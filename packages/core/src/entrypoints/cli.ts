@@ -87,6 +87,12 @@ export {
   type ResolvedCliProfile,
 } from '../tools/cli/profile';
 export {
+  type CliPublicationOptions,
+  type CliPublicationPhase,
+  type CliPublicationResult,
+  publishCli,
+} from '../tools/cli/publication';
+export {
   type CliBuildSignature,
   CliBuildSignatureSchema,
   type CliSignatureVerdict,
@@ -120,6 +126,11 @@ export {
 } from '../tools/cli/update';
 export { type CliViewOutput, renderCliView } from '../tools/cli/view';
 export { type CliWaitConfig, type PollParams, pollUntilDone } from '../tools/cli/wait';
+export type {
+  RuntimeToolDefinitionWithoutOutput,
+  RuntimeToolExecution,
+  RuntimeToolExecutionWithOutput,
+} from '../tools/runtime-tool-execution';
 /**
  * The second half of `parseCliArgs`. The parser leaves array and object values
  * as strings on purpose, because `executeToolMethod` runs this pass next; a

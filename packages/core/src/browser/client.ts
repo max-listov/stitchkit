@@ -7,6 +7,7 @@ import type {
 } from '../contract/client-types';
 import type { ContractDef, EndpointDef } from '../contract/define';
 import { isRecord, mapObject, typedEntries } from '../internal/typed';
+import { endpointHasArguments } from './client-arguments';
 import {
   type ClientRequestExecutor,
   createFetchExecutor,
@@ -336,10 +337,6 @@ function refuseExtraWithOptionsArguments(
       'An extra argument here is dropped, and a request options object in the dropped position ' +
       'sends the request without them: an abort signal placed there never reaches the server.',
   );
-}
-
-function endpointHasArguments(endpoint: EndpointDef): boolean {
-  return Boolean(endpoint.params || endpoint.input || endpoint.multipart);
 }
 
 function readClientRequestArgs(requestArgs: unknown): Record<string, unknown> {

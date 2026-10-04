@@ -51,7 +51,7 @@ export function mountPreparedRuntimeMcp(
         description: definition.description,
         annotations: definition.annotations,
         ui: definition.ui,
-        ...(present && { present: (data: unknown) => present(data) }),
+        ...(present && { present }),
       },
       descriptor,
       {
@@ -59,6 +59,8 @@ export function mountPreparedRuntimeMcp(
         formatResult: config.formatResult,
         catalog: config.catalog,
         multiRoundRuntime: config.multiRoundRuntime,
+        hooks: config.hooks,
+        context: config.context,
       },
     );
   }

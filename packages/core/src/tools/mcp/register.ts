@@ -8,12 +8,15 @@ import { AppError } from '../../contract/errors';
 import type { EndpointToolAnnotations, EndpointUiMeta } from '../../contract/tool-options';
 import { isRecord } from '../../internal/typed';
 import type { ToolExecutionOptions } from '../execute';
+import type { ToolCallContext, ToolCallHooks } from '../execute-hooks';
 import { type ToolResult, toolResultFromError } from '../execute-result';
+import { observed } from '../internal/observe-hook';
 import type { MountableTool } from '../mount';
 import { presentationMetadata } from '../schema/presentation';
 import { type McpCatalogStamp, stampToolRegistration, stampToolResult } from './catalog';
 import type { PreparedMcpTool } from './prepare';
 import { type McpRoundRuntime, resolveMcpRound } from './round';
+import { transportContext } from './round-context';
 import { runInMcpRequestContext } from './trace';
 
 /** What the host is told about a tool — contract endpoints and runtime tools alike. */
@@ -23,7 +26,7 @@ export interface McpToolPresentation {
   annotations?: EndpointToolAnnotations;
   ui?: EndpointUiMeta;
   /** A runtime tool's own MCP answer, built from its validated output. */
-  present?: (data: unknown) => unknown | Promise<unknown>;
+  present?(data: unknown): unknown | Promise<unknown>;
 }
 
 /** The runner every registered tool calls through — `createToolRunner`'s. */
@@ -43,6 +46,8 @@ export interface McpToolRegistrationConfig {
   ) => CallToolResult;
   catalog?: McpCatalogStamp;
   multiRoundRuntime?: McpRoundRuntime;
+  hooks?: ToolCallHooks;
+  context?: Record<string, unknown>;
 }
 
 /**
@@ -95,6 +100,7 @@ export function registerMcpTool(
       stampToolResult(
         await runInMcpRequestContext(mcpContext, name, async () => {
           const args = isRecord(rawArgs) ? rawArgs : {};
+          const startedAt = Date.now();
           try {
             const round = await resolveMcpRound({
               tool: mountable,
@@ -153,7 +159,34 @@ export function registerMcpTool(
             }
             return result.data;
           } catch (err) {
-            return format(toolResultFromError(err), 'none', name);
+            // Resolver/protocol preparation throws outside the managed runner.
+            // Observe those failures without executing the operation or its gates again.
+            const context: ToolCallContext = {
+              ...config.context,
+              ...transportContext(mcpContext, name),
+              source: 'mcp',
+            };
+            const result = toolResultFromError(err);
+            await observed('onToolError', () =>
+              config.hooks?.onToolError?.({
+                toolName: name,
+                error: err,
+                context,
+                endpoint: mountable.method,
+              }),
+            );
+            await observed('afterToolCall', () =>
+              config.hooks?.afterToolCall?.({
+                toolName: name,
+                args,
+                result,
+                durationMs: Date.now() - startedAt,
+                error: err,
+                context,
+                endpoint: mountable.method,
+              }),
+            );
+            return format(result, 'none', name);
           }
         }),
         config.catalog,

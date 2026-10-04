@@ -4,7 +4,11 @@ import { mkdir, open, realpath, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { ManagedFilePathSchema, type ManagedFileRef } from '../contract/file-ref';
 import { AtomicFilePublicationError, publishAtomicFile } from '../internal/atomic-publication';
+import type { FileObservation } from '../internal/bounded-file-read';
 import { isWithinDir } from '../internal/within-dir';
+
+export type { FileObservation } from '../internal/bounded-file-read';
+
 import { inspectedRef, inspectFile, writeSource } from './file-io';
 
 import { readManagedDescriptor } from './read';
@@ -95,15 +99,6 @@ export interface ManagedFileWriteOptions {
   mediaType?: string;
   name?: string;
   signal?: AbortSignal;
-}
-
-export interface FileObservation {
-  dev: number;
-  ino: number;
-  size: number;
-  nlink: number;
-  mtimeMs: number;
-  ctimeMs: number;
 }
 
 export interface ManagedFileSource {

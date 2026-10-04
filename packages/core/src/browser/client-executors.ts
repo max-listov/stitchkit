@@ -18,6 +18,7 @@ import {
   parseApiErrorBody,
   type RequestOptions,
 } from './http';
+import { resolveClientFetch } from './native-fetch';
 import { responseTraceId } from './request-id';
 import { uploadProgressRoute, withUploadProgress } from './upload-progress';
 
@@ -164,7 +165,7 @@ export function createFetchExecutor<K extends string>(
   config: ClientConfig,
   contractConfig?: ContractClientConfig<K>,
 ): ClientRequestExecutor {
-  const executeFetch = config.fetch ?? globalThis.fetch;
+  const executeFetch = resolveClientFetch(config.fetch);
   return async (requestArgs, options) => {
     const plan = planClientRequest(endpoint, prefix, requestArgs, contractConfig);
     const url = joinClientBaseUrl(config.baseUrl, plan.relativeUrl);
@@ -303,6 +304,8 @@ async function throwForErrorResponse(
       parsed.message,
       parsed.hint,
       responseTraceId(res),
+      undefined,
+      parsed.retryable,
     );
   }
   throw new ApiError(

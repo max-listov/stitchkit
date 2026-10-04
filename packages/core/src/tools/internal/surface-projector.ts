@@ -53,9 +53,8 @@ export interface SurfaceToolExtension<
   filter?: (service: ServiceDef, method: MethodDef) => boolean;
 }
 
-export interface ToolSurfaceProjection<
-  TRuntime extends SurfaceRuntimeToolDefinition = SurfaceRuntimeToolDefinition,
-> {
+/** Shared surface container; each executable mount supplies its own typed definition. */
+export interface ToolSurfaceProjection<TRuntime> {
   services?: readonly ServiceDef[];
   runtimeTools?: readonly TRuntime[];
 }

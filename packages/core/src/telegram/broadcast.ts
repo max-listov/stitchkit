@@ -15,19 +15,20 @@
  */
 
 import { callTelegramBotApi } from './bot-api';
+import { broadcastDelivery, broadcastLimits } from './broadcast-delivery';
+import type { TelegramBroadcastFailure } from './broadcast-failure';
 import {
   appendJournal,
   assertBroadcastName,
   type BroadcastProgress,
   broadcastFiles,
   lockBroadcast,
+  prepareJournal,
   readProgress,
   readRecipients,
-  type TelegramBroadcastOutcome,
   type TelegramBroadcastRecipient,
   writeRecipients,
 } from './broadcast-state';
-import { classifyTelegramSendFailure, type TelegramSendFailure } from './send-failure';
 
 export type { TelegramBroadcastOutcome, TelegramBroadcastRecipient } from './broadcast-state';
 
@@ -56,6 +57,10 @@ export interface TelegramBroadcastConfig {
   readonly ratePerSecond?: number;
   /** Tries of one recipient on a retryable refusal before it is `failed`. Default 5. */
   readonly maxAttempts?: number;
+  /** Provider waits above this budget halt without an early retry. Default 60 s. */
+  readonly maxRetryDelayMs?: number;
+  /** Retry variants certify that the attempt did not apply an external effect. */
+  readonly classify?: (error: unknown) => TelegramBroadcastFailure;
   /** Count what would be sent and send nothing; no state is written. */
   readonly dryRun?: boolean;
   /** Stops between sends — the send in flight is finished and recorded first. */
@@ -64,7 +69,7 @@ export interface TelegramBroadcastConfig {
   readonly onProgress?: (report: TelegramBroadcastReport) => void;
   /** Default 10 000. */
   readonly progressEveryMs?: number;
-  readonly sleep?: (milliseconds: number) => Promise<void>;
+  readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly now?: () => number;
 }
 
@@ -72,7 +77,8 @@ export interface TelegramBroadcastConfig {
  * - `finished` — nobody is left.
  * - `stopped` — the signal stopped it; run the same name again to continue.
  * - `halted` — the message itself was refused (`message-invalid`) or Telegram
- *   was unreachable; nobody was charged with it. Fix the cause and run again.
+ *   requested a wait outside the budget, or a send outcome was ambiguous.
+ *   An ambiguous recipient stays uncertain and is never sent again.
  * - `dry-run` — counted, not sent.
  */
 export type TelegramBroadcastRunOutcome = 'finished' | 'stopped' | 'halted' | 'dry-run';
@@ -86,25 +92,19 @@ export interface TelegramBroadcastReport {
   readonly unreachable: number;
   /** Refused for a reason about neither the recipient nor the message, or retries ran out. */
   readonly failed: number;
-  /** A send that was in flight when a previous run died — not repeated. */
+  /** A send whose external outcome is unknown, including a crash — never repeated. */
   readonly uncertain: number;
   readonly pending: number;
   /** Why a `halted` run stopped. */
-  readonly halt?: TelegramSendFailure;
+  readonly halt?: TelegramBroadcastFailure;
 }
-
-function pause(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-type RecipientOutcome = { outcome: TelegramBroadcastOutcome; reason?: string } | 'halt';
 
 function tally(
   name: string,
   total: number,
   progress: BroadcastProgress,
   outcome: TelegramBroadcastReport['outcome'],
-  halt?: TelegramSendFailure,
+  halt?: TelegramBroadcastFailure,
 ): TelegramBroadcastReport {
   const counts = { delivered: 0, unreachable: 0, failed: 0, uncertain: 0 };
   for (const state of progress.values()) if (state !== 'sending') counts[state] += 1;
@@ -137,14 +137,14 @@ export async function runTelegramBroadcast(
 ): Promise<TelegramBroadcastReport> {
   assertBroadcastName(config.name);
   const files = broadcastFiles(config.directory, config.name);
-  const intervalMs = 1_000 / (config.ratePerSecond ?? 25);
-  const maxAttempts = config.maxAttempts ?? 5;
-  const sleep = config.sleep ?? pause;
+  const limits = broadcastLimits(config);
   const now = config.now ?? Date.now;
   let recipients: TelegramBroadcastRecipient[] = [];
   let progress: BroadcastProgress = new Map();
-  const report = (outcome: TelegramBroadcastReport['outcome'], halt?: TelegramSendFailure) =>
-    tally(config.name, recipients.length, progress, outcome, halt);
+  const report = (
+    outcome: TelegramBroadcastReport['outcome'],
+    halt?: TelegramBroadcastFailure,
+  ) => tally(config.name, recipients.length, progress, outcome, halt);
 
   if (config.dryRun) {
     recipients = (await readRecipients(files)) ?? (await audience(config));
@@ -152,18 +152,20 @@ export async function runTelegramBroadcast(
     return report('dry-run');
   }
 
-  const unlock = await lockBroadcast(config.directory, files);
+  const lock = await lockBroadcast(config.directory, files);
+  const deliver = broadcastDelivery(config, limits, () => lock.assertHeld());
   try {
     const snapshot = await readRecipients(files);
     if (snapshot) recipients = snapshot;
     else {
       recipients = await audience(config);
-      await writeRecipients(files, recipients);
+      await writeRecipients(files, recipients, lock);
     }
+    await prepareJournal(files, lock);
     progress = await readProgress(files);
     for (const [index, state] of progress) {
       if (state !== 'sending') continue;
-      await appendJournal(files, { i: index, o: 'uncertain' });
+      await appendJournal(files, { i: index, o: 'uncertain' }, lock);
       progress.set(index, 'uncertain');
     }
 
@@ -177,70 +179,39 @@ export async function runTelegramBroadcast(
     };
     emit(report('running'));
     let lastProgressAt = now();
-    let lastSendAt = Number.NEGATIVE_INFINITY;
-
-    let halted: TelegramSendFailure | undefined;
-    const halt = (failure: TelegramSendFailure): 'halt' => {
-      halted = failure;
-      return 'halt';
-    };
-
-    /** One recipient to its end: sent, refused for good, or out of tries. */
-    const deliver = async (
-      recipient: TelegramBroadcastRecipient,
-    ): Promise<RecipientOutcome> => {
-      for (let attempt = 1; ; attempt += 1) {
-        const wait = lastSendAt + intervalMs - now();
-        if (wait > 0) await sleep(wait);
-        lastSendAt = now();
-        try {
-          await config.send({ recipient, attempt });
-          return { outcome: 'delivered' };
-        } catch (error) {
-          const failure = classifyTelegramSendFailure(error);
-          if (failure.recipientUnreachable)
-            return { outcome: 'unreachable', reason: failure.reason };
-          if (failure.reason === 'message-invalid') return halt(failure);
-          const transport = failure.reason === 'unknown' && failure.status === undefined;
-          if (!failure.retryable && !transport)
-            return { outcome: 'failed', reason: failure.reason };
-          if (attempt >= maxAttempts) {
-            return transport ? halt(failure) : { outcome: 'failed', reason: failure.reason };
-          }
-          await sleep(
-            failure.retryAfterSeconds !== undefined
-              ? failure.retryAfterSeconds * 1_000
-              : Math.min(60_000, 1_000 * 2 ** (attempt - 1)),
-          );
-        }
-      }
-    };
     for (let index = 0; index < recipients.length; index += 1) {
       if (progress.has(index)) continue;
       if (config.signal?.aborted) return emit(report('stopped'));
       const recipient = recipients[index];
       if (recipient === undefined) continue;
-      await appendJournal(files, { i: index, s: 'sending' });
+      await appendJournal(files, { i: index, s: 'sending' }, lock);
       const result = await deliver(recipient);
-      if (result === 'halt') {
+      if (result.kind !== 'settled') {
         // Not the recipient's doing: they stay pending for the run after the fix.
-        await appendJournal(files, { i: index, s: 'released' });
-        return emit(report('halted', halted));
+        await appendJournal(files, { i: index, s: 'released' }, lock);
+        return emit(
+          result.kind === 'stopped' ? report('stopped') : report('halted', result.failure),
+        );
       }
-      await appendJournal(files, {
-        i: index,
-        o: result.outcome,
-        ...(result.reason && { r: result.reason }),
-      });
+      await appendJournal(
+        files,
+        {
+          i: index,
+          o: result.outcome,
+          ...(result.reason && { r: result.reason }),
+        },
+        lock,
+      );
       progress.set(index, result.outcome);
-      if (now() - lastProgressAt >= (config.progressEveryMs ?? 10_000)) {
+      if (result.halt) return emit(report('halted', result.halt));
+      if (now() - lastProgressAt >= limits.progressEveryMs) {
         lastProgressAt = now();
         emit(report('running'));
       }
     }
     return emit(report('finished'));
   } finally {
-    await unlock();
+    await lock.release();
   }
 }
 

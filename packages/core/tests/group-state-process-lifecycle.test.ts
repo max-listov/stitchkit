@@ -10,29 +10,7 @@ import {
   transitionProcessStart,
 } from '../src/application/process-lifecycle-transitions';
 import type { StateStore } from '../src/application/state-store';
-
-function memoryStore<TState>(initial: TState | null = null): StateStore<TState> {
-  let state = initial;
-  let tail = Promise.resolve();
-  return {
-    async read() {
-      await tail;
-      return state;
-    },
-    update(transition) {
-      const result = tail.then(async () => {
-        const next = await transition(state);
-        state = next.state;
-        return next.result;
-      });
-      tail = result.then(
-        () => undefined,
-        () => undefined,
-      );
-      return result;
-    },
-  };
-}
+import { serialStateStore } from './application-file-state-store-fixture';
 
 const at = (second: number): string =>
   `2026-09-06T04:00:${String(second).padStart(2, '0')}.000Z`;
@@ -254,7 +232,7 @@ describe('process lifecycle transitions', () => {
   test('ledger keeps one run identity and publishes only recorded facts', async () => {
     let now = new Date(at(0));
     const ledger = createProcessLifecycleLedger({
-      store: memoryStore<LifecycleState>(),
+      store: serialStateStore<LifecycleState>(),
       clock: () => now,
       pid: 88,
       runId: 'one-run',
@@ -279,7 +257,7 @@ describe('process lifecycle transitions', () => {
     let sequence = 0;
     let now = new Date(at(0));
     const ledger = createProcessLifecycleLedger({
-      store: memoryStore<LifecycleState>(),
+      store: serialStateStore<LifecycleState>(),
       clock: () => now,
       pid: 88,
       runId: () => `run-${++sequence}`,
@@ -295,7 +273,7 @@ describe('process lifecycle transitions', () => {
   });
 
   test('a failed durable shutdown remains retryable', async () => {
-    const base = memoryStore<LifecycleState>();
+    const base = serialStateStore<LifecycleState>();
     let rejectNext = false;
     const store: StateStore<LifecycleState> = {
       read: () => base.read(),
@@ -536,7 +514,7 @@ describe('process lifecycle transitions', () => {
   });
 
   test('the ledger carries the overlap policy into every start', async () => {
-    const store = memoryStore<LifecycleState>();
+    const store = serialStateStore<LifecycleState>();
     const older = createProcessLifecycleLedger({
       store,
       pid: 20,
@@ -557,7 +535,7 @@ describe('process lifecycle transitions', () => {
   });
 
   test('the ledger carries the version-change policy into every start', async () => {
-    const store = memoryStore<LifecycleState>();
+    const store = serialStateStore<LifecycleState>();
     const older = createProcessLifecycleLedger({
       store,
       versionChangeOverlap: 'abnormal',
@@ -585,7 +563,7 @@ describe('process lifecycle transitions', () => {
     let sequence = 0;
     const facts: string[] = [];
     const ledger = createProcessLifecycleLedger({
-      store: memoryStore<LifecycleState>(),
+      store: serialStateStore<LifecycleState>(),
       pid: 88,
       runId: () => `run-${++sequence}`,
       clock: () => new Date(at(sequence)),

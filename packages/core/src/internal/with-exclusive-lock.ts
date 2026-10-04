@@ -47,13 +47,15 @@ export interface ExclusiveLock {
   readonly owner: ExclusiveLockOwner;
   /** Taken from an owner that was provably gone, or that never recorded itself. */
   readonly reclaimed: boolean;
+  /** Refuse after release or if the descriptor, path or owner record changed. */
+  assertHeld(): Promise<void>;
 }
 
 /** A lock that was not taken: the wait ran out, or was cancelled. */
 export class ExclusiveLockError extends Error {
   override name = 'ExclusiveLockError';
   constructor(
-    readonly code: 'LOCK_TIMEOUT' | 'LOCK_ABORTED',
+    readonly code: 'LOCK_TIMEOUT' | 'LOCK_ABORTED' | 'LOCK_LOST',
     readonly label: string,
     /** Who held it at the last attempt; `null` when the lock recorded no readable owner. */
     readonly holder: ExclusiveLockOwner | null,
@@ -164,7 +166,24 @@ export async function withExclusiveLock<T>(
             { cause: signal.reason },
           );
         }
-        result = await run({ path: held.path, owner: held.owner, reclaimed: held.reclaimed });
+        result = await run({
+          path: held.path,
+          owner: held.owner,
+          reclaimed: held.reclaimed,
+          async assertHeld() {
+            try {
+              await held.assertHeld();
+            } catch (cause) {
+              throw new ExclusiveLockError(
+                'LOCK_LOST',
+                label,
+                held.owner,
+                `[stitchkit] the held lock on "${label}" changed or was released`,
+                { cause },
+              );
+            }
+          },
+        });
       } catch (error) {
         await held.release().catch(() => undefined);
         throw error;

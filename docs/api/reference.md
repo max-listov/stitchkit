@@ -245,7 +245,7 @@ from the root `stitchkit`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `AppError` | class | the framework error — `code` / `status` / `details` / `hint` |
-| `ErrorEnvelope` | _type_ | the JSON shape of an error response |
+| `ErrorEnvelope` | _type_ | the JSON shape of an error response, preserving optional declared boolean `error.retryable` without changing HTTP retry policy |
 | `notFound` | function | throw `404 NOT_FOUND` — [guide](../guide/auth-and-errors.md#throwing-errors) |
 | `badRequest` | function | throw `400 BAD_REQUEST` |
 | `unauthorized` | function | throw `401 UNAUTHORIZED` |
@@ -408,6 +408,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `respondJson` | function | a raw route's JSON response (`204` for null/undefined) |
 | `errorResponse` | function | any thrown value → the framework error envelope + `x-request-id` |
 | `normalizeError` | function | any thrown value → an `AppError` (`ZodError` → `VALIDATION_ERROR` 400 with structured `details.issues`, else generic 500) — the framework's canonical classification, for a bespoke `onError` |
+| `NormalizeErrorOptions` | _type_ | `logUnexpected` defaults to logging the raw server-side cause; tool adapters disable process dumps while their existing observers retain that cause |
 | `errorCode` | function | the stable error code for a thrown value (side-effect-free — for log attribution) |
 | `formatZodError` | function | a `ZodError` → a readable, field-summarised string |
 | `zodIssues` | function | a `ZodError` → structured `{ path, code, message }[]` — the machine-readable sibling of `formatZodError` |
@@ -624,7 +625,9 @@ cutovers are covered by the executable
 | `NotificationOutboxItem` / `NotificationOutboxReceipt` / `NotificationOutboxState` / `NotificationSend` / `NotificationFailureClassification` / `DroppedNotification` / `EnqueueNotification` | _type_ | versioned queue records, stable send identity and delivery decisions |
 | `notificationOutboxStateSchema` | function | strict persisted-state schema over an application payload schema |
 | `notificationOutboxResource` / `NotificationOutboxResource` / `NotificationOutboxResourceConfig` | function / _type_ | thin managed-resource scheduler over an outbox handle |
-| `createDirectoryInbox` (from `stitchkit/application/directory-inbox`) / `DirectoryInbox` / `DirectoryInboxConfig` / `DirectoryInboxDelivery` / `DirectoryInboxResource` | function / _type_ | managed resource delivering each `<name>.json` entry another program drops into a directory to the application at least once, after readiness; separate durable taken/done records, leases, bounded retry |
+| `createDirectoryInbox` (from `stitchkit/application/directory-inbox`) / `DirectoryInbox` / `DirectoryInboxConfig` / `DirectoryInboxDelivery` / `DirectoryInboxResource` | function / _type_ | one managed directory inbox for files or durable `accept({ source, key, entry })`; first payload wins, bounded capacity/bytes/receipts and renewable fenced leases; delivery begins after readiness and effects remain at least once |
+| `DirectoryInboxIdentitySchema` / `DirectoryInboxIdentity` / `DirectoryInboxAccept` / `DirectoryInboxAcceptResultSchema` / `DirectoryInboxAcceptResult` | schema / _type_ | validated source/key, typed entry and durable accepted/duplicate result with filename; duplicates do not replace the first payload |
+| `StateStoreUpdateContext` | _type_ | real active protected transaction: `assertHeld()` refuses after ownership loss or completion; custom adapters supply this context to their transition |
 | `DirectoryInboxStateSchema` / `DirectoryInboxState` / `DirectoryInboxRejection` / `DirectoryInboxRejectionReasonSchema` / `DirectoryInboxRejectionReason` | schema / _type_ | the inbox's claims, receipts and rejections (`invalid`, `too-large`, `attempt-limit`) |
 | `ApplicationHandle.restart` | method | replace one resource and everything that depends on it, leaving the rest of the graph running and the process epoch unchanged |
 | `ApplicationRestartInputSchema` / `ApplicationRestartInput` | schema / _type_ | the resource to replace, by id, and optionally `gracePeriodMs` / `forceTimeoutMs` for this restart — the application's own shutdown budget otherwise |
@@ -1809,6 +1812,7 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `TransportSummary` | _type_ | `{ contractServices, runtimeTools, totals, sources }` from `summarizeTransports` |
 | `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
 | `ToolSurfaceDefinition` | _type_ | shared object-shaped `{ services?, runtimeTools? }` introspection surface |
+| `ToolSurfaceProjection` | _type_ | one readonly services/runtime container shared by full and MCP-only surfaces; executable mounts specialize the runtime definition without pulling in another adapter's peers |
 | `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options |
 | `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments |
 | `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions into conservative object joins; scalar collisions retain provable types, object/array collisions retain structural alternatives, and field descriptions retain discriminator labels plus availability/requiredness hints; the projection never executes validation |
@@ -1817,6 +1821,22 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `ToolManifestEntry` | _type_ | one `buildToolManifest` row |
 
 ---
+
+## `stitchkit/tools/mcp`
+
+A server-only leaf over the same MCP owner as `stitchkit/tools`. Its runtime and strict
+NodeNext declarations require Zod and `@modelcontextprotocol/server`, with no AI SDK peer.
+HTTP/stdio factories, mounts, schema policy, catalog and resource helpers keep their canonical
+behavior and names. See [MCP guide](../guide/mcp-and-agents.md#mcp--createmcphandler).
+
+| Export | Kind | Purpose |
+|--------|------|---------|
+| `createMcpHandler` / `createMcpHttpRoute` / `buildMcpServer` / `mountMcp` | function | the shared authenticated HTTP handler, raw-route adapter, SDK server and contract mount |
+| `createStdioMcpServer` / `bindStdioProcessSignals` | function | the shared stdio server and bounded process cleanup |
+| `RuntimeMcpToolDefinitionWithOutput` | _type_ | schema-aware MCP-only construction with concrete handler output and presenter input |
+| `RuntimeMcpToolDefinition` | _type_ | heterogeneous MCP registration; the canonical runner validates input/output before invocation |
+| `RuntimeMcpToolPresenters` / `RuntimeMcpPresentation` | _type_ | official SDK content without framework-owned `structuredContent` or `isError`; one presenter owner shared with the full SDK surface |
+| `RuntimeToolDefinitionWithoutOutput` | _type_ | the shared neutral void definition |
 
 ## `stitchkit/tools/connections`
 
@@ -1829,6 +1849,9 @@ and approval path.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `defineMcpClientConnection` | function | declare one external MCP server connection over Streamable HTTP with an optional SSE fallback |
+| `ConnectionOperationLimits` / `McpConnectionLimits` | _type_ | positive finite deadline/raw byte ceilings with independent discovery/call overrides; omitted fields inherit the shared bounds |
+| `ConnectionPhase` / `ConnectionOperation` / `ConnectionFailureContext` | _type_ | closed operation/phase vocabulary and measured read context for existing typed connection errors |
+| `ConnectionTimeoutError` / `ConnectionResponseTooLargeError` | class | bounded operation refusal, with phase, operation and finite observed bytes; safe tool projection retains the raw cause locally |
 | `defineOpenApiConnection` | function | declare one OpenAPI document (object, JSON text or JSON URL) as a tool surface |
 | `mountConnections` | function | discover every connection and return readonly `RuntimeToolDefinition`s for `mountAgent` |
 | `ConnectionAuthorizationRequiredError` | class | typed reauthorization signal raised on `401` with credentials resolved again on the next call |
@@ -1968,8 +1991,9 @@ injected grammY bot. → ADR 0143, ADR 0201 — [guide](../guide/telegram.md)
 | `classifyTelegramSendFailure` | function | name a refused Bot API send and separate "retry this send" from "stop addressing this recipient" |
 | `TelegramSendFailure` | _type_ | reason, `status`, Telegram-stated `retryAfterSeconds`, `retryable`, `recipientUnreachable` and which evidence produced the answer |
 | `TelegramSendFailureReason` / `TELEGRAM_SEND_FAILURE_REASONS` | _type_ / constant | `blocked-by-user` / `user-deactivated` / `chat-not-found` / `not-started` / `rate-limited` / `message-invalid` / `server-error` / `unknown`, and the same as a list; a `Record<TelegramSendFailureReason, …>` over them fails to compile when a reason is added |
-| `runTelegramBroadcast` | function | a resumable broadcast by `name` under a state `directory`: audience written once, an append-only journal, pacing at `ratePerSecond` (25), 429 waits `retry_after`, unreachable recipients never addressed again, a `message-invalid` or unreachable Telegram halts without charging the recipient, a send in flight at a crash is `uncertain` and not repeated, `dryRun`, one runner per name |
+| `runTelegramBroadcast` | function | a resumable broadcast by `name` under a state `directory`: audience and journal durably recorded, pacing at `ratePerSecond` (25), exact retry delays within the finite declared budget, injected classifier, uncertain send outcomes never replayed, `dryRun`, one fenced runner per name |
 | `TelegramBroadcastConfig` / `TelegramBroadcastSend` / `TelegramBroadcastReport` / `TelegramBroadcastRunOutcome` / `TelegramBroadcastOutcome` / `TelegramBroadcastRecipient` | _type_ | `name`, `directory`, `recipients()`, `send({ recipient, attempt })`, `maxAttempts`, `signal`, `onProgress`; counts `delivered` / `unreachable` / `failed` / `uncertain` / `pending` and `finished` / `stopped` / `halted` / `dry-run` |
+| `TelegramBroadcastFailureSchema` / `TelegramBroadcastFailure` | schema / _type_ | injected `classify` answers retry-after/transient/permanent/ambiguous; exact provider delay is bounded by `maxRetryDelayMs` without shortening, unknown outcome remains uncertain and is never replayed |
 | `telegramBroadcastSender` / `TelegramBroadcastSenderConfig` / `TelegramBroadcastMessage` | function / _type_ | the standard `send`: `sendMessage` with a text or `copyMessage` of a prepared message, through the Bot API |
 | `createTelegramOperatorChannel` | function | the operator chat, apart from the journal: `post(text, topic?)` returns at once and never throws; paced sends into forum topics, 429 honoured, oldest dropped on overflow, `drain(signal)` and `close()` for the way down |
 | `TelegramOperatorChannelConfig` / `TelegramOperatorChannel` / `TelegramOperatorMessage` / `TelegramOperatorDrop` / `TelegramChatId` | _type_ | `chatId`, `topics`, `send`, `maxQueued`, `minIntervalMs`, `maxAttempts`, `onDropped`, `sensitivePatterns` and `sensitiveValues` (a bot token is always masked), `dedupe`; a drop is `overflow` / `refused` / `attempts` / `closed` / `repeated` / `over-budget` with its classification |
@@ -2312,6 +2336,7 @@ SDK nor the `ai` peer.
 | `checkCliUpdate` | function | bounded, interval-limited, never-throwing check for a newer published build |
 | `applyCliUpdate` | function | download, verify the decompressed digest and replace the binary by rename |
 | `assertCliPublishable` | function | refuse republishing one version from a different commit — takes one manifest or every manifest already published, because the promise a version makes does not stop at a channel boundary |
+| `publishCli` / `CliPublicationOptions` / `CliPublicationPhase` / `CliPublicationResult` | function / _type_ | optional bounded builder/admission over one immutable name/version/commit stamp; commit verified assets before the manifest pointer, recover exact completed versions, retain verified history; existing signatures/installer/updater own the wire contract |
 | `rollbackCliUpdate` / `CliRollbackConfig` / `RolledBackCliUpdate` | function / _types_ | put the kept previous build back, digest-checked first and written by the same atomic rename the update uses |
 | `signCliManifest` / `verifyCliManifest` / `cliManifestSigningPayload` | function | Ed25519 over `{name, version, commit, builtAt, assets[]}` — every asset's digest included, so the chain closes on the file that executes |
 | `cliSignatureAccepted` / `CliSignatureVerdict` | function / _type_ | `valid` \| `unenforced` \| `missing` \| `unknown-key` \| `invalid`; `unenforced` keeps an unpinned build updating while making the absence of a check visible |
@@ -2343,6 +2368,9 @@ SDK nor the `ai` peer.
 | `CliConfig` | _type_ | config for `createCli`; `defaultCommand`, `globalOptions`, `optionAliases` and `positionals` define the shared command presentation policy |
 | `CliPresentationPolicyConfig` | _type_ | shared command presentation-policy subset of `CliConfig` |
 | `CliSurfaceSource` | _type_ | static service/runtime array or identity-dependent factory |
+| `RuntimeToolExecution` | _type_ | neutral heterogeneous runtime-tool registration; handlers execute through the schema-validating managed runner |
+| `RuntimeToolExecutionWithOutput` | _type_ | strict neutral managed definition with schema-derived handler input/output; construct before adding to CLI `runtimeTools` |
+| `RuntimeToolDefinitionWithoutOutput` | _type_ | strict neutral managed void definition without an output contract or transport presenters |
 | `CliCommandDefinition` | _type_ | native command definition union |
 | `CliCommandDefinitionBase` | _type_ | native command name, description and input schema |
 | `CliCommandDefinitionWithOutput` | _type_ | native command with validated declared output and typed optional `present` / successful `exitCode` callbacks |

@@ -1,47 +1,65 @@
 import { ConnectionResponseTooLargeError, ConnectionTimeoutError } from './errors';
+import type { ConnectionReadContext } from './operation-limits';
 
-/**
- * Bounds shared by both connection kinds.
- *
- * ADR 0180 says timeouts and response sizes are bounded; before this module
- * neither was. Every outbound `fetch` runs under a deadline that aborts with a
- * typed {@link ConnectionTimeoutError} and is combined with any caller signal,
- * and every JSON/text body is read through {@link readBoundedText}.
- */
-
-/** Default per-request deadline: long enough for a slow provider, finite. */
+/** Shared defaults for both connection kinds; phase overrides inherit these. */
 export const DEFAULT_CONNECTION_TIMEOUT_MS = 30_000;
-
-/** Default response ceiling: 1 MiB, far above any tool payload we accept. */
 export const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
+const MAX_TIMER_MS = 2_147_483_647;
 
-/** The declared timeout, or the default when absent or non-positive. */
 export function connectionTimeoutMs(value: number | undefined): number {
-  return value !== undefined && value > 0 ? value : DEFAULT_CONNECTION_TIMEOUT_MS;
+  if (value === undefined) return DEFAULT_CONNECTION_TIMEOUT_MS;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMER_MS) {
+    throw new RangeError('Connection timeoutMs must be a positive integer within timer range');
+  }
+  return value;
 }
 
-/** The declared response ceiling, or the default when absent or non-positive. */
 export function connectionMaxResponseBytes(value: number | undefined): number {
-  return value !== undefined && value > 0 ? value : DEFAULT_MAX_RESPONSE_BYTES;
+  if (value === undefined) return DEFAULT_MAX_RESPONSE_BYTES;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError('Connection maxResponseBytes must be a positive safe integer');
+  }
+  return value;
 }
 
-/**
- * Run `body` under a request deadline, passing it the combined signal.
- *
- * The signal aborts with a typed `ConnectionTimeoutError` once `timeoutMs`
- * elapses, and mirrors the caller's own signal so an application abort still
- * wins. `body` must thread the signal into every `fetch` and body read it
- * performs — the deadline covers both, not just the connection setup.
- */
+/** Abort races also cover injected streams or promises that do not observe fetch's signal. */
+export async function awaitConnection<T>(
+  pending: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) return pending;
+  if (signal.aborted) {
+    void pending.catch(() => undefined);
+    signal.throwIfAborted();
+  }
+  const aborted = Promise.withResolvers<never>();
+  const onAbort = () => aborted.reject(signal.reason);
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    signal.throwIfAborted();
+    const result = await Promise.race([pending, aborted.promise]);
+    signal.throwIfAborted();
+    return result;
+  } catch (error) {
+    signal.throwIfAborted();
+    throw error;
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
+/** One deadline spans negotiation, response waiting and all body reads. */
 export async function withConnectionDeadline<T>(
   connectionName: string,
   timeoutMs: number,
   callerSignal: AbortSignal | undefined,
   body: (signal: AbortSignal) => Promise<T>,
+  context?: ConnectionReadContext,
 ): Promise<T> {
+  connectionTimeoutMs(timeoutMs);
   const controller = new AbortController();
   const timer = setTimeout(
-    () => controller.abort(new ConnectionTimeoutError(connectionName, timeoutMs)),
+    () => controller.abort(new ConnectionTimeoutError(connectionName, timeoutMs, context)),
     timeoutMs,
   );
   const onAbort = () => controller.abort(callerSignal?.reason);
@@ -49,56 +67,81 @@ export async function withConnectionDeadline<T>(
     if (callerSignal.aborted) controller.abort(callerSignal.reason);
     else callerSignal.addEventListener('abort', onAbort, { once: true });
   }
+  if (context) context.signal = controller.signal;
   try {
-    return await body(controller.signal);
+    controller.signal.throwIfAborted();
+    return await awaitConnection(body(controller.signal), controller.signal);
   } finally {
     clearTimeout(timer);
     callerSignal?.removeEventListener('abort', onAbort);
   }
 }
 
-/**
- * Read a response body up to `maxBytes`, refusing anything above it.
- *
- * The stream is cancelled as soon as the ceiling is crossed, so an unbounded
- * server cannot keep the process reading. Returns the decoded text so a JSON
- * caller can parse it itself and a text caller gets it unchanged.
- */
+/** Count raw bytes; Content-Length is deliberately not a trust boundary. */
 export async function readBoundedText(
   response: Response,
   maxBytes: number,
   connectionName: string,
+  context?: ConnectionReadContext,
 ): Promise<string> {
-  const stream = response.body;
-  if (!stream) return '';
-  const reader = stream.getReader();
+  context?.signal?.throwIfAborted();
+  if (!response.body) return '';
+  const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let total = 0;
   let text = '';
+  const cancel = () => void reader.cancel(context?.signal?.reason).catch(() => undefined);
+  context?.signal?.addEventListener('abort', cancel, { once: true });
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await awaitConnection(reader.read(), context?.signal);
       if (done) break;
       total += value.byteLength;
+      if (context) context.observedReadBytes += value.byteLength;
       if (total > maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        throw new ConnectionResponseTooLargeError(connectionName, maxBytes);
+        throw new ConnectionResponseTooLargeError(connectionName, maxBytes, {
+          ...context,
+          observedReadBytes: total,
+        });
       }
       text += decoder.decode(value, { stream: true });
     }
     text += decoder.decode();
     return text;
   } finally {
+    context?.signal?.removeEventListener('abort', cancel);
+    cancel();
     reader.releaseLock();
   }
 }
 
-/** Parse a bounded JSON body, keeping the ceiling check in one place. */
 export async function readBoundedJson(
   response: Response,
   maxBytes: number,
   connectionName: string,
+  context?: ConnectionReadContext,
 ): Promise<unknown> {
-  const text = await readBoundedText(response, maxBytes, connectionName);
-  return JSON.parse(text);
+  return JSON.parse(await readBoundedText(response, maxBytes, connectionName, context));
+}
+
+/** Diagnostics are best effort; cancellation and declared bounds always win. */
+export async function readConnectionErrorText(
+  response: Response,
+  connectionName: string,
+  context: ConnectionReadContext,
+): Promise<string> {
+  try {
+    return (
+      await readBoundedText(response, context.maxResponseBytes, connectionName, context)
+    ).slice(0, 512);
+  } catch (error) {
+    context.signal?.throwIfAborted();
+    if (
+      error instanceof ConnectionResponseTooLargeError ||
+      error instanceof ConnectionTimeoutError
+    ) {
+      throw error;
+    }
+    return '';
+  }
 }

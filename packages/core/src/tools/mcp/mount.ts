@@ -8,7 +8,7 @@ import { isRecord } from '../../internal/typed';
 import type { ServiceDef, StitchLogger } from '../../server/types';
 import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute-hooks';
 import { createToolRunner, type ToolExtend } from '../mount';
-import type { RuntimeToolDefinition } from '../runtime-tool';
+import type { RuntimeMcpToolDefinition } from '../runtime-tool-mcp';
 import { type McpResourceDef, RESOURCE_MIME_TYPE } from './app';
 import { type McpCatalogStamp, mcpCatalogStamp } from './catalog';
 import {
@@ -125,6 +125,8 @@ export function mountPreparedMcp(
           formatMcpResult(result, mode, toolName, config.errorHint),
         catalog: config.catalog,
         multiRoundRuntime: config.multiRoundRuntime,
+        hooks: config.hooks,
+        context: config.context,
       },
     );
   }
@@ -198,8 +200,8 @@ export interface DirectMcpSurfaceConfig<TAuth> {
   services: ServiceDef[] | ((auth: TAuth) => ServiceDef[]);
   /** Framework-managed runtime tools — may depend on the identity. */
   runtimeTools?:
-    | readonly RuntimeToolDefinition[]
-    | ((auth: TAuth) => readonly RuntimeToolDefinition[]);
+    | readonly RuntimeMcpToolDefinition[]
+    | ((auth: TAuth) => readonly RuntimeMcpToolDefinition[]);
   surfaces?: never;
   selectSurface?: never;
 }

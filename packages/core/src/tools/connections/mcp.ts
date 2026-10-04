@@ -36,6 +36,7 @@ export async function mountMcpConnection(
       allowedHosts,
       timeoutMs: connectionTimeoutMs(connection.timeoutMs),
       maxResponseBytes: connectionMaxResponseBytes(connection.maxResponseBytes),
+      ...(connection.limits && { limits: connection.limits }),
     });
   const discovery = createClient();
   const listed = await withConnectionToken(

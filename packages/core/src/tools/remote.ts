@@ -1,5 +1,7 @@
 import { createClient } from '../browser/client';
+import { endpointHasArguments } from '../browser/client-arguments';
 import { ApiError, type HttpClient } from '../browser/http';
+import type { ClientRequestOptions } from '../contract/client-types';
 import type { ContractDef, EndpointDef } from '../contract/define';
 import { AppError } from '../contract/errors';
 import type { RuntimeContext } from '../contract/runtime-context';
@@ -8,7 +10,30 @@ import { contractMethodFields } from '../server/contract-method';
 import type { MethodDef, ServiceDef } from '../server/types';
 
 /** A contract's typed client, viewed as a flat string-keyed call map. */
-type RemoteCalls = Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
+type RemoteCalls = Record<
+  string,
+  {
+    withOptions(
+      args: Record<string, unknown>,
+      options: ClientRequestOptions,
+    ): Promise<unknown>;
+    withOptions(options: ClientRequestOptions): Promise<unknown>;
+  }
+>;
+
+function refuseCancelled(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw new ApiError(
+    'REQUEST_ABORTED',
+    0,
+    undefined,
+    'Request was aborted',
+    undefined,
+    undefined,
+    { cause: signal.reason },
+    false,
+  );
+}
 
 /** Flatten a runtime context's `params` + `input` into one argument object. */
 function toArgs(ctx: RuntimeContext): Record<string, unknown> {
@@ -76,13 +101,18 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
         }
         const args = toArgs(ctx);
         try {
+          refuseCancelled(ctx.signal);
           // Inside the try: a throwing transform hook (which may itself call
           // the remote API, e.g. to upload a referenced file) gets the same
           // error conversion as the forwarded call.
           const finalArgs = options?.transformArgs
             ? await options.transformArgs(key, args)
             : args;
-          return await call(finalArgs);
+          refuseCancelled(ctx.signal);
+          const requestOptions = { signal: ctx.signal };
+          return await (endpointHasArguments(endpoint)
+            ? call.withOptions(finalArgs, requestOptions)
+            : call.withOptions(requestOptions));
         } catch (err) {
           // The typed client throws `ApiError` on a non-2xx remote response.
           // Translate it to the framework `AppError` so the real code / status /
@@ -91,13 +121,19 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
           // error"). A remote 400 stays a clean `VALIDATION_ERROR`, a 403 a
           // `FORBIDDEN`, and so on, across every transport that mounts the proxy.
           if (ApiError.is(err)) {
+            // A local unexpected transport error can contain URLs or credentials.
+            // Let the canonical boundary scrub it and retain the original cause.
+            if (err.code === 'UNKNOWN_ERROR' || err.code === 'HTTP_ERROR') throw err;
+            const cancelled = err.status === 0 && err.code === 'REQUEST_ABORTED';
+            const timedOut = err.status === 0 && err.code === 'REQUEST_TIMEOUT';
             throw new AppError(
               err.code,
               err.message,
-              err.status,
+              cancelled ? 499 : timedOut ? 408 : err.status,
               isRecord(err.details) ? err.details : undefined,
               err.hint,
               err.traceId,
+              cancelled || timedOut ? false : err.retryable,
             );
           }
           throw err;

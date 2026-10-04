@@ -1,6 +1,6 @@
 import type { ManagedResourceContext } from '../src/application/resource';
 import type { StateStore } from '../src/application/state-store';
-import { createMutationQueue } from '../src/internal/mutation-queue';
+import { serialStateStore } from './application-file-state-store-fixture';
 
 export function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -38,15 +38,5 @@ export function resourceContext(health: string[] = []): ManagedResourceContext {
   };
 }
 export function memoryState<T>(): StateStore<T> {
-  let state: T | null = null;
-  const serialize = createMutationQueue();
-  return {
-    read: async () => state,
-    update: (transition) =>
-      serialize(async () => {
-        const result = await transition(state);
-        state = result.state;
-        return result.result;
-      }),
-  };
+  return serialStateStore<T>();
 }

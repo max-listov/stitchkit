@@ -132,13 +132,20 @@ get the view's defaults and projected answer, which is what `collectTools` and
 
 ## MCP — `createMcpHandler`
 
+An MCP-only server imports `stitchkit/tools/mcp` and installs
+`stitchkit`, `zod` and `@modelcontextprotocol/server`. The leaf's runtime and strict
+NodeNext declarations require no `ai`. It exports the existing HTTP/stdio server,
+schema policy, catalog and resource helpers; their implementation and security are shared
+with the full `stitchkit/tools` barrel. Use that full barrel when the application also
+needs its AI SDK features.
+
 `createMcpHandler` builds a complete stateless Streamable-HTTP MCP endpoint on
 the official TypeScript SDK v2 server package. It owns server creation,
 protocol-era negotiation and shutdown; application code does not import the SDK
 to mount a normal endpoint.
 
 ```ts
-import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools'
+import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools/mcp'
 import { createServer } from 'stitchkit/server'
 
 const mcp = createMcpHandler({
@@ -272,7 +279,7 @@ Every advertised tool and every tool result therefore carries the fingerprint of
 the catalog it came from:
 
 ```ts
-import { readMcpCatalogStamp } from 'stitchkit/tools';
+import { readMcpCatalogStamp } from 'stitchkit/tools/mcp';
 
 const listed = await client.listTools();
 let known = readMcpCatalogStamp(listed.tools[0]?._meta); // { digest, tools }
@@ -777,7 +784,7 @@ If you already run an `McpServer` from the SDK, `mountMcp` adds contract tools
 to it instead of owning the lifecycle:
 
 ```ts
-import { mountMcp } from 'stitchkit/tools'
+import { mountMcp } from 'stitchkit/tools/mcp'
 
 mountMcp(mcpServer, [usersService], { context: { source: 'mcp' } })
 ```
@@ -793,7 +800,7 @@ client (Claude Desktop, Claude Code, Cursor, Codex), on the user's machine, so
 it can reach the local filesystem.
 
 ```ts
-import { bindStdioProcessSignals, createStdioMcpServer } from 'stitchkit/tools'
+import { bindStdioProcessSignals, createStdioMcpServer } from 'stitchkit/tools/mcp'
 
 const stdio = await createStdioMcpServer({
   serverInfo: { name: 'my-app', version: '1.0.0' },
@@ -948,7 +955,7 @@ through the contract's typed client:
 ```ts
 import { createHttpClient } from 'stitchkit'
 import { implementRemote } from 'stitchkit/remote'
-import { createStdioMcpServer } from 'stitchkit/tools'
+import { createStdioMcpServer } from 'stitchkit/tools/mcp'
 
 const http = createHttpClient({
   baseUrl: 'https://api.example.com',
@@ -973,6 +980,17 @@ no duplicated business logic.
 `implementRemote(contract, http, { transformArgs })` takes an optional
 `transformArgs` hook that rewrites a call's arguments before they are forwarded
 — e.g. to upload a local file referenced in the args and swap in its URL.
+
+The call's signal reaches the existing typed HTTP client's request options, for endpoints
+with or without arguments. An already cancelled call, including cancellation while an async
+argument transform runs, dispatches no request. Bind your process signal to `createCli` or
+`createCliInvoker`; `REQUEST_ABORTED` is a safe nonretryable failure with CLI exit130.
+Cooperative origins observe `ctx.signal` and release resources when their work ends. An
+origin or provider ignoring cancellation may continue after the local wait stops.
+
+An explicit `AppError.retryable` boolean also survives this remote hop. `false` on502 and
+`true` on409 remain the application's recommendation through HTTP, CLI, MCP and AI tools.
+Absent metadata keeps the previous defaults and does not alter HTTP transport retries.
 
 ## Structured output
 

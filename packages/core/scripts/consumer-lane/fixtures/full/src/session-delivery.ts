@@ -42,12 +42,28 @@ try {
   if (!(error instanceof SessionExpiredError)) throw error;
 }
 let state: NotificationOutboxState<string> | null = null;
+let stateTail: Promise<unknown> = Promise.resolve();
 const store: StateStore<NotificationOutboxState<string>> = {
   read: async () => state,
-  async update(transition) {
-    const result = await transition(state);
-    state = result.state;
-    return result.result;
+  update(transition) {
+    const pending = stateTail.then(async () => {
+      let active = true;
+      const context = {
+        async assertHeld() {
+          if (!active) throw new Error('Consumer state transaction ended');
+        },
+      };
+      try {
+        const result = await transition(state, context);
+        await context.assertHeld();
+        state = result.state;
+        return result.result;
+      } finally {
+        active = false;
+      }
+    });
+    stateTail = pending.catch(() => undefined);
+    return pending;
   },
 };
 let sends = 0;

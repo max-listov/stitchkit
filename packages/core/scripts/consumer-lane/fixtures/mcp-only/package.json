@@ -1,0 +1,13 @@
+{
+  "name": "stitchkit-consumer-mcp-only",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "stitchkit": "TARBALL",
+    "zod": "^4.4.3",
+    "@modelcontextprotocol/server": "^2.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4"
+  }
+}

@@ -28,11 +28,7 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  declarationProofArguments,
-  installedConsumerProofs,
-  runInstalledConsumerProofs,
-} from './installed-proofs.ts';
+import { declarationProofArguments, runInstalledConsumerProofs } from './installed-proofs.ts';
 import { qualifyNeutralLibrary } from './neutral-library.mjs';
 import { runOptionalPeerMatrix } from './optional-peer-matrix.mjs';
 import { runSelfContainedSocketProof } from './self-contained-socket.mjs';
@@ -71,10 +67,11 @@ if (arguments_.length > 1) throw new Error('Select one consumer-lane mode');
 if (nativeUIDOnly && (process.platform !== 'linux' || process.getuid?.() !== 0))
   throw new Error('Mandatory mixed-UID qualification requires Linux UID0');
 const narrowNative = nativeUIDOnly || nativeOwnersOnly;
-const FIXTURES =
-  containedFilesOnly || narrowNative
+const FIXTURES = containedFilesOnly
+  ? ['minimal', 'node']
+  : narrowNative
     ? ['node']
-    : ['minimal', 'nodenext', 'full', 'node', 'grammy', 'geo', 'google'];
+    : ['minimal', 'nodenext', 'mcp-only', 'full', 'node', 'grammy', 'geo', 'google'];
 const PEER_FREE_FIXTURES = ['minimal', 'nodenext'];
 const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
 
@@ -189,17 +186,9 @@ try {
 
     step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
 
-    if (name === 'minimal' || name === 'node') {
-      if (containedFilesOnly) {
-        for (const proof of installedConsumerProofs.filter(
-          (proof) => proof.fixture !== name,
-        )) {
-          for (const file of [proof.entry, ...proof.files])
-            cpSync(join(here, 'fixtures', proof.fixture, 'src', file), join(dir, 'src', file));
-        }
-      }
+    if (name === 'minimal' || name === 'node' || name === 'mcp-only') {
       await runInstalledConsumerProofs({
-        fixture: containedFilesOnly ? undefined : name,
+        fixture: name,
         platform: process.platform,
         uid: process.getuid?.(),
         ids: nativeUIDOnly
@@ -215,7 +204,7 @@ try {
                   'bun',
                   [
                     join(pkgRoot, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc'),
-                    ...declarationProofArguments(`src/${proof.entry}`),
+                    ...declarationProofArguments(`src/${proof.entry}`, proof.resolution),
                   ],
                   dir,
                 )
@@ -230,6 +219,7 @@ try {
 
     if (narrowNative) continue;
 
+    if (containedFilesOnly && name === 'minimal') continue;
     if (containedFilesOnly) {
       for (const runtime of ['bun', 'node']) {
         const containedFilesOutput = step(`node: contained files (${runtime})`, () =>
@@ -312,10 +302,10 @@ try {
     const libCheck = step(`${name}: declaration check`, () =>
       tsc(dir, ['--skipLibCheck', 'false']),
     );
-    if (name === 'nodenext' && libCheck.trim()) {
+    if ((name === 'nodenext' || name === 'mcp-only') && libCheck.trim()) {
       failed = true;
       console.error(
-        `[consumer-lane] nodenext: packed HTTP-only declarations are not clean\n${libCheck}`,
+        `[consumer-lane] ${name}: packed isolated declarations are not clean\n${libCheck}`,
       );
     }
     // Everything else the compiler said about our own declarations is a defect,

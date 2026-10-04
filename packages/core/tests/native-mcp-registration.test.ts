@@ -504,7 +504,7 @@ describe('native call isolation and audit', () => {
           },
         },
         runtimeTools: [
-          {
+          defineRuntimeTool({
             name: 'entity_action',
             description: 'Act on an entity',
             identity: {
@@ -518,7 +518,7 @@ describe('native call isolation and audit', () => {
               await new Promise((resolve) => setTimeout(resolve, input.fail ? 2 : 5));
               if (input.fail) throw new AppError('CONFLICT', `failed ${input.id}`, 409);
             },
-          },
+          }),
         ],
       },
       undefined,

@@ -1,36 +1,43 @@
 import type { ToolTransport } from '../contract/define';
-import type { ServiceDef } from '../server/types';
-import { type ProjectedTool, projectToolSurface } from './internal/surface-projector';
+import {
+  type ProjectedTool,
+  projectToolSurface,
+  type ToolSurfaceProjection,
+} from './internal/surface-projector';
 import { type CollectToolsConfig, contractToolMountable, type MountableTool } from './mount';
 import { type RuntimeToolDefinition, runtimeToolMountable } from './runtime-tool';
+import type { RuntimeToolExecution } from './runtime-tool-execution';
 
 /** Contract and pathless runtime operations that form one tool surface. */
-export interface ToolSurfaceDefinition {
-  services?: readonly ServiceDef[];
-  runtimeTools?: readonly RuntimeToolDefinition[];
-}
+export interface ToolSurfaceDefinition<
+  TRuntime extends RuntimeToolExecution = RuntimeToolDefinition,
+> extends ToolSurfaceProjection<TRuntime> {}
 
-interface CollectedContractTool {
+interface CollectedContractTool<TRuntime extends RuntimeToolExecution> {
   kind: 'contract';
   service: string;
   action: string;
   mountable: MountableTool;
-  projection: Extract<ProjectedTool<RuntimeToolDefinition>, { kind: 'contract' }>;
+  projection: Extract<ProjectedTool<TRuntime>, { kind: 'contract' }>;
 }
 
-interface CollectedRuntimeTool {
+interface CollectedRuntimeTool<TRuntime extends RuntimeToolExecution> {
   kind: 'runtime';
   service: string;
   action: string;
   mountable: MountableTool;
-  definition: RuntimeToolDefinition;
-  projection: Extract<ProjectedTool<RuntimeToolDefinition>, { kind: 'runtime' }>;
+  definition: TRuntime;
+  projection: Extract<ProjectedTool<TRuntime>, { kind: 'runtime' }>;
 }
 
-export type CollectedToolSurfaceEntry = CollectedContractTool | CollectedRuntimeTool;
+export type CollectedToolSurfaceEntry<
+  TRuntime extends RuntimeToolExecution = RuntimeToolDefinition,
+> = CollectedContractTool<TRuntime> | CollectedRuntimeTool<TRuntime>;
 
-export interface CollectToolSurfaceConfig extends CollectToolsConfig {
-  surface: ToolSurfaceDefinition;
+export interface CollectToolSurfaceConfig<
+  TRuntime extends RuntimeToolExecution = RuntimeToolDefinition,
+> extends CollectToolsConfig {
+  surface: ToolSurfaceDefinition<TRuntime>;
   transport: ToolTransport;
   /** Diagnostics disable this so they can report a broken surface. Default: true. */
   assertUniqueNames?: boolean;
@@ -40,18 +47,18 @@ export interface CollectToolSurfaceConfig extends CollectToolsConfig {
  * Resolve contracts and runtime definitions in their real mount order through
  * the same name, exposure and presentation-schema machinery as the mounts.
  */
-export function collectToolSurface({
+export function collectToolSurface<TRuntime extends RuntimeToolExecution>({
   surface,
   transport,
   assertUniqueNames = true,
   ...collectConfig
-}: CollectToolSurfaceConfig): CollectedToolSurfaceEntry[] {
-  const entries: CollectedToolSurfaceEntry[] = [];
-  const append = (entry: CollectedToolSurfaceEntry): void => {
+}: CollectToolSurfaceConfig<TRuntime>): CollectedToolSurfaceEntry<TRuntime>[] {
+  const entries: CollectedToolSurfaceEntry<TRuntime>[] = [];
+  const append = (entry: CollectedToolSurfaceEntry<TRuntime>): void => {
     entries.push(entry);
   };
 
-  for (const projected of projectToolSurface<RuntimeToolDefinition>(surface, transport, {
+  for (const projected of projectToolSurface<TRuntime>(surface, transport, {
     extend: collectConfig.extend,
     flattenUnionInput: collectConfig.flattenUnionInput,
     assertNames: collectConfig.assertNames,

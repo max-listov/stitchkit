@@ -75,6 +75,7 @@ export type {
   ToolLifecycle,
 } from '../tools/execute-hooks';
 export type { ToolResult } from '../tools/execute-result';
+export type { ToolSurfaceProjection } from '../tools/internal/surface-projector';
 export {
   createToolInvoker,
   type ToolInvocationOptions,

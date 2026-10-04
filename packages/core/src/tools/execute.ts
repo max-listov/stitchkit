@@ -10,6 +10,7 @@ import type { OperationIdentity } from '../server/types';
 import { parseToolCallArguments } from './execute-args';
 import type { ToolCallContext, ToolCallHooks, ToolLifecycle } from './execute-hooks';
 import { type ToolResult, toolResultFromError } from './execute-result';
+import { observed } from './internal/observe-hook';
 import { projectToolView } from './internal/tool-view';
 
 export type ToolExecutionControlReason = 'stale_run' | 'run_interrupted';
@@ -273,19 +274,6 @@ async function resolveToolExtension(
     };
   } catch (err) {
     return { thrown: err };
-  }
-}
-
-/** Run an observing hook: a throwing hook, or a throwing console, never reaches the call. */
-async function observed(hook: string, call: () => unknown): Promise<void> {
-  try {
-    await call();
-  } catch (hookError) {
-    try {
-      console.error(`[stitchkit] ${hook} hook failed:`, hookError);
-    } catch {
-      // Even a throwing console must not reach the observed call.
-    }
   }
 }
 

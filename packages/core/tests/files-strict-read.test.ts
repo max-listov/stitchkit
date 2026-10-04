@@ -168,7 +168,7 @@ test('strict nofollow refuses dangling and cyclic symlinks instead of reporting 
 });
 
 test('one-byte short reads reuse bounded blocks instead of retaining one full allocation per byte', async () => {
-  const { readHandle } = await import('../src/files/file-io');
+  const { readHandle } = await import('../src/internal/bounded-file-read');
   const allocations = new Set<Uint8Array>();
   let read = 0;
   const count = 100_000;

@@ -21,6 +21,7 @@ export const ENTRYPOINTS = [
   { subpath: './react', source: 'src/entrypoints/react.ts', browser: true },
   { subpath: './react/keyboard', source: 'src/entrypoints/react/keyboard.ts', browser: true },
   { subpath: './tools', source: 'src/entrypoints/tools.ts', browser: false },
+  { subpath: './tools/mcp', source: 'src/entrypoints/tools/mcp.ts', browser: false },
   { subpath: './tools/contract', source: 'src/entrypoints/tools/contract.ts', browser: true },
   { subpath: './tools/invoker', source: 'src/entrypoints/tools/invoker.ts', browser: false },
   {

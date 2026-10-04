@@ -14,6 +14,7 @@ export const ContractStreamFrameSchema = z.discriminatedUnion('type', [
           message: z.string().optional(),
           details: z.unknown().optional(),
           hint: z.string().optional(),
+          retryable: z.boolean().optional(),
         })
         .strict(),
     })

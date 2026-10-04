@@ -24,7 +24,7 @@
 import { lstat, open, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { z } from 'zod';
-import { readLockRecord } from './exclusive-lock-read';
+import { LockRecordError, readLockRecord } from './exclusive-lock-read';
 import { machineIdentity } from './process-identity';
 import {
   ProcessInstanceSchema,
@@ -60,6 +60,8 @@ export interface HeldExclusiveLock {
   readonly owner: ExclusiveLockOwner;
   /** The lock was taken from an owner that was provably gone, or never recorded. */
   readonly reclaimed: boolean;
+  /** Refuse a released, replaced or changed descriptor/path generation. */
+  assertHeld(): Promise<void>;
   /** Close the descriptor and remove the file — only if it is still this lock's file. */
   release(): Promise<void>;
 }
@@ -90,15 +92,27 @@ function isCode(error: unknown, code: string): boolean {
   return isRecord(error) && error.code === code;
 }
 
-function readOwner(text: string): ExclusiveLockOwner | undefined {
+function readOwner(text: string): {
+  owner: ExclusiveLockOwner | undefined;
+  ownerless: boolean;
+} {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return undefined;
+    return { owner: undefined, ownerless: true };
   }
   const owner = ExclusiveLockOwnerSchema.safeParse(parsed);
-  return owner.success ? owner.data : undefined;
+  if (owner.success) return { owner: owner.data, ownerless: false };
+  // A readable legacy owner (including a pid/token record without host) is
+  // unknown evidence, not an ownerless create interrupted before its write.
+  // Do not invent a machine identity or take it from a live older writer by age.
+  const ownerlike =
+    isRecord(parsed) &&
+    ['pid', 'token', 'host', 'machine', 'process', 'acquiredAt'].some((key) =>
+      Object.hasOwn(parsed, key),
+    );
+  return { owner: undefined, ownerless: !ownerlike };
 }
 
 /**
@@ -131,6 +145,7 @@ async function diagnose(
 
 interface LockFileState {
   readonly owner: ExclusiveLockOwner | undefined;
+  readonly ownerless: boolean;
   /** Identity of the file read, so a removal can check it is still the same file. */
   readonly ino: number;
   readonly dev: number;
@@ -153,7 +168,7 @@ async function readLockFile(
   try {
     const record = await readLockRecord(path, undefined, signal);
     return {
-      owner: readOwner(record.text),
+      ...readOwner(record.text),
       ino: record.info.ino,
       dev: record.info.dev,
       mtimeMs: record.info.mtimeMs,
@@ -210,11 +225,29 @@ async function createOwned(
   }
   const ownedInode = ino;
   const ownedDevice = dev;
+  const ownedRecord = `${JSON.stringify(owner)}\n`;
   let released = false;
   return {
     path,
     owner,
     reclaimed,
+    async assertHeld() {
+      if (released) throw new LockRecordError('LOCK_RECORD_CHANGED', 'Lock is released');
+      const record = await readLockRecord(path);
+      const descriptor = await handle.stat();
+      if (
+        released ||
+        !descriptor.isFile() ||
+        descriptor.nlink !== 1 ||
+        descriptor.ino !== ownedInode ||
+        descriptor.dev !== ownedDevice ||
+        record.info.ino !== ownedInode ||
+        record.info.dev !== ownedDevice ||
+        record.text !== ownedRecord
+      ) {
+        throw new LockRecordError('LOCK_RECORD_CHANGED', 'Held lock generation changed');
+      }
+    },
     async release() {
       if (released) return;
       released = true;
@@ -235,7 +268,9 @@ function reclaimable(
   graceMs: number | null | undefined,
 ): boolean {
   if (state.owner) return diagnosis.liveness === 'gone';
-  return typeof graceMs === 'number' && Date.now() - state.mtimeMs >= graceMs;
+  return (
+    state.ownerless && typeof graceMs === 'number' && Date.now() - state.mtimeMs >= graceMs
+  );
 }
 
 /**

@@ -14,6 +14,8 @@ export interface ErrorEnvelope {
     details?: unknown;
     /** A remediation hint. */
     hint?: string;
+    /** Explicit retry recommendation. Absent means the status determines the default. */
+    retryable?: boolean;
   };
 }
 
@@ -53,12 +55,10 @@ export class AppError<
     /**
      * Whether repeating this call could succeed, when the error declares it.
      *
-     * Metadata, like `traceId`, and for the same reason: it is not part of
-     * `toJSON()`'s HTTP envelope. It exists for the MODEL-facing tool envelope,
-     * where the next move — wait and retry, fix the input, or stop — is the
-     * whole decision a refusal has to support. Left `undefined`, the class is
-     * derived from `status`; declared, it wins, for the domain failure whose
-     * status says one thing and whose truth is the other.
+     * An explicit recommendation survives HTTP and tool hops. Left undefined,
+     * it is omitted from the HTTP envelope and the tool result derives its
+     * default from status. Declared true or false wins without enabling any
+     * transport replay policy.
      */
     public readonly retryable?: boolean,
   ) {
@@ -81,6 +81,7 @@ export class AppError<
         message: this.message,
         ...(this.details && { details: this.details }),
         ...(this.hint && { hint: this.hint }),
+        ...(typeof this.retryable === 'boolean' && { retryable: this.retryable }),
       },
     };
   }
@@ -134,6 +135,8 @@ export const STITCH_ERROR_STATUS = {
   METHOD_NOT_ALLOWED: 405,
   CONFLICT: 409,
   RATE_LIMITED: 429,
+  REQUEST_ABORTED: 499,
+  REQUEST_TIMEOUT: 408,
   VALIDATION_ERROR: 400,
   FILE_INVALID_PATH: 400,
   FILE_OUTSIDE_ROOT: 400,
@@ -161,6 +164,10 @@ export const STITCH_ERROR_STATUS = {
   WAIT_FAILED: 409,
   DOWNLOAD_NOT_FOUND: 404,
   VIEW_HTTP_ERROR: 502,
+  CONNECTION_TIMEOUT: 504,
+  CONNECTION_RESPONSE_TOO_LARGE: 413,
+  CONNECTION_REQUEST_FAILED: 502,
+  UPSTREAM_TOOL_ERROR: 502,
   OPERATION_NOT_SUCCEEDED: 409,
   STREAM_ITEM_INVALID: 500,
   STREAM_FRAME_TOO_LARGE: 500,

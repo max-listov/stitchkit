@@ -12,6 +12,46 @@ It exists for what the other three surfaces cannot do: a generation kicked off
 with `Bash(run_in_background)` that notifies on exit, a `SKILL.md` that shells
 out in one line, a pipeable terminal command.
 
+## Installation and types
+
+Install `stitchkit` and `zod` for a CLI. The public `stitchkit/cli` runtime and
+declarations do not require `ai`, the MCP SDK or Bun globals. Node consumers can
+use strict `NodeNext` resolution with `skipLibCheck: false` and ordinary Node
+types; the package keeps its required dependencies separate from optional SDKs.
+
+CLI runtime tools use the shared executable contract: identity, input and output
+schemas, handler, and explicit CLI exposure. SDK presenters belong to the MCP/AI
+definitions in `stitchkit/tools`, which require the corresponding peers. A typed
+definition returned by `defineRuntimeTool` or `createRuntimeToolFactory` can be
+passed directly to both CLI and SDK mounts.
+
+Keep transport-specific `present` on that typed SDK definition, rather than on
+an inline object in `CliConfig.runtimeTools`. CLI never executes those presenters;
+its neutral configuration does not validate SDK presentation. Native CLI command
+presentation remains on `defineCliCommand({ present })` and retains its inferred
+output type.
+
+For a CLI-only managed tool, use the neutral generic construction contract to
+infer the handler from its schemas:
+
+```ts
+import type { RuntimeToolExecutionWithOutput } from 'stitchkit/cli'
+import { z } from 'zod'
+
+const input = z.object({ text: z.string() })
+const output = z.object({ size: z.number() })
+const measure = {
+  name: 'measure', description: 'Measure text',
+  identity: { serviceName: 'text', action: 'measure', method: 'POST' },
+  transports: ['CLI'], input, output,
+  handler: ({ input }) => ({ size: input.text.length }),
+} satisfies RuntimeToolExecutionWithOutput<typeof input, typeof output>
+```
+
+Pass `measure` to `runtimeTools`. The heterogeneous registration type preserves
+the definition without inventing a common handler input; execute it through
+`createCli` or `createCliInvoker` so validation remains on the canonical path.
+
 ## Exposure is opt-in
 
 Unlike MCP and agent — where an endpoint with no `expose` is a tool by default —
@@ -652,6 +692,88 @@ manifest URL is configuration you wrote, while an asset URL arrives inside a
 document the endpoint served, and a document is exactly what an SSRF boundary
 exists to distrust.
 
+### Publishing a complete version
+
+`publishCli` is an opt-in publisher for a local application-owned distribution
+directory. It commits every target and its version manifest before atomically
+replacing the public `manifest.json`. Your application selects the CLI source
+identity and admits that snapshot at each phase:
+
+```ts
+import { publishCli } from 'stitchkit/cli'
+
+const result = await publishCli({
+  storageRoot: '/srv/myapp/cli',
+  name: 'myapp', version: cliVersion, commit: selectedCliCommit,
+  baseUrl: 'https://downloads.example.com/cli/',
+  targets: [{ platform: 'linux', arch: 'x64' }],
+  signal,
+  admit: ({ phase, identity, signal }) => assertSelectedSource({ phase, identity, signal }),
+  build: ({ target, stamp, signal }) => compileSelectedSource({ target, stamp, signal }),
+})
+// result.outcome: 'published' | 'existing'; result.manifest is ready to serve.
+```
+
+The builder returns `Uint8Array` or `ReadableStream<Uint8Array>` containing the
+executable. Every target receives the same immutable `{ version, commit,
+builtAt }` stamp; carry it inside the binary. The publisher owns staging,
+gzip assets, paths and manifests. Callbacks receive the cancellation signal and
+run under the publication lock. Admission phases are `prepare`, each target's
+`build`, `commit`, and `promote`; validate the selected source through commit
+and promotion. A backend release can explicitly select an unchanged older CLI
+identity. The helper never substitutes a different commit or rebuilds an
+existing version under a new identity.
+
+Assets live at `<version>/<name>-<platform>-<arch>.gz`, with an immutable
+`<version>/manifest.json` and a public `manifest.json`. A verified repeat keeps
+the exact bytes and `builtAt`, requires the same target set and base URL, and
+returns `existing` without invoking the builder. A version committed before a
+failed promotion is recovered and promoted without rebuilding. Conflicting
+same-version commits, downgrades, unsafe components, corrupt manifests and
+assets are refused. Version/name/target components are validated before any
+build; `storageRoot` is absolute and its existing parent must be trusted.
+
+All limits are finite positive safe integers; `limits` overrides these defaults:
+
+| Field | Default | Enforced boundary |
+| --- | --- | --- |
+| `maxTargets` | 16 | Requested and verified target count |
+| `maxManifestBytes` | 256 KiB | Read and written manifest bytes |
+| `maxAssetBytes` | 256 MiB | Builder and decompressed executable bytes |
+| `maxCompressedBytes` | 256 MiB | Archived asset bytes |
+| `maxDirectoryEntries` | 128 | Version layout, root scan and commit space |
+| `maxStoredVersions` | 16 | Verified publisher-owned history |
+| `lockTimeoutMs` | 10,000 | Wait to acquire the lock |
+| `timeoutMs` | 600,000 | Whole publication deadline |
+
+`retention` defaults to 2 and keeps the current and previous published versions.
+It must be at least 2 and less than `maxStoredVersions` (at least 3), leaving a
+recovery slot. Older versions are pruned only after their own identity, exact
+layout, raw size and digest are verified. Runtime folders and foreign semver
+directories remain untouched. A full or unverifiable store refuses further
+publication; repeated completed candidates stay inside the owned history cap.
+Cancelled or failed incomplete staging is removed only while its root and
+directory generations still match. The shared asynchronous gzip decoder also
+bounds updater expansion by the declared raw size and configured byte cap.
+
+The publisher rejects symlink roots/versions/assets, non-regular files and
+multiply linked files, and checks held-lock, root and prior-pointer generations
+before commit and promotion. This is cooperative publication under a trusted
+parent directory. Portable path checks do not provide an atomic comparison with
+a hostile process replacing ancestors between syscalls. Durability uses file
+and directory sync on POSIX; Windows publication is refused. A deadline stops
+callback/stream waits and blocks late promotion; trusted callbacks remain
+responsible for cancelling their own subprocesses and external effects.
+
+A failure after an immutable commit reports that the publication outcome must
+be checked. A failure after public-pointer rename may already have published;
+`AtomicFilePublicationError.published` remains available when the atomic writer
+reports that boundary. Read the durable manifest and retry the admitted same
+identity to recover; an error does not promise rollback. Optional `signing` and
+`trust` reuse the Ed25519 contract below. The generated shell installer checks
+raw digest and size; the updater checks manifest authorship when given a trust
+root.
+
 ### Proving who built it — signing the manifest
 
 The asset digest proves the bytes that arrived are the bytes the manifest named.
@@ -890,6 +1012,10 @@ const discovered = await mountConnections([
     transport: { url },
     token: () => key,
     transports: ['CLI'],   // the opt-in: this server's tools are commands
+    limits: {
+      discovery: { timeoutMs: 30_000, maxResponseBytes: 4 * 1024 * 1024 },
+      call: { timeoutMs: 120_000 },
+    },
   }),
 ])
 await createCli({ name: 'myapp', version, runtimeTools: discovered, commands: [...] })
@@ -902,6 +1028,35 @@ exposure stays explicit, as it is everywhere else in the framework.
 One unconvertible schema no longer takes the connection down with it. The tool
 is skipped and **named** (`onSkippedTool`, or a stderr line by default), so a
 surface of two hundred tools is not lost to one.
+
+MCP connection limits follow the operation phase. `initialize`, the initialized
+notification, `tools/list` and legacy endpoint discovery use `limits.discovery`;
+`tools/call` uses `limits.call`. A mounted call's handshake still uses discovery
+limits. Each logical operation has one deadline, including initial transport
+negotiation and response-body reading. Legacy endpoint readiness has a discovery
+deadline; the lifetime of an established SSE stream does not.
+
+Omitted phase fields inherit the existing connection-level `timeoutMs` and
+`maxResponseBytes`, whose defaults are 30 seconds and 1 MiB. Values must be positive
+safe integers; `timeoutMs` must also fit the runtime timer range. The byte ceiling
+counts raw UTF-8 body bytes, including SSE framing, regardless of `Content-Length`.
+Pending legacy calls also count comments and wrong-id frames. `budget.maxTools`
+and `budget.maxSchemaBytes` remain separate mount limits.
+
+Only the initial `initialize` can negotiate HTTP-to-legacy fallback on 400, 404
+or 405. A failed `tools/call` is not replayed. Caller cancellation preserves its
+original reason for in-process observers.
+
+Expected local failures produce safe tool errors: `CONNECTION_TIMEOUT` (exit 7),
+`CONNECTION_RESPONSE_TOO_LARGE` (exit 1), `UNAUTHORIZED` (exit 2), `FORBIDDEN`
+(exit 3) or `CONNECTION_REQUEST_FAILED` (exit 1). Deadline and response-limit
+failures include fixed `operation`/`phase`, the applicable bound and measured
+`observedReadBytes`. The public `ConnectionTimeoutError` and
+`ConnectionResponseTooLargeError` classes carry the same diagnostics. Raw URL,
+credential, body, identity and stack stay with the original in-process cause in
+`onToolError` / `afterToolCall`; tool errors produce no process console dump.
+Unknown throws remain `INTERNAL_SERVER_ERROR`. A timeout is not proof that a
+write did not happen: verify the remote outcome before repeating an operation.
 
 **A remote refusal keeps its code.** A failed `tools/call` used to become a
 one-sentence `Error` with the result discarded, which cost three things at once:

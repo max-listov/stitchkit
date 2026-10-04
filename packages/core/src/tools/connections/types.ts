@@ -13,6 +13,34 @@ export interface McpToolFilter {
   block?: readonly string[];
 }
 
+/** The policy phase of a connection operation. */
+export type ConnectionPhase = 'discovery' | 'call';
+
+/** Fixed operation names carried by safe connection failures. */
+export type ConnectionOperation =
+  | 'initialize'
+  | 'notifications/initialized'
+  | 'tools/list'
+  | 'tools/call'
+  | 'endpoint'
+  | 'request'
+  | 'openapi/spec'
+  | 'openapi/call';
+
+/** Positive finite integer bounds for one logical operation. */
+export interface ConnectionOperationLimits {
+  /** Deadline in milliseconds, including transport negotiation and body reads. */
+  timeoutMs?: number;
+  /** Raw response-body byte ceiling, including SSE framing. */
+  maxResponseBytes?: number;
+}
+
+/** Phase-specific overrides of a connection's shared response bounds. */
+export interface McpConnectionLimits {
+  discovery?: ConnectionOperationLimits;
+  call?: ConnectionOperationLimits;
+}
+
 /** Declarative MCP client connection, before it is mounted. */
 export interface McpClientConnectionConfig {
   name: string;
@@ -23,10 +51,12 @@ export interface McpClientConnectionConfig {
   instanceKey?: string;
   /** Extra hosts a request may name, beside the connection URL's own host. */
   allowHosts?: readonly string[];
-  /** Per-request deadline in milliseconds; defaults to 30_000. */
+  /** Shared logical-operation deadline; defaults to 30_000 milliseconds. */
   timeoutMs?: number;
   /** Response body ceiling in bytes; defaults to 1 MiB. */
   maxResponseBytes?: number;
+  /** Discovery and call overrides; omitted fields inherit the shared bounds. */
+  limits?: McpConnectionLimits;
   /**
    * Which surfaces this server's discovered tools appear on; default MCP and
    * AGENT. Naming `['CLI']` is how a whole server becomes a set of commands,

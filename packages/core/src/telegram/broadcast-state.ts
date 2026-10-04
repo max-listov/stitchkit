@@ -14,9 +14,11 @@
  * of a broadcast is the failure a subscriber notices.
  */
 
-import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { writeFileAtomic } from '../internal/atomic-file';
+import { attemptExclusiveLock, type HeldExclusiveLock } from '../internal/exclusive-lock';
 
 export const TelegramBroadcastOutcomeSchema = z.enum([
   'delivered',
@@ -87,10 +89,26 @@ export async function readRecipients(
 export async function writeRecipients(
   files: BroadcastFiles,
   recipients: readonly TelegramBroadcastRecipient[],
+  lock: HeldExclusiveLock,
 ): Promise<void> {
-  const temporary = `${files.recipients}.${process.pid}.tmp`;
-  await writeFile(temporary, JSON.stringify(recipients));
-  await rename(temporary, files.recipients);
+  await lock.assertHeld();
+  await writeFileAtomic(files.recipients, JSON.stringify(recipients), {
+    replace: false,
+    durability: 'directory',
+  });
+}
+
+/** Persist the journal directory entry before its first sending intent can be acknowledged. */
+export async function prepareJournal(
+  files: BroadcastFiles,
+  lock: HeldExclusiveLock,
+): Promise<void> {
+  await lock.assertHeld();
+  try {
+    await writeFileAtomic(files.journal, '', { replace: false, durability: 'directory' });
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+  }
 }
 
 /**
@@ -121,16 +139,19 @@ export async function readProgress(files: BroadcastFiles): Promise<BroadcastProg
   return progress;
 }
 
-export function appendJournal(files: BroadcastFiles, line: JournalLine): Promise<void> {
-  return appendFile(files.journal, `${JSON.stringify(line)}\n`);
-}
-
-function alive(pid: number): boolean {
+export async function appendJournal(
+  files: BroadcastFiles,
+  line: JournalLine,
+  lock: HeldExclusiveLock,
+): Promise<void> {
+  await lock.assertHeld();
+  const handle = await open(files.journal, 'a', 0o600);
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+    await lock.assertHeld();
+    await handle.writeFile(`${JSON.stringify(line)}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 
@@ -142,22 +163,15 @@ function alive(pid: number): boolean {
 export async function lockBroadcast(
   directory: string,
   files: BroadcastFiles,
-): Promise<() => Promise<void>> {
+): Promise<HeldExclusiveLock> {
   await mkdir(directory, { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const handle = await open(files.lock, 'wx');
-      await handle.writeFile(String(process.pid));
-      await handle.close();
-      return () => rm(files.lock, { force: true });
-    } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
-      const owner = Number.parseInt(await readFile(files.lock, 'utf8').catch(() => ''), 10);
-      if (Number.isInteger(owner) && owner > 0 && alive(owner)) {
-        throw new Error('Telegram broadcast is already running in another process');
-      }
-      await rm(files.lock, { force: true });
-    }
-  }
-  throw new Error('Telegram broadcast lock could not be taken');
+  const attempt = await attemptExclusiveLock(files.lock, {
+    mode: 0o600,
+    reclaim: true,
+    ownerlessGraceMs: null,
+  });
+  if ('held' in attempt) return attempt.held;
+  throw new Error('Telegram broadcast is already running or its lock owner is unknown', {
+    cause: attempt.diagnosis?.cause ?? attempt.error,
+  });
 }

@@ -4,7 +4,7 @@ description: Compose process-local resources, schedules, readiness, drain and op
 type: architecture
 status: active
 created: 2026-08-23
-updated: 2026-09-30 17:41 +07:00
+updated: 2026-10-04 13:28 +07:00
 ---
 
 # Managed application kernel
@@ -987,49 +987,101 @@ deadline holds `stop()` — and so the resource's `force()` — for that one cal
 so give the transport a timeout. Superseding a key that is being sent right now
 does not recall it: the send completes, and only its receipt is not written.
 
-`createDirectoryInbox` is the receiving side for another program on the same
-host: it drops entries — a release transition, say — into a directory, and
-the application takes each one at least once. It is a managed resource of its
-own (`createDirectoryInbox({ id, directory, schema, handle })`, imported from
-`stitchkit/application/directory-inbox` because it touches files; its types
-and schemas are in `stitchkit/application`) and publishes a handle with
-`flush()` and `state()`. The producer writes each entry
-atomically as `<name>.json` — a temporary name, then a rename; names that start
-with a dot are never read. Entries are delivered in name order, and only after
-`activate`: none reaches the application before it is ready. `stopAdmission`
-stops taking new ones, `drain` waits for the one in flight, and `force` aborts
-the `signal` its handler was given.
+`createDirectoryInbox` receives entries from another program on the same host,
+or directly from a transport adapter. Import the resource from
+`stitchkit/application/directory-inbox`; its contracts live in
+`stitchkit/application`. Its published handle has `accept({ source, key, entry })`,
+`flush()` and `state()`:
 
-Taken and done are separate durable records. Before `handle` runs, the entry
-is claimed with a lease (`leaseMs`, default five minutes); after it returns,
-a receipt replaces the claim and only then is the file removed. A process that
-died mid-delivery leaves a claim, and the entry is taken again once the lease
-runs out — at least once, not exactly once, so a handler that sends somewhere
-should carry the entry's `key` as its idempotency key. A process that died
-after the receipt leaves only the file, which the next pass removes without
-delivering it again. A handler that throws is retried after a backoff from one
-second doubling to five minutes; an entry that fails `schema`, is over
-`maxEntryBytes` or was taken `maxAttempts` times (default 20 — the count
-survives restarts, so an entry whose handling kills the process is not taken
-forever) is moved to `rejected/` with its reason and reported to `onRejected`,
-and the entries after it keep flowing. The state lives in
-`<directory>/.inbox-state.json` under `createFileStateStore`'s inter-process
-lock unless a `store` is supplied.
+```ts
+const inbox = createDirectoryInbox({
+  id: 'updates',
+  directory: env.INBOX_DIRECTORY,
+  schema: UpdateSchema,
+  handle: ({ identity, entry, signal }) => processUpdate(identity, entry, signal),
+})
+const ingress = defineManagedResource({
+  id: 'ingress',
+  dependsOn: [inbox],
+  start(context) {
+    const intake = context.use(inbox)
+    return { value: (key: string, entry: Update) =>
+      intake.accept({ source: 'client-updates', key, entry }) }
+  },
+})
+```
 
-These primitives depend on the structural `StateStore`. On a server,
-`createFileStateStore` supplies the shared Zod-validated JSON adapter with an
-inter-process lock, unique temporary file, fsync and atomic rename. The lock
-is a file with a heartbeat: the holder refreshes its mtime every third of
-`staleLockMs` (default 3 s), a contender waits up to `lockTimeoutMs` (default
-10 s), and the stale bound must sit inside the timeout — otherwise a crashed
-holder blocks every update until the lock ages out, which the constructor
-refuses. A lock whose heartbeat is stale is reclaimed once its recorded pid is
-gone; a live or unverifiable pid (a reused number, another user's process)
-keeps it for ten stale bounds — and never fewer than thirty missed heartbeats,
-so a scheduler stall on a loaded host cannot pull a live lock from under its
-holder — after which the heartbeat wins and the lock is abandoned. Temporary files a crashed writer left beside the state are swept on
-the store's first update. Ledger corruption may be declared reconstructable;
-an outbox must fail closed rather than silently discard pending delivery.
+`accept` is available after the resource starts, including before activation.
+It validates the entry and full producer identity, writes a lossless JSON envelope,
+syncs its file and parent directory, then returns
+`{ status: 'accepted' | 'duplicate', filename }`. Automatic delivery starts at
+`activate`; an explicit `flush()` is available before activation. A producer
+should acknowledge its provider only after acceptance resolves. Failure after
+publication can mean the entry was accepted but its acknowledgement was lost:
+retry the same identity, and `duplicate` keeps the original payload.
+
+The identity is the pair `source` (1–128 characters) and `key` (1–1024 characters).
+A hash of the pair names the file; the full pair is retained inside its envelope
+and checked against existing files and records. Two sources may use the same key.
+The handler's legacy `key` remains the filename; programmatic entries additionally
+carry `identity`. No Telegram numeric update id or MTProto event shape is invented.
+
+The default `maxPendingEntries: 1000` refuses new programmatic entries when the
+pending directory is full, without publishing another file; duplicate acceptance
+still succeeds. `maxEntryBytes` defaults to 1 MiB and counts the complete UTF-8
+envelope. A completed identity is deduplicated while its receipt is retained
+(`retain`, default 1000); a rejected envelope also deduplicates while its file
+remains in `rejected/`. Choose the retention and rejected-file cleanup policy to
+match the provider's replay window. Provider cursors, identity extraction and
+external-effect idempotency remain application responsibilities.
+
+The original file-producer path also remains: atomically publish
+`<name>.json`, using a temporary name followed by a rename. Names starting with
+a dot are ignored; `intake-<64 hex characters>.json` is reserved for programmatic
+envelopes. Entries are delivered in filename order. The reader refuses unsafe
+leaf symlinks, multiple links and files changed during reading.
+`stopAdmission` stops new acceptance and delivery, `drain` waits for accepted
+storage operations and the handler in flight, and `force` aborts its handler
+signal. A handler ignoring that signal may still finish an external effect;
+the inbox leaves its entry unsettled rather than claiming it was cancelled.
+
+Taken and done are separate durable records. Before `handle`, the entry is
+claimed with a unique expiring lease (`leaseMs`, default five minutes). A
+long handler renews that lease; an expired or replaced lease cannot complete,
+reject, retry or remove the successor's file. Success first commits a receipt,
+then removes only that file generation under a new protected transaction.
+A crash after receipt commit is recovered by cleanup without redelivery. A crash
+before receipt commit may redeliver: the guarantee is at least once, so use the
+full producer identity as the external idempotency key.
+
+A throwing handler retries after a backoff from one second to five minutes.
+Schema failures, oversize files and `maxAttempts` exhaustion (default 20) are
+recorded before their files move to `rejected/`, with `onRejected` reporting the
+reason. The state defaults to `<directory>/.inbox-state.json`, or uses the supplied
+`store`. Manual file producers are responsible for atomic publication and capacity.
+
+These primitives share the structural `StateStore`. `update` owns one atomic
+read/modify/write transaction and passes a `StateStoreUpdateContext` as the
+transition's second argument. Its `await context.assertHeld()` checks that the
+transaction is still active and its exclusive generation is still owned. A custom
+store must implement both real serialization/atomic commit and this guard;
+a no-op guard does not satisfy the contract. Ordinary one-argument transition
+callbacks remain valid.
+
+On a server, `createFileStateStore` uses the same process-instance lock as
+`withExclusiveLock`, unique staging files and atomic directory-durable publication.
+`lockTimeoutMs` (default 10 s, zero means one attempt) bounds acquisition only.
+A live or unattributable owner is never replaced by age, including after an event
+loop stall or `SIGSTOP`; only a provably dead local process instance is reclaimed.
+Legacy readable pid/token records without a host are unknown owners and need
+operator recovery after the old writer is verified stopped.
+
+`staleLockMs` and `retryMs` are removed and are refused at runtime. The current
+write removes its own staging file; unknown historical temporary files are
+preserved, without an age sweep. Directory durability requires a filesystem
+supporting directory sync (Linux and macOS); Windows is refused explicitly.
+Ledger corruption may be declared reconstructable; an outbox must fail closed
+rather than discard pending delivery.
 
 ## Recovering change subscriptions
 

@@ -690,6 +690,13 @@ URLs.
 
 ## `ApiError`
 
+On native Bun, both client paths disable Bun's separate socket idle timer while preserving
+the framework deadline and caller signal. A long declared deadline therefore remains the
+request policy. Explicit or patched fetch implementations, including Next, keep their own
+transport behavior; Node and browsers receive no Bun-specific fetch options. Raw responses
+and contract streams retain their existing header timeout and caller-owned body lifetime.
+See [Bun's idle timeout contract](https://bun.sh/reference/globals/BunFetchRequestInit/timeout).
+
 A non-2xx response is thrown as an `ApiError`:
 
 ```ts
@@ -704,6 +711,7 @@ try {
     err.message  // 'Note not found'
     err.details  // structured details, if any
     err.hint     // optional hint
+    err.retryable // optional explicit recommendation, true or false
     err.traceId  // x-request-id — correlate this failure with backend logs
     err.cause    // concrete injected transport failure, when delivery failed
   }
@@ -716,6 +724,12 @@ browser code can read it through Stitchkit's default CORS expose list; a custom
 `cors.exposeHeaders` policy must keep `x-request-id` exposed.
 
 The error model is shared with the server — see [Auth & errors](./auth-and-errors.md).
+
+`retryable` preserves an explicit boolean in the server error envelope; an absent declaration
+remains absent. This metadata does not change the HTTP transport retry policy. The existing
+seventh constructor argument remains `ErrorOptions`, including `cause`; the optional
+retryability argument is eighth. Closed error/frame schemas must accept the new optional
+field before their producer declares it.
 
 ## Auth events
 

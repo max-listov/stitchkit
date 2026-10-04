@@ -58,7 +58,12 @@ export function recordedErrorMessage(
   return envelopeMessage;
 }
 
-export function normalizeError(err: unknown): AppError {
+/** Internal transport policy; HTTP records unexpected causes, tool runners retain them out-of-band. */
+export interface NormalizeErrorOptions {
+  logUnexpected?: boolean;
+}
+
+export function normalizeError(err: unknown, options: NormalizeErrorOptions = {}): AppError {
   if (AppError.is(err)) {
     // A realtime contract violation is a SERVER bug whose details — event
     // name, direction, field paths — are internal shape. Scrub them before
@@ -81,7 +86,7 @@ export function normalizeError(err: unknown): AppError {
   // An unexpected error: log the real cause server-side, but return a generic
   // message to the caller — a raw `Error.message` can carry internal detail
   // (a DB connection string, a file path, a stack fragment).
-  console.error('[stitchkit] unhandled error:', err);
+  if (options.logUnexpected !== false) console.error('[stitchkit] unhandled error:', err);
   return new AppError('INTERNAL_SERVER_ERROR', 'Internal server error', 500);
 }
 

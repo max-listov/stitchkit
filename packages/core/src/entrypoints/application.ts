@@ -104,8 +104,13 @@ export {
 } from '../application/diagnostic-journal-read-contract';
 export {
   type DirectoryInbox,
+  type DirectoryInboxAccept,
+  type DirectoryInboxAcceptResult,
+  DirectoryInboxAcceptResultSchema,
   type DirectoryInboxConfig,
   type DirectoryInboxDelivery,
+  type DirectoryInboxIdentity,
+  DirectoryInboxIdentitySchema,
   type DirectoryInboxRejection,
   type DirectoryInboxRejectionReason,
   DirectoryInboxRejectionReasonSchema,
@@ -281,7 +286,11 @@ export {
   type ManagedServerResourceConfig,
   managedServerResource,
 } from '../application/server-resource';
-export type { StateStore, StateStoreUpdate } from '../application/state-store';
+export type {
+  StateStore,
+  StateStoreUpdate,
+  StateStoreUpdateContext,
+} from '../application/state-store';
 export {
   type AttachedWatcher,
   createWatchHub,

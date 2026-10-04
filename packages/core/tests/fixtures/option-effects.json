@@ -536,6 +536,9 @@
     },
     "onError": {
       "test": "a handler that throws leaves the entry, reports it and takes it again after a backoff"
+    },
+    "maxPendingEntries": {
+      "test": "capacity includes pending legacy files, permits duplicates and releases capacity after delivery"
     }
   },
   "GrammyBotResourcesConfig": {
@@ -623,6 +626,12 @@
     },
     "now": {
       "test": "dry-run counts without sending or writing; sends are paced at ratePerSecond"
+    },
+    "classify": {
+      "test": "an injected FLOOD_WAIT classifier requests its exact wait, then retries the same recipient"
+    },
+    "maxRetryDelayMs": {
+      "test": "a provider wait above maxRetryDelayMs halts without clamping or resending early"
     }
   },
   "TelegramOperatorChannelConfig": {
@@ -1190,6 +1199,100 @@
     },
     "onLeaderSettled": {
       "test": "observed leader exit settles external scope before inherited pipe drain; no hook reaches declared deadline"
+    }
+  },
+  "CliPublicationOptions": {
+    "name": {
+      "test": "publisher refuses a linked storage root and unsafe version/name/target values"
+    },
+    "version": {
+      "test": "same-version conflict, target mismatch and downgrade refuse before build"
+    },
+    "commit": {
+      "test": "same-version conflict, target mismatch and downgrade refuse before build"
+    },
+    "storageRoot": {
+      "test": "publisher refuses a linked storage root and unsafe version/name/target values"
+    },
+    "baseUrl": {
+      "test": "same-version conflict, target mismatch and downgrade refuse before build"
+    },
+    "targets": {
+      "test": "publication builds all targets with one stamp and promotes manifest last"
+    },
+    "limits": {
+      "test": "maxTargets and invalid finite limits refuse before any build"
+    },
+    "retention": {
+      "test": "retention override keeps the requested verified history count"
+    },
+    "build": {
+      "test": "publication builds all targets with one stamp and promotes manifest last"
+    },
+    "admit": {
+      "test": "source drift refuses before immutable commit; postcommit fault recovers without build"
+    },
+    "signal": {
+      "test": "caller cancellation preserves reason identity and cancels stalled stream"
+    },
+    "signing": {
+      "test": "signed publication preserves the existing signature contract and refuses wrong trust"
+    },
+    "trust": {
+      "test": "signed publication preserves the existing signature contract and refuses wrong trust"
+    }
+  },
+  "McpClientConnectionConfig": {
+    "name": {
+      "test": "discovery mounts one tool per advertised tool and a call reaches the server"
+    },
+    "transport": {
+      "test": "discovery mounts one tool per advertised tool and a call reaches the server"
+    },
+    "tools": {
+      "test": "tools.allow keeps only the whitelist and tools.block removes from it"
+    },
+    "token": {
+      "test": "401 raises the typed reauthorization error and the next call re-fetches the token"
+    },
+    "instanceKey": {
+      "test": "credentials follow each call context and never another mount"
+    },
+    "allowHosts": {
+      "test": "redirect and remote-spec server cannot authorize a foreign host"
+    },
+    "timeoutMs": {
+      "test": "shared bounds remain the baseline and individual override fields inherit independently"
+    },
+    "maxResponseBytes": {
+      "test": "shared bounds remain the baseline and individual override fields inherit independently"
+    },
+    "limits": {
+      "test": "discovery.maxResponseBytes admits a large catalog while call keeps its default ceiling"
+    },
+    "transports": {
+      "test": "a connection that opts in contributes commands with no per-definition rewriting"
+    }
+  },
+  "McpConnectionLimits": {
+    "discovery": {
+      "test": "discovery.maxResponseBytes admits a large catalog while call keeps its default ceiling"
+    },
+    "call": {
+      "test": "call.maxResponseBytes admits a large call without enlarging discovery"
+    }
+  },
+  "ConnectionOperationLimits": {
+    "timeoutMs": {
+      "test": "call.timeoutMs admits a slow call and managed-call initialize stays discovery"
+    },
+    "maxResponseBytes": {
+      "test": "call.maxResponseBytes admits a large call without enlarging discovery"
+    }
+  },
+  "NormalizeErrorOptions": {
+    "logUnexpected": {
+      "test": "unknown tool errors scrub console and public output while observers keep exact raw cause"
     }
   }
 }

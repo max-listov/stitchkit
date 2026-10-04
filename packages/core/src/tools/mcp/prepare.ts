@@ -8,12 +8,13 @@ import {
   type McpProjectionPreparationConfig,
   type McpSchemaValidationConfig,
   prepareProjectedMcpTools,
+  type ToolSurfaceProjection,
 } from '../internal/surface-projector';
 import { toolSurfaceOutputSchema } from '../internal/tool-view';
 import { collectTools, formatToolError, type MountableTool, type ToolExtend } from '../mount';
-import type { RuntimeToolDefinition } from '../runtime-tool';
+import type { RuntimeMcpToolDefinition } from '../runtime-tool-mcp';
 import type { ToolPresentationSchema } from '../schema/flatten';
-import { collectToolSurface, type ToolSurfaceDefinition } from '../surface';
+import { collectToolSurface } from '../surface';
 
 /**
  * What to do when a tool's schema cannot be advertised on the MCP surface — a
@@ -153,7 +154,7 @@ function prepareMcpTools(
 }
 
 /** One immutable, framework-managed MCP surface selected as a unit. */
-export interface McpSurfaceDefinition extends ToolSurfaceDefinition {
+export interface McpSurfaceDefinition extends ToolSurfaceProjection<RuntimeMcpToolDefinition> {
   services: ServiceDef[];
 }
 
@@ -162,7 +163,7 @@ export type McpSurfaceRegistry = Record<string, McpSurfaceDefinition>;
 
 /** A runtime definition paired with its already validated MCP descriptor. */
 export interface PreparedRuntimeMcpTool {
-  definition: RuntimeToolDefinition;
+  definition: RuntimeMcpToolDefinition;
   descriptor: PreparedMcpTool;
 }
 
@@ -181,7 +182,7 @@ export function prepareMcpServerSurface(
   config: McpSurfacePreparationConfig = {},
 ): PreparedMcpServerSurface {
   const contractMountables: MountableTool[] = [];
-  const definitions: RuntimeToolDefinition[] = [];
+  const definitions: RuntimeMcpToolDefinition[] = [];
   const runtimeMountables: MountableTool[] = [];
 
   for (const entry of collectToolSurface({

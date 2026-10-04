@@ -256,6 +256,12 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0224](0224-native-primitives-have-one-owner.md) | Общие IO primitives имеют одного владельца | Active — native boundaries, historical bytes и recipient authority объявлены явно | I8, I10, I12, I15 |
 | [0225](0225-native-libraries-separate-install-and-import-closure.md) | Native libraries separate install and import closure | Active — public imports and reachable declarations may be bundled once with Zod external; build-time package installation and runtime installation are qualified separately | I7, I8, I13 |
 | [0226](0226-evidence-covers-the-affected-tree.md) | Evidence covers the affected tree | Accepted | P |
+| [0227](0227-cli-separates-construction-from-registration.md) | CLI separates construction from registration | Active — neutral schema-aware construction, heterogeneous registration through the managed runner, and SDK-owned presenters keep CLI declarations independent of optional peers | I3, I7, I8, I14 |
+| [0228](0228-durable-inbox-and-explicit-delivery-outcomes.md) | Durable inbox and explicit delivery outcomes | Active — One existing inbox accepts programmatic identities under fenced storage, while delivery retries require explicit evidence. | I8, I9, I10, I13 |
+| [0229](0229-connection-budgets-follow-operation-phases.md) | Connection budgets follow operation phases | Active — Discovery and calls keep independent bounded policy and expected transport failures preserve safe public diagnostics. | I8, I9, I10, I13 |
+| [0230](0230-cli-publication-commits-assets-before-pointer.md) | CLI publication commits assets before the public pointer | Active — A bounded opt-in publisher reuses CLI manifest, signatures, exclusive locking and atomic filesystem publication. | I8, I9, I10, I11, I13 |
+| [0231](0231-mcp-server-leaf-has-no-ai-peer.md) | MCP server leaf has no AI SDK peer | Active — MCP declarations depend on the MCP SDK and neutral execution contracts, preserving full SDK presenters through typed construction. | I8, I9, I10, I13 |
+| [0232](0232-http-remote-retains-error-policy-and-caller-signal.md) | HTTP remote retains error policy and caller signal | Active — One typed client forwards caller cancellation and explicit error policy while actual origin completion remains separately observable. | I8, I9, I10, I13 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

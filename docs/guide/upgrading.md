@@ -1,5 +1,122 @@
 # Upgrading stitchkit
 
+## Released migration: 0.104.0
+
+### CLI runtime-tool construction
+
+**Who must act:** callers writing a schema-dependent handler or MCP/AI `present` directly
+inside an annotated `CliConfig.runtimeTools` or `CliInvokerConfig.runtimeTools` object.
+Native `commands` and values returned by `defineRuntimeTool` / `createRuntimeToolFactory`
+remain valid. Execution, auth, validation and the invocation result envelope keep their behavior.
+
+Construct a CLI-only managed definition with the neutral schema-aware type before registration:
+
+```ts
+import type { CliInvokerConfig, RuntimeToolExecutionWithOutput } from 'stitchkit/cli'
+import { z } from 'zod'
+
+const input = z.object({ text: z.string() })
+const output = z.object({ size: z.number() })
+// Before: handler receives the heterogeneous registry context.
+const config: CliInvokerConfig = {
+  name: 'app',
+  runtimeTools: [{
+    name: 'measure', description: 'Measure text',
+    identity: { serviceName: 'text', action: 'measure', method: 'POST' },
+    transports: ['CLI'], input, output,
+    handler: ({ input }) => ({ size: String(input.text).length }),
+  }],
+}
+// After: handler input and output derive from the construction schemas.
+const measure = {
+  name: 'measure', description: 'Measure text',
+  identity: { serviceName: 'text', action: 'measure', method: 'POST' },
+  transports: ['CLI'], input, output,
+  handler: ({ input }) => ({ size: input.text.length }),
+} satisfies RuntimeToolExecutionWithOutput<typeof input, typeof output>
+const nextConfig: CliInvokerConfig = { name: 'app', runtimeTools: [measure] }
+```
+
+For a shared MCP/AI tool, construct the definition with `defineRuntimeTool` from
+`stitchkit/tools`, including its typed SDK `present` callbacks, then pass the returned value
+to `runtimeTools`. Install the corresponding SDK peers for that integration. A CLI-only
+consumer needs `stitchkit`, `zod` and its ordinary Node type tooling.
+
+`RuntimeToolExecution` names the heterogeneous registration contract. Call a registered
+operation through `createCli` or `createCliInvoker`; its erased handler input is `never`
+because the managed runner owns schema validation before execution. For a managed void
+definition, use `RuntimeToolDefinitionWithoutOutput<typeof input>`.
+
+### MCP construction, state stores and delivery
+
+**Who must act:** schema-dependent runtime tool literals written directly inside MCP mount
+configuration, MCP presenters returning malformed content or metadata, custom `StateStore`
+implementations, file-store consumers using retired lock
+options, broadcast consumers reading `halt` or retrying unknown send outcomes, and consumers
+that validate HTTP error envelopes with a closed schema. Applications collecting raw tool
+causes from `console.error` must configure an internal tool hook sink.
+
+MCP-only code can import the existing server factories from `stitchkit/tools/mcp` and
+construct its schema-aware tool before heterogeneous registration:
+
+```ts
+import { buildMcpServer, type RuntimeMcpToolDefinitionWithOutput } from 'stitchkit/tools/mcp'
+import { z } from 'zod'
+const input = z.object({ value: z.number() })
+const output = z.object({ doubled: z.number() })
+// Before: runtimeTools: [{ input, output, handler, present }]
+const double = {
+  name: 'double', description: 'Double a number',
+  identity: { serviceName: 'numbers', action: 'double', method: 'POST' },
+  input, output,
+  handler: ({ input }) => ({ doubled: input.value * 2 }),
+  present: { mcp: ({ doubled }) => ({ content: [{ type: 'text', text: String(doubled) }] }) },
+} satisfies RuntimeMcpToolDefinitionWithOutput<typeof input, typeof output>
+const server = buildMcpServer({ serverInfo: { name: 'numbers', version: '1' }, services: [], runtimeTools: [double] })
+```
+
+Full MCP/AI integrations keep `defineRuntimeTool` from `stitchkit/tools`; those typed values
+remain accepted by the MCP leaf and CLI. The leaf requires the MCP SDK and Zod, with no AI peer.
+
+`RuntimeMcpPresentation` preserves the official SDK's required `content` and typed `_meta`
+fields. A presenter returning `{}` must return `{ content: [] }`; text blocks require string
+text, and metadata must be an object. `structuredContent` and `isError` remain framework-owned.
+This restores SDK checks that an indexed mapped type previously erased.
+
+Unexpected tool causes remain in `hooks.onToolError` and the `error` field of
+`hooks.afterToolCall`. Protocol stderr carries safe errors. MCP resolver failures use those
+same observers without executing the handler or its lifecycle again. HTTP's default
+unexpected-error logging retains its behavior.
+
+A custom state adapter's `update` must invoke `transition(current, context)` while it still
+owns the serialized transaction. `context.assertHeld()` checks the actual transaction or lock
+generation and refuses after completion, rollback or ownership loss. A no-op guard cannot
+satisfy this contract. Existing transition callbacks may keep one parameter. For the owning
+file adapter, replace `{ staleLockMs, retryMs, lockTimeoutMs }` with `{ lockTimeoutMs }`:
+the remaining budget controls acquisition waiting, never expiry of a live transaction.
+Unknown legacy PID locks and historical temporary files are preserved; recover them only
+after independently proving their owner is gone.
+
+Broadcast consumers change `report.halt.reason` checks to the closed `halt.kind` union:
+`retry-after`, `transient`, `permanent` or `ambiguous`. A custom MTProto adapter can classify
+an acknowledged flood refusal as `{ kind: 'retry-after', retryAfterMs: wait }`; the exact
+provider wait is respected. A wait over `maxRetryDelayMs` halts with the recipient pending.
+Unknown write outcome becomes `uncertain`; restarting the same broadcast does not send it
+again. A retry classification must certify that the attempt did not apply the external effect.
+
+HTTP errors gain optional boolean `error.retryable`; framed contract streams use the same
+field. Update closed consumer schemas before producers declaring it. `false` on 502 and
+`true` on 409 remain explicit recommendations through the remote tool path. An absent field
+retains prior status-derived defaults; the field does not change the HTTP client's retry policy.
+The existing seventh `ApiError` constructor argument remains `ErrorOptions`; retryability is
+the new eighth argument.
+
+Caller cancellation now reaches `implementRemote`'s existing HTTP call. Applications bind
+signals to `createCli` / `createCliInvoker` and cooperative handlers observe `ctx.signal`.
+`REQUEST_ABORTED` is nonretryable and exits 130. A disconnected caller does not prove that
+an origin ignoring cancellation or an external provider stopped; keep resource leases until
+that work actually completes.
+
 ## Released migration: 0.103.0
 
 ### Diagnostic journal startup preserves torn evidence and inspects archives

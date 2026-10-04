@@ -9,9 +9,11 @@ import {
   connectionTimeoutMs,
   readBoundedJson,
   readBoundedText,
+  readConnectionErrorText,
   withConnectionDeadline,
 } from './limits';
 import { assertOpenApiOperation, resolveOpenApiDocument } from './openapi-document';
+import { type ConnectionReadContext, connectionReadContext } from './operation-limits';
 import {
   type ConnectionToolSkipReporter,
   mountToolsTolerantly,
@@ -107,6 +109,10 @@ export async function mountOpenApiConnection(
               }
               const body = requestBody(entry.operation);
               applyAuth(auth, token, url, headers);
+              const readContext = connectionReadContext('openapi/call', {
+                discovery: { timeoutMs, maxResponseBytes },
+                call: { timeoutMs, maxResponseBytes },
+              });
 
               return withConnectionDeadline(
                 connection.name,
@@ -130,17 +136,25 @@ export async function mountOpenApiConnection(
                     throw new ConnectionAuthorizationRequiredError(
                       connection.name,
                       instanceId,
+                      readContext,
                     );
                   }
                   if (!response.ok) {
                     throw new ConnectionRequestError(
                       connection.name,
                       response.status,
-                      (await safeText(response, maxResponseBytes)).slice(0, 512),
+                      await readConnectionErrorText(response, connection.name, readContext),
+                      readContext,
                     );
                   }
-                  return readResponse(response, maxResponseBytes, connection.name);
+                  return readResponse(
+                    response,
+                    maxResponseBytes,
+                    connection.name,
+                    readContext,
+                  );
                 },
+                readContext,
               );
             },
           ),
@@ -171,6 +185,10 @@ async function loadOpenApiDocument(
     return { document: parsed };
   }
   const url = assertConnectionUrl(text, connection.name);
+  const readContext = connectionReadContext('openapi/spec', {
+    discovery: { timeoutMs, maxResponseBytes },
+    call: { timeoutMs, maxResponseBytes },
+  });
   const parsed = await withConnectionDeadline(
     connection.name,
     timeoutMs,
@@ -183,10 +201,16 @@ async function loadOpenApiDocument(
         connection.name,
       );
       if (!response.ok) {
-        throw new ConnectionRequestError(connection.name, response.status, '');
+        throw new ConnectionRequestError(
+          connection.name,
+          response.status,
+          await readConnectionErrorText(response, connection.name, readContext),
+          readContext,
+        );
       }
-      return readBoundedJson(response, maxResponseBytes, connection.name);
+      return readBoundedJson(response, maxResponseBytes, connection.name, readContext);
     },
+    readContext,
   );
   if (!isRecord(parsed)) throw new Error(`OpenAPI spec at ${url} is not an object`);
   return { document: parsed, url: url.toString() };
@@ -436,19 +460,13 @@ async function readResponse(
   response: Response,
   maxBytes: number,
   connectionName: string,
+  context: ConnectionReadContext,
 ): Promise<unknown> {
   if (response.status === 204) return null;
   const contentType = response.headers.get('content-type') ?? '';
-  if (contentType.includes('json')) return readBoundedJson(response, maxBytes, connectionName);
-  return readBoundedText(response, maxBytes, connectionName);
-}
-
-async function safeText(response: Response, maxBytes: number): Promise<string> {
-  try {
-    return await readBoundedText(response, maxBytes, 'response');
-  } catch {
-    return '';
-  }
+  if (contentType.includes('json'))
+    return readBoundedJson(response, maxBytes, connectionName, context);
+  return readBoundedText(response, maxBytes, connectionName, context);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

@@ -43,10 +43,11 @@ own, recorded as an ADR.
 | `stitchkit/server` | server (Bun) | stable | `createServer`, `implement`, hooks, auth, Socket.IO server, server primitives |
 | `stitchkit/node` | server (Node ≥ 22) | stable | `serveNode` + the runtime-agnostic core — the Node mirror of `/server` |
 | `stitchkit/tools` | server | stable | `createMcpHandler`, `mountMcp`, `mountAgent`, the OAuth provider, native tools |
+| `stitchkit/tools/mcp` | server (Bun or Node) | evolving | the canonical MCP HTTP/stdio server, schemas and typed MCP presenters; only Zod and the MCP server SDK peers |
 | `stitchkit/tools/contract` | browser + server | evolving | the shapes a tool surface speaks — async-operation contract, snapshot and cancel schemas, view-file input/output — without the runtime that serves them |
 | `stitchkit/tools/invoker` | server | stable | peer-free `createToolInvoker` over the canonical contract tool runner |
 | `stitchkit/tools/connections` | server (Bun or Node) | evolving | consume external MCP servers and a bounded OpenAPI subset — typed reauthorization, a per-request host fence and per-call credentials |
-| `stitchkit/cli` | server | stable | `createCli` — the CLI transport, light (no MCP SDK / `ai`) |
+| `stitchkit/cli` | server | stable | `createCli` / `createCliInvoker` — runtime and strict NodeNext declarations without MCP SDK / `ai` |
 | `stitchkit/remote` | browser **and** server | stable | peer-free `implementRemote` for thin HTTP proxy processes |
 | `stitchkit/process` | server (Bun or Node, POSIX) | evolving | finite native commands, byte sinks, bounded capture and process-group cancellation |
 | `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
@@ -60,12 +61,12 @@ own, recorded as an ADR.
 | `stitchkit/geo` | server (Bun or Node) | evolving | managed GeoIP reader generations, last-known-good reload and the optional MaxMind adapter |
 | `stitchkit/oauth` | browser **and** server | evolving | provider-neutral Authorization Code + PKCE request and one-shot callback transaction mechanics |
 | `stitchkit/google` | server (Bun or Node) | evolving | optional Google code exchange and verified OIDC identity adapter |
-| `stitchkit/observability` | server | stable<br>_redefined in 2 of the 48 minors since 0.56.2, most recently 0.92.0_ | request/tool event projections — `createObservability`, trace context, sanitisation |
+| `stitchkit/observability` | server | stable<br>_redefined in 2 of the 49 minors since 0.56.2, most recently 0.92.0_ | request/tool event projections — `createObservability`, trace context, sanitisation |
 | `stitchkit/testing` | tests on Bun or Node | stable | in-process generated clients over a real Fetch handler, plus the managed-resource conformance kit |
 | `stitchkit/declaration` | browser + build and deployment tooling (Bun or Node) | evolving | `ProjectDeclarationSchema` — the one machine-readable statement a repository makes about itself |
 | `stitchkit/react` | browser + server rendering | stable | `createCursorQuery`, `createCacheBridge`, QueryClient and `ApiError` retry policy |
 | `stitchkit/react/keyboard` | browser | evolving | which part of a screen gets a key — ordered layers, one Escape per level, list zones with real focus; see [keyboard guide](keyboard.md) |
-| `stitchkit/agent-runtime` | server | evolving<br>_redefined in 22 of the 48 minors since 0.56.2, most recently 0.97.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
+| `stitchkit/agent-runtime` | server | evolving<br>_redefined in 22 of the 49 minors since 0.56.2, most recently 0.97.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
 | `stitchkit/agent-runtime/sandbox` | server | evolving | optional Linux Bubblewrap sessions, durable workspaces and a host HTTP credential gateway; see [sandbox guide](sandbox.md) |
 | `stitchkit/agent-runtime/testing` | tests on Bun or Node | evolving | credential-free replay, scripted provider faults, deterministic race controls and the agent-store conformance kit |
 | `stitchkit/agent-runtime/harness` | server | evolving | resource-aware process-local facade over the canonical Agent runtime; supervision stays outside |
@@ -78,7 +79,7 @@ own, recorded as an ADR.
 | `stitchkit/agent-runtime/sqlite/bun` | server (Bun) | evolving | durable built-in SQLite store for the agent runtime |
 | `stitchkit/agent-runtime/sqlite/node` | server (Node ≥ 22.5) | evolving | durable built-in SQLite store for the agent runtime |
 | `stitchkit-tui` | terminal (Bun) | evolving | optional official OpenTUI host over a caller-composed headless runtime |
-| `stitchkit/application` | browser + server | evolving<br>_redefined in 11 of the 48 minors since 0.56.2, most recently 0.103.0_ | managed resource graph, readiness, admission, schedules, subtree restart and bounded shutdown |
+| `stitchkit/application` | browser + server | evolving<br>_redefined in 12 of the 49 minors since 0.56.2, most recently 0.104.0_ | managed resource graph, readiness, admission, schedules, subtree restart and bounded shutdown |
 | `stitchkit/application/grammy` | server | evolving | a grammY bot as application resources — configuration, then polling with updates admitted by batch — and the webhook adapter |
 | `stitchkit/application/opentelemetry` | server | evolving | maps application snapshots onto an injected OpenTelemetry `Meter` |
 | `stitchkit/application/schemas` | browser + server | evolving | the application's snapshot, health and shutdown schemas alone, without the kernel |

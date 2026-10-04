@@ -19,7 +19,10 @@ export {
 export {
   ConnectionAuthorizationRequiredError,
   ConnectionBudgetExceededError,
+  type ConnectionFailureContext,
   ConnectionRequestError,
+  ConnectionResponseTooLargeError,
+  ConnectionTimeoutError,
   ConnectionUrlError,
 } from '../../tools/connections/errors';
 export { mountConnections } from '../../tools/connections/mount';
@@ -32,8 +35,12 @@ export type {
   ConnectionBudget,
   ConnectionDefinition,
   ConnectionMountOptions,
+  ConnectionOperation,
+  ConnectionOperationLimits,
+  ConnectionPhase,
   McpClientConnection,
   McpClientConnectionConfig,
+  McpConnectionLimits,
   McpConnectionTransport,
   McpToolFilter,
   OpenApiConnection,

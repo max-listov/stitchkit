@@ -1,3 +1,5 @@
+import { connectionMaxResponseBytes, connectionTimeoutMs } from './limits';
+import { resolveMcpLimits } from './operation-limits';
 import { assertConnectionUrl } from './ssrf';
 import type {
   McpClientConnection,
@@ -12,6 +14,7 @@ export function defineMcpClientConnection(
 ): McpClientConnection {
   if (!config.name.trim()) throw new Error('MCP connection requires a name');
   assertConnectionUrl(config.transport.url, config.name);
+  resolveMcpLimits(config);
   return { ...config, kind: 'mcp' };
 }
 
@@ -19,5 +22,7 @@ export function defineMcpClientConnection(
 export function defineOpenApiConnection(config: OpenApiConnectionConfig): OpenApiConnection {
   if (!config.name.trim()) throw new Error('OpenAPI connection requires a name');
   if (config.baseUrl) assertConnectionUrl(config.baseUrl, config.name);
+  connectionTimeoutMs(config.timeoutMs);
+  connectionMaxResponseBytes(config.maxResponseBytes);
   return { ...config, kind: 'openapi' };
 }

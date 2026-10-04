@@ -161,14 +161,23 @@ describe('runTelegramBroadcast', () => {
     expect(sent).toEqual([1, 2, 3, 4]);
   });
 
-  test('Telegram unreachable halts after the attempts and leaves the recipient pending', async () => {
+  test('unknown transport outcome is uncertain immediately and never retried on resume', async () => {
     const directory = await stateRoot();
     const { sent, config } = harness(directory, (recipient) =>
       recipient === 2 ? new TypeError('fetch failed') : undefined,
     );
     const result = await runTelegramBroadcast(config({ maxAttempts: 3 }));
-    expect(result).toMatchObject({ outcome: 'halted', delivered: 1, pending: 3, failed: 0 });
+    expect(result).toMatchObject({
+      outcome: 'halted',
+      delivered: 1,
+      pending: 2,
+      failed: 0,
+      uncertain: 1,
+    });
     expect(sent).toEqual([1]);
+    const resumed = await runTelegramBroadcast(config());
+    expect(resumed).toMatchObject({ outcome: 'finished', delivered: 3, uncertain: 1 });
+    expect(sent).toEqual([1, 3, 4]);
   });
 
   test('a server error retried past maxAttempts is failed, and the broadcast goes on', async () => {

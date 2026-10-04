@@ -3,7 +3,6 @@ import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { StateStore } from '../src/application/state-store';
 import type {
   DirectoryInboxConfig,
   DirectoryInboxDelivery,
@@ -11,6 +10,7 @@ import type {
   DirectoryInboxState,
 } from '../src/entrypoints/application';
 import { createDirectoryInbox } from '../src/entrypoints/application/directory-inbox';
+import { serialStateStore } from './application-file-state-store-fixture';
 
 /*
  * A directory another program drops entries into — a release transition, say —
@@ -214,19 +214,11 @@ describe('createDirectoryInbox', () => {
 
   test('a supplied store holds the state instead of the directory file', async () => {
     const dir = await directory();
-    let state: DirectoryInboxState | null = null;
-    const store: StateStore<DirectoryInboxState> = {
-      read: async () => state,
-      async update(transition) {
-        const next = await transition(state);
-        state = next.state;
-        return next.result;
-      },
-    };
+    const store = serialStateStore<DirectoryInboxState>();
     const { inbox } = await open(dir, () => undefined, { store });
     await drop(dir, 'one.json', { from: '1', to: '2' });
     await inbox.flush();
-    expect(state).toMatchObject({ receipts: [{ key: 'one.json' }] });
+    expect(await store.read()).toMatchObject({ receipts: [{ key: 'one.json' }] });
     expect(await readdir(dir)).not.toContain('.inbox-state.json');
   });
 

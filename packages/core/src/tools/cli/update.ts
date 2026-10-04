@@ -11,7 +11,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
-import { gunzipSync } from 'node:zlib';
 import { writeFileAtomicSync } from '../../internal/atomic-file';
 import { fetchGuarded, PrivateAddressRefusal, readCapped } from '../../internal/secure-fetch';
 import {
@@ -22,6 +21,7 @@ import {
   currentCliBuildTarget,
   selectCliBuildAsset,
 } from './manifest';
+import { decodeCliAsset } from './publication-assets';
 import {
   type CliSignatureVerdict,
   type CliTrustRoot,
@@ -103,7 +103,29 @@ export function compareCliVersions(left: string, right: string): number | undefi
   // A prerelease precedes its own release: 1.2.0-rc.1 < 1.2.0.
   if (a.prerelease === undefined) return 1;
   if (b.prerelease === undefined) return -1;
-  return a.prerelease < b.prerelease ? -1 : 1;
+  const leftParts = a.prerelease.split('.');
+  const rightParts = b.prerelease.split('.');
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index++) {
+    const leftPart = leftParts[index];
+    const rightPart = rightParts[index];
+    if (leftPart === rightPart) continue;
+    if (leftPart === undefined) return -1;
+    if (rightPart === undefined) return 1;
+    const leftNumeric = /^\d+$/.test(leftPart);
+    const rightNumeric = /^\d+$/.test(rightPart);
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    if (leftNumeric) {
+      // Numeric prerelease identifiers can exceed Number's exact range.
+      const leftDigits = leftPart.replace(/^0+(?=\d)/, '');
+      const rightDigits = rightPart.replace(/^0+(?=\d)/, '');
+      if (leftDigits.length !== rightDigits.length)
+        return leftDigits.length < rightDigits.length ? -1 : 1;
+      if (leftDigits === rightDigits) continue;
+      return leftDigits < rightDigits ? -1 : 1;
+    }
+    return leftPart < rightPart ? -1 : 1;
+  }
+  return 0;
 }
 
 /** Ask whether a newer build exists. Never throws; never blocks for long. */
@@ -288,21 +310,11 @@ export async function applyCliUpdate(config: CliUpdateApplyConfig): Promise<Appl
   // signed number. Unbounded, a 0.3 MB archive expands to 300 MB before any
   // digest can disagree with it, and the ceiling on the TRANSFER (256 MB)
   // permits roughly a thousand times that on the output.
-  const bytes =
-    config.asset.compression === 'gzip'
-      ? gunzipSync(transferred, { maxOutputLength: config.asset.size })
-      : transferred;
-  if (bytes.length !== config.asset.size) {
-    throw new Error(
-      `[stitchkit] update is ${bytes.length} bytes, manifest says ${config.asset.size} — refusing to install it`,
-    );
-  }
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
-  if (sha256 !== config.asset.sha256) {
-    throw new Error(
-      `[stitchkit] update digest ${sha256} does not match the manifest — refusing to install it`,
-    );
-  }
+  const { bytes, sha256 } = await decodeCliAsset(
+    transferred,
+    config.asset,
+    config.maxBytes ?? DEFAULT_MAX_ASSET_BYTES,
+  );
 
   if (config.verify)
     await verifyCandidate(target, bytes, config.verify, config.verifyTimeoutMs);

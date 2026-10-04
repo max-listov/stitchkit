@@ -14,6 +14,20 @@ import type { StateStore } from './state-store';
 const timestamp = z.string().datetime({ offset: true });
 const key = z.string().min(1).max(255);
 
+export const DirectoryInboxIdentitySchema = z
+  .object({ source: z.string().min(1).max(128), key: z.string().min(1).max(1_024) })
+  .strict();
+export type DirectoryInboxIdentity = z.infer<typeof DirectoryInboxIdentitySchema>;
+
+export const DirectoryInboxAcceptResultSchema = z
+  .object({ status: z.enum(['accepted', 'duplicate']), filename: key })
+  .strict();
+export type DirectoryInboxAcceptResult = z.infer<typeof DirectoryInboxAcceptResultSchema>;
+
+export interface DirectoryInboxAccept<TEntry> extends DirectoryInboxIdentity {
+  readonly entry: TEntry;
+}
+
 export const DirectoryInboxRejectionReasonSchema = z.enum([
   'invalid',
   'too-large',
@@ -30,6 +44,7 @@ export const DirectoryInboxStateSchema = z
       z
         .object({
           key,
+          identity: DirectoryInboxIdentitySchema.optional(),
           attempts: z.number().int().positive(),
           nextAttemptAt: timestamp,
           leaseId: z.string().min(1).max(128).nullable(),
@@ -37,11 +52,20 @@ export const DirectoryInboxStateSchema = z
         })
         .strict(),
     ),
-    receipts: z.array(z.object({ key, completedAt: timestamp }).strict()),
+    receipts: z.array(
+      z
+        .object({
+          key,
+          identity: DirectoryInboxIdentitySchema.optional(),
+          completedAt: timestamp,
+        })
+        .strict(),
+    ),
     rejected: z.array(
       z
         .object({
           key,
+          identity: DirectoryInboxIdentitySchema.optional(),
           reason: DirectoryInboxRejectionReasonSchema,
           detail: z.string().max(1_000),
           rejectedAt: timestamp,
@@ -70,6 +94,8 @@ export const emptyDirectoryInboxState = (): DirectoryInboxState => ({
 export interface DirectoryInboxDelivery<TEntry> {
   /** The entry's file name — stable across retries and restarts. */
   readonly key: string;
+  /** Explicit producer identity for programmatic entries; filename remains the legacy key. */
+  readonly identity?: DirectoryInboxIdentity;
   readonly entry: TEntry;
   /** 1 on the first delivery of this entry. */
   readonly attempt: number;
@@ -95,6 +121,8 @@ export interface DirectoryInboxConfig<TEntry> {
   readonly maxAttempts?: number;
   /** Larger entries are set aside unread. Default 1 MiB. */
   readonly maxEntryBytes?: number;
+  /** Programmatic acceptance refuses a full inbox without creating a file. Default 1 000. */
+  readonly maxPendingEntries?: number;
   /** Receipts and rejections kept. Default 1 000. */
   readonly retain?: number;
   /** An entry was set aside into `<directory>/rejected/`, with the reason. */
@@ -106,14 +134,16 @@ export interface DirectoryInboxConfig<TEntry> {
   readonly onError?: (error: unknown) => void | Promise<void>;
 }
 
-export interface DirectoryInbox {
+export interface DirectoryInbox<TEntry = unknown> {
+  /** Durably buffer an entry before activation; duplicates never replace the first payload. */
+  accept(input: DirectoryInboxAccept<TEntry>): Promise<DirectoryInboxAcceptResult>;
   /** Deliver every entry due now; resolves with how many were handled. */
   flush(): Promise<number>;
   state(): Promise<DirectoryInboxState>;
 }
 
-export interface DirectoryInboxResource extends ManagedResource {
-  start(): Promise<{ readonly value: DirectoryInbox }>;
+export interface DirectoryInboxResource<TEntry = unknown> extends ManagedResource {
+  start(): Promise<{ readonly value: DirectoryInbox<TEntry> }>;
 }
 
 /** What the next step does with one entry of the directory. */
@@ -173,6 +203,7 @@ export function claimEntry(
     if (claim.attempts >= input.maxAttempts) {
       const rejection: DirectoryInboxRejection = {
         key: input.key,
+        ...(claim.identity && { identity: claim.identity }),
         reason: 'attempt-limit',
         detail: `taken ${claim.attempts} times without completing`,
         rejectedAt: iso(now),
@@ -202,16 +233,21 @@ export function claimEntry(
 /** The entry was handled: its receipt replaces its claim. */
 export function completeEntry(
   state: DirectoryInboxState,
-  entryKey: string,
+  claim: DirectoryInboxClaim,
   now: Date,
   retain: number,
 ): DirectoryInboxState {
+  if (!ownsClaim(state, claim, now)) return state;
   return {
     ...state,
-    claims: state.claims.filter((claim) => claim.key !== entryKey),
+    claims: state.claims.filter((candidate) => candidate.key !== claim.key),
     receipts: [
-      { key: entryKey, completedAt: now.toISOString() },
-      ...state.receipts.filter((receipt) => receipt.key !== entryKey),
+      {
+        key: claim.key,
+        ...(claim.identity && { identity: claim.identity }),
+        completedAt: now.toISOString(),
+      },
+      ...state.receipts.filter((receipt) => receipt.key !== claim.key),
     ].slice(0, retain),
   };
 }
@@ -220,8 +256,10 @@ export function completeEntry(
 export function releaseEntry(
   state: DirectoryInboxState,
   claim: DirectoryInboxClaim,
+  now: Date,
   retryAt: Date,
 ): DirectoryInboxState {
+  if (!ownsClaim(state, claim, now)) return state;
   return {
     ...state,
     claims: state.claims.map((candidate) =>
@@ -232,6 +270,41 @@ export function releaseEntry(
             leaseId: null,
             leaseUntil: null,
           }
+        : candidate,
+    ),
+  };
+}
+
+/** A expired or replaced owner cannot complete, reject, renew or release an entry. */
+export function ownsClaim(
+  state: DirectoryInboxState,
+  claim: DirectoryInboxClaim,
+  now: Date,
+): boolean {
+  return (
+    claim.leaseId !== null &&
+    state.claims.some(
+      (candidate) =>
+        candidate.key === claim.key &&
+        candidate.leaseId === claim.leaseId &&
+        candidate.leaseUntil !== null &&
+        Date.parse(candidate.leaseUntil) > now.getTime(),
+    )
+  );
+}
+
+export function renewEntry(
+  state: DirectoryInboxState,
+  claim: DirectoryInboxClaim,
+  now: Date,
+  leaseMs: number,
+): DirectoryInboxState {
+  if (!ownsClaim(state, claim, now)) return state;
+  return {
+    ...state,
+    claims: state.claims.map((candidate) =>
+      candidate.key === claim.key
+        ? { ...candidate, leaseUntil: iso(now.getTime() + leaseMs) }
         : candidate,
     ),
   };

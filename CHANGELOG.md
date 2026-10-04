@@ -15,6 +15,101 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.104.0] - 2026-10-04
+
+### ⚠️ Breaking changes
+
+**Who must act:** consumers constructing schema-dependent CLI/MCP tools inline,
+custom state-store adapters, callers using retired file-lock options or broadcast
+halt fields, consumers validating closed HTTP error schemas, and applications
+collecting raw tool causes from protocol stderr. Follow the 0.104.0 migration guide;
+native CLI commands and ordinary one-argument state transitions remain valid.
+
+- `stitchkit/cli` — **construct schema-aware managed runtime tools before registration.**
+  The CLI registry no longer contextually types raw inline handlers or SDK-specific `present`.
+  This keeps strict NodeNext declarations independent of optional MCP/AI peers while preserving
+  the canonical schema-validating runner and strictly typed construction.
+  `// before: runtimeTools: [{ input, output, handler: ({ input }) => …, present }]` →
+  `// after: const tool = { … } satisfies RuntimeToolExecutionWithOutput<typeof input, typeof output>; runtimeTools: [tool]`
+  Keep SDK presenters on a definition constructed with `defineRuntimeTool` instead.
+  **Who must act:** callers constructing schema-dependent handlers or transport presenters inline
+  in `CliConfig.runtimeTools` / `CliInvokerConfig.runtimeTools`. Existing typed definitions and
+  native `commands` need no change. See [migration](docs/guide/upgrading.md#released-migration-01040).
+  → ADR 0227
+- `stitchkit/application` — custom state adapters must supply an active, fenced
+  `StateStoreUpdateContext`: `transition(current)` → `transition(current, context)` inside
+  their protected transaction. Remove file-store `staleLockMs` / `retryMs`:
+  `{ staleLockMs, retryMs, lockTimeoutMs }` → `{ lockTimeoutMs }`. Live and unknown owners
+  cannot be reclaimed by age; legacy lock recovery requires proof that the owner stopped.
+  Ordinary one-argument transition callbacks still work. → ADR 0228
+- `stitchkit/telegram` — broadcast halt uses `TelegramBroadcastFailure`:
+  `report.halt.reason` → `report.halt.kind`. An unknown send outcome becomes durable
+  `uncertain` and halts without replay; explicit retry classifiers certify that the failed
+  attempt did not apply its effect. → ADR 0228
+- `stitchkit/tools`, `stitchkit/tools/mcp` — construct schema-dependent MCP tools before
+  heterogeneous registration: `runtimeTools: [{ input, output, handler, present }]` →
+  `const tool = { … } satisfies RuntimeMcpToolDefinitionWithOutput<typeof input, typeof output>; runtimeTools: [tool]`.
+  Existing valid `defineRuntimeTool` values remain accepted. MCP presenters now retain the
+  official SDK's required content and metadata types: `present: { mcp: () => ({}) }` →
+  `present: { mcp: () => ({ content: [] }) }`. **Who must act:** inline MCP constructors
+  and presenters returning malformed content or metadata. → ADR 0231
+- `stitchkit/contract`, `stitchkit/remote` — error envelopes and framed errors admit an
+  optional boolean `retryable`. A closed error schema must add
+  `retryable: z.boolean().optional()` before upgrading producers that declare it; envelopes
+  without a declaration remain unchanged. See [migrations](docs/guide/upgrading.md).
+  These migrations require a minor release. → ADR 0232
+- `stitchkit/tools`, `stitchkit/cli` — raw unexpected tool errors are observed through
+  `hooks.onToolError` / `hooks.afterToolCall` instead of being printed on protocol stderr.
+  **Who must act:** applications collecting raw tool causes from `console.error`; configure
+  an internal hook sink instead. MCP resolver failures reach the same observing hooks without
+  rerunning the handler or its lifecycle. → ADR 0229
+
+### Fixed
+
+- `stitchkit/cli` runtime and declarations require no optional MCP/AI peers. Packed installed
+  proofs check strict NodeNext with `skipLibCheck: false` and execute native/managed commands
+  in Bun and Node. Post-publication proofs install neutral and SDK consumers as siblings so
+  transport peers cannot hide a declaration leak. Three CLI type exports name the neutral
+  construction and registration contracts; the shared void definition retains one owner.
+
+- `implementRemote` forwards caller cancellation through the typed HTTP client for endpoints
+  with and without arguments. Aborts are safe `REQUEST_ABORTED` failures (CLI exit 130),
+  with no automatic replay. Cooperative origins receive request cancellation; applications
+  still own cancellation of external work. Explicit error `retryable: false` / `true`
+  survives HTTP, CLI, MCP, AI tools and framed contract streams; an omitted field keeps
+  the existing defaults and transport retry policy.
+- Connection failures expose safe codes and phase/operation budgets through the existing
+  CLI/MCP/AI error boundary. Raw URLs, credentials, bodies and unknown exceptions remain
+  available to local observers while tool output and stderr contain safe errors.
+- State stores and broadcasts verify the actual exclusive lock generation before committing.
+  A readable legacy or live owner is never reclaimed merely because its lock is old.
+- Numeric SemVer prereleases retain their ordering during CLI updates and publication:
+  `1.0.0-rc.10` follows `1.0.0-rc.2`.
+- Native Bun HTTP requests keep the framework request deadline and caller cancellation
+  as their timeout policy, disabling only Bun's independent socket idle timer. Both HTTP
+  client paths share one native adapter; explicit/custom fetch, Node/browser/Next request
+  identity, retry policy and existing raw/stream lifetime semantics stay compatible.
+
+### Added
+
+- `DirectoryInbox.accept({ source, key, entry })` durably admits programmatic work to the
+  existing directory inbox. The first payload wins; capacity, encoded bytes and completed
+  receipt retention are finite. Renewable claims fence stale completion and cleanup.
+- An injected Telegram broadcast classifier supports known retry waits, transient failures,
+  permanent refusals and ambiguous send outcomes. Provider waits are never shortened.
+- `publishCli` builds a bounded target set with one immutable stamp, verifies source admission,
+  commits assets before the public manifest, recovers completed versions and retains verified
+  history. Existing signatures, installer and updater keep one implementation.
+- `stitchkit/tools/mcp` serves the existing HTTP/stdin-stdout MCP implementation with Zod
+  and the MCP SDK as its feature peers. Installing the AI SDK is unnecessary for this leaf.
+- MCP discovery and calls have independent `limits.discovery` / `limits.call` deadlines and
+  raw byte ceilings; omitted fields inherit the existing shared limits.
+- A managed stateful-client recipe covers startup, dependent resources, partial failure,
+  forced shutdown and restart with the existing application lifecycle.
+- Reviewed surface growth: application +6 intake/context names, Telegram +2 classifier
+  names, CLI +4 publisher names; connection diagnostics and policy gain named public types.
+  The MCP leaf shares existing owners and gives strict MCP construction its own contracts.
+
 ## [0.103.13] - 2026-10-04
 
 ### Fixed

@@ -4,30 +4,7 @@ import {
   createNotificationOutbox,
   type NotificationOutboxState,
 } from '../src/application/notification-outbox';
-import type { StateStore } from '../src/application/state-store';
-
-function memoryStore<TState>(initial: TState | null = null): StateStore<TState> {
-  let state = initial;
-  let tail = Promise.resolve();
-  return {
-    async read() {
-      await tail;
-      return state;
-    },
-    update(transition) {
-      const result = tail.then(async () => {
-        const next = await transition(state);
-        state = next.state;
-        return next.result;
-      });
-      tail = result.then(
-        () => undefined,
-        () => undefined,
-      );
-      return result;
-    },
-  };
-}
+import { serialStateStore } from './application-file-state-store-fixture';
 
 const PayloadSchema = z.object({ text: z.string() }).strict();
 type Payload = z.infer<typeof PayloadSchema>;
@@ -36,7 +13,7 @@ describe('notification outbox', () => {
   test('deduplicates completed keys and supersedes pending notifications', async () => {
     const delivered: string[] = [];
     const outbox = createNotificationOutbox({
-      store: memoryStore<NotificationOutboxState<Payload>>(),
+      store: serialStateStore<NotificationOutboxState<Payload>>(),
       payloadSchema: PayloadSchema,
       send: ({ key }) => {
         delivered.push(key);
@@ -56,7 +33,7 @@ describe('notification outbox', () => {
   test('persists retry attempts and respects a fake-clock backoff', async () => {
     let now = new Date('2026-09-06T04:00:00.000Z');
     let attempts = 0;
-    const store = memoryStore<NotificationOutboxState<Payload>>();
+    const store = serialStateStore<NotificationOutboxState<Payload>>();
     const outbox = createNotificationOutbox({
       store,
       payloadSchema: PayloadSchema,
@@ -80,7 +57,7 @@ describe('notification outbox', () => {
 
   test('a second process reclaims an expired crash lease with the same idempotency key', async () => {
     let now = new Date('2026-09-06T04:00:00.000Z');
-    const store = memoryStore<NotificationOutboxState<Payload>>();
+    const store = serialStateStore<NotificationOutboxState<Payload>>();
     const firstSend = Promise.withResolvers<void>();
     const firstStarted = Promise.withResolvers<void>();
     const observed: string[] = [];
@@ -125,7 +102,7 @@ describe('notification outbox', () => {
     let concurrent = 0;
     let maximum = 0;
     const outbox = createNotificationOutbox({
-      store: memoryStore<NotificationOutboxState<Payload>>(),
+      store: serialStateStore<NotificationOutboxState<Payload>>(),
       payloadSchema: PayloadSchema,
       send: async () => {
         concurrent += 1;
@@ -149,7 +126,7 @@ describe('notification outbox', () => {
   test('bounds attempts and payload state', async () => {
     const drops: string[] = [];
     const outbox = createNotificationOutbox({
-      store: memoryStore<NotificationOutboxState<Payload>>(),
+      store: serialStateStore<NotificationOutboxState<Payload>>(),
       payloadSchema: PayloadSchema,
       maxAttempts: 2,
       backoffMs: () => 0,
@@ -169,7 +146,7 @@ describe('notification outbox', () => {
 
   test('trims delivery receipts to the hard state byte budget', async () => {
     const outbox = createNotificationOutbox({
-      store: memoryStore<NotificationOutboxState<Payload>>(),
+      store: serialStateStore<NotificationOutboxState<Payload>>(),
       payloadSchema: PayloadSchema,
       maxStateBytes: 1_024,
       retainReceipts: 100,
@@ -190,7 +167,7 @@ describe('notification outbox', () => {
     );
   });
   test('reading state never fails on the bounds a transition enforces', async () => {
-    const oversized = memoryStore<NotificationOutboxState<Payload>>({
+    const oversized = serialStateStore<NotificationOutboxState<Payload>>({
       schemaVersion: 1,
       queue: [],
       receipts: Array.from({ length: 50 }, (_, index) => ({
@@ -220,7 +197,7 @@ describe('notification outbox', () => {
     const drops: string[] = [];
     let attempts = 0;
     const outbox = createNotificationOutbox({
-      store: memoryStore<NotificationOutboxState<Payload>>(),
+      store: serialStateStore<NotificationOutboxState<Payload>>(),
       payloadSchema: PayloadSchema,
       clock: () => now,
       send: () => {
@@ -247,7 +224,7 @@ describe('notification outbox', () => {
     const release = Promise.withResolvers<void>();
     const sent: string[] = [];
     const outbox = createNotificationOutbox({
-      store: memoryStore<NotificationOutboxState<Payload>>(),
+      store: serialStateStore<NotificationOutboxState<Payload>>(),
       payloadSchema: PayloadSchema,
       pollIntervalMs: 10,
       send: async ({ key }) => {

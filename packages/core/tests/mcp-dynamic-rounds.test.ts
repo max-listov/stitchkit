@@ -24,6 +24,7 @@ import {
   type RuntimeContext,
 } from '../src/entrypoints/contract';
 import { createImplement } from '../src/server/implement';
+import type { ToolCallHooks } from '../src/tools/execute-hooks';
 import { createMcpHandler } from '../src/tools/mcp/handler';
 
 const MODERN = '2026-07-28';
@@ -90,7 +91,7 @@ function asked(result: Record<string, unknown>): { key: string; message: string 
 function handlerFor(
   resolve: McpInputRequiredResolver,
   maxRounds?: number,
-  hooks?: { beforeHandle?: () => void; afterToolCall?: () => void },
+  hooks?: { beforeHandle?: () => void } & ToolCallHooks,
 ) {
   const contract = defineContract(
     { prefix: 'render' },
@@ -115,8 +116,9 @@ function handlerFor(
   return createMcpHandler({
     serverInfo: { name: 'dyn', version: '1' },
     auth: () => ({ identity: 'alpha' }),
+    context: (auth) => ({ identity: auth.identity }),
     services: [service],
-    ...(hooks?.afterToolCall && { hooks: { afterToolCall: hooks.afterToolCall } }),
+    ...(hooks && { hooks }),
     ...(hooks?.beforeHandle && { lifecycle: { beforeHandle: hooks.beforeHandle } }),
     multiRound: {
       state: { key: KEY, principal: () => 'alpha' },
@@ -243,6 +245,8 @@ describe('elicitation rounds can be chosen from the arguments', () => {
   }
 
   test('a resolver returning more rounds than allowed is refused', async () => {
+    const errors: unknown[] = [];
+    const after: unknown[] = [];
     const { wire, logged } = await refusedBy(
       handlerFor(
         () => [
@@ -250,22 +254,87 @@ describe('elicitation rounds can be chosen from the arguments', () => {
           { key: 'b', message: 'b?', schema: ratioSchema },
         ],
         1,
+        {
+          onToolError: ({ error }) => {
+            errors.push(error);
+          },
+          afterToolCall: ({ error }) => {
+            after.push(error);
+          },
+        },
       ),
     );
     expect(wire).toContain('INTERNAL_SERVER_ERROR');
     expect(wire).not.toContain('maxRounds');
-    expect(logged).toContain('exceeding maxRounds');
+    expect(logged).toBe('');
+    expect(errors).toHaveLength(1);
+    expect(String(errors[0])).toContain('exceeding maxRounds');
+    expect(after).toEqual([undefined, ...errors]);
   });
 
   test('a resolver returning a duplicate key is refused', async () => {
+    const errors: unknown[] = [];
+    const after: unknown[] = [];
     const { wire, logged } = await refusedBy(
-      handlerFor(() => [
-        { key: 'same', message: 'first?', schema: ratioSchema },
-        { key: 'same', message: 'second?', schema: ratioSchema },
-      ]),
+      handlerFor(
+        () => [
+          { key: 'same', message: 'first?', schema: ratioSchema },
+          { key: 'same', message: 'second?', schema: ratioSchema },
+        ],
+        2,
+        {
+          onToolError: ({ error }) => {
+            errors.push(error);
+          },
+          afterToolCall: ({ error }) => {
+            after.push(error);
+          },
+        },
+      ),
     );
     expect(wire).toContain('INTERNAL_SERVER_ERROR');
-    expect(logged).toContain('duplicate input key');
+    expect(logged).toBe('');
+    expect(errors).toHaveLength(1);
+    expect(String(errors[0])).toContain('duplicate input key');
+    expect(after).toEqual([undefined, ...errors]);
+  });
+
+  test('a resolver throw is observed once without repeating the operation or its gate', async () => {
+    const cause = new Error('resolver-private-fixture');
+    const errors: unknown[] = [];
+    const after: unknown[] = [];
+    let gates = 0;
+    const { wire, logged } = await refusedBy(
+      handlerFor(
+        () => {
+          throw cause;
+        },
+        1,
+        {
+          beforeHandle: () => {
+            gates += 1;
+          },
+          onToolError: ({ error, context, endpoint, toolName }) => {
+            errors.push(error);
+            expect(context.source).toBe('mcp');
+            expect(context.identity).toBe('alpha');
+            expect(endpoint.serviceName).toBe('render');
+            expect(toolName).toBe('create_render');
+          },
+          afterToolCall: ({ error, result }) => {
+            after.push(error);
+            if (error === undefined) expect(result).toMatchObject({ ok: true });
+            else expect(result).toMatchObject({ ok: false, code: 'INTERNAL_SERVER_ERROR' });
+          },
+        },
+      ),
+    );
+    expect(wire).toContain('INTERNAL_SERVER_ERROR');
+    expect(wire).not.toContain(cause.message);
+    expect(logged).toBe('');
+    expect(errors).toEqual([cause]);
+    expect(after).toEqual([undefined, cause]);
+    expect(gates).toBe(1);
   });
 });
 

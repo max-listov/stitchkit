@@ -1,14 +1,7 @@
-import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { Tool } from 'ai';
 import type { ZodObject, ZodType, z } from 'zod';
-import type { HttpMethod, ToolTransport } from '../contract/define';
-import type { McpCallContext, RuntimeContext } from '../contract/runtime-context';
-import type {
-  EndpointMcpPolicy,
-  EndpointToolAnnotations,
-  EndpointUiMeta,
-} from '../contract/tool-options';
-import type { LocalStepDurability } from '../durability/contract';
+import type { HttpMethod } from '../contract/define';
+import type { EndpointMcpPolicy } from '../contract/tool-options';
 import type { OperationIdentity } from '../server/types';
 import type { ToolOperation } from './execute';
 import {
@@ -16,102 +9,41 @@ import {
   type SurfaceAgentRuntimeToolDefinition,
 } from './internal/surface-projector';
 import type { MountableTool } from './mount';
+import type {
+  RuntimeToolDefinitionWithoutOutput,
+  RuntimeToolExecution,
+  RuntimeToolExecutionWithOutput,
+  RuntimeToolFactoryHandlerContext,
+  RuntimeToolHandlerContext,
+  RuntimeToolIdentity,
+} from './runtime-tool-execution';
+import type { RuntimeMcpToolPresenters } from './runtime-tool-mcp';
 
-export interface RuntimeToolIdentity {
-  serviceName: string;
-  action: string;
-  scope?: string;
-  /** Semantic operation verb for lifecycle and RequestEvent attribution. */
-  method: HttpMethod;
-  meta?: Record<string, unknown>;
-}
-
-export type RuntimeMcpInput<TMcp extends EndpointMcpPolicy | undefined> =
-  TMcp extends EndpointMcpPolicy<infer TRequests>
-    ? {
-        mcpInput?: {
-          [Request in TRequests[number] as Request['key']]: z.output<Request['schema']>;
-        };
-      }
-    : unknown;
-
-export type RuntimeToolHandlerContext<
-  TInput extends ZodObject,
-  TMcp extends EndpointMcpPolicy | undefined = undefined,
-> = RuntimeContext & {
-  params: undefined;
-  input: z.output<TInput>;
-  step?: LocalStepDurability['step'];
-  sleep?: LocalStepDurability['sleep'];
-  waitFor?: LocalStepDurability['waitFor'];
-} & RuntimeMcpInput<TMcp>;
-
-export type RuntimeToolOutput<TOutput extends ZodType | undefined> = TOutput extends ZodType
-  ? z.output<TOutput>
-  : undefined;
-
-/** Parsed application context plus the canonical runtime-tool input fields. */
-export type RuntimeToolFactoryHandlerContext<
-  TContext extends ZodObject,
-  TInput extends ZodObject,
-  TMcp extends EndpointMcpPolicy | undefined = undefined,
-> = Omit<RuntimeContext, 'input' | 'params' | 'mcp'> &
-  Omit<z.output<TContext>, 'input' | 'params' | 'mcp'> & {
-    params: undefined;
-    input: z.output<TInput>;
-    mcp?: McpCallContext;
-  } & RuntimeMcpInput<TMcp>;
-
-/** MCP-owned fields; validation and error state are always supplied by Stitchkit. */
-export type RuntimeMcpPresentation = Omit<CallToolResult, 'structuredContent' | 'isError'> & {
-  structuredContent?: never;
-  isError?: never;
-};
+export type {
+  RuntimeMcpInput,
+  RuntimeToolDefinitionBase,
+  RuntimeToolDefinitionWithoutOutput,
+  RuntimeToolFactoryHandlerContext,
+  RuntimeToolHandlerContext,
+  RuntimeToolIdentity,
+  RuntimeToolOutput,
+} from './runtime-tool-execution';
+export type { RuntimeMcpPresentation } from './runtime-tool-mcp';
 
 export type RuntimeAgentModelOutput = Awaited<
   ReturnType<NonNullable<Tool<unknown, unknown>['toModelOutput']>>
 >;
 
-export interface RuntimeToolPresenters<TOutput> {
-  mcp?: (output: TOutput) => RuntimeMcpPresentation | Promise<RuntimeMcpPresentation>;
+export interface RuntimeToolPresenters<TOutput> extends RuntimeMcpToolPresenters<TOutput> {
   agent?: (output: TOutput) => RuntimeAgentModelOutput | PromiseLike<RuntimeAgentModelOutput>;
-}
-
-export interface RuntimeToolDefinitionBase<
-  TInput extends ZodObject,
-  TMcp extends EndpointMcpPolicy | undefined = undefined,
-> {
-  name: string;
-  description: string;
-  identity: RuntimeToolIdentity;
-  input: TInput;
-  /** Default: MCP and AGENT. CLI is always explicit opt-in. */
-  transports?: readonly ToolTransport[];
-  annotations?: EndpointToolAnnotations;
-  ui?: EndpointUiMeta;
-  /** Opt-in multi-round input gate on the MCP transport only. */
-  mcp?: TMcp;
 }
 
 export interface RuntimeToolDefinitionWithOutput<
   TInput extends ZodObject,
   TOutput extends ZodType,
   TMcp extends EndpointMcpPolicy | undefined = undefined,
-> extends RuntimeToolDefinitionBase<TInput, TMcp> {
-  output: TOutput;
-  handler: (
-    context: RuntimeToolHandlerContext<TInput, TMcp>,
-  ) => z.output<TOutput> | Promise<z.output<TOutput>>;
+> extends RuntimeToolExecutionWithOutput<TInput, TOutput, TMcp> {
   present?: RuntimeToolPresenters<z.output<TOutput>>;
-}
-
-export interface RuntimeToolDefinitionWithoutOutput<
-  TInput extends ZodObject,
-  TMcp extends EndpointMcpPolicy | undefined = undefined,
-> extends RuntimeToolDefinitionBase<TInput, TMcp> {
-  output?: never;
-  handler: (context: RuntimeToolHandlerContext<TInput, TMcp>) => void | Promise<void>;
-  present?: never;
 }
 
 export type RuntimeToolDefinition =
@@ -259,7 +191,7 @@ export function createRuntimeToolFactory<TContext extends ZodObject>(
   return { define };
 }
 
-function runtimeToolIdentity(definition: RuntimeToolDefinition): OperationIdentity {
+function runtimeToolIdentity(definition: RuntimeToolExecution): OperationIdentity {
   return {
     method: definition.identity.method,
     desc: definition.description,
@@ -275,7 +207,7 @@ function runtimeToolIdentity(definition: RuntimeToolDefinition): OperationIdenti
 }
 
 export function runtimeToolMountable(
-  definition: RuntimeToolDefinition,
+  definition: RuntimeToolExecution,
   assertName = true,
 ): MountableTool {
   const projected = projectRuntimeTool(definition, assertName);

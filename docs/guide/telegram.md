@@ -170,7 +170,8 @@ const report = await runTelegramBroadcast({
   `retry_after` and sends the same recipient again; a server error is retried
   with backoff up to `maxAttempts`, then `failed`. A message Telegram cannot
   parse is not the recipient's fault: the run **halts** with them still pending,
-  so the run after the fix reaches them. So does Telegram being unreachable.
+  so the run after the fix reaches them. An unknown transport outcome becomes
+  `uncertain` immediately and halts the run; resume never sends to that recipient again.
 - **Pacing** is `ratePerSecond`, 25 by default. `dryRun` counts and writes
   nothing. One runner per name: a second concurrent run is refused.
 
@@ -178,6 +179,66 @@ The same call works from a script (the process's signal) and inside a live
 application (the application's signal, with admission held by the caller).
 The recipient state contains Telegram ids: keep it in the state directory, out
 of git.
+
+### Injecting another transport's failure policy
+
+`classify(error)` returns the public `TelegramBroadcastFailure` union. It lets
+an application use its own client without adding that SDK to Stitchkit:
+
+```ts
+const report = await runTelegramBroadcast({
+  name: 'announcement',
+  directory: env.STATE_DIRECTORY,
+  recipients: () => audience.activeSubscribers(),
+  send: ({ recipient }) => client.sendMessage(recipient, message),
+  classify(error) {
+    if (isFloodWait(error))
+      return { kind: 'retry-after', retryAfterMs: error.seconds * 1000,
+        reason: 'provider-rate-limit' }
+    if (isRecipientGone(error))
+      return { kind: 'permanent', recipientUnreachable: true,
+        reason: 'recipient-gone' }
+    return { kind: 'ambiguous', reason: 'unknown-provider-outcome' }
+  },
+  maxRetryDelayMs: 60_000,
+  signal: stop.signal,
+})
+```
+
+The four variants are `retry-after` (exact `retryAfterMs`), `transient` (bounded
+backoff), `permanent` (optionally `recipientUnreachable` or `stopBroadcast`), and
+`ambiguous`. Retry variants certify that the failed attempt had no external
+effect. Lack of an HTTP status does not establish that fact: a server may have
+accepted the message before the connection failed. `ambiguous` durably records
+`uncertain`, then halts; resuming the name skips that recipient.
+
+`maxRetryDelayMs` defaults to 60 seconds. A provider wait above it halts with the
+recipient pending; it is never shortened to send early. `maxAttempts` is an
+integer from 1 to 100, `maxRetryDelayMs` is an integer from 0 to 2,147,483,647,
+and pacing/progress intervals must fit native timers. The optional
+`sleep(milliseconds, signal)` receives cancellation; the runner also stops waiting
+when the signal aborts if a custom sleeper ignores it. A send already in flight
+finishes and is recorded before stopping.
+
+Without `classify`, known Bot API 429, unreachable-recipient, malformed-message
+and server-error behavior remains. Unknown/no-status failures now halt as
+uncertain, rather than being automatically retried. Existing custom `send`
+implementations that relied on those retries must supply an explicit classifier
+for proven pre-effect failures. `report.halt` now carries
+`TelegramBroadcastFailure`; inspect `halt.kind` instead of the old send-failure
+`scope`/`retryable` fields.
+
+The runner uses the shared process-instance lock and checks its generation before
+sends and journal writes. The audience and initial journal directory entry are
+synced before sending. Lost ownership cannot write a stale delivered receipt or
+start another send; the persisted intent becomes uncertain on recovery. Old
+pid-only broadcast locks have unknown ownership and require recovery after their
+writers are verified stopped, rather than automatic age-based deletion.
+
+The installed
+[`telegram-broadcast-classifier.mjs`](../../packages/core/scripts/consumer-lane/fixtures/minimal/src/telegram-broadcast-classifier.mjs)
+fixture checks injected rate limits, ambiguity/no resend, wait budgets and abort
+on Bun and Node without a client SDK.
 
 ## Message markup
 

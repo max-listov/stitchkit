@@ -3,7 +3,7 @@ export {
   type FileStateStoreCorruption,
   type FileStateStoreOptions,
 } from '../application/file-state-store';
-export { errorCode, normalizeError } from '../contract/normalize';
+export { errorCode, type NormalizeErrorOptions, normalizeError } from '../contract/normalize';
 export {
   type ClientIpOptions,
   extractIp,

@@ -4,6 +4,12 @@ export interface StateStoreUpdate<TState, TResult> {
   readonly result: TResult;
 }
 
+/** The still-active protected transaction that owns a state transition. */
+export interface StateStoreUpdateContext {
+  /** Refuse when the transaction ended or its exclusive generation was lost. */
+  assertHeld(): Promise<void>;
+}
+
 /**
  * Persistence boundary for small application state machines.
  *
@@ -17,6 +23,7 @@ export interface StateStore<TState> {
   update<TResult>(
     transition: (
       current: TState | null,
+      context: StateStoreUpdateContext,
     ) => StateStoreUpdate<TState, TResult> | Promise<StateStoreUpdate<TState, TResult>>,
   ): Promise<TResult>;
 }

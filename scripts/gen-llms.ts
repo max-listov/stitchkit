@@ -220,7 +220,13 @@ export const GUIDE_SLICES: GuideMap = {
   'client.md': { primary: '.' },
   'mcp-and-agents.md': {
     primary: './tools',
-    also: ['./tools/contract', './tools/invoker', './tools/connections', './remote'],
+    also: [
+      './tools/contract',
+      './tools/invoker',
+      './tools/mcp',
+      './tools/connections',
+      './remote',
+    ],
   },
   'agent-composition.md': {
     primary: './agent-runtime/harness',

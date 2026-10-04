@@ -1,3 +1,12 @@
+import type { ConnectionOperation, ConnectionPhase } from './types';
+
+/** Fixed operation diagnostics accepted by typed connection failure constructors. */
+export interface ConnectionFailureContext {
+  operation?: ConnectionOperation;
+  phase?: ConnectionPhase;
+  observedReadBytes?: number;
+}
+
 /**
  * Typed failures of the external-connection surface.
  *
@@ -12,12 +21,20 @@
 export class ConnectionAuthorizationRequiredError extends Error {
   readonly connectionName: string;
   readonly instanceId: string;
+  readonly operation: ConnectionOperation;
+  readonly phase: ConnectionPhase;
 
-  constructor(connectionName: string, instanceId: string) {
+  constructor(
+    connectionName: string,
+    instanceId: string,
+    context: ConnectionFailureContext = {},
+  ) {
     super(`Connection "${connectionName}" requires authorization`);
     this.name = 'ConnectionAuthorizationRequiredError';
     this.connectionName = connectionName;
     this.instanceId = instanceId;
+    this.operation = context.operation ?? 'request';
+    this.phase = context.phase ?? 'call';
   }
 }
 
@@ -26,13 +43,22 @@ export class ConnectionRequestError extends Error {
   readonly connectionName: string;
   readonly status: number;
   readonly body: string;
+  readonly operation: ConnectionOperation;
+  readonly phase: ConnectionPhase;
 
-  constructor(connectionName: string, status: number, body: string) {
+  constructor(
+    connectionName: string,
+    status: number,
+    body: string,
+    context: ConnectionFailureContext = {},
+  ) {
     super(`Connection "${connectionName}" request failed with status ${status}`);
     this.name = 'ConnectionRequestError';
     this.connectionName = connectionName;
     this.status = status;
     this.body = body;
+    this.operation = context.operation ?? 'request';
+    this.phase = context.phase ?? 'call';
   }
 }
 
@@ -61,31 +87,50 @@ export class ConnectionBudgetExceededError extends Error {
 }
 
 /**
- * A request exceeded the connection's declared deadline. This is not exported
- * from the public subexport; it is a typed boundary between the transport and
- * the caller, so an application can still tell a timeout from a network error.
+ * One logical operation exceeded its deadline. The original error remains
+ * available to in-process observers while tools receive its safe projection.
  */
 export class ConnectionTimeoutError extends Error {
   readonly connectionName: string;
   readonly timeoutMs: number;
+  readonly operation: ConnectionOperation;
+  readonly phase: ConnectionPhase;
+  readonly observedReadBytes: number;
 
-  constructor(connectionName: string, timeoutMs: number) {
+  constructor(
+    connectionName: string,
+    timeoutMs: number,
+    context: ConnectionFailureContext = {},
+  ) {
     super(`Connection "${connectionName}" timed out after ${timeoutMs} ms`);
     this.name = 'ConnectionTimeoutError';
     this.connectionName = connectionName;
     this.timeoutMs = timeoutMs;
+    this.operation = context.operation ?? 'request';
+    this.phase = context.phase ?? 'call';
+    this.observedReadBytes = context.observedReadBytes ?? 0;
   }
 }
 
-/** A response exceeded the connection's declared byte ceiling. Internal. */
+/** A raw response body or legacy response frame exceeded its byte ceiling. */
 export class ConnectionResponseTooLargeError extends Error {
   readonly connectionName: string;
   readonly maxBytes: number;
+  readonly operation: ConnectionOperation;
+  readonly phase: ConnectionPhase;
+  readonly observedReadBytes: number;
 
-  constructor(connectionName: string, maxBytes: number) {
+  constructor(
+    connectionName: string,
+    maxBytes: number,
+    context: ConnectionFailureContext = {},
+  ) {
     super(`Connection "${connectionName}" response exceeded the ${maxBytes} byte limit`);
     this.name = 'ConnectionResponseTooLargeError';
     this.connectionName = connectionName;
     this.maxBytes = maxBytes;
+    this.operation = context.operation ?? 'request';
+    this.phase = context.phase ?? 'call';
+    this.observedReadBytes = context.observedReadBytes ?? 0;
   }
 }

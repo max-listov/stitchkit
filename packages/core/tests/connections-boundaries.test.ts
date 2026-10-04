@@ -91,7 +91,14 @@ test('mounted reauthorization retains its typed cause and lifecycle runs once', 
   expect(error).toBeInstanceOf(AgentToolError);
   if (!(error instanceof AgentToolError)) throw new Error('Wrong envelope');
   expect(error.cause).toBeInstanceOf(ConnectionAuthorizationRequiredError);
-  expect(error.message).not.toContain('auth');
+  expect(error.output).toMatchObject({
+    error: 'UNAUTHORIZED',
+    retryable: false,
+    details: { reason: 'authorization-required', operation: 'openapi/call', phase: 'call' },
+  });
+  expect(error.message).not.toContain('Connection "auth"');
+  expect(error.message).not.toContain('connectionName');
+  expect(error.message).not.toContain('instanceId');
   status = 200;
   await call(definitions, config);
   expect({ before, after }).toEqual({ before: 2, after: 1 });

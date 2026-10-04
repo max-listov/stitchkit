@@ -14,13 +14,13 @@
     "stitchkit/agent-runtime/react": 1,
     "stitchkit/agent-runtime/realtime": 2,
     "stitchkit/agent-runtime/testing": 16,
-    "stitchkit/application": 296,
+    "stitchkit/application": 302,
     "stitchkit/application/diagnostic-journal": 3,
     "stitchkit/application/directory-inbox": 1,
     "stitchkit/application/grammy": 13,
     "stitchkit/application/opentelemetry": 5,
     "stitchkit/application/schemas": 21,
-    "stitchkit/cli": 86,
+    "stitchkit/cli": 93,
     "stitchkit/contract": 106,
     "stitchkit/declaration": 30,
     "stitchkit/files": 35,
@@ -36,18 +36,19 @@
     "stitchkit/react/keyboard": 17,
     "stitchkit/release": 17,
     "stitchkit/remote": 2,
-    "stitchkit/server": 214,
-    "stitchkit/telegram": 77,
+    "stitchkit/server": 215,
+    "stitchkit/telegram": 79,
     "stitchkit/telegram/html": 19,
     "stitchkit/telegram/screens": 76,
     "stitchkit/testing": 74,
-    "stitchkit/tools": 216,
-    "stitchkit/tools/connections": 19,
+    "stitchkit/tools": 217,
+    "stitchkit/tools/connections": 26,
     "stitchkit/tools/contract": 15,
     "stitchkit/tools/invoker": 4,
     "stitchkit/tracking": 77,
     "stitchkit/tracking/server": 26,
-    "stitchkit/process": 11
+    "stitchkit/process": 11,
+    "stitchkit/tools/mcp": 47
   },
   "overlaps": [
     {
@@ -368,8 +369,8 @@
     },
     {
       "entrypoints": ["stitchkit/cli", "stitchkit/tools"],
-      "reason": "`coerceJsonArgs` on the CLI keeps a binary free of the MCP and AI peers",
-      "names": ["coerceJsonArgs"]
+      "reason": "coerceJsonArgs and the schema-aware void construction contract have one neutral owner, usable by CLI and SDK adapters without importing optional SDK declarations or copying a definition (ADR 0227).",
+      "names": ["RuntimeToolDefinitionWithoutOutput", "coerceJsonArgs"]
     },
     {
       "entrypoints": ["stitchkit/cli", "stitchkit/tools/contract"],
@@ -548,9 +549,78 @@
       "entrypoints": ["stitchkit/tracking", "stitchkit/tracking/server"],
       "reason": "the tracking wire schemas both halves read",
       "names": ["TrackingDisposition", "VisitBootstrapResponse", "VisitEntryContext"]
+    },
+    {
+      "entrypoints": ["stitchkit/tools", "stitchkit/tools/mcp"],
+      "reason": "The MCP-only leaf re-exports the same SDK server factories, protocol schemas, catalog, resource, signal and surface container owners; it introduces no alternate MCP implementation (ADR 0231).",
+      "names": [
+        "DirectMcpSurfaceConfig",
+        "EXT_APPS_BUNDLE_PLACEHOLDER",
+        "FiniteMcpSurfaceConfig",
+        "IncompatibleSchemaPolicy",
+        "MCP_CATALOG_META_KEY",
+        "McpAppCsp",
+        "McpAppResourceMeta",
+        "McpCatalogStamp",
+        "McpHandlerConfig",
+        "McpHttpConfig",
+        "McpHttpHandler",
+        "McpHttpSecurityConfig",
+        "McpLegacyPolicy",
+        "McpMountConfig",
+        "McpResourceDef",
+        "McpSchemaValidationConfig",
+        "McpServer",
+        "McpServerBuildConfig",
+        "McpServerSharedConfig",
+        "McpStdioHandle",
+        "McpSurfaceDefinition",
+        "McpSurfaceRegistry",
+        "RESOURCE_MIME_TYPE",
+        "RuntimeMcpPresentation",
+        "RuntimeToolDefinitionWithoutOutput",
+        "StdioAuthConfig",
+        "StdioCloseTarget",
+        "StdioMcpServerConfig",
+        "StdioProcessSignalsBinding",
+        "StdioProcessSignalsErrorPhase",
+        "StdioProcessSignalsOptions",
+        "ToolSurfaceProjection",
+        "ValidateMcpSchemasConfig",
+        "bindStdioProcessSignals",
+        "buildMcpServer",
+        "createMcpHandler",
+        "createMcpHttpRoute",
+        "createStdioMcpServer",
+        "inlineMcpAppBundle",
+        "mcpCatalogMeta",
+        "mountMcp",
+        "mountMcpResource",
+        "readMcpCatalogStamp",
+        "validateMcpSchemas"
+      ]
+    },
+    {
+      "entrypoints": ["stitchkit/cli", "stitchkit/tools/mcp"],
+      "reason": "The neutral void-definition contract is owned once and shared by CLI and MCP heterogeneous registration; schema-aware construction retains its concrete input (ADRs 0227 and 0231).",
+      "names": ["RuntimeToolDefinitionWithoutOutput"]
+    },
+    {
+      "entrypoints": ["stitchkit/testing", "stitchkit/tools/mcp"],
+      "reason": "Schema validation policy is the same contract used by MCP executable mounts and their surface tests; the MCP-only leaf re-exports that owner (ADR 0231).",
+      "names": ["IncompatibleSchemaPolicy", "McpSchemaValidationConfig"]
     }
   ],
   "reviewed": [
+    {
+      "entrypoint": "stitchkit/cli",
+      "names": [
+        "RuntimeToolExecution",
+        "RuntimeToolExecutionWithOutput",
+        "RuntimeToolDefinitionWithoutOutput"
+      ],
+      "reason": "A CLI-only consumer can name heterogeneous registration and construct strict schema-aware output/void definitions without importing optional SDK declarations; the CLI ceiling grows by exactly these three contracts (ADR 0227)."
+    },
     {
       "entrypoint": "stitchkit/tools",
       "names": ["MountableTool", "ToolOperation"],
@@ -565,6 +635,65 @@
       "entrypoint": "stitchkit/tools",
       "names": ["AgentStoreEventEnvelope", "AppendAgentStoreEvent", "ReadAgentStoreEvents"],
       "reason": "The event-log vocabulary the durability engine speaks; it lives in the neutral durability part (ADR 0197) and a tools-only consumer of createLocalStepDurability names these types."
+    },
+    {
+      "entrypoint": "stitchkit/application",
+      "names": [
+        "DirectoryInboxAccept",
+        "DirectoryInboxAcceptResult",
+        "DirectoryInboxAcceptResultSchema",
+        "DirectoryInboxIdentity",
+        "DirectoryInboxIdentitySchema",
+        "StateStoreUpdateContext"
+      ],
+      "reason": "Six named intake identity/accept/result and protected transaction contracts qualify durable programmatic acceptance and fenced state adapters over the existing inbox owner (ADR 0228)."
+    },
+    {
+      "entrypoint": "stitchkit/cli",
+      "names": [
+        "publishCli",
+        "CliPublicationOptions",
+        "CliPublicationPhase",
+        "CliPublicationResult"
+      ],
+      "reason": "Exactly four opt-in bounded transactional publication names reuse the existing manifest, signatures, codec, filesystem and exclusive lock owners (ADR 0230)."
+    },
+    {
+      "entrypoint": "stitchkit/telegram",
+      "names": ["TelegramBroadcastFailure", "TelegramBroadcastFailureSchema"],
+      "reason": "One validated failure union enables injected send classification, bounded exact delays and explicit uncertain outcomes without a transport-specific retry engine (ADR 0228)."
+    },
+    {
+      "entrypoint": "stitchkit/tools/connections",
+      "names": [
+        "ConnectionOperation",
+        "ConnectionPhase",
+        "ConnectionFailureContext",
+        "ConnectionOperationLimits",
+        "McpConnectionLimits",
+        "ConnectionTimeoutError",
+        "ConnectionResponseTooLargeError"
+      ],
+      "reason": "Seven names expose existing typed failures, their constructor context and independently bounded discovery/call policy; no new hierarchy or transport adapter (ADR 0229)."
+    },
+    {
+      "entrypoint": "stitchkit/server",
+      "names": ["NormalizeErrorOptions"],
+      "reason": "The existing public normalizer must name its optional logging policy; tool observers keep the full cause while expected and unknown tool failures remain safe on stderr (ADR 0229)."
+    },
+    {
+      "entrypoint": "stitchkit/tools/mcp",
+      "names": [
+        "RuntimeMcpToolDefinition",
+        "RuntimeMcpToolDefinitionWithOutput",
+        "RuntimeMcpToolPresenters"
+      ],
+      "reason": "Three MCP construction/registration/presenter contracts specialize neutral execution without inheriting an AI default; other leaf names re-export established owners (ADR 0231)."
+    },
+    {
+      "entrypoint": "stitchkit/tools",
+      "names": ["ToolSurfaceProjection"],
+      "reason": "One explicit generic readonly container names the shared public base of full and MCP-only surfaces; executable adapters supply their own definitions without peer closure leakage (ADR 0231)."
     }
   ]
 }

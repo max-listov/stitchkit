@@ -17,6 +17,7 @@ import {
   readResponse,
   searchParamsOf,
 } from './http-fetch';
+import { resolveClientFetch } from './native-fetch';
 import { responseTraceId } from './request-id';
 import type { ClientFetch } from './transport';
 import { uploadProgressRoute, withUploadProgress } from './upload-progress';
@@ -76,6 +77,7 @@ export class ApiError extends Error {
     public readonly hint?: string,
     public readonly traceId?: string,
     options?: ErrorOptions,
+    public readonly retryable?: boolean,
   ) {
     super(messageForCode(code, message), options);
     this.name = 'ApiError';
@@ -157,6 +159,7 @@ export function parseApiErrorBody(body: unknown): ErrorEnvelope['error'] | null 
     message: typeof error.message === 'string' ? error.message : undefined,
     details: error.details,
     hint: typeof error.hint === 'string' ? error.hint : undefined,
+    retryable: typeof error.retryable === 'boolean' ? error.retryable : undefined,
   };
 }
 
@@ -409,6 +412,8 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
             parsed.message,
             parsed.hint,
             responseTraceId(error.response),
+            undefined,
+            typeof parsed.retryable === 'boolean' ? parsed.retryable : undefined,
           );
         },
       ],
@@ -425,7 +430,7 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       options.signal,
       options.timeout ?? config.timeout ?? 30_000,
     );
-    const transport = config.fetch ?? globalThis.fetch.bind(globalThis);
+    const transport = resolveClientFetch(config.fetch);
     const kyOptions: Options = {
       fetch: createRetryAwareFetch(
         options.onUploadProgress

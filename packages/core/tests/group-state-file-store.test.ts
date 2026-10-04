@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { createFileStateStore } from '../src/application/file-state-store';
@@ -65,22 +65,19 @@ describe('file state store', () => {
     const schema = z.object({ counter: z.number().int().nonnegative() }).strict();
     await writeFile(
       lockPath,
-      JSON.stringify({ token: 'dead', pid: 2_000_000_000, acquiredAt: 0 }),
+      JSON.stringify({
+        host: hostname(),
+        pid: 2_000_000_000,
+        acquiredAt: new Date(0).toISOString(),
+      }),
     );
     const old = new Date(Date.now() - 60_000);
     await utimes(lockPath, old, old);
-    // Realistic bounds: with a 1 ms stale bound the heartbeat floor and the
-    // abandonment window collapse into scheduler noise, and a loaded host once
-    // let the second contender take the first one's live lock.
     const first = createFileStateStore(path, {
       schema,
-      staleLockMs: 50,
-      retryMs: 5,
     });
     const second = createFileStateStore(path, {
       schema,
-      staleLockMs: 50,
-      retryMs: 5,
     });
     await Promise.all(
       [first, second].map((store) =>
@@ -104,7 +101,11 @@ describe('file state store', () => {
     const schema = z.object({ counter: z.number().int().nonnegative() }).strict();
     await writeFile(
       lockPath,
-      JSON.stringify({ token: 'live', pid: process.pid, acquiredAt: 0 }),
+      JSON.stringify({
+        host: hostname(),
+        pid: process.pid,
+        acquiredAt: new Date(0).toISOString(),
+      }),
     );
     // Stale by more than one bound, less than the abandonment multiple: a
     // live holder may be blocking its event loop and still about to write.
@@ -112,37 +113,34 @@ describe('file state store', () => {
     await utimes(lockPath, old, old);
     const store = createFileStateStore(path, {
       schema,
-      staleLockMs: 50,
       lockTimeoutMs: 200,
-      retryMs: 5,
     });
     await expect(
       store.update(() => ({ state: { counter: 1 }, result: undefined })),
-    ).rejects.toThrow('timed out acquiring state lock');
+    ).rejects.toThrow('gave up after 200 ms');
   });
 
-  test('a lock whose heartbeat is ten stale bounds old is abandoned whatever its pid says', async () => {
+  test('a readable legacy owner without host is preserved even when its timestamp is old', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stitchkit-state-'));
     directories.push(directory);
     const path = join(directory, 'counter.json');
     const lockPath = `${path}.lock`;
     const schema = z.object({ counter: z.number().int().nonnegative() }).strict();
-    // A reused pid (or one this user cannot probe) must not hold the state
-    // hostage for ever: the heartbeat is the liveness signal the lock carries.
     await writeFile(
       lockPath,
-      JSON.stringify({ token: 'reused-pid', pid: process.pid, acquiredAt: 0 }),
+      JSON.stringify({ token: 'legacy', pid: process.pid, acquiredAt: 0 }),
     );
     const old = new Date(Date.now() - 60_000);
     await utimes(lockPath, old, old);
     const store = createFileStateStore(path, {
       schema,
-      staleLockMs: 1_000,
-      lockTimeoutMs: 5_000,
-      retryMs: 5,
+      lockTimeoutMs: 30,
     });
-    await store.update(() => ({ state: { counter: 1 }, result: undefined }));
-    expect(await store.read()).toEqual({ counter: 1 });
+    await expect(
+      store.update(() => ({ state: { counter: 1 }, result: undefined })),
+    ).rejects.toThrow('gave up after 30 ms');
+    expect(await store.read()).toBeNull();
+    expect(JSON.parse(await readFile(lockPath, 'utf8')).token).toBe('legacy');
   });
 
   test('an orphaned reclaim guard older than the stale bound does not disable reclaim for good', async () => {
@@ -153,7 +151,11 @@ describe('file state store', () => {
     const schema = z.object({ counter: z.number().int().nonnegative() }).strict();
     await writeFile(
       lockPath,
-      JSON.stringify({ token: 'dead', pid: 2_000_000_000, acquiredAt: 0 }),
+      JSON.stringify({
+        host: hostname(),
+        pid: 2_000_000_000,
+        acquiredAt: new Date(0).toISOString(),
+      }),
     );
     await writeFile(`${lockPath}.reclaim`, '');
     const old = new Date(Date.now() - 60_000);
@@ -161,15 +163,13 @@ describe('file state store', () => {
     await utimes(`${lockPath}.reclaim`, old, old);
     const store = createFileStateStore(path, {
       schema,
-      staleLockMs: 20,
       lockTimeoutMs: 2_000,
-      retryMs: 5,
     });
     await store.update(() => ({ state: { counter: 1 }, result: undefined }));
     expect(await store.read()).toEqual({ counter: 1 });
   });
 
-  test('temporary files a crashed writer left behind are swept on the first update', async () => {
+  test('an update preserves unknown old temporary files and removes only its own staging file', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stitchkit-state-'));
     directories.push(directory);
     const path = join(directory, 'counter.json');
@@ -178,18 +178,19 @@ describe('file state store', () => {
     await writeFile(orphan, '{"counter":0}');
     const old = new Date(Date.now() - 60_000);
     await utimes(orphan, old, old);
-    const store = createFileStateStore(path, { schema, staleLockMs: 20 });
+    const store = createFileStateStore(path, { schema });
     await store.update(() => ({ state: { counter: 1 }, result: undefined }));
-    await expect(readFile(orphan, 'utf8')).rejects.toThrow();
+    expect(await readFile(orphan, 'utf8')).toBe('{"counter":0}');
   });
 
-  test('a stale bound at or above the acquire timeout is refused at construction', () => {
+  test('retired lock age options are refused at construction', () => {
     expect(() =>
       createFileStateStore('/nonexistent/x.json', {
         schema: z.object({ n: z.number() }),
         lockTimeoutMs: 1_000,
+        // @ts-expect-error retired options cannot weaken lock ownership
         staleLockMs: 1_000,
       }),
-    ).toThrow('must be below lockTimeoutMs');
+    ).toThrow('lock age/retry options are unsupported');
   });
 });

@@ -10,7 +10,7 @@ import {
   transitionProcessShutdown,
   transitionProcessStart,
 } from '../src/application/process-lifecycle-transitions';
-import type { StateStore } from '../src/application/state-store';
+import { serialStateStore } from './application-file-state-store-fixture';
 
 /*
  * Downtime is the window in which nobody answers: from the moment the old run
@@ -20,27 +20,13 @@ import type { StateStore } from '../src/application/state-store';
  * consuming project accepts every release by.
  */
 
-function memoryStore(initial: LifecycleState | null = null): StateStore<LifecycleState> {
-  let state = initial;
-  return {
-    async read() {
-      return state;
-    },
-    async update(transition) {
-      const next = await transition(state);
-      state = next.state;
-      return next.result;
-    },
-  };
-}
-
 const base = Date.parse('2026-09-23T09:00:00.000Z');
 const at = (seconds: number): string => new Date(base + seconds * 1_000).toISOString();
 const context = {} as never;
 
 describe('the lifecycle ledger measures unavailability', () => {
   test('a 110 s drain and a 4 s boot are 114 s of downtime, not 4', async () => {
-    const store = memoryStore();
+    const store = serialStateStore<LifecycleState>();
     let now = 0;
     const clock = () => new Date(at(now));
     const old = lifecycleLedgerResource(
@@ -78,7 +64,7 @@ describe('the lifecycle ledger measures unavailability', () => {
   });
 
   test('a run that ends before it is ready is startup-failed, by itself or by its successor', async () => {
-    const store = memoryStore();
+    const store = serialStateStore<LifecycleState>();
     const ledger = createProcessLifecycleLedger({
       store,
       clock: () => new Date(at(0)),

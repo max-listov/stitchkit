@@ -4,7 +4,7 @@ description: Executable patterns for moving database, poller, queue and operatio
 type: architecture
 status: active
 created: 2026-08-24
-updated: 2026-08-24
+updated: 2026-10-04 13:28 +07:00
 ---
 
 # Application migration recipes
@@ -37,6 +37,131 @@ const database = defineManagedResource({
 The application still owns the client, ORM configuration, transactions,
 migrations and reconnect policy. The executable recipe deliberately fails after
 allocation and proves one rollback close.
+
+## Stateful clients, including MTProto
+
+An application-owned client is an ordinary managed resource. Keep SDK creation,
+credentials, authorization and reconnect policy in the application; no Telegram
+client SDK is required by Stitchkit. Create a fresh client inside each `start`,
+publish it after connection/readiness succeeds, and share one memoized destroy
+promise between partial-start cleanup, `close` and `force`:
+
+```ts
+let generation: { destroy(): Promise<void> } | undefined
+
+const client = defineManagedResource({
+  id: 'client',
+  async start({ signal }) {
+    const connection = createClient() // Your SDK and configuration.
+    let destruction: Promise<void> | undefined
+    const destroy = () => destruction ??= Promise.resolve()
+      .then(() => connection.destroy())
+    generation = { destroy }
+    let ready = false
+    let startFailure: unknown
+    let startFailed = false
+    let cleanupFailure: unknown
+    let cleanupFailed = false
+    try {
+      await connection.connect(signal)
+      await connection.assertReady()
+      signal.throwIfAborted()
+      ready = true
+    } catch (error) {
+      startFailure = error
+      startFailed = true
+    } finally {
+      if (!ready) {
+        try { await destroy() }
+        catch (cleanup) {
+          cleanupFailure = cleanup
+          cleanupFailed = true
+        }
+      }
+    }
+    if (startFailed) {
+      if (cleanupFailed) throw new AggregateError([startFailure, cleanupFailure],
+        'Client startup and cleanup failed', { cause: startFailure })
+      throw startFailure
+    }
+    return { value: connection }
+  },
+  close: () => generation?.destroy(),
+  force: () => generation?.destroy(),
+})
+
+const api = defineManagedResource({
+  id: 'api',
+  dependsOn: [client],
+  start(context) {
+    const connection = context.use(client)
+    return { value: async () => {
+      const lease = context.admission.acquire()
+      if (!lease) throw new ApplicationAdmissionError()
+      try { return await connection.invoke() }
+      finally { lease.release() }
+    } }
+  },
+})
+```
+
+`createClient` supplies a client whose `destroy` safely cleans partial connection
+setup; its adapter must honor cancellation or otherwise reconcile late SDK effects.
+The destroy cache belongs to one generation and is reset by the next `start`.
+Successful startup keeps the connection alive. Dependants start after readiness,
+requests acquire admission before invoking the client, and dependent HTTP resources
+close before the client. A subtree restart builds a new client and new dependants.
+
+The packed-consumer fixture
+[`managed-client-composition.mjs`](../../packages/core/scripts/consumer-lane/fixtures/minimal/src/managed-client-composition.mjs)
+proves readiness/admission, partial startup, close order, forced cleanup and restart
+with a fake client on Bun and Node. It does not claim a live provider acceptance test.
+
+## Custom StateStore transaction guards
+
+Transitions now receive `(current, context)`. Keep ordinary callbacks that only use
+`current`; update custom store implementations to pass a real protected context.
+For an in-memory test store, queue transactions and invalidate the context when
+the transaction finishes:
+
+```ts
+function memoryStore<T>(): StateStore<T> {
+  let state: T | null = null
+  let tail: Promise<unknown> = Promise.resolve()
+  return {
+    read: async () => state,
+    update(transition) {
+      const work = tail.then(async () => {
+        let active = true
+        const context: StateStoreUpdateContext = {
+          async assertHeld() {
+            if (!active) throw new Error('Transaction is no longer active')
+          },
+        }
+        try {
+          const next = await transition(state, context)
+          await context.assertHeld()
+          state = next.state
+          return next.result
+        } finally { active = false }
+      })
+      tail = work.catch(() => undefined)
+      return work
+    },
+  }
+}
+```
+
+This recipe is process-local and has no restart durability. A database store must
+guard its real transaction/generation and commit atomically; an escaped or lost
+guard must refuse. Filesystem mutations made inside inbox transactions call
+`assertHeld` immediately before publication or cleanup.
+
+For `createFileStateStore`, remove `staleLockMs` and `retryMs` from configuration.
+`lockTimeoutMs` remains the acquisition budget. Timestamp age no longer revokes
+a live or unknown writer. Stop and verify old writers before recovering a legacy
+pid-only lock; do not invent owner metadata. Historical temporary files are no
+longer deleted by age. See the [durable intake contract](application-kernel.md#durable-process-facts-and-owner-notifications).
 
 ## Long-running poller
 

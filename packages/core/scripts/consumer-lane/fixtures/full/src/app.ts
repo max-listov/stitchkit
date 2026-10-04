@@ -852,8 +852,8 @@ if (!execute) {
   process.exit(1);
 }
 
-// The framework logs an unexpected throw on stderr by design; keep the fixture's
-// own output readable.
+// Tool protocol errors retain their raw cause in internal hooks, while stderr
+// and the SDK envelope stay safe for the caller.
 const originalError = console.error;
 const suppressed: unknown[] = [];
 console.error = (...args: unknown[]) => void suppressed.push(args[0]);
@@ -872,11 +872,7 @@ const success: unknown = await execute(
 );
 console.error = originalError;
 
-check(
-  'the framework still reports the raw cause on stderr',
-  suppressed.length === 1,
-  suppressed,
-);
+check('the tool boundary keeps raw causes out of stderr', suppressed.length === 0, suppressed);
 check('a failing Agent tool rejects through the SDK error channel', failure !== undefined);
 check('a working tool still returns', success !== undefined);
 
@@ -890,6 +886,10 @@ check(
   'the SDK error carries the scrubbed envelope',
   JSON.stringify(failure).includes('INTERNAL_SERVER_ERROR'),
   failure,
+);
+check(
+  'the SDK envelope does not expose the raw cause',
+  !JSON.stringify(failure).includes(thrown.message),
 );
 
 // The audit hook is asynchronous by design — let its detached write land.

@@ -18,6 +18,10 @@ export {
   telegramBroadcastSender,
 } from '../telegram/broadcast';
 export {
+  type TelegramBroadcastFailure,
+  TelegramBroadcastFailureSchema,
+} from '../telegram/broadcast-failure';
+export {
   type TelegramInitData,
   type TelegramInitDataRefusal,
   type TelegramInitDataVerification,

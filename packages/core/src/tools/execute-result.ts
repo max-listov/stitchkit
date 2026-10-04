@@ -11,6 +11,7 @@ import {
 } from '../contract/errors';
 import { normalizeError } from '../contract/normalize';
 import { isRecord } from '../internal/typed';
+import { connectionToolError } from './connections/error-projection';
 
 export type ToolResult =
   | { ok: true; data: unknown }
@@ -51,7 +52,7 @@ const normalizedToolErrors = new WeakMap<
  * transport mounts so every tool error has one shape.
  */
 export function toolResultFromError(err: unknown): ToolFailure {
-  const appErr = normalizeError(err);
+  const appErr = normalizeError(connectionToolError(err) ?? err, { logUnexpected: false });
   const result: ToolFailure = {
     ok: false,
     code: appErr.code,

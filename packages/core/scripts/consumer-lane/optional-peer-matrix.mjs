@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 
 const FIXTURE_PEERS = {
   minimal: [],
+  'mcp-only': ['@modelcontextprotocol/server'],
   full: [
     '@modelcontextprotocol/client',
     '@modelcontextprotocol/ext-apps',
@@ -107,13 +108,30 @@ export const OPTIONAL_PEER_MATRIX = [
   {
     id: 'cli-command-feature',
     subpath: './cli',
-    fixture: 'full',
-    installedPeers: FIXTURE_PEERS.full,
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
     target: 'bun',
     source: featureSource('stitchkit/cli', 'defineCliCommand'),
     runtimePeers: [],
-    declarationPeers: ['@modelcontextprotocol/server', 'ai'],
+    declarationPeers: [],
     execute: true,
+  },
+  {
+    id: 'mcp-only-leaf',
+    subpath: './tools/mcp',
+    fixture: 'mcp-only',
+    installedPeers: FIXTURE_PEERS['mcp-only'],
+    target: 'bun',
+    source: featureSource('stitchkit/tools/mcp', 'createMcpHandler'),
+    runtimePeers: ['@modelcontextprotocol/server'],
+    declarationPeers: ['@modelcontextprotocol/server'],
+    execute: true,
+    missingPeer: {
+      fixture: 'minimal',
+      command: ['node', 'src/missing-mcp-leaf-peer.mjs'],
+      expected: ['Cannot find package'],
+      expectedAny: ["'@modelcontextprotocol/server'"],
+    },
   },
   {
     id: 'tools-mcp-feature',
@@ -153,7 +171,7 @@ export const OPTIONAL_PEER_MATRIX = [
     target: 'bun',
     source: featureSource('stitchkit/cli', 'parseCliArgs'),
     runtimePeers: [],
-    declarationPeers: ['@modelcontextprotocol/server', 'ai'],
+    declarationPeers: [],
     execute: true,
   },
   {

@@ -52,6 +52,9 @@ async function* readContractStream<T>(
             frame.error.details,
             frame.error.message,
             frame.error.hint,
+            undefined,
+            undefined,
+            frame.error.retryable,
           );
         }
         if (frame.type === 'end') {

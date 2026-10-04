@@ -301,6 +301,11 @@ describe('managed generic native tools', () => {
   });
 
   test('managed factories preserve safe file codes on MCP/Agent and scrub internal IO', async () => {
+    const internalCause = new ManagedFileError(
+      'FILE_IO_ERROR',
+      'EACCES /srv/private/application-root/file.bin',
+    );
+    const observed: unknown[] = [];
     const safeDefinition = defineUploadTool({
       name: 'safe_upload',
       description: 'Safe managed failure',
@@ -319,9 +324,7 @@ describe('managed generic native tools', () => {
       description: 'Internal managed failure',
       identity: { serviceName: 'files', action: 'internalUpload' },
       output: z.object({ ok: z.boolean() }),
-      files: rejectingFiles(
-        new ManagedFileError('FILE_IO_ERROR', 'EACCES /srv/private/application-root/file.bin'),
-      ),
+      files: rejectingFiles(internalCause),
       upload: async () => ({ ok: true }),
     });
     const log = spyOn(console, 'error').mockImplementation(() => undefined);
@@ -331,6 +334,11 @@ describe('managed generic native tools', () => {
           serverInfo: { name: 'managed-errors', version: '1' },
           services: [],
           runtimeTools: [safeDefinition, internalDefinition],
+          hooks: {
+            onToolError: ({ error }) => {
+              observed.push(error);
+            },
+          },
         },
         undefined,
       ),
@@ -358,7 +366,8 @@ describe('managed generic native tools', () => {
       });
       expect(resultText(mcpInternal)).toContain('"error": "INTERNAL_SERVER_ERROR"');
       expect(resultText(mcpInternal)).not.toContain('/srv/private');
-      expect(log).toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+      expect(observed.at(-1)).toBe(internalCause);
     } finally {
       await client.close();
       log.mockRestore();
