@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.103.12",
+  "version": "0.103.13",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -42,6 +42,8 @@
   "files": [
     "dist",
     "native/*.node",
+    "darwin-native.cjs",
+    "darwin-native.d.cts",
     "llms.txt",
     "llms-full.txt",
     "llms",
@@ -49,6 +51,9 @@
     "CHANGELOG.md",
     "LICENSE"
   ],
+  "imports": {
+    "#stitchkit-darwin-native": "./darwin-native.cjs"
+  },
   "exports": {
     ".": {
       "types": "./dist/entrypoints/index.d.ts",

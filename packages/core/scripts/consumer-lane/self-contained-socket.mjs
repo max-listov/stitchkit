@@ -1,12 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import {
-  copyFileSync,
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, parse } from 'node:path';
 
@@ -158,17 +151,24 @@ export function runSelfContainedSocketProof({ workdir, tarball, pkgRoot }) {
       for (const inject of [true, false]) {
         const name = `${runtime.label}-${inject ? 'injected' : 'default'}`;
         const entry = join(source, `self-contained-${name}.ts`);
-        const bundle = join(source, `self-contained-${name}.js`);
+        const output = join(source, `artifact-${name}`);
         writeFileSync(entry, entrySource({ inject, target: runtime.target }));
         execFileSync(
           'bun',
-          ['build', entry, `--target=${runtime.target}`, '--outfile', bundle],
+          [
+            'build',
+            entry,
+            `--target=${runtime.target}`,
+            '--outdir',
+            output,
+            '--entry-naming=index.js',
+          ],
           {
             cwd: source,
             stdio: 'pipe',
           },
         );
-        copyFileSync(bundle, join(directory, `${name}.js`));
+        cpSync(output, join(directory, name), { recursive: true });
       }
     }
 
@@ -176,7 +176,7 @@ export function runSelfContainedSocketProof({ workdir, tarball, pkgRoot }) {
       const injected = runIn(
         directory,
         runtime.command,
-        runtime.args(`${runtime.label}-injected.js`),
+        runtime.args(`${runtime.label}-injected/index.js`),
       );
       if (injected.failed || !injected.output.includes(MARKER)) {
         throw new Error(
@@ -187,7 +187,7 @@ export function runSelfContainedSocketProof({ workdir, tarball, pkgRoot }) {
       const fallback = runIn(
         directory,
         runtime.command,
-        runtime.args(`${runtime.label}-default.js`),
+        runtime.args(`${runtime.label}-default/index.js`),
       );
       if (!fallback.failed) {
         throw new Error(

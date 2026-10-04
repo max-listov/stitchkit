@@ -27,6 +27,27 @@ export interface FieldInfo {
   integer?: boolean;
 }
 
+/** Admit each raw occurrence before scalar coercion can discard a value. */
+export function appendCliOptionValue(
+  raw: Map<string, string[]>,
+  name: string,
+  value: string,
+  info: FieldInfo | undefined,
+): void {
+  const existing = raw.get(name);
+  // Explicitly untyped passthrough fields retain their raw-list grammar.
+  // Dotted leaves and declared fields only repeat when the schema says array.
+  const repeatable = !name.includes('.') && (info === undefined || info.kind === 'array');
+  if (existing !== undefined) {
+    if (!repeatable) {
+      throw new CliArgumentError(`--${name} was passed ${existing.length + 1} times`);
+    }
+    existing.push(value);
+  } else {
+    raw.set(name, [value]);
+  }
+}
+
 /** Strip `.optional()` / `.nullable()` / `.default()` wrappers to the base type. */
 function unwrap(field: z.core.$ZodType): z.core.$ZodType {
   if (

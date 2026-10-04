@@ -13,12 +13,17 @@
  * two command lines a file was listed on.
  */
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { SOURCES } from '../entrypoints.mjs';
 
 // Passthrough goes BEFORE the pinned flags, so a later duplicate cannot win.
 // Appended after them, `-- --target browser` silently overrode `--target node`
 // and the build produced something no gate describes.
 const passthrough = process.argv.slice(2);
+const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+// Private package imports retain their stable package-root location through
+// this split build; a consumer bundler follows them and embeds native assets.
+const packageImports = Object.keys(manifest.imports ?? {});
 const args = [
   'build',
   ...SOURCES,
@@ -29,6 +34,7 @@ const args = [
   'node',
   '--packages',
   'external',
+  ...packageImports.flatMap((name) => ['--external', name]),
   '--splitting',
   '--root',
   'src',

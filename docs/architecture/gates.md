@@ -4,12 +4,16 @@ description: Which local gate a push earns, why the release rows cost what they 
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-10-03 13:36 +07:00
+updated: 2026-10-04 09:21 +07:00
 participants:
   - role: implemented
     harness: Codex
     model: GPT-6
     at: 2026-10-03 13:36 +07:00
+  - role: implemented
+    harness: Codex
+    model: GPT-6
+    at: 2026-10-04 09:21 +07:00
 ---
 
 # Local gates — what runs where, and why
@@ -29,7 +33,8 @@ starter lanes and the supervised PM2 lane. Its prerequisites are listed in
 reachable PostgreSQL and the Playwright browsers.
 
 The only CI-only qualifier is work another kernel cannot execute: real macOS arm64/x64 builds and
-packed Bun/Node contained-files probes (ADR 0135). Two portable gaps used to be: the Postgres
+packed Bun/Node process/files probes, plus relocated JS and standalone native artifacts
+with integrity and refusal controls (ADR 0135). Two portable gaps used to be: the Postgres
 stores lane, until it turned a release run red, and the supervised lane, until the supervisor became a
 pinned devDependency instead of a global install. Both gaps fell on the release commit — the one
 commit whose red run cannot be repaired in place (see
@@ -50,7 +55,8 @@ supervised and real-Darwin lanes start independently after the small planner; on
 assembly waits for selected evidence and native binaries. A starter release runs published-target
 compatibility, a core release runs packed HEAD, and scheduled/manual CI retains the complete
 target × HEAD matrix. Darwin packs the public package but executes only the platform-specific
-contained-files proof. → ADR 0136.
+process/files and native artifact proofs from the installed registry. Each macOS runner qualifies
+its real architecture; portable skips and cross-builds cannot certify native execution. → ADR 0136.
 
 So the local gate **complements** CI instead of copying it, and `pre-push` picks by what a red run
 would cost on the commit being pushed:

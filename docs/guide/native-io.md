@@ -4,7 +4,7 @@ description: Native IO для Bun и Node, с явно выбранной durabi
 type: guide
 status: active
 created: 2026-10-01 20:44 +07:00
-updated: 2026-10-03 13:36 +07:00
+updated: 2026-10-04 09:40 +07:00
 participants:
   - role: authored
     harness: Codex
@@ -18,6 +18,10 @@ participants:
     harness: Codex
     model: GPT-6
     at: 2026-10-03 13:36 +07:00
+  - role: implemented
+    harness: Codex
+    model: GPT-6
+    at: 2026-10-04 09:21 +07:00
 ---
 
 # Native IO
@@ -245,10 +249,35 @@ version: carry their reachable relative `.d.ts` closure, rather than emitting re
 instead emit declarations for only that DTO contract. Keep the library's manifest at runtime
 `dependencies: {}` and `peerDependencies: { zod: ... }` when that is its declared promise.
 
-Darwin consumers need the published native binaries at the bundled loader's relative native
-directory. A JS-only bundle is not portable evidence. Qualify the packed library outside its
-build tree in Bun and Node, test its declarations, and check that importing an unbundled
-Stitchkit leaf fails there. A separate schema-only entry must not import the native entry.
+The packaged Darwin loader has static references to both architecture addons. Bun compilation
+embeds the matching `.node` asset; ordinary Bun bundling emits native assets alongside its JS
+output. Publish **every output returned by `Bun.build`**, preserving relative paths. Copying only
+the JS file drops its native dependency. No runtime Stitchkit installation or manually chosen
+native path is required for these bundled artifacts.
+
+```sh
+bun build src/native.ts --target=bun --minify --outdir=dist
+bun build src/native.ts --compile --bytecode --format=esm --outfile=dist/native
+```
+
+For a JS build that previously used `--outfile=dist/native.js`, use
+`--outdir=dist --entry-naming=native.js` instead: the output can now include native assets.
+The standalone executable still uses `--outfile` because those assets are embedded inside it.
+
+Qualify the complete output outside its build tree and installed dependency graph. Test process
+identity, live-owner refusal, dead-owner recovery and contained file operations in the resulting
+JS bundle and standalone executable. Bun and Node package imports retain the same lazy loader;
+importing a portable leaf does not load a Darwin addon on another OS. Test declarations too,
+and check that importing an unbundled Stitchkit leaf fails in a deliberately isolated library
+distribution. A separate schema-only entry must not import the native entry.
+
+If the Darwin backend cannot load, `observeProcessInstance` still returns `unavailable`.
+Its backend `Error` preserves the original `cause`; JSON serialization carries only the stable
+`DARWIN_BACKEND_UNAVAILABLE` code, architecture, safe message and failure stage
+(`architecture`, `resolve`, `load` or `surface`), plus a recognized native error code when present.
+It excludes stack, paths and nested cause. This backend diagnosis does not reclassify kernel
+failures or turn unavailable identity into proof that an owner is dead. If a runtime provides
+no recognized native error code, the stage stays `load`; the loader never infers errno from text.
 
 This delivery removes a runtime kernel installation; it does not remove the build-time
 Stitchkit installation or create an independent lightweight npm package.

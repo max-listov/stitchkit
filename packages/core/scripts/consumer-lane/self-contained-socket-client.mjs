@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -280,17 +281,24 @@ export async function runSelfContainedSocketClientProof({ workdir, tarball, pkgR
       for (const inject of [true, false]) {
         const name = `${runtime.label}-${inject ? 'injected' : 'default'}`;
         const entry = join(source, `client-${name}.ts`);
-        const bundle = join(source, `client-${name}.js`);
+        const output = join(source, `artifact-${name}`);
         writeFileSync(entry, clientSource({ inject }));
         execFileSync(
           'bun',
-          ['build', entry, `--target=${runtime.target}`, '--outfile', bundle],
+          [
+            'build',
+            entry,
+            `--target=${runtime.target}`,
+            '--outdir',
+            output,
+            '--entry-naming=index.js',
+          ],
           {
             cwd: source,
             stdio: 'pipe',
           },
         );
-        copyFileSync(bundle, join(directory, `${name}.js`));
+        cpSync(output, join(directory, name), { recursive: true });
       }
     }
 
@@ -298,7 +306,7 @@ export async function runSelfContainedSocketClientProof({ workdir, tarball, pkgR
       const injected = runIn(
         directory,
         runtime.command,
-        runtime.args(`${runtime.label}-injected.js`, url),
+        runtime.args(`${runtime.label}-injected/index.js`, url),
       );
       if (injected.failed || !injected.output.includes(MARKER)) {
         throw new Error(
@@ -309,7 +317,7 @@ export async function runSelfContainedSocketClientProof({ workdir, tarball, pkgR
       const fallback = runIn(
         directory,
         runtime.command,
-        runtime.args(`${runtime.label}-default.js`, url),
+        runtime.args(`${runtime.label}-default/index.js`, url),
       );
       if (!fallback.failed) {
         throw new Error(

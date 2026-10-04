@@ -20,7 +20,7 @@
     },
     "packages/core": {
       "name": "stitchkit",
-      "version": "0.103.12",
+      "version": "0.103.13",
       "bin": {
         "stitchkit": "./dist/entrypoints/bin/upgrade-cli.js",
       },

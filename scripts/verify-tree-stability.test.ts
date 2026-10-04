@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { copyCoreSourceFixture } from './core-source-fixture';
 import { readGreenGates } from './gate-memo';
 
 test('the actual runner never certifies a mixed tree, including mutation then restoration', async () => {
@@ -18,12 +19,7 @@ test('the actual runner never certifies a mixed tree, including mutation then re
       const root = join(scratch, 'repo');
       await mkdir(root);
       await cp(import.meta.dir, join(root, 'scripts'), { recursive: true });
-      await mkdir(join(root, 'packages/core'), { recursive: true });
-      await cp(
-        join(import.meta.dir, '../packages/core/src'),
-        join(root, 'packages/core/src'),
-        { recursive: true },
-      );
+      await copyCoreSourceFixture(root);
       await symlink(join(import.meta.dir, '../node_modules'), join(root, 'node_modules'));
       await writeFile(join(root, '.gitignore'), 'node_modules\n.runs\ndist/\n');
       await writeFile(join(root, '.runs'), '');
@@ -74,7 +70,7 @@ test('the actual runner never certifies a mixed tree, including mutation then re
           },
         );
         const output = await new Response(child.stderr).text();
-        expect(await child.exited).toBe(0);
+        expect(await child.exited, output).toBe(0);
         return output;
       }
       await run();

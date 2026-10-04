@@ -21,6 +21,7 @@ import type { z } from 'zod';
 import { isUnsafeKey } from '../../internal/safe-json';
 import { coerceJsonArgs } from '../schema/coerce';
 import {
+  appendCliOptionValue,
   coerceField,
   describeSchemaFields,
   looseCoerce,
@@ -81,7 +82,8 @@ interface CliTokens {
   options: CliRunOptions;
   /** Raw values per flag, in order; only an array field may have several. */
   flags: Map<string, string[]>;
-  boolFlags: Map<string, boolean>;
+  /** Boolean presence and aliases name exact fields, even when the name has a dot. */
+  literalBooleanFlags: Set<string>;
   viewFlags: Map<string, string>;
   ascending: boolean;
   positionals: string[];
@@ -90,7 +92,7 @@ interface CliTokens {
 /**
  * Phase one: tokenise. Every refusal about the SHAPE of the command line —
  * an unknown option, a missing value, a prototype-polluting name, a repeated
- * view flag — happens here, before any value is coerced.
+ * non-array flag — happens here, before its raw multiplicity can be lost.
  */
 function readCliTokens(
   argv: readonly string[],
@@ -106,15 +108,14 @@ function readCliTokens(
   };
 
   const flags = new Map<string, string[]>();
-  const boolFlags = new Map<string, boolean>();
+  const literalBooleanFlags = new Set<string>();
+  const frameworkFlags = new Map<string, string[]>();
   const viewFlags = new Map<string, string>();
   let ascending = false;
   const positionals: string[] = [];
 
   const pushFlag = (name: string, value: string): void => {
-    const existing = flags.get(name);
-    if (existing) existing.push(value);
-    else flags.set(name, [value]);
+    appendCliOptionValue(flags, name, value, fields.get(name));
   };
 
   let optionsEnded = false;
@@ -130,6 +131,7 @@ function readCliTokens(
       continue;
     }
     if (tok === '-h') {
+      appendCliOptionValue(frameworkFlags, 'help', 'true', { kind: 'boolean' });
       options.help = true;
       continue;
     }
@@ -143,10 +145,9 @@ function readCliTokens(
       if (info?.kind === 'boolean') {
         const separate = inline === undefined ? separateBoolValue(argv[i + 1]) : undefined;
         if (separate !== undefined) i++;
-        boolFlags.set(
-          field,
-          inline === undefined ? (separate ?? true) : parseReservedBool(field, inline),
-        );
+        pushFlag(field, inline ?? String(separate ?? true));
+        if (inline !== undefined) parseReservedBool(field, inline);
+        literalBooleanFlags.add(field);
         continue;
       }
       let value = inline;
@@ -171,6 +172,9 @@ function readCliTokens(
     if (option.globalKind === 'boolean') {
       const separate = value === undefined ? separateBoolValue(argv[i + 1]) : undefined;
       if (separate !== undefined) i++;
+      appendCliOptionValue(frameworkFlags, name, value ?? String(separate ?? true), {
+        kind: 'boolean',
+      });
       const enabled =
         value === undefined ? (separate ?? true) : parseReservedBool(name, value);
       if (name === 'dry-run') options.dryRun = enabled;
@@ -188,6 +192,7 @@ function readCliTokens(
         throw new CliArgumentError(`--${name} requires a value`);
       }
       if (!option.inline) i++;
+      appendCliOptionValue(frameworkFlags, name, value, { kind: 'string' });
       if (name === 'wait-timeout') {
         const timeout = Number(value);
         if (!Number.isFinite(timeout) || timeout <= 0) {
@@ -195,7 +200,6 @@ function readCliTokens(
         }
         options.waitTimeout = timeout;
       } else if (VIEW_OPTIONS.has(name)) {
-        if (viewFlags.has(name)) throw new CliArgumentError(`--${name} was given twice`);
         viewFlags.set(name, value);
       } else {
         options.outputDir = value;
@@ -208,7 +212,8 @@ function readCliTokens(
       name.startsWith('no-') &&
       fields.get(name.slice(3))?.kind === 'boolean'
     ) {
-      boolFlags.set(name.slice(3), false);
+      pushFlag(name.slice(3), 'false');
+      literalBooleanFlags.add(name.slice(3));
       continue;
     }
 
@@ -227,7 +232,8 @@ function readCliTokens(
       if (info?.kind === 'boolean') {
         const separate = separateBoolValue(argv[i + 1]);
         if (separate !== undefined) i++;
-        boolFlags.set(name, separate ?? true);
+        pushFlag(name, String(separate ?? true));
+        literalBooleanFlags.add(name);
         continue;
       }
       // The next token is the value unless it is itself an option: `--grep
@@ -242,7 +248,7 @@ function readCliTokens(
     }
     pushFlag(name, value);
   }
-  return { options, flags, boolFlags, viewFlags, ascending, positionals };
+  return { options, flags, literalBooleanFlags, viewFlags, ascending, positionals };
 }
 
 /**
@@ -254,7 +260,7 @@ function buildToolArgs(
   fields: ReturnType<typeof describeSchemaFields>,
   declaredPositionals: readonly string[] | undefined,
 ): Record<string, unknown> {
-  const { flags, boolFlags, positionals } = tokens;
+  const { flags, literalBooleanFlags, positionals } = tokens;
   // ── Build the tool-argument object ──
   const toolArgs: Record<string, unknown> = {};
 
@@ -302,17 +308,15 @@ function buildToolArgs(
     throw new CliArgumentError(`Unexpected positional argument "${positionals[pi]}"`);
   }
 
-  for (const [key, value] of boolFlags) {
-    toolArgs[key] = value;
-  }
-
   // A plain `--meta {json}` and a dotted `--meta.a` fight over the same root:
   // whichever ran last would silently destroy the other, making the RESULT
   // depend on argument order. Refuse the combination outright.
   const dottedRoots = new Map<string, string>();
   for (const key of flags.keys()) {
     const dot = key.indexOf('.');
-    if (dot > 0) dottedRoots.set(key.slice(0, dot), key);
+    if (dot > 0 && !literalBooleanFlags.has(key)) {
+      dottedRoots.set(key.slice(0, dot), key);
+    }
   }
   for (const [root, dotted] of dottedRoots) {
     if (flags.has(root)) {
@@ -323,23 +327,12 @@ function buildToolArgs(
   }
 
   for (const [key, values] of flags) {
-    if (key.includes('.')) {
-      if (values.length > 1) {
-        throw new CliArgumentError(`--${key} was passed ${values.length} times`);
-      }
+    const info = fields.get(key);
+    // Presence and aliases address an exact boolean field; canonical inline
+    // dotted options retain the nested-path grammar of value options.
+    if (key.includes('.') && !literalBooleanFlags.has(key)) {
       setNested(toolArgs, key.split('.'), looseCoerce(values[0] ?? ''));
       continue;
-    }
-    const info = fields.get(key);
-    // Only an array field legitimately repeats (`--tag a --tag b`); a repeated
-    // scalar silently taking the last value would hide a caller mistake.
-    if (
-      values.length > 1 &&
-      info !== undefined &&
-      info.kind !== 'array' &&
-      info.kind !== 'other'
-    ) {
-      throw new CliArgumentError(`--${key} was passed ${values.length} times`);
     }
     toolArgs[key] = coerceField(info, values, `--${key}`);
   }
@@ -430,9 +423,7 @@ export function extractCliGlobalOptions(
         throw new CliArgumentError(`--${option.name} requires a value`);
       }
     }
-    const existing = raw.get(option.name);
-    if (existing) existing.push(value);
-    else raw.set(option.name, [value]);
+    appendCliOptionValue(raw, option.name, value, info);
   }
 
   const args: Record<string, unknown> = {};

@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { copyCoreSourceFixture } from './core-source-fixture';
 import { browserRuntimeFixture } from './gate-environment-fixtures';
 import { readGreenGates } from './gate-memo';
 import { FAST_STEPS, PROFILES, VERIFY_STEPS } from './verify-profiles';
@@ -12,10 +13,7 @@ async function fixture(scenario: Scenario) {
   const root = join(scratch, 'repo');
   await mkdir(root);
   await cp(import.meta.dir, join(root, 'scripts'), { recursive: true });
-  await mkdir(join(root, 'packages/core'), { recursive: true });
-  await cp(join(import.meta.dir, '../packages/core/src'), join(root, 'packages/core/src'), {
-    recursive: true,
-  });
+  await copyCoreSourceFixture(root);
   await symlink(join(import.meta.dir, '../node_modules'), join(root, 'node_modules'));
   await writeFile(join(root, '.gitignore'), 'node_modules\n.runs\n');
   await writeFile(join(root, 'input.txt'), 'original');
@@ -100,7 +98,7 @@ test('actual candidate and release CLI execute their selected steps and reuse on
     const f = await fixture('stable');
     try {
       const result = await f.run([flag]);
-      expect(result.code).toBe(0);
+      expect(result.code, result.output).toBe(0);
       const expected =
         flag === '--candidate'
           ? ['lockfile', 'lint', 'check']
@@ -127,7 +125,7 @@ test('actual full/head CLI distinguish stable heavy inputs from unknown required
       const f = await fixture(scenario);
       try {
         const result = await f.run(flag ? [flag] : []);
-        expect(result.code).toBe(0);
+        expect(result.code, result.output).toBe(0);
         const gate = flag ? PROFILES.head.gate : PROFILES.full.gate;
         expect(await f.history(gate)).toHaveLength(scenario === 'stable' ? 1 : 0);
         expect(await f.history(PROFILES.fast.gate)).toHaveLength(flag ? 0 : 1);

@@ -192,6 +192,16 @@ there stays a positional, and `--` makes a literal `false` one too. The same
 holds for a short alias, a framework flag such as `--json false` and an
 application option.
 
+Every declared non-array option is single-use, including framework and
+application globals. Bare, separate-value, inline, negative and short-alias
+forms of a command option count as the same name: `--active=false --active`,
+`--active false --no-active` and `-f --active` are argument errors even when
+the values agree. Duplicates are refused before command execution. Array
+options accumulate across long and short forms; unknown non-dotted passthrough
+options retain their raw-list grammar. Tokens after `--` are literal data.
+Command `--help` and `-h` keep their diagnostic precedence over malformed
+operation arguments; application globals are validated before routing.
+
 Without presentation configuration, positional arguments fill non-boolean
 fields in declaration order, so `myapp generate "a fox"` is
 `--prompt "a fox"`. A piped value fills the first required unset field:

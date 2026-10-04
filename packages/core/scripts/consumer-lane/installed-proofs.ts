@@ -22,6 +22,28 @@ const native = {
 };
 export const installedConsumerProofs = z.array(ProofSchema).parse([
   {
+    id: 'darwin-artifacts',
+    fixture: 'node',
+    entry: 'darwin-artifacts.mjs',
+    files: ['darwin-artifact-controls.mjs', 'contained-files.mjs'],
+    peers: ['zod', 'ai', '@modelcontextprotocol/server', '@modelcontextprotocol/ext-apps'],
+    platforms: ['darwin'],
+    runtimes: ['bun'],
+    kind: 'runtime',
+    marker: 'packed Darwin JS and standalone artifacts: ok',
+  },
+  {
+    id: 'cli-option-occurrences',
+    fixture: 'minimal',
+    entry: 'cli-option-occurrences.mjs',
+    files: [],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin', 'win32'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed CLI option occurrences: ok',
+  },
+  {
     id: 'cli-help-limits',
     fixture: 'node',
     entry: 'cli-help-limits.mjs',

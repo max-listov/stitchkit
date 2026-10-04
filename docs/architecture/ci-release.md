@@ -4,12 +4,16 @@ description: Package-aware evidence lanes, one-SHA release trains and immutable 
 type: architecture
 status: active
 created: 2026-08-14
-updated: 2026-10-03 13:36 +07:00
+updated: 2026-10-04 09:21 +07:00
 participants:
   - role: implemented
     harness: Codex
     model: GPT-6
     at: 2026-10-03 13:36 +07:00
+  - role: implemented
+    harness: Codex
+    model: GPT-6
+    at: 2026-10-04 09:21 +07:00
 ---
 
 # CI and exact-SHA release pipeline
@@ -64,7 +68,7 @@ Every job starts after the small planner, not after another platform:
 | `portable` | core/shared change | core types/tests/build, PostgreSQL adapter, smokes and packed consumer |
 | `tui` | TUI target/change | terminal package types/tests/build and packed host |
 | `starter-package` | starter compatibility is selected | scaffolder and authored template types |
-| `darwin-contained-files` | core target/change | real arm64/x64 native build and narrow packed Bun/Node file/search/resource/race proof |
+| `darwin-contained-files` | core target/change | real arm64/x64 native build; packed Bun/Node process/files proofs and relocated JS/standalone artifacts with asset integrity and missing/corrupt-backend controls |
 | `supervised` | core or starter | generated roles under the pinned PM2 supervisor |
 | `starter` | core or starter | two variants × two browsers on the compatibility edge that can differ |
 | `artifacts` | release train | waits for selected evidence, downloads Darwin leaves only for core, packs selected packages |
@@ -77,7 +81,11 @@ lockfile-matched Playwright image pinned by immutable digest and the exact pinne
 
 The portable core job has no Darwin dependency. Real macOS qualification still packs and installs
 the public package, but `--contained-files-only` executes only the surface whose implementation is
-platform-specific. Artifact assembly is the sole consumer of both validated native leaves.
+platform-specific. Each native runner also checks minified Bun/Node JS and Bun standalone artifacts
+after hiding the build tree and installed dependency graph. Process identity, exclusive locks,
+contained files, addon bytes and refusal controls share that installed-package proof. Each runner
+qualifies its actual architecture; a cross-build is not native execution evidence. Artifact
+assembly is the sole consumer of both validated native leaves.
 
 ## Local gate
 

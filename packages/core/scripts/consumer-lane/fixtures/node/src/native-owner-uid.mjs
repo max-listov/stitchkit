@@ -111,11 +111,15 @@ export async function verifySharedUID(specifier, control = {}) {
       entry,
       `export{withExclusiveLock}from${JSON.stringify(fileURLToPath(import.meta.resolve(specifier)))};`,
     );
-    execFileSync('bun', ['build', entry, '--target=node', '--outfile', bundle], {
-      timeout: 30_000,
-      maxBuffer: 64 * 1024,
-      stdio: 'pipe',
-    });
+    execFileSync(
+      'bun',
+      ['build', entry, '--target=node', '--outdir', root, '--entry-naming=files.mjs'],
+      {
+        timeout: 30_000,
+        maxBuffer: 64 * 1024,
+        stdio: 'pipe',
+      },
+    );
     await chmod(bundle, 0o644);
     const reader = async (code, gid) => {
       const owned = ownedChild(runtime, code, { uid: 65534, gid, cwd: root });

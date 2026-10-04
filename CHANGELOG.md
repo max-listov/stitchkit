@@ -15,6 +15,23 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.103.13] - 2026-10-04
+
+### Fixed
+
+- Darwin native process and contained-file backends retain a static addon dependency through
+  Node-compatible package builds, minified Bun/Node bundles and Bun standalone executables.
+  Bundlers emit native assets automatically; Bun compile embeds the target architecture addon.
+  Backend load failures keep their original internal cause and serialize safe stage/code
+  diagnostics instead of an empty object. Installed Darwin proofs exercise relocated artifacts,
+  exact process ownership, lock recovery, contained-file races and missing/corrupt backends.
+
+- `stitchkit/cli`: repeated non-array options are refused before scalar coercion, including
+  mixed boolean presence, separate values, inline values, negation and short aliases. The same
+  rule covers framework and application globals. For example, `--check=false --check` is an
+  argument error instead of silently selecting `false`. Single options, array repetition,
+  untyped passthrough lists and command help retain their grammar.
+
 ## [0.103.12] - 2026-10-03
 
 ### Fixed

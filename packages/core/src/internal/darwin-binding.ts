@@ -1,8 +1,6 @@
 /** One lazy Node-API boundary for the packaged Darwin operating-system primitives. */
-import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import loadDarwinAddon from '#stitchkit-darwin-native';
+import { DarwinBackendError, darwinNativeCode } from './darwin-binding-error';
 
 export interface DarwinEntry {
   name: string;
@@ -34,19 +32,21 @@ let darwinBinding: DarwinBinding | undefined;
 
 export function loadDarwinBinding(): DarwinBinding {
   if (darwinBinding) return darwinBinding;
-  const directory = path.dirname(fileURLToPath(import.meta.url));
-  const binary = `darwin-${process.arch}.node`;
-  const candidates = [
-    path.resolve(directory, '../native', binary),
-    path.resolve(directory, '../../native', binary),
-  ];
-  const selected = candidates.find((candidate) => existsSync(candidate));
-  if (!selected) {
-    throw new Error(
-      `Contained filesystem operations need the packaged Darwin ${process.arch} backend`,
+  if (process.arch !== 'arm64' && process.arch !== 'x64') {
+    throw new DarwinBackendError('architecture');
+  }
+  let loaded: unknown;
+  try {
+    loaded = loadDarwinAddon();
+  } catch (cause) {
+    const code = darwinNativeCode(cause);
+    throw new DarwinBackendError(
+      code === 'MODULE_NOT_FOUND' || code === 'ERR_MODULE_NOT_FOUND' || code === 'ENOENT'
+        ? 'resolve'
+        : 'load',
+      cause,
     );
   }
-  const loaded: unknown = createRequire(import.meta.url)(selected);
   const methods = [
     'openDirectoryAt',
     'openFileAt',
@@ -59,7 +59,7 @@ export function loadDarwinBinding(): DarwinBinding {
     'processIdentity',
   ];
   if (!hasFunctions(loaded, methods)) {
-    throw new Error('The packaged Darwin contained-files backend has an invalid surface');
+    throw new DarwinBackendError('surface');
   }
   // Native Node-API is an untyped external boundary; every callable was checked above.
   darwinBinding = loaded as DarwinBinding;

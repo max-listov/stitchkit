@@ -69,8 +69,9 @@ export function qualifyNeutralLibrary(author) {
           entry,
           '--target=node',
           '--external=zod',
-          '--outfile',
-          join(lib, `entrypoints/${name}.js`),
+          '--outdir',
+          join(lib, 'entrypoints'),
+          `--entry-naming=${name}.js`,
         ],
         author,
       );
@@ -80,8 +81,6 @@ export function qualifyNeutralLibrary(author) {
         import: `./lib/entrypoints/${name}.js`,
       };
     }
-    if (existsSync(join(packageRoot, 'native')))
-      cpSync(join(packageRoot, 'native'), join(lib, 'native'), { recursive: true });
     writeFileSync(
       join(artifact, 'package.json'),
       JSON.stringify({
