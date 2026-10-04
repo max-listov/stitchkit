@@ -21,6 +21,10 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 - `stitchkit/files/packaging`: one multi-target companion plugin packages both Darwin addons into a universal JS artifact; explicit per-architecture output paths preserve single-target and embedded recipes.
 
+### Fixed
+
+- Native qualification waits for the helper’s actual first write instead of inferring readiness from startup timing.
+
 ## [0.104.1] - 2026-10-04
 
 ### Added

@@ -9,10 +9,11 @@ assert.ok(node, 'native Node executable');
 const command = (script) => ({ executable: node, args: ['-e', script] });
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function blockedGroup(root) {
+export async function verifyBlockedGroup(root, helperStartDelayMs = 0) {
   const counter = join(root, 'counter');
-  const helper = `const fs=require('fs');process.on('SIGTERM',()=>{});let n=0;setInterval(()=>fs.appendFileSync(${JSON.stringify(counter)},String(++n)+'\\n'),5);`;
-  const script = `require('child_process').spawn(process.execPath,['-e',${JSON.stringify(helper)}],{stdio:'ignore'});setTimeout(()=>process.stdout.write('ready'),150);setInterval(()=>{},1000);`;
+  // The helper emits readiness only after its first write, independent of startup latency.
+  const helper = `const fs=require('fs');process.on('SIGTERM',()=>{});fs.appendFileSync(${JSON.stringify(counter)},'0\\n');process.stdout.write('ready');let n=0;setInterval(()=>fs.appendFileSync(${JSON.stringify(counter)},String(++n)+'\\n'),5);`;
+  const script = `setTimeout(()=>{const child=require('child_process').spawn(process.execPath,['-e',${JSON.stringify(helper)}],{stdio:['ignore','pipe','inherit']});child.stdout.once('data',()=>process.stdout.write('ready'));},${helperStartDelayMs});setInterval(()=>{},1000);`;
   const foreign = spawn(node, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
   const foreignClosed = new Promise((resolve) => foreign.once('close', resolve));
   const controller = new AbortController();
@@ -28,6 +29,7 @@ async function blockedGroup(root) {
   const pending = runNativeCommand({
     ...command(script),
     signal: controller.signal,
+    timeoutMs: 3000,
     killGraceMs: 10,
     onOutput: async () => {
       entered();
@@ -35,7 +37,12 @@ async function blockedGroup(root) {
     },
   });
   try {
-    await started;
+    await Promise.race([
+      started,
+      pending.then(() => {
+        throw new Error('Command settled before helper readiness');
+      }),
+    ]);
     const before = await readFile(counter, 'utf8');
     let grew = false;
     for (let attempt = 0; attempt < 50 && !grew; attempt++) {
@@ -110,7 +117,7 @@ async function undrainedPipe() {
 }
 
 export async function verifyCommandLifecycle(root) {
-  await blockedGroup(root);
+  await verifyBlockedGroup(root);
   // Node's writableLength qualifies the native pipe. Bun's compatibility wrapper
   // does not expose that pending-write measurement; its blocked sink is tested above.
   if (!process.versions.bun) await undrainedPipe();

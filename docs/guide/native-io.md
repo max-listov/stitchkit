@@ -330,7 +330,7 @@ Archive the complete output directory with an integrity manifest, unpack to a cl
 verify the same hashes there, and run offline without the build tree or `node_modules`.
 A digest provides integrity, not authenticity: signature and trust policy remain application-owned.
 
-For one JS artifact that runs on both Darwin architectures, change only the packaging inputs:
+From 0.104.2, one JS artifact can run on both Darwin architectures; change only the packaging inputs:
 
 ```ts
 const native = createNativePackaging({
