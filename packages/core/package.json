@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.104.0",
+  "version": "0.104.1",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -49,7 +49,8 @@
     "llms",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "native-assets.json"
   ],
   "imports": {
     "#stitchkit-darwin-native": "./darwin-native.cjs"
@@ -246,6 +247,10 @@
     "./process": {
       "types": "./dist/entrypoints/process.d.ts",
       "import": "./dist/entrypoints/process.js"
+    },
+    "./files/packaging": {
+      "types": "./dist/entrypoints/files/packaging.d.ts",
+      "import": "./dist/entrypoints/files/packaging.js"
     }
   },
   "publishConfig": {
@@ -266,7 +271,7 @@
     "consumer-lane": "bun scripts/consumer-lane/run.mjs",
     "bench:mcp-preparation": "bun scripts/benchmark-mcp-preparation.ts",
     "bench:durable-store": "bun scripts/bench-durable-store.ts",
-    "build:entrypoints": "bun scripts/build-entrypoints.mjs"
+    "build:entrypoints": "bun scripts/generate-native-loader.ts && bun scripts/build-entrypoints.mjs"
   },
   "peerDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.2 || ^2.0.0",

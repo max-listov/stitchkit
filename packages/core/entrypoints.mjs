@@ -119,6 +119,11 @@ export const ENTRYPOINTS = [
   },
   { subpath: './testing', source: 'src/entrypoints/testing.ts', browser: false },
   { subpath: './process', source: 'src/entrypoints/process.ts', browser: false },
+  {
+    subpath: './files/packaging',
+    source: 'src/entrypoints/files/packaging.ts',
+    browser: false,
+  },
   { subpath: './files', source: 'src/entrypoints/files.ts', browser: false },
   { subpath: './telegram', source: 'src/entrypoints/telegram.ts', browser: false },
   { subpath: './telegram/html', source: 'src/entrypoints/telegram/html.ts', browser: true },

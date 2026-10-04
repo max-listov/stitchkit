@@ -38,6 +38,17 @@ function featureSource(subpath, name) {
  */
 export const OPTIONAL_PEER_MATRIX = [
   {
+    id: 'native-packaging',
+    subpath: './files/packaging',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/files/packaging', 'createNativePackaging'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
     id: 'root-client',
     subpath: '.',
     fixture: 'minimal',

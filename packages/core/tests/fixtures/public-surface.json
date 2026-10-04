@@ -2737,5 +2737,12 @@
     "rateLimited",
     "serveNode",
     "unauthorized"
+  ],
+  "stitchkit/files/packaging": [
+    "NativePackagingAsset",
+    "NativePackagingOptions",
+    "NativePackagingPlugin",
+    "NativePackagingResult",
+    "createNativePackaging"
   ]
 }

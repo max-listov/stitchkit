@@ -2,6 +2,10 @@
 
 ## Released migration: 0.104.0
 
+JS bundles carrying Darwin native capabilities also need the
+[delivery migration first affected in 0.103.13](#released-migration-010313).
+Consumers upgrading from 0.103.12 or earlier must apply it even if their TypeScript API is unchanged.
+
 ### CLI runtime-tool construction
 
 **Who must act:** callers writing a schema-dependent handler or MCP/AI `present` directly
@@ -116,6 +120,36 @@ signals to `createCli` / `createCliInvoker` and cooperative handlers observe `ct
 `REQUEST_ABORTED` is nonretryable and exits 130. A disconnected caller does not prove that
 an origin ignoring cancellation or an external provider stopped; keep resource leases until
 that work actually completes.
+
+## Released migration: 0.103.13
+
+### Darwin native assets in JS distributions
+
+**Who must act:** Bun JS builds using `--outfile`, copying only `outputs[0]`, custom
+single-file/archive packagers and installers delivering native process/files capabilities.
+First affected publication: **0.103.13**. It shipped as a patch; its changed delivery graph
+requires this migration despite unchanged API signatures.
+
+```sh
+# Before: one JS file was assumed to be the entire distribution.
+bun build src/native.ts --target=bun --outfile=dist/native.js
+# After: retain every output, with its relative path.
+bun build src/native.ts --target=bun --outdir=dist --entry-naming=native.js
+```
+
+For `Bun.build`, copy **all** `result.outputs`, not just the JS entry or `outputs[0]`.
+A single-file JS distribution cannot embed a native `.node` addon automatically.
+An archive may contain JS plus companion assets, materialized together before execution.
+Custom output layout uses the evolving build-only packaging contract in the
+[native IO guide](native-io.md#public-native-packaging).
+
+Three deliveries have different rules: an ordinary npm install retains the package's
+native assets; a JS distribution must ship its complete output graph; a Bun compiled
+executable embeds the matching addon and may still use `--outfile`.
+The [native IO guide](native-io.md#libraries-with-a-zod-only-runtime) is the canonical recipe.
+Check the resulting artifact offline outside the build tree and `node_modules`, including
+process identity, live-owner lock refusal, dead-owner recovery and contained IO.
+A missing or corrupt addon remains `unavailable`, never evidence that an owner died.
 
 ## Released migration: 0.103.0
 

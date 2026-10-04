@@ -1294,5 +1294,22 @@
     "logUnexpected": {
       "test": "unknown tool errors scrub console and public output while observers keep exact raw cause"
     }
+  },
+  "NativePackagingOptions": {
+    "platform": {
+      "test": "packaging target, delivery and output paths change the real Bun build graph"
+    },
+    "architecture": {
+      "test": "packaging target, delivery and output paths change the real Bun build graph"
+    },
+    "delivery": {
+      "test": "packaging target, delivery and output paths change the real Bun build graph"
+    },
+    "entryPath": {
+      "test": "packaging target, delivery and output paths change the real Bun build graph"
+    },
+    "assetPath": {
+      "test": "packaging target, delivery and output paths change the real Bun build graph"
+    }
   }
 }

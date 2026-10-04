@@ -265,7 +265,7 @@ export const GUIDE_SLICES: GuideMap = {
     ],
   },
   'sandbox.md': { primary: './agent-runtime/sandbox' },
-  'native-io.md': { primary: './process', also: ['./files'] },
+  'native-io.md': { primary: './process', also: ['./files', './files/packaging'] },
   'primitives.md': { primary: './primitives' },
   'application-migration-recipes.md': { primary: './application' },
   'cli.md': { primary: './cli' },

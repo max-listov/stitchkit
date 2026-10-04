@@ -2522,3 +2522,17 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 | `observeProcessInstance` / `ProcessInstanceObservation` | function / type | Linux/Darwin lifetime observation; observed identity or unavailable with its original cause, never guessed absence |
 | `ProcessInstanceSchema` / `ProcessInstance` | schema / type | platform, boot ID, namespace and process start identity from the shared native reader |
 | `probeProcessOwner` / `ProcessOwnerEvidence` | function / type | compare lifetimes on one caller-established machine; matched, boot change, reused PID, gone, legacy or unavailable with cause |
+
+## `stitchkit/files/packaging`
+
+`stitchkit/files/packaging` owns `createNativePackaging` and the types
+`NativePackagingOptions`, `NativePackagingAsset`, `NativePackagingPlugin`, `NativePackagingResult`.
+It resolves the installed package's target/version and original addon SHA256.
+`platform`, `architecture`, `delivery`, `entryPath` and `assetPath` are explicit public inputs.
+The result is `ready` with assets and a structural Bun plugin, or `unsupported`/`missing` with a safe code.
+Malformed options/metadata and other filesystem errors fail rather than masquerade as missing.
+Companion mode places an external addon relative to the emitted entry; embedded mode lets
+Bun compile retain the matching addon. Keep JS builds without splitting, preserve every output,
+and copy each original asset to its `outputPath` after verifying `sha256`.
+This evolving entrypoint is a build dependency; runtime imports do not reach it.
+The detailed recipe is in [native IO](../guide/native-io.md#public-native-packaging).

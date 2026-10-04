@@ -23,6 +23,29 @@ const native = {
 };
 export const installedConsumerProofs = z.array(ProofSchema).parse([
   {
+    id: 'native-packaging',
+    fixture: 'minimal',
+    entry: 'native-packaging.mjs',
+    files: [],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin', 'win32'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed build-only native packaging: ok',
+  },
+  {
+    id: 'native-packaging-types',
+    fixture: 'minimal',
+    entry: 'native-packaging-types.ts',
+    files: [],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin', 'win32'],
+    runtimes: [],
+    kind: 'declarations',
+    resolution: 'NodeNext',
+    marker: 'strict build-only native packaging types: ok',
+  },
+  {
     id: 'mcp-only-leaf',
     fixture: 'mcp-only',
     entry: 'mcp-leaf.mjs',

@@ -99,6 +99,7 @@ const COVERED: Record<string, string> = {
   ManagedFileReadOptions: 'entrypoints/files.ts',
   CanonicalJsonOptions: 'entrypoints/primitives.ts',
   NativeCommandOptions: 'entrypoints/process.ts',
+  NativePackagingOptions: 'entrypoints/files/packaging.ts',
   EffectRunOptions: 'entrypoints/tools.ts',
   AgentControllerConfig: 'entrypoints/agent-runtime/browser.ts',
   AgentHarnessToolsConfig: 'entrypoints/agent-runtime/harness-tools.ts',

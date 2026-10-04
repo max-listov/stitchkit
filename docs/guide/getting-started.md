@@ -50,6 +50,7 @@ own, recorded as an ADR.
 | `stitchkit/cli` | server | stable | `createCli` / `createCliInvoker` — runtime and strict NodeNext declarations without MCP SDK / `ai` |
 | `stitchkit/remote` | browser **and** server | stable | peer-free `implementRemote` for thin HTTP proxy processes |
 | `stitchkit/process` | server (Bun or Node, POSIX) | evolving | finite native commands, byte sinks, bounded capture and process-group cancellation |
+| `stitchkit/files/packaging` | build time (Bun or Node) | evolving | installed native asset graph, integrity and Bun packaging plugin; no runtime install policy |
 | `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
 | `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, resumable broadcasts, the operator channel with dedupe, local Bot API files, webhook ownership and durable webhook update intake |
 | `stitchkit/telegram/html` | browser and server | evolving | Telegram's HTML as a tree — clean any markup to what Telegram accepts, cut long text into valid parts by what the reader sees, check markup before it is sent |

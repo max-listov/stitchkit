@@ -4,7 +4,7 @@ description: Native IO для Bun и Node, с явно выбранной durabi
 type: guide
 status: active
 created: 2026-10-01 20:44 +07:00
-updated: 2026-10-04 09:40 +07:00
+updated: 2026-10-04 20:04 +07:00
 participants:
   - role: authored
     harness: Codex
@@ -281,6 +281,68 @@ no recognized native error code, the stage stays `load`; the loader never infers
 
 This delivery removes a runtime kernel installation; it does not remove the build-time
 Stitchkit installation or create an independent lightweight npm package.
+
+## Public native packaging
+
+Custom archives and installers use `stitchkit/files/packaging` at **build time**.
+`createNativePackaging` resolves the installed version and target addon with its original SHA256;
+its Bun-compatible plugin integrates that asset with the same lazy native loader.
+The leaf is evolving. It requires no optional peer or Bun ambient declarations for Node imports.
+It must run unbundled from its installed package, never from an application's runtime artifact.
+This contract is available from 0.104.1; versions 0.103.13–0.104.0 use the complete-output recipe
+in the previous section.
+
+```ts
+import { createNativePackaging } from 'stitchkit/files/packaging'
+import { createHash } from 'node:crypto'
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+
+const native = createNativePackaging({
+  platform: 'darwin', architecture: 'arm64', delivery: 'companion',
+  entryPath: 'app/native.js', assetPath: 'addons/owner.node',
+})
+if (native.state !== 'ready') throw new Error(native.code)
+const result = await Bun.build({
+  entrypoints: ['src/native.ts'], target: 'node', format: 'esm',
+  outdir: 'dist', naming: { entry: 'app/native.js' }, splitting: false,
+  plugins: [native.plugin],
+})
+if (!result.success) throw new AggregateError(result.logs, 'Build failed')
+// Preserve every result.outputs file under dist, then add the selected companion.
+for (const asset of native.assets) {
+  const bytes = readFileSync(asset.sourcePath)
+  if (createHash('sha256').update(bytes).digest('hex') !== asset.sha256)
+    throw new Error('Native asset changed during build')
+  const destination = join('dist', asset.outputPath)
+  mkdirSync(dirname(destination), { recursive: true })
+  copyFileSync(asset.sourcePath, destination)
+}
+```
+
+`entryPath` and `assetPath` are relative paths inside the application's output root, without
+absolute paths, traversal or overlapping file/directory paths. `entryPath` is fixed, without
+Bun naming templates such as `[dir]` or `[name]`. Companion JS builds require one entry, no splitting,
+and `naming.entry` exactly matching `entryPath`; the plugin rejects a mismatching layout.
+Choose any application layout; the framework does not prescribe an app directory or installer.
+Keep every bundler output, then verify copied addon bytes against the original SHA256.
+Archive the complete output directory with an integrity manifest, unpack to a clean directory,
+verify the same hashes there, and run offline without the build tree or `node_modules`.
+A digest provides integrity, not authenticity: signature and trust policy remain application-owned.
+
+For a standalone executable use `delivery: 'embedded'` and the same plugin in `Bun.build`
+with `compile: { outfile: ... }`. Bun embeds the selected addon; `assets` identifies its
+original bytes for qualification, not a companion that must be installed beside the executable.
+Cross-builds must select the requested architecture explicitly; the artifact must run on that target.
+The installed package must contain that target's addon. No automatic fallback/downgrade occurs.
+
+The API returns `unsupported` / `NATIVE_TARGET_UNSUPPORTED` for non-Darwin or unsupported
+architectures, and `missing` / `NATIVE_ASSET_MISSING` for a missing addon. Portable Linux libraries
+use their normal build, without a Darwin plugin; merely importing the build leaf loads no addon.
+Malformed inputs, unsupported metadata versions and other IO errors throw before packaging.
+Runtime missing/corrupt companions preserve the native `unavailable` result and safe stage/code
+from the existing observer; they never certify a dead owner. Preserve the raw cause internally.
+The plugin does not parse consumer JS or establish a second runtime native implementation.
 
 ## Qualification boundaries
 

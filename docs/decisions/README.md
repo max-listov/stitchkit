@@ -262,6 +262,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0230](0230-cli-publication-commits-assets-before-pointer.md) | CLI publication commits assets before the public pointer | Active — A bounded opt-in publisher reuses CLI manifest, signatures, exclusive locking and atomic filesystem publication. | I8, I9, I10, I11, I13 |
 | [0231](0231-mcp-server-leaf-has-no-ai-peer.md) | MCP server leaf has no AI SDK peer | Active — MCP declarations depend on the MCP SDK and neutral execution contracts, preserving full SDK presenters through typed construction. | I8, I9, I10, I13 |
 | [0232](0232-http-remote-retains-error-policy-and-caller-signal.md) | HTTP remote retains error policy and caller signal | Active — One typed client forwards caller cancellation and explicit error policy while actual origin completion remains separately observable. | I8, I9, I10, I13 |
+| [0233](0233-public-build-time-native-packaging.md) | Public build-time native packaging | Active — One native graph and loader serve custom companion layouts and embedded delivery. | I7, I8, I13, I14 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

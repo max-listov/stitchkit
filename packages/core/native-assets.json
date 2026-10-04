@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "loader": "darwin-native.cjs",
+  "assets": {
+    "arm64": "native/darwin-arm64.node",
+    "x64": "native/darwin-x64.node"
+  }
+}

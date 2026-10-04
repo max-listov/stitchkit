@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 if (process.platform !== 'darwin') {
@@ -19,9 +19,14 @@ const include = includeCandidates.find((candidate) =>
 if (!include)
   throw new Error('Unable to locate the Node-API headers for the active Node runtime');
 
-const outputDirectory = path.join(root, 'native');
+const layout = JSON.parse(readFileSync(path.join(root, 'native-assets.json'), 'utf8'));
+const asset = layout.assets[process.arch];
+if (typeof asset !== 'string') throw new Error('Unsupported native build architecture');
+const output = path.resolve(root, asset);
+if (!output.startsWith(`${root}/`))
+  throw new Error('Native output must remain in its package');
+const outputDirectory = path.dirname(output);
 mkdirSync(outputDirectory, { recursive: true });
-const output = path.join(outputDirectory, `darwin-${process.arch}.node`);
 execFileSync(
   process.env.CC ?? 'cc',
   [

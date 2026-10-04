@@ -15,6 +15,21 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.104.1] - 2026-10-04
+
+### Added
+
+- `stitchkit/files/packaging` — evolving build-only `createNativePackaging` resolves the
+  installed target addon, original SHA256 and a Bun-compatible plugin for custom companion
+  placement or embedded standalone delivery. Runtime leaves keep the same native owner;
+  archives, signing and installation policy remain application-owned. → ADR 0233
+
+### Documentation
+
+- The JS native-asset delivery migration first affected in 0.103.13 is explicit in the
+  [upgrade guide](docs/guide/upgrading.md#released-migration-010313), including single-file
+  packaging, complete output graphs and the distinct npm/JS/compiled delivery paths.
+
 ## [0.104.0] - 2026-10-04
 
 ### ⚠️ Breaking changes
@@ -111,6 +126,16 @@ native CLI commands and ordinary one-argument state transitions remain valid.
   The MCP leaf shares existing owners and gives strict MCP construction its own contracts.
 
 ## [0.103.13] - 2026-10-04
+
+### ⚠️ Delivery migration
+
+- `stitchkit/process`, `stitchkit/files` and contained-file tools in Bun JS distributions:
+  the static Darwin addon graph adds companion assets. This delivery change was published
+  as a patch, although packagers assuming one output must migrate:
+  `--outfile=dist/native.js` → `--outdir=dist --entry-naming=native.js` and retain all outputs.
+  Ordinary npm imports keep their package assets; Bun compiled executables embed them.
+  **Who must act:** custom JS packagers and installers, including single-archive delivery.
+  [Migration](docs/guide/upgrading.md#released-migration-010313).
 
 ### Fixed
 

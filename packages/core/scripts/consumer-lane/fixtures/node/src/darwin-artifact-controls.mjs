@@ -201,11 +201,16 @@ if (process.argv.includes('--identity-child')) {
 } else {
   if (standalone) {
     const expected = process.argv[process.argv.indexOf('--expected-native') + 1];
-    const asset = Bun.embeddedFiles.find(
-      (file) =>
-        path.basename(file.name).startsWith(`darwin-${process.arch}-`) &&
-        file.name.endsWith('.node'),
-    );
+    const matches = [];
+    for (const file of Bun.embeddedFiles) {
+      if (!file.name.endsWith('.node')) continue;
+      const digest = createHash('sha256')
+        .update(new Uint8Array(await file.arrayBuffer()))
+        .digest('hex');
+      if (digest === expected) matches.push(file);
+    }
+    assert.equal(matches.length, 1, 'Exactly one embedded addon must match the original hash');
+    const asset = matches[0];
     assert.ok(asset, 'Standalone artifact did not embed its native addon');
     assert.equal(
       createHash('sha256')
