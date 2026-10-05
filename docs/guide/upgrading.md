@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: CLI publication has its own entrypoint
+## Released migration: 0.105.0
+
+### CLI publication has its own entrypoint
 
 **Who must act:** code that imports `publishCli`, `CliPublicationOptions`, `CliPublicationPhase` or
 `CliPublicationResult` from `stitchkit/cli`. Everything else in `stitchkit/cli` — `createCli`, the
@@ -26,7 +28,7 @@ behaviour are the same.
 2. Type-check: an import left on `stitchkit/cli` fails with "has no exported member".
 3. `stitchkit/cli/publish` is evolving: read its breaking entries in each minor you upgrade across.
 
-## Unreleased migration: a command stops by its `stop` policy
+### a command stops by its `stop` policy
 
 **Who must act:** callers of `runNativeCommand` (`stitchkit/process`) that pass `killGraceMs`.
 Callers that omit it need no change: the default stop is the same TERM to the group, 100 ms, KILL.
@@ -47,7 +49,7 @@ Callers that omit it need no change: the default stop is the same TERM to the gr
 3. The result of a stopped command rejects once the group is gone, up to `graceMs` plus
    `cleanupTimeoutMs` after the abort; size your caller deadlines on that sum.
 
-## Unreleased migration: a command stops what its leader left
+### a command stops what its leader left
 
 **Who must act:** callers of `runNativeCommand` (`stitchkit/process`) whose command starts a helper
 in its own process group that must keep running after the command returns. A daemon that detaches
@@ -74,7 +76,7 @@ pipes drain.
    deadline. It now completes when the leader exits; drop a workaround that killed the helper from
    `onLeaderSettled`.
 
-## Unreleased migration: native packaging verifies published digests
+### native packaging verifies published digests
 
 **Who must act:** build scripts that call `createNativePackaging` (`stitchkit/files/packaging`) and
 read `asset.sourcePath`, hash the addon themselves, switch over the refusal `state`/`code`, pass a
@@ -121,7 +123,7 @@ differs refuses with `NATIVE_ASSET_DIGEST_MISMATCH`.
 5. If you read `native-assets.json` directly, read `assets.<arch>.path`, `.size` and `.sha256`
    instead of a bare path per architecture; an architecture with no entry is not published.
 
-## Unreleased migration: exclusive locks publish their owner first
+### exclusive locks publish their owner first
 
 **Who must act:** callers of `withExclusiveLock` (`stitchkit/files`) that rely on a lock file with no
 readable owner being taken by age, and anything that puts lock files on a filesystem without hard
@@ -146,7 +148,7 @@ to `null` instead of 5 000 ms: a lock file with no readable owner is never taken
    publishing it. It is not a lock; the next reclaim in that directory removes the ones whose owner
    is gone on this machine. Exclude the pattern from directory-size caps or backups if you have any.
 
-## Unreleased migration: one runtime-tool declaration
+### one runtime-tool declaration
 
 **Who must act:** code that names `RuntimeToolExecution`, `RuntimeToolExecutionWithOutput`,
 `RuntimeMcpToolDefinition`, `RuntimeMcpToolDefinitionWithOutput` or `ToolSurfaceDefinition`; code
@@ -205,7 +207,7 @@ extension, named as the fourth type argument. `RuntimeToolDefinition` is the one
    list written as text"). Send the array itself. A string that is not a list the array member accepts
    (`[preview].png`) is still one plain string.
 
-## Unreleased migration: flattened unions keep declaration order
+### flattened unions keep declaration order
 
 **Who must act:** consumers that use `flattenUnionInput: true` and keep snapshot tests, golden
 files or provider prompt caches of flattened tool schemas.
@@ -220,7 +222,7 @@ canonical order, independent of variant order.
 2. Expect one provider prompt-cache miss per flattened tool after the upgrade.
 3. To keep an order you prefer, declare the variants and fields in that order.
 
-## Unreleased migration: connection limits are validated
+### connection limits are validated
 
 **Who must act:** callers that pass `timeoutMs` or `maxResponseBytes` to a connection and relied
 on an invalid value silently becoming the default.
@@ -236,7 +238,7 @@ the default without a message.
 { timeoutMs: 30_000 }
 ```
 
-## Unreleased migration: one canonical JSON serializer
+### one canonical JSON serializer
 
 **Who must act:** tests that call `serializeSurfaceValue` from `stitchkit/testing`, and code that
 puts a value nested deeper than 100 levels into agent store events, archives or projections
@@ -272,7 +274,7 @@ a value nested deeper than 100 levels is now refused.
 //         canonicalAgentJson(nestedBeyond100Levels) throws CanonicalJsonError (reason 'depth')
 ```
 
-## Unreleased migration: directory inbox entries
+### directory inbox entries
 
 **Who must act:** producers that drop hard links into an inbox directory, and callers that pass
 `accept` the output of a transforming schema.
@@ -295,7 +297,7 @@ const schema = z.object({ amount: z.string().transform(Number) })
 A name that is already in `rejected/` no longer stops the pass: identical bytes are the entry
 already set aside, different bytes are kept as `rejected/<name>.<16 hex digits>`.
 
-## Unreleased migration: journal startup scan
+### journal startup scan
 
 **Who must act:** operators that read `status.recovery` right after `createDiagnosticJournal` to
 find damaged rows in the middle of a file.
@@ -312,7 +314,7 @@ grows with the bytes retained, at read speed. Pass `startupScan: 'full'` to read
 const journal = await createDiagnosticJournal({ path, eventSchema, limits, startupScan: 'full' })
 ```
 
-## Unreleased migration: journal startup quarantine
+### journal startup quarantine
 
 **Who must act:** operators of a journal that is a source of truth and must not start over
 damaged retained files; code that constructs `DiagnosticJournalRecoveryError` or reads its
@@ -354,7 +356,7 @@ every later open lists them again, without a `reason`, until you remove them.
    The schema is `.strict()`: upgrade every reader that parses it with its own copy before a
    writer on this version sends a status with either field, or bump your protocol version.
 
-## Unreleased migration: error constructors take named options
+### error constructors take named options
 
 **Who must act:** code that constructs an `AppError` or an `ApiError` with anything beyond its
 code, and classes that extend `AppError` and call `super(code, message, status, …)`. Code that

@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.105.0] - 2026-10-05
+
 ### ⚠️ Breaking changes
 
 **Who must act:** consumers who bundle `stitchkit/files`, `stitchkit/process` or contained-file
@@ -40,7 +42,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// before: import { publishCli, type CliPublicationOptions } from 'stitchkit/cli'` →
   `// after: import { publishCli, type CliPublicationOptions } from 'stitchkit/cli/publish'`
   **Who must act:** code that imports `publishCli` or a `CliPublication*` type from
-  `stitchkit/cli`. See [migration](docs/guide/upgrading.md#unreleased-migration-cli-publication-has-its-own-entrypoint).
+  `stitchkit/cli`. See [migration](docs/guide/upgrading.md#cli-publication-has-its-own-entrypoint).
   → ADR 0245
 
 - `stitchkit/process` — **`killGraceMs` becomes the `stop` policy.** How a cancelled command
@@ -66,7 +68,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// after: runNativeCommand({ …, timeoutMs, descendants: 'leave' })`
   **Who must act:** callers whose command starts a helper in its own process group that must
   keep running after the command returns. See
-  [migration](docs/guide/upgrading.md#unreleased-migration-a-command-stops-what-its-leader-left).
+  [migration](docs/guide/upgrading.md#a-command-stops-what-its-leader-left).
   → ADR 0246
 
 - `stitchkit/server`, `stitchkit/files`, `stitchkit/process` — **bundles no longer emit Darwin
@@ -104,7 +106,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   **Who must act:** build scripts that read `asset.sourcePath`, re-hash the addon themselves,
   switch over the refusal `code`/`state`, parse `native-assets.json`, or pass a `platform` other
   than the literal `'darwin'`.
-  See [migration](docs/guide/upgrading.md#unreleased-migration-native-packaging-verifies-published-digests).
+  See [migration](docs/guide/upgrading.md#native-packaging-verifies-published-digests).
   → ADR 0241
 - `stitchkit/files` — **`withExclusiveLock` publishes its lock with the owner already recorded,
   and `ownerlessGraceMs` defaults to `null`.** The owner record is written to a temporary file
@@ -117,7 +119,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `.lock-*.tmp` sibling that the next reclaim removes.
   **Who must act:** callers that relied on the age-based reclaim of an empty or unreadable lock
   file, and locks on a filesystem without hard links; every other caller is unaffected.
-  See [migration](docs/guide/upgrading.md#unreleased-migration-exclusive-locks-publish-their-owner-first).
+  See [migration](docs/guide/upgrading.md#exclusive-locks-publish-their-owner-first).
   → ADR 0238
 - `stitchkit/tools/connections` — **a `timeoutMs` or `maxResponseBytes` that is not a positive
   integer within range throws a `RangeError`** instead of falling back to the default. This
@@ -125,14 +127,14 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// before: timeoutMs: 0  (the default applied silently)` →
   `// after: timeoutMs: 0  (RangeError; omit the option to take the default)`
   **Who must act:** callers that passed 0, a negative, a fractional or an oversized limit.
-  See [migration](docs/guide/upgrading.md#unreleased-migration-connection-limits-are-validated).
+  See [migration](docs/guide/upgrading.md#connection-limits-are-validated).
 - `stitchkit/testing` — **`serializeSurfaceValue` is removed.** It was a second name for the
   package's one canonical serializer. `canonicalJson` from `stitchkit/primitives` is that
   serializer, bounded and with a typed refusal:
   `// before: serializeSurfaceValue(manifest)` →
   `// after: canonicalJson(manifest, { maxBytes: 16 * 1024 * 1024 })`
   **Who must act:** tests that call `serializeSurfaceValue`.
-  See [migration](docs/guide/upgrading.md#unreleased-migration-one-canonical-json-serializer).
+  See [migration](docs/guide/upgrading.md#one-canonical-json-serializer).
   → ADR 0199, ADR 0238
 - `stitchkit/agent-runtime` — **`canonicalAgentJson` follows the one admissibility table of
   `canonicalJson`.** A value nested deeper than 100 levels is refused with a
@@ -144,7 +146,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// after: canonicalAgentJson({ a: undefined }) === '{}', a 101-level value throws (reason 'depth')`
   **Who must act:** code that puts a value nested deeper than 100 levels into agent store events,
   archives or projections. See
-  [migration](docs/guide/upgrading.md#unreleased-migration-one-canonical-json-serializer).
+  [migration](docs/guide/upgrading.md#one-canonical-json-serializer).
 - `stitchkit/application` — **`DirectoryInbox` sets a hard-linked entry file aside as
   `invalid`, and `accept` takes the schema's input type.** A dropped file with more than one
   link is never trusted, because another name can still rewrite it (since 0.104.0, without a
@@ -156,7 +158,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// after: accept({ ...identity, entry: { amount: '42' } })  (the input; it is stored as given and parsed on delivery)`
   **Who must act:** producers that drop hard links into an inbox directory, and callers that pass
   `accept` the output of a transforming schema.
-  See [migration](docs/guide/upgrading.md#unreleased-migration-directory-inbox-entries).
+  See [migration](docs/guide/upgrading.md#directory-inbox-entries).
 - `stitchkit/application` — **`createDiagnosticJournal` checks only the last line of each file
   when it opens** (`startupScan: 'tails'`, the default), so opening no longer parses and
   validates every line of every retained generation. The scan still reads each file once in
@@ -166,7 +168,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// before: createDiagnosticJournal({ path, eventSchema, limits })  (every line of every file was parsed)` →
   `// after: createDiagnosticJournal({ path, eventSchema, limits, startupScan: 'full' })  (the same full scan)`
   **Who must act:** operators that read `recovery` at startup to find damaged rows in the middle
-  of a file. See [migration](docs/guide/upgrading.md#unreleased-migration-journal-startup-scan).
+  of a file. See [migration](docs/guide/upgrading.md#journal-startup-scan).
 - `stitchkit/application/diagnostic-journal`, `stitchkit/application` — **opening a diagnostic
   journal moves a file it cannot keep in place aside and starts, instead of refusing to start.**
   A torn active file with `maxFiles: 1`, a generation name that is not a regular file and a
@@ -187,7 +189,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   **Who must act:** operators of a journal that is a source of truth and must not start over
   damage (declare `'fail'`); code that constructs `DiagnosticJournalRecoveryError` or reads its
   `recovery`; protocols that embed `DiagnosticJournalRecoveryStatusSchema` and their readers.
-  See [migration](docs/guide/upgrading.md#unreleased-migration-journal-startup-quarantine).
+  See [migration](docs/guide/upgrading.md#journal-startup-quarantine).
   → ADR 0240
 
 - `stitchkit/cli`, `stitchkit/tools`, `stitchkit/tools/mcp` — **one runtime-tool declaration.**
@@ -208,7 +210,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   presenters as `RuntimeToolDefinitionWithOutput<I, O>` from `stitchkit/tools` (use `defineRuntimeTool`
   or pass the presenter type as the fourth argument). Values returned by `defineRuntimeTool` and
   `createRuntimeToolFactory` need no change.
-  See [migration](docs/guide/upgrading.md#unreleased-migration-one-runtime-tool-declaration).
+  See [migration](docs/guide/upgrading.md#one-runtime-tool-declaration).
   → ADR 0236, ADR 0238
 - `stitchkit/tools`, `stitchkit/tools/mcp` — **a flattened union keeps declaration order.**
   With `flattenUnionInput: true`, properties, enum values and branch labels are advertised in the
@@ -219,7 +221,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// after: the same union → properties kind, z, a; kind enum b|a`
   **Who must act:** consumers with snapshot tests or caches of flattened tool schemas, and
   anyone using `flattenUnionInput: true`: regenerate the snapshots.
-  See [migration](docs/guide/upgrading.md#unreleased-migration-flattened-unions-keep-declaration-order).
+  See [migration](docs/guide/upgrading.md#flattened-unions-keep-declaration-order).
   → ADR 0238
 - `stitchkit/tools`, `stitchkit/cli` — **a list written as text is refused in every
   string-or-array field.** `coerceJsonArgs`, and so every tool surface, throws a validation error
@@ -237,7 +239,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// before: tools: createAgentHarnessTools(({ context }) => ({ services: [svc], context }))` →
   `// after: tools: ({ context, toolFenceLifecycle }) => mountAgent([svc], { context, lifecycle: composeToolLifecycle(undefined, toolFenceLifecycle) })`
   **Who must act:** imports of `stitchkit/agent-runtime/harness-tools`. See
-  [migration](docs/guide/upgrading.md#unreleased-migration-one-runtime-tool-declaration).
+  [migration](docs/guide/upgrading.md#one-runtime-tool-declaration).
 - `stitchkit/agent-runtime/realtime`, `stitchkit/agent-runtime/browser` — **control errors use one
   vocabulary, and the binding authorizes requests, not events.** `ACCESS_DENIED` is `FORBIDDEN`, and
   a closed connection answers `CONNECTION_CLOSED` instead of a denial. `AgentControlErrorCode`
@@ -262,7 +264,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   the standard `cause`. A subclass calls `super(code, { message, status })` the same way.
   **Who must act:** code that constructs an `AppError` or extends it with more than the code.
   The `notFound`, `badRequest`, `unauthorized`, `forbidden`, `conflict` and `rateLimited` helpers
-  are unchanged. See [migration](docs/guide/upgrading.md#unreleased-migration-error-constructors-take-named-options).
+  are unchanged. See [migration](docs/guide/upgrading.md#error-constructors-take-named-options).
   → ADR 0238
 - `stitchkit` — **`ApiError` takes its fields by name.** The constructor had eight positions
   and call sites ended in `undefined, undefined, retryable`. The code stays first and the rest
@@ -273,7 +275,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `cause`. **Who must act:** code that constructs an `ApiError`, which is mostly tests and
   custom transports; code that only reads `code`, `status`, `details`, `hint`, `traceId`,
   `retryable` or `cause` is unaffected. See
-  [migration](docs/guide/upgrading.md#unreleased-migration-error-constructors-take-named-options).
+  [migration](docs/guide/upgrading.md#error-constructors-take-named-options).
   → ADR 0238
 
 ### Added

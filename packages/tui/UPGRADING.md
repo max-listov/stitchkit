@@ -1,6 +1,8 @@
 # Upgrading stitchkit-tui
 
-## Unreleased migration: stitchkit is a peer
+## Released migration: 0.2.0
+
+### stitchkit is a peer
 
 **Who must act:** projects that install `stitchkit-tui` without listing `stitchkit` themselves.
 

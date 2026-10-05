@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-05
+
 ### ⚠️ Breaking changes
 
 **Who must act:** projects that install `stitchkit-tui` without listing `stitchkit` in their own
