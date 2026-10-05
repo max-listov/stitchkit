@@ -10,8 +10,9 @@
 import type { Transport } from '../contract/define';
 import { ALL_TRANSPORTS, TOOL_TRANSPORTS } from '../contract/define';
 import type { ServiceDef } from '../server/types';
-import type { RuntimeToolDefinition } from './runtime-tool';
-import { collectToolSurface, type ToolSurfaceDefinition } from './surface';
+import type { ToolSurfaceProjection } from './internal/surface-projector';
+import type { RuntimeToolDefinition } from './runtime-tool-declaration';
+import { collectToolSurface } from './surface';
 
 /** Operation counts per transport, for one service or the whole fleet. */
 export type TransportCounts = Record<Transport, number>;
@@ -70,7 +71,9 @@ function addCounts(target: TransportCounts, source: TransportCounts): void {
   for (const transport of ALL_TRANSPORTS) target[transport] += source[transport];
 }
 
-export function summarizeTransports(surface: ToolSurfaceDefinition): TransportSummary {
+export function summarizeTransports(
+  surface: ToolSurfaceProjection<RuntimeToolDefinition>,
+): TransportSummary {
   const totals = emptyCounts();
   const sources: TransportSummary['sources'] = [];
 

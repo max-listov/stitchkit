@@ -93,7 +93,7 @@ describe('flattened tool surfaces retain structural alternatives', () => {
       );
       expect(projected.required).toEqual(['kind']);
       expect(field(projected, 'media').description).toBe(
-        'Available if kind = mediaGroup | message. Required if kind = mediaGroup',
+        'Available if kind = message | mediaGroup. Required if kind = mediaGroup',
       );
       expectTypedArrays(schema);
     }
@@ -174,7 +174,7 @@ describe('flattened tool surfaces retain structural alternatives', () => {
     expect(manifest.type).toBe('object');
     expect(manifest.oneOf).toBeUndefined();
     expect(manifest.anyOf).toBeUndefined();
-    expect(field(manifest, 'kind').enum).toEqual(['mediaGroup', 'message']);
+    expect(field(manifest, 'kind').enum).toEqual(['message', 'mediaGroup']);
     const run = mounted.execute;
     if (typeof run !== 'function') throw new Error('expected executable tool');
     const execute = (value: unknown) =>

@@ -207,7 +207,11 @@ describe('executeToolMethod', () => {
   test('handler AppError → structured error', async () => {
     const method = makeMethod({
       handler: () => {
-        throw new AppError('NOT_FOUND', 'User not found', 404, undefined, 'Try list endpoint');
+        throw new AppError('NOT_FOUND', {
+          message: 'User not found',
+          status: 404,
+          hint: 'Try list endpoint',
+        });
       },
     });
 
@@ -417,7 +421,7 @@ describe('executeToolMethod', () => {
       {
         lifecycle: {
           beforeHandle: () => {
-            throw new AppError('FORBIDDEN', 'denied', 403);
+            throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
           },
         },
       },

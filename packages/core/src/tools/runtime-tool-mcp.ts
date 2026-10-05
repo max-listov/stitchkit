@@ -1,10 +1,4 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
-import type { ZodObject, ZodType, z } from 'zod';
-import type { EndpointMcpPolicy } from '../contract/tool-options';
-import type {
-  RuntimeToolExecution,
-  RuntimeToolExecutionWithOutput,
-} from './runtime-tool-execution';
 
 /**
  * Preserve the SDK's required content and metadata despite its extension index.
@@ -15,23 +9,11 @@ export type RuntimeMcpPresentation = CallToolResult & {
   isError?: never;
 };
 
-export interface RuntimeMcpToolPresenters<TOutput> {
-  mcp?: (output: TOutput) => RuntimeMcpPresentation | Promise<RuntimeMcpPresentation>;
-}
-
-/** Schema-aware construction for an MCP tool without an AI SDK declaration. */
-export interface RuntimeMcpToolDefinitionWithOutput<
-  TInput extends ZodObject,
-  TOutput extends ZodType,
-  TMcp extends EndpointMcpPolicy | undefined = undefined,
-> extends RuntimeToolExecutionWithOutput<TInput, TOutput, TMcp> {
-  present?: RuntimeMcpToolPresenters<z.output<TOutput>>;
-}
-
 /**
- * Heterogeneous registration retains typed definitions. The canonical runner
- * parses input and output before invoking either erased function.
+ * The MCP presenters a tool declaration may carry as its `present` extension.
+ * Declared as methods so a presenter written for one tool's output registers
+ * beside the others; the canonical runner validates the output before it calls one.
  */
-export type RuntimeMcpToolDefinition = RuntimeToolExecution & {
-  present?: RuntimeMcpToolPresenters<never>;
-};
+export interface RuntimeMcpToolPresenters<TOutput> {
+  mcp?(output: TOutput): RuntimeMcpPresentation | Promise<RuntimeMcpPresentation>;
+}

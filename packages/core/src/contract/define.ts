@@ -1,4 +1,5 @@
 import type { ZodType } from 'zod';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { resolveRouteParamsSchema } from '../internal/route-pattern';
 import type { MultipartDescriptor } from './client-types';
 import {
@@ -407,14 +408,11 @@ export function defineContract(
       throw new Error(`Contract "${meta.prefix}": endpoint "${key}" has an empty desc`);
     }
 
-    if (
-      ep.maxJsonBodyBytes !== undefined &&
-      (!Number.isSafeInteger(ep.maxJsonBodyBytes) || ep.maxJsonBodyBytes <= 0)
-    ) {
-      throw new Error(
-        `Contract "${meta.prefix}": endpoint "${key}" maxJsonBodyBytes must be a positive safe integer, received ${ep.maxJsonBodyBytes}`,
-      );
-    }
+    assertPositiveSafeInteger(
+      `Contract "${meta.prefix}": endpoint "${key}" maxJsonBodyBytes`,
+      ep.maxJsonBodyBytes,
+      Error,
+    );
 
     if (ep.multipart) assertMultipartEndpoint(meta.prefix, key, ep);
 

@@ -14,7 +14,7 @@ import {
   existingCodingPath,
 } from './coding-tool-paths';
 import { codingRefusal } from './coding-tool-refusals';
-import { missingSandboxRestrictions, probeAgentProcessSandbox } from './sandbox';
+import { missingSandboxRestrictions, probeAgentProcessSandboxOutcome } from './sandbox';
 
 export function createShellCodingTool(
   config: AgentCodingToolConfig,
@@ -71,13 +71,18 @@ export function createShellCodingTool(
       let executableArgs = input.args;
       let environment = config.environment ?? {};
       if (config.sandbox) {
-        const grade = await probeAgentProcessSandbox(config.sandbox.adapter);
+        // An adapter's error carries paths and raw tool output: it rides on the refusal as its
+        // `cause`, which the mount's `onToolError` hook receives, and the agent sees a fixed
+        // reason.
+        const probed = await probeAgentProcessSandboxOutcome(config.sandbox.adapter);
+        const grade = probed.grade;
         if (grade.grade === 'unavailable') {
           codingRefusal(
             'SANDBOX_UNAVAILABLE',
             'The configured process sandbox is unavailable',
             {
               details: { reason: grade.reason },
+              ...(probed.cause !== undefined && { cause: probed.cause }),
             },
           );
         }
@@ -103,17 +108,21 @@ export function createShellCodingTool(
           executableArgs = [...prepared.args];
           environment = prepared.environment ?? environment;
         } catch (error) {
-          const refreshed = await probeAgentProcessSandbox(config.sandbox.adapter, {
+          const refreshed = await probeAgentProcessSandboxOutcome(config.sandbox.adapter, {
             refresh: true,
           });
           codingRefusal(
             'SANDBOX_UNAVAILABLE',
             'The process sandbox failed while preparing a command',
             {
-              details: {
-                grade: refreshed.grade,
-                reason: error instanceof Error ? error.message : 'unknown sandbox error',
-              },
+              details: { grade: refreshed.grade.grade, reason: 'sandbox prepare failed' },
+              cause:
+                refreshed.cause === undefined
+                  ? error
+                  : new AggregateError(
+                      [error, refreshed.cause],
+                      'Sandbox prepare failed and probing it again failed',
+                    ),
             },
           );
         }

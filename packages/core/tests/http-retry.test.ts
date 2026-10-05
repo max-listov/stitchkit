@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test';
 import ky, { NetworkError, TimeoutError } from 'ky';
 import { z } from 'zod';
-import { ApiError, shouldRetryBunNetworkError } from '../src/browser/http';
+import { ApiError } from '../src/browser/api-error';
+import { shouldRetryBunNetworkError } from '../src/browser/http';
 
 const ProbeResultSchema = z.object({
   lateServer: z.object({
@@ -146,7 +147,9 @@ test('Bun classifier is exact, own-property-only and leaves Ky semantics untouch
   expect(shouldRetryBunNetworkError(accessor)).toBeUndefined();
   expect(accessorRead).toBe(false);
 
-  expect(shouldRetryBunNetworkError(new ApiError('ConnectionRefused', 401))).toBeUndefined();
+  expect(
+    shouldRetryBunNetworkError(new ApiError('ConnectionRefused', { status: 401 })),
+  ).toBeUndefined();
   expect(
     shouldRetryBunNetworkError(new NetworkError(new Request('http://localhost'))),
   ).toBeUndefined();

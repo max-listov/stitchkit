@@ -17,7 +17,7 @@ const contract = defineContract(
     },
   },
 );
-const original = new AppError('UNAUTHORIZED', 'Unauthorized', 401);
+const original = new AppError('UNAUTHORIZED', { message: 'Unauthorized', status: 401 });
 const hookFailure = new Error('private error hook failure');
 const service = implement(contract, {
   save: () => {

@@ -58,15 +58,17 @@ export type CodingRefusalCode = (typeof REFUSAL_CODES)[number];
 export function codingRefusal(
   code: CodingRefusalCode,
   message: string,
-  options: { details?: Record<string, unknown>; hint?: string } = {},
+  options: { details?: Record<string, unknown>; hint?: string; cause?: unknown } = {},
 ): never {
-  throw new AppError(
-    code,
+  throw new AppError(code, {
     message,
-    STITCH_ERROR_STATUS[code],
-    { message, ...options.details },
-    options.hint,
-  );
+    status: STITCH_ERROR_STATUS[code],
+    details: { message, ...options.details },
+    hint: options.hint,
+    // The internal cause stays on the thrown error for the mount's `onToolError` and
+    // `afterToolCall` hooks; the tool envelope carries only code, details and hint.
+    ...('cause' in options && { cause: options.cause }),
+  });
 }
 
 /** The workspace path a refusal may name — never a host path. */

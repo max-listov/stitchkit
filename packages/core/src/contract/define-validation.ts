@@ -1,16 +1,7 @@
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { isUnsafeKey } from '../internal/safe-json';
 import type { EndpointDef } from './define';
 import type { EndpointToolOptions } from './tool-options';
-
-export function assertPositiveLimit(
-  where: string,
-  name: string,
-  value: number | undefined,
-): void {
-  if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
-    throw new Error(`${where} ${name} must be a positive safe integer, received ${value}`);
-  }
-}
 
 /** Multipart is one declarative HTTP-only request boundary. */
 export function assertMultipartEndpoint(prefix: string, key: string, ep: EndpointDef): void {
@@ -22,15 +13,15 @@ export function assertMultipartEndpoint(prefix: string, key: string, ep: Endpoin
   if (!multipart || typeof multipart !== 'object') {
     throw new Error(`${where} must declare a multipart descriptor`);
   }
-  assertPositiveLimit(where, 'maxRequestBytes', multipart.maxRequestBytes);
-  assertPositiveLimit(where, 'maxFieldBytes', multipart.maxFieldBytes);
+  assertPositiveSafeInteger(`${where} maxRequestBytes`, multipart.maxRequestBytes, Error);
+  assertPositiveSafeInteger(`${where} maxFieldBytes`, multipart.maxFieldBytes, Error);
   const entries = Object.entries(multipart.files);
   if (entries.length === 0) throw new Error(`${where} must declare at least one file field`);
   for (const [field, policy] of entries) {
     if (!field || isUnsafeKey(field))
       throw new Error(`${where} has an invalid file field name`);
-    assertPositiveLimit(`${where} field "${field}"`, 'maxBytes', policy.maxBytes);
-    assertPositiveLimit(`${where} field "${field}"`, 'maxFiles', policy.maxFiles);
+    assertPositiveSafeInteger(`${where} field "${field}" maxBytes`, policy.maxBytes, Error);
+    assertPositiveSafeInteger(`${where} field "${field}" maxFiles`, policy.maxFiles, Error);
     if (policy.multiple !== true && policy.maxFiles !== undefined) {
       throw new Error(`${where} field "${field}" may set maxFiles only with multiple: true`);
     }
@@ -92,9 +83,9 @@ export function assertStreamingResponseEndpoint(
   if (runtimeFinalLine === 'require-newline' && runtimeFormat === 'sse') {
     throw new Error(`${where} finalLine applies only to ndjson`);
   }
-  assertPositiveLimit(where, 'maxFrameBytes', ep.stream.maxFrameBytes);
-  assertPositiveLimit(where, 'lifetimeMs', ep.stream.lifetimeMs);
-  assertPositiveLimit(where, 'heartbeatMs', ep.stream.heartbeatMs);
+  assertPositiveSafeInteger(`${where} maxFrameBytes`, ep.stream.maxFrameBytes, Error);
+  assertPositiveSafeInteger(`${where} lifetimeMs`, ep.stream.lifetimeMs, Error);
+  assertPositiveSafeInteger(`${where} heartbeatMs`, ep.stream.heartbeatMs, Error);
   if (
     ep.stream.idleTimeoutSeconds !== undefined &&
     (!Number.isSafeInteger(ep.stream.idleTimeoutSeconds) || ep.stream.idleTimeoutSeconds < 0)

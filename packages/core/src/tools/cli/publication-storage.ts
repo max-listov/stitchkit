@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, opendir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, opendir, realpath, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import {
@@ -6,6 +6,7 @@ import {
   type ManagedFileBoundary,
   ManagedFileError,
 } from '../../files/boundary';
+import { assertDirectoryDurability, syncDirectory } from '../../internal/atomic-publication';
 import { type CliBuildManifest, CliBuildManifestSchema } from './manifest';
 import { decodeCliAsset } from './publication-assets';
 import {
@@ -52,8 +53,7 @@ export async function bindPublicationStorage(
   signal: AbortSignal,
 ): Promise<PublicationStorage> {
   signal.throwIfAborted();
-  if (process.platform === 'win32')
-    throw new Error('CLI publication needs directory durability, unsupported on Windows');
+  assertDirectoryDurability();
   const requested = resolve(data.storageRoot);
   try {
     await mkdir(requested, { mode: 0o700 });
@@ -122,13 +122,16 @@ export async function readPublicationManifest(
   }
 }
 
-export async function verifyPublicationVersion(
-  storage: PublicationStorage,
+/**
+ * Everything a version's manifest must satisfy on its own: identity, the layout
+ * the publisher writes, and asset URLs. Returns the file names the version
+ * directory must hold. Reads nothing.
+ */
+export function assertPublicationManifest(
   record: PublicationManifest,
   data: PublicationData,
-  signal: AbortSignal,
   exactTargets: boolean,
-): Promise<void> {
+): string[] {
   const { manifest } = record;
   PublicationVersionSchema.parse(manifest.version);
   if (
@@ -137,8 +140,6 @@ export async function verifyPublicationVersion(
     manifest.assets.length > data.limits.maxTargets
   )
     throw new Error('CLI version identity or target count is invalid');
-  const directory = join(storage.root, manifest.version);
-  const generation = await directoryGeneration(directory);
   const expected = manifest.assets.map((asset) => assetFilename(data.name, asset));
   if (
     new Set(expected).size !== expected.length ||
@@ -153,17 +154,6 @@ export async function verifyPublicationVersion(
     if (JSON.stringify(requested) !== JSON.stringify([...expected].sort()))
       throw new Error('CLI publication target set differs from existing version');
   }
-  const names = await directoryNames(directory, data.limits.maxDirectoryEntries, signal);
-  if (JSON.stringify(names) !== JSON.stringify([...expected, 'manifest.json'].sort()))
-    throw new Error('CLI version has unknown or missing files');
-  const saved = await readPublicationManifest(
-    storage,
-    `${manifest.version}/manifest.json`,
-    data,
-    signal,
-  );
-  if (!saved || !Buffer.from(saved.bytes).equals(Buffer.from(record.bytes)))
-    throw new Error('CLI version manifest differs from publication');
   for (const asset of manifest.assets) {
     const file = assetFilename(data.name, asset);
     const url = new URL(asset.url);
@@ -178,6 +168,55 @@ export async function verifyPublicationVersion(
       (exactTargets && asset.url !== assetUrl(data.baseUrl, manifest.version, file))
     )
       throw new Error('CLI asset URL differs from owned version layout');
+  }
+  return expected;
+}
+
+/** The version directory holds exactly the manifest's files and the manifest it was published with. */
+async function assertStoredLayout(
+  storage: PublicationStorage,
+  record: PublicationManifest,
+  expected: readonly string[],
+  data: PublicationData,
+  signal: AbortSignal,
+): Promise<void> {
+  const version = record.manifest.version;
+  const names = await directoryNames(
+    join(storage.root, version),
+    data.limits.maxDirectoryEntries,
+    signal,
+  );
+  if (JSON.stringify(names) !== JSON.stringify([...expected, 'manifest.json'].sort()))
+    throw new Error('CLI version has unknown or missing files');
+  const saved = await readPublicationManifest(
+    storage,
+    `${version}/manifest.json`,
+    data,
+    signal,
+  );
+  if (!saved || !Buffer.from(saved.bytes).equals(Buffer.from(record.bytes)))
+    throw new Error('CLI version manifest differs from publication');
+}
+
+/**
+ * Prove a stored version whole: its layout, then every asset decompressed to its
+ * declared size and digest. Decompression is the expensive part, so one
+ * publication proves each stored version once and passes the result on.
+ */
+export async function verifyPublicationVersion(
+  storage: PublicationStorage,
+  record: PublicationManifest,
+  data: PublicationData,
+  signal: AbortSignal,
+  exactTargets: boolean,
+): Promise<void> {
+  const { manifest } = record;
+  const expected = assertPublicationManifest(record, data, exactTargets);
+  const directory = join(storage.root, manifest.version);
+  const generation = await directoryGeneration(directory);
+  await assertStoredLayout(storage, record, expected, data, signal);
+  for (const asset of manifest.assets) {
+    const file = assetFilename(data.name, asset);
     const archived = await storage.files.read(`${manifest.version}/${file}`, {
       rejectSymlinks: true,
       singleLink: true,
@@ -222,16 +261,11 @@ export async function publicationHistory(
   return history;
 }
 
-export async function syncPublicationDirectory(path: string): Promise<void> {
-  const handle = await open(path, 'r');
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-/** Only a fully verified, unchanged publisher-owned directory is removable. */
+/**
+ * Remove a stored version that `publicationHistory` already proved whole in this
+ * transaction. Only the cheap facts are checked again — the directory is still
+ * the same one and still holds exactly the proven files — before it is removed.
+ */
 export async function removePublicationVersion(
   storage: PublicationStorage,
   version: OwnedVersion,
@@ -239,7 +273,47 @@ export async function removePublicationVersion(
   signal: AbortSignal,
 ): Promise<void> {
   await storage.assertRoot();
-  await verifyPublicationVersion(storage, version, data, signal, false);
+  const generation = await directoryGeneration(version.directory);
+  await assertStoredLayout(
+    storage,
+    version,
+    assertPublicationManifest(version, data, false),
+    data,
+    signal,
+  );
+  await assertDirectory(version.directory, generation);
   await rm(version.directory, { recursive: true });
-  await syncPublicationDirectory(storage.root);
+  await syncDirectory(storage.root);
+}
+
+/** A staging directory made by `publishCli`: `mkdtemp` appends six random characters. */
+const STAGING_NAME = /^\.publish-[A-Za-z0-9]{6}$/;
+
+/**
+ * Remove staging directories left by a publisher that died mid-build. Call it
+ * only while holding the publication lock: the lock admits one publisher, so
+ * every staging directory present then belongs to a publisher that is gone.
+ * Returns how many were removed.
+ */
+export async function reclaimPublicationStaging(
+  storage: PublicationStorage,
+  signal: AbortSignal,
+): Promise<number> {
+  await storage.assertRoot();
+  const stale: string[] = [];
+  const directory = await opendir(storage.root);
+  try {
+    for await (const entry of directory) {
+      signal.throwIfAborted();
+      if (STAGING_NAME.test(entry.name) && entry.isDirectory()) stale.push(entry.name);
+    }
+  } finally {
+    await directory.close().catch(() => undefined);
+  }
+  for (const name of stale) {
+    signal.throwIfAborted();
+    await rm(join(storage.root, name), { recursive: true });
+  }
+  if (stale.length > 0) await syncDirectory(storage.root);
+  return stale.length;
 }

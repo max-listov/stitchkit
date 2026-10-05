@@ -1,10 +1,16 @@
-/** OS process lifetime evidence; timestamps and PID presence alone never establish ownership. */
+/**
+ * OS process lifetime evidence; timestamps and PID presence alone never establish ownership.
+ */
 import { readFile, readlink } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { z } from 'zod';
 import { loadDarwinBinding } from './darwin-binding';
 import { probeLiveness } from './process-identity';
 
+/**
+ * Identity of one running process (boot id, PID namespace, start tick); a bare PID can be
+ * reused, this triple cannot.
+ */
 export const ProcessInstanceSchema = z
   .object({
     platform: z.enum(['linux', 'darwin']),
@@ -13,23 +19,42 @@ export const ProcessInstanceSchema = z
     startId: z.string().regex(/^\d+$/),
   })
   .strict();
+/**
+ * A process identity to store next to its PID, so a later check can tell the same process from
+ * a reused PID.
+ */
 export type ProcessInstance = z.infer<typeof ProcessInstanceSchema>;
 
-/** An unavailable observation preserves its native or validation cause; it never proves death. */
+/**
+ * An unavailable observation preserves its native or validation cause; it never proves death.
+ */
 const ProcessInstanceObservationSchema = z.discriminatedUnion('state', [
   z.object({ state: z.literal('observed'), instance: ProcessInstanceSchema }),
   z.object({ state: z.literal('unavailable'), cause: z.unknown() }),
 ]);
+/** Process ids are signed 32-bit integers. */
+const MAX_PID = 2 ** 31 - 1;
+
+/**
+ * Result of `observeProcessInstance`: `observed` with the identity, or `unavailable` with the
+ * cause; unavailable never proves the process is dead.
+ */
 export type ProcessInstanceObservation = z.infer<typeof ProcessInstanceObservationSchema>;
 
+/**
+ * Reads the identity of a running process on Linux or macOS; resolves `unavailable` instead of
+ * throwing when the platform cannot say, and rejects an invalid PID.
+ */
 export async function observeProcessInstance(
   pid: number,
 ): Promise<ProcessInstanceObservation> {
-  z.number().int().positive().max(2_147_483_647).parse(pid);
+  z.number().int().positive().max(MAX_PID).parse(pid);
   return observeProcessInstanceAt(pid, '/proc');
 }
 
-/** /proc stat field 22 follows a command name that may itself contain spaces and parentheses. */
+/**
+ * /proc stat field 22 follows a command name that may itself contain spaces and parentheses.
+ */
 export function linuxProcessStart(stat: string, pid: number): string | null {
   if (!stat.startsWith(`${pid} (`)) return null;
   const end = stat.lastIndexOf(')');
@@ -41,7 +66,9 @@ export function linuxProcessStart(stat: string, pid: number): string | null {
   return start !== undefined && /^\d+$/.test(start) ? start : null;
 }
 
-/** @internal procRoot permits kernel-format fixtures without changing a real process or boot. */
+/**
+ * @internal procRoot permits kernel-format fixtures without changing a real process or boot.
+ */
 export async function readProcessInstance(
   pid: number,
   procRoot = '/proc',
@@ -122,14 +149,20 @@ const ProcessOwnerEvidenceSchema = z.object({
   ]),
   cause: z.unknown().optional(),
 });
+/**
+ * What `probeProcessOwner` found: whether the PID is alive and whether it is still the
+ * recorded process; only `identity: 'matched'` means the same process.
+ */
 export type ProcessOwnerEvidence = z.infer<typeof ProcessOwnerEvidenceSchema>;
 
-/** Compare identities only inside one machine (the caller establishes that boundary). */
+/**
+ * Compare identities only inside one machine (the caller establishes that boundary).
+ */
 export async function probeProcessOwner(
   pid: number,
   recorded: ProcessInstance | null | undefined,
 ): Promise<ProcessOwnerEvidence> {
-  z.number().int().positive().max(2_147_483_647).parse(pid);
+  z.number().int().positive().max(MAX_PID).parse(pid);
   if (recorded != null) ProcessInstanceSchema.parse(recorded);
   return probeProcessOwnerWith(pid, recorded, {
     read: readProcessInstance,
@@ -144,7 +177,9 @@ interface ProcessOwnerProbes {
   observe?(pid: number): Promise<ProcessInstanceObservation>;
 }
 
-/** @internal Injection is for kernel-format controls, not a public ownership assertion. */
+/**
+ * @internal Injection is for kernel-format controls, not a public ownership assertion.
+ */
 export async function probeProcessOwnerWith(
   pid: number,
   recorded: ProcessInstance | null | undefined,
@@ -183,11 +218,7 @@ export async function probeProcessOwnerWith(
   const observation = await observe(pid);
   if (observation.state === 'unavailable') return unavailable(observation.cause);
   const observed = observation.instance;
-  if (
-    !observed ||
-    observed.bootId !== current.bootId ||
-    observed.namespace !== current.namespace
-  )
+  if (observed.bootId !== current.bootId || observed.namespace !== current.namespace)
     return unavailable(new Error('Observed boot or namespace changed during probe'));
   if (recorded.startId !== observed.startId)
     return { liveness: 'gone', identity: 'reused-pid' };

@@ -1,5 +1,7 @@
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import {
   type AgentControlDelivery,
+  type AgentControlErrorCode,
   type AgentControlRequest,
   AgentControlRequestSchema,
   type AgentControlResponse,
@@ -92,7 +94,7 @@ async function runControlledOperation<CONTEXT>(
 
 function controlFailure(
   requestId: string,
-  code: string,
+  code: AgentControlErrorCode,
   message: string,
 ): AgentControlResponse {
   return AgentControlResponseSchema.parse({
@@ -105,8 +107,7 @@ function controlFailure(
 
 function attachmentLimit(config: AgentHarnessControlServerConfig): number {
   const limit = config.maxPendingAttachments ?? 32;
-  if (!Number.isSafeInteger(limit) || limit <= 0)
-    throw new TypeError('maxPendingAttachments must be a positive safe integer');
+  assertPositiveSafeInteger('maxPendingAttachments', limit);
   return limit;
 }
 
@@ -188,7 +189,7 @@ export function createAgentHarnessControlServer<CONTEXT>(
       return {
         async request(raw) {
           const request = AgentControlRequestSchema.parse(raw);
-          const fail = (code: string, message: string) =>
+          const fail = (code: AgentControlErrorCode, message: string) =>
             controlFailure(request.requestId, code, message);
           if (closed || connections.get(id) !== state)
             return fail('CONNECTION_CLOSED', 'Connection is closed');

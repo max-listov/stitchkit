@@ -1,13 +1,16 @@
-import { constants } from 'node:fs';
-import { lstat, open } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
+import { openJournalFile } from './diagnostic-journal-open';
 import {
   createDiagnosticJournalReadResultSchema,
   type DiagnosticJournalAnomaly,
   type DiagnosticJournalReadResult,
 } from './diagnostic-journal-read-contract';
 
+/**
+ * Config for `readDiagnosticJournal`: the files to read in order, the schema each event must
+ * match, and a per-line byte limit.
+ */
 export interface DiagnosticJournalReaderConfig<SCHEMA extends z.ZodType> {
   /** Explicit operator-owned files, read in this order; missing files are I/O errors. */
   readonly paths: readonly string[];
@@ -17,7 +20,7 @@ export interface DiagnosticJournalReaderConfig<SCHEMA extends z.ZodType> {
   readonly signal?: AbortSignal;
 }
 
-interface LineLocation {
+export interface LineLocation {
   readonly file: string;
   readonly offset: number;
   readonly line: number;
@@ -26,7 +29,7 @@ interface LineLocation {
   readonly position: 'tail' | 'interior';
 }
 
-function decodeLine<SCHEMA extends z.ZodType>(
+export function decodeLine<SCHEMA extends z.ZodType>(
   schema: ReturnType<typeof createDiagnosticJournalReadResultSchema<SCHEMA>>,
   location: LineLocation,
   body: Uint8Array | undefined,
@@ -79,27 +82,9 @@ function decodeLine<SCHEMA extends z.ZodType>(
   return location.terminated ? [parsed.data] : [anomaly('unterminated-line', 0), parsed.data];
 }
 
-async function openRegularFile(path: string) {
-  const before = await lstat(path);
-  if (before.isSymbolicLink() || !before.isFile()) {
-    throw new TypeError('Diagnostic journal reader requires a regular file, never a symlink');
-  }
-  const handle = await open(
-    path,
-    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-  );
-  try {
-    const info = await handle.stat();
-    if (!info.isFile())
-      throw new TypeError('Diagnostic journal reader requires a regular file');
-    return { handle, size: z.number().int().nonnegative().parse(info.size) };
-  } catch (error) {
-    await handle.close();
-    throw error;
-  }
-}
-
-/** One finite file snapshot at a time. Corrupt rows are data; filesystem failures throw. */
+/**
+ * One finite file snapshot at a time. Corrupt rows are data; filesystem failures throw.
+ */
 export async function* readDiagnosticJournal<SCHEMA extends z.ZodType>(
   config: DiagnosticJournalReaderConfig<SCHEMA>,
 ): AsyncGenerator<DiagnosticJournalReadResult<SCHEMA>, void, unknown> {
@@ -114,7 +99,7 @@ export async function* readDiagnosticJournal<SCHEMA extends z.ZodType>(
   const schema = createDiagnosticJournalReadResultSchema(config.eventSchema);
   for (const file of config.paths) {
     config.signal?.throwIfAborted();
-    const { handle, size } = await openRegularFile(file);
+    const { handle, size } = await openJournalFile(file);
     try {
       const chunk = Buffer.alloc(64 * 1024);
       let offset = 0;

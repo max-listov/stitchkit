@@ -171,7 +171,10 @@ export interface ApplicationHandle {
  */
 export class ApplicationAdmissionError extends AppError<'APPLICATION_NOT_ACCEPTING'> {
   constructor() {
-    super('APPLICATION_NOT_ACCEPTING', 'Application is not accepting new operations', 503);
+    super('APPLICATION_NOT_ACCEPTING', {
+      message: 'Application is not accepting new operations',
+      status: 503,
+    });
     this.name = 'ApplicationAdmissionError';
   }
 }

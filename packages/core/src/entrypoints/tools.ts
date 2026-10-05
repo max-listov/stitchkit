@@ -236,7 +236,6 @@ export {
   findUntypedProperties,
   type UntypedProperty,
 } from '../tools/schema/untyped-properties';
-export type { ToolSurfaceDefinition } from '../tools/surface';
 export {
   createToolLogger,
   type ToolCallRecord,

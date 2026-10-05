@@ -3,7 +3,7 @@ import { existsSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { ApiError } from '../src/browser/http';
+import { ApiError } from '../src/browser/api-error';
 import { createClient, createHttpClient } from '../src/entrypoints';
 import { defineContract } from '../src/entrypoints/contract';
 import { createServer, implement } from '../src/entrypoints/server';

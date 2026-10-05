@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_TIMER_MS } from '../internal/timers';
 import type { SandboxCodingBinding } from './sandbox-coding';
 
 export const SandboxNetworkPolicySchema = z.union([
@@ -70,7 +71,7 @@ export const SandboxCommandSchema = z
     args: z.array(z.string()).optional(),
     cwd: z.string().optional(),
     environment: z.record(z.string(), z.string()).optional(),
-    timeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
+    timeoutMs: z.number().int().positive().max(MAX_TIMER_MS).optional(),
     maxOutputBytes: z.number().int().positive().optional(),
   })
   .strict();

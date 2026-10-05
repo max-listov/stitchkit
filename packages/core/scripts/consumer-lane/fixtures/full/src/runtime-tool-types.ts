@@ -5,7 +5,6 @@ import {
   type CliInvokerConfig,
   createCli,
   createCliInvoker,
-  type RuntimeToolExecutionWithOutput,
 } from 'stitchkit/cli';
 import {
   createRuntimeToolFactory,
@@ -14,6 +13,7 @@ import {
   type RuntimeAgentModelOutput,
   type RuntimeMcpPresentation,
   type RuntimeToolDefinitionWithOutput,
+  type RuntimeToolPresenters,
 } from 'stitchkit/tools';
 import { z } from 'zod';
 
@@ -32,7 +32,12 @@ const definition = defineRuntimeTool({
     agent: (value) => ({ type: 'text', value: String(value.size) }),
   },
 });
-const typed: RuntimeToolDefinitionWithOutput<typeof input, typeof output> = definition;
+const typed: RuntimeToolDefinitionWithOutput<
+  typeof input,
+  typeof output,
+  undefined,
+  RuntimeToolPresenters<z.output<typeof output>>
+> = definition;
 const cli: CliConfig = { name: 'sdk-cli', version: '1', runtimeTools: [typed] };
 const invoker: CliInvokerConfig<{ id: string }> = {
   name: 'sdk-invoker',
@@ -70,11 +75,16 @@ void reservedMcp;
 void malformedAgent;
 
 const extraInput = z.object({ text: z.string(), requiredExtra: z.string() });
-const tooNarrow: RuntimeToolExecutionWithOutput<typeof extraInput, typeof output>['handler'] =
+const tooNarrow: RuntimeToolDefinitionWithOutput<typeof extraInput, typeof output>['handler'] =
   ({ input }) => ({
     size: input.requiredExtra.length,
   });
-const invalidDefinition: RuntimeToolDefinitionWithOutput<typeof input, typeof output> = {
+const invalidDefinition: RuntimeToolDefinitionWithOutput<
+  typeof input,
+  typeof output,
+  undefined,
+  RuntimeToolPresenters<z.output<typeof output>>
+> = {
   ...definition,
   // @ts-expect-error A pretyped callback cannot require fields the declared schema omits.
   handler: tooNarrow,

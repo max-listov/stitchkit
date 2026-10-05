@@ -80,11 +80,10 @@ export function contractStreamResponse(
         const parsed = descriptor.item.safeParse(next.value);
         if (!parsed.success) {
           console.error('[stitchkit] contract stream item failed validation:', parsed.error);
-          throw new AppError(
-            'STREAM_ITEM_INVALID',
-            'Stream item did not match its contract',
-            500,
-          );
+          throw new AppError('STREAM_ITEM_INVALID', {
+            message: 'Stream item did not match its contract',
+            status: 500,
+          });
         }
         const item = parsed.data;
         const terminal = descriptor.terminal?.safeParse(item).success ?? false;
@@ -94,21 +93,19 @@ export function contractStreamResponse(
           console.error(
             `[stitchkit] contract stream frame exceeded its ${maxFrameBytes} byte limit`,
           );
-          throw new AppError(
-            'STREAM_FRAME_TOO_LARGE',
-            'Stream item exceeded its declared frame limit',
-            500,
-          );
+          throw new AppError('STREAM_FRAME_TOO_LARGE', {
+            message: 'Stream item exceeded its declared frame limit',
+            status: 500,
+          });
         }
         yield frame;
         if (terminal && descriptor.completion === 'terminal') return;
       }
       if (!terminalSeen) {
-        throw new AppError(
-          'STREAM_TERMINAL_MISSING',
-          'Stream completed before its declared terminal item',
-          500,
-        );
+        throw new AppError('STREAM_TERMINAL_MISSING', {
+          message: 'Stream completed before its declared terminal item',
+          status: 500,
+        });
       }
       if (descriptor.framing !== 'item') yield { type: 'end' };
     } catch (error) {
@@ -117,11 +114,10 @@ export function contractStreamResponse(
         if (descriptor.framing === 'item') return;
         yield {
           type: 'error',
-          error: new AppError(
-            'STREAM_LIFETIME_EXCEEDED',
-            'Stream exceeded its declared lifetime',
-            408,
-          ).toJSON().error,
+          error: new AppError('STREAM_LIFETIME_EXCEEDED', {
+            message: 'Stream exceeded its declared lifetime',
+            status: 408,
+          }).toJSON().error,
         };
         return;
       }

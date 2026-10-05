@@ -14,18 +14,38 @@ import type { StateStore } from './state-store';
 const timestamp = z.string().datetime({ offset: true });
 const key = z.string().min(1).max(255);
 
+/**
+ * The identity of an inbox entry: `source` and `key`; a second entry with the same pair is a
+ * duplicate.
+ */
 export const DirectoryInboxIdentitySchema = z
   .object({ source: z.string().min(1).max(128), key: z.string().min(1).max(1_024) })
   .strict();
+/**
+ * The identity of an inbox entry: `source` and `key`; a second entry with the same pair is a
+ * duplicate.
+ */
 export type DirectoryInboxIdentity = z.infer<typeof DirectoryInboxIdentitySchema>;
 
+/**
+ * Result of accepting an entry: `accepted` for a new one, `duplicate` when that identity was
+ * already taken, plus the file name.
+ */
 export const DirectoryInboxAcceptResultSchema = z
   .object({ status: z.enum(['accepted', 'duplicate']), filename: key })
   .strict();
+/**
+ * Result of accepting an entry: `accepted` for a new one, `duplicate` when that identity was
+ * already taken, plus the file name.
+ */
 export type DirectoryInboxAcceptResult = z.infer<typeof DirectoryInboxAcceptResultSchema>;
 
-export interface DirectoryInboxAccept<TEntry> extends DirectoryInboxIdentity {
-  readonly entry: TEntry;
+/**
+ * A programmatic entry: what the schema accepts as input, stored as given and parsed on
+ * delivery.
+ */
+export interface DirectoryInboxAccept<TInput> extends DirectoryInboxIdentity {
+  readonly entry: TInput;
 }
 
 export const DirectoryInboxRejectionReasonSchema = z.enum([
@@ -103,10 +123,11 @@ export interface DirectoryInboxDelivery<TEntry> {
   readonly signal: AbortSignal;
 }
 
-export interface DirectoryInboxConfig<TEntry> {
+export interface DirectoryInboxConfig<TEntry, TInput = TEntry> {
   readonly id: string;
   readonly directory: string;
-  readonly schema: z.ZodType<TEntry>;
+  /** Parses every stored entry on delivery; `accept` takes its input type. */
+  readonly schema: z.ZodType<TEntry, TInput>;
   /** Throwing leaves the entry for a later attempt. */
   readonly handle: (delivery: DirectoryInboxDelivery<TEntry>) => void | Promise<void>;
   readonly dependsOn?: readonly ManagedResourceDependency[];
@@ -123,7 +144,11 @@ export interface DirectoryInboxConfig<TEntry> {
   readonly maxEntryBytes?: number;
   /** Programmatic acceptance refuses a full inbox without creating a file. Default 1 000. */
   readonly maxPendingEntries?: number;
-  /** Receipts and rejections kept. Default 1 000. */
+  /**
+   * Receipts and rejections kept, each list. Default 1 000. Every state update
+   * reads, validates and rewrites the whole state, so its cost grows with this
+   * number: keep it as small as duplicate detection needs.
+   */
   readonly retain?: number;
   /** An entry was set aside into `<directory>/rejected/`, with the reason. */
   readonly onRejected?: (rejection: DirectoryInboxRejection) => void | Promise<void>;
@@ -134,16 +159,16 @@ export interface DirectoryInboxConfig<TEntry> {
   readonly onError?: (error: unknown) => void | Promise<void>;
 }
 
-export interface DirectoryInbox<TEntry = unknown> {
+export interface DirectoryInbox<TInput = unknown> {
   /** Durably buffer an entry before activation; duplicates never replace the first payload. */
-  accept(input: DirectoryInboxAccept<TEntry>): Promise<DirectoryInboxAcceptResult>;
+  accept(input: DirectoryInboxAccept<TInput>): Promise<DirectoryInboxAcceptResult>;
   /** Deliver every entry due now; resolves with how many were handled. */
   flush(): Promise<number>;
   state(): Promise<DirectoryInboxState>;
 }
 
-export interface DirectoryInboxResource<TEntry = unknown> extends ManagedResource {
-  start(): Promise<{ readonly value: DirectoryInbox<TEntry> }>;
+export interface DirectoryInboxResource<TInput = unknown> extends ManagedResource {
+  start(): Promise<{ readonly value: DirectoryInbox<TInput> }>;
 }
 
 /** What the next step does with one entry of the directory. */
@@ -310,7 +335,10 @@ export function renewEntry(
   };
 }
 
-/** Records about entries that are gone from the directory, except a live lease. */
+/**
+ * Records about entries that are gone from the directory, except a live lease; the same state
+ * when none is.
+ */
 export function forgetMissing(
   state: DirectoryInboxState,
   present: ReadonlySet<string>,
@@ -318,8 +346,6 @@ export function forgetMissing(
 ): DirectoryInboxState {
   const live = (claim: DirectoryInboxClaim) =>
     claim.leaseUntil !== null && Date.parse(claim.leaseUntil) > now.getTime();
-  return {
-    ...state,
-    claims: state.claims.filter((claim) => present.has(claim.key) || live(claim)),
-  };
+  const claims = state.claims.filter((claim) => present.has(claim.key) || live(claim));
+  return claims.length === state.claims.length ? state : { ...state, claims };
 }

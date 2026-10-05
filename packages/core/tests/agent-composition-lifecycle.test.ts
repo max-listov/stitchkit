@@ -245,7 +245,7 @@ test('server bounds pending requests and authorization time while error observer
       outcome: 'error',
       error: { code: 'REQUEST_CAPACITY' },
     });
-    expect(await first).toMatchObject({ outcome: 'error', error: { code: 'ACCESS_DENIED' } });
+    expect(await first).toMatchObject({ outcome: 'error', error: { code: 'FORBIDDEN' } });
     expect(seen).toHaveLength(1);
   } finally {
     transport.disconnect();

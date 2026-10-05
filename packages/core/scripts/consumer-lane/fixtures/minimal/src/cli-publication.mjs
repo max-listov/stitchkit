@@ -8,11 +8,11 @@ import { fileURLToPath } from 'node:url';
 import {
   applyCliUpdate,
   checkCliUpdate,
-  publishCli,
   renderCliInstaller,
   rollbackCliUpdate,
   verifyCliManifest,
 } from 'stitchkit/cli';
+import { publishCli } from 'stitchkit/cli/publish';
 import { assertBinary, distributionServer, execute } from './cli-publication-support.mjs';
 
 const require = createRequire(import.meta.url);

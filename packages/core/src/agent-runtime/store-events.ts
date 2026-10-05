@@ -7,7 +7,7 @@ import {
   type AppendAgentStoreEvent,
   AppendAgentStoreEventSchema,
 } from '../durability/events';
-import { serializeCanonicalJson } from '../internal/canonical-json';
+import { canonicalZodJson } from '../primitives/canonical-json';
 import {
   AcceptInputAndAssignRunSchema,
   AcquireAgentRunSchema,
@@ -97,13 +97,21 @@ export function agentStoreEventDraft(input: AppendAgentStoreEvent): AgentStoreEv
 }
 
 /**
- * Stable UTF-8 JSON used by archives, digests and byte-for-byte round trips —
- * the package's one canonical serialisation, after a strict JSON parse: the
- * store refuses `undefined`, a `Date` or a `BigInt` rather than hashing what
- * `JSON.stringify` would make of them.
+ * Stable UTF-8 JSON used by archives, digests and byte-for-byte round trips.
+ * It is `canonicalJson` and answers to its one admissibility table — an
+ * `undefined` member is omitted, while a cycle, an accessor or a value deeper
+ * than 100 levels is refused with a `CanonicalJsonError`. Unlike the public
+ * serializer it reads the value as `z.json()` does: model output can carry
+ * `-0`, which is JSON-equal to `0` and hashes as `0`, and an own `__proto__`
+ * member is dropped. The store
+ * bounds the size of what it keeps where records are written, so the node and
+ * byte limits here are the largest the serializer accepts.
  */
 export function canonicalAgentJson(value: unknown): string {
-  return serializeCanonicalJson(z.json().parse(value));
+  return canonicalZodJson(value, {
+    maxNodes: Number.MAX_SAFE_INTEGER,
+    maxBytes: Number.MAX_SAFE_INTEGER,
+  });
 }
 
 export const AgentConversationArchiveSchema = z

@@ -29,7 +29,12 @@ export interface DefineUploadToolConfig<TOutput extends ZodType>
 /** Define one managed local-file upload operation. */
 export function defineUploadTool<TOutput extends ZodType>(
   config: DefineUploadToolConfig<TOutput>,
-): RuntimeToolDefinitionWithOutput<typeof UploadToolInputSchema, TOutput> {
+): RuntimeToolDefinitionWithOutput<
+  typeof UploadToolInputSchema,
+  TOutput,
+  undefined,
+  RuntimeToolPresenters<z.output<TOutput>>
+> {
   return defineRuntimeTool({
     name: config.name ?? 'upload',
     description: config.description,

@@ -114,7 +114,11 @@ describe('mounted Agent tool error outcomes', () => {
       identity: { serviceName: 'fixture', action: 'guard', method: 'POST' },
       input: z.object({}),
       handler: () => {
-        throw new AppError('CONFLICT', 'Selection is stale', 409, { revision: 7 });
+        throw new AppError('CONFLICT', {
+          message: 'Selection is stale',
+          status: 409,
+          details: { revision: 7 },
+        });
       },
     });
     const model = new MockLanguageModelV4({

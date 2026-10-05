@@ -10,6 +10,7 @@ import {
   createAgentController,
 } from '../src/entrypoints/agent-runtime/browser';
 import { eventually } from './support/agent-composition';
+import { eventLoopTurn } from './support/until';
 
 function fixture() {
   let connected = true;
@@ -116,7 +117,7 @@ test('controller fences old acknowledgements, bounds event count and bytes, and 
     f.respond(1, 5);
     await eventually(() => controller.getSnapshot().status === 'ready');
     f.respond(0, 1);
-    await Bun.sleep(5);
+    await eventLoopTurn();
     expect(controller.getSnapshot().view.conversations.one?.snapshot?.version).toBe(5);
     const pending = controller.request({ operation: 'snapshot' });
     await eventually(() => f.requests.length === 3);
@@ -179,6 +180,54 @@ test('controller coalesces gaps during attach and reports denied or mismatched r
   f.requests[2]?.respond({ schemaVersion: 1, requestId: 'wrong', outcome: 'ok' });
   await expect(pending).rejects.toThrow('identity mismatch');
   expect(controller.getSnapshot().error?.code).toBe('CONTROL_REQUEST_FAILED');
+  f.connection(false);
+  await controller.close();
+});
+
+test('a reconnect releases the capacity held by the previous connection and attaches', async () => {
+  const f = fixture();
+  const controller = createAgentController({
+    transport: f.transport,
+    conversationId: 'one',
+    access: 'observe',
+    maxPendingRequests: 1,
+  });
+  await eventually(() => f.requests.length === 1);
+  f.respond(0, 1);
+  await eventually(() => controller.getSnapshot().status === 'ready');
+  const inFlight = controller.request({ operation: 'snapshot' });
+  const settled = inFlight.then(
+    () => 'answered',
+    (error: unknown) => (error instanceof Error ? error.message : 'rejected'),
+  );
+  await eventually(() => f.requests.length === 2);
+  f.connection(false);
+  f.connection(true);
+  expect(await settled).toBe('Agent controller connection changed');
+  await eventually(() => f.requests.length === 3);
+  expect(f.requests[2]?.request.operation).toBe('attach');
+  f.respond(2, 2);
+  await eventually(() => controller.getSnapshot().status === 'ready');
+  expect(controller.getSnapshot().error).toBeUndefined();
+  f.connection(false);
+  await controller.close();
+});
+
+test('an access-denied delivery turns the controller into a FORBIDDEN error', async () => {
+  const f = fixture();
+  const controller = createAgentController({
+    transport: f.transport,
+    conversationId: 'one',
+    access: 'observe',
+  });
+  await eventually(() => f.requests.length === 1);
+  f.respond(0, 1);
+  await eventually(() => controller.getSnapshot().status === 'ready');
+  f.deliver({ schemaVersion: 1, type: 'access-denied', conversationId: 'one' });
+  expect(controller.getSnapshot()).toMatchObject({
+    status: 'error',
+    error: { code: 'FORBIDDEN' },
+  });
   f.connection(false);
   await controller.close();
 });

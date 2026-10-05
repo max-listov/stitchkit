@@ -1,4 +1,5 @@
 import { badRequest } from '../contract/errors';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 
 function requestAbortReason(req: Request): unknown {
   return req.signal.reason ?? new DOMException('The connection was closed', 'AbortError');
@@ -8,12 +9,6 @@ function throwIfRequestAborted(req: Request): void {
   if (req.signal.aborted) throw requestAbortReason(req);
 }
 
-export function assertJsonBodyLimit(maxBytes: number | undefined, owner: string): void {
-  if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)) {
-    throw new Error(`${owner} must be a positive safe integer, received ${maxBytes}`);
-  }
-}
-
 /** Read UTF-8 request text, optionally stopping before a configured byte cap is exceeded. */
 export async function readRequestText(req: Request, maxBytes?: number): Promise<string> {
   // A runtime may abort the Fetch Request before a delayed body read starts.
@@ -21,7 +16,7 @@ export async function readRequestText(req: Request, maxBytes?: number): Promise<
   // has already disappeared, so fail from the request's canonical reason first.
   throwIfRequestAborted(req);
   if (maxBytes === undefined) return req.text();
-  assertJsonBodyLimit(maxBytes, 'maxJsonBodyBytes');
+  assertPositiveSafeInteger('maxJsonBodyBytes', maxBytes, Error);
 
   const reader = req.body?.getReader();
   if (!reader) return '';

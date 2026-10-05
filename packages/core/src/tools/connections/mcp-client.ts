@@ -130,30 +130,24 @@ export class McpHttpClient {
     const context = connectionReadContext(mcpOperation(message.method), this.limits);
     const negotiate = message.method === 'initialize' && this.initialInitializePending;
     if (message.method === 'initialize') this.initialInitializePending = false;
-    return withConnectionDeadline(
-      this.connectionName,
-      context.timeoutMs,
-      signal,
-      async () => {
-        if (this.mode === 'sse') return this.sseRequest(message, token, context);
-        try {
-          return await this.streamableRequest(message, token, context);
-        } catch (error) {
-          context.signal?.throwIfAborted();
-          if (
-            negotiate &&
-            error instanceof ConnectionRequestError &&
-            FALLBACK_STATUSES.has(error.status)
-          ) {
-            await this.openSse(token, context);
-            this.mode = 'sse';
-            return this.sseRequest(message, token, context);
-          }
-          throw error;
+    return withConnectionDeadline(this.connectionName, context, signal, async (scoped) => {
+      if (this.mode === 'sse') return this.sseRequest(message, token, scoped);
+      try {
+        return await this.streamableRequest(message, token, scoped);
+      } catch (error) {
+        scoped.signal?.throwIfAborted();
+        if (
+          negotiate &&
+          error instanceof ConnectionRequestError &&
+          FALLBACK_STATUSES.has(error.status)
+        ) {
+          await this.openSse(token, scoped);
+          this.mode = 'sse';
+          return this.sseRequest(message, token, scoped);
         }
-      },
-      context,
-    );
+        throw error;
+      }
+    });
   }
 
   private async streamableRequest(

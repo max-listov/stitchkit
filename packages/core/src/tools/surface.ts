@@ -5,15 +5,10 @@ import {
   type ToolSurfaceProjection,
 } from './internal/surface-projector';
 import { type CollectToolsConfig, contractToolMountable, type MountableTool } from './mount';
-import { type RuntimeToolDefinition, runtimeToolMountable } from './runtime-tool';
-import type { RuntimeToolExecution } from './runtime-tool-execution';
+import { runtimeToolMountable } from './runtime-tool';
+import type { RuntimeToolDefinition } from './runtime-tool-declaration';
 
-/** Contract and pathless runtime operations that form one tool surface. */
-export interface ToolSurfaceDefinition<
-  TRuntime extends RuntimeToolExecution = RuntimeToolDefinition,
-> extends ToolSurfaceProjection<TRuntime> {}
-
-interface CollectedContractTool<TRuntime extends RuntimeToolExecution> {
+interface CollectedContractTool<TRuntime extends RuntimeToolDefinition> {
   kind: 'contract';
   service: string;
   action: string;
@@ -21,7 +16,7 @@ interface CollectedContractTool<TRuntime extends RuntimeToolExecution> {
   projection: Extract<ProjectedTool<TRuntime>, { kind: 'contract' }>;
 }
 
-interface CollectedRuntimeTool<TRuntime extends RuntimeToolExecution> {
+interface CollectedRuntimeTool<TRuntime extends RuntimeToolDefinition> {
   kind: 'runtime';
   service: string;
   action: string;
@@ -31,13 +26,13 @@ interface CollectedRuntimeTool<TRuntime extends RuntimeToolExecution> {
 }
 
 export type CollectedToolSurfaceEntry<
-  TRuntime extends RuntimeToolExecution = RuntimeToolDefinition,
+  TRuntime extends RuntimeToolDefinition = RuntimeToolDefinition,
 > = CollectedContractTool<TRuntime> | CollectedRuntimeTool<TRuntime>;
 
 export interface CollectToolSurfaceConfig<
-  TRuntime extends RuntimeToolExecution = RuntimeToolDefinition,
+  TRuntime extends RuntimeToolDefinition = RuntimeToolDefinition,
 > extends CollectToolsConfig {
-  surface: ToolSurfaceDefinition<TRuntime>;
+  surface: ToolSurfaceProjection<TRuntime>;
   transport: ToolTransport;
   /** Diagnostics disable this so they can report a broken surface. Default: true. */
   assertUniqueNames?: boolean;
@@ -47,7 +42,7 @@ export interface CollectToolSurfaceConfig<
  * Resolve contracts and runtime definitions in their real mount order through
  * the same name, exposure and presentation-schema machinery as the mounts.
  */
-export function collectToolSurface<TRuntime extends RuntimeToolExecution>({
+export function collectToolSurface<TRuntime extends RuntimeToolDefinition>({
   surface,
   transport,
   assertUniqueNames = true,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { ApiError } from '../src/browser/http';
+import { ApiError } from '../src/browser/api-error';
 import { defineContract, notFound, unauthorized } from '../src/entrypoints/contract';
 import { createHandlerTestClient, createHandlerTestClients } from '../src/entrypoints/testing';
 import { createHandler } from '../src/server/create';

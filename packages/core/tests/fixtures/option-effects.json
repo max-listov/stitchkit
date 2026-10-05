@@ -211,6 +211,12 @@
     },
     "machineIdentity": {
       "test": "reclaims a lock recorded under a name this machine no longer carries"
+    },
+    "startupScan": {
+      "test": "startupScan tails reports a torn retained generation, full also reports a damaged row in the middle"
+    },
+    "onStartupRefusal": {
+      "test": "retained names that are not regular files are quarantined, or refused under fail"
     }
   },
   "DiagnosticJournalReaderConfig": {
@@ -484,6 +490,17 @@
     },
     "durability": {
       "test": "directory durability option syncs after publish and default leaves directory untouched"
+    }
+  },
+  "SweepAtomicStagingOptions": {
+    "directory": {
+      "test": "leaves symlinks, directories, nested staging and other files alone"
+    },
+    "olderThanMs": {
+      "test": "leaves a staging file younger than the bound: it may be a write in flight"
+    },
+    "signal": {
+      "test": "an aborted signal stops the sweep before it removes anything"
     }
   },
   "EffectRunOptions": {
@@ -1085,44 +1102,6 @@
       "test": "attaches before snapshot settlement so a concurrent Agent event is not missed"
     }
   },
-  "AgentHarnessToolsConfig": {
-    "services": {
-      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
-    },
-    "context": {
-      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
-    },
-    "runtimeTools": {
-      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
-    },
-    "hooks": {
-      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
-    },
-    "lifecycle": {
-      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
-    },
-    "onOutputStrip": {
-      "test": "harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence"
-    },
-    "registry": {
-      "test": "mountAgent accepts the registry and refuses two surface declarations"
-    },
-    "durability": {
-      "test": "a declared factory puts step into the handler context"
-    },
-    "extend": {
-      "test": "ToolExtend owns required, default, coerce and refine semantics exactly once"
-    },
-    "flattenUnionInput": {
-      "test": "agent parses params and nested flattened transforms once"
-    },
-    "coerceJsonArgs": {
-      "exempt": "Unchanged inherited AgentMountConfig option forwarded as part of the complete configuration to the existing mountAgent owner; no separate coercion policy."
-    },
-    "errorHint": {
-      "exempt": "Unchanged inherited AgentMountConfig option forwarded to the existing mountAgent owner; composition introduces no separate error formatting policy."
-    }
-  },
   "CanonicalJsonOptions": {
     "maxDepth": {
       "test": "canonical JSON depth, nodes and UTF-8 bytes limits change admission"
@@ -1191,14 +1170,17 @@
     "onOutput": {
       "test": "native streaming fully drains multi-megabyte output per channel before completion"
     },
-    "killGraceMs": {
-      "test": "command grace and cleanup options control their native budgets"
+    "stop": {
+      "test": "stop target 'leader' signals only the leader, ends the grace when it exits and kills the member left behind"
     },
     "cleanupTimeoutMs": {
       "test": "command grace and cleanup options control their native budgets"
     },
     "onLeaderSettled": {
       "test": "observed leader exit settles external scope before inherited pipe drain; no hook reaches declared deadline"
+    },
+    "descendants": {
+      "test": "descendants: terminate-after-leader ends a detached grandchild after a successful run, leave keeps it"
     }
   },
   "CliPublicationOptions": {
@@ -1297,13 +1279,13 @@
   },
   "NativePackagingOptions": {
     "platform": {
-      "test": "packaging target, delivery and output paths change the real Bun build graph"
+      "test": "a platform without native addons is a type error and a schema refusal"
     },
     "architecture": {
       "test": "packaging target, delivery and output paths change the real Bun build graph"
     },
     "delivery": {
-      "test": "packaging target, delivery and output paths change the real Bun build graph"
+      "test": "embedded delivery gives Bun the verified bytes, not a second read of the file"
     },
     "entryPath": {
       "test": "packaging target, delivery and output paths change the real Bun build graph"

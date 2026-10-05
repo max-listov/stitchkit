@@ -76,7 +76,7 @@ describe('presentation flattening walks the JSON Schema graph', () => {
       const text = JSON.stringify(schema);
       expect(text).toContain(`When kind = single: ${oneDescription}`);
       expect(text).toContain(`When kind = group: ${manyDescription}`);
-      expect(text).toContain('Available if kind = group | single');
+      expect(text).toContain('Available if kind = single | group');
       expect(text).toContain('Required if kind = group');
       expectDeepFrozen(schema);
     }

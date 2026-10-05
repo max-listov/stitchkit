@@ -34,6 +34,10 @@ export function mcpFixture(
   const mode = options.mode ?? 'json';
   const seen: string[] = [];
   const senders = new Map<string, (text: string) => void>();
+  const closeWaiters: (() => void)[] = [];
+  const settleClosed = () => {
+    if (senders.size === 0) for (const wake of closeWaiters.splice(0)) wake();
+  };
   let serial = 0;
   const server = Bun.serve({
     hostname: '127.0.0.1',
@@ -62,6 +66,7 @@ export function mcpFixture(
           cancel() {
             closed = true;
             senders.delete(endpoint);
+            settleClosed();
           },
         });
         if (options.endpointDelayMs) await Bun.sleep(options.endpointDelayMs);
@@ -114,5 +119,11 @@ export function mcpFixture(
     get openStreams() {
       return senders.size;
     },
+    /** Resolves when the client has cancelled every legacy stream (immediately when none is open). */
+    streamsClosed: () =>
+      new Promise<void>((resolve) => {
+        closeWaiters.push(resolve);
+        settleClosed();
+      }),
   };
 }

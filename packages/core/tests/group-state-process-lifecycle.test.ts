@@ -11,6 +11,7 @@ import {
 } from '../src/application/process-lifecycle-transitions';
 import type { StateStore } from '../src/application/state-store';
 import { serialStateStore } from './application-file-state-store-fixture';
+import { resourceContext } from './session-delivery-fixture';
 
 const at = (second: number): string =>
   `2026-09-06T04:00:${String(second).padStart(2, '0')}.000Z`;
@@ -293,10 +294,10 @@ describe('process lifecycle transitions', () => {
     });
     const resource = lifecycleLedgerResource(ledger, { version: '1' });
     await resource.start();
-    await resource.activate?.({} as never);
+    await resource.activate?.(resourceContext());
     rejectNext = true;
-    await expect(resource.close?.({} as never)).rejects.toThrow('disk unavailable');
-    await expect(resource.close?.({} as never)).resolves.toBeUndefined();
+    await expect(resource.close?.(resourceContext())).rejects.toThrow('disk unavailable');
+    await expect(resource.close?.(resourceContext())).resolves.toBeUndefined();
     expect(await ledger.current()).toMatchObject({ termination: 'clean' });
   });
   test('an unknown version never turns a crash into a handoff', () => {
@@ -574,8 +575,8 @@ describe('process lifecycle transitions', () => {
     const resource = lifecycleLedgerResource(ledger, { version: '1' });
     for (let round = 0; round < 2; round += 1) {
       await resource.start();
-      await resource.activate?.({} as never);
-      await resource.close?.({} as never);
+      await resource.activate?.(resourceContext());
+      await resource.close?.(resourceContext());
     }
     await Promise.resolve();
     expect(facts).toEqual([

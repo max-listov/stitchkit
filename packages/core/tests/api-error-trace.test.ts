@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
+import { ApiError } from '../src/browser/api-error';
 import { createClient } from '../src/browser/client';
-import { ApiError, createHttpClient } from '../src/browser/http';
+import { createHttpClient } from '../src/browser/http';
 import { defineContract } from '../src/entrypoints/contract';
 
 const TRACE_ID = 'request-trace-123';
@@ -199,7 +200,7 @@ describe('ApiError response trace correlation', () => {
 
   test('traceId is an optional public field', () => {
     const withoutTrace = new ApiError('UNKNOWN_ERROR');
-    const withTrace = new ApiError('CONFLICT', 409, undefined, undefined, undefined, TRACE_ID);
+    const withTrace = new ApiError('CONFLICT', { status: 409, traceId: TRACE_ID });
 
     expect(withoutTrace.traceId).toBeUndefined();
     expect(withTrace.traceId).toBe(TRACE_ID);

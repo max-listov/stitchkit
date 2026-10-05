@@ -1,11 +1,13 @@
 import { afterEach, expect, test } from 'bun:test';
-import { access, mkdtemp, readFile, rm, unlink, utimes, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { createFileStateStore } from '../src/application/file-state-store';
 import type { StateStoreUpdateContext } from '../src/application/state-store';
 import { serialStateStore } from './application-file-state-store-fixture';
+import { until } from './support/until';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -113,17 +115,7 @@ test('SIGSTOP of a live transaction cannot cause an age takeover or a lost updat
     { stdout: 'pipe', stderr: 'pipe' },
   );
   try {
-    let held = false;
-    for (let attempt = 0; attempt < 500; attempt += 1) {
-      try {
-        await access(ready);
-        held = true;
-        break;
-      } catch {
-        await Bun.sleep(5);
-      }
-    }
-    expect(held).toBe(true);
+    await until(() => existsSync(ready), 'the child to hold the lock');
     process.kill(child.pid, 'SIGSTOP');
     const old = new Date(Date.now() - 120_000);
     await utimes(`${path}.lock`, old, old);

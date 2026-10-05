@@ -69,18 +69,30 @@ export interface RuntimeToolDefinitionBase<
   mcp?: TMcp;
 }
 
-/** Executable contract shared by CLI and SDK adapters; presentation belongs to the adapter. */
-export interface RuntimeToolExecutionWithOutput<
+/**
+ * The one declaration of a runtime tool, with no SDK declaration in it. The
+ * `present` slot is the adapters' extension point: an adapter names the
+ * presenters it understands as the fourth type argument (the MCP presenters of
+ * `stitchkit/tools/mcp`, the MCP and Agent presenters of `stitchkit/tools`), and
+ * the neutral default admits none. Execution never reads it.
+ */
+export interface RuntimeToolDefinitionWithOutput<
   TInput extends ZodObject,
   TOutput extends ZodType,
   TMcp extends EndpointMcpPolicy | undefined = undefined,
+  TPresent = undefined,
 > extends RuntimeToolDefinitionBase<TInput, TMcp> {
   output: TOutput;
   handler: (
     context: RuntimeToolHandlerContext<TInput, TMcp>,
   ) => z.output<TOutput> | Promise<z.output<TOutput>>;
+  present?: TPresent;
 }
 
+/**
+ * A runtime tool that declares no `output` schema; its handler returns nothing and has no
+ * `present` slot.
+ */
 export interface RuntimeToolDefinitionWithoutOutput<
   TInput extends ZodObject,
   TMcp extends EndpointMcpPolicy | undefined = undefined,
@@ -91,32 +103,40 @@ export interface RuntimeToolDefinitionWithoutOutput<
 }
 
 /**
- * Heterogeneous registration preserves each definition's validated input shape.
- * Its erased handler cannot be called directly: the canonical mount supplies
- * schema-parsed input before execution. Construction uses the generic contracts.
+ * The input every registered handler is shaped for: any object the canonical runner parsed.
  */
-export type RuntimeToolExecution =
+type RegisteredHandlerContext = RuntimeToolHandlerContext<
+  ZodObject,
+  EndpointMcpPolicy | undefined
+>;
+
+/**
+ * Heterogeneous registration of runtime tools (`runtimeTools: [...]`), where every
+ * tool has its own input schema. Each registered handler is declared as a METHOD:
+ * a method parameter is compared bivariantly, so a handler constructed against
+ * its own schema is accepted, and an inline handler is contextually typed by the
+ * loose parsed-object context instead of being erased. The canonical runner parses
+ * the input against the tool's schema before it calls the handler.
+ *
+ * `present` is whatever presenters the declaring adapter attached; the mount that
+ * reads them narrows what it finds, because each presenter was typed against its
+ * own tool when it was declared.
+ */
+export type RuntimeToolDefinition =
   | (Omit<
-      RuntimeToolExecutionWithOutput<ZodObject, ZodType, EndpointMcpPolicy | undefined>,
+      RuntimeToolDefinitionWithOutput<
+        ZodObject,
+        ZodType,
+        EndpointMcpPolicy | undefined,
+        unknown
+      >,
       'handler'
     > & {
-      handler: (
-        context: never,
-      ) => ReturnType<
-        RuntimeToolExecutionWithOutput<
-          ZodObject,
-          ZodType,
-          EndpointMcpPolicy | undefined
-        >['handler']
-      >;
+      handler(context: RegisteredHandlerContext): unknown;
     })
   | (Omit<
       RuntimeToolDefinitionWithoutOutput<ZodObject, EndpointMcpPolicy | undefined>,
       'handler'
     > & {
-      handler: (
-        context: never,
-      ) => ReturnType<
-        RuntimeToolDefinitionWithoutOutput<ZodObject, EndpointMcpPolicy | undefined>['handler']
-      >;
+      handler(context: RegisteredHandlerContext): void | Promise<void>;
     });

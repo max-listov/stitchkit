@@ -35,7 +35,12 @@ export interface DefineWaitToolConfig<TInput extends ZodObject, TState extends Z
 /** Define one managed wait operation for `runtimeTools` and/or Agent tools. */
 export function defineWaitTool<TInput extends ZodObject, TState extends ZodType>(
   config: DefineWaitToolConfig<TInput, TState>,
-): RuntimeToolDefinitionWithOutput<TInput, TState> {
+): RuntimeToolDefinitionWithOutput<
+  TInput,
+  TState,
+  undefined,
+  RuntimeToolPresenters<z.output<TState>>
+> {
   const renderedMcp: RuntimeToolPresenters<z.output<TState>> | undefined = config.render
     ? {
         mcp: (state: z.output<TState>): RuntimeMcpPresentation => {
@@ -77,20 +82,22 @@ export function defineWaitTool<TInput extends ZodObject, TState extends ZodType>
         });
       } catch (error) {
         if (error instanceof WaitTimeoutError) {
-          throw new AppError('WAIT_TIMEOUT', 'Wait timed out before the first snapshot', 408);
+          throw new AppError('WAIT_TIMEOUT', {
+            message: 'Wait timed out before the first snapshot',
+            status: 408,
+          });
         }
         throw error;
       }
       const rendered = config.render?.(result.state, result.timedOut);
       if (result.timedOut) {
-        throw new AppError(
-          'WAIT_TIMEOUT',
-          rendered?.text ?? 'Wait timed out before the operation completed',
-          408,
-        );
+        throw new AppError('WAIT_TIMEOUT', {
+          message: rendered?.text ?? 'Wait timed out before the operation completed',
+          status: 408,
+        });
       }
       if (rendered?.isError) {
-        throw new AppError('WAIT_FAILED', rendered.text, 409);
+        throw new AppError('WAIT_FAILED', { message: rendered.text, status: 409 });
       }
       return result.state;
     },

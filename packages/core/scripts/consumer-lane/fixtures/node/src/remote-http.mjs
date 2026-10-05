@@ -133,15 +133,13 @@ async function operation(ctx) {
 }
 const originService = implement(contract, {
   fail: ({ input }) => {
-    throw new AppError(
-      'DOMAIN_REFUSED',
-      'A safe refusal',
-      input.status,
-      { marker: 'safe' },
-      'Reconcile destination',
-      undefined,
-      input.declared,
-    );
+    throw new AppError('DOMAIN_REFUSED', {
+      message: 'A safe refusal',
+      status: input.status,
+      details: { marker: 'safe' },
+      hint: 'Reconcile destination',
+      retryable: input.declared,
+    });
   },
   plain: operation,
   input: operation,

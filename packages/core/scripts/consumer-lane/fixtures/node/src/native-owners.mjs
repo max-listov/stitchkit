@@ -133,7 +133,13 @@ try {
   assert.equal(calls, 1);
   await rm(member);
   await assert.rejects(
-    runNativeCommand({ executable: process.execPath, args: ['-e', launcher], timeoutMs: 150 }),
+    // A member left running holds the inherited pipes, so the drain waits for the deadline.
+    runNativeCommand({
+      executable: process.execPath,
+      args: ['-e', launcher],
+      timeoutMs: 150,
+      descendants: 'leave',
+    }),
     (error) => {
       if (error.code !== 'COMMAND_LIMIT') console.error(inspect(error, { depth: 8 }));
       assert.equal(error.code, 'COMMAND_LIMIT');

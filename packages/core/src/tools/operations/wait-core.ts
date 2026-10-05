@@ -4,6 +4,7 @@
  * polling mechanics live in exactly one place. Domain-free (ADR 0002): the
  * caller supplies how to fetch a state (`poll`) and when it is terminal (`done`).
  */
+import { sleep } from '../../internal/timers';
 
 const DEFAULT_BACKOFF = [2, 3, 5, 5, 8, 10];
 const DEFAULT_TIMEOUT = 600;
@@ -14,31 +15,6 @@ export class WaitTimeoutError extends Error {
     this.name = 'WaitTimeoutError';
   }
 }
-
-const defaultSleep = (ms: number, signal?: AbortSignal): Promise<void> => {
-  signal?.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const settle = (action: () => void): void => {
-      if (settled) return;
-      settled = true;
-      signal?.removeEventListener('abort', onAbort);
-      action();
-    };
-    const timer = setTimeout(() => {
-      settle(resolve);
-    }, ms);
-    timer.unref?.();
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      settle(() => reject(signal?.reason ?? new Error('aborted')));
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    // Close the check/listen race if the caller aborts between throwIfAborted
-    // above and listener registration.
-    if (signal?.aborted) onAbort();
-  });
-};
 
 export interface PollUntilParams<T> {
   /** Fetch the current state — called once per tick. */
@@ -75,7 +51,7 @@ export async function pollUntil<T>(params: PollUntilParams<T>): Promise<PollUnti
   const backoff = params.backoff?.length ? params.backoff : DEFAULT_BACKOFF;
   const lastBackoff = backoff[backoff.length - 1] ?? 5;
   const timeoutSec = params.timeoutSec ?? DEFAULT_TIMEOUT;
-  const sleep = params.sleepFn ?? defaultSleep;
+  const pause = params.sleepFn ?? sleep;
   const now = params.nowFn ?? (() => performance.now());
   const startedAt = now();
   const deadline = startedAt + timeoutSec * 1000;
@@ -119,7 +95,7 @@ export async function pollUntil<T>(params: PollUntilParams<T>): Promise<PollUnti
     if (elapsedSec >= timeoutSec) return { state, timedOut: true };
 
     const waitSec = backoff[Math.min(attempt, backoff.length - 1)] ?? lastBackoff;
-    await sleep(Math.min(waitSec * 1000, Math.max(0, deadline - now())), params.signal);
+    await pause(Math.min(waitSec * 1000, Math.max(0, deadline - now())), params.signal);
   }
 }
 

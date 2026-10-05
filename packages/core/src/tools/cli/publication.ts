@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { createManagedFileBoundary } from '../../files/boundary';
 import { writeFileAtomic } from '../../internal/atomic-file';
-import { AtomicFilePublicationError } from '../../internal/atomic-publication';
+import { AtomicFilePublicationError, syncDirectory } from '../../internal/atomic-publication';
 import { type ExclusiveLock, withExclusiveLock } from '../../internal/with-exclusive-lock';
 import {
   assertCliPublishable,
@@ -24,6 +24,7 @@ import {
 import { waitForPublication, withPublicationDeadline } from './publication-control';
 import {
   assertDirectory,
+  assertPublicationManifest,
   bindPublicationStorage,
   directoryGeneration,
   directoryNames,
@@ -32,8 +33,8 @@ import {
   type PublicationStorage,
   publicationHistory,
   readPublicationManifest,
+  reclaimPublicationStaging,
   removePublicationVersion,
-  syncPublicationDirectory,
   verifyPublicationVersion,
 } from './publication-storage';
 import { cliSignatureAccepted, signCliManifest, verifyCliManifest } from './signature';
@@ -45,6 +46,10 @@ const resultSchema = z.object({
   outcome: z.enum(['published', 'existing']),
   manifest: CliBuildManifestSchema,
 });
+/**
+ * Outcome of `publishCli`: `published` for a new version or `existing` when an identical one
+ * was already stored, with its manifest.
+ */
 export type CliPublicationResult = z.infer<typeof resultSchema>;
 
 function trustPublication(manifest: CliBuildManifest, options: CliPublicationOptions): void {
@@ -110,6 +115,10 @@ function newest(versions: OwnedVersion[]): OwnedVersion[] {
   );
 }
 
+/**
+ * Remove the oldest unprotected stored versions beyond `count`; returns the versions that
+ * remain.
+ */
 async function retainVersions(
   storage: PublicationStorage,
   history: OwnedVersion[],
@@ -118,15 +127,18 @@ async function retainVersions(
   data: PublicationData,
   lock: ExclusiveLock,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<OwnedVersion[]> {
   const retained = newest(history).filter((item) => !keep.has(item.manifest.version));
   const spare = Math.max(0, count - keep.size);
-  for (const version of retained.slice(spare)) {
+  const removed = new Set(retained.slice(spare));
+  for (const version of removed) {
     await lock.assertHeld();
     await removePublicationVersion(storage, version, data, signal);
   }
+  return history.filter((item) => !removed.has(item));
 }
 
+/** Move the public pointer to a version already proven whole in this transaction. */
 async function promote(
   storage: PublicationStorage,
   record: PublicationManifest,
@@ -137,7 +149,6 @@ async function promote(
   signal: AbortSignal,
 ): Promise<void> {
   await admission(options, data, 'promote', signal);
-  await verifyPublicationVersion(storage, record, data, signal, true);
   trustPublication(record.manifest, options);
   await unchanged(storage, prior, data, lock, signal);
   const names = await directoryNames(storage.root, data.limits.maxDirectoryEntries, signal);
@@ -231,7 +242,7 @@ async function buildVersion(
     signal.throwIfAborted();
     await rename(staged, join(storage.root, data.version));
     committed = true;
-    await syncPublicationDirectory(storage.root);
+    await syncDirectory(storage.root);
     return { manifest, bytes };
   } catch (error) {
     if (!committed) {
@@ -263,9 +274,12 @@ async function publishLocked(
 ): Promise<CliPublicationResult> {
   await lock.assertHeld();
   await admission(options, data, 'prepare', signal);
+  await reclaimPublicationStaging(storage, signal);
   const prior = await readPublicationManifest(storage, 'manifest.json', data, signal);
   if (prior && prior.manifest.name !== data.name)
     throw new Error('CLI public manifest belongs to another CLI');
+  // Every stored version is proven whole here, once. Later steps of this
+  // transaction use these records and check only what could have changed.
   const history = await publicationHistory(storage, data, signal);
   const candidate = {
     name: data.name,
@@ -279,27 +293,24 @@ async function publishLocked(
     candidate,
   );
   if (prior) {
-    await verifyPublicationVersion(
-      storage,
-      prior,
-      data,
-      signal,
-      prior.manifest.version === data.version,
-    );
+    const pointed = history.find((item) => item.manifest.version === prior.manifest.version);
+    if (!pointed || !sameManifest(prior, pointed))
+      throw new Error('CLI public manifest differs from its stored version');
+    assertPublicationManifest(prior, data, prior.manifest.version === data.version);
     trustPublication(prior.manifest, options);
     const order = compareCliVersions(data.version, prior.manifest.version) ?? -1;
     if (order < 0 || (order === 0 && data.version !== prior.manifest.version))
       throw new Error('CLI publication downgrade or non-advancing version refused');
     if (prior.manifest.version === data.version) {
       await admission(options, data, 'promote', signal);
-      await verifyPublicationVersion(storage, prior, data, signal, true);
       await unchanged(storage, prior, data, lock, signal);
       return { outcome: 'existing', manifest: prior.manifest };
     }
   }
   let record = history.find((item) => item.manifest.version === data.version);
+  let stored = history;
   if (record) {
-    await verifyPublicationVersion(storage, record, data, signal, true);
+    assertPublicationManifest(record, data, true);
     trustPublication(record.manifest, options);
   } else {
     // Make room using only verified owned history. Keep the current pointer and its preceding version.
@@ -309,7 +320,7 @@ async function publishLocked(
         prior && (compareCliVersions(item.manifest.version, prior.manifest.version) ?? 0) < 0,
     );
     if (previous) protect.add(previous.manifest.version);
-    await retainVersions(
+    stored = await retainVersions(
       storage,
       history,
       protect,
@@ -322,13 +333,16 @@ async function publishLocked(
       ...(await buildVersion(storage, data, options, lock, prior, signal)),
       directory: join(storage.root, data.version),
     };
+    await verifyPublicationVersion(storage, record, data, signal, true);
+    stored = [...stored, record];
   }
   try {
     await promote(storage, record, prior, data, options, lock, signal);
-    const updated = await publicationHistory(storage, data, signal);
+    if (stored.length > data.limits.maxStoredVersions)
+      throw new RangeError('CLI publication stored version cap exceeded');
     await retainVersions(
       storage,
-      updated,
+      stored,
       new Set([data.version, ...(prior ? [prior.manifest.version] : [])]),
       data.retention,
       data,
@@ -344,7 +358,10 @@ async function publishLocked(
   return { outcome: 'published', manifest: record.manifest };
 }
 
-/** Publish in trusted application-owned storage; a complete version is immutable and the public pointer moves last. */
+/**
+ * Publish in trusted application-owned storage; a complete version is immutable and the public
+ * pointer moves last.
+ */
 export async function publishCli(
   options: CliPublicationOptions,
 ): Promise<CliPublicationResult> {

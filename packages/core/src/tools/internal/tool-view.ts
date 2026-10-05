@@ -61,11 +61,10 @@ export function projectToolView(options: {
       // the validated full result and parsed input that signature names.
       projected = Reflect.apply(view.project, undefined, [options.full, options.call]);
     } catch (error) {
-      const failure = new AppError(
-        'INTERNAL_SERVER_ERROR',
-        `${options.operation} toolView.project threw`,
-        500,
-      );
+      const failure = new AppError('INTERNAL_SERVER_ERROR', {
+        message: `${options.operation} toolView.project threw`,
+        status: 500,
+      });
       failure.cause = error;
       throw failure;
     }
@@ -73,11 +72,10 @@ export function projectToolView(options: {
       // Settle it before refusing it: an abandoned rejected Promise is an
       // unhandled rejection, which a runtime may answer by ending the process.
       Promise.resolve(projected).catch(() => undefined);
-      throw new AppError(
-        'INTERNAL_SERVER_ERROR',
-        `${options.operation} toolView.project returned a Promise — it must be synchronous`,
-        500,
-      );
+      throw new AppError('INTERNAL_SERVER_ERROR', {
+        message: `${options.operation} toolView.project returned a Promise — it must be synchronous`,
+        status: 500,
+      });
     }
     if (projected === undefined) {
       return {

@@ -19,7 +19,7 @@ async function failure(input) {
 const deadline = await failure({
   ...command('setInterval(()=>{},1000)'),
   timeoutMs: 30,
-  killGraceMs: 0,
+  stop: { target: 'group', graceMs: 0 },
 });
 const script =
   'process.stdout.write(Buffer.from([255,0,97]));process.stderr.write(Buffer.from([98]));';
@@ -29,7 +29,7 @@ for (const capture of [true, false]) {
     capture,
     maxOutputBytes: 3,
     timeoutMs: 2000,
-    killGraceMs: 0,
+    stop: { target: 'group', graceMs: 0 },
   });
   deadline.message = budget.message = 'identical localized message';
   assert.equal(deadline.code, 'COMMAND_LIMIT');
@@ -52,7 +52,7 @@ await assert.rejects(
   runNativeCommand({
     ...command("process.stdout.write('ready');setInterval(()=>{},1000)"),
     signal: controller.signal,
-    killGraceMs: 0,
+    stop: { target: 'group', graceMs: 0 },
     onOutput: () => controller.abort(caller),
   }),
   (error) => error === caller,
@@ -71,7 +71,7 @@ let eventCause;
 const cleanup = await failure({
   ...command('setInterval(()=>{},1000)'),
   timeoutMs: 30,
-  killGraceMs: 0,
+  stop: { target: 'group', graceMs: 0 },
   onLeaderSettled: (event) => {
     calls++;
     assert.equal(event.kind, 'error');

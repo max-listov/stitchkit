@@ -25,18 +25,25 @@ const envelope = (err: unknown) => formatToolError(toolResultFromError(err));
 
 describe('the tool refusal says whether repeating it could work', () => {
   test('a rate limit is retryable and a permission failure is not', async () => {
-    expect(envelope(new AppError('RATE_LIMITED', 'slow down', 429)).retryable).toBe(true);
-    expect(envelope(new AppError('FORBIDDEN', 'no', 403)).retryable).toBe(false);
+    expect(
+      envelope(new AppError('RATE_LIMITED', { message: 'slow down', status: 429 })).retryable,
+    ).toBe(true);
+    expect(envelope(new AppError('FORBIDDEN', { message: 'no', status: 403 })).retryable).toBe(
+      false,
+    );
   });
 
   test('a deterministic 500 is NOT retryable — the rule is not "any 5xx"', async () => {
     // `REALTIME_CONTRACT_VIOLATION`, `STREAM_ITEM_INVALID` and `FRAME_TOO_LARGE` all carry 500
     // and all fail the same way every time. Telling a model to retry them buys billed turns
     // and nothing else.
-    expect(envelope(new AppError('REALTIME_CONTRACT_VIOLATION', 'x', 500)).retryable).toBe(
-      false,
-    );
-    expect(envelope(new AppError('STREAM_ITEM_INVALID', 'x', 500)).retryable).toBe(false);
+    expect(
+      envelope(new AppError('REALTIME_CONTRACT_VIOLATION', { message: 'x', status: 500 }))
+        .retryable,
+    ).toBe(false);
+    expect(
+      envelope(new AppError('STREAM_ITEM_INVALID', { message: 'x', status: 500 })).retryable,
+    ).toBe(false);
   });
 
   test('an application code is classified by its declared status, not by its name', async () => {
@@ -80,7 +87,7 @@ describe('the tool refusal says whether repeating it could work', () => {
     // deriving from the status would pass a test that checked values one by one, and would
     // silently omit the next code added to the map.
     for (const [code, status] of Object.entries(STITCH_ERROR_STATUS)) {
-      expect(envelope(new AppError(code, code, status)).retryable).toBe(
+      expect(envelope(new AppError(code, { message: code, status })).retryable).toBe(
         isRetryableStatus(status),
       );
     }

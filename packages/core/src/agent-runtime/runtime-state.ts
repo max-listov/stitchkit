@@ -1,4 +1,5 @@
 import type { ToolSet } from 'ai';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { createRuntimeAdmissionLanes, type RuntimeAdmissionLanes } from './admission-lanes';
 import { type AgentSessionCoordinator, createAgentSessionCoordinator } from './coordinator';
 import type { AgentRuntimeEvent } from './events';
@@ -56,18 +57,9 @@ function resolveLoopLimits<CONTEXT, TOOLS extends ToolSet>(
   const declaredIdleTimeoutMs = config.loop?.idleTimeoutMs;
   const idleTimeoutMs =
     declaredIdleTimeoutMs === null ? undefined : (declaredIdleTimeoutMs ?? 60_000);
-  if (!Number.isSafeInteger(checkpointEveryEvents) || checkpointEveryEvents < 1) {
-    throw new TypeError('checkpointEveryEvents must be a positive safe integer');
-  }
-  if (!Number.isSafeInteger(maxSteps) || maxSteps < 1) {
-    throw new TypeError('maxSteps must be a positive safe integer');
-  }
-  if (
-    idleTimeoutMs !== undefined &&
-    (!Number.isSafeInteger(idleTimeoutMs) || idleTimeoutMs < 1)
-  ) {
-    throw new TypeError('idleTimeoutMs must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('checkpointEveryEvents', checkpointEveryEvents);
+  assertPositiveSafeInteger('maxSteps', maxSteps);
+  assertPositiveSafeInteger('idleTimeoutMs', idleTimeoutMs);
   const policyNames = new Set<string>(['max-steps']);
   for (const policy of config.loop?.stopPolicies ?? []) {
     if (!policy.name || policyNames.has(policy.name)) {

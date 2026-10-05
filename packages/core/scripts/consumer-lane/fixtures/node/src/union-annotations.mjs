@@ -38,7 +38,7 @@ for (const schema of [
   const field = schema.properties.content.properties.parts.items.properties.value;
   assert.ok(field.description.includes(`When kind = single: ${one}`));
   assert.ok(field.description.includes(`When kind = group: ${many}`));
-  assert.ok(field.description.includes('Available if kind = group | single'));
+  assert.ok(field.description.includes('Available if kind = single | group'));
   assert.ok(field.description.includes('Required if kind = group'));
   assert.ok(!field.description.includes('marker'));
   assert.equal(field.anyOf.length, 2);

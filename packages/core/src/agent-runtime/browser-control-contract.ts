@@ -7,7 +7,9 @@ import {
 } from './control-schema';
 import { AgentFilePartSchema, AgentTextPartSchema } from './schemas';
 
-/** Untrusted user input cannot manufacture tool evidence or supply runtime identity. */
+/**
+ * Untrusted user input cannot manufacture tool evidence or supply runtime identity.
+ */
 export const AgentBrowserRequestSchema = z.discriminatedUnion('operation', [
   AgentControlRequestSchema.options[0],
   AgentControlRequestSchema.options[1],
@@ -20,8 +22,17 @@ export const AgentBrowserRequestSchema = z.discriminatedUnion('operation', [
   AgentControlRequestSchema.options[4],
   AgentControlRequestSchema.options[5].omit({ context: true }),
 ]);
+/**
+ * A request a browser may send to the agent controller (attach, send message, interrupt and so
+ * on); the server supplies context and identity, the browser cannot.
+ */
 export type AgentBrowserRequest = z.infer<typeof AgentBrowserRequestSchema>;
 
+/**
+ * Realtime contract carrying `agent:control` requests up and `agent:delivery` events down;
+ * bind it with `bindAgentHarnessRealtime` on the server and `createAgentController` in the
+ * browser.
+ */
 export const agentControlRealtimeContract = defineRealtimeContract({
   serverToClient: {
     'agent:delivery': { args: z.tuple([AgentControlDeliverySchema]) },

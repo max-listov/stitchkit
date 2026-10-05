@@ -27,7 +27,12 @@ describe('respondJson', () => {
 describe('errorResponse', () => {
   test('AppError → framework envelope + its status', async () => {
     const res = errorResponse(
-      new AppError('FORBIDDEN', 'nope', 403, { reason: 'x' }, 'try again'),
+      new AppError('FORBIDDEN', {
+        message: 'nope',
+        status: 403,
+        details: { reason: 'x' },
+        hint: 'try again',
+      }),
     );
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({
@@ -63,14 +68,16 @@ describe('errorResponse', () => {
     const trace = createTraceContext();
     const res = runWithRequestContext(
       { trace, source: 'http', method: 'GET', path: '/x', startedAt: 0n },
-      () => errorResponse(new AppError('CONFLICT', 'dup', 409)),
+      () => errorResponse(new AppError('CONFLICT', { message: 'dup', status: 409 })),
     );
     expect(res.headers.get('x-request-id')).toBe(trace.traceId);
   });
 
   test('no x-request-id outside a request context', () => {
     expect(
-      errorResponse(new AppError('CONFLICT', 'dup', 409)).headers.get('x-request-id'),
+      errorResponse(new AppError('CONFLICT', { message: 'dup', status: 409 })).headers.get(
+        'x-request-id',
+      ),
     ).toBeNull();
   });
 });

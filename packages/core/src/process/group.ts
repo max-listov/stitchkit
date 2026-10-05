@@ -1,17 +1,18 @@
 import { raceAbort } from '../internal/abort-race';
-import { NativeCommandError } from './contract';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import { MAX_TIMER_MS, sleep } from '../internal/timers';
+import { NativeCommandError, type ParsedNativeCommandStopPolicy } from './contract';
 
 /** Chain native-sized timers; internal callers retain their declared safe-integer deadline. */
 export function createCommandDeadline(timeoutMs: number, reason: unknown) {
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
-    throw new RangeError('Command deadline must be a positive safe integer');
+  assertPositiveSafeInteger('Command deadline', timeoutMs, RangeError);
   const controller = new AbortController();
   const deadline = performance.now() + timeoutMs;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const schedule = () => {
     const remaining = deadline - performance.now();
     if (remaining <= 0) controller.abort(reason);
-    else timer = setTimeout(schedule, Math.min(remaining, 2_147_483_647));
+    else timer = setTimeout(schedule, Math.min(remaining, MAX_TIMER_MS));
   };
   schedule();
   return {
@@ -31,12 +32,19 @@ function deniedOnDarwin(error: unknown): boolean {
   );
 }
 
-export function signalGroup(pid: number | undefined, signal: NodeJS.Signals): void {
-  if (pid === undefined) return;
+function isErrno(error: unknown, code: string): boolean {
+  return error instanceof Error && 'code' in error && error.code === code;
+}
+
+/** Send `signal` to the group. `false` is `ESRCH`: the kernel found no member to receive it. */
+export function signalGroup(pid: number | undefined, signal: NodeJS.Signals): boolean {
+  if (pid === undefined) return false;
   try {
     process.kill(-pid, signal);
+    return true;
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+    if (isErrno(error, 'ESRCH')) return false;
+    throw error;
   }
 }
 function exists(pid: number | undefined): boolean {
@@ -45,7 +53,7 @@ function exists(pid: number | undefined): boolean {
     process.kill(-pid, 0);
     return true;
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false;
+    if (isErrno(error, 'ESRCH')) return false;
     // Darwin filters zombies out of killpg and can report EPERM until they
     // are reaped. It is still an existing/unknown group, never proof of death.
     if (deniedOnDarwin(error)) return true;
@@ -53,15 +61,15 @@ function exists(pid: number | undefined): boolean {
   }
 }
 
+/** Resolves `true` when a signal was delivered and `false` when the group was already gone. */
 async function signalUntilSettled(
   pid: number | undefined,
   signal: NodeJS.Signals,
   deadline: number,
-): Promise<void> {
+): Promise<boolean> {
   for (;;) {
     try {
-      signalGroup(pid, signal);
-      return;
+      return signalGroup(pid, signal);
     } catch (error) {
       // Do not suppress permission failures. Success requires an actual
       // delivered signal or ESRCH; a persistent refusal keeps its own cause.
@@ -73,25 +81,83 @@ async function signalUntilSettled(
   }
 }
 
-export async function stopCommandGroup(
-  pid: number | undefined,
-  graceMs: number,
-  cleanupTimeoutMs = 2000,
-  force = false,
-): Promise<void> {
-  const deadline = performance.now() + graceMs + cleanupTimeoutMs;
-  if (force) {
+/** One stop of a command's group: the policy, the bound for retries and whether to skip the grace. */
+export interface CommandGroupStop {
+  readonly pid: number | undefined;
+  readonly policy: ParsedNativeCommandStopPolicy;
+  readonly cleanupTimeoutMs: number;
+  /** KILL at once, as `policy.killOn` does when it is aborted. */
+  readonly force: boolean;
+}
+
+/**
+ * Stop the group `pid` leads: the policy's signal to every member, a grace for it to leave,
+ * then KILL.
+ *
+ * `ESRCH` means the kernel found no member, and the numeric group id may already
+ * belong to an unrelated group, so no further signal follows an observed absence.
+ * A group still visible after the grace (including members holding a pipe after
+ * the leader exited, or Darwin zombies awaiting the reaper) is killed. The probe
+ * backs off to 250 ms, so a grace of an hour costs a few thousand probes, not millions.
+ */
+export async function stopCommandGroup(stop: CommandGroupStop): Promise<void> {
+  const { pid, policy } = stop;
+  const deadline = performance.now() + policy.graceMs + stop.cleanupTimeoutMs;
+  if (stop.force || policy.killOn?.aborted) {
     await signalUntilSettled(pid, 'SIGKILL', deadline);
     return;
   }
-  await signalUntilSettled(pid, 'SIGTERM', deadline);
-  const until = performance.now() + graceMs;
-  while (performance.now() < until && exists(pid))
-    await new Promise((resolve) =>
-      setTimeout(resolve, Math.min(10, until - performance.now())),
+  if (!(await signalUntilSettled(pid, policy.signal, deadline))) return;
+  const until = performance.now() + policy.graceMs;
+  let interval = 10;
+  let present = exists(pid);
+  while (present && !policy.killOn?.aborted && performance.now() < until) {
+    // An abort ends the wait early; the loop condition then sees it.
+    await sleep(Math.min(interval, until - performance.now()), policy.killOn).catch(
+      () => undefined,
     );
-  // Includes members holding a pipe after the leader already exited. A zombie
-  // group can remain visible until the OS reaper runs, so ESRCH is not a success gate.
+    interval = Math.min(interval * 2, 250);
+    present = exists(pid);
+  }
+  if (present) await signalUntilSettled(pid, 'SIGKILL', deadline);
+}
+
+/** The leader of a stop with `target: 'leader'`: its exit state and the promise of its exit. */
+export interface CommandLeader {
+  readonly pid?: number;
+  readonly exitCode: number | null;
+  readonly signalCode: string | null;
+}
+
+/**
+ * Stop a command cooperatively: the policy's signal to the leader alone, a grace for the
+ * leader to exit, then KILL to whatever is left of the group.
+ *
+ * The leader's exit ends the grace at once: the rest of the group are processes the leader
+ * left behind, and nothing in them was asked to cooperate. A leader that has already
+ * exited is not signalled again, because its pid may be reused once it was reaped.
+ */
+export async function stopCommandLeader(
+  stop: CommandGroupStop & { leader: CommandLeader; leaderExit: Promise<unknown> },
+): Promise<void> {
+  const { pid, policy, leader } = stop;
+  const deadline = performance.now() + policy.graceMs + stop.cleanupTimeoutMs;
+  const running = () => leader.exitCode === null && leader.signalCode === null;
+  if (!stop.force && !policy.killOn?.aborted && pid !== undefined && running()) {
+    try {
+      process.kill(pid, policy.signal);
+    } catch (error) {
+      if (!isErrno(error, 'ESRCH')) throw error;
+    }
+    const grace = new AbortController();
+    const end = () => grace.abort();
+    policy.killOn?.addEventListener('abort', end, { once: true });
+    void stop.leaderExit.then(end, end);
+    // Ended early by the leader's exit or `killOn`; either way KILL follows.
+    await sleep(policy.graceMs, grace.signal).catch(() => undefined);
+    policy.killOn?.removeEventListener('abort', end);
+    grace.abort();
+  }
   await signalUntilSettled(pid, 'SIGKILL', deadline);
 }
 

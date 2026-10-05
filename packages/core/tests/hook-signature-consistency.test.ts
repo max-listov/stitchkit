@@ -24,7 +24,10 @@ describe('createErrorHook — ctx and endpoint reach render and onError', () => 
     const hook = createErrorHook({
       render: (info, ctx) => ({ ok: false, code: info.code, traceId: ctx.traceId }),
     });
-    const res = await hook(ctxWith('trace-1'), new AppError('NOT_FOUND', 'gone', 404));
+    const res = await hook(
+      ctxWith('trace-1'),
+      new AppError('NOT_FOUND', { message: 'gone', status: 404 }),
+    );
     expect(res?.status).toBe(404);
     const body: unknown = await res?.json();
     expect(body).toEqual({ ok: false, code: 'NOT_FOUND', traceId: 'trace-1' });
@@ -46,7 +49,10 @@ describe('createErrorHook — ctx and endpoint reach render and onError', () => 
     // Existing consumers declared `render: (info) => …`; a function with fewer
     // parameters stays assignable, and must keep behaving.
     const hook = createErrorHook({ render: (info) => ({ code: info.code }) });
-    const res = await hook(ctxWith('trace-3'), new AppError('FORBIDDEN', 'no', 403));
+    const res = await hook(
+      ctxWith('trace-3'),
+      new AppError('FORBIDDEN', { message: 'no', status: 403 }),
+    );
     expect(res?.status).toBe(403);
     expect(await res?.json()).toEqual({ code: 'FORBIDDEN' });
   });

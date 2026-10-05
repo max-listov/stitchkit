@@ -217,8 +217,8 @@ describe('CLI option occurrences before coercion', () => {
 });
 
 describe('framework and application global occurrences', () => {
-  test('every framework option is single-use including the help alias', () => {
-    for (const name of ['json', 'wait', 'quiet', 'dry-run', 'help', 'ascending']) {
+  test('every framework option except help is single-use', () => {
+    for (const name of ['json', 'wait', 'quiet', 'dry-run', 'ascending']) {
       expect(() => parseCliArgs([`--${name}=false`, `--${name}`], Input)).toThrow(
         `--${name} was passed 2 times`,
       );
@@ -237,12 +237,20 @@ describe('framework and application global occurrences', () => {
         `--${name} was passed 2 times`,
       );
     }
+  });
+
+  test('help is a request: repeating it in any spelling never errors', () => {
     for (const flags of [
       ['--help', '-h'],
       ['-h', '--help'],
+      ['-h', '-h'],
+      ['--help', '--help'],
+      ['--help=false', '--help'],
+      ['--help', '--help=false'],
     ]) {
-      expect(() => parseCliArgs(flags, Input)).toThrow('--help was passed 2 times');
+      expect(parseCliArgs(flags, Input).options.help).toBe(true);
     }
+    expect(parseCliArgs(['--help=false'], Input).options.help).toBe(false);
   });
 
   test('leading framework flags count with flags after the explicit command', () => {

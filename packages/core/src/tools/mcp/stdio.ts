@@ -3,6 +3,10 @@ import type { McpLegacyPolicy } from './handler';
 import { buildMcpServer, type McpServerBuildConfig } from './mount';
 import type { McpSurfaceRegistry } from './prepare';
 
+/**
+ * Auth part of a stdio MCP config: one identity for the single connection, and an optional
+ * legacy policy.
+ */
 export interface StdioAuthConfig<TAuth> {
   /** Identity for the single stdio connection. */
   auth: TAuth | Promise<TAuth>;
@@ -10,6 +14,9 @@ export interface StdioAuthConfig<TAuth> {
   legacy?: McpLegacyPolicy;
 }
 
+/**
+ * Full config for `createStdioMcpServer`: the shared surface config plus the stdio identity.
+ */
 export type StdioMcpServerConfig<
   TAuth,
   TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,

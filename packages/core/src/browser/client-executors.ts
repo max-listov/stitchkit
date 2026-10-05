@@ -7,13 +7,13 @@
 
 import type { ClientRequestOptions } from '../contract/client-types';
 import type { EndpointDef } from '../contract/define';
+import { ApiError } from './api-error';
 import { createRequestCancellation, RequestCancellationError } from './cancellation';
 import type { ClientConfig, ContractClientConfig } from './client';
 import { buildMultipartForm } from './client-multipart';
 import { joinClientBaseUrl, planClientRequest } from './client-url';
 import { parseContractStream } from './contract-stream';
 import {
-  ApiError,
   type HttpClient as HttpAdapter,
   parseApiErrorBody,
   type RequestOptions,
@@ -265,24 +265,19 @@ export function createFetchExecutor<K extends string>(
       });
     } catch (error) {
       if (error instanceof RequestCancellationError) {
-        throw new ApiError(
-          error.cause === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT',
-          0,
-          undefined,
-          error.message,
-        );
+        throw new ApiError(error.cause === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT', {
+          status: 0,
+          message: error.message,
+        });
       }
       if (ApiError.is(error)) throw error;
       const message = error instanceof Error ? error.message : undefined;
-      throw new ApiError(
-        'UNKNOWN_ERROR',
-        0,
-        message ? { message } : undefined,
+      throw new ApiError('UNKNOWN_ERROR', {
+        status: 0,
+        details: message ? { message } : undefined,
         message,
-        undefined,
-        undefined,
-        { cause: error },
-      );
+        cause: error,
+      });
     }
   };
 }
@@ -297,23 +292,18 @@ async function throwForErrorResponse(
   config.onError?.(res.status, body);
   const parsed = parseApiErrorBody(body);
   if (parsed) {
-    throw new ApiError(
-      parsed.code,
-      res.status,
-      parsed.details,
-      parsed.message,
-      parsed.hint,
-      responseTraceId(res),
-      undefined,
-      parsed.retryable,
-    );
+    throw new ApiError(parsed.code, {
+      status: res.status,
+      details: parsed.details,
+      message: parsed.message,
+      hint: parsed.hint,
+      traceId: responseTraceId(res),
+      retryable: parsed.retryable,
+    });
   }
-  throw new ApiError(
-    'HTTP_ERROR',
-    res.status,
-    { body },
-    undefined,
-    undefined,
-    responseTraceId(res),
-  );
+  throw new ApiError('HTTP_ERROR', {
+    status: res.status,
+    details: { body },
+    traceId: responseTraceId(res),
+  });
 }

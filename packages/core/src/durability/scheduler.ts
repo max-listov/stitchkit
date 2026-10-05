@@ -1,8 +1,9 @@
+import { MAX_TIMER_MS } from '../internal/timers';
 import { type DurabilityClock, ParkAbortedError, type StepDurabilityLedger } from './contract';
 export const systemClock: DurabilityClock = {
   now: () => Date.now(),
   schedule(callback, delayMs) {
-    const timer = setTimeout(callback, Math.min(delayMs, 2_147_483_647));
+    const timer = setTimeout(callback, Math.min(delayMs, MAX_TIMER_MS));
     timer.unref();
     return { cancel: () => clearTimeout(timer) };
   },

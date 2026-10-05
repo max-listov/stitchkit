@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { ApiError } from '../src/browser/http';
+import { ApiError } from '../src/browser/api-error';
 import { implement } from '../src/server/implement';
 import { listToolNames } from '../src/tools/list-names';
 import { resolveAttribution } from '../src/tracking/attribution';
@@ -61,7 +61,7 @@ describe('delivery', () => {
     return async () => {
       const status = statuses[attempt++];
       if (status === undefined || status === 200) return;
-      throw new ApiError('SERVER_ERROR', status, 'boom');
+      throw new ApiError('SERVER_ERROR', { status, details: 'boom' });
     };
   };
   const noWait = () => Promise.resolve();

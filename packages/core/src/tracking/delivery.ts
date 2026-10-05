@@ -1,4 +1,4 @@
-import { ApiError } from '../browser/http';
+import { ApiError } from '../browser/api-error';
 
 export type TrackingDeliveryOutcome = 'delivered' | 'failed' | 'auth-invalidated';
 

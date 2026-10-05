@@ -45,6 +45,35 @@ export const AgentControlRequestSchema = z.discriminatedUnion('operation', [
 ]);
 export type AgentControlRequest = z.infer<typeof AgentControlRequestSchema>;
 
+/**
+ * Every code a control response or a controller state can carry — one
+ * vocabulary for the server, the realtime binding and the browser controller.
+ * `FORBIDDEN` is an access denial (including a revoked grant) and
+ * `CONNECTION_CLOSED` a connection that no longer exists, as elsewhere in the
+ * library; the `*_CAPACITY` codes name the bound that refused the request.
+ */
+export const AgentControlErrorCodeSchema = z.enum([
+  'ATTACH_CANCELLED',
+  'ATTACH_IN_PROGRESS',
+  'ATTACHMENT_CAPACITY',
+  'CONNECTION_CLOSED',
+  'CONTROL_REQUEST_FAILED',
+  'EVENT_OVERFLOW',
+  'FORBIDDEN',
+  'LEASE_CONFLICT',
+  'LEASE_REQUIRED',
+  'NOT_ATTACHED',
+  'REQUEST_CANCELLED',
+  'REQUEST_CAPACITY',
+  'REQUEST_REJECTED',
+  'RESYNC_EXHAUSTED',
+]);
+/**
+ * One of the codes in `AgentControlErrorCodeSchema`, reported in a failed control response or
+ * controller state.
+ */
+export type AgentControlErrorCode = z.infer<typeof AgentControlErrorCodeSchema>;
+
 const AgentControlResponseIdentitySchema = z.object({
   schemaVersion: z.literal(1),
   requestId: z.string().min(1),
@@ -57,7 +86,9 @@ export const AgentControlResponseSchema = z.discriminatedUnion('outcome', [
   }).strict(),
   AgentControlResponseIdentitySchema.extend({
     outcome: z.literal('error'),
-    error: z.object({ code: z.string().min(1), message: z.string().min(1) }).strict(),
+    error: z
+      .object({ code: AgentControlErrorCodeSchema, message: z.string().min(1) })
+      .strict(),
   }).strict(),
 ]);
 export type AgentControlResponse = z.infer<typeof AgentControlResponseSchema>;
@@ -76,6 +107,15 @@ export const AgentControlDeliverySchema = z.discriminatedUnion('type', [
       type: z.literal('resync-required'),
       conversationId: z.string().min(1),
       reason: z.literal('overflow'),
+    })
+    .strict(),
+  // Access to the conversation ended while events were flowing: the server has
+  // detached it, and nothing further will arrive until the caller attaches again.
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      type: z.literal('access-denied'),
+      conversationId: z.string().min(1),
     })
     .strict(),
 ]);

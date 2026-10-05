@@ -45,16 +45,39 @@ describe('conservative discriminated-union join', () => {
 
   test('availability includes optional branches and excludes absent fields', () => {
     const value = field(flatten(annotatedPart), 'value');
-    expect(value.description).toContain('Available if kind = group | single');
+    expect(value.description).toContain('Available if kind = single | group');
     expect(value.description).toContain('Required if kind = group');
     expect(value.description).not.toContain('marker');
   });
 
-  test('branch reordering produces the same annotated projection', () => {
+  test('properties, enum values and labels follow the order the variants declare them', () => {
     const [single, group, marker] = annotatedParts;
-    expect(flatten(z.discriminatedUnion('kind', [marker, group, single]))).toEqual(
-      flatten(annotatedPart),
+    const declared = flatten(annotatedPart);
+    expect(Object.keys(properties(declared))).toEqual(['kind', 'value', 'note']);
+    expect(properties(declared).kind).toEqual({
+      type: 'string',
+      enum: ['single', 'group', 'marker'],
+    });
+    const reordered = flatten(z.discriminatedUnion('kind', [marker, group, single]));
+    expect(Object.keys(properties(reordered))).toEqual(['kind', 'note', 'value']);
+    expect(properties(reordered).kind).toEqual({
+      type: 'string',
+      enum: ['marker', 'group', 'single'],
+    });
+    expect(field(reordered, 'value').description).toContain(
+      'Available if kind = group | single',
     );
+  });
+
+  test('alternatives of different kinds keep one canonical order whatever the variant order', () => {
+    const [single, group, marker] = annotatedParts;
+    const declared = field(flatten(annotatedPart), 'value').anyOf;
+    const reordered = field(
+      flatten(z.discriminatedUnion('kind', [marker, group, single])),
+      'value',
+    ).anyOf;
+    expect(Array.isArray(declared)).toBe(true);
+    expect(reordered).toEqual(declared);
   });
 
   test('shared descriptions appear once and required everywhere stays required', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { MutationCache } from '@tanstack/react-query';
-import { ApiError } from '../src/browser/http';
+import { ApiError } from '../src/browser/api-error';
 import { apiErrorRetry, createQueryClientFactory } from '../src/react/query-client';
 
 describe('apiErrorRetry', () => {
@@ -8,14 +8,14 @@ describe('apiErrorRetry', () => {
 
   test('retries network and 5xx query failures within the budget', () => {
     expect(retry(0, new Error('offline'))).toBe(true);
-    expect(retry(0, new ApiError('UPSTREAM', 503))).toBe(true);
-    expect(retry(2, new ApiError('UPSTREAM', 503))).toBe(false);
+    expect(retry(0, new ApiError('UPSTREAM', { status: 503 }))).toBe(true);
+    expect(retry(2, new ApiError('UPSTREAM', { status: 503 }))).toBe(false);
   });
 
   test('does not retry authorization, validation or 4xx failures', () => {
-    expect(retry(0, new ApiError('UNAUTHORIZED', 401))).toBe(false);
-    expect(retry(0, new ApiError('VALIDATION_ERROR', 0))).toBe(false);
-    expect(retry(0, new ApiError('MISSING', 404))).toBe(false);
+    expect(retry(0, new ApiError('UNAUTHORIZED', { status: 401 }))).toBe(false);
+    expect(retry(0, new ApiError('VALIDATION_ERROR', { status: 0 }))).toBe(false);
+    expect(retry(0, new ApiError('MISSING', { status: 404 }))).toBe(false);
     expect(retry(0, new DOMException('cancelled', 'AbortError'))).toBe(false);
     expect(retry(0, { name: 'TimeoutError' })).toBe(false);
   });
@@ -25,13 +25,15 @@ describe('apiErrorRetry', () => {
   });
 
   test('never excludes an application error code from retries', () => {
-    expect(apiErrorRetry({ never: ['BUSY'] })(0, new ApiError('BUSY', 503))).toBe(false);
+    expect(apiErrorRetry({ never: ['BUSY'] })(0, new ApiError('BUSY', { status: 503 }))).toBe(
+      false,
+    );
   });
 
   test('statusRanges chooses the inclusive retryable HTTP range', () => {
     const selected = apiErrorRetry({ statusRanges: [[408, 408]] });
-    expect(selected(0, new ApiError('TIMEOUT', 408))).toBe(true);
-    expect(selected(0, new ApiError('UPSTREAM', 503))).toBe(false);
+    expect(selected(0, new ApiError('TIMEOUT', { status: 408 }))).toBe(true);
+    expect(selected(0, new ApiError('UPSTREAM', { status: 503 }))).toBe(false);
   });
 
   test('network false refuses an unclassified transport failure', () => {

@@ -418,7 +418,7 @@ describe('what a dynamic declaration costs, exactly', () => {
       undefined,
       {
         beforeHandle: () => {
-          throw new AppError('FORBIDDEN', 'no', 403);
+          throw new AppError('FORBIDDEN', { message: 'no', status: 403 });
         },
       },
     );

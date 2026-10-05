@@ -21,7 +21,12 @@ export interface DefineViewFileToolConfig extends ManagedNativeToolConfig, ViewF
 /** Define one protected managed multimodal media-inspection operation. */
 export function defineViewFileTool(
   config: DefineViewFileToolConfig,
-): RuntimeToolDefinitionWithOutput<typeof ViewFileInputSchema, typeof ViewFileOutputSchema> {
+): RuntimeToolDefinitionWithOutput<
+  typeof ViewFileInputSchema,
+  typeof ViewFileOutputSchema,
+  undefined,
+  RuntimeToolPresenters<z.output<typeof ViewFileOutputSchema>>
+> {
   const defaults: RuntimeToolPresenters<z.output<typeof ViewFileOutputSchema>> = {
     mcp: (output): RuntimeMcpPresentation => ({ content: output.content }),
     agent: (output): RuntimeAgentModelOutput => ({

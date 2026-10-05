@@ -1,3 +1,4 @@
+export { ApiError } from '../browser/api-error';
 export {
   type ChunkedUploadConfig,
   type ChunkedUploadPart,
@@ -27,7 +28,6 @@ export {
   type UrlBuilderConfig,
 } from '../browser/client';
 export {
-  ApiError,
   type ApiEvent,
   type ApiEventListener,
   type ConfiguredHttpClient,

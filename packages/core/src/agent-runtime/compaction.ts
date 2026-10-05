@@ -1,4 +1,5 @@
 import type { ZodType, z } from 'zod';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import type { AgentMessage, AgentSnapshot, AgentUsage } from './schemas';
 import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
 import {
@@ -152,13 +153,9 @@ function mutationSnapshot(
 export function structuredCompaction<SUMMARY_SCHEMA extends ZodType>(
   config: StructuredCompactionConfig<SUMMARY_SCHEMA>,
 ) {
-  if (!Number.isSafeInteger(config.keepRecentTurns) || config.keepRecentTurns < 1) {
-    throw new TypeError('keepRecentTurns must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('keepRecentTurns', config.keepRecentTurns);
   const maxAttempts = config.maxAttempts ?? 1;
-  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
-    throw new TypeError('maxAttempts must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('maxAttempts', maxAttempts);
 
   return async (input: {
     conversationId: string;

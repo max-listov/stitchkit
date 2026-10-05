@@ -5,6 +5,7 @@ import {
   EffectUnresolvedError,
   type StepDurabilityLedger,
 } from '../src/entrypoints/tools';
+import { eventLoopTurn } from './support/until';
 
 /*
  * `step` records its result after the body, so a body cut short by a crash runs
@@ -275,7 +276,7 @@ test('caller abort releases a noncooperative reconcile and ignores its late acce
   await expect(pending).rejects.toMatchObject({ name: 'StepAbortedError' });
   const count = store.rows.length;
   release({ id: 'late' });
-  await new Promise((r) => setTimeout(r, 5));
+  await eventLoopTurn();
   expect(store.rows).toHaveLength(count);
   const recovered = await engine(store).effect('reply', {
     run: () => ({ id: 'must-not-run' }),

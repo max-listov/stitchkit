@@ -275,7 +275,10 @@ describe('a failed read says what failed, in words', () => {
       read: async () => {
         attempt += 1;
         if (attempt === 1) {
-          throw new AppError('SERVICE_UNAVAILABLE', 'the notes store is restarting', 503);
+          throw new AppError('SERVICE_UNAVAILABLE', {
+            message: 'the notes store is restarting',
+            status: 503,
+          });
         }
         if (attempt === 2) {
           throw Object.assign(new Error('connect ECONNREFUSED 10.0.0.7:5432'), {

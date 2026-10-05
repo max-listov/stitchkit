@@ -90,6 +90,7 @@ export const ALLOWED: Readonly<Record<string, readonly string[]>> = {
     'durability',
     'internal',
     'observability',
+    'primitives',
     'realtime',
     'server',
     'tools',

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type CliPublicationOptions, publishCli } from '../src/entrypoints/cli';
+import { type CliPublicationOptions, publishCli } from '../src/entrypoints/cli/publish';
 
 export async function publicationFixture() {
   const root = await mkdtemp(join(tmpdir(), 'stitchkit-publication-'));

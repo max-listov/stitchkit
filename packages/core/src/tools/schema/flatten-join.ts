@@ -201,6 +201,8 @@ function commonBaseType(schemas: ToolPresentationSchema[]): ToolPresentationSche
   if (bases.has('array') || bases.has('object')) {
     const alternatives = new Map<string, ToolPresentationSchema>();
     for (const schema of schemas) alternatives.set(serializeCanonicalJson(schema), schema);
+    // Alternatives are a set of kinds, not a list the author ordered: their order is the
+    // canonical-JSON order, so the same union reads the same whatever order its variants came in.
     const ordered = [...alternatives]
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([, schema]) => schema);
@@ -239,11 +241,8 @@ function describeVariants(
   return [...groups]
     .map(([description, labels]) => ({
       description,
-      labels: [...new Set(labels)].sort().join(' | '),
+      labels: [...new Set(labels)].join(' | '),
     }))
-    .sort((left, right) =>
-      left.labels < right.labels ? -1 : left.labels > right.labels ? 1 : 0,
-    )
     .map(({ description, labels }) => `When ${discriminator} = ${labels}: ${description}`)
     .join(' ');
 }
@@ -267,7 +266,7 @@ export function mergePropertySchemas(
     const values = schemas.map(stringValues);
     const allStrings = values.every((value) => value !== null);
     merged = allStrings
-      ? { type: 'string', enum: [...new Set(values.flatMap((value) => value ?? []))].sort() }
+      ? { type: 'string', enum: [...new Set(values.flatMap((value) => value ?? []))] }
       : commonBaseType(structural);
   }
   const description = describeVariants(

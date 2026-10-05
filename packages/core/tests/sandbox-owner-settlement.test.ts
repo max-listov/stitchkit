@@ -2,16 +2,20 @@ import { expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { sandboxProcessOwner } from '../src/agent-runtime/sandbox-process-owner';
 import { startNativeCommand } from '../src/process/command-owner';
 import { waitForCommandClose } from '../src/process/group';
 import { nativeCommandOwner } from '../src/process/launch';
+import { processAlive } from './support/process-state';
+import { eventLoopTurn, observe, until } from './support/until';
 
 test('Sandbox admission waits for both native close and successful owner settlement', async () => {
   const admission = sandboxProcessOwner(() => undefined, 1);
   const hook = Promise.withResolvers<void>();
   const entered = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<void>();
   const command = startNativeCommand(
     {
       executable: process.execPath,
@@ -22,10 +26,13 @@ test('Sandbox admission waits for both native close and successful owner settlem
         return hook.promise;
       },
     },
-    (child) => admission.track(child),
+    (child) => {
+      child.once('close', () => closed.resolve());
+      admission.track(child);
+    },
   );
-  await entered.promise;
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await Promise.all([entered.promise, closed.promise]);
+  await eventLoopTurn();
   expect(admission.size).toBe(1);
   expect(() => admission.admit()).toThrow('concurrency limit');
   hook.resolve();
@@ -73,7 +80,7 @@ test('stop after synchronous launch failure propagates cleanup refusal only', as
   }
 });
 
-test('a direct natural close retains output and completes one native settlement', async () => {
+test('a direct natural close retains output and settles without a command owner', async () => {
   const admission = sandboxProcessOwner(() => undefined, 1);
   const child = admission.spawn({
     executable: process.execPath,
@@ -93,10 +100,84 @@ test('a direct natural close retains output and completes one native settlement'
     await waitForCommandClose(closed, 3000);
     await waitForCommandClose(admission.stop(), 3000);
     expect(output).toBe('kept-output');
-    expect(nativeCommandOwner(child)).toBeDefined();
+    // A direct child is settled by the group terminator, never by a command wrapped around it.
+    expect(nativeCommandOwner(child)).toBeUndefined();
     expect(admission.size).toBe(0);
   } finally {
     await admission.stop();
+  }
+});
+
+function stoppedWithin(pid: number): Promise<boolean> {
+  return until(() => !processAlive(pid), `process ${pid} to stop`, 3_000).then(
+    () => true,
+    () => false,
+  );
+}
+
+test('a direct child that exits leaves no descendant: its group is stopped and its pipes close', async () => {
+  const admission = sandboxProcessOwner(() => undefined, 1);
+  const child = admission.spawn({
+    executable: '/bin/sh',
+    args: ['-c', 'sleep 30 & echo $!'],
+    cwd: tmpdir(),
+    environment: {},
+  });
+  let output = '';
+  child.stdout.on('data', (bytes) => {
+    output += String(bytes);
+  });
+  const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+  const grandchild = await new Promise<number>((resolve) => {
+    child.stdout.on('data', () => {
+      const pid = Number(output.trim());
+      if (Number.isInteger(pid) && pid > 0) resolve(pid);
+    });
+  });
+  try {
+    // The sleeper holds the inherited pipe, so close can only follow the group stop.
+    await waitForCommandClose(closed, 3000);
+    expect(await stoppedWithin(grandchild)).toBe(true);
+    await waitForCommandClose(admission.stop(), 3000);
+    expect(admission.size).toBe(0);
+  } finally {
+    await admission.stop();
+    try {
+      process.kill(grandchild, 'SIGKILL');
+    } catch {
+      // Already gone.
+    }
+  }
+});
+
+test('stop terminates a running direct child group without reading its output', async () => {
+  const admission = sandboxProcessOwner(() => undefined, 1);
+  const child = admission.spawn({
+    executable: '/bin/sh',
+    args: ['-c', 'sleep 30 & echo $!; wait'],
+    cwd: tmpdir(),
+    environment: {},
+  });
+  let output = '';
+  const ready = new Promise<number>((resolve) => {
+    child.stdout.on('data', (bytes) => {
+      output += String(bytes);
+      const pid = Number(output.trim());
+      if (Number.isInteger(pid) && pid > 0) resolve(pid);
+    });
+  });
+  const grandchild = await ready;
+  try {
+    await waitForCommandClose(admission.stop(), 5000);
+    expect(await stoppedWithin(grandchild)).toBe(true);
+    expect(admission.size).toBe(0);
+    expect(nativeCommandOwner(child)).toBeUndefined();
+  } finally {
+    try {
+      process.kill(grandchild, 'SIGKILL');
+    } catch {
+      // Already gone.
+    }
   }
 });
 
@@ -127,19 +208,17 @@ async function executing(pid: number): Promise<boolean> {
     const info = await readFile(`/proc/${pid}/stat`, 'utf8');
     return !info.slice(info.lastIndexOf(')') + 2).startsWith('Z ');
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    if (!(error instanceof Error && 'code' in error)) throw error;
+    if (error.code === 'ENOENT') return false;
+    // A process being torn down fails the read itself with ESRCH before it becomes a zombie;
+    // it has not stopped yet, so the caller keeps observing until the zombie or the absence.
+    if (error.code === 'ESRCH') return true;
     throw error;
   }
 }
 
-async function waitForObservation<T>(read: () => Promise<T | undefined>, timeoutMs = 3000) {
-  const deadline = performance.now() + timeoutMs;
-  while (performance.now() < deadline) {
-    const value = await read();
-    if (value !== undefined) return value;
-    await Bun.sleep(10);
-  }
-  throw new Error('Sandbox test observation deadline exceeded');
+function waitForObservation<T>(read: () => Promise<T | undefined>, timeoutMs = 3000) {
+  return observe(read, 'a Sandbox test observation', timeoutMs);
 }
 
 function killTestGroup(pid: number) {
@@ -156,12 +235,14 @@ test.skipIf(process.platform !== 'linux')(
     const root = await mkdtemp(join(tmpdir(), 'sandbox-direct-descendant-'));
     const marker = join(root, 'member.json');
     const release = join(root, 'release');
-    const helper = `require('node:fs').writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid}));setInterval(()=>{},20)`;
-    const leader = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(helper)}],{stdio:'ignore'});setInterval(()=>{if(require('node:fs').existsSync(${JSON.stringify(release)}))process.exit(0)},5)`;
     const admission = sandboxProcessOwner(() => undefined, 1);
     const child = admission.spawn({
       executable: process.execPath,
-      args: ['-e', leader],
+      args: [
+        fileURLToPath(new URL('./fixtures/sandbox-leader-until-release.mjs', import.meta.url)),
+        marker,
+        release,
+      ],
       cwd: root,
       environment: {},
     });
@@ -194,8 +275,9 @@ test.skipIf(process.platform !== 'linux')(
       await waitForCommandClose(admission.stop(), 3000);
       expect(admission.size).toBe(0);
       const pid = member;
+      // Settles only on a zombie or an absent pid, both terminal; a second read could meet the
+      // reaping itself and fail with ESRCH.
       await waitForObservation(async () => ((await executing(pid)) ? undefined : true), 1000);
-      expect(await executing(member)).toBe(false);
     } finally {
       if (
         child.pid !== undefined &&

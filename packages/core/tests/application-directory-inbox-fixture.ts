@@ -9,11 +9,18 @@ import type { DirectoryInboxConfig } from '../src/application/directory-inbox-co
 export const Entry = z.object({ text: z.string() }).strict();
 export type Entry = z.infer<typeof Entry>;
 const directories: string[] = [];
-afterEach(async () => {
-  await Promise.all(
-    directories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
+/**
+ * Removes the directories `inboxDirectory` made after each test. A test file calls it once at the
+ * top level: a hook registered at the top level of this shared module would belong to the first
+ * file that imports it, and every later file would leave its directories behind.
+ */
+export function removeInboxDirectoriesAfterEach(): void {
+  afterEach(async () => {
+    await Promise.all(
+      directories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
+    );
+  });
+}
 export async function inboxDirectory() {
   const path = await mkdtemp(join(tmpdir(), 'stitchkit-intake-'));
   directories.push(path);

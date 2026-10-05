@@ -195,11 +195,10 @@ function grammyNodeSignal(signal: AbortSignal): GrammyNodeAbortSignal {
  */
 export class GrammyWebhookUnavailableError extends AppError<'GRAMMY_WEBHOOK_NOT_ACCEPTING'> {
   constructor() {
-    super(
-      'GRAMMY_WEBHOOK_NOT_ACCEPTING',
-      'grammY webhook resource is not accepting updates',
-      503,
-    );
+    super('GRAMMY_WEBHOOK_NOT_ACCEPTING', {
+      message: 'grammY webhook resource is not accepting updates',
+      status: 503,
+    });
     this.name = 'GrammyWebhookUnavailableError';
   }
 }

@@ -11,7 +11,7 @@ import {
 } from '../contract/errors';
 import { normalizeError } from '../contract/normalize';
 import { isRecord } from '../internal/typed';
-import { connectionToolError } from './connections/error-projection';
+import { projectedToolError } from './internal/tool-error-projection';
 
 export type ToolResult =
   | { ok: true; data: unknown }
@@ -52,7 +52,7 @@ const normalizedToolErrors = new WeakMap<
  * transport mounts so every tool error has one shape.
  */
 export function toolResultFromError(err: unknown): ToolFailure {
-  const appErr = normalizeError(connectionToolError(err) ?? err, { logUnexpected: false });
+  const appErr = normalizeError(projectedToolError(err) ?? err, { logUnexpected: false });
   const result: ToolFailure = {
     ok: false,
     code: appErr.code,
@@ -79,15 +79,13 @@ export function toolErrorFromResult(result: ToolFailure): AppError {
   const details = isRecord(result.details) ? result.details : undefined;
   const message = typeof details?.message === 'string' ? details.message : result.code;
   const status = isStitchErrorCode(result.code) ? STITCH_ERROR_STATUS[result.code] : 500;
-  return new AppError(
-    result.code,
+  return new AppError(result.code, {
     message,
     status,
     details,
-    result.hint,
-    undefined,
-    result.retryable,
-  );
+    hint: result.hint,
+    retryable: result.retryable,
+  });
 }
 
 /** Original in-process failure; never part of the serialized tool envelope. */

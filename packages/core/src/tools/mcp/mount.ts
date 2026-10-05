@@ -8,7 +8,7 @@ import { isRecord } from '../../internal/typed';
 import type { ServiceDef, StitchLogger } from '../../server/types';
 import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute-hooks';
 import { createToolRunner, type ToolExtend } from '../mount';
-import type { RuntimeMcpToolDefinition } from '../runtime-tool-mcp';
+import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
 import { type McpResourceDef, RESOURCE_MIME_TYPE } from './app';
 import { type McpCatalogStamp, mcpCatalogStamp } from './catalog';
 import {
@@ -26,6 +26,10 @@ import { registerMcpTool } from './register';
 import type { McpRoundRuntime, McpRoundState } from './round';
 import { mountPreparedRuntimeMcp } from './runtime-tools';
 
+/**
+ * Options for `mountMcp`; pass the same auth lifecycle you use on the HTTP server, or tool
+ * calls skip that auth gate.
+ */
 export interface McpMountConfig {
   context?: Record<string, unknown>;
   /** Tool-call observability hooks. */
@@ -74,6 +78,10 @@ export function validateMcpSchemas(config: ValidateMcpSchemasConfig): void {
   });
 }
 
+/**
+ * Registers contract services as tools on an existing MCP server; the services you pass are
+ * the whole tool list.
+ */
 export function mountMcp(
   mcpServer: McpServer,
   services: ServiceDef | ServiceDef[],
@@ -195,17 +203,25 @@ export interface McpServerSharedConfig<TAuth> {
   onOutputStrip?: (toolName: string, paths: string[]) => void;
 }
 
+/**
+ * Surface config with a fixed or per-identity list of services and runtime tools; cannot be
+ * combined with `surfaces`.
+ */
 export interface DirectMcpSurfaceConfig<TAuth> {
   /** Contract services exposed as MCP tools — may depend on the identity. */
   services: ServiceDef[] | ((auth: TAuth) => ServiceDef[]);
   /** Framework-managed runtime tools — may depend on the identity. */
   runtimeTools?:
-    | readonly RuntimeMcpToolDefinition[]
-    | ((auth: TAuth) => readonly RuntimeMcpToolDefinition[]);
+    | readonly RuntimeToolDefinition[]
+    | ((auth: TAuth) => readonly RuntimeToolDefinition[]);
   surfaces?: never;
   selectSurface?: never;
 }
 
+/**
+ * Surface config with a fixed registry of named surfaces and a `selectSurface` function
+ * picking one per identity; all surfaces are prepared once at build.
+ */
 export interface FiniteMcpSurfaceConfig<TAuth, TSurfaces extends McpSurfaceRegistry> {
   /** Finite immutable surfaces, all prepared eagerly exactly once. */
   surfaces: TSurfaces;

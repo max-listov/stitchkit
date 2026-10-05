@@ -70,7 +70,10 @@ export function normalizeError(err: unknown, options: NormalizeErrorOptions = {}
     // they cross to the caller; the full message still reaches observability
     // through `recordedErrorMessage`, which receives the raw thrown error.
     if (err.code === 'REALTIME_CONTRACT_VIOLATION') {
-      return new AppError('REALTIME_CONTRACT_VIOLATION', 'Realtime contract violation', 500);
+      return new AppError('REALTIME_CONTRACT_VIOLATION', {
+        message: 'Realtime contract violation',
+        status: 500,
+      });
     }
     return err;
   }
@@ -78,8 +81,12 @@ export function normalizeError(err: unknown, options: NormalizeErrorOptions = {}
   if (err instanceof z.ZodError) {
     // Carry structured field issues in `details` alongside the text `message`,
     // so a machine client matches on fields instead of parsing the message.
-    return new AppError('VALIDATION_ERROR', formatZodError(err), 400, {
-      issues: zodIssues(err).slice(0, MAX_DETAIL_ISSUES),
+    return new AppError('VALIDATION_ERROR', {
+      message: formatZodError(err),
+      status: 400,
+      details: {
+        issues: zodIssues(err).slice(0, MAX_DETAIL_ISSUES),
+      },
     });
   }
 
@@ -87,7 +94,10 @@ export function normalizeError(err: unknown, options: NormalizeErrorOptions = {}
   // message to the caller — a raw `Error.message` can carry internal detail
   // (a DB connection string, a file path, a stack fragment).
   if (options.logUnexpected !== false) console.error('[stitchkit] unhandled error:', err);
-  return new AppError('INTERNAL_SERVER_ERROR', 'Internal server error', 500);
+  return new AppError('INTERNAL_SERVER_ERROR', {
+    message: 'Internal server error',
+    status: 500,
+  });
 }
 
 /**

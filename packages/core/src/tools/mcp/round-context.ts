@@ -132,7 +132,7 @@ async function runRoundFailure(
         ...tool.method,
         outputSchema: undefined,
         handler: () => {
-          throw new AppError(code, message, 400);
+          throw new AppError(code, { message, status: 400 });
         },
       },
     },

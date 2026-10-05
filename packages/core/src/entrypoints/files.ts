@@ -35,8 +35,12 @@ export {
   writeFileAtomic,
   writeFileAtomicSync,
 } from '../internal/atomic-file';
-
 export { AtomicFilePublicationError } from '../internal/atomic-publication';
+export {
+  isAtomicStagingName,
+  type SweepAtomicStagingOptions,
+  sweepAtomicStaging,
+} from '../internal/atomic-staging';
 export {
   type ExclusiveLock,
   ExclusiveLockError,

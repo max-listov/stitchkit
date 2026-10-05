@@ -58,11 +58,10 @@ function rawEndpointResponse<TServer>(
   { match: { method }, result }: EndpointOutcome,
 ): Response {
   if (!(result instanceof Response)) {
-    throw new AppError(
-      'INTERNAL_SERVER_ERROR',
-      `Raw endpoint ${method.serviceName}.${method.key} must return a Response`,
-      500,
-    );
+    throw new AppError('INTERNAL_SERVER_ERROR', {
+      message: `Raw endpoint ${method.serviceName}.${method.key} must return a Response`,
+      status: 500,
+    });
   }
   const response =
     method.method === 'HEAD'
@@ -85,11 +84,10 @@ async function streamEndpointResponse<TServer>(
   const { req, server, clientIp } = request;
   if (!method.stream || !streamAbort || !isAsyncIterable(result)) {
     streamAbort?.abort();
-    throw new AppError(
-      'INTERNAL_SERVER_ERROR',
-      `Streaming endpoint ${method.serviceName}.${method.key} must return an AsyncIterable`,
-      500,
-    );
+    throw new AppError('INTERNAL_SERVER_ERROR', {
+      message: `Streaming endpoint ${method.serviceName}.${method.key} must return an AsyncIterable`,
+      status: 500,
+    });
   }
   const response = await contractStreamResponse(
     req,
@@ -132,11 +130,10 @@ async function dataEndpointResponse<TServer>(
   // returns one; the type forbids the handler doing it, but a service
   // assembled past the types, and any hook, still can.
   if (result instanceof Response) {
-    throw new AppError(
-      'INTERNAL_SERVER_ERROR',
-      `${method.serviceName}.${method.key} produced a Response on the data path — only a \`rawResponse: true\` endpoint may return one (an afterHandle hook must return data)`,
-      500,
-    );
+    throw new AppError('INTERNAL_SERVER_ERROR', {
+      message: `${method.serviceName}.${method.key} produced a Response on the data path — only a \`rawResponse: true\` endpoint may return one (an afterHandle hook must return data)`,
+      status: 500,
+    });
   }
 
   // A handler returning the wrong shape — including data with no declared
@@ -156,17 +153,16 @@ async function dataEndpointResponse<TServer>(
       : undefined,
   );
   if (!checked.ok) {
-    throw new AppError('INTERNAL_SERVER_ERROR', checked.message, 500);
+    throw new AppError('INTERNAL_SERVER_ERROR', { message: checked.message, status: 500 });
   }
   result = checked.data;
 
   const responseStatus = method.responseMeta?.status ?? (method.outputSchema ? 200 : 204);
   if (method.outputSchema && (responseStatus === 204 || responseStatus === 205)) {
-    throw new AppError(
-      'INTERNAL_SERVER_ERROR',
-      `${method.serviceName}.${method.key} cannot combine output with bodyless status ${responseStatus}`,
-      500,
-    );
+    throw new AppError('INTERNAL_SERVER_ERROR', {
+      message: `${method.serviceName}.${method.key} cannot combine output with bodyless status ${responseStatus}`,
+      status: 500,
+    });
   }
   const responseHeaders = new Headers(requestCorsHeaders(cors, req));
   applyResponseMetadata(

@@ -1,11 +1,10 @@
 import { expect, test } from 'bun:test';
 import { z } from 'zod';
 import { AppError } from '../src/contract/errors';
-import { AgentRunSchema } from '../src/entrypoints/agent-runtime';
-import { createAgentHarnessTools } from '../src/entrypoints/agent-runtime/harness-tools';
-import { defineRuntimeTool } from '../src/entrypoints/tools';
+import { AgentRunSchema, type AgentRuntimeRunContext } from '../src/entrypoints/agent-runtime';
+import { composeToolLifecycle, defineRuntimeTool, mountAgent } from '../src/entrypoints/tools';
 
-test('harness tool factory retains mapped identity, mount options, hooks, authorization and exactly one fence', async () => {
+test('the one-line harness composition retains mapped identity, mount options, hooks, authorization and exactly one fence', async () => {
   const seen: string[] = [];
   let denied = false;
   let stale = false;
@@ -31,27 +30,30 @@ test('harness tool factory retains mapped identity, mount options, hooks, author
     createdAt: '2026-09-30T00:00:00Z',
     updatedAt: '2026-09-30T00:00:00Z',
   });
-  const factory = createAgentHarnessTools<{ userId: string }>(async ({ context, run }) => ({
-    services: [],
-    runtimeTools: [definition],
-    context: { ...context, messageId: run.assistantMessageId },
-    lifecycle: {
-      beforeHandle: () => {
-        seen.push('auth');
-        if (denied) throw new AppError('DENIED', 'denied', 403);
+  const factory = async (input: AgentRuntimeRunContext<{ userId: string }>) =>
+    mountAgent([], {
+      runtimeTools: [definition],
+      context: { ...input.context, messageId: input.run.assistantMessageId },
+      lifecycle: composeToolLifecycle(
+        {
+          beforeHandle: () => {
+            seen.push('auth');
+            if (denied) throw new AppError('DENIED', { message: 'denied', status: 403 });
+          },
+        },
+        input.toolFenceLifecycle,
+      ),
+      hooks: {
+        beforeToolCall: () => {
+          seen.push('hook');
+        },
       },
-    },
-    hooks: {
-      beforeToolCall: () => {
-        seen.push('hook');
+      onOutputStrip: () => {
+        seen.push('strip');
       },
-    },
-    onOutputStrip: () => {
-      seen.push('strip');
-    },
-    flattenUnionInput: true,
-    coerceJsonArgs: false,
-  }));
+      flattenUnionInput: true,
+      coerceJsonArgs: false,
+    });
   const tools = await factory({
     context: { userId: 'alice' },
     run,
@@ -59,7 +61,7 @@ test('harness tool factory retains mapped identity, mount options, hooks, author
     toolFenceLifecycle: {
       beforeHandle: () => {
         seen.push('fence');
-        if (stale) throw new AppError('STALE', 'stale', 409);
+        if (stale) throw new AppError('STALE', { message: 'stale', status: 409 });
       },
     },
   });

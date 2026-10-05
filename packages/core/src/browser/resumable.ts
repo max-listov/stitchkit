@@ -1,4 +1,5 @@
 import { type BackoffPolicy, createBackoff } from '../internal/backoff';
+import { sleep } from '../internal/timers';
 
 export interface ResumableAttempt {
   /** 1 for the first re-open after a failure, growing until a delivery resets it. */
@@ -23,32 +24,6 @@ export interface ResumableIteratorConfig<T, CURSOR> {
 }
 
 const DEFAULT_RETRY: BackoffPolicy = { minDelayMs: 100, maxDelayMs: 30_000, jitter: 0.5 };
-
-class ResumableAbortError extends Error {
-  constructor() {
-    super('Resumable iterator was aborted');
-    this.name = 'ResumableAbortError';
-  }
-}
-
-function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    function onAbort(): void {
-      clearTimeout(timer);
-      reject(new ResumableAbortError());
-    }
-    if (signal?.aborted) {
-      clearTimeout(timer);
-      reject(new ResumableAbortError());
-      return;
-    }
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
 
 /**
  * Re-open a long-lived stream from the last delivered position.
@@ -86,7 +61,7 @@ export async function* resumableIterator<T, CURSOR>(
       // Saying otherwise here is how a resumable consumer silently stops resuming.
       throw new Error('Resumable source ended without a terminal item');
     } catch (error) {
-      if (config.signal?.aborted || error instanceof ResumableAbortError) return;
+      if (config.signal?.aborted) return;
       attempt += 1;
       const delayMs = backoff.next();
       config.onAttempt?.({ number: attempt, delayMs, error });

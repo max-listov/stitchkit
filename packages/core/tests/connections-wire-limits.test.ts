@@ -142,12 +142,8 @@ test('a body reader that ignores fetch still terminates on its deadline and canc
     }),
   );
   const read = context(100, 20);
-  const error = await withConnectionDeadline(
-    'wire',
-    20,
-    undefined,
-    () => readBoundedText(response, 100, 'wire', read),
-    read,
+  const error = await withConnectionDeadline('wire', read, undefined, (scoped) =>
+    readBoundedText(response, 100, 'wire', scoped),
   ).catch((error: unknown) => error);
   expect(error).toBeInstanceOf(ConnectionTimeoutError);
   expect(error).toMatchObject({
@@ -257,7 +253,7 @@ test.each(streamModes)(
     } finally {
       allowed.teardown();
     }
-    await Bun.sleep(5);
+    await fixture.streamsClosed();
     expect(fixture.openStreams).toBe(0);
   },
 );
@@ -289,7 +285,7 @@ test.each(streamModes)(
     } finally {
       bounded.teardown();
     }
-    await Bun.sleep(5);
+    await fixture.streamsClosed();
     expect(fixture.openStreams).toBe(0);
   },
 );
@@ -302,7 +298,6 @@ test('legacy endpoint readiness is bounded but its stream lifetime uses active c
   const connection = client(fixture.url, 2000, 2000, 40, 200);
   try {
     await connection.initialize(undefined);
-    await Bun.sleep(60);
     expect(await connection.request('tools/call', {}, undefined)).toHaveProperty(
       'structuredContent',
     );
@@ -331,7 +326,7 @@ test('legacy endpoint readiness is bounded but its stream lifetime uses active c
   } finally {
     ceiling.teardown();
   }
-  await Bun.sleep(5);
+  await Promise.all([missing.streamsClosed(), large.streamsClosed()]);
   expect(missing.openStreams).toBe(0);
   expect(large.openStreams).toBe(0);
 });

@@ -6,7 +6,8 @@ import {
   QueryClient,
   type QueryClientConfig,
 } from '@tanstack/react-query';
-import { ApiError, isAbortLikeError } from '../browser/http';
+import { ApiError } from '../browser/api-error';
+import { isAbortLikeError } from '../browser/http';
 
 export interface ApiErrorRetryConfig {
   /** Maximum retries after the initial query attempt. */

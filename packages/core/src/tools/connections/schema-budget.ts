@@ -1,4 +1,4 @@
-import type { RuntimeToolDefinition } from '../runtime-tool';
+import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
 
 /**
  * Foreign JSON-schema accounting for the mount budget.

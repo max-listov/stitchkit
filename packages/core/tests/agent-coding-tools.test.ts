@@ -12,6 +12,8 @@ import {
   createAgentCodingTools,
 } from '../src/entrypoints/agent-runtime/coding-tools';
 import { mountAgent } from '../src/entrypoints/tools';
+import { processAlive } from './support/process-state';
+import { until } from './support/until';
 
 const roots: string[] = [];
 
@@ -34,28 +36,21 @@ function descendantPid(value: string): number {
 }
 
 async function waitForDescendant(file: string): Promise<number> {
-  const deadline = performance.now() + 500;
-  do {
-    if (existsSync(file)) {
-      const text = await readFile(file, 'utf8');
-      if (text.trim()) return descendantPid(text);
-    }
-    await Bun.sleep(10);
-  } while (performance.now() < deadline);
-  throw new Error('Descendant readiness was not observed');
+  let text = '';
+  await until(
+    async () => {
+      text = existsSync(file) ? (await readFile(file, 'utf8')).trim() : '';
+      return text !== '';
+    },
+    'the descendant readiness file',
+    500,
+  );
+  return descendantPid(text);
 }
 
 async function expectProcessGone(pid: number): Promise<void> {
   descendantPid(String(pid));
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    try {
-      process.kill(pid, 0);
-    } catch {
-      return;
-    }
-    await Bun.sleep(10);
-  }
-  throw new Error(`descendant process ${pid} remained alive`);
+  await until(() => !processAlive(pid), `descendant process ${pid} to be gone`, 2_000);
 }
 
 describe('host-authorized Agent coding tools', () => {

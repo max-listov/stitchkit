@@ -13,6 +13,8 @@
  * - `notice` with `expiresInMs` is a remark below the screen that removes
  *   itself; the screen stays where it is.
  */
+
+import { MAX_TIMER_MS } from '../../internal/timers';
 import type { ActionValue } from './callback-codec';
 import type { TelegramText } from './html';
 import type { AnyTelegramScreen, ScreenLinkArgs } from './screen-types';
@@ -45,8 +47,6 @@ export interface NoticeOptions {
 
 /** Telegram's limit for the text of a press answer. */
 const TOAST_LIMIT = 200;
-/** The longest delay a timer can wait (2³¹ − 1 ms, about 24.8 days); a longer one fires at once. */
-const MAX_EXPIRY_MS = 2_147_483_647;
 
 export class ScreenOutcome {
   // Nominal: data that happens to have these fields is still data.
@@ -114,10 +114,10 @@ export class ScreenOutcome {
     const { expiresInMs } = options;
     if (
       expiresInMs !== undefined &&
-      (!Number.isInteger(expiresInMs) || expiresInMs <= 0 || expiresInMs > MAX_EXPIRY_MS)
+      (!Number.isInteger(expiresInMs) || expiresInMs <= 0 || expiresInMs > MAX_TIMER_MS)
     ) {
       throw new RangeError(
-        `[stitchkit] telegram screens: expiresInMs must be a positive integer up to ${MAX_EXPIRY_MS}.`,
+        `[stitchkit] telegram screens: expiresInMs must be a positive integer up to ${MAX_TIMER_MS}.`,
       );
     }
     const notice: ScreenNotice =

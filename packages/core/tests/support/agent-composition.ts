@@ -9,6 +9,7 @@ import {
   createHeadlessAgentHarness,
   type HeadlessAgentHarnessConfig,
 } from '../../src/entrypoints/agent-runtime/harness';
+import { until } from './until';
 
 export function compositionHarness(
   overrides: Partial<HeadlessAgentHarnessConfig<{ owner: string }, ToolSet>> = {},
@@ -67,10 +68,6 @@ export function compositionHarness(
   });
 }
 
-export async function eventually(predicate: () => boolean, timeoutMs = 3_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Composition condition did not settle');
-    await Bun.sleep(5);
-  }
+export function eventually(predicate: () => boolean, timeoutMs = 3_000) {
+  return until(predicate, 'the composition condition to settle', timeoutMs);
 }

@@ -424,7 +424,8 @@ describe('framework-owned native MCP registration', () => {
         services: [],
         lifecycle: {
           beforeHandle: (_context, endpoint) => {
-            if (endpoint.scope === 'admin') throw new AppError('FORBIDDEN', 'denied', 403);
+            if (endpoint.scope === 'admin')
+              throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
           },
         },
         runtimeTools: [
@@ -516,7 +517,8 @@ describe('native call isolation and audit', () => {
             input: z.object({ id: z.string(), fail: z.boolean() }),
             handler: async ({ input }) => {
               await new Promise((resolve) => setTimeout(resolve, input.fail ? 2 : 5));
-              if (input.fail) throw new AppError('CONFLICT', `failed ${input.id}`, 409);
+              if (input.fail)
+                throw new AppError('CONFLICT', { message: `failed ${input.id}`, status: 409 });
             },
           }),
         ],

@@ -1,19 +1,8 @@
-import { constants, type Stats } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { BoundedFileReadError, readBoundedFile } from './bounded-file-read';
+import type { FileObservation } from './file-observation';
 
-/** Owner records are small JSON objects; the extra byte detects growth beyond the cap. */
+/** Owner records are small JSON objects; one byte past the cap would already be refused. */
 const OWNER_RECORD_BYTES = 16 * 1024;
-
-interface LockRecordDescriptor {
-  stat(): Promise<Stats>;
-  read(
-    buffer: Buffer,
-    offset: number,
-    length: number,
-    position: number,
-  ): Promise<{ bytesRead: number }>;
-  close(): Promise<void>;
-}
 
 export class LockRecordError extends Error {
   override name = 'LockRecordError';
@@ -25,71 +14,42 @@ export class LockRecordError extends Error {
   }
 }
 
-/** A descriptor-bound observation, never a pathname stat followed by an unbounded read. */
+const LOCK_CODE = {
+  FILE_UNSUPPORTED: 'LOCK_UNSAFE_RECORD',
+  FILE_NOT_REGULAR: 'LOCK_UNSAFE_RECORD',
+  FILE_UNSAFE_LINK: 'LOCK_UNSAFE_RECORD',
+  FILE_TOO_LARGE: 'LOCK_RECORD_TOO_LARGE',
+  FILE_CHANGED: 'LOCK_RECORD_CHANGED',
+} satisfies Record<BoundedFileReadError['code'], LockRecordError['code']>;
+
+/** A descriptor-bound observation of a lock file: a regular, single-link, stable, capped read. */
 export async function readLockRecord(
   path: string,
-  openDescriptor: (path: string, flags: number) => Promise<LockRecordDescriptor> = open,
-  signal?: AbortSignal,
-): Promise<{ text: string; info: Stats }> {
-  signal?.throwIfAborted();
-  if (!constants.O_NOFOLLOW || !constants.O_NONBLOCK) {
-    throw new LockRecordError(
-      'LOCK_UNSAFE_RECORD',
-      'Safe lock descriptor flags are unavailable',
-    );
-  }
-  const handle = await openDescriptor(
-    path,
-    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-  );
+  {
+    openDescriptor,
+    signal,
+    singleLink = true,
+  }: {
+    openDescriptor?: Parameters<typeof readBoundedFile>[3];
+    signal?: AbortSignal;
+    /** `false` only for a lock whose second name was proven to be its own staging file. */
+    singleLink?: boolean;
+  } = {},
+): Promise<{ text: string; info: FileObservation }> {
   try {
-    signal?.throwIfAborted();
-    const before = await handle.stat();
-    signal?.throwIfAborted();
-    if (!before.isFile() || before.nlink !== 1) {
-      throw new LockRecordError(
-        'LOCK_UNSAFE_RECORD',
-        'Lock record must be a regular file with one link',
-      );
-    }
-    if (before.size > OWNER_RECORD_BYTES) {
-      throw new LockRecordError(
-        'LOCK_RECORD_TOO_LARGE',
-        'Lock owner record exceeds its byte cap',
-      );
-    }
-    const bytes = Buffer.alloc(OWNER_RECORD_BYTES + 1);
-    let length = 0;
-    while (length < bytes.length) {
-      signal?.throwIfAborted();
-      const read = await handle.read(bytes, length, bytes.length - length, length);
-      if (read.bytesRead === 0) break;
-      length += read.bytesRead;
-    }
-    if (length > OWNER_RECORD_BYTES) {
-      throw new LockRecordError(
-        'LOCK_RECORD_TOO_LARGE',
-        'Lock owner record grew beyond its byte cap',
-      );
-    }
-    const after = await handle.stat();
-    signal?.throwIfAborted();
-    if (
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      before.ctimeMs !== after.ctimeMs ||
-      before.nlink !== after.nlink ||
-      length !== after.size
-    ) {
-      throw new LockRecordError(
-        'LOCK_RECORD_CHANGED',
-        'Lock owner record changed during its read',
-      );
-    }
-    return { text: bytes.subarray(0, length).toString('utf8'), info: after };
-  } finally {
-    await handle.close();
+    const { bytes, observation } = await readBoundedFile(
+      path,
+      OWNER_RECORD_BYTES,
+      { rejectSymlinks: true, singleLink, stable: true, ...(signal && { signal }) },
+      openDescriptor,
+    );
+    return {
+      text: new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes),
+      info: observation,
+    };
+  } catch (error) {
+    if (error instanceof BoundedFileReadError)
+      throw new LockRecordError(LOCK_CODE[error.code], error.message);
+    throw error;
   }
 }

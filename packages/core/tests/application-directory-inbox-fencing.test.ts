@@ -15,10 +15,16 @@ import {
   identity,
   inboxDirectory,
   openInbox,
+  removeInboxDirectoriesAfterEach,
 } from './application-directory-inbox-fixture';
+
+removeInboxDirectoriesAfterEach();
+
+import { until } from './support/until';
 
 test('concurrent inboxes share one claim and a long handler renews its lease', async () => {
   const dir = await inboxDirectory();
+  const time = clock();
   const entered = deferred();
   const release = deferred();
   let attempts = 0;
@@ -29,20 +35,27 @@ test('concurrent inboxes share one claim and a long handler renews its lease', a
       entered.resolve();
       await release.promise;
     },
-    { leaseMs: 100 },
+    { clock: time.now, leaseMs: 100 },
   );
   const second = await openInbox(
     dir,
     () => {
       attempts += 1;
     },
-    { leaseMs: 100 },
+    { clock: time.now, leaseMs: 100 },
   );
   await first.inbox.accept({ ...identity, entry: { text: 'long' } });
   const flushing = first.inbox.flush();
   await entered.promise;
   try {
-    await Bun.sleep(180);
+    const taken = (await first.inbox.state()).claims[0]?.leaseUntil;
+    // Past the first lease the entry is still held, but only because the handler renewed it.
+    time.advance(60);
+    await until(
+      async () => (await first.inbox.state()).claims[0]?.leaseUntil !== taken,
+      'the handler lease to be renewed',
+    );
+    time.advance(60);
     expect(await second.inbox.flush()).toBe(0);
     expect(attempts).toBe(1);
   } finally {

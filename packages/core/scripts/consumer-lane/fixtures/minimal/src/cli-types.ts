@@ -8,8 +8,8 @@ import {
   createCliInvoker,
   defineCliCommand,
   parseCliArgs,
-  type RuntimeToolExecution,
-  type RuntimeToolExecutionWithOutput,
+  type RuntimeToolDefinition,
+  type RuntimeToolDefinitionWithOutput,
   routeCliArgv,
 } from 'stitchkit/cli';
 import { writeFileAtomic } from 'stitchkit/files';
@@ -17,6 +17,7 @@ import { canonicalJson } from 'stitchkit/primitives';
 import { observeProcessInstance } from 'stitchkit/process';
 import { z } from 'zod';
 import './cli-peer-absence.js';
+import './cli-publish-leaf.js';
 
 // Neutral declarations and CLI declarations use the same strict NodeNext program.
 void writeFileAtomic;
@@ -103,18 +104,18 @@ const managed = {
   input: managedInput,
   output,
   handler: ({ input }) => ({ size: input.text.length }),
-} satisfies RuntimeToolExecutionWithOutput<typeof managedInput, typeof output>;
+} satisfies RuntimeToolDefinitionWithOutput<typeof managedInput, typeof output>;
 const extraInput = z.object({ text: z.string(), requiredExtra: z.string() });
-const tooNarrow: RuntimeToolExecutionWithOutput<typeof extraInput, typeof output>['handler'] =
+const tooNarrow: RuntimeToolDefinitionWithOutput<typeof extraInput, typeof output>['handler'] =
   ({ input }) => ({ size: input.requiredExtra.length });
-const invalidManaged: RuntimeToolExecutionWithOutput<typeof managedInput, typeof output> = {
+const invalidManaged: RuntimeToolDefinitionWithOutput<typeof managedInput, typeof output> = {
   ...managed,
   // @ts-expect-error Strict neutral construction rejects pretyped undeclared input fields.
   handler: tooNarrow,
 };
 void invalidManaged;
 void createCliInvoker({ name: 'typed-neutral', runtimeTools: [managed] });
-const registered: readonly RuntimeToolExecution[] = [managed];
+const registered: readonly RuntimeToolDefinition[] = [managed];
 {
   const first = registered[0];
   if (first) {

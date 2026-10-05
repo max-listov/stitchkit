@@ -1,10 +1,9 @@
+import { assertPositiveSafeInteger } from './positive-integer';
 export const DEFAULT_STREAM_LINE_BYTES = 1024 * 1024;
 
 function lineLimit(value: number | undefined): number {
   const resolved = value ?? DEFAULT_STREAM_LINE_BYTES;
-  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
-    throw new TypeError('maxLineBytes must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('maxLineBytes', resolved);
   return resolved;
 }
 

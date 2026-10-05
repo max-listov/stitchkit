@@ -170,12 +170,15 @@ async function dispatch<TServer>(
     const allow = allowedMethods(routeMap, url.pathname);
     if (allow.length > 0) {
       const res = await respondError(
-        new AppError('METHOD_NOT_ALLOWED', `Method ${req.method} not allowed`, 405),
+        new AppError('METHOD_NOT_ALLOWED', {
+          message: `Method ${req.method} not allowed`,
+          status: 405,
+        }),
       );
       res.headers.set('Allow', allow.join(', '));
       return res;
     }
-    return respondError(new AppError('NOT_FOUND', 'Not found', 404));
+    return respondError(new AppError('NOT_FOUND', { message: 'Not found', status: 404 }));
   }
 
   return dispatchEndpoint(state, request, match);

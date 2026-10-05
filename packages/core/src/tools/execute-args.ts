@@ -2,6 +2,7 @@
  * A tool call's arguments, split and validated exactly as the call does it:
  * path params and body keys are disjoint slices, each parsed by its own schema.
  */
+import { z } from 'zod';
 import { isUnsafeKey } from '../internal/safe-json';
 import { formatZodError } from '../internal/zod-issues';
 import type { ToolExecutionOptions, ToolOperation } from './execute';
@@ -49,8 +50,22 @@ export function parseToolCallArguments(
 
   // Coerce JSON-stringified array/object args (LLM double-serialization).
   if (coerceJson) {
-    paramArgs = coerceJsonArgs(paramArgs, method.paramsSchema);
-    inputArgs = coerceJsonArgs(inputArgs, method.inputSchema);
+    try {
+      paramArgs = coerceJsonArgs(paramArgs, method.paramsSchema);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return { ok: false, message: `Invalid params: ${formatZodError(err)}` };
+      }
+      throw err;
+    }
+    try {
+      inputArgs = coerceJsonArgs(inputArgs, method.inputSchema);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return { ok: false, message: `Invalid input: ${formatZodError(err)}` };
+      }
+      throw err;
+    }
   }
 
   // The view's defaults join the arguments before the one parse, so the

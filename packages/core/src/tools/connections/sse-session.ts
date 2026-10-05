@@ -69,12 +69,8 @@ export class SseSession {
       return this.waitForEndpoint(signal);
     }
     const readiness = this.endpointContext;
-    return withConnectionDeadline(
-      this.connectionName,
-      readiness.timeoutMs,
-      signal,
-      (deadline) => this.waitForEndpoint(deadline),
-      readiness,
+    return withConnectionDeadline(this.connectionName, readiness, signal, (scoped) =>
+      this.waitForEndpoint(scoped.signal),
     );
   }
 
@@ -107,12 +103,8 @@ export class SseSession {
   ): Promise<unknown> {
     if (context) return this.requestWithin(message, token, context, signal);
     const operation = connectionReadContext(mcpOperation(message.method), this.limits);
-    return withConnectionDeadline(
-      this.connectionName,
-      operation.timeoutMs,
-      signal,
-      (deadline) => this.requestWithin(message, token, operation, deadline),
-      operation,
+    return withConnectionDeadline(this.connectionName, operation, signal, (scoped) =>
+      this.requestWithin(message, token, scoped, scoped.signal),
     );
   }
 

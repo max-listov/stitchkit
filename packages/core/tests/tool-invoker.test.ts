@@ -73,13 +73,12 @@ const service = implement(operations, {
   },
   explode: ({ input }) => {
     if (input.id === 'app') {
-      throw new AppError(
-        'ENTITY_LOCKED',
-        'Entity is locked',
-        423,
-        { entityId: 'app' },
-        'Wait',
-      );
+      throw new AppError('ENTITY_LOCKED', {
+        message: 'Entity is locked',
+        status: 423,
+        details: { entityId: 'app' },
+        hint: 'Wait',
+      });
     }
     throw new Error('boom');
   },
@@ -139,7 +138,7 @@ describe('createToolInvoker', () => {
         {
           lifecycle: {
             beforeHandle: () => {
-              throw new AppError('FORBIDDEN', 'denied', 403);
+              throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
             },
           },
         },

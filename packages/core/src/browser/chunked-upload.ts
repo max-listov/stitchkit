@@ -18,7 +18,8 @@
  */
 
 import type { ClientRequestOptions, UploadProgress } from '../contract/client-types';
-import { ApiError } from './http';
+import { sleep } from '../internal/timers';
+import { ApiError } from './api-error';
 
 /** How far a chunked upload is, in bytes of the file. */
 export interface ChunkedUploadProgress {
@@ -188,27 +189,18 @@ async function repeating<T>(
     } catch (error) {
       if (signal?.aborted || attempt > retries || !isRetryableUploadFailure(error))
         throw error;
-      await pause(retryDelayMs * 2 ** (attempt - 1), signal);
+      try {
+        await sleep(retryDelayMs * 2 ** (attempt - 1), signal);
+      } catch (aborted) {
+        throwIfAborted(signal);
+        throw aborted;
+      }
     }
   }
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
-    throw new ApiError('REQUEST_ABORTED', 0, undefined, 'Request was aborted');
+    throw new ApiError('REQUEST_ABORTED', { status: 0, message: 'Request was aborted' });
   }
-}
-
-function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const abort = (): void => {
-      clearTimeout(timer);
-      reject(new ApiError('REQUEST_ABORTED', 0, undefined, 'Request was aborted'));
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', abort);
-      resolve();
-    }, ms);
-    signal?.addEventListener('abort', abort, { once: true });
-  });
 }

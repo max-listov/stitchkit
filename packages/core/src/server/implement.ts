@@ -209,11 +209,10 @@ export interface ImplementOptions {
  */
 function stubHandler(label: string): () => never {
   return () => {
-    throw new AppError(
-      'NOT_IMPLEMENTED',
-      `[stitchkit] ${label} is declared by its contract and has no handler`,
-      501,
-    );
+    throw new AppError('NOT_IMPLEMENTED', {
+      message: `[stitchkit] ${label} is declared by its contract and has no handler`,
+      status: 501,
+    });
   };
 }
 

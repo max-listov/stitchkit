@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { getEventListeners } from 'node:events';
 import { runNativeCommand } from '../src/process/command';
 import { NativeCommandError } from '../src/process/contract';
+import { eventLoopTurn } from './support/until';
 
 test.skipIf(process.platform !== 'linux')(
   'real synchronous E2BIG settles once before rejecting and preserves the native cause',
@@ -19,7 +20,7 @@ test.skipIf(process.platform !== 'linux')(
         onLeaderSettled: async (event) => {
           calls++;
           if (event.kind === 'error') nativeCause = event.cause;
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          await eventLoopTurn();
           settled = true;
         },
       });

@@ -34,7 +34,8 @@ const dbDown = new Error('ECONNREFUSED 10.0.0.4:5432');
 const service = implement(widgets, {
   get: (ctx) => {
     if (ctx.params.id === 'boom') throw dbDown;
-    if (ctx.params.id === 'missing') throw new AppError('NOT_FOUND', 'No such widget', 404);
+    if (ctx.params.id === 'missing')
+      throw new AppError('NOT_FOUND', { message: 'No such widget', status: 404 });
     return { id: ctx.params.id };
   },
 });

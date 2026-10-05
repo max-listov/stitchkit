@@ -198,13 +198,6 @@ export interface SurfaceManifestConfig {
   extensions?: readonly SurfaceManifestExtension[];
 }
 
-/**
- * Canonical bytes used by snapshots and schema digests. Arrays retain order.
- * The package's one canonical serialisation, published under the name a
- * surface test reaches for.
- */
-export const serializeSurfaceValue: (value: unknown) => string = serializeCanonicalJson;
-
 /** Every realtime event of every contract, in contract, direction and event order. */
 function realtimeEvents(
   config: SurfaceManifestConfig,
@@ -421,8 +414,8 @@ export function assertSurfaceManifestSnapshot(
         'changed, so the first regeneration is expected to be large.',
     );
   }
-  const actual = serializeSurfaceValue(SurfaceManifestSchema.parse(manifest));
-  const expected = serializeSurfaceValue(SurfaceManifestSchema.parse(snapshot));
+  const actual = serializeCanonicalJson(SurfaceManifestSchema.parse(manifest));
+  const expected = serializeCanonicalJson(SurfaceManifestSchema.parse(snapshot));
   if (actual !== expected) {
     throw new Error(
       `Surface manifest diverged from its committed snapshot\nexpected: ${expected}\nactual: ${actual}`,

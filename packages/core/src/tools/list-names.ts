@@ -13,7 +13,9 @@
 import type { ContractDef, Transport } from '../contract/define';
 import { TOOL_TRANSPORTS } from '../contract/define';
 import { contractOnlyService } from '../server/implement';
-import { collectToolSurface, type ToolSurfaceDefinition } from './surface';
+import type { ToolSurfaceProjection } from './internal/surface-projector';
+import type { RuntimeToolDefinition } from './runtime-tool-declaration';
+import { collectToolSurface } from './surface';
 
 /** One mounted tool name and where it comes from. */
 export interface ToolNameEntry {
@@ -36,7 +38,9 @@ export interface ToolNameEntry {
  * (never mounted as tools) and CLI appears only where `expose` opts in,
  * mirroring the real mounts.
  */
-export function listToolNames(surface: ToolSurfaceDefinition): ToolNameEntry[] {
+export function listToolNames(
+  surface: ToolSurfaceProjection<RuntimeToolDefinition>,
+): ToolNameEntry[] {
   const entries = new Map<string, ToolNameEntry>();
   for (const transport of TOOL_TRANSPORTS) {
     // Diagnostics deliberately keep invalid and duplicate names visible.

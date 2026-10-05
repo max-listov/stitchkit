@@ -13,11 +13,10 @@ export function realtimeContractViolation(options: {
 }): RealtimeRejectedEvent {
   const issues = options.cause instanceof z.ZodError ? zodIssues(options.cause) : undefined;
   const reason = options.reason.replaceAll('-', ' ');
-  const error = new AppError(
-    'REALTIME_CONTRACT_VIOLATION',
-    `Realtime event "${options.event}" (${options.direction}, ${options.phase}): ${reason}`,
-    500,
-    {
+  const error = new AppError('REALTIME_CONTRACT_VIOLATION', {
+    message: `Realtime event "${options.event}" (${options.direction}, ${options.phase}): ${reason}`,
+    status: 500,
+    details: {
       event: options.event,
       direction: options.direction,
       phase: options.phase,
@@ -25,7 +24,7 @@ export function realtimeContractViolation(options: {
       fault: options.fault,
       ...(issues !== undefined && { issues }),
     },
-  );
+  });
   if (options.cause !== undefined) error.cause = options.cause;
   return { ...options, error };
 }

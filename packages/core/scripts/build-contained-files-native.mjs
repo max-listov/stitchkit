@@ -19,7 +19,7 @@ const include = includeCandidates.find((candidate) =>
 if (!include)
   throw new Error('Unable to locate the Node-API headers for the active Node runtime');
 
-const layout = JSON.parse(readFileSync(path.join(root, 'native-assets.json'), 'utf8'));
+const layout = JSON.parse(readFileSync(path.join(root, 'native-layout.json'), 'utf8'));
 const asset = layout.assets[process.arch];
 if (typeof asset !== 'string') throw new Error('Unsupported native build architecture');
 const output = path.resolve(root, asset);

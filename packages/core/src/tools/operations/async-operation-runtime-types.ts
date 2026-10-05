@@ -5,6 +5,7 @@ import type {
   RuntimeToolDefinition,
   RuntimeToolDefinitionWithOutput,
   RuntimeToolHandlerContext,
+  RuntimeToolPresenters,
 } from '../runtime-tool';
 import type {
   AsyncOperationCancelResultSchema,
@@ -94,11 +95,21 @@ export interface RuntimeAsyncOperationConfig<
 export type AsyncOperationStartDefinition<
   TInput extends ZodObject,
   TId extends ZodObject,
-> = RuntimeToolDefinitionWithOutput<TInput, TId>;
+> = RuntimeToolDefinitionWithOutput<
+  TInput,
+  TId,
+  undefined,
+  RuntimeToolPresenters<z.output<TId>>
+>;
 export type AsyncOperationFollowDefinition<
   TId extends ZodObject,
   TOutput extends ZodType,
-> = RuntimeToolDefinitionWithOutput<TId, TOutput>;
+> = RuntimeToolDefinitionWithOutput<
+  TId,
+  TOutput,
+  undefined,
+  RuntimeToolPresenters<z.output<TOutput>>
+>;
 
 export type RuntimeAsyncOperation<
   TStartInput extends ZodObject,

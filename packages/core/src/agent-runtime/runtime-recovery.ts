@@ -1,4 +1,5 @@
 import type { ToolSet } from 'ai';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import type {
   AgentRuntimeRecoverOptions,
   AgentRuntimeRecoveryInput,
@@ -79,9 +80,7 @@ export async function recoverAgentRuns<CONTEXT, TOOLS extends ToolSet>(
   if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 1_000) {
     throw new TypeError('Recovery pageSize must be an integer between 1 and 1000');
   }
-  if (!Number.isSafeInteger(maxRuns) || maxRuns < 1) {
-    throw new TypeError('Recovery maxRuns must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('Recovery maxRuns', maxRuns);
   const ordered = await collectRecoverable(state, options, pageSize, maxRuns);
 
   const outcomes: AgentRuntimeRecoveryOutcome[] = [];

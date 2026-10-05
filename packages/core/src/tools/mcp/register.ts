@@ -121,18 +121,17 @@ export function registerMcpTool(
               finalizeOutput: async (data) => {
                 const presented = await present(data);
                 if (!isRecord(presented)) {
-                  throw new AppError(
-                    'INTERNAL_SERVER_ERROR',
-                    'Runtime MCP presenter did not return a result',
-                    500,
-                  );
+                  throw new AppError('INTERNAL_SERVER_ERROR', {
+                    message: 'Runtime MCP presenter did not return a result',
+                    status: 500,
+                  });
                 }
                 if ('structuredContent' in presented || 'isError' in presented) {
-                  throw new AppError(
-                    'INTERNAL_SERVER_ERROR',
-                    'Runtime MCP presenter cannot set framework-owned structuredContent or isError',
-                    500,
-                  );
+                  throw new AppError('INTERNAL_SERVER_ERROR', {
+                    message:
+                      'Runtime MCP presenter cannot set framework-owned structuredContent or isError',
+                    status: 500,
+                  });
                 }
                 const structured = format(
                   { ok: true, data },
@@ -144,11 +143,10 @@ export function registerMcpTool(
                     ? presented
                     : { ...presented, structuredContent: structured };
                 if (!isCallToolResult(response)) {
-                  throw new AppError(
-                    'INTERNAL_SERVER_ERROR',
-                    'Runtime MCP presenter returned an invalid CallToolResult',
-                    500,
-                  );
+                  throw new AppError('INTERNAL_SERVER_ERROR', {
+                    message: 'Runtime MCP presenter returned an invalid CallToolResult',
+                    status: 500,
+                  });
                 }
                 return response;
               },

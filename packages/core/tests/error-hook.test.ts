@@ -99,7 +99,10 @@ describe('an admission refusal travels as itself', () => {
 
 describe('createErrorHook', () => {
   test('remaps a stitchkit code to the app wire code and keeps the status', async () => {
-    const res = await onError(ctx, new AppError('NOT_FOUND', 'nope', 404));
+    const res = await onError(
+      ctx,
+      new AppError('NOT_FOUND', { message: 'nope', status: 404 }),
+    );
     expect(res?.status).toBe(404);
     expect(await res?.json()).toEqual({
       ok: false,
@@ -108,7 +111,10 @@ describe('createErrorHook', () => {
   });
 
   test("an app's own code passes through unmapped", async () => {
-    const res = await onError(ctx, new AppError('SESSION_NOT_FOUND', 'gone', 404));
+    const res = await onError(
+      ctx,
+      new AppError('SESSION_NOT_FOUND', { message: 'gone', status: 404 }),
+    );
     expect(await res?.json()).toEqual({
       ok: false,
       error: { code: 'SESSION_NOT_FOUND', message: 'gone' },
@@ -142,7 +148,7 @@ describe('createErrorHook', () => {
       render: (info) => ({ code: info.code }),
       onError: (raw, info) => seen.push({ raw, code: info.code }),
     });
-    const thrown = new AppError('CONFLICT', 'dupe', 409);
+    const thrown = new AppError('CONFLICT', { message: 'dupe', status: 409 });
     await hook(ctx, thrown);
     expect(seen).toHaveLength(1);
     expect(seen[0]?.raw).toBe(thrown);
@@ -176,7 +182,7 @@ describe('createErrorHook', () => {
 
     const response = await hook(
       enrichedContext,
-      new AppError('FORBIDDEN', 'no', 403),
+      new AppError('FORBIDDEN', { message: 'no', status: 403 }),
       endpoint,
     );
 
@@ -212,7 +218,7 @@ describe('createErrorHook', () => {
           method: 'GET',
           path: '/boom',
           handler: () => {
-            throw new AppError('NOT_FOUND', 'original', 404);
+            throw new AppError('NOT_FOUND', { message: 'original', status: 404 });
           },
         },
       ],
@@ -242,7 +248,7 @@ describe('createErrorHook', () => {
           method: 'GET',
           path: '/boom',
           handler: () => {
-            throw new AppError('CONFLICT', 'original', 409);
+            throw new AppError('CONFLICT', { message: 'original', status: 409 });
           },
         },
       ],
@@ -273,14 +279,14 @@ describe('createErrorHook', () => {
           method: 'GET',
           path: '/mapped',
           handler: () => {
-            throw new AppError('CONFLICT', 'thrown', 409);
+            throw new AppError('CONFLICT', { message: 'thrown', status: 409 });
           },
         },
         {
           method: 'GET',
           path: '/unmapped',
           handler: () => {
-            throw new AppError('FILE_TOO_LARGE', 'thrown', 413);
+            throw new AppError('FILE_TOO_LARGE', { message: 'thrown', status: 413 });
           },
         },
       ],
@@ -306,9 +312,18 @@ describe('createErrorHook', () => {
       render: (info) => ({ code: info.code }),
     });
 
-    const mapped = await hook(ctx, new AppError('CONFLICT', 'duplicate', 409));
-    const frameworkFallback = await hook(ctx, new AppError('FILE_TOO_LARGE', 'large', 413));
-    const projectCode = await hook(ctx, new AppError('SESSION_GONE', 'gone', 404));
+    const mapped = await hook(
+      ctx,
+      new AppError('CONFLICT', { message: 'duplicate', status: 409 }),
+    );
+    const frameworkFallback = await hook(
+      ctx,
+      new AppError('FILE_TOO_LARGE', { message: 'large', status: 413 }),
+    );
+    const projectCode = await hook(
+      ctx,
+      new AppError('SESSION_GONE', { message: 'gone', status: 404 }),
+    );
 
     expect(await mapped?.json()).toEqual({ code: 'conflict' });
     expect(await frameworkFallback?.json()).toEqual({ code: 'framework_error' });
@@ -325,7 +340,10 @@ describe('createErrorHook', () => {
       render: (info) => ({ code: info.code }),
     });
 
-    const response = await hook(ctx, new AppError('FILE_NOT_FOUND', 'gone', 404));
+    const response = await hook(
+      ctx,
+      new AppError('FILE_NOT_FOUND', { message: 'gone', status: 404 }),
+    );
 
     expect(seen).toEqual(['FILE_NOT_FOUND']);
     expect(await response?.json()).toEqual({ code: 'storage_error' });

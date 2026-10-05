@@ -68,7 +68,7 @@ describe('defineErrors vocabulary mapping', () => {
     });
     const response = await hook(
       { params: undefined, input: undefined, source: 'http' },
-      new AppError('FILE_NOT_FOUND', 'No file', 404),
+      new AppError('FILE_NOT_FOUND', { message: 'No file', status: 404 }),
     );
     if (!(response instanceof Response)) throw new Error('Expected an error response');
     expect(response.status).toBe(404);

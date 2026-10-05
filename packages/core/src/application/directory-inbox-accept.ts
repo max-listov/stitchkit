@@ -12,15 +12,15 @@ import {
 } from './directory-inbox-files';
 import type { InboxStateAccess } from './directory-inbox-state';
 
-export function createInboxAccept<TEntry>(options: {
+export function createInboxAccept<TEntry, TInput>(options: {
   access: InboxStateAccess;
   files: () => InboxFiles;
   accepting: () => boolean;
-  schema: z.ZodType<TEntry>;
+  schema: z.ZodType<TEntry, TInput>;
   maxEntryBytes: number;
   maxPendingEntries: number;
 }) {
-  return async (input: DirectoryInboxAccept<TEntry>): Promise<DirectoryInboxAcceptResult> => {
+  return async (input: DirectoryInboxAccept<TInput>): Promise<DirectoryInboxAcceptResult> => {
     if (!options.accepting()) throw new Error('Directory inbox is not accepting entries');
     const identity = DirectoryInboxIdentitySchema.parse({
       source: input.source,
@@ -35,7 +35,6 @@ export function createInboxAccept<TEntry>(options: {
     );
     return options.access.update<DirectoryInboxAcceptResult>(async (state, context) => {
       if (!options.accepting()) throw new Error('Directory inbox is not accepting entries');
-      await context.assertHeld();
       const files = options.files();
       const remembered = [...state.receipts, ...state.rejected, ...state.claims].find(
         (item) => item.key === filename,
@@ -48,7 +47,6 @@ export function createInboxAccept<TEntry>(options: {
       }
       if ((await files.names(options.maxPendingEntries)).length >= options.maxPendingEntries)
         throw new RangeError('Directory inbox reached maxPendingEntries');
-      await context.assertHeld();
       if (!options.accepting()) throw new Error('Directory inbox is not accepting entries');
       await files.publish(filename, bytes, context);
       return { state, result: { status: 'accepted', filename } };

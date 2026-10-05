@@ -82,20 +82,17 @@ export function mcpToolFailure(toolName: string, result: unknown): AppError {
     // `_hint` is the key the model-facing tool envelope emits (`formatToolError`),
     // so it is the key read back here. A remote that declares neither field
     // leaves both `undefined`, and the status decides as it did before.
-    return new AppError(
-      payload.error,
+    return new AppError(payload.error, {
       message,
-      502,
+      status: 502,
       details,
-      typeof payload._hint === 'string' ? payload._hint : undefined,
-      undefined,
-      typeof payload.retryable === 'boolean' ? payload.retryable : undefined,
-    );
+      hint: typeof payload._hint === 'string' ? payload._hint : undefined,
+      retryable: typeof payload.retryable === 'boolean' ? payload.retryable : undefined,
+    });
   }
-  return new AppError(
-    UPSTREAM_TOOL_ERROR,
-    `External MCP tool "${toolName}" returned an error`,
-    502,
-    payload === undefined ? undefined : { upstream: payload },
-  );
+  return new AppError(UPSTREAM_TOOL_ERROR, {
+    message: `External MCP tool "${toolName}" returned an error`,
+    status: 502,
+    details: payload === undefined ? undefined : { upstream: payload },
+  });
 }

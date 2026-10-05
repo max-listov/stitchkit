@@ -21,7 +21,7 @@ export function spawnSandboxProcess(
       capture: true,
       envPolicy: 'declared-only',
       env: {},
-      killGraceMs: 0,
+      stop: { target: 'group', graceMs: 0 },
       ...(options.stdin !== undefined
         ? {
             stdin:

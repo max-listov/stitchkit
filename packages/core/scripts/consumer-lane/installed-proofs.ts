@@ -161,7 +161,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
     id: 'cli-public-types',
     fixture: 'minimal',
     entry: 'cli-types.ts',
-    files: ['cli-peer-absence.ts'],
+    files: ['cli-peer-absence.ts', 'cli-publish-leaf.ts'],
     peers: ['zod'],
     platforms: ['linux', 'darwin', 'win32'],
     runtimes: [],

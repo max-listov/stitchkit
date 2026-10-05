@@ -1,4 +1,4 @@
-import type { FileObservation } from '../internal/bounded-file-read';
+import type { FileObservation } from '../internal/file-observation';
 import {
   type DirectoryInboxRejection,
   type DirectoryInboxState,
@@ -26,7 +26,14 @@ export function inboxStateAccess(store: StateStore<DirectoryInboxState>): InboxS
   return {
     read: async () => parse(await store.read()),
     update: (transition) =>
-      store.update((current, context) => transition(parse(current), context)),
+      store.update(async (current, context) => {
+        const parsed = parse(current);
+        const next = await transition(parsed, context);
+        // A store persists only a different object; an untouched parse is the stored state.
+        return next.state === parsed && current !== null
+          ? { state: current, result: next.result }
+          : next;
+      }),
   };
 }
 

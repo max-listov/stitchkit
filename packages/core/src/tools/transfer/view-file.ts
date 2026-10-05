@@ -15,7 +15,7 @@
 
 import { extname } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { McpMediaContent, ViewFileOutput } from './view-file-contract';
 import { ViewFileInputSchema, ViewFileOutputSchema } from './view-file-contract';
 
@@ -34,6 +34,8 @@ import { AppError } from '../../contract/errors';
 import { type ManagedFileBoundary, ManagedFileError } from '../../files/boundary';
 import { mediaTypeEssence } from '../../internal/media-type';
 import { fetchGuarded, readCapped } from '../../internal/secure-fetch';
+import { formatZodError } from '../../internal/zod-issues';
+import { coerceJsonArgs } from '../schema/coerce';
 import { normalizeFileToolError } from './managed-file-error';
 
 /** MCP inline cap — bytes above this are returned as a link, not embedded. */
@@ -97,7 +99,8 @@ async function fetchSource(
       timeoutMs: options.timeoutMs,
       signal: options.signal,
     });
-    if (!res.ok) throw new AppError('VIEW_HTTP_ERROR', `HTTP ${res.status}`, 502);
+    if (!res.ok)
+      throw new AppError('VIEW_HTTP_ERROR', { message: `HTTP ${res.status}`, status: 502 });
     const headerMime = mediaTypeEssence(res.headers.get('content-type'));
     const mimeType = headerMime || extMime || 'application/octet-stream';
 
@@ -123,22 +126,20 @@ async function fetchSource(
 
   // Local file access is opt-in and owned by one managed boundary.
   if (!options.files) {
-    throw new AppError(
-      'FILE_INVALID_PATH',
-      'local file paths are disabled — set files to allow them',
-      400,
-    );
+    throw new AppError('FILE_INVALID_PATH', {
+      message: 'local file paths are disabled — set files to allow them',
+      status: 400,
+    });
   }
   options.signal?.throwIfAborted();
   // Only ever read a media file — never a `config.json` / `.env` / `id_rsa`
   // that happens to sit inside the sandbox. A path with no known media
   // extension is refused before it is touched.
   if (!extMime) {
-    throw new AppError(
-      'FILE_INSPECTION_REJECTED',
-      `refusing to read ${JSON.stringify(pathOrUrl)} — ${JSON.stringify(extension)} is not a media extension`,
-      422,
-    );
+    throw new AppError('FILE_INSPECTION_REJECTED', {
+      message: `refusing to read ${JSON.stringify(pathOrUrl)} — ${JSON.stringify(extension)} is not a media extension`,
+      status: 422,
+    });
   }
   try {
     const source = await options.files.read(pathOrUrl, {
@@ -309,6 +310,15 @@ export function mountViewFile(server: McpServer, options: ViewFileOptions = {}):
       annotations: { title: 'View Media', readOnlyHint: true, idempotentHint: true },
     },
     async (args: { paths: string | string[] }) => {
+      // The SDK validated the shape; a list written as text still passes it as one
+      // string, and the shared argument coercion is what refuses it by name.
+      try {
+        coerceJsonArgs(args, ViewFileInputSchema);
+      } catch (error) {
+        if (!(error instanceof z.ZodError)) throw error;
+        const refusal: McpMediaContent = { type: 'text', text: formatZodError(error) };
+        return { isError: true, content: [refusal] };
+      }
       const result = await runViewFileOperation(args.paths, options);
       return { content: result.content };
     },

@@ -2,6 +2,7 @@ import type { z } from 'zod';
 import {
   defineRuntimeTool,
   type RuntimeToolDefinitionWithOutput,
+  type RuntimeToolPresenters,
 } from '../tools/runtime-tool';
 import { AgentContextOverflowError } from './context-refusal';
 import { ranked, schemaBytes, uniqueKnown, utf8Bytes } from './deferred-tool-selection';
@@ -17,7 +18,9 @@ import type { AgentRuntimeRunContext } from './runtime';
 
 type SearchDefinition = RuntimeToolDefinitionWithOutput<
   typeof DeferredAgentToolSearchInputSchema,
-  typeof DeferredAgentToolReceiptSchema
+  typeof DeferredAgentToolReceiptSchema,
+  undefined,
+  RuntimeToolPresenters<z.output<typeof DeferredAgentToolReceiptSchema>>
 >;
 /**
  * What the model is told, because it cannot read this file.

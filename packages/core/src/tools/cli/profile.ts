@@ -37,7 +37,10 @@ const DIRECTORY_MODE = 0o700;
 /** A refusal a CLI can report as an ordinary error result. */
 export class CliProfileError extends AppError {
   constructor(message: string, code: 'NOT_FOUND' | 'BAD_REQUEST' | 'FORBIDDEN' = 'NOT_FOUND') {
-    super(code, message, code === 'NOT_FOUND' ? 404 : code === 'FORBIDDEN' ? 403 : 400);
+    super(code, {
+      message,
+      status: code === 'NOT_FOUND' ? 404 : code === 'FORBIDDEN' ? 403 : 400,
+    });
     this.name = 'CliProfileError';
   }
 }

@@ -11,7 +11,7 @@ import type {
   MultipartDescriptor,
   MultipartFile,
 } from '../contract/client-types';
-import { refuseLocally } from './http';
+import { refuseLocally } from './api-error';
 
 /**
  * A React Native / Expo file descriptor — a plain `{ uri, name, type }` object

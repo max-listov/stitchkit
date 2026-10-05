@@ -122,7 +122,7 @@ describe('defineContract', () => {
 
 describe('AppError', () => {
   test('creates error with code and status', () => {
-    const err = new AppError('NOT_FOUND', 'User not found', 404);
+    const err = new AppError('NOT_FOUND', { message: 'User not found', status: 404 });
     expect(err.code).toBe('NOT_FOUND');
     expect(err.message).toBe('User not found');
     expect(err.status).toBe(404);
@@ -130,7 +130,11 @@ describe('AppError', () => {
   });
 
   test('toJSON serializes correctly', () => {
-    const err = new AppError('BAD_REQUEST', 'Invalid', 400, { field: 'name' });
+    const err = new AppError('BAD_REQUEST', {
+      message: 'Invalid',
+      status: 400,
+      details: { field: 'name' },
+    });
     const json = err.toJSON();
     expect(json.error.code).toBe('BAD_REQUEST');
     expect(json.error.details).toEqual({ field: 'name' });

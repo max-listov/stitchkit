@@ -47,6 +47,77 @@ describe('coerceJsonArgs', () => {
     expect(({} as Record<string, unknown>).x).toBeUndefined();
   });
 
+  test('a list written as text in a string-or-array field is refused by name, at any depth', () => {
+    const field = z.union([z.string(), z.array(z.string()).max(3)]);
+    expect(() => coerceJsonArgs({ names: '["a","b"]' }, z.object({ names: field }))).toThrow(
+      'names is a list written as text',
+    );
+    expect(() =>
+      coerceJsonArgs(
+        { rows: [{ names: ' ["a"]' }] },
+        z.object({ rows: z.array(z.object({ names: field.optional() })) }),
+      ),
+    ).toThrow('rows.0.names is a list written as text');
+    expect(() => coerceJsonArgs({ names: '[]' }, z.object({ names: field }))).toThrow(
+      'names is a list written as text',
+    );
+  });
+
+  test('a string that is not a list the array member accepts stays one plain value', () => {
+    const field = z.union([z.string(), z.array(z.string()).max(1)]);
+    const schema = z.object({
+      names: field,
+      pick: z.union([z.string(), z.array(z.number())]),
+    });
+    for (const value of ['[preview].png', 'plain', '["a","b"]', '[1,2', '[{"a":1}]', '123']) {
+      expect(coerceJsonArgs({ names: value, pick: 'x' }, schema)).toEqual({
+        names: value,
+        pick: 'x',
+      });
+    }
+    expect(coerceJsonArgs({ names: 'a', pick: '["a"]' }, schema)).toEqual({
+      names: 'a',
+      pick: '["a"]',
+    });
+    expect(() => coerceJsonArgs({ names: 'a', pick: '[1,2]' }, schema)).toThrow(
+      'pick is a list written as text',
+    );
+  });
+
+  test('every tool surface reports the refusal as a validation error', async () => {
+    const method = {
+      ...implement(
+        defineContract(
+          { prefix: '/list', scope: 'public' },
+          {
+            find: {
+              method: 'POST',
+              path: '/find',
+              desc: 'Find',
+              input: z.object({ names: z.union([z.string(), z.array(z.string())]) }),
+              output: z.object({ ok: z.boolean() }),
+            },
+          },
+        ),
+        { find: () => ({ ok: true }) },
+      ).methods,
+    }.find;
+    if (!method) throw new Error('expected method');
+    const result = await executeToolMethod(
+      method,
+      { toolName: 'find', rawArgs: { names: '["a","b"]' }, context: { source: 'agent' } },
+      { coerceJson: true },
+    );
+    expect(result).toMatchObject({ ok: false, code: 'VALIDATION_ERROR' });
+    expect(JSON.stringify(result)).toContain('names is a list written as text');
+    const kept = await executeToolMethod(
+      method,
+      { toolName: 'find', rawArgs: { names: 'a.png' }, context: { source: 'agent' } },
+      { coerceJson: true },
+    );
+    expect(kept.ok).toBe(true);
+  });
+
   test('a non-object schema is returned unchanged', () => {
     const schema = z.array(z.string());
     expect(coerceJsonArgs({ a: '1' }, schema)).toEqual({ a: '1' });

@@ -9,7 +9,12 @@ export {
   type CreateAuditRecordInput,
   createAuditRecord,
 } from './audit';
-export { type CanonicalJsonOptions, canonicalJson } from './canonical-json';
+export {
+  CanonicalJsonError,
+  type CanonicalJsonOptions,
+  type CanonicalJsonRefusal,
+  canonicalJson,
+} from './canonical-json';
 export {
   type DeadlineResult,
   DeadlineResultSchema,

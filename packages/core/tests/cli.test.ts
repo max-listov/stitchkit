@@ -1627,7 +1627,7 @@ describe('createCli — help survives an unresolved dynamic surface', () => {
     services: [],
     runtimeTools: () => [managed],
     resolveAuth: (): never => {
-      throw new AppError('UNREACHABLE', 'socket closed');
+      throw new AppError('UNREACHABLE', { message: 'socket closed' });
     },
     exitCodes: { UNREACHABLE: 69 },
   };

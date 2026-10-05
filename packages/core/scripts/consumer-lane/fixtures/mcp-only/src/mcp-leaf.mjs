@@ -17,7 +17,7 @@ const definition = {
   output: z.object({ doubled: z.number() }),
   handler: ({ input }) => {
     calls++;
-    if (input.value === -1) throw new AppError('FORBIDDEN', 'Operation refused');
+    if (input.value === -1) throw new AppError('FORBIDDEN', { message: 'Operation refused' });
     return { doubled: input.value * 2, removed: true };
   },
   present: {

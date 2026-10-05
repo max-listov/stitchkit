@@ -141,14 +141,7 @@ check(
     packedPromptOverflow.availableHistoryTokens === -1,
 );
 
-const packedApiError = new ApiError(
-  'CONFLICT',
-  409,
-  undefined,
-  undefined,
-  undefined,
-  'packed-trace-id',
-);
+const packedApiError = new ApiError('CONFLICT', { status: 409, traceId: 'packed-trace-id' });
 
 const packedAgentStore = createMemoryAgentRuntimeStore();
 const packedAgentRuntime = createAgentRuntime({

@@ -54,10 +54,12 @@ export {
   type StdioProcessSignalsErrorPhase,
   type StdioProcessSignalsOptions,
 } from '../../tools/mcp/stdio-signals';
-export type { RuntimeToolDefinitionWithoutOutput } from '../../tools/runtime-tool-execution';
+export type {
+  RuntimeToolDefinition,
+  RuntimeToolDefinitionWithOutput,
+  RuntimeToolDefinitionWithoutOutput,
+} from '../../tools/runtime-tool-declaration';
 export type {
   RuntimeMcpPresentation,
-  RuntimeMcpToolDefinition,
-  RuntimeMcpToolDefinitionWithOutput,
   RuntimeMcpToolPresenters,
 } from '../../tools/runtime-tool-mcp';

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { type DomainEvent, DomainEventSchema } from './event';
 
 export const DomainEventDestinationSchema = z.object({
@@ -86,9 +87,7 @@ export function defineDomainEventDelivery(config: {
   readonly maxClaimsPerDispatch?: number;
 }) {
   const maxClaims = config.maxClaimsPerDispatch ?? 100;
-  if (!Number.isSafeInteger(maxClaims) || maxClaims <= 0) {
-    throw new RangeError('maxClaimsPerDispatch must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('maxClaimsPerDispatch', maxClaims, RangeError);
   return Object.freeze({
     plan(eventInput: DomainEvent): DomainEventDeliveryPlan {
       const event = DomainEventSchema.parse(eventInput);

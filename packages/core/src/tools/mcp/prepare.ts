@@ -12,7 +12,7 @@ import {
 } from '../internal/surface-projector';
 import { toolSurfaceOutputSchema } from '../internal/tool-view';
 import { collectTools, formatToolError, type MountableTool, type ToolExtend } from '../mount';
-import type { RuntimeMcpToolDefinition } from '../runtime-tool-mcp';
+import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
 import type { ToolPresentationSchema } from '../schema/flatten';
 import { collectToolSurface } from '../surface';
 
@@ -154,7 +154,7 @@ function prepareMcpTools(
 }
 
 /** One immutable, framework-managed MCP surface selected as a unit. */
-export interface McpSurfaceDefinition extends ToolSurfaceProjection<RuntimeMcpToolDefinition> {
+export interface McpSurfaceDefinition extends ToolSurfaceProjection<RuntimeToolDefinition> {
   services: ServiceDef[];
 }
 
@@ -163,7 +163,7 @@ export type McpSurfaceRegistry = Record<string, McpSurfaceDefinition>;
 
 /** A runtime definition paired with its already validated MCP descriptor. */
 export interface PreparedRuntimeMcpTool {
-  definition: RuntimeMcpToolDefinition;
+  definition: RuntimeToolDefinition;
   descriptor: PreparedMcpTool;
 }
 
@@ -182,7 +182,7 @@ export function prepareMcpServerSurface(
   config: McpSurfacePreparationConfig = {},
 ): PreparedMcpServerSurface {
   const contractMountables: MountableTool[] = [];
-  const definitions: RuntimeMcpToolDefinition[] = [];
+  const definitions: RuntimeToolDefinition[] = [];
   const runtimeMountables: MountableTool[] = [];
 
   for (const entry of collectToolSurface({

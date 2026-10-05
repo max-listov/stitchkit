@@ -1,6 +1,8 @@
 import type { ToolTransport } from '../contract/define';
+import type { ToolSurfaceProjection } from './internal/surface-projector';
 import type { CollectToolsConfig } from './mount';
-import { collectToolSurface, type ToolSurfaceDefinition } from './surface';
+import type { RuntimeToolDefinition } from './runtime-tool-declaration';
+import { collectToolSurface } from './surface';
 
 export interface ToolManifestEntry {
   name: string;
@@ -8,7 +10,7 @@ export interface ToolManifestEntry {
   inputSchema: Record<string, unknown>;
 }
 
-export interface ToolManifestConfig extends ToolSurfaceDefinition {
+export interface ToolManifestConfig extends ToolSurfaceProjection<RuntimeToolDefinition> {
   /** Model-facing surface whose exposure rules the manifest must mirror. */
   transport: ToolTransport;
   extend?: CollectToolsConfig['extend'];

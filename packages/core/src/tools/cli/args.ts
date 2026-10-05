@@ -17,7 +17,7 @@
  * so a CLI call validates against the exact same contract schema an HTTP or MCP
  * call does (ADR 0014 parity).
  */
-import type { z } from 'zod';
+import { z } from 'zod';
 import { isUnsafeKey } from '../../internal/safe-json';
 import { coerceJsonArgs } from '../schema/coerce';
 import {
@@ -131,7 +131,6 @@ function readCliTokens(
       continue;
     }
     if (tok === '-h') {
-      appendCliOptionValue(frameworkFlags, 'help', 'true', { kind: 'boolean' });
       options.help = true;
       continue;
     }
@@ -172,9 +171,12 @@ function readCliTokens(
     if (option.globalKind === 'boolean') {
       const separate = value === undefined ? separateBoolValue(argv[i + 1]) : undefined;
       if (separate !== undefined) i++;
-      appendCliOptionValue(frameworkFlags, name, value ?? String(separate ?? true), {
-        kind: 'boolean',
-      });
+      // Help is a request, not a setting: asking twice asks once.
+      if (name !== 'help') {
+        appendCliOptionValue(frameworkFlags, name, value ?? String(separate ?? true), {
+          kind: 'boolean',
+        });
+      }
       const enabled =
         value === undefined ? (separate ?? true) : parseReservedBool(name, value);
       if (name === 'dry-run') options.dryRun = enabled;
@@ -182,7 +184,7 @@ function readCliTokens(
       else if (name === 'wait') options.wait = enabled;
       else if (name === 'quiet') options.quiet = enabled;
       else if (name === 'ascending') ascending = enabled;
-      else options.help = enabled;
+      else options.help = options.help || enabled;
       continue;
     }
     if (option.globalKind === 'value') {
@@ -368,6 +370,13 @@ export interface CliGlobalOptionsParse {
   globals: Record<string, unknown>;
 }
 
+/** The argument error for the first issue of an application option's validation. */
+function refuseGlobalOption(issue: z.core.$ZodIssue | undefined): never {
+  const field = issue?.path[0];
+  const where = typeof field === 'string' ? `--${field}` : 'application option';
+  throw new CliArgumentError(`${where}: ${issue?.message ?? 'invalid value'}`);
+}
+
 /**
  * Lift the APPLICATION's global options out of argv, wherever they stand.
  *
@@ -430,12 +439,14 @@ export function extractCliGlobalOptions(
   for (const [name, values] of raw) {
     args[name] = coerceField(fields.get(name), values, `--${name}`);
   }
-  const parsed = schema.safeParse(coerceJsonArgs(args, schema));
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    const field = issue?.path[0];
-    const where = typeof field === 'string' ? `--${field}` : 'application option';
-    throw new CliArgumentError(`${where}: ${issue?.message ?? 'invalid value'}`);
+  let coerced: Record<string, unknown>;
+  try {
+    coerced = coerceJsonArgs(args, schema);
+  } catch (error) {
+    if (error instanceof z.ZodError) refuseGlobalOption(error.issues[0]);
+    throw error;
   }
+  const parsed = schema.safeParse(coerced);
+  if (!parsed.success) refuseGlobalOption(parsed.error.issues[0]);
   return { argv: rest, globals: parsed.data };
 }

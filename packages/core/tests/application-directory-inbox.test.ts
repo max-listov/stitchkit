@@ -11,6 +11,7 @@ import type {
 } from '../src/entrypoints/application';
 import { createDirectoryInbox } from '../src/entrypoints/application/directory-inbox';
 import { serialStateStore } from './application-file-state-store-fixture';
+import { resourceContext } from './session-delivery-fixture';
 
 /*
  * A directory another program drops entries into — a release transition, say —
@@ -62,7 +63,7 @@ async function open(
   return { resource, inbox: value };
 }
 
-const context = {} as never;
+const context = resourceContext();
 
 /** Wait for a condition, not a duration: a poll on a slow disk takes what it takes. */
 async function until(check: () => boolean): Promise<void> {

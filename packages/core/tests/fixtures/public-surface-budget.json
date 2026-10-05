@@ -3,27 +3,27 @@
   "limits": {
     "stitchkit": 230,
     "stitchkit/agent-runtime": 364,
-    "stitchkit/agent-runtime/browser": 90,
+    "stitchkit/agent-runtime/browser": 92,
     "stitchkit/agent-runtime/coding-tools": 10,
     "stitchkit/agent-runtime/harness": 31,
-    "stitchkit/agent-runtime/harness-tools": 2,
     "stitchkit/agent-runtime/openrouter": 6,
     "stitchkit/agent-runtime/sandbox": 20,
     "stitchkit/agent-runtime/sqlite/bun": 10,
     "stitchkit/agent-runtime/sqlite/node": 10,
     "stitchkit/agent-runtime/react": 1,
-    "stitchkit/agent-runtime/realtime": 2,
+    "stitchkit/agent-runtime/realtime": 3,
     "stitchkit/agent-runtime/testing": 16,
-    "stitchkit/application": 302,
+    "stitchkit/application": 309,
     "stitchkit/application/diagnostic-journal": 3,
     "stitchkit/application/directory-inbox": 1,
     "stitchkit/application/grammy": 13,
     "stitchkit/application/opentelemetry": 5,
     "stitchkit/application/schemas": 21,
-    "stitchkit/cli": 93,
+    "stitchkit/cli": 89,
+    "stitchkit/cli/publish": 4,
     "stitchkit/contract": 106,
     "stitchkit/declaration": 30,
-    "stitchkit/files": 35,
+    "stitchkit/files": 38,
     "stitchkit/files/packaging": 5,
     "stitchkit/geo": 11,
     "stitchkit/google": 11,
@@ -32,7 +32,7 @@
     "stitchkit/oauth": 12,
     "stitchkit/voice": 6,
     "stitchkit/observability": 67,
-    "stitchkit/primitives": 73,
+    "stitchkit/primitives": 75,
     "stitchkit/react": 30,
     "stitchkit/react/keyboard": 17,
     "stitchkit/release": 17,
@@ -41,14 +41,14 @@
     "stitchkit/telegram": 79,
     "stitchkit/telegram/html": 19,
     "stitchkit/telegram/screens": 76,
-    "stitchkit/testing": 74,
-    "stitchkit/tools": 217,
+    "stitchkit/testing": 73,
+    "stitchkit/tools": 216,
     "stitchkit/tools/connections": 26,
     "stitchkit/tools/contract": 15,
     "stitchkit/tools/invoker": 4,
     "stitchkit/tracking": 77,
     "stitchkit/tracking/server": 26,
-    "stitchkit/process": 11,
+    "stitchkit/process": 12,
     "stitchkit/tools/mcp": 47
   },
   "overlaps": [
@@ -370,8 +370,13 @@
     },
     {
       "entrypoints": ["stitchkit/cli", "stitchkit/tools"],
-      "reason": "coerceJsonArgs and the schema-aware void construction contract have one neutral owner, usable by CLI and SDK adapters without importing optional SDK declarations or copying a definition (ADR 0227).",
-      "names": ["RuntimeToolDefinitionWithoutOutput", "coerceJsonArgs"]
+      "reason": "coerceJsonArgs and the one runtime-tool declaration (construction, with and without output, and registration) have one neutral owner, usable by CLI and SDK adapters without importing optional SDK declarations or copying a definition (ADRs 0227 and 0236).",
+      "names": [
+        "RuntimeToolDefinition",
+        "RuntimeToolDefinitionWithOutput",
+        "RuntimeToolDefinitionWithoutOutput",
+        "coerceJsonArgs"
+      ]
     },
     {
       "entrypoints": ["stitchkit/cli", "stitchkit/tools/contract"],
@@ -579,6 +584,8 @@
         "McpSurfaceRegistry",
         "RESOURCE_MIME_TYPE",
         "RuntimeMcpPresentation",
+        "RuntimeToolDefinition",
+        "RuntimeToolDefinitionWithOutput",
         "RuntimeToolDefinitionWithoutOutput",
         "StdioAuthConfig",
         "StdioCloseTarget",
@@ -603,8 +610,12 @@
     },
     {
       "entrypoints": ["stitchkit/cli", "stitchkit/tools/mcp"],
-      "reason": "The neutral void-definition contract is owned once and shared by CLI and MCP heterogeneous registration; schema-aware construction retains its concrete input (ADRs 0227 and 0231).",
-      "names": ["RuntimeToolDefinitionWithoutOutput"]
+      "reason": "The one runtime-tool declaration is owned once and shared by CLI and MCP construction and registration; schema-aware construction retains its concrete input (ADRs 0227, 0231 and 0236).",
+      "names": [
+        "RuntimeToolDefinition",
+        "RuntimeToolDefinitionWithOutput",
+        "RuntimeToolDefinitionWithoutOutput"
+      ]
     },
     {
       "entrypoints": ["stitchkit/testing", "stitchkit/tools/mcp"],
@@ -616,11 +627,11 @@
     {
       "entrypoint": "stitchkit/cli",
       "names": [
-        "RuntimeToolExecution",
-        "RuntimeToolExecutionWithOutput",
+        "RuntimeToolDefinition",
+        "RuntimeToolDefinitionWithOutput",
         "RuntimeToolDefinitionWithoutOutput"
       ],
-      "reason": "A CLI-only consumer can name heterogeneous registration and construct strict schema-aware output/void definitions without importing optional SDK declarations; the CLI ceiling grows by exactly these three contracts (ADR 0227)."
+      "reason": "A CLI-only consumer can name heterogeneous registration and construct strict schema-aware output/void definitions without importing optional SDK declarations; the CLI ceiling holds exactly these three contracts (ADRs 0227 and 0236)."
     },
     {
       "entrypoint": "stitchkit/tools",
@@ -650,14 +661,14 @@
       "reason": "Six named intake identity/accept/result and protected transaction contracts qualify durable programmatic acceptance and fenced state adapters over the existing inbox owner (ADR 0228)."
     },
     {
-      "entrypoint": "stitchkit/cli",
+      "entrypoint": "stitchkit/cli/publish",
       "names": [
         "publishCli",
         "CliPublicationOptions",
         "CliPublicationPhase",
         "CliPublicationResult"
       ],
-      "reason": "Exactly four opt-in bounded transactional publication names reuse the existing manifest, signatures, codec, filesystem and exclusive lock owners (ADR 0230)."
+      "reason": "Exactly four opt-in bounded transactional publication names reuse the existing manifest, signatures, codec, filesystem and exclusive lock owners (ADR 0230); they live in their own evolving leaf because release infrastructure cannot hold the stable promise of stitchkit/cli (ADR 0245)."
     },
     {
       "entrypoint": "stitchkit/telegram",
@@ -684,12 +695,8 @@
     },
     {
       "entrypoint": "stitchkit/tools/mcp",
-      "names": [
-        "RuntimeMcpToolDefinition",
-        "RuntimeMcpToolDefinitionWithOutput",
-        "RuntimeMcpToolPresenters"
-      ],
-      "reason": "Three MCP construction/registration/presenter contracts specialize neutral execution without inheriting an AI default; other leaf names re-export established owners (ADR 0231)."
+      "names": ["RuntimeMcpToolPresenters"],
+      "reason": "The MCP presenter extension of the one runtime-tool declaration is named without inheriting an AI default; other leaf names re-export established owners (ADRs 0231 and 0236)."
     },
     {
       "entrypoint": "stitchkit/tools",

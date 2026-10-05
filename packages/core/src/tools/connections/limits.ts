@@ -1,10 +1,13 @@
+import { raceAbort } from '../../internal/abort-race';
+import { withSignalDeadline } from '../../internal/deadline';
+import { assertPositiveSafeInteger } from '../../internal/positive-integer';
+import { MAX_TIMER_MS } from '../../internal/timers';
 import { ConnectionResponseTooLargeError, ConnectionTimeoutError } from './errors';
 import type { ConnectionReadContext } from './operation-limits';
 
 /** Shared defaults for both connection kinds; phase overrides inherit these. */
 export const DEFAULT_CONNECTION_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
-const MAX_TIMER_MS = 2_147_483_647;
 
 export function connectionTimeoutMs(value: number | undefined): number {
   if (value === undefined) return DEFAULT_CONNECTION_TIMEOUT_MS;
@@ -16,65 +19,42 @@ export function connectionTimeoutMs(value: number | undefined): number {
 
 export function connectionMaxResponseBytes(value: number | undefined): number {
   if (value === undefined) return DEFAULT_MAX_RESPONSE_BYTES;
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new RangeError('Connection maxResponseBytes must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('Connection maxResponseBytes', value, RangeError);
   return value;
 }
 
 /** Abort races also cover injected streams or promises that do not observe fetch's signal. */
-export async function awaitConnection<T>(
+export function awaitConnection<T>(
   pending: Promise<T>,
   signal: AbortSignal | undefined,
 ): Promise<T> {
-  if (!signal) return pending;
-  if (signal.aborted) {
-    void pending.catch(() => undefined);
-    signal.throwIfAborted();
-  }
-  const aborted = Promise.withResolvers<never>();
-  const onAbort = () => aborted.reject(signal.reason);
-  signal.addEventListener('abort', onAbort, { once: true });
-  try {
-    signal.throwIfAborted();
-    const result = await Promise.race([pending, aborted.promise]);
-    signal.throwIfAborted();
-    return result;
-  } catch (error) {
-    signal.throwIfAborted();
-    throw error;
-  } finally {
-    signal.removeEventListener('abort', onAbort);
-  }
+  return signal ? raceAbort(pending, signal) : pending;
 }
 
-/** One deadline spans negotiation, response waiting and all body reads. */
-export async function withConnectionDeadline<T>(
+/**
+ * One deadline spans negotiation, response waiting and all body reads.
+ *
+ * `body` receives a copy of `context` that carries the deadline signal, so the caller's
+ * own context object is never changed and a context reused across operations never holds a
+ * stale signal. The copy is the one whose read counters a timeout reports.
+ */
+export function withConnectionDeadline<T>(
   connectionName: string,
-  timeoutMs: number,
+  context: ConnectionReadContext,
   callerSignal: AbortSignal | undefined,
-  body: (signal: AbortSignal) => Promise<T>,
-  context?: ConnectionReadContext,
+  body: (scoped: ConnectionReadContext) => Promise<T>,
 ): Promise<T> {
-  connectionTimeoutMs(timeoutMs);
-  const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(new ConnectionTimeoutError(connectionName, timeoutMs, context)),
+  const timeoutMs = connectionTimeoutMs(context.timeoutMs);
+  let scoped = context;
+  return withSignalDeadline(
     timeoutMs,
+    callerSignal,
+    () => new ConnectionTimeoutError(connectionName, timeoutMs, scoped),
+    (signal) => {
+      scoped = { ...context, signal };
+      return raceAbort(body(scoped), signal);
+    },
   );
-  const onAbort = () => controller.abort(callerSignal?.reason);
-  if (callerSignal) {
-    if (callerSignal.aborted) controller.abort(callerSignal.reason);
-    else callerSignal.addEventListener('abort', onAbort, { once: true });
-  }
-  if (context) context.signal = controller.signal;
-  try {
-    controller.signal.throwIfAborted();
-    return await awaitConnection(body(controller.signal), controller.signal);
-  } finally {
-    clearTimeout(timer);
-    callerSignal?.removeEventListener('abort', onAbort);
-  }
 }
 
 /** Count raw bytes; Content-Length is deliberately not a trust boundary. */

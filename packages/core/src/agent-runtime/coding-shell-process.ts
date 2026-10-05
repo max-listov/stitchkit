@@ -1,9 +1,8 @@
 import type { z } from 'zod';
+import { CommandStopped } from '../process/command-lifetime';
 import { startNativeCommand } from '../process/command-owner';
 import { NativeCommandError } from '../process/contract';
-import { stopCommandGroup } from '../process/group';
 import type { NativeCommandLaunchedProcess } from '../process/launch';
-import { ownsCommandGroup } from '../process/owned-child';
 import { type AgentCodingToolConfig, ShellOutputSchema } from './coding-tool-contract';
 import { utf8AlignedEnd, utf8AlignedStart } from './coding-tool-utf8';
 import type { AgentProcessSandbox } from './sandbox';
@@ -113,20 +112,19 @@ export async function runCodingShell(input: {
       env: { ...input.environment },
       envPolicy: 'declared-only',
       signal: input.signal ?? new AbortController().signal,
-      killGraceMs: 0,
+      stop: { target: 'group', graceMs: 0 },
+      // Coding commands own their descendants after the leader exits.
+      descendants: 'terminate-after-leader',
       onOutput: (bytes, channel) =>
         retain(
           channel === 'stdout' ? stdout : stderr,
           channel === 'stdout' ? artifactStdout : artifactStderr,
           bytes,
         ),
-      onLeaderSettled: async (event) => {
+      onLeaderSettled: (event) => {
         if (event.kind !== 'exit') return;
         exitCode = event.exitCode;
         signal = event.signal;
-        // Coding commands own descendants after leader exit; generic commands choose their own policy.
-        if (process.platform !== 'win32' && child && ownsCommandGroup(child))
-          await stopCommandGroup(child?.pid, 0, input.terminationGraceMs, true);
       },
     },
     (started) => {
@@ -166,12 +164,7 @@ export async function runCodingShell(input: {
       (error.reason === 'deadline' || error.reason === 'output-budget')
     )
       outcome = error.reason === 'deadline' ? 'timeout' : 'output-limit';
-    else if (
-      error instanceof DOMException &&
-      error.name === 'AbortError' &&
-      error.message === 'Command stopped'
-    )
-      outcome = 'cancelled';
+    else if (error instanceof CommandStopped) outcome = 'cancelled';
     else throw error;
     exitCode = child?.exitCode ?? exitCode;
     signal = child?.signalCode ?? signal;

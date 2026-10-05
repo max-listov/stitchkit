@@ -1,3 +1,4 @@
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { type ObservabilitySinkStatus, ObservabilitySinkStatusSchema } from './status';
 
 export type BoundedSinkDropReason = 'capacity' | 'closed';
@@ -137,9 +138,7 @@ export function createBoundedSinkManager<EVENT>(
   config: BoundedSinkConfig<EVENT>,
 ): BoundedSinkManager<EVENT> {
   const maxPending = config.maxPending ?? DEFAULT_MAX_PENDING;
-  if (!Number.isSafeInteger(maxPending) || maxPending <= 0) {
-    throw new TypeError('Observability maxPending must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('Observability maxPending', maxPending);
 
   let sequence = 0;
   let closed = false;

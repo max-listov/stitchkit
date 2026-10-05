@@ -47,7 +47,7 @@ describe('matched route group error dispatch', () => {
   });
 
   const fail = () => {
-    throw new AppError('FORBIDDEN', 'denied', 403);
+    throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
   };
   const cases: Array<{
     name: string;

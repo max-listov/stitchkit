@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TOOL_TRANSPORTS, type ToolTransport } from '../contract/define';
+import { serializeCanonicalJson } from '../internal/canonical-json';
 import {
   RealtimeRejectDirectionSchema,
   RealtimeRejectFaultSchema,
@@ -7,7 +8,7 @@ import {
   RealtimeRejectReasonSchema,
 } from '../realtime/contract';
 import type { OpenApiDocument } from '../server/openapi';
-import { type SurfaceManifest, serializeSurfaceValue } from './surface-manifest';
+import type { SurfaceManifest } from './surface-manifest';
 
 export const RealtimeRejectionObservationSchema = z.object({
   direction: RealtimeRejectDirectionSchema,
@@ -84,7 +85,7 @@ function assertSameSet(
 ): void {
   const expected = sorted(expectedValues);
   const actual = sorted(actualValues);
-  if (serializeSurfaceValue(expected) === serializeSurfaceValue(actual)) return;
+  if (serializeCanonicalJson(expected) === serializeCanonicalJson(actual)) return;
   throw new Error(
     `${label} mismatch\nexpected: ${expected.join(', ') || '(empty)'}\nactual: ${actual.join(', ') || '(empty)'}`,
   );
@@ -283,9 +284,9 @@ export async function runSurfaceProbes<TFixture>({
         if (!expected) {
           throw new Error(`Surface probe "${probe.name}" has no ${transport} expectation`);
         }
-        if (serializeSurfaceValue(actual) !== serializeSurfaceValue(expected)) {
+        if (serializeCanonicalJson(actual) !== serializeCanonicalJson(expected)) {
           throw new Error(
-            `Surface probe "${probe.name}" ${transport} mismatch\nexpected: ${serializeSurfaceValue(expected)}\nactual: ${serializeSurfaceValue(actual)}`,
+            `Surface probe "${probe.name}" ${transport} mismatch\nexpected: ${serializeCanonicalJson(expected)}\nactual: ${serializeCanonicalJson(actual)}`,
           );
         }
       }

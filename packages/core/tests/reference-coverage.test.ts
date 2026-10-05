@@ -158,3 +158,160 @@ describe('reference.md coverage', () => {
     });
   }
 });
+
+/**
+ * Exports of `program`'s module `file` whose declaration carries no JSDoc text. An export is
+ * followed to the module that declares it, because an entrypoint only re-exports; a name that
+ * is both a type and a value counts as documented when either declaration is.
+ */
+function undocumentedExports(
+  checked: ts.Program,
+  file: string,
+  only?: readonly string[],
+): string[] {
+  const typeChecker = checked.getTypeChecker();
+  const source = checked.getSourceFile(file);
+  const moduleSymbol = source && typeChecker.getSymbolAtLocation(source);
+  if (!moduleSymbol) throw new Error(`cannot resolve ${file}`);
+  const exported = typeChecker.getExportsOfModule(moduleSymbol);
+  const absent = (only ?? []).filter((name) => !exported.some((s) => s.getName() === name));
+  if (absent.length > 0) throw new Error(`${file} no longer exports ${absent.join(', ')}`);
+  return exported
+    .filter((symbol) => only === undefined || only.includes(symbol.getName()))
+    .filter((symbol) => {
+      const declared =
+        symbol.flags & ts.SymbolFlags.Alias ? typeChecker.getAliasedSymbol(symbol) : symbol;
+      return (
+        ts.displayPartsToString(declared.getDocumentationComment(typeChecker)).trim() === ''
+      );
+    })
+    .map((symbol) => symbol.getName());
+}
+
+// Entrypoints whose whole surface is new enough that every export explains itself.
+const FULLY_DOCUMENTED = [
+  'stitchkit/cli/publish',
+  'stitchkit/process',
+  'stitchkit/files/packaging',
+  'stitchkit/tools/mcp',
+  'stitchkit/agent-runtime/react',
+  'stitchkit/agent-runtime/realtime',
+];
+
+// Names added to older entrypoints since 0.102.0; the rest of those entrypoints predates this rule.
+const DOCUMENTED_ADDITIONS: Record<string, readonly string[]> = {
+  'stitchkit/tools': ['ToolSurfaceProjection'],
+  'stitchkit/tools/connections': [
+    'ConnectionFailureContext',
+    'ConnectionOperation',
+    'ConnectionOperationLimits',
+    'ConnectionPhase',
+    'ConnectionResponseTooLargeError',
+    'ConnectionTimeoutError',
+    'McpConnectionLimits',
+  ],
+  'stitchkit/cli': ['RuntimeToolDefinitionWithoutOutput'],
+  'stitchkit/primitives': ['CanonicalJsonOptions', 'canonicalJson'],
+  'stitchkit/server': ['NormalizeErrorOptions'],
+  'stitchkit/agent-runtime/testing': ['inspectAgentRun'],
+  'stitchkit/agent-runtime/browser': [
+    'AgentBrowserCommand',
+    'AgentBrowserRequest',
+    'AgentBrowserRequestSchema',
+    'AgentControlErrorCode',
+    'AgentControlErrorCodeSchema',
+    'AgentController',
+    'AgentControllerConfig',
+    'AgentControllerState',
+    'agentControlRealtimeContract',
+    'createAgentController',
+  ],
+  'stitchkit/application': [
+    'DiagnosticJournalAnomaly',
+    'DiagnosticJournalAnomalySchema',
+    'DiagnosticJournalReadResult',
+    'DiagnosticJournalRecoveryError',
+    'DiagnosticJournalRecoveryErrorOptions',
+    'DiagnosticJournalRecoveryStatus',
+    'DiagnosticJournalRecoveryStatusSchema',
+    'DiagnosticJournalStartupRefusalPolicy',
+    'DiagnosticJournalStartupRefusalPolicySchema',
+    'DiagnosticJournalStartupRefusalReason',
+    'DiagnosticJournalStartupRefusalReasonSchema',
+    'DiagnosticJournalStartupScan',
+    'DiagnosticJournalStartupScanSchema',
+    'DirectoryInboxAccept',
+    'DirectoryInboxAcceptResult',
+    'DirectoryInboxAcceptResultSchema',
+    'DirectoryInboxIdentity',
+    'DirectoryInboxIdentitySchema',
+    'StateStoreUpdateContext',
+    'createDiagnosticJournalReadResultSchema',
+  ],
+  'stitchkit/application/diagnostic-journal': [
+    'DiagnosticJournalReaderConfig',
+    'readDiagnosticJournal',
+  ],
+  'stitchkit/files': ['AtomicFilePublicationError', 'FileObservation'],
+  'stitchkit/telegram': ['TelegramBroadcastFailure', 'TelegramBroadcastFailureSchema'],
+};
+
+describe('public exports explain themselves in one line', () => {
+  test('the detector reports an undocumented export and accepts a documented one', () => {
+    const virtual = new Map([
+      [
+        '/virtual/owner.ts',
+        [
+          '/** Documented value. */',
+          'export const documentedValue = 1;',
+          'export const undocumentedValue = 2;',
+          '/** Documented by its type alone. */',
+          'export type Both = number;',
+          'export const Both = 3;',
+        ].join('\n'),
+      ],
+      [
+        '/virtual/entry.ts',
+        "export * from './owner';\nexport { documentedValue as renamed } from './owner';",
+      ],
+    ]);
+    const options: ts.CompilerOptions = {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      noEmit: true,
+    };
+    const host = ts.createCompilerHost(options);
+    const realSource = host.getSourceFile.bind(host);
+    host.getSourceFile = (name, languageVersion, ...rest) => {
+      const text = virtual.get(name);
+      return text === undefined
+        ? realSource(name, languageVersion, ...rest)
+        : ts.createSourceFile(name, text, languageVersion, true);
+    };
+    host.fileExists = (name) => virtual.has(name) || ts.sys.fileExists(name);
+    host.directoryExists = (name) =>
+      name.startsWith('/virtual') || ts.sys.directoryExists(name);
+    host.readFile = (name) => virtual.get(name) ?? ts.sys.readFile(name);
+    const virtualProgram = ts.createProgram(['/virtual/entry.ts'], options, host);
+    expect(undocumentedExports(virtualProgram, '/virtual/entry.ts')).toEqual([
+      'undocumentedValue',
+    ]);
+  });
+
+  for (const entry of FULLY_DOCUMENTED) {
+    test(`every export of ${entry} has a JSDoc line`, () => {
+      const file = ENTRYPOINTS[entry];
+      if (!file) throw new Error(`${entry} is not a published entrypoint`);
+      expect(undocumentedExports(program, join(SRC, file))).toEqual([]);
+    });
+  }
+
+  for (const [entry, names] of Object.entries(DOCUMENTED_ADDITIONS)) {
+    test(`the names added to ${entry} have a JSDoc line`, () => {
+      const file = ENTRYPOINTS[entry];
+      if (!file) throw new Error(`${entry} is not a published entrypoint`);
+      expect(undocumentedExports(program, join(SRC, file), names)).toEqual([]);
+    });
+  }
+});

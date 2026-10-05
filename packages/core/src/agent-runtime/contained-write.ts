@@ -7,6 +7,7 @@ import { fchmod, write as writeDescriptor } from 'node:fs';
 import { rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { stagingName } from '../internal/atomic-staging';
 import { loadDarwinBinding } from '../internal/darwin-binding';
 import { NumericFileHandle } from './contained-darwin';
 import {
@@ -88,7 +89,7 @@ export async function writeContainedFile(input: {
     return;
   }
 
-  const temporary = `.${input.parent.basename}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  const temporary = stagingName();
   if (process.platform === 'darwin') {
     const binding = loadDarwinBinding();
     let created = false;

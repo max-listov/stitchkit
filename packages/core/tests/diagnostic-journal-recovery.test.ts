@@ -68,7 +68,12 @@ test('single-file recovery refuses to erase evidence and releases its lock on fa
     await writeFile(path, damaged);
     await writeFile(`${path}.1`, frame);
     await expect(
-      createDiagnosticJournal({ path, eventSchema, limits: { ...limits, maxFiles: 1 } }),
+      createDiagnosticJournal({
+        path,
+        eventSchema,
+        limits: { ...limits, maxFiles: 1 },
+        onStartupRefusal: 'fail',
+      }),
     ).rejects.toBeInstanceOf(DiagnosticJournalRecoveryError);
     expect(await readFile(path)).toEqual(damaged);
     expect(await readFile(`${path}.1`)).toEqual(Buffer.from(frame));

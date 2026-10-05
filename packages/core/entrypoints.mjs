@@ -30,6 +30,7 @@ export const ENTRYPOINTS = [
     browser: false,
   },
   { subpath: './cli', source: 'src/entrypoints/cli.ts', browser: false },
+  { subpath: './cli/publish', source: 'src/entrypoints/cli/publish.ts', browser: false },
   { subpath: './remote', source: 'src/entrypoints/remote.ts', browser: true },
   { subpath: './contract', source: 'src/entrypoints/contract.ts', browser: true },
   { subpath: './primitives', source: 'src/entrypoints/primitives.ts', browser: true },
@@ -49,11 +50,6 @@ export const ENTRYPOINTS = [
   {
     subpath: './agent-runtime/harness',
     source: 'src/entrypoints/agent-runtime/harness.ts',
-    browser: false,
-  },
-  {
-    subpath: './agent-runtime/harness-tools',
-    source: 'src/entrypoints/agent-runtime/harness-tools.ts',
     browser: false,
   },
   {

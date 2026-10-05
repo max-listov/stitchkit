@@ -1,6 +1,13 @@
 import { NativeCommandError, type NativeCommandResult } from './contract';
 import { commandCleanupError, waitForCommandClose } from './group';
 
+/** The abort reason of `stop()`, matched by type rather than by its message. */
+export class CommandStopped extends DOMException {
+  constructor() {
+    super('Command stopped', 'AbortError');
+  }
+}
+
 /** Admission sees the same owner before transport setup and through terminal cleanup. */
 export function createCommandLifetime(input: {
   result: Promise<NativeCommandResult>;
@@ -35,8 +42,7 @@ export function createCommandLifetime(input: {
       if (refused) throw commandCleanupError(refusal);
     },
     async stop() {
-      if (!input.finished())
-        input.controller.abort(new DOMException('Command stopped', 'AbortError'));
+      if (!input.finished()) input.controller.abort(new CommandStopped());
       await input.result.then(() => undefined, acceptSettlement);
     },
   };

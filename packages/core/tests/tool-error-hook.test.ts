@@ -99,7 +99,11 @@ describe('onToolError — the value as thrown', () => {
   });
 
   test('an AppError arrives as thrown too, not re-normalised', async () => {
-    const thrown = new AppError('NOT_FOUND', 'No such widget', 404, { id: 'w1' });
+    const thrown = new AppError('NOT_FOUND', {
+      message: 'No such widget',
+      status: 404,
+      details: { id: 'w1' },
+    });
     const method = makeMethod({
       handler: () => {
         throw thrown;
@@ -138,7 +142,7 @@ describe('onToolError — the value as thrown', () => {
   test('carries the tool name, the call context and the endpoint identity', async () => {
     const method = makeMethod({
       handler: () => {
-        throw new AppError('FORBIDDEN', 'nope', 403);
+        throw new AppError('FORBIDDEN', { message: 'nope', status: 403 });
       },
     });
     const { seen, hooks } = recorder();
@@ -163,7 +167,7 @@ describe('onToolError — the value as thrown', () => {
 
 describe('onToolError — the span it covers', () => {
   test('fires for a throw from lifecycle.beforeHandle', async () => {
-    const thrown = new AppError('UNAUTHORIZED', 'no scope', 401);
+    const thrown = new AppError('UNAUTHORIZED', { message: 'no scope', status: 401 });
     const { seen, hooks } = recorder();
 
     const result = await executeToolMethod(
@@ -210,7 +214,7 @@ describe('onToolError — the span it covers', () => {
     const results: ToolResult[] = [];
     const hooks: ToolCallHooks = {
       beforeToolCall: () => {
-        throw new AppError('UNAUTHORIZED', 'no scope', 401);
+        throw new AppError('UNAUTHORIZED', { message: 'no scope', status: 401 });
       },
       onToolError: ({ error }) => {
         seen.push(error);
@@ -278,7 +282,7 @@ describe('onToolError — the span it covers', () => {
     const { seen, hooks } = recorder();
     const method = makeMethod({
       handler: () => {
-        throw new AppError('CONFLICT', 'clash', 409);
+        throw new AppError('CONFLICT', { message: 'clash', status: 409 });
       },
     });
 
@@ -311,7 +315,7 @@ describe('onToolError — it observes, it does not interfere', () => {
     };
     const method = makeMethod({
       handler: () => {
-        throw new AppError('CONFLICT', 'clash', 409);
+        throw new AppError('CONFLICT', { message: 'clash', status: 409 });
       },
     });
 
@@ -335,7 +339,7 @@ describe('onToolError — it observes, it does not interfere', () => {
     };
     const method = makeMethod({
       handler: () => {
-        throw new AppError('NOT_FOUND', 'gone', 404);
+        throw new AppError('NOT_FOUND', { message: 'gone', status: 404 });
       },
     });
 
@@ -366,7 +370,7 @@ describe('onToolError — it observes, it does not interfere', () => {
     };
     const method = makeMethod({
       handler: () => {
-        throw new AppError('NOT_FOUND', 'gone', 404);
+        throw new AppError('NOT_FOUND', { message: 'gone', status: 404 });
       },
     });
 
@@ -397,7 +401,7 @@ describe('onToolError — it observes, it does not interfere', () => {
     };
     const method = makeMethod({
       handler: () => {
-        throw new AppError('NOT_FOUND', 'gone', 404);
+        throw new AppError('NOT_FOUND', { message: 'gone', status: 404 });
       },
     });
 
@@ -511,7 +515,7 @@ describe('the raw cause reaches afterToolCall too', () => {
         hooks: {
           ...hooks,
           beforeToolCall: () => {
-            throw new AppError('UNAUTHORIZED', 'no', 401);
+            throw new AppError('UNAUTHORIZED', { message: 'no', status: 401 });
           },
         },
       },

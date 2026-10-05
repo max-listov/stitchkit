@@ -1,4 +1,4 @@
-import type { RuntimeToolDefinition } from './runtime-tool';
+import type { RuntimeToolDefinition } from './runtime-tool-declaration';
 
 /**
  * The effective tool surface one composition will mount.

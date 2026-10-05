@@ -65,7 +65,11 @@ export function defineAsyncOperation<
   });
   const { status, wait } = defineObservationTools(surface);
 
-  const definitions: Record<string, RuntimeToolDefinition> = { start, status, wait };
+  const definitions: Record<string, RuntimeToolDefinition> = {
+    start,
+    status,
+    wait,
+  };
   const names = new Set<string>();
 
   if (config.cancel) {

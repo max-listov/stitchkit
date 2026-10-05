@@ -1,16 +1,17 @@
 /**
  * An exclusive lock between processes, held as a file that records its owner.
  *
- * `open(path, 'wx')` is the whole mutual exclusion: the kernel lets exactly one
- * caller create the file. Everything else here is about the lock that outlives
- * its holder. A crashed process cannot unlink its lock, so a lock with no way to
+ * The owner record is written to a private temporary file first and the file is
+ * then hard-linked to the lock name: `link` fails with `EEXIST` for all but one
+ * caller, and the name never exists without a complete owner record. Everything
+ * else here is about the lock that outlives its holder. A crashed process cannot unlink its lock, so a lock with no way to
  * tell a dead owner from a slow one either wedges forever or is taken from under
  * a live writer. The rule is that time never proves death: an owner is reclaimed
  * only when it is on THIS machine and its recorded process lifetime is gone.
  * Boot and start identity disambiguate a reused PID; unknown evidence refuses.
- * Age decides exactly one case — a lock with no readable owner at all, left by
- * a process that died between creating the file and writing to it — and only
- * after a grace period.
+ * Age decides exactly one case, and only when the caller opts in: a lock file
+ * with no readable owner at all, which this code never produces but an older
+ * writer could leave behind.
  *
  * Reclaiming is serialised through a second, short-lived guard file. Without it
  * every waiter sees the same dead owner at the same moment, and the second one
@@ -21,9 +22,12 @@
  * journal's refusal policy and the reasons it attaches to a refusal are the
  * same code paths as the public lock's.
  */
-import { lstat, open, unlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { lstat, open, readdir, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
+import { AtomicFilePublicationError, publishAtomicFile } from './atomic-publication';
 import { LockRecordError, readLockRecord } from './exclusive-lock-read';
 import { machineIdentity } from './process-identity';
 import {
@@ -73,8 +77,8 @@ export interface ExclusiveLockAttemptOptions {
   readonly reclaim: boolean;
   readonly machineIdentity?: string;
   /**
-   * How old a lock with no readable owner must be before it is taken. Absent,
-   * an ownerless lock is never taken — it may predate owner records.
+   * How old a lock file with no readable owner must be before it is taken. Absent
+   * or `null`, such a file is never taken: it may belong to a live older writer.
    */
   readonly ownerlessGraceMs?: number | null;
 }
@@ -150,14 +154,39 @@ interface LockFileState {
   readonly ino: number;
   readonly dev: number;
   readonly mtimeMs: number;
+  /** The staging name still hard-linked to the lock: its holder stopped between link and unlink. */
+  readonly stagedName?: string;
 }
 
 // Each level appends a guard and repeats identity/record IO. Ordinary recovery needs
 // one level; a finite chain also refuses before pathological names or unbounded IO.
 const MAX_RECLAIM_DEPTH = 16;
+// The reclaim guard is internal machinery with its own bounded stale rule: this library
+// publishes a guard with its owner already recorded, so only an empty guard left by an older
+// writer is taken by age. Unset, the guard uses this bound; an explicit `ownerlessGraceMs`
+// (a number, or `null` to refuse) governs the guard as well. The lock itself never uses it.
+const STALE_GUARD_GRACE_MS = 5_000;
 interface ReclaimRefusal {
   readonly refused: true;
   readonly cause?: unknown;
+}
+
+const STAGED_NAME = /^\.lock-[0-9a-f-]{36}\.tmp$/;
+
+/** The sibling staging file that shares the inode of the lock `path`, if there is one. */
+async function stagedSibling(
+  path: string,
+  ino: number,
+  dev: number,
+): Promise<string | undefined> {
+  const directory = dirname(path);
+  for (const name of await readdir(directory)) {
+    if (!STAGED_NAME.test(name)) continue;
+    const candidate = join(directory, name);
+    const info = await lstat(candidate).catch(() => undefined);
+    if (info?.isFile() && info.ino === ino && info.dev === dev) return candidate;
+  }
+  return undefined;
 }
 
 async function readLockFile(
@@ -166,12 +195,27 @@ async function readLockFile(
   signal?: AbortSignal,
 ): Promise<LockFileState | undefined> {
   try {
-    const record = await readLockRecord(path, undefined, signal);
+    let stagedName: string | undefined;
+    let record: Awaited<ReturnType<typeof readLockRecord>>;
+    try {
+      record = await readLockRecord(path, { signal });
+    } catch (cause) {
+      // A lock with exactly two names is safe to read only when the other name is its own
+      // staging file; any other second link keeps the single-link refusal.
+      if (!(cause instanceof LockRecordError) || cause.code !== 'LOCK_UNSAFE_RECORD')
+        throw cause;
+      const info = await lstat(path);
+      stagedName =
+        info.nlink === 2 ? await stagedSibling(path, info.ino, info.dev) : undefined;
+      if (stagedName === undefined) throw cause;
+      record = await readLockRecord(path, { signal, singleLink: false });
+    }
     return {
       ...readOwner(record.text),
       ino: record.info.ino,
       dev: record.info.dev,
       mtimeMs: record.info.mtimeMs,
+      ...(stagedName !== undefined && { stagedName }),
     };
   } catch (cause) {
     if (!isCode(cause, 'ENOENT')) onFailure?.(cause);
@@ -179,11 +223,40 @@ async function readLockFile(
   }
 }
 
-/** Remove `path` only while it is still the file that was read as `ino`. */
-async function unlinkIfSame(path: string, ino: number, dev: number): Promise<void> {
+/**
+ * Remove staging files whose recorded owner is provably gone on this machine: a holder that
+ * died after writing its record and before (or while) publishing it leaves one behind.
+ */
+async function sweepStagedLocks(
+  directory: string,
+  machine: string | undefined,
+  signal?: AbortSignal,
+): Promise<void> {
+  for (const name of await readdir(directory).catch(() => [])) {
+    if (!STAGED_NAME.test(name)) continue;
+    const candidate = join(directory, name);
+    const state = await readLockFile(candidate, undefined, signal);
+    if (!state?.owner) continue;
+    if ((await diagnose(state.owner, machine)).liveness !== 'gone') continue;
+    await unlinkIfSame(
+      candidate,
+      state.ino,
+      state.dev,
+      state.stagedName === undefined ? 1 : 2,
+    );
+  }
+}
+
+/** Remove `path` only while it is still the file that was read as `ino`, with `links` names. */
+async function unlinkIfSame(path: string, ino: number, dev: number, links = 1): Promise<void> {
   try {
     const current = await lstat(path);
-    if (current.ino !== ino || current.dev !== dev || !current.isFile() || current.nlink !== 1)
+    if (
+      current.ino !== ino ||
+      current.dev !== dev ||
+      !current.isFile() ||
+      current.nlink !== links
+    )
       return;
     await unlink(path);
   } catch (error) {
@@ -191,16 +264,20 @@ async function unlinkIfSame(path: string, ino: number, dev: number): Promise<voi
   }
 }
 
+/**
+ * Create the lock file at `path` with its owner already recorded.
+ *
+ * The record is written to a sibling temporary file and published with a hard
+ * link, so a reader that sees the name sees a complete record, and a holder that
+ * stalls or dies before the link leaves no lock behind. `EEXIST` is the refusal.
+ */
 async function createOwned(
   path: string,
   options: ExclusiveLockAttemptOptions,
   reclaimed: boolean,
 ): Promise<HeldExclusiveLock> {
-  // Identity first: on darwin it may spawn a registry read, and every moment
-  // between the create and the owner write is a moment the lock has no owner.
   const identity = await machineIdentity(options.machineIdentity);
   const instance = await readProcessInstance(process.pid);
-  const handle = await open(path, 'wx', options.mode);
   const owner: ExclusiveLockOwner = {
     pid: process.pid,
     process: instance,
@@ -208,24 +285,37 @@ async function createOwned(
     acquiredAt: new Date().toISOString(),
     ...(identity !== null && { machine: identity }),
   };
+  const ownedRecord = `${JSON.stringify(owner)}\n`;
+  const staged = join(dirname(path), `.lock-${randomUUID()}.tmp`);
+  const handle = await open(staged, 'wx', options.mode);
   let ino: number | undefined;
   let dev: number | undefined;
+  let published = false;
   try {
     const info = await handle.stat();
     ino = info.ino;
     dev = info.dev;
     // The creator owns this descriptor; umask must not silently drop shared-reader rights.
     await handle.chmod(options.mode);
-    await handle.writeFile(`${JSON.stringify(owner)}\n`, 'utf8');
+    await handle.writeFile(ownedRecord, 'utf8');
+    try {
+      await publishAtomicFile(staged, path, { replace: false, durability: 'file' });
+      published = true;
+    } catch (error) {
+      // The link exists but the staged name could not be removed: the lock has two
+      // names, so it is not a held lock. Take it down rather than hold it.
+      published = error instanceof AtomicFilePublicationError;
+      throw error;
+    }
   } catch (error) {
     await handle.close().catch(() => undefined);
-    if (ino !== undefined && dev !== undefined)
-      await unlinkIfSame(path, ino, dev).catch(() => undefined);
+    if (published && ino !== undefined && dev !== undefined)
+      await unlinkIfSame(path, ino, dev, 2).catch(() => undefined);
+    await unlink(staged).catch(() => undefined);
     throw error;
   }
   const ownedInode = ino;
   const ownedDevice = dev;
-  const ownedRecord = `${JSON.stringify(owner)}\n`;
   let released = false;
   return {
     path,
@@ -300,7 +390,9 @@ async function reclaimUnderGuard(
       {
         ...options,
         ownerlessGraceMs:
-          options.ownerlessGraceMs === undefined ? 5_000 : options.ownerlessGraceMs,
+          options.ownerlessGraceMs === undefined
+            ? STALE_GUARD_GRACE_MS
+            : options.ownerlessGraceMs,
       },
       depth + 1,
     );
@@ -330,8 +422,13 @@ async function reclaimUnderGuard(
       if (options.signal?.aborted) return { refused: true };
       if (!reclaimable(state, diagnosis, options.ownerlessGraceMs))
         return { refused: true, cause: diagnosis.cause };
+      if (state.stagedName !== undefined)
+        await unlink(state.stagedName).catch((error: unknown) => {
+          if (!isCode(error, 'ENOENT')) throw error;
+        });
       await unlinkIfSame(path, state.ino, state.dev);
     }
+    await sweepStagedLocks(dirname(path), options.machineIdentity, options.signal);
     // An ordinary acquirer never unlinks, but it may create the file between
     // that unlink and this create; it then holds the lock, and this refuses.
     return await createOwned(path, options, state !== undefined).catch((error: unknown) => {

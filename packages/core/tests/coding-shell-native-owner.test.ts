@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ShellOutputSchema } from '../src/agent-runtime/coding-tool-contract';
 import type { AgentProcessSandbox, AgentSandboxProcess } from '../src/agent-runtime/sandbox';
 import { createAgentCodingTools } from '../src/entrypoints/agent-runtime/coding-tools';
@@ -191,30 +192,19 @@ describe('coding shell shared native ownership', () => {
     const entry = new URL('../src/entrypoints/agent-runtime/coding-tools.ts', import.meta.url)
       .pathname;
     const mount = new URL('../src/entrypoints/tools.ts', import.meta.url).pathname;
-    const source = `
-      import assert from 'node:assert/strict';
-      import { createAgentCodingTools } from ${JSON.stringify(entry)};
-      import { mountAgent } from ${JSON.stringify(mount)};
-      const original = process.kill;
-      const refusal = Object.assign(new Error('group-refusal-marker'), { code: 'EPERM' });
-      process.kill = (pid, signal) => { if (pid < 0 && signal === 'SIGKILL') throw refusal; return original(pid, signal); };
-      const definitions = createAgentCodingTools({ root: ${JSON.stringify(root)}, authorize: () => true, executables: { printf: '/usr/bin/printf' }, limits: { shellTerminationGraceMs: 20, shellTimeoutMs: 200 } });
-      const definition = definitions.find(tool => tool.name === 'run_command');
-      const hasCause = (error) => error === refusal || (error instanceof AggregateError && error.errors.some(hasCause)) || (error instanceof Error && hasCause(error.cause));
-      try { await definition.handler({ params: undefined, input: { executable: 'printf', args: ['ok'], cwd: '.' } }); throw new Error('Unexpected successful cleanup'); }
-      catch (error) { assert.equal(error.code, 'COMMAND_CLEANUP'); assert.equal(hasCause(error), true); }
-      const errors = [];
-      console.error = (...values) => errors.push(values.map(String).join(' '));
-      const execute = mountAgent([], { runtimeTools: definitions }).run_command.execute;
-      try { await execute({ executable: 'printf', args: ['ok'] }, { toolCallId: 'refusal', messages: [], context: undefined }); throw new Error('Unexpected successful tool'); }
-      catch (error) { assert.equal(error.output.error, 'INTERNAL_SERVER_ERROR'); assert.equal(JSON.stringify(error.output).includes('group-refusal-marker'), false); }
-      process.kill = original;
-      console.log('coding group cleanup refusal: ok');
-    `;
-    const child = Bun.spawn([process.execPath, '-e', source], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        fileURLToPath(new URL('./fixtures/coding-group-cleanup-refusal.mjs', import.meta.url)),
+        root,
+        entry,
+        mount,
+      ],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
     const result = await child.exited;
     const stderr = await new Response(child.stderr).text();
     expect(result, stderr).toBe(0);

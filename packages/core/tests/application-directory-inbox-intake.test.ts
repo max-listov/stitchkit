@@ -16,7 +16,12 @@ import {
   identity,
   inboxDirectory,
   openInbox,
+  removeInboxDirectoriesAfterEach,
 } from './application-directory-inbox-fixture';
+
+removeInboxDirectoriesAfterEach();
+
+import { resourceContext } from './session-delivery-fixture';
 
 test('programmatic acceptance is durable, deduplicated across restart and delivers the original full identity', async () => {
   const dir = await inboxDirectory();
@@ -137,15 +142,33 @@ test('producer can buffer before activation and rejects acceptance after stopAdm
     delivered += 1;
   });
   await inbox.accept({ ...identity, entry: { text: 'buffered' } });
-  await Bun.sleep(30);
   expect(delivered).toBe(0);
-  await resource.stopAdmission?.({} as never);
+  await resource.stopAdmission?.(resourceContext());
   await expect(
     inbox.accept({ ...identity, key: 'late', entry: { text: 'late' } }),
   ).rejects.toThrow('not accepting');
-  await resource.close?.({} as never);
+  await resource.close?.(resourceContext());
   expect(delivered).toBe(0);
   expect((await readdir(dir)).filter((name) => name.startsWith('intake-'))).toHaveLength(1);
+});
+
+test('activation starts delivery of an entry buffered before it', async () => {
+  const dir = await inboxDirectory();
+  const delivered = deferred<string>();
+  const { inbox, resource } = await openInbox(
+    dir,
+    ({ entry }) => delivered.resolve(entry.text),
+    {
+      pollIntervalMs: 10,
+    },
+  );
+  await inbox.accept({ ...identity, entry: { text: 'buffered' } });
+  await resource.activate?.(resourceContext());
+  try {
+    expect(await delivered.promise).toBe('buffered');
+  } finally {
+    await resource.close?.(resourceContext());
+  }
 });
 
 test('an expired rejected entry remains deduplicated by its durable rejected envelope', async () => {
@@ -172,17 +195,20 @@ test('an aborted uncooperative handler leaves its entry unsettled even if it ret
   const dir = await inboxDirectory();
   const entered = deferred();
   const release = deferred();
+  const returned = deferred();
   const { resource, inbox } = await openInbox(dir, async () => {
     entered.resolve();
     await release.promise;
+    returned.resolve();
   });
   const accepted = await inbox.accept({ ...identity, entry: { text: 'one' } });
   const flushing = inbox.flush();
   await entered.promise;
-  await resource.force?.({} as never);
+  await resource.force?.(resourceContext());
   expect(await flushing).toBe(0);
   release.resolve();
-  await Bun.sleep(20);
+  await returned.promise;
+  await resource.drain?.(resourceContext());
   expect((await inbox.state()).receipts).toEqual([]);
   expect(await readdir(dir)).toContain(accepted.filename);
 });
@@ -245,14 +271,13 @@ test('close waits for already accepted storage work and rejects later producers'
   const accepting = inbox.accept({ ...identity, entry: { text: 'before close' } });
   await entered.promise;
   let closed = false;
-  const closing = Promise.resolve(resource.close?.({} as never)).then(() => {
+  const closing = Promise.resolve(resource.close?.(resourceContext())).then(() => {
     closed = true;
   });
-  await Bun.sleep(20);
-  expect(closed).toBe(false);
   await expect(
     inbox.accept({ ...identity, key: 'late', entry: { text: 'late' } }),
   ).rejects.toThrow('not accepting');
+  expect(closed).toBe(false);
   release.resolve();
   expect((await accepting).status).toBe('accepted');
   await closing;

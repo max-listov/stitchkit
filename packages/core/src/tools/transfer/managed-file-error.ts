@@ -22,11 +22,20 @@ export function managedFileAppError(error: unknown): AppError | null {
   if (!(error instanceof ManagedFileError)) return null;
   switch (error.code) {
     case 'FILE_UNSAFE_LINK':
-      return new AppError('FORBIDDEN', SAFE_MANAGED_FILE_MESSAGES[error.code], 403);
+      return new AppError('FORBIDDEN', {
+        message: SAFE_MANAGED_FILE_MESSAGES[error.code],
+        status: 403,
+      });
     case 'FILE_CHANGED':
-      return new AppError('CONFLICT', SAFE_MANAGED_FILE_MESSAGES[error.code], 409);
+      return new AppError('CONFLICT', {
+        message: SAFE_MANAGED_FILE_MESSAGES[error.code],
+        status: 409,
+      });
     case 'FILE_UNSUPPORTED':
-      return new AppError('NOT_IMPLEMENTED', SAFE_MANAGED_FILE_MESSAGES[error.code], 501);
+      return new AppError('NOT_IMPLEMENTED', {
+        message: SAFE_MANAGED_FILE_MESSAGES[error.code],
+        status: 501,
+      });
 
     case 'FILE_INVALID_PATH':
     case 'FILE_OUTSIDE_ROOT':
@@ -35,11 +44,10 @@ export function managedFileAppError(error: unknown): AppError | null {
     case 'FILE_INSPECTION_REJECTED':
     case 'FILE_TOO_LARGE':
     case 'FILE_EXISTS':
-      return new AppError(
-        error.code,
-        SAFE_MANAGED_FILE_MESSAGES[error.code],
-        STITCH_ERROR_STATUS[error.code],
-      );
+      return new AppError(error.code, {
+        message: SAFE_MANAGED_FILE_MESSAGES[error.code],
+        status: STITCH_ERROR_STATUS[error.code],
+      });
     case 'FILE_IO_ERROR':
       return null;
   }

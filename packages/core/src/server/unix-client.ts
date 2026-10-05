@@ -5,6 +5,7 @@ import {
   type IncomingMessage,
 } from 'node:http';
 import type { ClientFetch } from '../browser/transport';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { incomingResponseBody, readBoundedRequestBody } from './unix-client-body';
 import { bunUnixRequest, hasBunUnixRuntime } from './unix-client-bun';
 import { UnixClientTransportError } from './unix-client-error';
@@ -50,9 +51,7 @@ export interface UnixClientTransport {
 
 function positiveInteger(value: number | undefined, fallback: number, name: string): number {
   const resolved = value ?? fallback;
-  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
-    throw new TypeError(`${name} must be a positive safe integer`);
-  }
+  assertPositiveSafeInteger(name, resolved);
   return resolved;
 }
 

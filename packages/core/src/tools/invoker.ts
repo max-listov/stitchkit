@@ -77,8 +77,12 @@ export function createToolInvoker(
   const operation = (name: string): MountableTool => {
     const tool = tools.get(name);
     if (tool) return tool;
-    throw new AppError('NOT_FOUND', `Unknown tool: ${name}`, 404, {
-      available: names,
+    throw new AppError('NOT_FOUND', {
+      message: `Unknown tool: ${name}`,
+      status: 404,
+      details: {
+        available: names,
+      },
     });
   };
 

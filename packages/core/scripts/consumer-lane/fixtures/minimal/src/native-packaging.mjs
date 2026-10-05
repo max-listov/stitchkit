@@ -8,12 +8,8 @@ const options = {
   entryPath: 'app/proof.js',
   assetPath: 'addons/owner.node',
 };
-assert.deepEqual(createNativePackaging({ ...options, platform: 'linux' }), {
-  state: 'unsupported',
-  platform: 'linux',
-  architecture: process.arch,
-  code: 'NATIVE_TARGET_UNSUPPORTED',
-});
+// A platform without native addons is refused by the schema, before any target is resolved.
+assert.throws(() => createNativePackaging({ ...options, platform: 'linux' }), /platform/);
 assert.deepEqual(createNativePackaging({ ...options, architecture: 'invalid' }), {
   state: 'unsupported',
   platform: 'darwin',
@@ -22,7 +18,7 @@ assert.deepEqual(createNativePackaging({ ...options, architecture: 'invalid' }),
 });
 assert.throws(
   () => createNativePackaging({ ...options, assetPath: '../owner.node' }),
-  /relative output path/,
+  /relative path without traversal/,
 );
 assert.throws(
   () => createNativePackaging({ ...options, entryPath: '[dir]/proof.js' }),
@@ -38,6 +34,7 @@ const selected = createNativePackaging(options);
 if (selected.state === 'ready') {
   assert.equal(selected.assets.length, 1);
   assert.match(selected.assets[0].sha256, /^[a-f0-9]{64}$/);
+  assert.equal(selected.assets[0].bytes.byteLength, selected.assets[0].size);
   assert.equal(selected.assets[0].outputPath, 'addons/owner.node');
 } else assert.equal(selected.code, 'NATIVE_ASSET_MISSING');
 console.log('packed build-only native packaging: ok');

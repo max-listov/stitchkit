@@ -34,6 +34,10 @@ export interface McpHttpSecurityConfig {
   allowedOrigins?: readonly string[];
 }
 
+/**
+ * HTTP-only part of an MCP endpoint config: `auth` resolves a request to an identity (null
+ * gives 401); legacy policy and Host/Origin rules are optional.
+ */
 export interface McpHttpConfig<TAuth> {
   /** Resolve an incoming request to an identity. Return `null` → 401. */
   auth: (req: Request) => TAuth | null | Promise<TAuth | null>;
@@ -50,6 +54,9 @@ export interface McpHttpConfig<TAuth> {
   }) => void | Promise<void>;
 }
 
+/**
+ * Full config for `createMcpHandler`: the shared surface config plus the HTTP auth settings.
+ */
 export type McpHandlerConfig<
   TAuth,
   TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,

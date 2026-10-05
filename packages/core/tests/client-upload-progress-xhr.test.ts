@@ -7,8 +7,9 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
+import { ApiError } from '../src/browser/api-error';
 import { createClient } from '../src/browser/client';
-import { ApiError, createHttpClient } from '../src/browser/http';
+import { createHttpClient } from '../src/browser/http';
 import type { UploadProgress } from '../src/contract/client-types';
 import { defineContract } from '../src/entrypoints/contract';
 

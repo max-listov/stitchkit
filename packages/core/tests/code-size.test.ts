@@ -9,26 +9,55 @@
  * review, and a new offender is a red test rather than a slow drift.
  */
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import ts from '@typescript/typescript6';
 import { z } from 'zod';
 
 const SRC = resolve(import.meta.dir, '../src');
+const REPOSITORY = resolve(import.meta.dir, '../../..');
+/** Tooling roots: the repository scripts and the core package's own scripts and fixtures. */
+const SCRIPT_ROOTS = [join(REPOSITORY, 'scripts'), join(REPOSITORY, 'packages/core/scripts')];
 export const MAX_FUNCTION_LINES = 200;
 export const MAX_FILE_LINES = 500;
 
 const ExceptionsSchema = z.object({
   files: z.record(z.string(), z.string().min(10)),
   functions: z.record(z.string(), z.string().min(10)),
+  /** Oversized tooling files, keyed by repository-relative path. */
+  scriptFiles: z.record(z.string(), z.string().min(10)),
 });
 
-function* sources(dir: string): Generator<string> {
+function* sources(dir: string, pattern = /\.tsx?$/): Generator<string> {
   for (const name of readdirSync(dir)) {
+    if (name === 'node_modules') continue;
     const path = join(dir, name);
-    if (statSync(path).isDirectory()) yield* sources(path);
-    else if (/\.tsx?$/.test(name) && !name.endsWith('.d.ts')) yield path;
+    if (statSync(path).isDirectory()) yield* sources(path, pattern);
+    else if (pattern.test(name) && !name.endsWith('.d.ts')) yield path;
   }
+}
+
+const SCRIPT_SOURCE = /\.(tsx?|mjs|cjs|js)$/;
+
+/** Lines of a text: a final newline ends the last line rather than starting another. */
+export function lineCount(text: string): number {
+  const lines = text.split('\n').length;
+  return text.endsWith('\n') ? lines - 1 : lines;
+}
+
+/** Files under `directory` longer than the file limit, as `directory`-relative paths. */
+export function oversizedFiles(directory: string, pattern: RegExp): string[] {
+  return [...sources(directory, pattern)]
+    .filter((file) => lineCount(readFileSync(file, 'utf8')) > MAX_FILE_LINES)
+    .map((file) => relative(directory, file));
 }
 
 function functionName(node: ts.Node): string | undefined {
@@ -66,8 +95,7 @@ export function oversized(
     ts.forEachChild(node, visit);
   };
   visit(source);
-  const fileLines = text.split('\n').length;
-  return { files: fileLines > MAX_FILE_LINES ? [path] : [], functions };
+  return { files: lineCount(text) > MAX_FILE_LINES ? [path] : [], functions };
 }
 
 const exceptions = ExceptionsSchema.parse(
@@ -76,6 +104,9 @@ const exceptions = ExceptionsSchema.parse(
 const found = {
   files: [] as string[],
   functions: [] as Array<{ key: string; lines: number }>,
+  scriptFiles: SCRIPT_ROOTS.flatMap((root) =>
+    oversizedFiles(root, SCRIPT_SOURCE).map((file) => relative(REPOSITORY, join(root, file))),
+  ),
 };
 for (const file of sources(SRC)) {
   const result = oversized(relative(SRC, file), readFileSync(file, 'utf8'));
@@ -96,6 +127,10 @@ describe('code size', () => {
     expect(found.files.filter((file) => !(file in exceptions.files))).toEqual([]);
   });
 
+  test(`no script or fixture file over ${MAX_FILE_LINES} lines outside the declared exceptions`, () => {
+    expect(found.scriptFiles.filter((file) => !(file in exceptions.scriptFiles))).toEqual([]);
+  });
+
   test('every exception is still needed, so the list only shrinks by review', () => {
     const functionKeys = new Set(found.functions.map(({ key }) => key));
     expect(Object.keys(exceptions.functions).filter((key) => !functionKeys.has(key))).toEqual(
@@ -104,6 +139,22 @@ describe('code size', () => {
     expect(
       Object.keys(exceptions.files).filter((file) => !found.files.includes(file)),
     ).toEqual([]);
+    expect(
+      Object.keys(exceptions.scriptFiles).filter((file) => !found.scriptFiles.includes(file)),
+    ).toEqual([]);
+  });
+
+  test('a planted file of 501 lines is found and one of 500 is not (negative control)', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'stitchkit-size-'));
+    try {
+      const lines = (count: number) => `${Array(count).fill('export {};').join('\n')}\n`;
+      writeFileSync(join(directory, 'at-limit.ts'), lines(MAX_FILE_LINES));
+      writeFileSync(join(directory, 'over-limit.mjs'), lines(MAX_FILE_LINES + 1));
+      writeFileSync(join(directory, 'over-limit.json'), lines(MAX_FILE_LINES + 1));
+      expect(oversizedFiles(directory, SCRIPT_SOURCE)).toEqual(['over-limit.mjs']);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test('an oversized function and file are found (negative control)', () => {

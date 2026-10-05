@@ -78,5 +78,4 @@ export {
   SurfaceSchemaDigestsSchema,
   type SurfaceToolDefinition,
   type SurfaceToolExtension,
-  serializeSurfaceValue,
 } from '../testing/surface-manifest';

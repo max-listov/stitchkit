@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { z } from 'zod';
+import { MAX_TIMER_MS } from '../../internal/timers';
 import {
   CliBuildManifestSchema,
   type CliBuildStamp,
@@ -9,7 +10,7 @@ import {
 import type { CliSigningKey, CliTrustRoot } from './signature';
 
 const positive = z.int().positive().max(Number.MAX_SAFE_INTEGER);
-const timer = positive.max(2_147_483_647);
+const timer = positive.max(MAX_TIMER_MS);
 const component = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/);
 export const PublicationTargetSchema = CliBuildTargetSchema.extend({
   platform: component,
@@ -67,7 +68,15 @@ const dataSchema = CliBuildManifestSchema.pick({
   retention: positive.min(2).default(2),
 });
 const phaseSchema = z.enum(['prepare', 'build', 'commit', 'promote']);
+/**
+ * Step of `publishCli` that the app's `admit` callback is called for: `prepare`, `build`,
+ * `commit` or `promote`.
+ */
 export type CliPublicationPhase = z.infer<typeof phaseSchema>;
+/**
+ * Input to `publishCli`: identity, storage root, base URL and targets, plus `build` (bytes per
+ * target) and `admit` (checked before every phase).
+ */
 export type CliPublicationOptions = Omit<z.input<typeof dataSchema>, 'limits' | 'targets'> & {
   targets: readonly CliBuildTarget[];
   limits?: z.input<typeof limitsSchema>;

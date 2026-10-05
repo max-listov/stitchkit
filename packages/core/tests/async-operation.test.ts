@@ -819,7 +819,10 @@ describe('async operation protocol', () => {
     let inspections = 0;
     const operation = operationFixture({
       authorize: () => {
-        throw new AppError('OPERATION_NOT_FOUND', 'Operation not found', 404);
+        throw new AppError('OPERATION_NOT_FOUND', {
+          message: 'Operation not found',
+          status: 404,
+        });
       },
       inspect: (): TestState => {
         inspections += 1;

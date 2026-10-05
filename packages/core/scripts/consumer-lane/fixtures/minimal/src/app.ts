@@ -89,7 +89,8 @@ const widgets = defineContract(
 
 const service = implement(widgets, {
   get: (ctx) => {
-    if (ctx.params.id === 'boom') throw new AppError('NOT_FOUND', 'No such widget', 404);
+    if (ctx.params.id === 'boom')
+      throw new AppError('NOT_FOUND', { message: 'No such widget', status: 404 });
     return { id: ctx.params.id };
   },
   complete: ({ req, response }) => {

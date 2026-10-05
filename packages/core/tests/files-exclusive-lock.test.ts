@@ -159,18 +159,21 @@ describe('withExclusiveLock', () => {
     expect(existsSync(lockPath)).toBe(true);
   });
 
-  test('a lock with no owner is taken only after its grace period', async () => {
+  test('a legacy empty lock file is never taken by age unless a grace period is set', async () => {
     writeFileSync(lockPath, '');
-    const early = await withExclusiveLock(lockPath, () => undefined, {
+    const past = new Date(Date.now() - 60_000);
+    utimesSync(lockPath, past, past);
+    const refused = await withExclusiveLock(lockPath, () => undefined, {
       ...options,
       timeoutMs: 30,
     }).catch((caught: unknown) => caught);
-    expect((early as ExclusiveLockError).code).toBe('LOCK_TIMEOUT');
-    expect((early as ExclusiveLockError).holder).toBeNull();
+    expect((refused as ExclusiveLockError).code).toBe('LOCK_TIMEOUT');
+    expect((refused as ExclusiveLockError).holder).toBeNull();
 
-    const past = new Date(Date.now() - 60_000);
-    utimesSync(lockPath, past, past);
-    const lock = await withExclusiveLock(lockPath, (held) => held, options);
+    const lock = await withExclusiveLock(lockPath, (held) => held, {
+      ...options,
+      ownerlessGraceMs: 30_000,
+    });
     expect(lock.reclaimed).toBe(true);
   });
 
@@ -224,9 +227,10 @@ describe('withExclusiveLock', () => {
     writeFileSync(lockPath, '');
     const past = new Date(Date.now() - 2_000);
     utimesSync(lockPath, past, past);
-    // Two seconds old: inside the default five-second grace, past a one-second one.
+    // Two seconds old: inside a ten-second grace, past a one-second one.
     const refused = await withExclusiveLock(lockPath, () => undefined, {
       ...options,
+      ownerlessGraceMs: 10_000,
       timeoutMs: 20,
     }).catch((caught: unknown) => caught);
     expect((refused as ExclusiveLockError).code).toBe('LOCK_TIMEOUT');

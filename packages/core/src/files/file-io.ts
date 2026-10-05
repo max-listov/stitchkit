@@ -1,5 +1,6 @@
-import type { open } from 'node:fs/promises';
 import { type ManagedFileRef, ManagedFileRefSchema } from '../contract/file-ref';
+import { raceAbort } from '../internal/abort-race';
+import { type StagedFile, writeAllBytes } from '../internal/atomic-file';
 import {
   ManagedFileError,
   type ManagedFileInspection,
@@ -12,30 +13,6 @@ const ManagedFileInspectionSchema = ManagedFileRefSchema.pick({
   name: true,
 });
 
-function abortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException('The operation was aborted', 'AbortError');
-}
-
-function raceWithSignal<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  signal.throwIfAborted();
-  return new Promise<T>((resolvePromise, rejectPromise) => {
-    let settled = false;
-    const settle = (complete: () => void): void => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener('abort', onAbort);
-      complete();
-    };
-    const onAbort = (): void => settle(() => rejectPromise(abortReason(signal)));
-    signal.addEventListener('abort', onAbort, { once: true });
-    if (signal.aborted) onAbort();
-    operation.then(
-      (value) => settle(() => resolvePromise(value)),
-      (error: unknown) => settle(() => rejectPromise(error)),
-    );
-  });
-}
-
 export async function inspectFile(
   inspector: ManagedFileInspector | undefined,
   input: Omit<ManagedFileInspectionInput, 'signal'>,
@@ -47,13 +24,13 @@ export async function inspectFile(
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = outerSignal ? AbortSignal.any([outerSignal, timeoutSignal]) : timeoutSignal;
   try {
-    const inspected = await raceWithSignal(
+    const inspected = await raceAbort(
       Promise.resolve().then(() => inspector({ ...input, signal })),
       signal,
     );
     return ManagedFileInspectionSchema.parse(inspected);
   } catch (error) {
-    if (outerSignal?.aborted) throw abortReason(outerSignal);
+    if (outerSignal?.aborted) throw outerSignal.reason;
     throw new ManagedFileError(
       'FILE_INSPECTION_REJECTED',
       'managed file rejected by inspection',
@@ -86,20 +63,8 @@ export function inspectedRef(
   return parsed.data;
 }
 
-async function writeChunk(
-  handle: Awaited<ReturnType<typeof open>>,
-  chunk: Uint8Array,
-): Promise<void> {
-  let offset = 0;
-  while (offset < chunk.byteLength) {
-    const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset);
-    if (bytesWritten === 0) throw new Error('zero-byte managed-file write');
-    offset += bytesWritten;
-  }
-}
-
 export async function writeSource(
-  handle: Awaited<ReturnType<typeof open>>,
+  file: StagedFile,
   source: Uint8Array | ReadableStream<Uint8Array>,
   maxBytes: number,
   inspectionBytes: number,
@@ -119,7 +84,7 @@ export async function writeSource(
       prefixChunks.push(kept);
       prefixSize += kept.byteLength;
     }
-    await writeChunk(handle, chunk);
+    await writeAllBytes(file, chunk);
   };
 
   if (source instanceof Uint8Array) {

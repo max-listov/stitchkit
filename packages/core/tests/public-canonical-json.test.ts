@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { canonicalJson } from '../src/entrypoints/primitives';
+import { CanonicalJsonError, canonicalJson } from '../src/entrypoints/primitives';
 import { serializeCanonicalJson } from '../src/internal/canonical-json';
 
 test('canonical JSON keeps UTF-16 and lexical integer keys, array order and optional members', () => {
@@ -121,4 +121,30 @@ test('canonical JSON keeps numeric literals, omitted-member nodes and own __prot
   );
   expect(() => canonicalJson(-0)).toThrow(TypeError);
   expect(serializeCanonicalJson([-0, undefined])).toBe('[0,null]');
+});
+
+test('a refusal names whether a limit was exceeded or the value is not JSON', () => {
+  const reason = (value: unknown, options?: Parameters<typeof canonicalJson>[1]): unknown => {
+    try {
+      canonicalJson(value, options);
+    } catch (error) {
+      if (error instanceof CanonicalJsonError) {
+        expect(error).toBeInstanceOf(TypeError);
+        return error.reason;
+      }
+      throw error;
+    }
+    return 'admitted';
+  };
+  const cycle: Record<string, unknown> = {};
+  cycle.self = cycle;
+  const nested = { x: { y: 1 } };
+  expect(reason(nested, { maxDepth: 1 })).toBe('depth');
+  expect(reason(nested, { maxNodes: 2 })).toBe('nodes');
+  expect(reason(nested, { maxBytes: 5 })).toBe('bytes');
+  expect(reason(-0)).toBe('negative-zero');
+  expect(reason(cycle)).toBe('cycle');
+  expect(reason(Number.NaN)).toBe('not-json');
+  expect(reason(new Date(0))).toBe('not-json');
+  expect(reason(nested)).toBe('admitted');
 });

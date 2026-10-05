@@ -4,7 +4,10 @@ import { getEventListeners } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runNativeCommand } from '../src/entrypoints/process';
+import { processAlive } from './support/process-state';
+import { eventLoopTurn } from './support/until';
 
 let root: string;
 beforeEach(async () => {
@@ -16,6 +19,10 @@ afterEach(async () => {
 const NODE = spawnSync('node', ['-p', 'process.execPath']).stdout.toString().trim();
 if (!NODE) throw new Error('native Node executable unavailable');
 const command = (script: string) => ({ executable: NODE, args: ['-e', script] });
+const fixture = (name: string, ...args: string[]) => ({
+  executable: NODE,
+  args: [fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)), ...args],
+});
 
 test('native capture preserves raw bytes and counts actual combined bytes', async () => {
   const input = command(
@@ -83,7 +90,7 @@ test('native streaming fully drains multi-megabyte output per channel before com
     ),
     timeoutMs: 5000,
     onOutput: async (bytes, channel) => {
-      await new Promise((r) => setTimeout(r, 1));
+      await eventLoopTurn();
       chunks[channel].push(bytes);
     },
   });
@@ -101,8 +108,6 @@ test('native streaming fully drains multi-megabyte output per channel before com
 test('blocked sink abort releases wait and terminates TERM-resistant descendant without touching unrelated child', async () => {
   const counter = join(root, 'counter');
   const pidfile = join(root, 'pid');
-  const helper = `const fs=require('fs');process.on('SIGTERM',()=>{});let n=0;setInterval(()=>fs.writeFileSync(${JSON.stringify(counter)},String(++n)),5);`;
-  const script = `const {spawn}=require('child_process');const fs=require('fs');const h=spawn(process.execPath,['-e',${JSON.stringify(helper)}],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(pidfile)},String(h.pid));setTimeout(()=>process.stdout.write('ready'),100);setInterval(()=>{},1000);`;
   const unrelated = spawn(NODE, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
   const controller = new AbortController();
   let sinkEntered!: () => void;
@@ -114,9 +119,9 @@ test('blocked sink abort releases wait and terminates TERM-resistant descendant 
     release = resolve;
   });
   const promise = runNativeCommand({
-    ...command(script),
+    ...fixture('native-term-resistant-leader.mjs', counter, pidfile),
     signal: controller.signal,
-    killGraceMs: 10,
+    stop: { target: 'group', graceMs: 10 },
     cleanupTimeoutMs: 1000,
     onOutput: async () => {
       sinkEntered();
@@ -127,9 +132,7 @@ test('blocked sink abort releases wait and terminates TERM-resistant descendant 
     await entered;
     controller.abort(new Error('cancel'));
     await expect(promise).rejects.toThrow('cancel');
-    const first = await readFile(counter, 'utf8');
-    await new Promise((r) => setTimeout(r, 50));
-    expect(await readFile(counter, 'utf8')).toBe(first);
+    expect(processAlive(Number(await readFile(pidfile, 'utf8')))).toBe(false);
     expect(unrelated.exitCode).toBeNull();
   } finally {
     release();
@@ -140,14 +143,14 @@ test('blocked sink abort releases wait and terminates TERM-resistant descendant 
 
 test('parent exit with helper holding pipes remains cancellable and sink failure cleans up', async () => {
   const controller = new AbortController();
-  setTimeout(() => controller.abort(new Error('cancel after leader exit')), 100);
   await expect(
     runNativeCommand({
-      ...command(
-        "require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore',1,2]});process.exit(0);",
-      ),
+      ...fixture('native-orphaned-pipe-holder.mjs'),
       signal: controller.signal,
-      killGraceMs: 0,
+      stop: { target: 'group', graceMs: 0 },
+      // The helper outlives the leader and keeps the pipes; only the caller's abort ends it.
+      descendants: 'leave',
+      onOutput: () => controller.abort(new Error('cancel after leader exit')),
     }),
   ).rejects.toThrow('cancel after leader exit');
   await expect(
@@ -195,6 +198,8 @@ test('physically undrained native pipe abort completes before reader teardown', 
     stdio: ['pipe', 'ignore', 'ignore'],
   });
   reader.stdin.on('error', () => undefined);
+  // The reader never reads: this backlog exceeds any pipe buffer, so every later write stays pending.
+  expect(reader.stdin.write(Buffer.alloc(4 * 1024 * 1024))).toBe(false);
   const controller = new AbortController();
   let entered!: () => void;
   const waiting = new Promise<void>((resolve) => {
@@ -207,7 +212,7 @@ test('physically undrained native pipe abort completes before reader teardown', 
       "const b=Buffer.alloc(65536);function write(){while(process.stdout.write(b)){}process.stdout.once('drain',write)}write();",
     ),
     signal: controller.signal,
-    killGraceMs: 0,
+    stop: { target: 'group', graceMs: 0 },
     onOutput: (bytes, _channel, signal) => {
       sinks++;
       outputSignal = signal;
@@ -219,7 +224,6 @@ test('physically undrained native pipe abort completes before reader teardown', 
   });
   try {
     await waiting;
-    await new Promise((r) => setTimeout(r, 50));
     const began = performance.now();
     controller.abort(new Error('undrained pipe cancelled'));
     await expect(producer).rejects.toThrow('undrained pipe cancelled');
@@ -227,7 +231,7 @@ test('physically undrained native pipe abort completes before reader teardown', 
     expect(reader.exitCode).toBeNull();
     expect(outputSignal?.aborted).toBe(true);
     const count = sinks;
-    await new Promise((r) => setTimeout(r, 20));
+    await eventLoopTurn();
     expect(sinks).toBe(count);
   } finally {
     reader.kill('SIGKILL');
@@ -249,14 +253,9 @@ test('early stdin close is handled without an unhandled EPIPE', async () => {
 test('command grace and cleanup options control their native budgets', async () => {
   const { waitForCommandClose } = await import('../src/process/group');
   await expect(
-    waitForCommandClose(new Promise<number>((resolve) => setTimeout(() => resolve(0), 30)), 1),
+    waitForCommandClose(new Promise<number>(() => undefined), 1),
   ).rejects.toMatchObject({ name: 'TimeoutError' });
-  expect(
-    await waitForCommandClose(
-      new Promise<number>((resolve) => setTimeout(() => resolve(0), 5)),
-      100,
-    ),
-  ).toBe(0);
+  expect(await waitForCommandClose(Promise.resolve(0), 100)).toBe(0);
   const controller = new AbortController();
   let began = 0;
   await expect(
@@ -265,7 +264,7 @@ test('command grace and cleanup options control their native budgets', async () 
         "process.on('SIGTERM',()=>{});process.stdout.write('ready');setInterval(()=>{},1000)",
       ),
       signal: controller.signal,
-      killGraceMs: 80,
+      stop: { target: 'group', graceMs: 80 },
       onOutput: () => {
         began = performance.now();
         controller.abort(new Error('grace control'));
@@ -317,5 +316,5 @@ test('an already aborted race observes a late producer rejection', async () => {
   await expect(
     raceAbort(Promise.reject(new Error('producer failure')), controller.signal),
   ).rejects.toBe(reason);
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await eventLoopTurn();
 });

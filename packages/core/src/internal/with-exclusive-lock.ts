@@ -13,6 +13,7 @@ import {
   type ExclusiveLockDiagnosis,
   type ExclusiveLockOwner,
 } from './exclusive-lock';
+import { sleep } from './timers';
 
 export type { ExclusiveLockOwner } from './exclusive-lock';
 
@@ -33,10 +34,11 @@ export interface ExclusiveLockOptions {
    */
   machineIdentity?: string;
   /**
-   * How old a lock with no readable owner must be before it is taken — the one
-   * case where time decides, left by a process that died between creating the
-   * file and recording itself. Default 5 000; `null` disables age-based reclaim,
-   * including abandoned ownerless reclaim guards.
+   * How old a lock file with no readable owner must be before it is taken — the one case
+   * where time decides. This library publishes a lock only with its owner record complete,
+   * so such a file is one an older writer left behind. Unset: the lock is never taken by age,
+   * while an abandoned empty reclaim guard is taken after 5 000 ms. A number governs both;
+   * `null` refuses both.
    */
   ownerlessGraceMs?: number | null;
 }
@@ -67,7 +69,6 @@ export class ExclusiveLockError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
-const DEFAULT_OWNERLESS_GRACE_MS = 5_000;
 const FIRST_RETRY_MS = 10;
 const MAX_RETRY_MS = 100;
 
@@ -92,19 +93,6 @@ function describeEvidence(diagnosis: ExclusiveLockDiagnosis | undefined): string
   return ` (${diagnosis.attribution}, liveness ${diagnosis.liveness}${identity})`;
 }
 
-/** Sleep until `ms` passes or `signal` aborts, whichever is first. */
-function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise((resolve) => {
-    const done = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', done);
-      resolve();
-    };
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener('abort', done, { once: true });
-  });
-}
-
 /**
  * Run `run` while holding the exclusive lock at `path`, and release it on every
  * outcome.
@@ -123,9 +111,9 @@ export async function withExclusiveLock<T>(
   const label = options.label ?? path;
   const timeoutMs = nonNegative('timeoutMs', options.timeoutMs, DEFAULT_TIMEOUT_MS);
   const ownerlessGraceMs =
-    options.ownerlessGraceMs === null
-      ? null
-      : nonNegative('ownerlessGraceMs', options.ownerlessGraceMs, DEFAULT_OWNERLESS_GRACE_MS);
+    options.ownerlessGraceMs === undefined || options.ownerlessGraceMs === null
+      ? options.ownerlessGraceMs
+      : nonNegative('ownerlessGraceMs', options.ownerlessGraceMs, 0);
   const mode = options.mode ?? 0o600;
   if (!Number.isInteger(mode) || mode < 0 || mode > 0o777)
     throw new RangeError(
@@ -204,7 +192,10 @@ export async function withExclusiveLock<T>(
       );
     }
     // Jittered, so waiters released by one holder do not all retry together.
-    await pause(Math.min(delay * (0.5 + Math.random() / 2), remaining), signal);
+    // An abort ends the wait; the next pass reports LOCK_ABORTED.
+    await sleep(Math.min(delay * (0.5 + Math.random() / 2), remaining), signal).catch(
+      () => undefined,
+    );
     delay = Math.min(delay * 2, MAX_RETRY_MS);
   }
 }

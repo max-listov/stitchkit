@@ -82,6 +82,10 @@ export {
   DiagnosticJournalLockPolicySchema,
   type DiagnosticJournalRefusalReason,
   DiagnosticJournalRefusalReasonSchema,
+  type DiagnosticJournalStartupRefusalPolicy,
+  DiagnosticJournalStartupRefusalPolicySchema,
+  type DiagnosticJournalStartupScan,
+  DiagnosticJournalStartupScanSchema,
   type DiagnosticJournalState,
   DiagnosticJournalStateSchema,
   type DiagnosticJournalStatus,
@@ -99,8 +103,11 @@ export {
   DiagnosticJournalAnomalySchema,
   type DiagnosticJournalReadResult,
   DiagnosticJournalRecoveryError,
+  type DiagnosticJournalRecoveryErrorOptions,
   type DiagnosticJournalRecoveryStatus,
   DiagnosticJournalRecoveryStatusSchema,
+  type DiagnosticJournalStartupRefusalReason,
+  DiagnosticJournalStartupRefusalReasonSchema,
 } from '../application/diagnostic-journal-read-contract';
 export {
   type DirectoryInbox,

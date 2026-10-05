@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { MAX_TIMER_MS } from '../internal/timers';
 import { createInboxAccept } from './directory-inbox-accept';
 import {
   claimEntry,
@@ -11,21 +12,21 @@ import {
   forgetMissing,
 } from './directory-inbox-contract';
 import { createInboxDelivery } from './directory-inbox-delivery';
-import { createInboxFiles, type InboxFiles } from './directory-inbox-files';
+import { createInboxFiles, InboxEntryError, type InboxFiles } from './directory-inbox-files';
 import { cleanupInboxEntry, inboxStateAccess } from './directory-inbox-state';
 import { createFileStateStore } from './file-state-store';
 import { defineManagedResource } from './resource';
 
-function resolveLimits<TEntry>(config: DirectoryInboxConfig<TEntry>) {
+function resolveLimits<TEntry, TInput>(config: DirectoryInboxConfig<TEntry, TInput>) {
   const integer = z.int();
   return {
     pollIntervalMs: integer
       .min(10)
-      .max(2_147_483_647)
+      .max(MAX_TIMER_MS)
       .parse(config.pollIntervalMs ?? 1_000),
     leaseMs: integer
       .min(100)
-      .max(2_147_483_647)
+      .max(MAX_TIMER_MS)
       .parse(config.leaseMs ?? 300_000),
     maxAttempts: integer
       .min(1)
@@ -43,16 +44,29 @@ function resolveLimits<TEntry>(config: DirectoryInboxConfig<TEntry>) {
   };
 }
 
+/** Worst-case encoded size of one state record: a long identity and detail, escaped. */
+const STATE_RECORD_BYTES = 16 * 1024;
+const MIN_STATE_BYTES = 64 * 1024 * 1024;
+
+/** The largest state file the default store reads: every retained record plus the entries awaiting acceptance. */
+function stateByteCap(limits: { retain: number; maxPendingEntries: number }): number {
+  return Math.max(
+    MIN_STATE_BYTES,
+    (2 * limits.retain + limits.maxPendingEntries) * STATE_RECORD_BYTES,
+  );
+}
+
 /** One file-backed intake engine for atomically dropped and programmatically accepted entries. */
-export function createDirectoryInbox<TEntry>(
-  config: DirectoryInboxConfig<TEntry>,
-): DirectoryInboxResource<TEntry> {
+export function createDirectoryInbox<TEntry, TInput = TEntry>(
+  config: DirectoryInboxConfig<TEntry, TInput>,
+): DirectoryInboxResource<TInput> {
   const limits = resolveLimits(config);
   const clock = config.clock ?? (() => new Date());
   const access = inboxStateAccess(
     config.store ??
       createFileStateStore(join(config.directory, '.inbox-state.json'), {
         schema: DirectoryInboxStateSchema,
+        maxBytes: stateByteCap(limits),
       }),
   );
   let files: InboxFiles | undefined;
@@ -85,6 +99,35 @@ export function createDirectoryInbox<TEntry>(
     report,
   });
 
+  /** Take one directory entry through its next step; true when the application handled it. */
+  const step = async (currentFiles: InboxFiles, key: string): Promise<boolean> => {
+    const next = await access.update((state) => {
+      const claimed = claimEntry(state, { key, now: clock(), ...limits });
+      return { state: claimed.state, result: claimed.step };
+    });
+    if (next.kind === 'deliver') return deliver(next.claim);
+    if (next.kind === 'reject') {
+      await cleanupInboxEntry(access, currentFiles, key, next.rejection);
+      await config.onRejected?.(next.rejection);
+    } else if (next.kind === 'remove' || next.kind === 'set-aside') {
+      await access.update(async (state, context) => {
+        if (state.claims.some((claim) => claim.key === key))
+          return { state, result: undefined };
+        const terminal =
+          next.kind === 'remove'
+            ? state.receipts.some((receipt) => receipt.key === key)
+            : state.rejected.some((rejection) => rejection.key === key);
+        if (terminal) {
+          await context.assertHeld();
+          if (next.kind === 'remove') await currentFiles.remove(key, context);
+          else await currentFiles.setAside(key, context);
+        }
+        return { state, result: undefined };
+      });
+    }
+    return false;
+  };
+
   const pass = async (): Promise<number> => {
     if (!accepting || forced.signal.aborted) return 0;
     const currentFiles = filesFor();
@@ -96,30 +139,13 @@ export function createDirectoryInbox<TEntry>(
     let handled = 0;
     for (const key of names) {
       if (!accepting || forced.signal.aborted || (running && !admitting)) break;
-      const step = await access.update((state) => {
-        const next = claimEntry(state, { key, now: clock(), ...limits });
-        return { state: next.state, result: next.step };
-      });
-      if (step.kind === 'deliver') {
-        if (await deliver(step.claim)) handled += 1;
-      } else if (step.kind === 'reject') {
-        await cleanupInboxEntry(access, currentFiles, key, step.rejection);
-        await config.onRejected?.(step.rejection);
-      } else if (step.kind === 'remove' || step.kind === 'set-aside') {
-        await access.update(async (state, context) => {
-          if (state.claims.some((claim) => claim.key === key))
-            return { state, result: undefined };
-          const terminal =
-            step.kind === 'remove'
-              ? state.receipts.some((receipt) => receipt.key === key)
-              : state.rejected.some((rejection) => rejection.key === key);
-          if (terminal) {
-            await context.assertHeld();
-            if (step.kind === 'remove') await currentFiles.remove(key, context);
-            else await currentFiles.setAside(key, context);
-          }
-          return { state, result: undefined };
-        });
+      try {
+        if (await step(currentFiles, key)) handled += 1;
+      } catch (error) {
+        // The file of one entry cannot stop the others. A failure of the state
+        // store or the directory fails every entry alike and ends the pass.
+        if (!(error instanceof InboxEntryError) || forced.signal.aborted) throw error;
+        await report(error.cause);
       }
     }
     return handled;
@@ -156,7 +182,7 @@ export function createDirectoryInbox<TEntry>(
     await Promise.allSettled([...pendingAccepts]);
     await tail;
   };
-  const inbox: DirectoryInbox<TEntry> = {
+  const inbox: DirectoryInbox<TInput> = {
     accept(input) {
       const result = accept(input);
       pendingAccepts.add(result);

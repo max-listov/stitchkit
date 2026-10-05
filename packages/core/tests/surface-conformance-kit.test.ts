@@ -17,9 +17,9 @@ import {
   type SurfaceMcpPreparation,
   type SurfaceRuntimeToolDefinition,
   type SurfaceToolDefinition,
-  serializeSurfaceValue,
   TransportObservationSchema,
 } from '../src/entrypoints/testing';
+import { serializeCanonicalJson } from '../src/internal/canonical-json';
 import {
   defineRealtimeContract,
   RealtimeRequestDisconnectedError,
@@ -122,7 +122,7 @@ describe('transport conformance kit', () => {
     const second = buildSurfaceManifest({ runtimeTools: [secondTool] });
 
     expect(first.operations[0]?.schemas.input).toBe(second.operations[0]?.schemas.input);
-    expect(serializeSurfaceValue(first)).toBe(serializeSurfaceValue(second));
+    expect(serializeCanonicalJson(first)).toBe(serializeCanonicalJson(second));
   });
 
   test('snapshot and live discovery fail on real drift', () => {
@@ -509,11 +509,11 @@ describe('transport conformance kit', () => {
     });
 
     const baseline = buildSurfaceManifest({ realtime: { primary: first } });
-    expect(serializeSurfaceValue(baseline)).toBe(
-      serializeSurfaceValue(buildSurfaceManifest({ realtime: { primary: reordered } })),
+    expect(serializeCanonicalJson(baseline)).toBe(
+      serializeCanonicalJson(buildSurfaceManifest({ realtime: { primary: reordered } })),
     );
-    expect(serializeSurfaceValue(baseline)).not.toBe(
-      serializeSurfaceValue(buildSurfaceManifest({ realtime: { primary: changed } })),
+    expect(serializeCanonicalJson(baseline)).not.toBe(
+      serializeCanonicalJson(buildSurfaceManifest({ realtime: { primary: changed } })),
     );
   });
 
@@ -695,18 +695,17 @@ describe('transport conformance kit', () => {
         invoke: async () => {
           if (fixture.scenario === 'timeout') {
             setTimeout(() => {
-              const error = new AppError(
-                'REALTIME_CONTRACT_VIOLATION',
-                'late acknowledgement rejection',
-                500,
-                {
+              const error = new AppError('REALTIME_CONTRACT_VIOLATION', {
+                message: 'late acknowledgement rejection',
+                status: 500,
+                details: {
                   event: 'late',
                   direction: 'client-inbound',
                   phase: 'acknowledgement',
                   reason: 'invalid-acknowledgement-value',
                   fault: 'peer',
                 },
-              );
+              });
               void onRejected({
                 event: 'late',
                 direction: 'client-inbound',

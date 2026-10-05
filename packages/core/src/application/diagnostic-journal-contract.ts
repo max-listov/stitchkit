@@ -26,6 +26,24 @@ export type DiagnosticJournalLimits = z.infer<typeof DiagnosticJournalLimitsSche
 export const DiagnosticJournalLockPolicySchema = z.enum(['refuse', 'reclaim-stale']);
 export type DiagnosticJournalLockPolicy = z.infer<typeof DiagnosticJournalLockPolicySchema>;
 
+/**
+ * How much of the retained generations opening a journal reads: `tails` checks only the end of
+ * each file for a torn line, `full` parses every line.
+ */
+export const DiagnosticJournalStartupScanSchema = z.enum(['tails', 'full']);
+/** The inferred value of {@link DiagnosticJournalStartupScanSchema}. */
+export type DiagnosticJournalStartupScan = z.infer<typeof DiagnosticJournalStartupScanSchema>;
+
+/**
+ * What opening a journal does with a file it cannot keep in place: `quarantine` renames it aside
+ * and starts, `fail` throws `DiagnosticJournalRecoveryError`. Neither deletes it.
+ */
+export const DiagnosticJournalStartupRefusalPolicySchema = z.enum(['quarantine', 'fail']);
+/** The inferred value of {@link DiagnosticJournalStartupRefusalPolicySchema}. */
+export type DiagnosticJournalStartupRefusalPolicy = z.infer<
+  typeof DiagnosticJournalStartupRefusalPolicySchema
+>;
+
 export const DiagnosticJournalStateSchema = z.enum(['open', 'draining', 'closed', 'failed']);
 export type DiagnosticJournalState = z.infer<typeof DiagnosticJournalStateSchema>;
 
@@ -182,6 +200,25 @@ export interface DiagnosticJournalConfig<SCHEMA extends z.ZodType> {
    * mistake this guard exists to prevent.
    */
   readonly machineIdentity?: string;
+  /**
+   * What opening the journal reads to report damaged evidence. Default `tails`:
+   * the final line of each file, which is where a crash tears one, at a cost that
+   * does not grow with the size of the retained generations. `full` also reads and
+   * validates every line of every generation and so also reports damaged rows in
+   * the middle of a file, at a cost proportional to `maxFiles * maxFileBytes`.
+   */
+  readonly startupScan?: DiagnosticJournalStartupScan;
+  /**
+   * What opening does with a file it cannot keep in place — a torn active file with
+   * `maxFiles: 1`, a retained name that is not a regular file, a retained file it cannot read.
+   * Default `quarantine`: the file is renamed to `<file>.quarantined-<epoch>` beside it, the
+   * journal starts, and `getStatus().recovery.quarantined` names it — on this open with its
+   * reason, and on every later open until it is gone. Quarantined files are outside retention
+   * and never deleted; removing them is the operator's call. `fail` throws
+   * `DiagnosticJournalRecoveryError` and leaves everything in place — the choice for a journal
+   * that is a source of truth rather than diagnostics, whose damage must stop the process.
+   */
+  readonly onStartupRefusal?: DiagnosticJournalStartupRefusalPolicy;
   /** Diagnostics are isolated and are never written back into this journal. */
   readonly onFailure?: (failure: DiagnosticJournalFailure) => void | Promise<void>;
 }

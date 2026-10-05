@@ -60,7 +60,7 @@ const COVERED: Record<string, string> = {
   SqliteKeyspaceBackendConfig: 'entrypoints/application.ts',
   WatchHubConfig: 'entrypoints/application.ts',
   DirectoryInboxConfig: 'entrypoints/application.ts',
-  CliPublicationOptions: 'entrypoints/cli.ts',
+  CliPublicationOptions: 'entrypoints/cli/publish.ts',
   McpClientConnectionConfig: 'entrypoints/tools/connections.ts',
   McpConnectionLimits: 'entrypoints/tools/connections.ts',
   ConnectionOperationLimits: 'entrypoints/tools/connections.ts',
@@ -96,13 +96,13 @@ const COVERED: Record<string, string> = {
   EndpointToolView: 'entrypoints/contract.ts',
   ExclusiveLockOptions: 'entrypoints/files.ts',
   WriteFileAtomicOptions: 'entrypoints/files.ts',
+  SweepAtomicStagingOptions: 'entrypoints/files.ts',
   ManagedFileReadOptions: 'entrypoints/files.ts',
   CanonicalJsonOptions: 'entrypoints/primitives.ts',
   NativeCommandOptions: 'entrypoints/process.ts',
   NativePackagingOptions: 'entrypoints/files/packaging.ts',
   EffectRunOptions: 'entrypoints/tools.ts',
   AgentControllerConfig: 'entrypoints/agent-runtime/browser.ts',
-  AgentHarnessToolsConfig: 'entrypoints/agent-runtime/harness-tools.ts',
   AgentHarnessRealtimeConfig: 'entrypoints/agent-runtime/realtime.ts',
 };
 

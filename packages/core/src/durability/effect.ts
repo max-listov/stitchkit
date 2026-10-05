@@ -10,6 +10,7 @@
  */
 import type { z } from 'zod';
 import { raceAbort } from '../internal/abort-race';
+import { MAX_TIMER_MS } from '../internal/timers';
 import {
   DURABILITY_EFFECT_EVENT_KIND,
   type EffectHandlers,
@@ -127,9 +128,9 @@ export async function executeEffect<P extends Proof>(
   options: EffectRunOptions | undefined,
 ): Promise<EffectOutcome<P>> {
   const timeoutMs = options?.reconcileTimeoutMs ?? DEFAULT_RECONCILE_TIMEOUT_MS;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMER_MS) {
     throw new TypeError(
-      `reconcileTimeoutMs must be a positive finite number at most 2147483647, got ${timeoutMs}`,
+      `reconcileTimeoutMs must be a positive finite number at most ${MAX_TIMER_MS}, got ${timeoutMs}`,
     );
   }
   const key = effectKey(context.conversationId, context.runId, name);

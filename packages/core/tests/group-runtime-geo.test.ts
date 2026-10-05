@@ -8,6 +8,7 @@ import {
   mapGeoIpRecord,
 } from '../src/entrypoints/geo';
 import type { GeoIpReader } from '../src/geo/types';
+import { resourceContext } from './session-delivery-fixture';
 
 describe('GeoIP resolver generations', () => {
   test('has three states, rejects non-public IPs, and atomically swaps generations', async () => {
@@ -31,7 +32,7 @@ describe('GeoIP resolver generations', () => {
       reload: false,
     });
     expect(resolver.snapshot().state).toBe('uninitialized');
-    await resolver.start({} as never);
+    await resolver.start(resourceContext());
     expect(resolver.snapshot().state).toBe('unavailable');
     expect(await resolver.resolve('127.0.0.1')).toBeNull();
 
@@ -57,7 +58,7 @@ describe('GeoIP resolver generations', () => {
       },
       reload: false,
     });
-    await resolver.start({} as never);
+    await resolver.start(resourceContext());
     fail = true;
     expect(await resolver.reload()).toBe(false);
     expect(resolver.snapshot()).toMatchObject({
@@ -89,7 +90,7 @@ describe('GeoIP resolver generations', () => {
       },
       reload: false,
     });
-    await resolver.start({} as never);
+    await resolver.start(resourceContext());
     const lookup = resolver.resolve('8.8.8.8');
     revision = 'two';
     const reload = resolver.reload();
@@ -166,7 +167,7 @@ describe('GeoIP resolver generations', () => {
       },
       reload: false,
     });
-    await resolver.start({} as never);
+    await resolver.start(resourceContext());
     expect(resolver.snapshot()).toMatchObject({
       state: 'unavailable',
       reloadError: 'generation moved',

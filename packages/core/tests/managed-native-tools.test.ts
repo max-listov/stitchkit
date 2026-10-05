@@ -160,7 +160,7 @@ describe('managed generic native tools', () => {
           runtimeTools: [wait],
           lifecycle: {
             beforeHandle: () => {
-              throw new AppError('FORBIDDEN', 'Denied', 403);
+              throw new AppError('FORBIDDEN', { message: 'Denied', status: 403 });
             },
           },
           hooks: {

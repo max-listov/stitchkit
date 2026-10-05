@@ -129,10 +129,8 @@ describe('one order behind every digest', () => {
 
   test('the argument digest and the agent store take the same bytes', async () => {
     const { canonicalAgentJson } = await import('../src/agent-runtime/store-events');
-    const { serializeSurfaceValue } = await import('../src/testing/surface-manifest');
     const bytes = serializeCanonicalJson(value);
     expect(canonicalAgentJson(value)).toBe(bytes);
-    expect(serializeSurfaceValue(value)).toBe(bytes);
     expect(argumentsDigest(value)).toBe(
       argumentsDigest({ a: 0, '\u{1F600}': 1, '\u{FF61}': 2 }),
     );
@@ -157,9 +155,74 @@ describe('one order behind every digest', () => {
     expect(serializeCanonicalJson(holed)).toBe('[1,null,null,null,{"c":null}]');
   });
 
-  test('the agent store still refuses what is not JSON', async () => {
+  test('the agent store and the public serializer share one admissibility table', async () => {
     const { canonicalAgentJson } = await import('../src/agent-runtime/store-events');
-    expect(() => canonicalAgentJson({ a: undefined })).toThrow();
-    expect(serializeCanonicalJson({ a: undefined })).toBe('{}');
+    const { canonicalJson, CanonicalJsonError } = await import(
+      '../src/primitives/canonical-json'
+    );
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    const outcome = (run: () => string): string => {
+      try {
+        return run();
+      } catch (error) {
+        if (error instanceof CanonicalJsonError) return `refused:${error.reason}`;
+        throw error;
+      }
+    };
+    const table: Array<[string, unknown, string]> = [
+      ['an undefined member is omitted', { a: undefined, b: 1 }, '{"b":1}'],
+
+      ['a top-level undefined is refused', undefined, 'refused:not-json'],
+      ['an undefined array item is refused', [undefined], 'refused:not-json'],
+      ['a Date is refused', new Date(0), 'refused:not-json'],
+      ['a cycle is refused', cycle, 'refused:cycle'],
+    ];
+    // Negative zero is the one difference: the public serializer refuses it, the store hashes it as 0.
+    expect(outcome(() => canonicalJson(-0))).toBe('refused:negative-zero');
+    expect(outcome(() => canonicalJson({ a: [-0] }))).toBe('refused:negative-zero');
+    expect(outcome(() => canonicalAgentJson({ a: [-0] }))).toBe('{"a":[0]}');
+    for (const [label, value, expected] of table) {
+      expect([label, outcome(() => canonicalAgentJson(value))]).toEqual([label, expected]);
+      expect([label, outcome(() => canonicalJson(value))]).toEqual([label, expected]);
+    }
+  });
+});
+
+describe('the agent store reads a value as z.json() does', () => {
+  test('a tool-call input of -0 passes the checkpoint record and hashes like 0', async () => {
+    const { canonicalAgentJson } = await import('../src/agent-runtime/store-events');
+    const { transitionRecord } = await import('../src/agent-runtime/store-reducer');
+    const { CheckpointRunAssistantSchema } = await import('../src/agent-runtime/store');
+    const record = (input: unknown) =>
+      transitionRecord({
+        type: 'checkpoint',
+        input: CheckpointRunAssistantSchema.parse({
+          conversationId: 'c1',
+          runId: 'r1',
+          expectedRevision: 1,
+          ownerId: 'owner',
+          assistant: {
+            schemaVersion: 1,
+            id: 'm1',
+            conversationId: 'c1',
+            role: 'assistant',
+            status: 'streaming',
+            parts: [{ type: 'tool-call', callId: 'k', toolName: 't', input }],
+            createdAt: '2026-10-05T00:00:00.000Z',
+            updatedAt: '2026-10-05T00:00:00.000Z',
+          },
+        }),
+      });
+    expect(record(JSON.parse('{"offset":-0}'))).toEqual(record({ offset: 0 }));
+    expect(canonicalAgentJson([-0])).toBe('[0]');
+  });
+
+  test('an own __proto__ member is dropped, as z.json() dropped it', async () => {
+    const { canonicalAgentJson } = await import('../src/agent-runtime/store-events');
+    const { canonicalJson } = await import('../src/primitives/canonical-json');
+    const value = JSON.parse('{"a":1,"__proto__":{"x":1}}');
+    expect(canonicalAgentJson(value)).toBe('{"a":1}');
+    expect(canonicalJson(value)).toBe('{"__proto__":{"x":1},"a":1}');
   });
 });

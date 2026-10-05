@@ -8,7 +8,7 @@ import {
 } from '../src/entrypoints/server';
 import { groupErrorRequest, groupErrorService } from './fixtures/route-group-error';
 
-const original = new AppError('FORBIDDEN', 'denied', 403);
+const original = new AppError('FORBIDDEN', { message: 'denied', status: 403 });
 const hookFailure = new Error('private diagnostic: error hook unavailable');
 const fail = () => {
   throw original;

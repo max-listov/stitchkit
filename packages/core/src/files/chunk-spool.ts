@@ -20,7 +20,7 @@
  * them answers the client with a typed envelope the driver does not repeat.
  */
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   type FileHandle,
   link,
@@ -37,6 +37,7 @@ import { join } from 'node:path';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import { AppError } from '../contract/errors';
+import { stagingPath } from '../internal/atomic-staging';
 
 export type ChunkSpoolErrorCode =
   | 'UPLOAD_INVALID'
@@ -76,7 +77,7 @@ function refuse(
   message: string,
   details?: Record<string, unknown>,
 ): AppError {
-  return new AppError(code, message, STATUS[code], details);
+  return new AppError(code, { message, status: STATUS[code], details });
 }
 
 export interface ChunkSpoolConfig<TMeta> {
@@ -144,7 +145,7 @@ function isErrorCode(error: unknown, code: string): boolean {
 
 /** Publish `bytes` at `path` unless something is already there; `false` if it was. */
 async function publishOnce(path: string, bytes: Uint8Array | string): Promise<boolean> {
-  const staging = `${path}.${randomBytes(8).toString('hex')}.tmp`;
+  const staging = stagingPath(path);
   await writeFile(staging, bytes, { flag: 'wx' });
   try {
     await link(staging, path);

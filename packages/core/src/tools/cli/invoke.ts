@@ -35,7 +35,7 @@ import type { ServiceDef, StitchLogger } from '../../server/types';
 import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute-hooks';
 import { type ToolResult, toolErrorFromResult, toolResultFromError } from '../execute-result';
 import { createToolRunner, type MountableTool } from '../mount';
-import type { RuntimeToolExecution } from '../runtime-tool-execution';
+import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
 import { collectToolSurface } from '../surface';
 import type { CliRunOptions } from './args';
 import {
@@ -71,7 +71,7 @@ export interface CliInvokerConfig<
   /** Contract services exposed as commands — may depend on the resolved identity. */
   services?: CliSurfaceSource<TAuth, ServiceDef>;
   /** Pathless managed operations. CLI exposure always requires `transports: ['CLI']`. */
-  runtimeTools?: CliSurfaceSource<TAuth, RuntimeToolExecution>;
+  runtimeTools?: CliSurfaceSource<TAuth, RuntimeToolDefinition>;
   /** CLI-only executable commands, dispatched before the managed surface. */
   commands?: readonly CliCommandDefinition[];
   auth?: TAuth | Promise<TAuth>;

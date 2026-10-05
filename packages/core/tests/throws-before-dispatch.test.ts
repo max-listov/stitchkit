@@ -87,7 +87,7 @@ describe('a throwing onRequest', () => {
       services: [itemsService()],
       hooks: {
         onRequest: () => {
-          throw new AppError('UNAUTHORIZED', 'no token', 401);
+          throw new AppError('UNAUTHORIZED', { message: 'no token', status: 401 });
         },
       },
     });

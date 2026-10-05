@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { createBoundedChannel } from '../internal/channel';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import {
   type DiagnosticJournal,
   DiagnosticJournalCloseResultSchema,
@@ -38,9 +39,7 @@ type WaitOutcome = 'settled' | 'timed-out' | 'cancelled';
 
 function waitBudget(options: DiagnosticJournalWaitOptions): number | undefined {
   if (options.timeoutMs === undefined) return undefined;
-  if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0) {
-    throw new TypeError('Diagnostic journal timeoutMs must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('Diagnostic journal timeoutMs', options.timeoutMs);
   return options.timeoutMs;
 }
 

@@ -21,7 +21,7 @@ test('native deadline and combined binary overflow classify independently of ide
   const deadline = await failure({
     ...command('setInterval(()=>{},1000)'),
     timeoutMs: 20,
-    killGraceMs: 0,
+    stop: { target: 'group', graceMs: 0 },
   });
   const budget = await failure({
     ...command(
@@ -30,7 +30,7 @@ test('native deadline and combined binary overflow classify independently of ide
     timeoutMs: 2000,
     capture: true,
     maxOutputBytes: 3,
-    killGraceMs: 0,
+    stop: { target: 'group', graceMs: 0 },
   });
   deadline.message = budget.message = 'same wording';
   expect(deadline).toMatchObject({ code: 'COMMAND_LIMIT', reason: 'deadline' });
@@ -54,7 +54,7 @@ test('caller abort and output sink errors retain identity even with deadline wor
   const pending = runNativeCommand({
     ...command("process.stdout.write('ready');setInterval(()=>{},1000)"),
     signal: controller.signal,
-    killGraceMs: 0,
+    stop: { target: 'group', graceMs: 0 },
     onOutput: () => controller.abort(caller),
   });
   await expect(pending).rejects.toBe(caller);
@@ -63,7 +63,7 @@ test('caller abort and output sink errors retain identity even with deadline wor
     runNativeCommand({
       ...command("process.stdout.write('ready');setInterval(()=>{},1000)"),
       timeoutMs: 2000,
-      killGraceMs: 0,
+      stop: { target: 'group', graceMs: 0 },
       onOutput: () => {
         throw sink;
       },
@@ -122,7 +122,7 @@ test('cleanup aggregate and exactly-once settlement preserve the initial structu
   const error = await failure({
     ...command('setInterval(()=>{},1000)'),
     timeoutMs: 20,
-    killGraceMs: 0,
+    stop: { target: 'group', graceMs: 0 },
     onLeaderSettled: (event) => {
       calls++;
       expect(event.kind).toBe('error');

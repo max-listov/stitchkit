@@ -96,6 +96,10 @@
       "types": "./dist/entrypoints/cli.d.ts",
       "import": "./dist/entrypoints/cli.js"
     },
+    "./cli/publish": {
+      "types": "./dist/entrypoints/cli/publish.d.ts",
+      "import": "./dist/entrypoints/cli/publish.js"
+    },
     "./remote": {
       "types": "./dist/entrypoints/remote.d.ts",
       "import": "./dist/entrypoints/remote.js"
@@ -240,10 +244,6 @@
       "types": "./dist/entrypoints/agent-runtime/realtime.d.ts",
       "import": "./dist/entrypoints/agent-runtime/realtime.js"
     },
-    "./agent-runtime/harness-tools": {
-      "types": "./dist/entrypoints/agent-runtime/harness-tools.d.ts",
-      "import": "./dist/entrypoints/agent-runtime/harness-tools.js"
-    },
     "./process": {
       "types": "./dist/entrypoints/process.d.ts",
       "import": "./dist/entrypoints/process.js"
@@ -271,7 +271,7 @@
     "consumer-lane": "bun scripts/consumer-lane/run.mjs",
     "bench:mcp-preparation": "bun scripts/benchmark-mcp-preparation.ts",
     "bench:durable-store": "bun scripts/bench-durable-store.ts",
-    "build:entrypoints": "bun scripts/generate-native-loader.ts && bun scripts/build-entrypoints.mjs"
+    "build:entrypoints": "bun scripts/generate-native-assets.ts && bun scripts/build-entrypoints.mjs"
   },
   "peerDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.2 || ^2.0.0",

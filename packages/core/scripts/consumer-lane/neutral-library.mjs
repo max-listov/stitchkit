@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -11,6 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** A library bundles public imports once, and ships their declaration closure with Zod as its only peer. */
 export function qualifyNeutralLibrary(author) {
@@ -119,10 +121,8 @@ export function qualifyNeutralLibrary(author) {
       .replaceAll("'stitchkit/files'", "'neutral-library-fixture/files'")
       .replaceAll("'stitchkit/process'", "'neutral-library-fixture/process'");
     writeFileSync(join(consumer, 'owners.mjs'), fixture);
-    writeFileSync(
-      join(consumer, 'json.mjs'),
-      `import assert from 'node:assert/strict';import{canonicalJson}from'neutral-library-fixture/primitives';assert.equal(canonicalJson({2:2,10:10,'\uE000':'bmp','\u{10000}':'pair'}),'{"10":10,"2":2,"𐀀":"pair","":"bmp"}');console.log('neutral JSON: ok');`,
-    );
+    const sources = join(dirname(fileURLToPath(import.meta.url)), 'neutral-library');
+    copyFileSync(join(sources, 'json.mjs'), join(consumer, 'json.mjs'));
     writeFileSync(join(consumer, 'negative.mjs'), "import 'stitchkit/files';");
     for (const runtime of ['bun', 'node']) {
       assert.ok(run(runtime, ['owners.mjs'], consumer).includes('packed native owners: ok'));
@@ -132,10 +132,7 @@ export function qualifyNeutralLibrary(author) {
         /Cannot find|Cannot resolve|Module not found/,
       );
     }
-    writeFileSync(
-      join(consumer, 'types.ts'),
-      `import{observeProcessInstance, type ProcessOwnerEvidence}from'neutral-library-fixture/process';import{writeFileAtomic, type ExclusiveLockOptions}from'neutral-library-fixture/files';import{canonicalJson}from'neutral-library-fixture/primitives';const lock:ExclusiveLockOptions={ownerlessGraceMs:null};void lock;void writeFileAtomic('x',canonicalJson({a:1}));void observeProcessInstance(1).then(x=>{if(x.state==='unavailable')void x.cause;});const evidence:ProcessOwnerEvidence={identity:'unavailable',liveness:'not-probed',cause:new Error()};void evidence;`,
-    );
+    copyFileSync(join(sources, 'types.ts'), join(consumer, 'types.ts'));
     mkdirSync(join(consumer, 'node_modules/@types'), { recursive: true });
     // Node's ambient declarations are a typechecking tool, never a runtime dependency of the artifact.
     cpSync(

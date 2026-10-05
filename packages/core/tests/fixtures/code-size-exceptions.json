@@ -4,5 +4,16 @@
     "declaration/declaration.ts": "A schema file: one Zod schema per project-declaration record (paths, listeners, roles, builds, env) with refinements; size is the vocabulary.",
     "server/types.ts": "Type vocabulary only: handler contexts, method/service defs, hooks, raw routes, logging and handler config; no runtime code, size is the surface area of the server API."
   },
-  "functions": {}
+  "functions": {},
+  "scriptFiles": {
+    "packages/core/scripts/consumer-lane/optional-peer-matrix.mjs": "One matrix of optional-peer install and bundle scenarios run as a single lane; it should split by scenario family.",
+    "packages/core/scripts/consumer-lane/fixtures/full/src/app.ts": "The full-surface consumer fixture: one application that imports every public entrypoint so the lane type-checks them together.",
+    "packages/core/scripts/consumer-lane/fixtures/minimal/src/streaming-subscription.ts": "A consumer fixture that exercises streaming subscriptions end to end; ten lines over the limit.",
+    "packages/core/scripts/consumer-lane/run.mjs": "The consumer-lane runner: pack, install, type-check and execute every fixture; it should split into pack, install and run steps.",
+    "packages/core/scripts/node-smoke.mjs": "The Node smoke lane: one script that loads every built entrypoint under Node; it should split by entrypoint family.",
+    "scripts/gen-llms.ts": "The llms bundle generator: parsing, rendering and checking of every public entrypoint in one script; it should split by phase.",
+    "scripts/lane-processes.test.ts": "Tests of the lane process supervisor; they share one fixture process and should split by behaviour next to lane-processes.ts.",
+    "scripts/lane-processes.ts": "The lane process supervisor: spawn, readiness, shutdown and reporting of lane children; seven lines over the limit.",
+    "scripts/starter-lane.ts": "The starter lane runner: scaffold, install, check, build and serve in one script; it should split by phase."
+  }
 }

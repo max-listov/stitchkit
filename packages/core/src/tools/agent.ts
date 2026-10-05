@@ -10,7 +10,8 @@ import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from './execute-hooks'
 import { toolCauseFromResult, toolResultFromError } from './execute-result';
 import { createToolRunner, formatToolError, type ToolExtend } from './mount';
 import type { AgentToolRegistry } from './registry';
-import type { RuntimeToolDefinition } from './runtime-tool';
+import { agentPresenterOf } from './runtime-tool';
+import type { RuntimeToolDefinition } from './runtime-tool-declaration';
 import { collectToolSurface } from './surface';
 
 export interface AgentContext {
@@ -137,7 +138,8 @@ export function mountAgent(
       );
     };
 
-    const presenter = entry.kind === 'runtime' ? entry.definition.present?.agent : undefined;
+    const presenter =
+      entry.kind === 'runtime' ? agentPresenterOf(entry.definition) : undefined;
     if (entry.kind === 'runtime' && presenter) {
       const { definition } = entry;
       const output = definition.output;

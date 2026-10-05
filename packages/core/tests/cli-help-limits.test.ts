@@ -108,6 +108,45 @@ describe('CLI help exposes the schema limits before execution', () => {
     });
   }
 
+  test('an integer prints only the bounds its author declared', async () => {
+    const integers = defineCliCommand({
+      name: 'integers',
+      description: 'Integer limits',
+      input: z.object({
+        bare: z.int().optional(),
+        legacy: z.number().int().optional(),
+        floor: z.int().min(1).optional(),
+        positive: z.int().positive().optional(),
+        ceiling: z.int().max(9).optional(),
+        either: z.union([z.int().min(2), z.string().min(3)]).optional(),
+      }),
+      handler: () => undefined,
+    });
+    const { out, code } = await run(['integers', '--help'], { commands: [integers] });
+    expect(code).toBe(0);
+    expect(argument(out, 'bare').trimEnd().endsWith('<integer>')).toBe(true);
+    expect(argument(out, 'legacy').trimEnd().endsWith('<integer>')).toBe(true);
+    expect(argument(out, 'floor')).toContain('<integer> [>=1]');
+    expect(argument(out, 'positive')).toContain('<integer> [>0]');
+    expect(argument(out, 'ceiling')).toContain('<integer> [<=9]');
+    expect(argument(out, 'either')).toContain('[any of: integer [>=2] | string [length >=3]]');
+    expect(out).not.toContain('9007199254740991');
+  });
+
+  test('help asked twice, in any spelling, prints help and exits 0', async () => {
+    for (const argv of [
+      ['local', '-h', '--help'],
+      ['local', '-h', '-h'],
+      ['local', '--help', '-h'],
+      ['--help', '-h'],
+    ]) {
+      const { out, err, code } = await run(argv);
+      expect(code).toBe(0);
+      expect(err).toBe('');
+      expect(out).toContain('Usage');
+    }
+  });
+
   test('length and item counts belong to their field, not its array items', async () => {
     const { out } = await run(['local', '--help']);
     expect(argument(out, 'key')).toContain(

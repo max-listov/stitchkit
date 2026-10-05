@@ -40,33 +40,48 @@ export class AppError<
   TCode extends string = string,
   TDetails extends Record<string, unknown> | undefined = Record<string, unknown> | undefined,
 > extends Error {
+  readonly status: number;
+  readonly details?: TDetails;
+  readonly hint?: string;
+  /**
+   * Transport trace id (`x-request-id`) preserved across the
+   * `ApiError → AppError` conversion in `implementRemote`. Metadata for
+   * logs/observability — deliberately NOT part of `toJSON()`'s envelope.
+   */
+  readonly traceId?: string;
+  /**
+   * Whether repeating this call could succeed, when the error declares it.
+   *
+   * An explicit recommendation survives HTTP and tool hops. Left undefined,
+   * it is omitted from the HTTP envelope and the tool result derives its
+   * default from status. Declared true or false wins without enabling any
+   * transport replay policy.
+   */
+  readonly retryable?: boolean;
+
+  /**
+   * `message` defaults to the code and `status` to 500; `cause` is the standard
+   * `Error` cause.
+   */
   constructor(
     public readonly code: TCode,
-    message?: string,
-    public readonly status: number = 500,
-    public readonly details?: TDetails,
-    public readonly hint?: string,
-    /**
-     * Transport trace id (`x-request-id`) preserved across the
-     * `ApiError → AppError` conversion in `implementRemote`. Metadata for
-     * logs/observability — deliberately NOT part of `toJSON()`'s envelope.
-     */
-    public readonly traceId?: string,
-    /**
-     * Whether repeating this call could succeed, when the error declares it.
-     *
-     * An explicit recommendation survives HTTP and tool hops. Left undefined,
-     * it is omitted from the HTTP envelope and the tool result derives its
-     * default from status. Declared true or false wins without enabling any
-     * transport replay policy.
-     */
-    public readonly retryable?: boolean,
+    options: {
+      message?: string;
+      status?: number;
+      details?: TDetails;
+      hint?: string;
+      traceId?: string;
+      retryable?: boolean;
+      cause?: unknown;
+    } = {},
   ) {
-    super(message ?? code);
+    super(options.message ?? code, 'cause' in options ? { cause: options.cause } : undefined);
     this.name = 'AppError';
-    // Non-enumerable brand — invisible to JSON / spread / Object.keys, present
-    // for `is()`. Set on every instance, including consumer subclasses (their
-    // `super()` runs this).
+    this.status = options.status ?? 500;
+    this.details = options.details;
+    this.hint = options.hint;
+    this.traceId = options.traceId;
+    this.retryable = options.retryable;
     Object.defineProperty(this, APP_ERROR_BRAND, { value: true });
   }
 
@@ -89,32 +104,32 @@ export class AppError<
 
 /** Throw a `404 NOT_FOUND` error. */
 export function notFound(message = 'Not found'): never {
-  throw new AppError('NOT_FOUND', message, 404);
+  throw new AppError('NOT_FOUND', { message, status: 404 });
 }
 
 /** Throw a `400 BAD_REQUEST` error, optionally with structured `details`. */
 export function badRequest(message: string, details?: Record<string, unknown>): never {
-  throw new AppError('BAD_REQUEST', message, 400, details);
+  throw new AppError('BAD_REQUEST', { message, status: 400, details });
 }
 
 /** Throw a `401 UNAUTHORIZED` error. */
 export function unauthorized(message = 'Unauthorized'): never {
-  throw new AppError('UNAUTHORIZED', message, 401);
+  throw new AppError('UNAUTHORIZED', { message, status: 401 });
 }
 
 /** Throw a `403 FORBIDDEN` error. */
 export function forbidden(message = 'Forbidden'): never {
-  throw new AppError('FORBIDDEN', message, 403);
+  throw new AppError('FORBIDDEN', { message, status: 403 });
 }
 
 /** Throw a `409 CONFLICT` error, optionally with structured `details`. */
 export function conflict(message = 'Conflict', details?: Record<string, unknown>): never {
-  throw new AppError('CONFLICT', message, 409, details);
+  throw new AppError('CONFLICT', { message, status: 409, details });
 }
 
 /** Throw a `429 RATE_LIMITED` error. */
 export function rateLimited(message = 'Too many requests'): never {
-  throw new AppError('RATE_LIMITED', message, 429);
+  throw new AppError('RATE_LIMITED', { message, status: 429 });
 }
 
 /**
@@ -217,10 +232,9 @@ export function appError(
   message?: string,
   details?: Record<string, unknown>,
 ): never {
-  throw new AppError(
-    code,
+  throw new AppError(code, {
     message,
-    isStitchErrorCode(code) ? STITCH_ERROR_STATUS[code] : 500,
+    status: isStitchErrorCode(code) ? STITCH_ERROR_STATUS[code] : 500,
     details,
-  );
+  });
 }

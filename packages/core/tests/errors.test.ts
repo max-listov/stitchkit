@@ -91,20 +91,23 @@ describe('stitch error registry', () => {
 
 describe('AppError', () => {
   test('hint field', () => {
-    const err = new AppError(
-      'NOT_FOUND',
-      'missing',
-      404,
-      undefined,
-      'Try list endpoint first',
-    );
+    const err = new AppError('NOT_FOUND', {
+      message: 'missing',
+      status: 404,
+      hint: 'Try list endpoint first',
+    });
     expect(err.hint).toBe('Try list endpoint first');
     expect(err.code).toBe('NOT_FOUND');
     expect(err.status).toBe(404);
   });
 
   test('toJSON nests the public error payload', () => {
-    const err = new AppError('ERR', 'msg', 500, { key: 'val' }, 'hint');
+    const err = new AppError('ERR', {
+      message: 'msg',
+      status: 500,
+      details: { key: 'val' },
+      hint: 'hint',
+    });
     const json = err.toJSON();
     expect(json.error.code).toBe('ERR');
     expect(json.error.message).toBe('msg');
@@ -115,7 +118,7 @@ describe('AppError', () => {
 
 describe('normalizeError', () => {
   test('AppError passthrough', () => {
-    const err = new AppError('MY_ERROR', 'test', 422);
+    const err = new AppError('MY_ERROR', { message: 'test', status: 422 });
     expect(normalizeError(err)).toBe(err);
   });
 

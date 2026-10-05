@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from 'bun:test';
 import { z } from 'zod';
+import { ApiError } from '../src/browser/api-error';
 import { createClient } from '../src/browser/client';
-import { ApiError, createHttpClient } from '../src/browser/http';
+import { createHttpClient } from '../src/browser/http';
 import { createRetryAwareFetch } from '../src/browser/http-fetch';
 import { resolveClientFetch } from '../src/browser/native-fetch';
 import { defineContract } from '../src/contract/define';

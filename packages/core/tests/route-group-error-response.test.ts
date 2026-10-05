@@ -28,7 +28,7 @@ test('group error response preserves CORS, trace and exactly one error completio
         services: [groupErrorService],
         hooks: {
           authorize: () => {
-            throw new AppError('FORBIDDEN', 'denied', 403);
+            throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
           },
           onError: () =>
             new Response('group', { status: 403, headers: { 'cache-control': 'no-store' } }),

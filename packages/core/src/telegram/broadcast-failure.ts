@@ -1,14 +1,17 @@
 import { z } from 'zod';
+import { MAX_TIMER_MS } from '../internal/timers';
 import { classifyTelegramSendFailure } from './send-failure';
 
 const reason = z.string().max(64).optional();
 
-/** Retry variants certify that the failed attempt did not apply the external effect. */
+/**
+ * Retry variants certify that the failed attempt did not apply the external effect.
+ */
 export const TelegramBroadcastFailureSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('retry-after'),
-      retryAfterMs: z.int().nonnegative().max(2_147_483_647),
+      retryAfterMs: z.int().nonnegative().max(MAX_TIMER_MS),
       reason,
     })
     .strict(),
@@ -23,9 +26,15 @@ export const TelegramBroadcastFailureSchema = z.discriminatedUnion('kind', [
     .strict(),
   z.object({ kind: z.literal('ambiguous'), reason }).strict(),
 ]);
+/**
+ * How a broadcast send failed: `retry-after`, `transient`, `permanent` or `ambiguous`; the
+ * retry kinds assert the message was not delivered.
+ */
 export type TelegramBroadcastFailure = z.infer<typeof TelegramBroadcastFailureSchema>;
 
-/** Bot refusals retain their known policy; an unknown send outcome never certifies a retry. */
+/**
+ * Bot refusals retain their known policy; an unknown send outcome never certifies a retry.
+ */
 export function classifyBotBroadcastFailure(error: unknown): TelegramBroadcastFailure {
   const failure = classifyTelegramSendFailure(error);
   if (failure.recipientUnreachable)

@@ -3,7 +3,8 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
 import {
   buildMcpServer,
-  type RuntimeMcpToolDefinitionWithOutput,
+  type RuntimeMcpToolPresenters,
+  type RuntimeToolDefinitionWithOutput,
 } from '../src/entrypoints/tools/mcp';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
@@ -20,7 +21,12 @@ test('MCP leaf keeps canonical parsing and full SDK tool compatibility', async (
     present: {
       mcp: ({ doubled }) => ({ content: [{ type: 'text', text: `answer:${doubled}` }] }),
     },
-  } satisfies RuntimeMcpToolDefinitionWithOutput<typeof input, typeof output>;
+  } satisfies RuntimeToolDefinitionWithOutput<
+    typeof input,
+    typeof output,
+    undefined,
+    RuntimeMcpToolPresenters<z.output<typeof output>>
+  >;
   const full = defineRuntimeTool({
     ...definition,
     present: { ...definition.present, agent: () => ({ type: 'text', value: 'shared' }) },

@@ -30,7 +30,7 @@ export async function verifyBlockedGroup(root, helperStartDelayMs = 0) {
     ...command(script),
     signal: controller.signal,
     timeoutMs: 3000,
-    killGraceMs: 10,
+    stop: { target: 'group', graceMs: 10 },
     onOutput: async () => {
       entered();
       await held;
@@ -84,7 +84,7 @@ async function undrainedPipe() {
       "const b=Buffer.alloc(65536);function write(){while(process.stdout.write(b)){}process.stdout.once('drain',write)}write();",
     ),
     signal: controller.signal,
-    killGraceMs: 0,
+    stop: { target: 'group', graceMs: 0 },
     onOutput: (bytes, _channel, signal) => {
       sinks++;
       outputSignal = signal;
@@ -130,7 +130,9 @@ export async function verifyCommandLifecycle(root) {
           "require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore',1,2]});process.exit(0);",
         ),
         signal: controller.signal,
-        killGraceMs: 0,
+        stop: { target: 'group', graceMs: 0 },
+        // The child outlives the leader and keeps the pipes; only the caller's abort ends it.
+        descendants: 'leave',
       }),
       /leader exited/,
     );

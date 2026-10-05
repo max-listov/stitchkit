@@ -23,15 +23,14 @@ const contract = defineContract(
 );
 const service = implement(contract, {
   fail: ({ input }) => {
-    throw new AppError(
-      'DOMAIN_REFUSED',
-      'Cannot repeat this operation',
-      input.status,
-      { message: 'Cannot repeat this operation', marker: 'safe' },
-      'Reconcile destination',
-      'domain-trace',
-      input.declared,
-    );
+    throw new AppError('DOMAIN_REFUSED', {
+      message: 'Cannot repeat this operation',
+      status: input.status,
+      details: { message: 'Cannot repeat this operation', marker: 'safe' },
+      hint: 'Reconcile destination',
+      traceId: 'domain-trace',
+      retryable: input.declared,
+    });
   },
 });
 const handler = createHandler({ services: [service], logging: false });
@@ -98,11 +97,11 @@ test('both HTTP client adapters preserve boolean retryability and transport trac
 });
 
 test('HTTP retryability is absent by default and rejects nonboolean wire metadata', async () => {
-  expect(new AppError('DEFAULT', 'Default', 502).toJSON()).toEqual({
+  expect(new AppError('DEFAULT', { message: 'Default', status: 502 }).toJSON()).toEqual({
     error: { code: 'DEFAULT', message: 'Default' },
   });
   expect(
-    new AppError('EXPLICIT', 'Explicit', 502, undefined, undefined, undefined, false).toJSON(),
+    new AppError('EXPLICIT', { message: 'Explicit', status: 502, retryable: false }).toJSON(),
   ).toEqual({ error: { code: 'EXPLICIT', message: 'Explicit', retryable: false } });
   for (const malformed of ['false', 0, null]) {
     const transport: typeof globalThis.fetch = Object.assign(
@@ -128,18 +127,15 @@ test('HTTP retryability is absent by default and rejects nonboolean wire metadat
   }
 });
 
-test('ApiError keeps the existing cause argument and remote unknown transport errors stay private', async () => {
+test('ApiError keeps the existing cause argument and remote transport errors stay private', async () => {
   const secret = new Error('private-token-and-url');
-  const explicit = new ApiError(
-    'REMOTE',
-    502,
-    undefined,
-    'Safe',
-    undefined,
-    'trace',
-    { cause: secret },
-    false,
-  );
+  const explicit = new ApiError('REMOTE', {
+    status: 502,
+    message: 'Safe',
+    traceId: 'trace',
+    retryable: false,
+    cause: secret,
+  });
   expect(explicit.cause).toBe(secret);
   expect(explicit.retryable).toBe(false);
   const transport: typeof globalThis.fetch = Object.assign(
@@ -165,13 +161,84 @@ test('ApiError keeps the existing cause argument and remote unknown transport er
   const result = await proxy.invoke('recommendation_fail', { status: 502 });
   expect(result).toMatchObject({
     ok: false,
-    error: { code: 'INTERNAL_SERVER_ERROR', retryable: false },
+    error: { code: 'CONNECTION_REQUEST_FAILED', retryable: true },
   });
   expect(JSON.stringify(result)).not.toContain('private-token-and-url');
+  expect(JSON.stringify(result)).not.toContain('localhost');
   expect(causes).toHaveLength(1);
-  expect(ApiError.is(causes[0])).toBe(true);
-  if (!ApiError.is(causes[0])) throw new Error('Missing internal cause');
-  expect(causes[0].cause).toBe(secret);
+  const projected = causes[0];
+  if (!AppError.is(projected)) throw new Error('Missing projected error');
+  expect(projected.status).toBe(502);
+  expect(ApiError.is(projected.cause)).toBe(true);
+  if (!ApiError.is(projected.cause)) throw new Error('Missing internal cause');
+  expect(projected.cause.cause).toBe(secret);
+});
+
+test('an upstream failure without an envelope keeps its status and never leaks its body', async () => {
+  for (const [status, body] of [
+    [503, '<html>nginx upstream-secret-body</html>'],
+    [429, 'proxy upstream-secret-body'],
+    [404, 'upstream-secret-body'],
+  ] as const) {
+    const transport: typeof globalThis.fetch = Object.assign(
+      async () => new Response(body, { status, headers: { 'content-type': 'text/html' } }),
+      { preconnect: globalThis.fetch.preconnect },
+    );
+    const adapted = implementRemote(
+      contract,
+      createHttpClient({ baseUrl: 'http://localhost', fetch: transport, retry: { limit: 0 } }),
+    );
+    const causes: unknown[] = [];
+    const cli = await createCliInvoker({
+      name: 'envelope-less',
+      services: [adapted],
+      hooks: { onToolError: ({ error }) => void causes.push(error) },
+    });
+    const result = await cli.invoke('recommendation_fail', { status });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'HTTP_ERROR', retryable: status !== 404 },
+    });
+    expect(JSON.stringify(result)).not.toContain('upstream-secret-body');
+    const tools = createToolInvoker([adapted], { transport: 'MCP' });
+    const tool = await tools.invoke('recommendation_fail', { status }, { source: 'mcp' });
+    expect(tool).toMatchObject({ ok: false, code: 'HTTP_ERROR', retryable: status !== 404 });
+    expect(JSON.stringify(tool)).not.toContain('upstream-secret-body');
+    const projected = causes[0];
+    if (!AppError.is(projected)) throw new Error('Missing projected error');
+    expect(projected.status).toBe(status);
+    expect(projected.details).toBeUndefined();
+    expect(ApiError.is(projected.cause)).toBe(true);
+  }
+});
+
+test('a deadline the remote client hit follows the status class like any 408', async () => {
+  const transport: typeof globalThis.fetch = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      await new Promise<void>((_resolve, reject) =>
+        request.signal.addEventListener('abort', () => reject(request.signal.reason), {
+          once: true,
+        }),
+      );
+      return Response.json({ ok: true });
+    },
+    { preconnect: globalThis.fetch.preconnect },
+  );
+  const adapted = implementRemote(
+    contract,
+    createHttpClient({
+      baseUrl: 'http://localhost',
+      fetch: transport,
+      timeout: 5,
+      retry: { limit: 0 },
+    }),
+  );
+  const cli = await createCliInvoker({ name: 'deadline', services: [adapted] });
+  expect(await cli.invoke('recommendation_fail', { status: 502 })).toMatchObject({
+    ok: false,
+    error: { code: 'REQUEST_TIMEOUT', retryable: true },
+  });
 });
 
 test('declared retryability survives canonical SSE and NDJSON error frames', async () => {
@@ -194,15 +261,11 @@ test('declared retryability survives canonical SSE and NDJSON error frames', asy
           implement(streamed, {
             observe: async function* () {
               yield { ok: true };
-              throw new AppError(
-                'DOMAIN_REFUSED',
-                'Safe stream refusal',
-                502,
-                undefined,
-                undefined,
-                undefined,
-                declared,
-              );
+              throw new AppError('DOMAIN_REFUSED', {
+                message: 'Safe stream refusal',
+                status: 502,
+                retryable: declared,
+              });
             },
           }),
         ],

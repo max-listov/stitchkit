@@ -14,6 +14,7 @@ import { lookup } from 'node:dns/promises';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
+import { raceAbort } from './abort-race';
 
 /** A host that is digits/dots-only or `0x…` is a numeric IP in disguise. */
 const NUMERIC_HOST = /^(0x[0-9a-f]+|[0-9.]+)$/i;
@@ -126,32 +127,6 @@ export function isPrivateIp(ip: string): boolean {
     );
   }
   return false;
-}
-
-/**
- * Race a promise against an abort signal, cleaning the listener up on either
- * outcome — DNS lookups have no native cancellation, so a deadline must be
- * enforced from the outside.
- */
-function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) {
-    promise.catch(() => undefined);
-    return Promise.reject(signal.reason ?? new Error('aborted'));
-  }
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason ?? new Error('aborted'));
-    signal.addEventListener('abort', onAbort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(error);
-      },
-    );
-  });
 }
 
 /**
@@ -309,7 +284,8 @@ async function resolvePublicAddress(
     throw new PrivateAddressRefusal('refusing to fetch an internal host');
   }
   const pending = lookup(host, { all: true });
-  const records = signal ? await raceWithAbort(pending, signal) : await pending;
+  // DNS lookups have no native cancellation, so a deadline is enforced from the outside.
+  const records = signal ? await raceAbort(pending, signal) : await pending;
   for (const record of records) {
     if (isPrivateIp(record.address)) {
       throw new PrivateAddressRefusal(

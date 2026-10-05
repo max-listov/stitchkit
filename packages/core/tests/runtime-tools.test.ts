@@ -294,7 +294,7 @@ describe('framework runtime tools', () => {
       runtimeTools: [definition],
       lifecycle: {
         beforeHandle: () => {
-          throw new AppError('FORBIDDEN', 'denied', 403);
+          throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
         },
       },
       hooks: {

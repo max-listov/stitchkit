@@ -30,7 +30,12 @@ export interface DefineDownloadToolConfig<TInput extends ZodObject>
 /** Define one guarded managed download operation. */
 export function defineDownloadTool<TInput extends ZodObject>(
   config: DefineDownloadToolConfig<TInput>,
-): RuntimeToolDefinitionWithOutput<TInput, typeof ManagedFileRefSchema> {
+): RuntimeToolDefinitionWithOutput<
+  TInput,
+  typeof ManagedFileRefSchema,
+  undefined,
+  RuntimeToolPresenters<z.output<typeof ManagedFileRefSchema>>
+> {
   return defineRuntimeTool({
     name: config.name ?? 'download',
     description: config.description,
@@ -43,7 +48,10 @@ export function defineDownloadTool<TInput extends ZodObject>(
     handler: async (context) => {
       const url = await config.resolveUrl(context.input, context);
       if (!url) {
-        throw new AppError('DOWNLOAD_NOT_FOUND', 'Nothing to download', 404);
+        throw new AppError('DOWNLOAD_NOT_FOUND', {
+          message: 'Nothing to download',
+          status: 404,
+        });
       }
       try {
         return await runDownloadOperation({
@@ -57,7 +65,10 @@ export function defineDownloadTool<TInput extends ZodObject>(
         });
       } catch (error) {
         if (error instanceof DownloadOperationError) {
-          throw new AppError(error.code, `Download failed: ${error.message}`, error.status);
+          throw new AppError(error.code, {
+            message: `Download failed: ${error.message}`,
+            status: error.status,
+          });
         }
         const managedError = managedFileAppError(error);
         if (managedError) throw managedError;

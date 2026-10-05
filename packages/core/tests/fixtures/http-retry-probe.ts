@@ -1,4 +1,5 @@
-import { ApiError, createHttpClient } from '../../src/browser/http';
+import { ApiError } from '../../src/browser/api-error';
+import { createHttpClient } from '../../src/browser/http';
 
 type Probe = {
   attempts(): number;

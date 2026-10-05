@@ -71,6 +71,10 @@ const ACCEPTED = {
   InferInput: 'inference helper — endpoint input is computed from its schema',
   InferMcpInput: 'inference helper — MCP input is computed from endpoint policy',
   ToolViewEndpoint: 'inference helper — the endpoint withToolView accepts is the tool variant',
+  RegisteredHandlerContext:
+    'inference helper — the loose parsed-object context an inline runtime-tool handler is contextually typed by',
+  ToolErrorProjection:
+    'internal protocol — only the tool runner reads it, through a symbol the package does not export',
   EndpointRouteBase:
     'structural base — a consumer writes an endpoint literal or HeadEndpointDef, never the shared route fields',
   ToolTransportEndpoint:

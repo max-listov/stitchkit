@@ -116,10 +116,14 @@ export async function mountOpenApiConnection(
 
               return withConnectionDeadline(
                 connection.name,
-                timeoutMs,
+                readContext,
                 context.signal,
-                async (signal) => {
-                  const requestInit: RequestInit = { method: entry.method, headers, signal };
+                async (scoped) => {
+                  const requestInit: RequestInit = {
+                    method: entry.method,
+                    headers,
+                    signal: scoped.signal,
+                  };
                   if (body && args.body !== undefined) {
                     headers['content-type'] = 'application/json';
                     requestInit.body = JSON.stringify(args.body);
@@ -136,25 +140,19 @@ export async function mountOpenApiConnection(
                     throw new ConnectionAuthorizationRequiredError(
                       connection.name,
                       instanceId,
-                      readContext,
+                      scoped,
                     );
                   }
                   if (!response.ok) {
                     throw new ConnectionRequestError(
                       connection.name,
                       response.status,
-                      await readConnectionErrorText(response, connection.name, readContext),
-                      readContext,
+                      await readConnectionErrorText(response, connection.name, scoped),
+                      scoped,
                     );
                   }
-                  return readResponse(
-                    response,
-                    maxResponseBytes,
-                    connection.name,
-                    readContext,
-                  );
+                  return readResponse(response, maxResponseBytes, connection.name, scoped);
                 },
-                readContext,
               );
             },
           ),
@@ -191,12 +189,12 @@ async function loadOpenApiDocument(
   });
   const parsed = await withConnectionDeadline(
     connection.name,
-    timeoutMs,
+    readContext,
     undefined,
-    async (signal) => {
+    async (scoped) => {
       const response = await fetchConnection(
         url,
-        { signal },
+        { signal: scoped.signal },
         connectionAllowedHosts(url, connection.allowHosts),
         connection.name,
       );
@@ -204,13 +202,12 @@ async function loadOpenApiDocument(
         throw new ConnectionRequestError(
           connection.name,
           response.status,
-          await readConnectionErrorText(response, connection.name, readContext),
-          readContext,
+          await readConnectionErrorText(response, connection.name, scoped),
+          scoped,
         );
       }
-      return readBoundedJson(response, maxResponseBytes, connection.name, readContext);
+      return readBoundedJson(response, maxResponseBytes, connection.name, scoped);
     },
-    readContext,
   );
   if (!isRecord(parsed)) throw new Error(`OpenAPI spec at ${url} is not an object`);
   return { document: parsed, url: url.toString() };

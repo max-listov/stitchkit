@@ -149,23 +149,25 @@ for (const growth of [1, 16385]) {
     const path = fixture();
     writeFileSync(path, '');
     let closed = false;
-    const pending = readLockRecord(path, async (target, flags) => {
-      const handle = await open(target, flags);
-      let changed = false;
-      return {
-        stat: () => handle.stat(),
-        read: async (buffer, offset, length, position) => {
-          if (!changed) {
-            changed = true;
-            appendFileSync(path, 'x'.repeat(growth));
-          }
-          return handle.read(buffer, offset, length, position);
-        },
-        close: async () => {
-          closed = true;
-          await handle.close();
-        },
-      };
+    const pending = readLockRecord(path, {
+      openDescriptor: async (target, flags) => {
+        const handle = await open(target, flags);
+        let changed = false;
+        return {
+          stat: () => handle.stat(),
+          read: async (buffer, offset, length) => {
+            if (!changed) {
+              changed = true;
+              appendFileSync(path, 'x'.repeat(growth));
+            }
+            return handle.read(buffer, offset, length);
+          },
+          close: async () => {
+            closed = true;
+            await handle.close();
+          },
+        };
+      },
     });
     const error = await pending.catch((error: unknown) => error);
     expect(error).toBeInstanceOf(LockRecordError);
@@ -194,9 +196,8 @@ test('abort after descriptor stat refuses before byte read and closes the descri
   const cause = new Error('cancel descriptor read');
   let reads = 0;
   let closed = false;
-  const result = readLockRecord(
-    path,
-    async (target, flags) => {
+  const result = readLockRecord(path, {
+    openDescriptor: async (target, flags) => {
       const handle = await open(target, flags);
       return {
         stat: async () => {
@@ -204,9 +205,9 @@ test('abort after descriptor stat refuses before byte read and closes the descri
           controller.abort(cause);
           return info;
         },
-        read: async (buffer, offset, length, position) => {
+        read: async (buffer, offset, length) => {
           reads++;
-          return handle.read(buffer, offset, length, position);
+          return handle.read(buffer, offset, length);
         },
         close: async () => {
           closed = true;
@@ -214,8 +215,8 @@ test('abort after descriptor stat refuses before byte read and closes the descri
         },
       };
     },
-    controller.signal,
-  );
+    signal: controller.signal,
+  });
   expect(await result.catch((error: unknown) => error)).toBe(cause);
   expect(reads).toBe(0);
   expect(closed).toBe(true);

@@ -9,7 +9,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { ApiError, type HttpClient } from '../src/browser/http';
+import { ApiError } from '../src/browser/api-error';
+import type { HttpClient } from '../src/browser/http';
 import { AppError, defineContract, type RuntimeContext } from '../src/entrypoints/contract';
 import { implementRemote } from '../src/tools/remote';
 
@@ -30,7 +31,7 @@ function foreignApiError(): Error {
 
 describe('ApiError.is — brand-based, cross-chunk safe', () => {
   test('recognises a real ApiError', () => {
-    expect(ApiError.is(new ApiError('X', 400))).toBe(true);
+    expect(ApiError.is(new ApiError('X', { status: 400 }))).toBe(true);
   });
 
   test('recognises a foreign-chunk ApiError carrying the same brand', () => {
@@ -46,7 +47,7 @@ describe('ApiError.is — brand-based, cross-chunk safe', () => {
   });
 
   test('the brand does not leak into JSON / keys', () => {
-    const error = new ApiError('X', 400);
+    const error = new ApiError('X', { status: 400 });
     // `Object.keys` returns string keys only, so it can never contain a symbol
     // — that half was unfalsifiable. The brand must be present as a symbol and
     // absent from serialisation.
@@ -108,7 +109,12 @@ describe('implementRemote error conversion', () => {
   test('an ApiError thrown by transformArgs converts the same way', async () => {
     const service = implementRemote(contract, throwingHttp(new Error('unused')), {
       transformArgs: () => {
-        throw new ApiError('RATE_LIMITED', 429, undefined, 'slow down', 'wait', 'trace-429');
+        throw new ApiError('RATE_LIMITED', {
+          status: 429,
+          message: 'slow down',
+          hint: 'wait',
+          traceId: 'trace-429',
+        });
       },
     });
     const handler = service.methods.get?.handler;

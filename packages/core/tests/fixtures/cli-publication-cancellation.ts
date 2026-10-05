@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as nativeFs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { eventLoopTurn } from '../support/until';
 
 const mode = process.argv[2];
 assert.ok(mode === 'pointer' || mode === 'admission');
@@ -72,7 +73,7 @@ mock.module('node:fs/promises', () => ({
   },
 }));
 
-const { publishCli } = await import('../../src/entrypoints/cli');
+const { publishCli } = await import('../../src/entrypoints/cli/publish');
 
 for (const cancel of [false, true]) {
   const root = await realFs.mkdtemp(join(tmpdir(), 'stitchkit-publication-cancel-'));
@@ -120,7 +121,8 @@ for (const cancel of [false, true]) {
     } catch (cause) {
       error = cause;
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    // An unhandled rejection is raised once the microtask queue drains; a few event-loop turns observe it.
+    for (let turn = 0; turn < 3; turn++) await eventLoopTurn();
     assert.equal(state.fired, true, 'control did not reach the actual native close');
     assert.equal(unhandled.length, 0, 'publication leaked an admission rejection');
     const pointer = await realFs

@@ -11,9 +11,8 @@ import {
   createAgentHarnessFileResources,
   createHeadlessAgentHarness,
 } from 'stitchkit/agent-runtime/harness';
-import { createAgentHarnessTools } from 'stitchkit/agent-runtime/harness-tools';
 import { AppError } from 'stitchkit/contract';
-import { defineRuntimeTool } from 'stitchkit/tools';
+import { composeToolLifecycle, defineRuntimeTool, mountAgent } from 'stitchkit/tools';
 import { z } from 'zod';
 import './approval-chronology.mjs';
 
@@ -175,7 +174,11 @@ try {
     identity: { serviceName: 'packed', action: 'guard', method: 'POST' },
     input: z.object({}),
     handler: () => {
-      throw new AppError('CONFLICT', 'Packed operation is stale', 409, { revision: 7 });
+      throw new AppError('CONFLICT', {
+        message: 'Packed operation is stale',
+        status: 409,
+        details: { revision: 7 },
+      });
     },
   });
   const codingTools = createAgentCodingTools({
@@ -243,10 +246,11 @@ try {
       providerOverhead: { provenance: 'unavailable' },
     }),
     estimateResourceTokens: () => ({ value: 4, provenance: 'measured' }),
-    tools: createAgentHarnessTools(() => ({
-      services: [],
-      runtimeTools: [...codingTools, guardedOperation, ...fileResources.runtimeTools],
-    })),
+    tools: (run) =>
+      mountAgent([], {
+        runtimeTools: [...codingTools, guardedOperation, ...fileResources.runtimeTools],
+        lifecycle: composeToolLifecycle(undefined, run.toolFenceLifecycle),
+      }),
     loop: {
       toolApproval: { edit_file: 'user-approval' },
       toolApprovalSecret: 'packed-approval-secret',

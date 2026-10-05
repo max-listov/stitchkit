@@ -1,11 +1,12 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
+import { ApiError } from '../src/browser/api-error';
 import {
   createRequestCancellation,
   RequestCancellationError,
 } from '../src/browser/cancellation';
 import { createClient } from '../src/browser/client';
-import { ApiError, createHttpClient } from '../src/browser/http';
+import { createHttpClient } from '../src/browser/http';
 import { defineContract } from '../src/entrypoints/contract';
 
 const contract = defineContract(

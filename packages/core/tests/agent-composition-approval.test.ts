@@ -4,10 +4,9 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { createSocketIOClient } from '../src/browser/socket-io';
 import { createAgentController } from '../src/entrypoints/agent-runtime/browser';
-import { createAgentHarnessTools } from '../src/entrypoints/agent-runtime/harness-tools';
 import { bindAgentHarnessRealtime } from '../src/entrypoints/agent-runtime/realtime';
 import { inspectAgentRun } from '../src/entrypoints/agent-runtime/testing';
-import { defineRuntimeTool } from '../src/entrypoints/tools';
+import { composeToolLifecycle, defineRuntimeTool, mountAgent } from '../src/entrypoints/tools';
 import { createServer } from '../src/server/bun';
 import { createSocketIOServer } from '../src/server/socket-io';
 import { compositionHarness, eventually } from './support/agent-composition';
@@ -77,24 +76,25 @@ test('browser approval executes one authorized tool and interrupt cancels a live
         model,
       }),
     },
-    tools: createAgentHarnessTools<{ owner: string }>(({ context }) => ({
-      services: [],
-      context,
-      runtimeTools: [
-        defineRuntimeTool({
-          name: 'change_item',
-          description: 'Change an item',
-          identity: { serviceName: 'items', action: 'change', method: 'POST' },
-          input: z.object({}),
-          output: z.object({ ok: z.boolean() }),
-          handler: (ctx) => {
-            expect(ctx.owner).toBe('alice');
-            effects += 1;
-            return { ok: true };
-          },
-        }),
-      ],
-    })),
+    tools: (run) =>
+      mountAgent([], {
+        context: run.context,
+        lifecycle: composeToolLifecycle(undefined, run.toolFenceLifecycle),
+        runtimeTools: [
+          defineRuntimeTool({
+            name: 'change_item',
+            description: 'Change an item',
+            identity: { serviceName: 'items', action: 'change', method: 'POST' },
+            input: z.object({}),
+            output: z.object({ ok: z.boolean() }),
+            handler: (ctx) => {
+              expect(ctx.owner).toBe('alice');
+              effects += 1;
+              return { ok: true };
+            },
+          }),
+        ],
+      }),
     loop: {
       toolApproval: { change_item: 'user-approval' },
       toolApprovalSecret: 'composition-fixture-secret',

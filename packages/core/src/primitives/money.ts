@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 
 const IntegerStringSchema = z.string().regex(/^-?(?:0|[1-9]\d*)$/);
 
@@ -97,9 +98,7 @@ export function splitMoney<TCurrency extends string>(
   value: Money<TCurrency>,
   count: number,
 ): MoneySplit<TCurrency> {
-  if (!Number.isSafeInteger(count) || count <= 0) {
-    throw new RangeError('count must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('count', count, RangeError);
   const divisor = BigInt(count);
   const total = parseMinor(value);
   return Object.freeze({

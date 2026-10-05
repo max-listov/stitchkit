@@ -4,7 +4,7 @@ import {
   ContractStreamFrameSchema,
   DEFAULT_CONTRACT_STREAM_FRAME_BYTES,
 } from '../contract/stream';
-import { ApiError } from './http';
+import { ApiError } from './api-error';
 import { parseNDJSON, parseSSE } from './stream';
 
 function sourceFor(
@@ -37,34 +37,27 @@ async function* readContractStream<T>(
       if (descriptor.framing !== 'item') {
         const parsedFrame = ContractStreamFrameSchema.safeParse(candidate);
         if (!parsedFrame.success) {
-          throw new ApiError(
-            'STREAM_PROTOCOL_ERROR',
-            0,
-            undefined,
-            'Stream frame did not match the protocol envelope',
-          );
+          throw new ApiError('STREAM_PROTOCOL_ERROR', {
+            status: 0,
+            message: 'Stream frame did not match the protocol envelope',
+          });
         }
         const frame = parsedFrame.data;
         if (frame.type === 'error') {
-          throw new ApiError(
-            frame.error.code,
-            0,
-            frame.error.details,
-            frame.error.message,
-            frame.error.hint,
-            undefined,
-            undefined,
-            frame.error.retryable,
-          );
+          throw new ApiError(frame.error.code, {
+            status: 0,
+            details: frame.error.details,
+            message: frame.error.message,
+            hint: frame.error.hint,
+            retryable: frame.error.retryable,
+          });
         }
         if (frame.type === 'end') {
           if (!terminalSeen) {
-            throw new ApiError(
-              'STREAM_TERMINAL_MISSING',
-              0,
-              undefined,
-              'Stream completed before its declared terminal item',
-            );
+            throw new ApiError('STREAM_TERMINAL_MISSING', {
+              status: 0,
+              message: 'Stream completed before its declared terminal item',
+            });
           }
           ended = true;
           return;
@@ -73,12 +66,10 @@ async function* readContractStream<T>(
       }
       const parsedItem = descriptor.item.safeParse(candidate);
       if (!parsedItem.success) {
-        throw new ApiError(
-          'STREAM_ITEM_INVALID',
-          0,
-          undefined,
-          'Stream item did not match its contract',
-        );
+        throw new ApiError('STREAM_ITEM_INVALID', {
+          status: 0,
+          message: 'Stream item did not match its contract',
+        });
       }
       const item = parsedItem.data;
       const terminal = descriptor.terminal?.safeParse(item).success ?? false;
@@ -93,20 +84,16 @@ async function* readContractStream<T>(
     }
     if (descriptor.framing === 'item') {
       if (terminalSeen) return;
-      throw new ApiError(
-        'STREAM_TERMINAL_MISSING',
-        0,
-        undefined,
-        'Stream completed before its declared terminal item',
-      );
+      throw new ApiError('STREAM_TERMINAL_MISSING', {
+        status: 0,
+        message: 'Stream completed before its declared terminal item',
+      });
     }
     if (!ended) {
-      throw new ApiError(
-        'STREAM_TRUNCATED',
-        0,
-        undefined,
-        'Stream ended without its protocol terminal frame',
-      );
+      throw new ApiError('STREAM_TRUNCATED', {
+        status: 0,
+        message: 'Stream ended without its protocol terminal frame',
+      });
     }
   } finally {
     abort();

@@ -6,10 +6,10 @@
  */
 
 import type { RuntimeContext } from '../contract/runtime-context';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { type ClientIpOptions, resolveTraceId } from '../internal/request';
 import { resolveLoggingConfig } from './logging';
 import { assertCorsConfig } from './middleware/cors';
-import { assertJsonBodyLimit } from './request-body';
 import { compileRouteTable } from './route-table';
 import type { RouteMap } from './router';
 import type {
@@ -70,7 +70,7 @@ export function createHandlerState<TServer>(
 ): HandlerState<TServer> {
   const { cors, hooks, logging = false, observability } = config;
   if (cors) assertCorsConfig(cors);
-  assertJsonBodyLimit(config.maxJsonBodyBytes, 'HandlerConfig.maxJsonBodyBytes');
+  assertPositiveSafeInteger('HandlerConfig.maxJsonBodyBytes', config.maxJsonBodyBytes, Error);
 
   // `true` is shorthand for `{}`: any object turns logging on, and `logger`
   // decides which sink writes it. Throws on a pre-0.28 bare `StitchLogger`.

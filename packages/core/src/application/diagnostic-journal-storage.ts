@@ -1,16 +1,25 @@
 import { constants } from 'node:fs';
-import { lstat, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
+import { lstat, open, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { isRecord } from '../internal/typed';
 import type {
   DiagnosticJournalFailurePhase,
   DiagnosticJournalLockPolicy,
+  DiagnosticJournalStartupRefusalPolicy,
+  DiagnosticJournalStartupScan,
 } from './diagnostic-journal-contract';
+import {
+  generation,
+  listDiagnosticJournalGenerations,
+  retainedDiagnosticJournalGenerations,
+} from './diagnostic-journal-generations';
 import { acquireDiagnosticJournalLock } from './diagnostic-journal-lock';
 import {
-  DiagnosticJournalRecoveryError,
-  type DiagnosticJournalRecoveryStatus,
-} from './diagnostic-journal-read-contract';
+  createStartupRefusalHandler,
+  type DiagnosticJournalQuarantinedFile,
+  listQuarantinedFiles,
+} from './diagnostic-journal-quarantine';
+import type { DiagnosticJournalRecoveryStatus } from './diagnostic-journal-read-contract';
 import { inspectDiagnosticJournalRecovery } from './diagnostic-journal-recovery';
 
 export interface DiagnosticJournalStorageSnapshot {
@@ -51,6 +60,10 @@ interface RotatingStorageConfig {
   readonly maxFiles: number;
   readonly mode: number;
   readonly lock: DiagnosticJournalLockPolicy;
+  readonly scan: DiagnosticJournalStartupScan;
+  readonly onStartupRefusal: DiagnosticJournalStartupRefusalPolicy;
+  /** The process epoch; it names the files this open moves aside. */
+  readonly epoch: string;
   readonly machineIdentity?: string;
 }
 
@@ -82,18 +95,6 @@ async function moveIfPresent(from: string, to: string): Promise<boolean> {
     if (isMissing(error)) return false;
     throw error;
   }
-}
-
-function generation(path: string, index: number): string {
-  return `${path}.${index}`;
-}
-
-function generationIndex(name: string, prefix: string): number | undefined {
-  if (!name.startsWith(prefix)) return undefined;
-  const suffix = name.slice(prefix.length);
-  if (!/^\d+$/.test(suffix)) return undefined;
-  const value = Number(suffix);
-  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 /** One exclusive local writer. The lock is deliberately not a cross-crash lease. */
@@ -164,55 +165,81 @@ export async function createRotatingDiagnosticJournalStorage(
     }
   };
 
+  const refuse = createStartupRefusalHandler(config.onStartupRefusal, config.epoch);
   try {
-    const names = await readdir(parent);
     const prefix = `${basename(journalPath)}.`;
-    const expiredGenerations: string[] = [];
-    let existingGenerations = 0;
-    for (const name of names) {
-      const index = generationIndex(name, prefix);
-      if (index === undefined) continue;
-      const path = resolve(parent, name);
-      const info = await lstat(path);
-      if (info.isSymbolicLink() || !info.isFile()) {
-        throw new Error('Diagnostic journal generations must be regular files');
-      }
-      if (index >= config.maxFiles) {
-        expiredGenerations.push(path);
-      } else {
-        existingGenerations += 1;
-      }
-    }
-    retainedFiles = Math.min(config.maxFiles, existingGenerations + 1);
+    const listing = await listDiagnosticJournalGenerations(
+      parent,
+      prefix,
+      config.maxFiles,
+      refuse,
+    );
+    const quarantined: DiagnosticJournalQuarantinedFile[] = [...listing.quarantined];
+    retainedFiles = Math.min(config.maxFiles, listing.existing + 1);
     await openCurrent();
     if (currentFileBytes > 0) {
       const tail = new Uint8Array(1);
       const read = await handle?.read(tail, 0, 1, currentFileBytes - 1);
       if (read?.bytesRead === 1 && tail[0] !== 10) {
-        if (config.maxFiles === 1) {
-          throw new DiagnosticJournalRecoveryError(
-            await inspectDiagnosticJournalRecovery([journalPath], config.maxFileBytes),
-          );
-        }
         partialTails += 1;
-        await rotate();
+        if (config.maxFiles === 1) {
+          // No slot to rotate the torn file into: it is refused, never truncated.
+          const recovery =
+            config.onStartupRefusal === 'fail'
+              ? await inspectDiagnosticJournalRecovery({
+                  paths: [journalPath],
+                  maxLineBytes: config.maxFileBytes,
+                  scan: config.scan,
+                })
+              : undefined;
+          await handle?.close();
+          handle = undefined;
+          quarantined.push(
+            await refuse({
+              file: journalPath,
+              reason: 'torn-without-retention-slot',
+              ...(recovery && { recovery }),
+            }),
+          );
+          await openCurrent();
+        } else {
+          await rotate();
+        }
       }
     }
     // Refuse destructive single-file recovery before applying ordinary retention.
-    for (const path of expiredGenerations) await removeIfPresent(path);
-    const paths: { readonly index: number; readonly path: string }[] = [];
-    for (const name of await readdir(parent)) {
-      const index = generationIndex(name, prefix);
-      if (index !== undefined && index < config.maxFiles) {
-        paths.push({ index, path: resolve(parent, name) });
-      }
-    }
-    paths.sort((left, right) => right.index - left.index);
-    const inspected = await inspectDiagnosticJournalRecovery(
-      [...paths.map((file) => file.path), journalPath],
-      config.maxFileBytes,
+    for (const path of listing.expired) await removeIfPresent(path);
+    const retained = await retainedDiagnosticJournalGenerations(
+      parent,
+      prefix,
+      config.maxFiles,
     );
-    if (inspected.anomalies > 0) recovery = inspected;
+    const inspected = await inspectDiagnosticJournalRecovery({
+      paths: [...retained, journalPath],
+      maxLineBytes: config.maxFileBytes,
+      scan: config.scan,
+      onUnreadable: async (file, error) => {
+        const active = file === journalPath;
+        if (active) {
+          await handle?.close();
+          handle = undefined;
+        }
+        quarantined.push(
+          await refuse({
+            file,
+            // The shared open refuses a link or a non-file with a `TypeError`.
+            reason: error instanceof TypeError ? 'not-a-regular-file' : 'unreadable',
+            cause: error,
+          }),
+        );
+        if (active) await openCurrent();
+        else retainedFiles -= 1;
+      },
+    });
+    const listed = listQuarantinedFiles(quarantined, listing.quarantinedEarlier);
+    if (inspected.anomalies > 0 || listed.quarantined) {
+      recovery = { ...inspected, ...listed };
+    }
   } catch (error) {
     await handle?.close().catch(() => undefined);
     await lock.release().catch(() => undefined);
@@ -255,22 +282,30 @@ export async function createRotatingDiagnosticJournalStorage(
     async close() {
       if (closed) return;
       closed = true;
-      let failure: unknown;
-      try {
-        await handle?.close();
-      } catch (error) {
-        failure = error;
-      }
-      try {
-        await lock.release();
-      } catch (error) {
-        failure ??= error;
-      }
-      if (failure !== undefined) {
-        throw new DiagnosticJournalStorageError('close', 'Diagnostic journal close failed', {
-          cause: failure,
-        });
-      }
+      await closeBoth(handle, lock);
     },
   };
+}
+
+/** Closes the file and releases the lock, both attempted; the first failure is the cause. */
+async function closeBoth(
+  handle: { close(): Promise<void> } | undefined,
+  lock: { release(): Promise<void> },
+): Promise<void> {
+  let failure: unknown;
+  try {
+    await handle?.close();
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    await lock.release();
+  } catch (error) {
+    failure ??= error;
+  }
+  if (failure !== undefined) {
+    throw new DiagnosticJournalStorageError('close', 'Diagnostic journal close failed', {
+      cause: failure,
+    });
+  }
 }

@@ -7,11 +7,11 @@ const BRAND = Symbol.for('stitchkit.AppError');
 
 describe('AppError.is — brand-based, cross-chunk safe', () => {
   test('recognises a real AppError and a consumer subclass', () => {
-    expect(AppError.is(new AppError('X', 'm', 400))).toBe(true);
+    expect(AppError.is(new AppError('X', { message: 'm', status: 400 }))).toBe(true);
 
     class DomainError extends AppError {
       constructor() {
-        super('FEATURE_LOCKED', 'locked', 403);
+        super('FEATURE_LOCKED', { message: 'locked', status: 403 });
       }
     }
     expect(AppError.is(new DomainError())).toBe(true);
@@ -38,7 +38,7 @@ describe('AppError.is — brand-based, cross-chunk safe', () => {
   });
 
   test('the brand does not leak into JSON / keys', () => {
-    const err = new AppError('X', 'm', 400, { field: 'a' });
+    const err = new AppError('X', { message: 'm', status: 400, details: { field: 'a' } });
     expect(JSON.stringify(err.toJSON())).not.toContain('stitchkit.AppError');
     // The brand is a symbol, so `Object.keys` can never contain it for ANY
     // implementation — the old assertion was unfalsifiable. What is worth

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { raceAbort } from '../internal/abort-race';
+import { backoffDelay } from '../internal/backoff';
+import { MAX_TIMER_MS, sleep } from '../internal/timers';
 import type { TelegramBroadcastConfig } from './broadcast';
 import {
   classifyBotBroadcastFailure,
@@ -18,24 +20,11 @@ export type RecipientOutcome =
   | { kind: 'halted'; failure: TelegramBroadcastFailure }
   | { kind: 'stopped' };
 
-function pause(milliseconds: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const done = (): void => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', done);
-      resolve();
-    };
-    const timer = setTimeout(done, milliseconds);
-    signal?.addEventListener('abort', done, { once: true });
-    if (signal?.aborted) done();
-  });
-}
-
 export function broadcastLimits(config: TelegramBroadcastConfig) {
   const rate = z
     .number()
     .positive()
-    .min(1_000 / 2_147_483_647)
+    .min(1_000 / MAX_TIMER_MS)
     .parse(config.ratePerSecond ?? 25);
   return {
     intervalMs: 1_000 / rate,
@@ -47,12 +36,12 @@ export function broadcastLimits(config: TelegramBroadcastConfig) {
     maxRetryDelayMs: z
       .int()
       .nonnegative()
-      .max(2_147_483_647)
+      .max(MAX_TIMER_MS)
       .parse(config.maxRetryDelayMs ?? 60_000),
     progressEveryMs: z
       .int()
       .nonnegative()
-      .max(2_147_483_647)
+      .max(MAX_TIMER_MS)
       .parse(config.progressEveryMs ?? 10_000),
   };
 }
@@ -63,15 +52,21 @@ export function broadcastDelivery(
   limits: ReturnType<typeof broadcastLimits>,
   assertHeld: () => Promise<void>,
 ) {
-  const sleep = config.sleep ?? pause;
+  const pause = config.sleep ?? sleep;
   const now = config.now ?? Date.now;
   const classify = config.classify ?? classifyBotBroadcastFailure;
   let lastSendAt = Number.NEGATIVE_INFINITY;
+  const transientCeiling = Math.max(1, Math.min(60_000, limits.maxRetryDelayMs));
+  const transientBackoff = {
+    minDelayMs: Math.min(1_000, transientCeiling),
+    maxDelayMs: transientCeiling,
+    jitter: 0,
+  };
   const wait = async (milliseconds: number): Promise<boolean> => {
     if (config.signal?.aborted) return false;
     if (milliseconds > 0) {
       try {
-        const pending = sleep(milliseconds, config.signal);
+        const pending = pause(milliseconds, config.signal);
         if (config.signal) await raceAbort(pending, config.signal);
         else await pending;
       } catch (error) {
@@ -82,7 +77,7 @@ export function broadcastDelivery(
     return !config.signal?.aborted;
   };
   return async (recipient: TelegramBroadcastRecipient): Promise<RecipientOutcome> => {
-    for (let attempt = 1; attempt <= limits.maxAttempts; attempt += 1) {
+    for (let attempt = 1; ; attempt += 1) {
       if (!(await wait(lastSendAt + limits.intervalMs - now()))) return { kind: 'stopped' };
       await assertHeld();
       if (config.signal?.aborted) return { kind: 'stopped' };
@@ -107,12 +102,16 @@ export function broadcastDelivery(
             ...(failure.reason && { reason: failure.reason }),
           };
         }
+        // Never shorten the provider's wait and send before its deadline: a wait the
+        // provider demands that exceeds the limit stops the broadcast. Our own
+        // backoff between transient failures is ours to bound, so it is capped at
+        // the limit instead.
+        if (failure.kind === 'retry-after' && failure.retryAfterMs > limits.maxRetryDelayMs)
+          return { kind: 'halted', failure };
         const delay =
           failure.kind === 'retry-after'
             ? failure.retryAfterMs
-            : Math.min(60_000, 1_000 * 2 ** (attempt - 1));
-        // Never shorten the provider's wait and send before its deadline.
-        if (delay > limits.maxRetryDelayMs) return { kind: 'halted', failure };
+            : backoffDelay(transientBackoff, attempt);
         if (attempt >= limits.maxAttempts)
           return {
             kind: 'settled',
@@ -122,6 +121,5 @@ export function broadcastDelivery(
         if (!(await wait(delay))) return { kind: 'stopped' };
       }
     }
-    throw new Error('Broadcast retry budget produced no outcome');
   };
 }

@@ -6,14 +6,20 @@ import {
   type McpHandlerConfig,
   type McpSurfaceDefinition,
   type RuntimeMcpPresentation,
-  type RuntimeMcpToolDefinition,
-  type RuntimeMcpToolDefinitionWithOutput,
+  type RuntimeMcpToolPresenters,
+  type RuntimeToolDefinition,
+  type RuntimeToolDefinitionWithOutput,
 } from 'stitchkit/tools/mcp';
 import { z } from 'zod';
 
 const input = z.object({ value: z.number() });
 const output = z.object({ doubled: z.number() });
-type Definition = RuntimeMcpToolDefinitionWithOutput<typeof input, typeof output>;
+type Definition = RuntimeToolDefinitionWithOutput<
+  typeof input,
+  typeof output,
+  undefined,
+  RuntimeMcpToolPresenters<z.output<typeof output>>
+>;
 const definition = {
   name: 'double',
   description: 'Double a number',
@@ -23,7 +29,7 @@ const definition = {
   handler: ({ input }) => ({ doubled: input.value * 2 }),
   present: { mcp: ({ doubled }) => ({ content: [{ type: 'text', text: `${doubled}` }] }) },
 } satisfies Definition;
-const registered: RuntimeMcpToolDefinition = definition;
+const registered: RuntimeToolDefinition = definition;
 const surface: McpSurfaceDefinition = { services: [], runtimeTools: [registered] };
 const config: McpHandlerConfig<{ id: string }> = {
   serverInfo: { name: 'strict-mcp-only', version: '1' },

@@ -18,15 +18,37 @@ if (result.state === 'ready') {
   const assets: NativePackagingAsset[] = result.assets;
   const plugin: NativePackagingPlugin = result.plugin;
   const architecture: 'arm64' | 'x64' = result.architecture;
+  for (const asset of assets) {
+    const verified: { bytes: Uint8Array; size: number; sha256: string; outputPath: string } =
+      asset;
+    void verified;
+    // @ts-expect-error — the source path is not exposed; consumers write the verified bytes.
+    void asset.sourcePath;
+  }
   void architecture;
-  void assets;
   void plugin;
 } else {
-  const code: 'NATIVE_TARGET_UNSUPPORTED' | 'NATIVE_ASSET_MISSING' = result.code;
+  const code:
+    | 'NATIVE_TARGET_UNSUPPORTED'
+    | 'NATIVE_ASSET_MISSING'
+    | 'NATIVE_ASSET_DIGEST_MISMATCH' = result.code;
+  const state: 'unsupported' | 'missing' | 'mismatch' = result.state;
+  const platform: 'darwin' = result.platform;
+  if (result.state === 'mismatch') {
+    const digests: {
+      expected: { size: number; sha256: string };
+      actual: { size: number; sha256: string };
+    } = result;
+    void digests;
+  }
   void code;
+  void state;
+  void platform;
 }
 // @ts-expect-error — delivery is a closed protocol, no ambient Bun types are needed.
 createNativePackaging({ ...options, delivery: 'single-js' });
+// @ts-expect-error — platform is the closed set of platforms with native addons.
+createNativePackaging({ ...options, platform: 'linux' });
 
 const universalOptions: NativePackagingOptions<true> = {
   ...options,

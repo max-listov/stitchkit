@@ -48,7 +48,7 @@ test('guard recovery admits the finite depth boundary and refuses its next desce
         }
         expect('held' in attempt).toBe(false);
         if ('held' in attempt) throw new Error('Unbounded recovery admitted the next guard');
-        expect(attempt.error).toMatchObject({ code: 'EEXIST', path });
+        expect(attempt.error).toMatchObject({ code: 'EEXIST', dest: path });
         expect(attempt.diagnosis?.cause).toBeInstanceOf(Error);
         expect(String(attempt.diagnosis?.cause)).toContain('reclaim guard recovery depth');
         expect(
@@ -82,7 +82,7 @@ test('generated guard path refusal keeps its native cause while caller path IO r
       ),
     ).rejects.toMatchObject({
       code: 'LOCK_TIMEOUT',
-      cause: { code: 'ENAMETOOLONG', path: `${path}.reclaim` },
+      cause: { code: 'ENAMETOOLONG', dest: `${path}.reclaim` },
     });
     expect(calls).toBe(0);
     expect(await readFile(path, 'utf8')).toBe(stale);

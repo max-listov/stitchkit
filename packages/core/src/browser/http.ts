@@ -9,6 +9,7 @@ import type { UploadProgress } from '../contract/client-types';
 import type { ErrorEnvelope } from '../contract/errors';
 import { isRecord } from '../internal/typed';
 import { createTraceContext, formatTraceparent } from '../observability/trace';
+import { ApiError } from './api-error';
 import { createRequestCancellation, RequestCancellationError } from './cancellation';
 import {
   createRetryAwareFetch,
@@ -31,87 +32,6 @@ export type ApiEventListener = (event: ApiEvent) => void;
 
 /** Exact pathname policy used to suppress an expected `401` event. */
 export type UnauthorizedMatcher = (pathname: string) => boolean;
-
-/**
- * Global brand for cross-realm / cross-chunk identification, mirroring
- * `AppError`'s (→ ADR 0032). The published dist bundles this class into more
- * than one chunk (the browser build and the server build each carry a copy),
- * so an `ApiError` thrown by a client from one chunk fails `instanceof`
- * against the other chunk's class — which silently killed the
- * `ApiError → AppError` conversion in `implementRemote` and flattened every
- * remote failure to `INTERNAL_SERVER_ERROR`.
- */
-const API_ERROR_BRAND = Symbol.for('stitchkit.ApiError');
-
-/**
- * The text an `ApiError` carries when nothing supplied one.
- *
- * The old fallback was `API Error: ${code}`, which reads like an explanation and
- * is not one: a caller could not tell "the origin explained this failure" from
- * "nothing explained it", because `message` was a plausible non-empty string
- * either way. Those are different answers, and merging them is what sent one
- * consumer hunting a permission refusal that never happened — the code alone
- * read as one.
- *
- * Fixed in the text rather than in a field beside it, because the text is the
- * channel that survives a hop: `implementRemote` copies `message` into the
- * `AppError` it re-throws, so a fabricated line crosses to the NEXT consumer as
- * though the origin had written it, while a structural flag would stop at the
- * boundary — dead exactly where it is needed.
- *
- * An empty string counts as unsupplied: it explains nothing either, and `??`
- * alone would have let it through.
- */
-function messageForCode(code: string, message: string | undefined): string {
-  return message !== undefined && message.length > 0
-    ? message
-    : `${code} (no message supplied)`;
-}
-
-export class ApiError extends Error {
-  constructor(
-    public readonly code: string,
-    public readonly status: number = 0,
-    public readonly details?: unknown,
-    message?: string,
-    public readonly hint?: string,
-    public readonly traceId?: string,
-    options?: ErrorOptions,
-    public readonly retryable?: boolean,
-  ) {
-    super(messageForCode(code, message), options);
-    this.name = 'ApiError';
-    // Non-enumerable — invisible to JSON / spread, present for `is()`.
-    Object.defineProperty(this, API_ERROR_BRAND, { value: true });
-  }
-
-  static is(error: unknown): error is ApiError {
-    return typeof error === 'object' && error !== null && API_ERROR_BRAND in error;
-  }
-}
-
-/**
- * A refusal the client raised itself, in the shape the server uses for the same failure.
- *
- * Before this, the client refused a bad argument in three shapes across two timings: a plain `Error`
- * rejected on one transport, the same plain `Error` thrown **synchronously** on the other, and a
- * missing multipart file reported as `UNKNOWN_ERROR` — the code whose whole meaning is *this client
- * cannot tell you what happened*, on the one refusal where dispatch provably never happened, while
- * the client guide instructs the reader never to conclude anything from that code.
- *
- * `status: 0` already means "this never reached the server" (`REQUEST_ABORTED`, `REQUEST_TIMEOUT`),
- * so `VALIDATION_ERROR` with `status: 0` reads as "refused here" against the server's `400` with no
- * new field and no new name. `details.issues` carries the same `{ path, code, message }` a 400
- * carries, so one rendering serves both.
- */
-export function refuseLocally(path: string, message: string): ApiError {
-  return new ApiError(
-    'VALIDATION_ERROR',
-    0,
-    { issues: [{ path, code: 'invalid_type', message }] },
-    message,
-  );
-}
 
 /**
  * An abort or a deadline the caller chose — `RequestCancellationError`, a
@@ -274,12 +194,10 @@ function assertTransportChoice(config: HttpClientConfig): void {
  */
 function requestFailure(error: unknown, emit: (event: ApiEvent) => void): ApiError {
   if (error instanceof RequestCancellationError) {
-    return new ApiError(
-      error.cause === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT',
-      0,
-      undefined,
-      error.message,
-    );
+    return new ApiError(error.cause === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT', {
+      status: 0,
+      message: error.message,
+    });
   }
   if (ApiError.is(error)) return error;
   emit({ type: 'network_error' });
@@ -292,15 +210,13 @@ function requestFailure(error: unknown, emit: (event: ApiEvent) => void): ApiErr
   // ky adapter answered `API Error: UNKNOWN_ERROR` where the bare-fetch
   // path answered "Unable to connect" — same failure, same client, two
   // different stories.
-  return new ApiError(
-    'UNKNOWN_ERROR',
+  return new ApiError('UNKNOWN_ERROR', {
     status,
-    msg ? { message: msg } : undefined,
-    msg,
-    undefined,
-    responseTraceId(response),
-    { cause: error },
-  );
+    details: msg ? { message: msg } : undefined,
+    message: msg,
+    traceId: responseTraceId(response),
+    cause: error,
+  });
 }
 
 /** The body Ky sends for `json`, as the React Native upload route must send it. */
@@ -405,16 +321,14 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
           const body = errorBodyOf(error.data);
           const parsed = body === null ? null : parseError(body);
           if (!parsed) return error;
-          return new ApiError(
-            parsed.code,
-            error.response.status,
-            parsed.details,
-            parsed.message,
-            parsed.hint,
-            responseTraceId(error.response),
-            undefined,
-            typeof parsed.retryable === 'boolean' ? parsed.retryable : undefined,
-          );
+          return new ApiError(parsed.code, {
+            status: error.response.status,
+            details: parsed.details,
+            message: parsed.message,
+            hint: parsed.hint,
+            traceId: responseTraceId(error.response),
+            retryable: typeof parsed.retryable === 'boolean' ? parsed.retryable : undefined,
+          });
         },
       ],
     },

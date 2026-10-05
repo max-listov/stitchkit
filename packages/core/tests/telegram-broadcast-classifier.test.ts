@@ -119,6 +119,29 @@ test('explicit transient failures obey the attempt budget and become failed', as
   expect(waits).toEqual([1_000, 2_000]);
 });
 
+test('transient backoff is capped at maxRetryDelayMs and never halts the broadcast', async () => {
+  const dir = await directory();
+  const waits: number[] = [];
+  let now = 0;
+  const result = await runTelegramBroadcast(
+    config(dir, {
+      send: async ({ attempt }) => {
+        if (attempt <= 4) throw new Error('certified pre-effect failure');
+      },
+      classify: () => ({ kind: 'transient', reason: 'connect-refused' }),
+      maxAttempts: 6,
+      maxRetryDelayMs: 5_000,
+      now: () => now,
+      sleep: async (ms) => {
+        waits.push(ms);
+        now += ms;
+      },
+    }),
+  );
+  expect(result).toMatchObject({ outcome: 'finished', delivered: 1, failed: 0 });
+  expect(waits).toEqual([1_000, 2_000, 4_000, 5_000]);
+});
+
 test('injected permanent and ambiguous outcomes persist and are never resent', async () => {
   for (const failure of [
     { kind: 'permanent', recipientUnreachable: true, reason: 'recipient-gone' },

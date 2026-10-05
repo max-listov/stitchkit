@@ -140,7 +140,10 @@ export function defineObservationTools<
   TSnapshot extends ZodType,
 >(
   surface: RuntimeOperationSurface<TId, TState, TSnapshot>,
-): { status: RuntimeToolDefinition; wait: RuntimeToolDefinition } {
+): {
+  status: RuntimeToolDefinition;
+  wait: RuntimeToolDefinition;
+} {
   const { config } = surface;
   const status = defineRuntimeTool({
     ...surface.common('status'),
@@ -202,7 +205,10 @@ export function defineSucceededOutputTool<
     handler: async (context) => {
       const inspected = await surface.inspect(kind, context);
       if (!succeeded(inspected.snapshot)) {
-        throw new AppError('OPERATION_NOT_SUCCEEDED', unavailableMessage, 409);
+        throw new AppError('OPERATION_NOT_SUCCEEDED', {
+          message: unavailableMessage,
+          status: 409,
+        });
       }
       return capability.handler(inspected.state, context);
     },

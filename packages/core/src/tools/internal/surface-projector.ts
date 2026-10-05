@@ -19,7 +19,9 @@ import { mergeSchemas } from '../schema/schema';
 import { findUntypedProperties } from '../schema/untyped-properties';
 import { toolSurfaceOutputSchema } from './tool-view';
 
-/** Non-executable runtime-tool shape needed to project names and advertised schemas. */
+/**
+ * Non-executable runtime-tool shape needed to project names and advertised schemas.
+ */
 export interface SurfaceRuntimeToolDefinition {
   name: string;
   description: string;
@@ -53,7 +55,9 @@ export interface SurfaceToolExtension<
   filter?: (service: ServiceDef, method: MethodDef) => boolean;
 }
 
-/** Shared surface container; each executable mount supplies its own typed definition. */
+/**
+ * Shared surface container; each executable mount supplies its own typed definition.
+ */
 export interface ToolSurfaceProjection<TRuntime> {
   services?: readonly ServiceDef[];
   runtimeTools?: readonly TRuntime[];
@@ -108,7 +112,9 @@ export type ProjectedTool<
   TRuntime extends SurfaceRuntimeToolDefinition = SurfaceRuntimeToolDefinition,
 > = ProjectedContractTool | ProjectedRuntimeTool<TRuntime>;
 
-/** Canonical runtime descriptor projection, independent of one transport's exposure filter. */
+/**
+ * Canonical runtime descriptor projection, independent of one transport's exposure filter.
+ */
 export function projectRuntimeTool<TRuntime extends SurfaceRuntimeToolDefinition>(
   definition: TRuntime,
   assertName = true,
@@ -258,8 +264,16 @@ export function projectToolSurface<TRuntime extends SurfaceRuntimeToolDefinition
   return projected;
 }
 
+/**
+ * What to do with a tool whose schema fails MCP validation: `throw` stops the build, `skip`
+ * leaves the tool out with a warning, `warn` keeps it and warns.
+ */
 export type IncompatibleSchemaPolicy = 'throw' | 'skip' | 'warn';
 
+/**
+ * Rules applied to every advertised MCP schema: the incompatibility `policy` plus optional
+ * strict checks on untyped properties and non-portable string formats.
+ */
 export interface McpSchemaValidationConfig {
   policy?: IncompatibleSchemaPolicy;
   requireTypedProperties?: boolean;

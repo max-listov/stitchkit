@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   installedConsumerProofs,
   runInstalledConsumerProofs,
@@ -12,8 +13,9 @@ const helper = new URL(
 ).href;
 const files = new URL('../src/entrypoints/files.ts', import.meta.url).href;
 
-function fixture(code: string, executable = process.execPath) {
-  const result = spawnSync(executable, ['--eval', code], {
+function fixture(name: string) {
+  const program = fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
+  const result = spawnSync(process.execPath, [program, helper, files], {
     encoding: 'utf8',
     timeout: 10_000,
     maxBuffer: 16 * 1024,
@@ -26,62 +28,25 @@ function fixture(code: string, executable = process.execPath) {
 test.skipIf(!capable)(
   'native mixed UID validates Node from PATH, outsider EACCES and SIGKILL reclaim',
   () => {
-    const output = fixture(
-      `import{verifySharedUID}from${JSON.stringify(helper)};await verifySharedUID(${JSON.stringify(files)});console.log('native mixed UID: ok');`,
-    );
-    expect(output.trim()).toBe('native mixed UID: ok');
+    expect(fixture('native-uid-mixed.mjs').trim()).toBe('native mixed UID: ok');
   },
 );
 
 test.skipIf(!capable)(
   'a Bun parent selects actual Node outside /usr/bin and refuses Bun disguised as node',
   () => {
-    const output = fixture(`
-    import assert from 'node:assert/strict';
-    import{execFileSync}from'node:child_process';
-    import{mkdtemp,copyFile,chmod,symlink,rm}from'node:fs/promises';
-    import{tmpdir}from'node:os';import{join}from'node:path';
-    import{verifySharedUID}from${JSON.stringify(helper)};
-    assert.ok(process.versions.bun);
-    const node=execFileSync('node',['-e','if(process.versions.bun)throw Error("not Node");console.log(process.execPath)'],{encoding:'utf8',timeout:3000}).trim();
-    const root=await mkdtemp(join(tmpdir(),'uid-node-path-'));
-    const selected=join(root,'node');
-    const previous=process.env.PATH;
-    try {
-      await copyFile(node,selected);await chmod(selected,0o755);
-      process.env.PATH=root+':'+previous;
-      let resolved;
-      await verifySharedUID(${JSON.stringify(files)},{onResolvedNode(value){resolved=value}});
-      assert.equal(resolved,selected);
-      assert.ok(process.versions.bun);
-      await rm(selected);await symlink(process.execPath,selected);
-      await assert.rejects(verifySharedUID(${JSON.stringify(files)}),(cause)=>String(cause.stderr).includes('Expected Node, received Bun'));
-    } finally {process.env.PATH=previous;await rm(root,{recursive:true,force:true})}
-    console.log('validated Node PATH controls: ok');
-  `);
-    expect(output.trim()).toBe('validated Node PATH controls: ok');
+    expect(fixture('native-uid-node-path.mjs').trim()).toBe(
+      'validated Node PATH controls: ok',
+    );
   },
 );
 
 test.skipIf(!capable)(
   'UID holder readiness and post-acquisition assertion failures kill and reap their exact child',
   () => {
-    const output = fixture(`
-    import assert from 'node:assert/strict';
-    import{verifySharedUID}from${JSON.stringify(helper)};
-    for(const readiness of [false,true]) {
-      let pid;
-      const refusal=new Error('assertion control');
-      await assert.rejects(verifySharedUID(${JSON.stringify(files)},{
-        ...(readiness?{holderCode:'setInterval(()=>{},20)'}:{}),
-        onHolder(value){pid=value},afterHeld(){throw refusal},
-      }), readiness?/Holder did not acquire/:(error)=>error===refusal);
-      assert.ok(pid>0);
-      assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
-    }
-    console.log('UID owned holder controls: ok');
-  `);
-    expect(output.trim()).toBe('UID owned holder controls: ok');
+    expect(fixture('native-uid-holder-controls.mjs').trim()).toBe(
+      'UID owned holder controls: ok',
+    );
   },
 );
 

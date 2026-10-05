@@ -11,6 +11,7 @@ import {
 } from '../src/files/boundary';
 import { mountAgent } from '../src/tools/agent';
 import { buildMcpServer } from '../src/tools/mcp/mount';
+import { coerceJsonArgs } from '../src/tools/schema/coerce';
 import { defineViewFileTool } from '../src/tools/transfer/define-view-file-tool';
 import {
   mountViewFile,
@@ -172,20 +173,17 @@ describe('managed view_file definition', () => {
     if (!execute) throw new Error('expected executable managed view_file');
     const read = spyOn(files, 'read');
     const fetchMock = spyOn(globalThis, 'fetch');
-    const hint = 'paths is a list written as text — pass an array of paths or one path';
+    const hint =
+      'paths is a list written as text — pass the array itself, not JSON written as text';
     try {
       for (const paths of [
         '["nested/pic.png"]',
         '  ["https://example.com/pic.png"]\n',
         '["nested/pic.png", "nested/pic.png"]',
         '[]',
-        ['["nested/pic.png"]'],
       ]) {
         const input = { paths };
-        const parsed = ViewFileInputSchema.safeParse(input);
-        expect(parsed.success).toBe(false);
-        if (parsed.success) throw new Error('expected a validation error');
-        expect(parsed.error.issues).toContainEqual(expect.objectContaining({ message: hint }));
+        expect(() => coerceJsonArgs(input, ViewFileInputSchema)).toThrow(hint);
         const mcp = await client.callTool({ name: 'view_file', arguments: input });
         expect(mcp.isError).toBe(true);
         expect(JSON.stringify(mcp)).toContain('VALIDATION_ERROR');

@@ -209,7 +209,7 @@ describe('createToolRunner — the shared mount machinery', () => {
       source: 'agent',
       lifecycle: {
         beforeHandle: () => {
-          throw new AppError('FORBIDDEN', 'denied', 403);
+          throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
         },
       },
     });
@@ -258,7 +258,7 @@ describe('MCP round-trip (in-memory transport)', () => {
     mountMcp(server, notesService, {
       lifecycle: {
         beforeHandle: () => {
-          throw new AppError('FORBIDDEN', 'denied', 403);
+          throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
         },
       },
     });

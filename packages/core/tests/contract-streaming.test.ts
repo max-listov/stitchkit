@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
+import { ApiError } from '../src/browser/api-error';
 import { createClient } from '../src/browser/client';
-import { ApiError } from '../src/browser/http';
 import { parseNDJSON } from '../src/browser/stream';
 import { defineContract } from '../src/entrypoints/contract';
 import { createHandler, implement } from '../src/entrypoints/server';

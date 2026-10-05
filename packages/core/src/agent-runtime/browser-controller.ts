@@ -1,10 +1,12 @@
 import { bindRealtimeClient, type RealtimeClientTransport } from '../browser/realtime-client';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import {
   type AgentBrowserRequest,
   agentControlRealtimeContract,
 } from './browser-control-contract';
 import {
   type AgentControlDelivery,
+  type AgentControlErrorCode,
   type AgentControlResponse,
   type AgentControlView,
   createAgentControlView,
@@ -13,6 +15,10 @@ import {
 } from './control-schema';
 import type { AgentSnapshot } from './schemas';
 
+/**
+ * Config for `createAgentController`: a realtime transport, one conversation id, `observe` or
+ * `control` access, and optional buffer and timeout limits.
+ */
 export interface AgentControllerConfig {
   transport: RealtimeClientTransport;
   conversationId: string;
@@ -23,15 +29,27 @@ export interface AgentControllerConfig {
   maxPendingRequests?: number;
 }
 
+/**
+ * Connection status (`connecting` to `closed`), the current conversation view and the last
+ * error, as returned by `getSnapshot()`.
+ */
 export interface AgentControllerState {
   status: 'connecting' | 'ready' | 'disconnected' | 'error' | 'closed';
   view: AgentControlView;
-  error?: { code: string; message: string };
+  error?: { code: AgentControlErrorCode; message: string };
 }
 
+/**
+ * A browser request without `schemaVersion`, `requestId` and `conversationId`; the controller
+ * fills those in.
+ */
 export type AgentBrowserCommand<T extends AgentBrowserRequest = AgentBrowserRequest> =
   T extends unknown ? Omit<T, 'schemaVersion' | 'requestId' | 'conversationId'> : never;
 
+/**
+ * Browser handle on one conversation: `getSnapshot` and `subscribe` read state, `request`
+ * sends a command, `close` detaches (the transport stays yours).
+ */
 export interface AgentController {
   getSnapshot(): AgentControllerState;
   subscribe(listener: () => void): () => void;
@@ -40,7 +58,10 @@ export interface AgentController {
   close(): Promise<void>;
 }
 
-/** Preserve active transient progress across a durable refresh; terminal runs lose transient state. */
+/**
+ * Preserve active transient progress across a durable refresh; terminal runs lose transient
+ * state.
+ */
 function refreshed(view: AgentControlView, snapshot: AgentSnapshot): AgentControlView {
   const current = view.conversations[snapshot.conversationId];
   if (
@@ -67,7 +88,9 @@ function refreshed(view: AgentControlView, snapshot: AgentSnapshot): AgentContro
   };
 }
 
-/** One conversation over the existing realtime client; no transport or agent-loop ownership. */
+/**
+ * One conversation over the existing realtime client; no transport or agent-loop ownership.
+ */
 export function createAgentController(config: AgentControllerConfig): AgentController {
   return new ConversationController(config);
 }
@@ -92,7 +115,8 @@ class ConversationController implements AgentController {
   private refreshScheduled = false;
   private refreshAttempts = 0;
   private tail: Promise<unknown> = Promise.resolve();
-  private readonly pending = new Set<object>();
+  /** In-flight requests of the current connection, each with the way to settle it early. */
+  private readonly pending = new Map<object, (reason: Error) => void>();
 
   private offDelivery: () => void;
   private offConnection: () => void;
@@ -102,15 +126,10 @@ class ConversationController implements AgentController {
     this.maxEvents = config.maxBufferedEvents ?? 256;
     this.maxBytes = config.maxBufferedBytes ?? 1_048_576;
     this.maxPending = config.maxPendingRequests ?? 32;
-    for (const [name, value] of Object.entries({
-      timeoutMs: this.timeoutMs,
-      maxEvents: this.maxEvents,
-      maxBytes: this.maxBytes,
-      maxPending: this.maxPending,
-    })) {
-      if (!Number.isSafeInteger(value) || value < 1)
-        throw new TypeError(`${name} must be a positive safe integer`);
-    }
+    assertPositiveSafeInteger('timeoutMs', this.timeoutMs);
+    assertPositiveSafeInteger('maxBufferedEvents', this.maxEvents);
+    assertPositiveSafeInteger('maxBufferedBytes', this.maxBytes);
+    assertPositiveSafeInteger('maxPendingRequests', this.maxPending);
     if (!config.conversationId) throw new TypeError('conversationId must not be empty');
     this.offDelivery = this.client.on('agent:delivery', (delivery) => this.receive(delivery));
     this.offConnection = this.client.onConnectionChange((connected) =>
@@ -129,7 +148,7 @@ class ConversationController implements AgentController {
     this.state = next;
     for (const listener of this.listeners) listener();
   }
-  private failure(code: string, message: string) {
+  private failure(code: AgentControlErrorCode, message: string) {
     this.update({ ...this.state, status: 'error', error: { code, message } });
   }
   private apply(delivery: AgentControlDelivery) {
@@ -138,6 +157,8 @@ class ConversationController implements AgentController {
         ...this.state,
         view: reduceAgentControlEvent(this.state.view, delivery.event),
       });
+    } else if (delivery.type === 'access-denied') {
+      this.failure('FORBIDDEN', 'Access to the conversation was withdrawn; attach again');
     } else {
       this.failure('EVENT_OVERFLOW', 'Reconnect the transport to restore agent state');
     }
@@ -234,14 +255,17 @@ class ConversationController implements AgentController {
         ),
       );
     const entry = {};
-    this.pending.add(entry);
     const epoch = this.generation;
-    const result = this.tail
-      .then(() => this.execute(command, epoch))
-      .finally(() => {
-        this.pending.delete(entry);
-        this.scheduleRefresh();
-      });
+    const superseded = new Promise<never>((_resolve, reject) => {
+      this.pending.set(entry, reject);
+    });
+    const result = Promise.race([
+      this.tail.then(() => this.execute(command, epoch)),
+      superseded,
+    ]).finally(() => {
+      this.pending.delete(entry);
+      this.scheduleRefresh();
+    });
     this.tail = result.catch(() => {
       /* Keep serialization usable after a reported failure. */
     });
@@ -272,6 +296,11 @@ class ConversationController implements AgentController {
   }
   private changed(connected: boolean) {
     this.generation += 1;
+    // Requests of the previous connection can no longer be answered; they must not
+    // hold capacity the new attach needs until their own timeouts run out.
+    const previous = [...this.pending.values()];
+    this.pending.clear();
+    for (const settle of previous) settle(new Error('Agent controller connection changed'));
     this.busy = false;
     this.buffered = [];
     this.bufferedBytes = 0;
@@ -307,7 +336,7 @@ class ConversationController implements AgentController {
       );
       if (
         response.outcome === 'error' &&
-        !['CONNECTION_CLOSED', 'ACCESS_DENIED'].includes(response.error.code)
+        !['CONNECTION_CLOSED', 'FORBIDDEN'].includes(response.error.code)
       )
         throw new Error(`Agent detach failed: ${response.error.code}`);
     }

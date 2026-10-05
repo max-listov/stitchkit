@@ -5,6 +5,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { type AgentSchedule, AgentScheduleSchema } from './schedule-contract';
 import type { SqliteAgentRuntimeStore } from './sqlite';
 
@@ -48,9 +49,7 @@ export function newSchedule(request: ScheduleRequest, observedAt: Date): AgentSc
     request.at !== undefined ? 'at' : request.afterMs !== undefined ? 'after' : 'every';
   const intervalMs = request.everyMs;
   const delay = request.afterMs ?? request.everyMs;
-  if (delay !== undefined && (!Number.isSafeInteger(delay) || delay < 1)) {
-    throw new TypeError('Schedule delay must be a positive safe integer');
-  }
+  assertPositiveSafeInteger('Schedule delay', delay);
   const nextAt = request.at
     ? new Date(z.iso.datetime({ offset: true }).parse(request.at)).toISOString()
     : new Date(observedAt.getTime() + (delay ?? 0)).toISOString();

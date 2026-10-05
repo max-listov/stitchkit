@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { withExclusiveLock } from '../src/entrypoints/files';
 import {
   observeProcessInstance,
@@ -12,6 +13,9 @@ import {
   observeProcessInstanceAt,
   probeProcessOwnerWith,
 } from '../src/internal/process-instance';
+
+const fixture = (name: string) =>
+  fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 
 test('exact lock mode survives restrictive umask and null refuses ownerless locks and guards', async () => {
   const root = await mkdtemp(join(tmpdir(), 'native-owner-mode-'));
@@ -107,16 +111,16 @@ test.skipIf(process.platform === 'darwin')(
   },
 );
 
-test('descriptor mode failure retains cause and leaves a replacement inode untouched', async () => {
+test('descriptor mode failure retains cause and publishes no lock name', async () => {
   const root = await mkdtemp(join(tmpdir(), 'native-mode-failure-'));
-  const path = join(root, 'lock');
-  const entry = join(import.meta.dir, '../src/entrypoints/files.ts');
-  const code = `import{mock}from'bun:test';const fs=await import('node:fs/promises');const realOpen=fs.open;const path=${JSON.stringify(path)};const failure=new Error('descriptor mode failed');mock.module('node:fs/promises',()=>({...fs,open:async(...args)=>{const handle=await realOpen(...args);if(args[0]===path&&args[1]==='wx')handle.chmod=async()=>{await fs.rename(path,path+'.original');await fs.writeFile(path,'replacement');throw failure};return handle}}));const{withExclusiveLock}=await import(${JSON.stringify(entry)});try{await withExclusiveLock(path,()=>{throw Error('callback must not run')});throw Error('must fail')}catch(e){if(e!==failure)throw e}if(await fs.readFile(path,'utf8')!=='replacement')throw Error('replacement removed');if(await fs.readFile(path+'.original','utf8')!=='')throw Error('false owner published');console.log('descriptor failure: ok');`;
   try {
-    const result = Bun.spawn([process.execPath, '-e', code], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    const result = Bun.spawn(
+      [process.execPath, fixture('exclusive-lock-descriptor-failure.ts'), root],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
     const exit = await result.exited;
     if (exit !== 0) throw new Error(await new Response(result.stderr).text());
     expect(exit).toBe(0);
@@ -129,13 +133,12 @@ test('descriptor mode failure retains cause and leaves a replacement inode untou
 test('observed leader exit settles external scope before inherited pipe drain; no hook reaches declared deadline', async () => {
   const root = await mkdtemp(join(tmpdir(), 'native-leader-'));
   const pidFile = join(root, 'member');
-  const helper = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},20);`;
-  const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(helper)}],{stdio:['ignore','inherit','inherit']});const fs=require('node:fs');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(pidFile)})){clearInterval(timer);process.exit(0)}},5);`;
+  const leader = [fixture('native-leader-after-member.mjs'), pidFile];
   let calls = 0;
   try {
     const result = await runNativeCommand({
       executable: process.execPath,
-      args: ['-e', script],
+      args: leader,
       timeoutMs: 2000,
       onLeaderSettled: async (event) => {
         calls++;
@@ -146,8 +149,14 @@ test('observed leader exit settles external scope before inherited pipe drain; n
     expect(result.exitCode).toBe(0);
     expect(calls).toBe(1);
     await rm(pidFile);
+    // A member left running holds the inherited pipes, so the drain waits for the deadline.
     await expect(
-      runNativeCommand({ executable: process.execPath, args: ['-e', script], timeoutMs: 200 }),
+      runNativeCommand({
+        executable: process.execPath,
+        args: leader,
+        timeoutMs: 200,
+        descendants: 'leave',
+      }),
     ).rejects.toMatchObject({ code: 'COMMAND_LIMIT' });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -174,12 +183,13 @@ test('leader settlement runs once for nonzero, unavailable, sink failure and abo
           ? () => {
               throw cause;
             }
-          : undefined,
+          : scenario === 'abort'
+            ? () => controller.abort(cause)
+            : undefined,
       onLeaderSettled: () => {
         calls++;
       },
     });
-    if (scenario === 'abort') setTimeout(() => controller.abort(cause), 30);
     if (scenario === 'nonzero') expect((await command).exitCode).toBe(7);
     else if (scenario === 'missing')
       await expect(command).rejects.toMatchObject({ code: 'COMMAND_UNAVAILABLE' });
@@ -203,9 +213,7 @@ test('leader settlement runs once for nonzero, unavailable, sink failure and abo
 });
 
 test('cleanup observes native leader and pipe closure when aggregate child close is unavailable', async () => {
-  const entry = join(import.meta.dir, '../src/entrypoints/process.ts');
-  const code = `import{ChildProcess}from'node:child_process';const emit=ChildProcess.prototype.emit;let suppressed=0;ChildProcess.prototype.emit=function(event,...args){if(event==='close'){suppressed++;return false}return emit.call(this,event,...args)};const{runNativeCommand}=await import(${JSON.stringify(entry)});try{await runNativeCommand({executable:process.execPath,args:['-e','setInterval(()=>{},20)'],timeoutMs:30,cleanupTimeoutMs:100});throw Error('must fail')}catch(error){if(error.code!=='COMMAND_LIMIT')throw error}if(!suppressed)throw Error('negative control did not suppress child close');console.log('individual handles released: ok');`;
-  const child = Bun.spawn([process.execPath, '-e', code], {
+  const child = Bun.spawn([process.execPath, fixture('native-close-event-suppressed.ts')], {
     stdout: 'pipe',
     stderr: 'pipe',
   });

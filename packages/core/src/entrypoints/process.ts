@@ -14,4 +14,5 @@ export {
   type NativeCommandOptions,
   type NativeCommandResult,
   type NativeCommandSettlement,
+  type NativeCommandStopPolicy,
 } from '../process/contract';

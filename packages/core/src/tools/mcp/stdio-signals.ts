@@ -7,8 +7,15 @@ import {
 import type { ProcessSignalName, SignalSource } from '../../server/process-signals';
 import type { McpStdioHandle } from './stdio';
 
+/**
+ * Which step of a signal-triggered shutdown failed: `prepare`, `close` or `complete`.
+ */
 export type StdioProcessSignalsErrorPhase = 'prepare' | 'close' | 'complete';
 
+/**
+ * Options for `bindStdioProcessSignals`: which signals to catch (default SIGINT and SIGTERM)
+ * and hooks around the close.
+ */
 export interface StdioProcessSignalsOptions {
   /** Defaults to `['SIGINT', 'SIGTERM']`; duplicates are ignored. */
   signals?: readonly ProcessSignalName[];
@@ -24,6 +31,10 @@ export interface StdioProcessSignalsOptions {
   onEscalationBlocked?: (signal: ProcessSignalName) => void;
 }
 
+/**
+ * Handle returned by `bindStdioProcessSignals`: `promise` settles after close, `close()`
+ * removes the signal listeners.
+ */
 export interface StdioProcessSignalsBinding {
   /** Resolves after close, or `undefined` when an idle binding is removed. */
   readonly promise: Promise<void>;
@@ -31,6 +42,9 @@ export interface StdioProcessSignalsBinding {
   close(): void;
 }
 
+/**
+ * Anything with a `close()` method, such as the handle from `createStdioMcpServer`.
+ */
 export type StdioCloseTarget = Pick<McpStdioHandle, 'close'>;
 
 const bound = new WeakSet<StdioCloseTarget>();

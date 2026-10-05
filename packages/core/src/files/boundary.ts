@@ -1,13 +1,13 @@
-import { randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
-import { mkdir, open, realpath, stat, unlink } from 'node:fs/promises';
+import { mkdir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { ManagedFilePathSchema, type ManagedFileRef } from '../contract/file-ref';
-import { AtomicFilePublicationError, publishAtomicFile } from '../internal/atomic-publication';
-import type { FileObservation } from '../internal/bounded-file-read';
+import { writeAtomicFileStaged } from '../internal/atomic-file';
+import { AtomicFilePublicationError } from '../internal/atomic-publication';
+import type { FileObservation } from '../internal/file-observation';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { isWithinDir } from '../internal/within-dir';
 
-export type { FileObservation } from '../internal/bounded-file-read';
+export type { FileObservation } from '../internal/file-observation';
 
 import { inspectedRef, inspectFile, writeSource } from './file-io';
 
@@ -16,17 +16,6 @@ import { readManagedDescriptor } from './read';
 const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
 const DEFAULT_INSPECTION_BYTES = 64 * 1024;
 const DEFAULT_INSPECTION_TIMEOUT_MS = 15_000;
-/**
- * Read on first use. `?? 0` defends against a platform without the constant —
- * it does not defend against `constants` itself being a bundler stub, where the
- * property read throws while the module initialises and takes the page with it.
- */
-let nofollowFlag: number | undefined;
-const noFollow = (): number => {
-  nofollowFlag ??= constants.O_NOFOLLOW ?? 0;
-  return nofollowFlag;
-};
-
 export type ManagedFileErrorCode =
   | 'FILE_INVALID_PATH'
   | 'FILE_NOT_FOUND'
@@ -119,9 +108,7 @@ export interface ManagedFileBoundary {
 
 function positiveLimit(value: number | undefined, fallback: number, name: string): number {
   const resolved = value ?? fallback;
-  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
-    throw new TypeError(`${name} must be a positive safe integer`);
-  }
+  assertPositiveSafeInteger(name, resolved);
   return resolved;
 }
 
@@ -308,74 +295,48 @@ export async function createManagedFileBoundary(
       const resolved = targetFor(path);
       const parent = await existingParent(root, resolved.target);
       const maxBytes = positiveLimit(options.maxBytes, maxWriteBytes, 'maxBytes');
-      const temporary = resolve(parent, `.stitchkit-${randomUUID()}.tmp`);
-      let handle: Awaited<ReturnType<typeof open>> | undefined;
-      let committed = false;
-      let size = 0;
       try {
-        handle = await open(
-          temporary,
-          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow(),
-          0o600,
-        );
-        const written = await writeSource(
-          handle,
-          source,
-          maxBytes,
-          inspectionBytes,
-          options.signal,
-        );
-        size = written.size;
-        if (options.durable) await handle.sync();
-        await handle.close();
-        handle = undefined;
-
-        const inspection = await inspectFile(
-          config.inspect,
+        const staged = await writeAtomicFileStaged(
+          resolve(parent, basename(resolved.target)),
           {
-            prefix: written.prefix,
-            ...(options.mediaType ? { declaredMediaType: options.mediaType } : {}),
-            name: options.name ?? basename(resolved.path),
+            async fill(file) {
+              const written = await writeSource(
+                file,
+                source,
+                maxBytes,
+                inspectionBytes,
+                options.signal,
+              );
+              const inspection = await inspectFile(
+                config.inspect,
+                {
+                  prefix: written.prefix,
+                  ...(options.mediaType ? { declaredMediaType: options.mediaType } : {}),
+                  name: options.name ?? basename(resolved.path),
+                },
+                inspectionTimeoutMs,
+                options.signal,
+              );
+              options.signal?.throwIfAborted();
+              return { size: written.size, inspection };
+            },
+            onCleanupError: config.onCleanupError,
           },
-          inspectionTimeoutMs,
-          options.signal,
+          {
+            replace: options.replace ?? false,
+            durability: options.durable ? 'directory' : 'none',
+          },
         );
-
-        options.signal?.throwIfAborted();
-
-        try {
-          await publishAtomicFile(
-            temporary,
-            resolved.target,
-            options.replace ?? false,
-            options.durable ?? false,
-          );
-          committed = true;
-        } catch (error) {
-          if (error instanceof AtomicFilePublicationError) {
-            committed = true;
-            throw error;
-          }
-          if (errorCode(error) === 'EEXIST')
-            throw new ManagedFileError('FILE_EXISTS', 'managed file already exists');
-          throw error;
-        }
-
-        return inspectedRef(resolved.path, size, inspection, {
+        return inspectedRef(resolved.path, staged.size, staged.inspection, {
           mediaType: options.mediaType,
           name: options.name,
         });
       } catch (error) {
         if (error instanceof AtomicFilePublicationError) throw error;
         if (options.signal?.aborted && error === options.signal.reason) throw error;
+        if (errorCode(error) === 'EEXIST')
+          throw new ManagedFileError('FILE_EXISTS', 'managed file already exists');
         throw ioError('failed to write managed file', error);
-      } finally {
-        await handle?.close().catch(() => undefined);
-        if (!options.replace || !committed) {
-          await unlink(temporary).catch((error) => {
-            if (errorCode(error) !== 'ENOENT') config.onCleanupError?.(error);
-          });
-        }
       }
     },
   };

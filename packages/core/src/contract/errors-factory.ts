@@ -241,26 +241,21 @@ export function defineErrors<
         if ('details' in options) {
           throw new Error(`[stitchkit] Error "${name}" does not declare details`);
         }
-        return new AppError(
-          name,
+        return new AppError(name, {
           message,
-          definition.status,
-          undefined,
-          options.hint,
-          undefined,
-          definition.retryable,
-        );
+          status: definition.status,
+          hint: options.hint,
+          retryable: definition.retryable,
+        });
       }
       const details = definition.details.parse(options.details);
-      return new AppError(
-        name,
+      return new AppError(name, {
         message,
-        definition.status,
+        status: definition.status,
         details,
-        options.hint,
-        undefined,
-        definition.retryable,
-      );
+        hint: options.hint,
+        retryable: definition.retryable,
+      });
     };
   });
   Object.freeze(errors);

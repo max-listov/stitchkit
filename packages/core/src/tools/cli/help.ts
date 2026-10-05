@@ -32,7 +32,9 @@ function typeLabel(schema: Record<string, unknown>): string {
 function constraintLabel(schema: Record<string, unknown>): string {
   const limits: string[] = [];
   // Both emitted dialects (draft-07 and 2020-12) use numeric exclusive bounds,
-  // not the boolean modifiers of draft-04. A zero bound is still a bound.
+  // not the boolean modifiers of draft-04. A zero bound is still a bound. An
+  // integer schema always carries the safe-integer range; that is the type, not
+  // a limit the author declared, so it is not printed.
   const bounds: readonly (readonly [string, string])[] = [
     ['minimum', '>='],
     ['exclusiveMinimum', '>'],
@@ -45,7 +47,9 @@ function constraintLabel(schema: Record<string, unknown>): string {
   ];
   for (const [keyword, label] of bounds) {
     const bound = schema[keyword];
-    if (typeof bound === 'number') limits.push(`${label}${bound}`);
+    if (typeof bound !== 'number') continue;
+    if (schema.type === 'integer' && Math.abs(bound) === Number.MAX_SAFE_INTEGER) continue;
+    limits.push(`${label}${bound}`);
   }
   const compositions: readonly (readonly [string, string, string])[] = [
     ['anyOf', 'any of', ' | '],

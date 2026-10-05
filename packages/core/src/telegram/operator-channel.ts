@@ -14,6 +14,7 @@
  * topics, 429s and the bounded way down.
  */
 
+import { sleep } from '../internal/timers';
 import { callTelegramBotApi, TELEGRAM_BOT_TOKEN_PATTERN } from './bot-api';
 import { TELEGRAM_TEXT_LIMIT } from './html/nodes';
 import { truncateTelegramHtml } from './html/render';
@@ -116,21 +117,6 @@ interface Queued<TTopic extends string> {
   attempts: number;
 }
 
-function timer(milliseconds: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(signal.reason);
-    const handle = setTimeout(() => {
-      signal.removeEventListener('abort', stop);
-      resolve();
-    }, milliseconds);
-    const stop = (): void => {
-      clearTimeout(handle);
-      reject(signal.reason);
-    };
-    signal.addEventListener('abort', stop, { once: true });
-  });
-}
-
 function fitted(text: string): string {
   const points = Array.from(text);
   return points.length <= TELEGRAM_TEXT_LIMIT
@@ -144,7 +130,7 @@ export function createTelegramOperatorChannel<TTopic extends string = never>(
   const maxQueued = config.maxQueued ?? 200;
   const minIntervalMs = config.minIntervalMs ?? 3_000;
   const maxAttempts = config.maxAttempts ?? 3;
-  const sleep = config.sleep ?? timer;
+  const pause = config.sleep ?? sleep;
   const patterns = [
     TELEGRAM_BOT_TOKEN_PATTERN,
     ...(config.sensitivePatterns ?? []),
@@ -226,13 +212,13 @@ export function createTelegramOperatorChannel<TTopic extends string = never>(
         queue.shift();
         let retryIn = await attempt(item, signal);
         while (retryIn !== undefined) {
-          await sleep(retryIn, signal);
+          await pause(retryIn, signal);
           retryIn = await attempt(item, signal);
         }
         current = undefined;
         inFlight = 0;
         settleIdle();
-        if (queue.length > 0) await sleep(minIntervalMs, signal);
+        if (queue.length > 0) await pause(minIntervalMs, signal);
       }
     } catch {
       // Aborted by `close`, which dropped the queue; the message in hand too.

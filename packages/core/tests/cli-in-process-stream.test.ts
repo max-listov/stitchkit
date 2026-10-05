@@ -58,7 +58,7 @@ const service = createImplement()(contract, {
     return { id: `item-${created}`, title: context.input.title, tags: context.input.tags };
   },
   fail: () => {
-    throw new AppError('CONFLICT', 'nope', 409);
+    throw new AppError('CONFLICT', { message: 'nope', status: 409 });
   },
 });
 

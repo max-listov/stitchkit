@@ -17,6 +17,9 @@ export interface StateStoreUpdateContext {
  * on the store, rather than building it from public `read` and `write` calls,
  * is what lets file and database adapters protect two application processes
  * from silently overwriting one another.
+ *
+ * A transition whose resulting state equals the state it started from changes nothing: an
+ * adapter may commit no write for it.
  */
 export interface StateStore<TState> {
   read(): Promise<TState | null>;

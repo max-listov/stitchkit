@@ -1,9 +1,10 @@
+import { ApiError } from '../browser/api-error';
 import { createClient } from '../browser/client';
 import { endpointHasArguments } from '../browser/client-arguments';
-import { ApiError, type HttpClient } from '../browser/http';
+import type { HttpClient } from '../browser/http';
 import type { ClientRequestOptions } from '../contract/client-types';
 import type { ContractDef, EndpointDef } from '../contract/define';
-import { AppError } from '../contract/errors';
+import { AppError, STITCH_ERROR_STATUS } from '../contract/errors';
 import type { RuntimeContext } from '../contract/runtime-context';
 import { isRecord } from '../internal/typed';
 import { contractMethodFields } from '../server/contract-method';
@@ -23,16 +24,12 @@ type RemoteCalls = Record<
 
 function refuseCancelled(signal: AbortSignal | undefined): void {
   if (!signal?.aborted) return;
-  throw new ApiError(
-    'REQUEST_ABORTED',
-    0,
-    undefined,
-    'Request was aborted',
-    undefined,
-    undefined,
-    { cause: signal.reason },
-    false,
-  );
+  throw new ApiError('REQUEST_ABORTED', {
+    status: 0,
+    message: 'Request was aborted',
+    retryable: false,
+    cause: signal.reason,
+  });
 }
 
 /** Flatten a runtime context's `params` + `input` into one argument object. */
@@ -42,6 +39,39 @@ function toArgs(ctx: RuntimeContext): Record<string, unknown> {
     ...(isRecord(params) ? params : {}),
     ...(isRecord(input) ? input : {}),
   };
+}
+
+/**
+ * The `AppError` a remote failure becomes, in one rule: the status decides
+ * retryability unless the error declares it. The origin's own envelope keeps its
+ * code, status, details and hint. A failure without an envelope — an HTML 503
+ * page, a rate-limiting proxy, a refused connection — is projected to a fixed
+ * message and no details, because its body and message can carry upstream
+ * content, URLs or credentials; it keeps the upstream status, or answers
+ * `CONNECTION_REQUEST_FAILED` when no response arrived. The original `ApiError`
+ * stays on `cause` for in-process observers.
+ */
+function projectRemoteError(err: ApiError): AppError {
+  if (err.code === 'HTTP_ERROR' || err.code === 'UNKNOWN_ERROR') {
+    const answered = err.status > 0;
+    const projected = new AppError(answered ? 'HTTP_ERROR' : 'CONNECTION_REQUEST_FAILED', {
+      message: answered ? 'Remote service answered with an error' : 'Remote request failed',
+      status: answered ? err.status : STITCH_ERROR_STATUS.CONNECTION_REQUEST_FAILED,
+      traceId: err.traceId,
+    });
+    projected.cause = err;
+    return projected;
+  }
+  const cancelled = err.status === 0 && err.code === 'REQUEST_ABORTED';
+  const timedOut = err.status === 0 && err.code === 'REQUEST_TIMEOUT';
+  return new AppError(err.code, {
+    message: err.message,
+    status: cancelled ? 499 : timedOut ? 408 : err.status,
+    details: isRecord(err.details) ? err.details : undefined,
+    hint: err.hint,
+    traceId: err.traceId,
+    retryable: err.retryable,
+  });
 }
 
 export interface ImplementRemoteOptions {
@@ -120,22 +150,7 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
           // failure to `INTERNAL_SERVER_ERROR` (and logs a misleading "unhandled
           // error"). A remote 400 stays a clean `VALIDATION_ERROR`, a 403 a
           // `FORBIDDEN`, and so on, across every transport that mounts the proxy.
-          if (ApiError.is(err)) {
-            // A local unexpected transport error can contain URLs or credentials.
-            // Let the canonical boundary scrub it and retain the original cause.
-            if (err.code === 'UNKNOWN_ERROR' || err.code === 'HTTP_ERROR') throw err;
-            const cancelled = err.status === 0 && err.code === 'REQUEST_ABORTED';
-            const timedOut = err.status === 0 && err.code === 'REQUEST_TIMEOUT';
-            throw new AppError(
-              err.code,
-              err.message,
-              cancelled ? 499 : timedOut ? 408 : err.status,
-              isRecord(err.details) ? err.details : undefined,
-              err.hint,
-              err.traceId,
-              cancelled || timedOut ? false : err.retryable,
-            );
-          }
+          if (ApiError.is(err)) throw projectRemoteError(err);
           throw err;
         }
       },

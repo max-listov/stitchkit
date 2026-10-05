@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_TIMER_MS } from '../internal/timers';
 import {
   type AgentSchedule,
   type AgentScheduleService,
@@ -86,7 +87,7 @@ export function createAgentScheduleService(input: {
         timer = undefined;
         void tick();
       },
-      Math.min(Math.max(0, dueAt - now().getTime()), 2_147_483_647),
+      Math.min(Math.max(0, dueAt - now().getTime()), MAX_TIMER_MS),
     );
   };
 

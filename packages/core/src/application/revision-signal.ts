@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { MAX_TIMER_MS } from '../internal/timers';
 
 const NonNegativeSafeIntegerSchema = z.number().int().nonnegative().safe();
 const PositiveSafeIntegerSchema = z.number().int().positive().safe();
-const TimerDelaySchema = z.number().int().positive().max(2_147_483_647);
+const TimerDelaySchema = z.number().int().positive().max(MAX_TIMER_MS);
 
 export const RevisionSignalStateSchema = z.enum(['open', 'closed']);
 export type RevisionSignalState = z.infer<typeof RevisionSignalStateSchema>;

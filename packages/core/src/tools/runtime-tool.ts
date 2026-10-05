@@ -2,6 +2,7 @@ import type { Tool } from 'ai';
 import type { ZodObject, ZodType, z } from 'zod';
 import type { HttpMethod } from '../contract/define';
 import type { EndpointMcpPolicy } from '../contract/tool-options';
+import { isRecord } from '../internal/typed';
 import type { OperationIdentity } from '../server/types';
 import type { ToolOperation } from './execute';
 import {
@@ -10,24 +11,26 @@ import {
 } from './internal/surface-projector';
 import type { MountableTool } from './mount';
 import type {
+  RuntimeToolDefinition,
+  RuntimeToolDefinitionWithOutput,
   RuntimeToolDefinitionWithoutOutput,
-  RuntimeToolExecution,
-  RuntimeToolExecutionWithOutput,
   RuntimeToolFactoryHandlerContext,
   RuntimeToolHandlerContext,
   RuntimeToolIdentity,
-} from './runtime-tool-execution';
+} from './runtime-tool-declaration';
 import type { RuntimeMcpToolPresenters } from './runtime-tool-mcp';
 
 export type {
   RuntimeMcpInput,
+  RuntimeToolDefinition,
   RuntimeToolDefinitionBase,
+  RuntimeToolDefinitionWithOutput,
   RuntimeToolDefinitionWithoutOutput,
   RuntimeToolFactoryHandlerContext,
   RuntimeToolHandlerContext,
   RuntimeToolIdentity,
   RuntimeToolOutput,
-} from './runtime-tool-execution';
+} from './runtime-tool-declaration';
 export type { RuntimeMcpPresentation } from './runtime-tool-mcp';
 
 export type RuntimeAgentModelOutput = Awaited<
@@ -35,20 +38,8 @@ export type RuntimeAgentModelOutput = Awaited<
 >;
 
 export interface RuntimeToolPresenters<TOutput> extends RuntimeMcpToolPresenters<TOutput> {
-  agent?: (output: TOutput) => RuntimeAgentModelOutput | PromiseLike<RuntimeAgentModelOutput>;
+  agent?(output: TOutput): RuntimeAgentModelOutput | PromiseLike<RuntimeAgentModelOutput>;
 }
-
-export interface RuntimeToolDefinitionWithOutput<
-  TInput extends ZodObject,
-  TOutput extends ZodType,
-  TMcp extends EndpointMcpPolicy | undefined = undefined,
-> extends RuntimeToolExecutionWithOutput<TInput, TOutput, TMcp> {
-  present?: RuntimeToolPresenters<z.output<TOutput>>;
-}
-
-export type RuntimeToolDefinition =
-  | RuntimeToolDefinitionWithOutput<ZodObject, ZodType, EndpointMcpPolicy | undefined>
-  | RuntimeToolDefinitionWithoutOutput<ZodObject, EndpointMcpPolicy | undefined>;
 
 export interface RuntimeToolFactoryConfig<TContext extends ZodObject> {
   serviceName: string;
@@ -68,7 +59,15 @@ export type RuntimeToolFactoryDefinitionWithOutput<
   TInput extends ZodObject,
   TOutput extends ZodType,
   TMcp extends EndpointMcpPolicy | undefined = undefined,
-> = Omit<RuntimeToolDefinitionWithOutput<TInput, TOutput, TMcp>, 'handler' | 'identity'> &
+> = Omit<
+  RuntimeToolDefinitionWithOutput<
+    TInput,
+    TOutput,
+    TMcp,
+    RuntimeToolPresenters<z.output<TOutput>>
+  >,
+  'handler' | 'identity'
+> &
   RuntimeToolFactoryIdentityFields & {
     handler: (
       context: RuntimeToolFactoryHandlerContext<TContext, TInput, TMcp>,
@@ -93,7 +92,12 @@ export interface RuntimeToolFactory<TContext extends ZodObject> {
     const TMcp extends EndpointMcpPolicy | undefined = undefined,
   >(
     definition: RuntimeToolFactoryDefinitionWithOutput<TContext, TInput, TOutput, TMcp>,
-  ): RuntimeToolDefinitionWithOutput<TInput, TOutput, TMcp>;
+  ): RuntimeToolDefinitionWithOutput<
+    TInput,
+    TOutput,
+    TMcp,
+    RuntimeToolPresenters<z.output<TOutput>>
+  >;
   define<
     TInput extends ZodObject,
     const TMcp extends EndpointMcpPolicy | undefined = undefined,
@@ -102,14 +106,27 @@ export interface RuntimeToolFactory<TContext extends ZodObject> {
   ): RuntimeToolDefinitionWithoutOutput<TInput, TMcp>;
 }
 
-/** Typed identity helper; execution remains owned by the transport mounts. */
+/**
+ * Typed construction of a runtime tool with the MCP and Agent presenters of this
+ * entrypoint; execution remains owned by the transport mounts.
+ */
 export function defineRuntimeTool<
   TInput extends ZodObject,
   TOutput extends ZodType,
   const TMcp extends EndpointMcpPolicy | undefined = undefined,
 >(
-  definition: RuntimeToolDefinitionWithOutput<TInput, TOutput, TMcp>,
-): RuntimeToolDefinitionWithOutput<TInput, TOutput, TMcp>;
+  definition: RuntimeToolDefinitionWithOutput<
+    TInput,
+    TOutput,
+    TMcp,
+    RuntimeToolPresenters<z.output<TOutput>>
+  >,
+): RuntimeToolDefinitionWithOutput<
+  TInput,
+  TOutput,
+  TMcp,
+  RuntimeToolPresenters<z.output<TOutput>>
+>;
 export function defineRuntimeTool<
   TInput extends ZodObject,
   const TMcp extends EndpointMcpPolicy | undefined = undefined,
@@ -148,7 +165,12 @@ export function createRuntimeToolFactory<TContext extends ZodObject>(
 
   function define<TInput extends ZodObject, TOutput extends ZodType>(
     definition: RuntimeToolFactoryDefinitionWithOutput<TContext, TInput, TOutput>,
-  ): RuntimeToolDefinitionWithOutput<TInput, TOutput>;
+  ): RuntimeToolDefinitionWithOutput<
+    TInput,
+    TOutput,
+    undefined,
+    RuntimeToolPresenters<z.output<TOutput>>
+  >;
   function define<TInput extends ZodObject>(
     definition: RuntimeToolFactoryDefinitionWithoutOutput<TContext, TInput>,
   ): RuntimeToolDefinitionWithoutOutput<TInput>;
@@ -191,7 +213,29 @@ export function createRuntimeToolFactory<TContext extends ZodObject>(
   return { define };
 }
 
-function runtimeToolIdentity(definition: RuntimeToolExecution): OperationIdentity {
+type AgentPresenter = (
+  output: unknown,
+) => RuntimeAgentModelOutput | PromiseLike<RuntimeAgentModelOutput>;
+
+/**
+ * A presenter was typed against its own tool's output when the tool was declared
+ * (`defineRuntimeTool`, or validated by `executableAgentRuntimeTools`); the
+ * canonical runner parses the output before calling it. This predicate restores
+ * that type for the registration, which holds every tool's presenters as `unknown`.
+ */
+function isAgentPresenter(value: unknown): value is AgentPresenter {
+  return typeof value === 'function';
+}
+
+/** The Agent presenter a registered tool declares, if any. */
+export function agentPresenterOf(
+  definition: RuntimeToolDefinition,
+): AgentPresenter | undefined {
+  const { present } = definition;
+  return isRecord(present) && isAgentPresenter(present.agent) ? present.agent : undefined;
+}
+
+function runtimeToolIdentity(definition: RuntimeToolDefinition): OperationIdentity {
   return {
     method: definition.identity.method,
     desc: definition.description,
@@ -207,7 +251,7 @@ function runtimeToolIdentity(definition: RuntimeToolExecution): OperationIdentit
 }
 
 export function runtimeToolMountable(
-  definition: RuntimeToolExecution,
+  definition: RuntimeToolDefinition,
   assertName = true,
 ): MountableTool {
   const projected = projectRuntimeTool(definition, assertName);

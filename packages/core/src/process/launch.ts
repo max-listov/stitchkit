@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Readable } from 'node:stream';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { NativeCommandError, type ParsedNativeCommandOptions } from './contract';
 import { spawnOwnedCommand } from './owned-child';
 import { createCommandTransport, type NativeCommandTransport } from './transport';
@@ -43,13 +44,13 @@ export function nativeCommandBudgets(
 ) {
   const cleanupTimeoutMs = driver?.cleanupTimeoutMs ?? options.cleanupTimeoutMs;
   const timeoutMs = driver?.timeoutMs ?? options.timeoutMs;
-  for (const [name, value] of [
+  const budgets: Array<[string, number | undefined]> = [
     ['cleanup', cleanupTimeoutMs],
     ['execution', timeoutMs],
     ['close', driver?.closeTimeoutMs],
-  ] as const)
-    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0))
-      throw new RangeError(`Command ${name} deadline must be a positive safe integer`);
+  ];
+  for (const [name, value] of budgets)
+    assertPositiveSafeInteger(`Command ${name} deadline`, value, RangeError);
   return { cleanupTimeoutMs, timeoutMs };
 }
 
@@ -140,14 +141,25 @@ function outputStream(
 }
 
 /** Install every observation before starting stdin or invoking an admission callback. */
-export function launchNativeCommand(
-  options: ParsedNativeCommandOptions,
-  driver: NativeCommandLaunchDriver | undefined,
-  onSpawn: ((child: ChildProcessWithoutNullStreams) => void) | undefined,
-  onFailure: (error: Error) => void,
-  onInputFailure: (error: Error) => void,
-  onAcquired: (transport: NativeCommandTransport) => void,
-) {
+export function launchNativeCommand({
+  options,
+  driver,
+  onSpawn,
+  onFailure,
+  onInputFailure,
+  onAcquired,
+}: {
+  options: ParsedNativeCommandOptions;
+  driver: NativeCommandLaunchDriver | undefined;
+  /** Called once the real child exists, when the command starts. */
+  onSpawn?: (child: ChildProcessWithoutNullStreams) => void;
+  /** The process failed to start or reported an error. */
+  onFailure: (error: Error) => void;
+  /** Writing stdin failed for a reason other than a closed pipe. */
+  onInputFailure: (error: Error) => void;
+  /** The transport exists; fires before any observation or stdin write. */
+  onAcquired: (transport: NativeCommandTransport) => void;
+}) {
   let native: ChildProcessWithoutNullStreams | undefined;
   const launch = driver?.launch;
   if (!launch)

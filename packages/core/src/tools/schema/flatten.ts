@@ -113,9 +113,9 @@ function flattenNode(node: ToolPresentationSchema): ToolPresentationSchema {
   };
   const required = [discriminator.key];
 
-  for (const [key, entries] of [...perKey].sort(([left], [right]) =>
-    left < right ? -1 : left > right ? 1 : 0,
-  )) {
+  // Insertion order of `perKey` is the order each property first appears across
+  // the variants, which is the order the author declared them.
+  for (const [key, entries] of perKey) {
     let merged = mergePropertySchemas(entries, discriminator.key);
     const requiredEverywhere =
       entries.length === variants.length && entries.every((entry) => entry.required);
@@ -128,12 +128,12 @@ function flattenNode(node: ToolPresentationSchema): ToolPresentationSchema {
       const presentLabels = entries.flatMap((entry) => entry.labels);
       merged = appendHint(
         merged,
-        `Available if ${discriminator.key} = ${[...new Set(presentLabels)].sort().join(' | ')}.`,
+        `Available if ${discriminator.key} = ${[...new Set(presentLabels)].join(' | ')}.`,
       );
       if (requiredLabels.length > 0) {
         merged = appendHint(
           merged,
-          `Required if ${discriminator.key} = ${[...new Set(requiredLabels)].sort().join(' | ')}`,
+          `Required if ${discriminator.key} = ${[...new Set(requiredLabels)].join(' | ')}`,
         );
       }
     }

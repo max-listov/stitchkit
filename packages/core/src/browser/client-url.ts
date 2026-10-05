@@ -1,8 +1,8 @@
 import type { EndpointDef } from '../contract/define';
 import { inputIsQuery } from '../internal/http-input';
 import { parseTrailingWildcard } from '../internal/route-pattern';
+import { refuseLocally } from './api-error';
 import type { ContractClientConfig, PathPrefixArgs } from './client';
-import { refuseLocally } from './http';
 
 type QueryParams = Record<string, string | number | boolean | Array<string | number>>;
 

@@ -1,6 +1,9 @@
 import { expect, test } from 'bun:test';
 import { z } from 'zod';
-import { createCliInvoker, type RuntimeToolExecutionWithOutput } from '../src/entrypoints/cli';
+import {
+  createCliInvoker,
+  type RuntimeToolDefinitionWithOutput,
+} from '../src/entrypoints/cli';
 
 test('a neutral managed definition validates before handler side effects', async () => {
   const input = z.object({ text: z.string(), repeat: z.coerce.number().default(1) });
@@ -17,7 +20,7 @@ test('a neutral managed definition validates before handler side effects', async
       calls++;
       return { size: input.text.length * input.repeat };
     },
-  } satisfies RuntimeToolExecutionWithOutput<typeof input, typeof output>;
+  } satisfies RuntimeToolDefinitionWithOutput<typeof input, typeof output>;
   const invoker = await createCliInvoker({ name: 'neutral', runtimeTools: [measure] });
 
   expect(await invoker.invoke('measure', { text: 'hello', repeat: '2' })).toEqual({

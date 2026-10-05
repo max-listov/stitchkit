@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import { createGunzip, createGzip } from 'node:zlib';
+import { assertPositiveSafeInteger } from '../../internal/positive-integer';
 import type { CliBuildAsset } from './manifest';
 import { waitForPublication } from './publication-control';
 
@@ -12,8 +13,7 @@ export async function collectCliBytes(
   maxBytes: number,
   signal?: AbortSignal,
 ): Promise<Uint8Array> {
-  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
-    throw new RangeError('CLI asset byte cap must be a positive safe integer');
+  assertPositiveSafeInteger('CLI asset byte cap', maxBytes, RangeError);
   const blocks: Uint8Array[] = [];
   let total = 0;
   let filled = 0;
@@ -103,13 +103,8 @@ export async function decodeCliAsset(
   maxBytes: number,
   signal?: AbortSignal,
 ): Promise<{ bytes: Uint8Array; sha256: string }> {
-  if (
-    !Number.isSafeInteger(maxBytes) ||
-    maxBytes <= 0 ||
-    !Number.isSafeInteger(asset.size) ||
-    asset.size <= 0
-  )
-    throw new RangeError('CLI asset size and cap must be positive safe integers');
+  assertPositiveSafeInteger('CLI asset byte cap', maxBytes, RangeError);
+  assertPositiveSafeInteger('CLI asset size', asset.size, RangeError);
   if (asset.size > maxBytes)
     throw new RangeError(`CLI asset declared size exceeds ${maxBytes} bytes`);
   const bytes =

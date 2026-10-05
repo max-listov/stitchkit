@@ -10,13 +10,13 @@ import {
   renewEntry,
   withRejection,
 } from './directory-inbox-contract';
-import type { InboxFiles } from './directory-inbox-files';
+import { InboxEntryError, type InboxFiles, type InboxRead } from './directory-inbox-files';
 import { cleanupInboxEntry, type InboxStateAccess } from './directory-inbox-state';
 
 const RETRY_BACKOFF = { minDelayMs: 1_000, maxDelayMs: 300_000, jitter: 0 };
 
-export function createInboxDelivery<TEntry>(options: {
-  config: DirectoryInboxConfig<TEntry>;
+export function createInboxDelivery<TEntry, TInput>(options: {
+  config: DirectoryInboxConfig<TEntry, TInput>;
   access: InboxStateAccess;
   files: () => InboxFiles;
   clock: () => Date;
@@ -49,9 +49,33 @@ export function createInboxDelivery<TEntry>(options: {
     };
     if (!signal.aborted)
       timer = setTimeout(renew, Math.max(10, Math.floor(options.leaseMs / 4)));
+    // The entry failed this time and is taken again after a backoff.
+    const release = async (owned: DirectoryInboxClaim): Promise<void> => {
+      await access.update((state) => ({
+        state: signal.aborted
+          ? state
+          : releaseEntry(
+              state,
+              owned,
+              clock(),
+              new Date(clock().getTime() + backoffDelay(RETRY_BACKOFF, owned.attempts)),
+            ),
+        result: undefined,
+      }));
+    };
     try {
       const files = options.files();
-      const read = await files.read(taken.key, config.schema);
+      let read: InboxRead<TEntry>;
+      try {
+        read = await files.read(taken.key, config.schema);
+      } catch (error) {
+        // The entry changed under the read or cannot be read: a later attempt reads
+        // it again, and the attempt limit settles one that never stabilises.
+        if (!(error instanceof InboxEntryError)) throw error;
+        await options.report(error.cause);
+        await release(taken);
+        return false;
+      }
       if (read === null || signal.aborted) return false;
       const claim = { ...taken, ...(read.identity && { identity: read.identity }) };
       if ('reason' in read) {
@@ -106,17 +130,7 @@ export function createInboxDelivery<TEntry>(options: {
         );
       } catch (error) {
         await options.report(error);
-        await access.update((state) => ({
-          state: signal.aborted
-            ? state
-            : releaseEntry(
-                state,
-                claim,
-                clock(),
-                new Date(clock().getTime() + backoffDelay(RETRY_BACKOFF, claim.attempts)),
-              ),
-          result: undefined,
-        }));
+        await release(claim);
         return false;
       }
       const completedAt = clock();

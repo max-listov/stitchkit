@@ -1,4 +1,5 @@
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
+import { isRecord } from '../../internal/typed';
 import type { ToolCallHooks, ToolLifecycle } from '../execute-hooks';
 import type { ToolResult } from '../execute-result';
 import { createToolRunner } from '../mount';
@@ -23,6 +24,17 @@ interface NativeMcpRuntimeConfig {
   ) => CallToolResult;
 }
 
+type McpPresenter = (output: unknown) => unknown;
+
+/**
+ * A presenter was typed against its own tool's output when the tool was declared;
+ * the canonical runner parses the output before calling it. This predicate
+ * restores that type for the registration, which holds every presenter as `unknown`.
+ */
+function isMcpPresenter(value: unknown): value is McpPresenter {
+  return typeof value === 'function';
+}
+
 /**
  * Mount immutable runtime-tool descriptors onto one fresh MCP server/runtime —
  * through the same runner and the same registration as contract endpoints; a
@@ -43,7 +55,9 @@ export function mountPreparedRuntimeMcp(
     onOutputStrip: config.onOutputStrip,
   });
   for (const { definition, descriptor } of tools) {
-    const present = definition.present?.mcp;
+    const { present: presenters } = definition;
+    const present =
+      isRecord(presenters) && isMcpPresenter(presenters.mcp) ? presenters.mcp : undefined;
     registerMcpTool(
       server,
       {
