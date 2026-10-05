@@ -5,11 +5,6 @@ status: active
 created: 2026-10-04 12:49 +07:00
 updated: 2026-10-04 12:49 +07:00
 type: decision
-participants:
-  - role: authored
-    harness: Codex Desktop
-    model: GPT-6
-    at: 2026-10-04 12:49 +07:00
 ---
 
 # Durable inbox and explicit delivery outcomes

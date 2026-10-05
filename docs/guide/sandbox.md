@@ -1,12 +1,7 @@
 ---
 title: Optional process sandbox
 description: Linux namespace isolation, durable workspaces and a host credential gateway.
-updated: 2026-10-03 14:47 +07:00
-participants:
-  - role: implemented
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-03 14:47 +07:00
+updated: 2026-10-05 20:55 +07:00
 ---
 
 # Optional process sandbox
@@ -72,6 +67,9 @@ access the same workspace through the host's contained-file implementation;
 commands run inside the namespace with `/workspace` as their root. The host-only
 `handle.coding` binding never belongs in model input or persisted state.
 Unsupported backends omit the binding and the factory refuses explicitly.
+When the adapter's `probe()` or `prepare()` fails, the agent gets `SANDBOX_UNAVAILABLE` with a
+fixed reason; the adapter's own error is the refusal's `cause`, delivered to the mount's
+`hooks.onToolError`, which is where an application logs it.
 
 Stop also kills coding commands. Both launch paths share the configured
 `maxConcurrentCommands` admission limit (default 8); an occupied slot gives

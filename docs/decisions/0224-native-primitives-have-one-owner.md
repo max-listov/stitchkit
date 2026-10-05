@@ -1,43 +1,45 @@
 ---
-title: "ADR 0224: Общие IO primitives имеют одного владельца"
-description: Files расширяется явно, canonical JSON сохраняет bytes, команды используют нейтральный механизм, retry требует recipient authority.
+title: "ADR 0224: Shared IO primitives have one owner"
+description: Files is extended explicitly, canonical JSON preserves bytes, commands use a neutral mechanism, a retry requires recipient authority.
 type: decision
 status: active
 created: 2026-10-01 20:44 +07:00
 updated: 2026-10-01 21:03 +07:00
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-01 20:44 +07:00
 ---
 
-# ADR 0224 — Общие IO primitives имеют одного владельца
+# ADR 0224 — Shared IO primitives have one owner
 
-## Решение
+## Decision
 
-Files atomic/managed writers используют единый publication owner. Default atomic file fsync
-сохраняется; directory durability и create без overwrite выбираются явно. Post-publication error
-несёт published=true. Managed read получает opt-in leaf/link/stability checks и observed metadata;
-trusted ancestors не превращаются в hostile containment от дополнительных path checks.
+Files atomic/managed writers use a single publication owner. The default atomic
+file fsync is kept; directory durability and create without overwrite are chosen
+explicitly. A post-publication error carries published=true. A managed read gets
+opt-in leaf/link/stability checks and observed metadata; trusted ancestors do not
+become hostile containment because of additional path checks.
 
-Canonical JSON production API принадлежит primitives и делегирует existing serializer. Общая
-plain-JSON validation переиспользуется durability и canonical boundary. UTF-16 sort и ручная сборка
-members сохраняют historical digest bytes; strict public boundary имеет finite depth/nodes/bytes.
+The canonical JSON production API belongs to primitives and delegates to the
+existing serializer. The shared plain-JSON validation is reused by durability and
+by the canonical boundary. UTF-16 sorting and manual assembly of members preserve
+the historical digest bytes; the strict public boundary has finite depth/nodes/bytes.
 
-Конечные native commands принадлежат нейтральному process owner. Agent-runtime адаптирует его
-через существующую sandbox policy с mandatory limits. Новый process entrypoint начинает evolving.
-Binary IO, environment policy, streaming caller lifetime и bounded cleanup объявлены явно. Native
-leaf не становится supervisor/PTY и не обещает убить descendants, покинувших POSIX группу.
+Finite native commands belong to the neutral process owner. The agent-runtime
+adapts it through the existing sandbox policy with mandatory limits. A new process
+entrypoint starts as evolving. Binary IO, environment policy, streaming caller
+lifetime and bounded cleanup are declared explicitly. The native leaf does not
+become a supervisor/PTY and does not promise to kill descendants that left the
+POSIX group.
 
-## Внешние эффекты
+## External effects
 
-Append-before-run и process-local in-flight не являются межпроцессным atomic claim. Existing
-local-step durability требует caller-owned execution lease и сохраняет sticky uncertain. Existing
-domain-event outbox даёт application-owned atomic claim и delivered/retryable/terminal/unknown;
-это иной protocol, который не заменяет indexed receipt store и recipient reconciliation автоматически.
+Append-before-run and process-local in-flight are not an interprocess atomic claim.
+Existing local-step durability requires a caller-owned execution lease and keeps
+the sticky uncertain state. The existing domain-event outbox gives an
+application-owned atomic claim and delivered/retryable/terminal/unknown; it is a
+different protocol and does not automatically replace the indexed receipt store
+and recipient reconciliation.
 
-Hash отсутствия, timeout, missing local row или null не доказывают, что старый recipient request
-не завершится позже. Общий verified-absence retry отклонён без recipient-side fence либо стабильной
-idempotency capability. Не создаётся второй delivery engine и не расширяется at-most-once promise.
-Reconcile должен освобождать caller await на abort/deadline и игнорировать поздний результат.
+A hash of absence, a timeout, a missing local row or a null does not prove that the
+old recipient request will not complete later. A shared verified-absence retry is
+rejected without a recipient-side fence or a stable idempotency capability. No
+second delivery engine is created and the at-most-once promise is not extended.
+Reconcile must release the caller's await on abort/deadline and ignore a late result.

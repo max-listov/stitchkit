@@ -57,10 +57,9 @@ none of them.
 A release candidate on `release/X.Y.Z` runs lockfile/lint/types at push. Complete selected
 CI must pass for that exact SHA before master and tag. A direct unproven master
 release requires `bun scripts/verify.ts --release`; this profile includes every
-fast check and the selected heavy lanes. Successful full/release gates separately
-certify the fast subset by tree/runtime, while heavy evidence retains its lane
-environment key. Scheduled/manual CI owns the complete package and starter-mode
-cross-product.
+fast check and the selected heavy lanes. The local green memo covers the fast
+subset only, keyed by tree and toolchain. Scheduled/manual CI owns the complete
+package and starter-mode cross-product.
 
 The gate remembers its last green run by working-tree content, so a push whose
 tree is unchanged is not gated twice; any edit to any file runs it again, and a
@@ -170,13 +169,11 @@ the export honest.
   publication, migrate the starter, advance its catalog and remove the review;
   both lanes are mandatory before any scaffolder release.
 
-List the packages being published in `release-train.json`, prepare each selected
-version and changelog, run the package-aware release gate once, then make the
-last commit with a `release(train): …` subject. After its exact-SHA push CI is
-green, run `bun run release:train`. Every selected tag points at that same SHA;
-each tag workflow downloads its matching already-validated tarball and neither
-rebuilds nor reruns expensive gates. The legacy single-package commands remain
-available for an isolated release.
+List the packages being published in `release-train.json` and follow
+[how a release happens](docs/architecture/release-process.md#how-a-release-happens):
+five steps, one command each, ending with `bun run release:train`. Every selected tag points
+at the proven head; each tag workflow downloads its matching already-validated tarball and
+neither rebuilds nor reruns expensive gates. The train is the only release entry point.
 
 An external observer identifies release intent from the committed tree instead
 of treating every push as a candidate:
@@ -215,7 +212,8 @@ root `prepare` script):
   package version, the release notes, the calibre (a `### ⚠️ Breaking changes`
   section may not ride a patch bump), the presence of the matching
   `## Released migration: X.Y.Z` in the matching upgrade guide, membership and
-  exact version in `release-train.json`, the `release(train): …` subject, and —
+  exact version in `release-train.json`, the `release(train): …` subject on a metadata-only
+  commit, that every package differs from its previous release, and —
   for a scaffolder tag only — that the template lockfile resolves the newest
   published framework version its own range allows.
   Deletion-only pushes run no build.

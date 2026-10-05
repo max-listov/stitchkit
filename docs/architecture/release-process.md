@@ -5,11 +5,6 @@ type: architecture
 status: active
 created: 2026-09-23
 updated: 2026-10-03 13:36 +07:00
-participants:
-  - role: implemented
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-03 13:36 +07:00
 ---
 
 # Release process — breaking changes, versions and the release train
@@ -18,6 +13,30 @@ The rules are one line each in [`AGENTS.md`](../../AGENTS.md); this page holds t
 and the incidents behind it. Much of it is scar tissue from runs that went wrong. The CI graph and
 the exact-SHA publication boundary are in [`ci-release.md`](./ci-release.md); which local gate a
 push earns is in [`gates.md`](./gates.md).
+
+## How a release happens
+
+Five steps, one command each. Every command is idempotent until the last one.
+
+| # | Do | Command | What it guarantees |
+| --- | --- | --- | --- |
+| 1 | Commit each feature or fix on its own, with its own conventional subject and a body | `git commit` | `git log`, `bisect` and `revert` work per change |
+| 2 | Write the release metadata: version, changelog roll, train | `bun scripts/release-plan.ts prepare core@X.Y.Z && bun install --ignore-scripts` | next patch or minor only; the notes carry real content |
+| 3 | Check it before anything expensive | `bun run release:check` | version matches manifest and lockfile; a break is a minor and carries `**Who must act:**` and its promoted migration; the package differs from its previous release |
+| 4 | Commit the metadata as `release(train): <summary> in X.Y.Z`, push `release/X.Y.Z`, wait for its push CI run, fast-forward master | `git push -u origin release/X.Y.Z` | a green exact-SHA push run exists before anything is public |
+| 5 | Tag the master head | `bun run release:train` | tags only the proven head; CI then publishes the artifact CI built, and the registry bytes are checked |
+
+The tag workflow publishes nothing CI did not build for that SHA. Details of each rule are below;
+the pre-push and tag-time gates refuse every shape that skips a step.
+
+### Measuring the pipeline
+
+A pipeline benchmark never needs a published version. Run steps 2 to 4 on a throwaway branch and
+stop before step 5: the push run of `ci.yml` for the exact SHA is the measured candidate. Pack the
+train with `bun scripts/pack-release-train.ts` and run `npm publish --dry-run ./release-artifacts/<tarball>`
+to measure the publish step without a registry write. The dry-run line has not been exercised by a
+test in this repository. A release whose packed files equal the previous release is refused by
+`release:check`, so a benchmark cannot reach step 5 by accident.
 
 ## Breaking changes and migration
 
@@ -74,7 +93,9 @@ The minor is reserved as the *breaking* signal — that is what makes a consumer
 construction, and spending a minor on it would strand consumers on the fixes shipped beside it
 (0.48.1 added `stitchkit/testing`; 0.49.1 added `forceTimeoutMs`). So the question at release time
 is not "is there a `### Added` section" but "is there a `### ⚠️ Breaking changes` section" — that
-one alone moves the minor.
+one alone moves the minor. The gate enforces it: a patch whose notes carry any breaking marker —
+a heading that opens with `⚠️`, an item that opens with `Breaking`, or a `**Who must act:**` line —
+is refused by `release:check`, whatever the section is called.
 
 ## Two packages, one train
 
@@ -96,6 +117,14 @@ coordinated by one exact-tree release train. The tag flow lives in the
   `## Unreleased migration:` heading in its own `packages/create-stitchkit/UPGRADING.md`, then tag
   `create-stitchkit-vX.Y.Z`. CI checks the scaffolder version and publishes only
   `create-stitchkit`.
+- **stitchkit-tui:** declares `stitchkit` as a **peer** (`workspace:^`, and the same as a dev
+  dependency for the workspace), so a project installs one framework, its own. `bun pm pack` freezes
+  that spec into `^<core version>` at pack time, and pre-1.0 a caret holds one minor: **a core
+  release outside the range the published `stitchkit-tui` froze carries `tui` in the same train.**
+  `assertTrainCarriesItsCompanions` (`scripts/release-companions.ts`) refuses the train otherwise —
+  in `release:check` and at push, from the repository's release tags. As a hard dependency the
+  frozen range gave every project a second, older stitchkit beside its own once the framework moved
+  on, which breaks `instanceof` across the package boundary.
 
 The package versions never need to match. A framework release must not silently advance or publish
 the starter; a starter release must target a Stitchkit range that already exists on npm — and its
@@ -118,15 +147,19 @@ outside this and still rides along.
 
 ## Order inside a release
 
-`release-train.json` lists every package/version to publish. The `release(train): …` commit is the
-LAST commit of the release. Land every fix first, then:
+`release-train.json` lists every package and version to publish. The `release(train): … in X.Y.Z`
+commit carries release metadata only: versions, changelogs, the train, the lockfile, the promoted
+migration heading and the maturity-cadence sentences. Every feature or fix is its own commit
+before it, with a conventional subject and a body
+([ADR 0237](../decisions/0237-release-commit-holds-metadata-only.md)).
 
 ```bash
-# 1. Everything the release commit will carry: version bumps, release-train.json,
-#    the changelog section, the promoted migration heading. Then, in one second:
+# 1. Metadata, then the check that costs a second.
+bun scripts/release-plan.ts prepare core@0.87.2 && bun install --ignore-scripts
 bun run release:check
-# 2. The commit, on its own branch. Nothing is published by this push.
-git switch -c release/0.87.2 && git commit -m 'release(train): publish core in 0.87.2'
+# 2. The release commit on its own branch. Nothing is published by this push.
+git switch -c release/0.87.2   # created before the feature commits
+git commit -m 'release(train): publish core in 0.87.2'
 git push -u origin release/0.87.2
 # 3. Wait for the push run of ci.yml for this exact SHA (see below).
 # 4. Fast-forward master to the proven SHA, then tag it.
@@ -135,36 +168,31 @@ bun run release:train
 ```
 
 `release:train` ends by retiring every `release/…` branch, local and on `origin`, whose tip the
-tagged head already contains; the tag is the lasting record, the branch only carried the candidate
-through CI. An unreleased branch is never touched, and a failed cleanup is reported without
-failing the release.
+tagged head already contains; the tag is the lasting record. An unreleased branch is never
+touched, and a failed cleanup is reported without failing the release.
 
-`release:check` runs the same metadata gate the push runs, against the working tree, before
-anything expensive: version against manifest, breaking section against its `**Who must act:**`
-line and against the version calibre, the promoted migration heading, and breaking-entry
-metadata (ADR 0198, ADR 0204). It costs a second, and the mistake it catches otherwise costs a whole gate run —
-editing `release-train.json` after a green local gate invalidates the memo, and 0.87.0 paid
-exactly that.
+`release:check` runs the metadata gate the push runs, against the working tree: version against
+manifest and lockfile, breaking section against its `**Who must act:**` line and the version
+calibre, the promoted migration heading, breaking-entry metadata (ADR 0198, ADR 0204), and that
+each package differs from its previous release. It refuses a package whose packed closure — its
+directory minus tests and the changelog, plus the guides and scripts that build its tarball — is
+unchanged since the previous tag except for the version: an npm version is permanent, and a
+release of identical files gives every consumer an update that changes nothing.
 
-Step 4 does not re-run the gate: the SHA already has a green push run, and `pre-push` asks GitHub
-rather than assuming. It does start a second CI run, on master, for a SHA already proven on the
-branch — expected, and deliberately not suppressed: nothing waits for it, and the alternative is a
-network call inside the one job every other job waits on. Where a release commit goes straight to
-master instead, the full local gate runs first, because pushing it there publishes it. Pushing the
-release commit to master before it is green forces the tag onto whatever fix lands next —
-`git show <tag>` then points at the wrong change, and the release commit keeps a red run forever
-(that is what 0.55.0 did). Two gates hold the shape, both in the publishing workflow, so neither
-depends on local hooks: `assert-head` keeps the tag on the branch head, and `assert-subject`
-requires that head to be a `release(train): …` commit whose manifest selects the tag's own package
-and exact version. The `pre-push` hook runs the **subject** check earlier, before the expensive
-gate; it deliberately does not run `assert-head`, which needs the remote head and belongs where the
-remote is authoritative. So a tag pointing at a superseded release commit passes `pre-push` and
-fails in the workflow — after the tag is already pushed, and a published tag is never moved. Tag
-the head.
+Step 4 does not re-run the gate: the SHA already has a green push run, and `pre-push` asks GitHub.
+The master push of that SHA starts an empty CI run. Where a release commit goes straight to master
+instead, the full local gate runs first, because pushing it there publishes it. Pushing the release
+commit to master before it is green forces the tag onto whatever lands next. Two gates hold the
+shape, both in the publishing workflow so neither depends on local hooks: `assert-head` keeps the
+tag on the master head, and `assert-subject` requires the head to be the release commit of a train
+that selects the tag's package and version, or fix commits with their own types stacked on it. The
+release commit must be non-empty and metadata-only; a fix commit must be non-empty. `pre-push`
+runs the subject and metadata checks earlier and does not run `assert-head`, which needs the remote
+head.
 
-If a release commit is already pushed and its run goes red, the fix does not become taggable: land
-the fix, then make a **new** release commit for the same version on top of it (or bump the patch),
-and tag that. Recovering by tagging the fix itself is exactly the shape these gates refuse.
+If a pushed release commit's run goes red, land a fix commit on the branch with its own type, wait
+for a green run of the new head, and tag it, or make a new release commit on top. Tagging a red
+SHA is refused because the tag needs a green push run for the tagged SHA itself.
 
 ## Waiting for the green run — the query has to be able to answer
 

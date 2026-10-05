@@ -1,34 +1,31 @@
 ---
-title: Конечные команды и файловые гарантии
-description: Native IO для Bun и Node, с явно выбранной durability, безопасными bounds и caller lifetime.
+title: Bounded commands and file guarantees
+description: Native IO for Bun and Node with an explicitly chosen durability, safe bounds and a caller-owned lifetime.
 type: guide
 status: active
 created: 2026-10-01 20:44 +07:00
-updated: 2026-10-04 20:04 +07:00
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-01 20:44 +07:00
-  - role: implemented
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-02 00:08 +07:00
-  - role: implemented
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-03 13:36 +07:00
-  - role: implemented
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-04 09:21 +07:00
+updated: 2026-10-05 18:05 +07:00
 ---
 
 # Native IO
 
-Примеры используют публичные imports и одинаково исполняются в Bun и Node ≥22.
+Shortest working example: publish a file atomically, then run one bounded command.
 
-## Запись файла
+```ts
+import { writeFileAtomic } from 'stitchkit/files'
+import { runNativeCommand } from 'stitchkit/process'
+
+await writeFileAtomic('/srv/app/state.json', '{"version":2}')
+const { exitCode, stdout } = await runNativeCommand({
+  executable: '/usr/bin/git', args: ['rev-parse', 'HEAD'], cwd: '/srv/app',
+  capture: true, maxOutputBytes: 4096, timeoutMs: 5000,
+})
+console.log(exitCode, new TextDecoder().decode(stdout))
+```
+
+The examples use public imports and run the same in Bun and Node >= 22.
+
+## Writing a file
 
 ```ts
 import { writeFileAtomic, AtomicFilePublicationError } from 'stitchkit/files'
@@ -41,7 +38,7 @@ try {
   })
 } catch (error) {
   if (error instanceof AtomicFilePublicationError) {
-    // target уже виден. Проверьте receipt, прежде чем решать о повторе.
+    // The target is already visible. Check the receipt before deciding whether to retry.
     console.error(error.phase, error.cause)
   } else throw error
 }
@@ -50,25 +47,50 @@ await writeFileAtomic('/srv/app/state.json', '{"version":2}', {
 })
 ```
 
-По умолчанию `replace: true`, `durability: 'file'`, `mode: 0o600`: existing вызовы сохраняют
-file-fsync и atomic replacement. `durability: 'none'` отключает sync; `'directory'` выполняет
-полную запись → exact descriptor chmod → file fsync → rename (replace) либо link (create) →
-удаление staging link → parent fsync. `writeFileAtomicSync` имеет те же options и порядок.
-Create отказывает с native `EEXIST` при существующем файле, symlink или concurrent winner.
-Никогда не переводите этот отказ в replace автоматически.
+The defaults are `replace: true`, `durability: 'file'` and `mode: 0o600`: file fsync and atomic
+replacement. `durability: 'none'` skips every sync. `'directory'` runs the full sequence: write all
+bytes, exact descriptor chmod, file fsync, rename (replace) or link (create), remove the staging
+link, parent directory fsync. `writeFileAtomicSync` takes the same options and runs the same order.
+Create fails with the native `EEXIST` when the target exists, is a symlink, or a concurrent writer
+won. Never turn that refusal into a replace automatically.
 
-`AtomicFilePublicationError.published === true` отличает видимость от неподтверждённого
-acknowledgement. `phase` — `cleanup`, `directory-sync` или `directory-close`; первичная причина
-сохранена в `cause`. Ошибка до publish оставляет прежний target. Cleanup вторичен к первичной ошибке.
-При create кратко существует второй hardlink; strict single-link reader вправе отказать в этом окне.
+`AtomicFilePublicationError.published === true` tells a visible target from an unconfirmed
+acknowledgement. `phase` is `cleanup`, `directory-sync` or `directory-close`; the primary cause is
+kept in `cause`. An error before publication leaves the previous target untouched. Cleanup errors are
+secondary to the primary error. While a create is in flight a second hardlink briefly exists, so a
+strict single-link reader may refuse in that window.
 
-Directory fsync — native POSIX/filesystem capability. Windows явно отказывает; иной filesystem
-может отказать при open/sync. Проверка на Linux не подтверждает поведение macOS, сетевой FS или
-сохранность при отключении питания. Состояние диска определяется гарантиями самой FS/ОС.
-`createManagedFileBoundary.write(..., { durable: true })` использует тот же publish owner и parent sync;
-его create по умолчанию остаётся create, а `replace: true` явно разрешает replacement.
+### Abandoned staging files
 
-## Строгое чтение
+The bytes are staged beside the target under `.stitchkit-<24 lowercase hex>.tmp`, the same name for
+`writeFileAtomic`, `writeFileAtomicSync`, the managed writer and the chunk spool. A process killed
+between the staging and the publication (SIGKILL, OOM, power loss) leaves that file behind, and no
+later write removes it: a random name alone cannot tell an abandoned write from one in flight.
+Removing it is the caller's responsibility:
+
+```ts
+import { isAtomicStagingName, sweepAtomicStaging } from 'stitchkit/files'
+
+// At startup, or before trusting that a directory holds only your own records:
+const removed = await sweepAtomicStaging({ directory: '/srv/app/registry', olderThanMs: 60 * 60_000 })
+
+// Skip staging files when listing a directory of your records:
+const records = (await readdir('/srv/app/registry')).filter((name) => !isAtomicStagingName(name))
+```
+
+`olderThanMs` is required and must exceed the longest write in flight; a younger staging file is
+left alone. The sweep removes only regular files, never follows a symlink and never enters a
+subdirectory. The name form is a stable public contract: changing it is a breaking change of
+`stitchkit/files`. An exclusive lock's `.lock-*.tmp` file is not an atomic-write staging file and
+does not match.
+
+Directory fsync is a native POSIX filesystem capability. Windows refuses it explicitly, and another
+filesystem may refuse at open or sync. A check on Linux does not confirm macOS behavior, network
+filesystems or survival of a power loss; the disk state is whatever the filesystem and OS guarantee.
+`createManagedFileBoundary.write(..., { durable: true })` uses the same publish owner and parent sync;
+its create stays a create, and `replace: true` allows replacement explicitly.
+
+## Strict reads
 
 ```ts
 import { createManagedFileBoundary } from 'stitchkit/files'
@@ -79,25 +101,27 @@ const source = await files.read('receipt.json', {
 })
 console.log(source.observation) // dev, ino, size, nlink, mtimeMs, ctimeMs
 const receipt = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(source.bytes))
-// schema.parse(receipt) и проверка digest принадлежат приложению.
+// Schema parsing and digest checks belong to the application.
 ```
 
-Без новых options ответ сохраняет `{ ref, bytes }`, допускает trusted in-root symlink и hardlink.
-`rejectSymlinks` запрещает requested leaf, `singleLink` проверяет `nlink` открытого descriptor,
-`stable` сравнивает dev/ino/size/mtime/ctime/nlink вокруг byte read; `observe` добавляет metadata.
-`FILE_NOT_FOUND`, `FILE_NOT_REGULAR`, `FILE_UNSAFE_LINK`, `FILE_TOO_LARGE`, `FILE_CHANGED`,
-`FILE_UNSUPPORTED` и `FILE_IO_ERROR` различаются. Abort сохраняет caller reason.
-Nonblocking open позволяет отказать FIFO без ожидания writer. Bytes ограничены во время чтения,
-включая рост файла, не только initial stat. Chunk allocation ≤ maxBytes+1+64 KiB, flatten ≤ maxBytes;
-FD закрывается при success, отказе, abort и IO error.
-Ошибка close сохраняет первичную ошибку чтения; после успешного чтения ошибка close возвращается caller.
+Without options the result is `{ ref, bytes }` and a trusted in-root symlink or hardlink is
+allowed. `rejectSymlinks` refuses a symlink at the requested leaf, `singleLink` checks `nlink` of
+the opened descriptor, `stable` compares dev/ino/size/mtime/ctime/nlink around the byte read, and
+`observe` adds the metadata. These refusals are distinct: `FILE_NOT_FOUND`, `FILE_NOT_REGULAR`,
+`FILE_UNSAFE_LINK`, `FILE_TOO_LARGE`, `FILE_CHANGED`, `FILE_UNSUPPORTED` and `FILE_IO_ERROR`. Abort
+keeps the caller's reason. A nonblocking open lets a FIFO be refused without waiting for a writer.
+Bytes are bounded while reading, including a file that grows, not only by the initial stat. Chunk
+allocation is at most `maxBytes + 1 + 64 KiB` and the flattened result at most `maxBytes`. The
+descriptor closes on success, refusal, abort and IO error. A close error keeps the primary read error;
+after a successful read a close error is returned to the caller.
 
-Root и ancestors принадлежат trusted actor. Эти options не дают descriptor-relative containment
-при hostile concurrent ancestor replacement. Отдельного переключателя «считать ancestors безопасными»
-нет: portable owner не предоставляет такую capability. Metadata stability не доказывает immutable
-snapshot против произвольного hostile writer; используйте application lock/immutable publication.
+The root and its ancestors belong to a trusted actor. These options do not give
+descriptor-relative containment against a hostile concurrent ancestor replacement, and there is no
+switch to treat ancestors as safe: the portable owner has no such capability. Metadata stability does
+not prove an immutable snapshot against an arbitrary hostile writer; use an application lock or
+immutable publication.
 
-## Команды
+## Commands
 
 ```ts
 import { runNativeCommand } from 'stitchkit/process'
@@ -119,21 +143,23 @@ await runNativeCommand({
 })
 ```
 
-Команда требует caller signal или finite `timeoutMs` (1–2147483647 ms: native timer range; большее значение отказывается, не превращается в 1 ms). Streaming имеет caller lifetime, без скрытого
-60-second timeout или 1-MiB output limit. `capture` по умолчанию false; true требует
-`maxOutputBytes` для суммарных stdout+stderr. Лимит считает исходные bytes; API возвращает
-`Uint8Array`, не преобразует invalid UTF-8. Result содержит наблюдаемый `exitCode: number | null`
-и `signal: string | null`; signal termination не превращается в выдуманный exit code. `maxOutputBytes` может ограничивать и streaming.
-`stdin` — bytes с `maxStdinBytes` (default 1 MiB). `envPolicy` default `declared-only`: отсутствие env
-означает пустой environment; `ambient` явно разрешает наследование. Cwd/executable policy остаётся
-приложению; этот primitive запускает native executable и сам не создаёт shell.
+A command needs a caller `signal` or a finite `timeoutMs` (1 to 2147483647 ms, the native timer
+range; a larger value is refused, never turned into 1 ms). Streaming runs for the caller's lifetime,
+with no hidden 60-second timeout or 1 MiB output limit. `capture` defaults to false; `true` requires
+`maxOutputBytes` for the combined stdout and stderr. The limit counts source bytes; the API returns
+`Uint8Array` and does not decode invalid UTF-8. The result holds the observed `exitCode: number | null`
+and `signal: string | null`; a signal termination is never turned into an invented exit code.
+`maxOutputBytes` may bound streaming too. `stdin` is bytes bounded by `maxStdinBytes` (default 1 MiB).
+`envPolicy` defaults to `declared-only`: no `env` means an empty environment, and `ambient` inherits
+explicitly. The application owns cwd and executable policy; the primitive launches a native
+executable and never creates a shell.
 
-Машинная классификация limit error использует `NativeCommandError.reason`: `deadline` при
-истечении собственного `timeoutMs`, `output-budget` при превышении суммарных bytes stdout+stderr
-в capture или streaming. Оба случая сохраняют `code: 'COMMAND_LIMIT'`; `message` служит
-диагностике, не протоколу. У `COMMAND_UNAVAILABLE` и `COMMAND_CLEANUP` reason отсутствует;
-caller abort и sink failure сохраняют исходную ошибку. При cleanup failure первоначальный
-limit вместе с reason остаётся внутри `AggregateError` cause.
+`NativeCommandError.reason` classifies a limit error by machine: `deadline` when the command's own
+`timeoutMs` expires, `output-budget` when the combined stdout and stderr bytes exceed the limit, in
+capture or streaming. Both keep `code: 'COMMAND_LIMIT'`; `message` is for diagnosis, not for
+protocols. `COMMAND_UNAVAILABLE` and `COMMAND_CLEANUP` have no reason. A caller abort and a sink
+failure keep the original error. When cleanup fails, the original limit and its reason stay inside the
+`AggregateError` cause.
 
 ```ts
 import { NativeCommandError } from 'stitchkit/process'
@@ -149,38 +175,112 @@ try {
 }
 ```
 
-Конструктор сохраняет вызов `new NativeCommandError(code, message, { cause })` и принимает
-`{ cause, reason: 'deadline' | 'output-budget' }` только для `COMMAND_LIMIT`. Owner всегда
-заполняет reason для собственных limits. Созданная вызывающей стороной ошибка без reason
-не получает выдуманную причину из текста; её reason остаётся `undefined`.
+The constructor is `new NativeCommandError(code, message, { cause })`; it accepts
+`{ cause, reason: 'deadline' | 'output-budget' }` only for `COMMAND_LIMIT`. The owner always sets the
+reason for its own limits. An error a caller constructs without a reason gets none inferred from the
+text; its `reason` is `undefined`.
 
-Вывод читается с backpressure отдельно для stdout/stderr: один выполняющийся sink на канал плюс
-bounded native Readable buffer; накопления всей истории при streaming нет. Callback получает
-lifetime signal. Abort освобождает ожидание даже игнорирующего signal callback, но не способен
-отменить сторонние действия, которые сам callback продолжит после abort. Sink обязан отменять свои
-IO, не сохранять бесконечную историю и не изменять shared descriptor flags. После abort новых
-callbacks owner не запускает. Normal completion ждёт всех bytes и sinks.
+Output is read with backpressure, stdout and stderr separately: one running sink per channel plus a
+bounded native Readable buffer, with no accumulation of the whole history while streaming. The
+callback receives the lifetime signal. Abort releases the wait even for a callback that ignores the
+signal, but it cannot cancel third-party work the callback continues after the abort. A sink must
+cancel its own IO, must not keep an unbounded history and must not change shared descriptor flags.
+After an abort the owner starts no new callbacks. Normal completion waits for all bytes and sinks.
 
-Cleanup: POSIX process group, TERM, `killGraceMs` (default 100, maximum 10 000), затем KILL;
-`cleanupTimeoutMs` (default 2000, maximum 30 000) ограничивает ожидание close после сигналов.
-На Darwin временный `EPERM` при сигнале группе может означать zombies, ещё не убранные
-OS reaper. Повтор ограничен `cleanupTimeoutMs`; успех требует доставленного сигнала или
-`ESRCH`, постоянный отказ сохраняется в cause. Закрытие каждого owned pipe и выход leader
-наблюдаются отдельно, включая отсутствие общего `child.close` при teardown.
-Сохраняется caller/sink причина; failure cleanup — `NativeCommandError` с `COMMAND_CLEANUP` и
-AggregateError cause. Даже вышедший parent не исключает helper, удерживающий pipe. Windows
-отказывает с `COMMAND_UNAVAILABLE`; потомок, самостоятельно покинувший группу через setsid,
-лежит за границей этой capability. Это one-shot execution, не PTY, supervisor или daemon host.
+Cleanup uses the POSIX process group under the `stop` policy, then KILL; `cleanupTimeoutMs`
+(default 2000, maximum 30 000) bounds the wait for close after the signals. On
+Darwin a transient `EPERM` when signalling a group can mean zombies the OS reaper has not collected
+yet. The retry is bounded by `cleanupTimeoutMs`; success needs a delivered signal or `ESRCH`, and a
+permanent refusal is kept in the cause. The close of every owned pipe and the leader's exit are
+observed separately, including the absence of a shared `child.close` during teardown. The caller or
+sink cause is kept; a cleanup failure is a `NativeCommandError` with `COMMAND_CLEANUP` and an
+`AggregateError` cause. Even an exited parent does not exclude a helper that holds a pipe. Windows
+refuses with `COMMAND_UNAVAILABLE`; a descendant that leaves the group on its own with `setsid` is
+outside this capability. This is one-shot execution, not a PTY, a supervisor or a daemon host.
 
-## Механическая адаптация
+### Stopping a command: the `stop` policy
 
-Atomic file wrapper заменяется одним вызовом `writeFileAtomic` с выбранными options. Bounded
-regular-file read заменяется `files.read`; JSON/schema, receipt conflicts, journal rotation и
-application locks сохраняются. Spawn/drain/capture/cancellation wrapper заменяется `runNativeCommand`;
-shell policy, command admission, логирование, redaction, bytes→text decoder и operator sink сохраняются.
-Длительные signal-only команды остаются streaming; bounded tar/capture получают свои явные limits.
-Импорт leaf не делает установку всего npm package маленькой; выбирайте dependency после измерения
-packed размера и dependency closure.
+A caller abort, the `timeoutMs` deadline, an exceeded output budget and a failing sink all stop the
+command the same way, by its `stop` policy:
+
+| field | meaning |
+|---|---|
+| `target` | `'group'`: `signal` goes to every member of the group. `'leader'`: `signal` goes to the leader alone; the leader's exit ends the grace at once. Required. |
+| `signal` | `SIGTERM` (default), `SIGINT`, `SIGHUP`, `SIGQUIT`, `SIGUSR1` or `SIGUSR2`. KILL is not a stop signal: it is what the grace ends in. |
+| `graceMs` | How long the leader (or the group) has to leave before the whole group gets KILL. 0 to 3 600 000 (one hour). Required. |
+| `killOn` | Optional `AbortSignal`. Its abort stops the command with KILL to the whole group at once, also in the middle of a grace. |
+
+Omitting `stop` means `{ target: 'group', signal: 'SIGTERM', graceMs: 100 }`.
+
+```ts
+// Cooperative cancellation: the leader rolls its work back, its helpers are not asked.
+await runNativeCommand({
+  executable: '/usr/local/bin/migrate', args: ['apply'], signal: request.signal,
+  stop: { target: 'leader', signal: 'SIGINT', graceMs: 15 * 60_000, killOn: shutdown.signal },
+})
+```
+
+With `target: 'leader'` the rest of the group never receives the cooperative signal: they are
+processes the leader started, and the leader decides what happens to them. Whatever is left in the
+group when the leader exits, or when the grace ends, gets KILL, including a helper with its stdio
+closed that no pipe would have revealed. A leader that has already exited is never signalled again.
+
+The output pipes stay open until the stop sequence ends. Output a stopping command writes is read and
+dropped, never passed to `onOutput` and never captured, so a leader that writes while it shuts down
+does not meet a broken pipe. The result rejects with the abort reason once the group is gone and the
+pipes are closed, so it can take `graceMs` plus `cleanupTimeoutMs` after the abort.
+
+The grace is a timer inside the process that runs the command. If that process exits first, the
+timer is gone and the group, which is detached into its own session, keeps running: nothing in this
+package can bound it from outside. Abort `killOn` in your shutdown path, so the group is killed
+before the process exits, and let the supervisor own the case where the process dies without a
+shutdown. Under systemd, keep `KillMode=control-group` (the default) so the stop of the unit
+reaches every process in its cgroup, whatever its process group; launchd only kills the job's own
+process group, which a command's group is not.
+
+### Stopping a group and its descendants
+
+A group is signalled only while the kernel still reports members. `ESRCH` from the first signal,
+or from the existence probe that follows it during the grace, means no member is left: no KILL
+is sent afterwards, because a numeric group id that has vanished can already belong to an
+unrelated group. A group that is still visible after the grace period receives KILL.
+
+`descendants` declares what happens to processes the leader left running once it has exited
+successfully:
+
+| `descendants` | After the leader exits |
+|---|---|
+| `'terminate-after-leader'` (the default) | The group is stopped right after `onLeaderSettled` returns and before the pipes drain: with `target: 'group'` by the same signal, grace, KILL sequence as cancellation; with `target: 'leader'` by KILL at once, since the leader has already exited. Descendants that left the group with `setsid` stay out of reach. |
+| `'leave'` | Nothing. A helper started with its stdio detached keeps running. One that inherited stdout or stderr keeps the pipes open, and the command then waits for it until its deadline or abort. |
+
+Omitting the option means `'terminate-after-leader'`: a command does not leak the helpers it
+started. A real daemon detaches into its own session (`setsid`, as `daemon(3)` does), is no member
+of the group and is unaffected. Declare `'leave'` only for a helper that has to outlive the
+command while staying in its group:
+
+```ts
+await runNativeCommand({
+  executable: '/usr/local/bin/start-helper', timeoutMs: 60_000,
+  // the helper started here outlives this command on purpose
+  descendants: 'leave',
+})
+```
+
+A command whose group this package did not create (a structural
+launcher supplied by a host) has no group to stop, and `descendants` has nothing to act on there.
+
+
+## Replacing hand-written wrappers
+
+An atomic-file wrapper becomes one `writeFileAtomic` call with the chosen options. A bounded
+regular-file read becomes `files.read`; JSON and schema parsing, receipt conflicts, journal rotation
+and application locks stay with the application. A spawn, drain, capture and cancellation wrapper
+becomes `runNativeCommand`; shell policy, command admission, logging, redaction, the bytes-to-text
+decoder and the operator sink stay with the application. Long signal-only commands stay streaming;
+bounded tar or capture commands get their own explicit limits. Importing one leaf does not make
+installing the whole npm package smaller; choose a dependency after measuring packed size and its
+dependency closure.
+
 ## Resource-scoped launchers and shared owners
 
 `onLeaderSettled(event, signal)` observes leader exit before inherited stdout/stderr pipes
@@ -222,8 +322,23 @@ syscall interruptible or provide a snapshot against a hostile writer.
 An exclusive lock applies exact requested permissions through its creating descriptor,
 independent of umask. Default `0600` stays private. Shared `0640` requires a common group and
 traversable directories; another UID also needs directory write permission to reclaim a
-proven-dead owner's file. Set `ownerlessGraceMs: null` to refuse every age-only reclaim,
-including ownerless reclaim guards. The default remains 5000 ms for existing clients.
+proven-dead owner's file.
+
+The lock is published with its owner already recorded: the owner record is written to a
+private temporary file in the lock's directory, then hard-linked to the lock name. `link`
+fails with `EEXIST` for every caller but one, and the name never exists without a complete
+record, so a holder that stalls or dies before publishing leaves no lock and cannot be
+displaced. The directory must therefore be on a filesystem that supports hard links. A crash
+between the temporary write and the link can leave a `.lock-*.tmp` file behind; it is not a
+lock and nothing waits on it.
+
+`ownerlessGraceMs` defaults to `null`: a lock file with no readable owner is never taken
+because of its age. This library does not produce such a file; only a writer that creates the name
+before its owner record can leave one (for example an empty file from a crashed process).
+`ownerlessGraceMs: <ms>` opts in to reclaiming an empty lock file older than that, and also governs
+abandoned empty reclaim guards.
+When unset, an empty reclaim guard left by an older writer is taken after 5 000 ms so recovery
+is never disabled for good; `null` refuses that too.
 Stale reclaim guards use the same lock owner and a child guard for the inode check and
 unlink. Recovery depth is capped at 16; a deeper stale chain refuses recovery with a depth diagnosis retained as the cause of
 the bounded `LOCK_TIMEOUT`. Live owners, unknown process-lifetime evidence and unsafe records are never
@@ -249,27 +364,26 @@ version: carry their reachable relative `.d.ts` closure, rather than emitting re
 instead emit declarations for only that DTO contract. Keep the library's manifest at runtime
 `dependencies: {}` and `peerDependencies: { zod: ... }` when that is its declared promise.
 
-The packaged Darwin loader has static references to both architecture addons. Bun compilation
-embeds the matching `.node` asset; ordinary Bun bundling emits native assets alongside its JS
-output. Publish **every output returned by `Bun.build`**, preserving relative paths. Copying only
-the JS file drops its native dependency. No runtime Stitchkit installation or manually chosen
-native path is required for these bundled artifacts.
+The packaged Darwin loader names its addons by a path computed at run time, so a bundler
+never follows it: bundling `stitchkit/server`, `stitchkit/files` or `stitchkit/process` yields
+the same single JS file on every operating system, with no `.node` output, and
+`bun build --outfile` works. Such a bundle looks for the addon beside the original package
+files, never inside itself. Where that file is absent (an artifact moved to another machine)
+the Darwin backend is `unavailable`: process identity cannot be recorded, so a lock held by a
+crashed owner is not reclaimed. An artifact that must carry the Darwin addon uses the packaging
+plugin of the next section; it is the only way a static loader enters a bundle.
 
 ```sh
-bun build src/native.ts --target=bun --minify --outdir=dist
-bun build src/native.ts --compile --bytecode --format=esm --outfile=dist/native
+bun build src/native.ts --target=bun --minify --outfile=dist/native.js
 ```
 
-For a JS build that previously used `--outfile=dist/native.js`, use
-`--outdir=dist --entry-naming=native.js` instead: the output can now include native assets.
-The standalone executable still uses `--outfile` because those assets are embedded inside it.
-
 Qualify the complete output outside its build tree and installed dependency graph. Test process
-identity, live-owner refusal, dead-owner recovery and contained file operations in the resulting
-JS bundle and standalone executable. Bun and Node package imports retain the same lazy loader;
-importing a portable leaf does not load a Darwin addon on another OS. Test declarations too,
-and check that importing an unbundled Stitchkit leaf fails in a deliberately isolated library
-distribution. A separate schema-only entry must not import the native entry.
+identity, live-owner refusal, dead-owner recovery and contained file operations in artifacts built
+with the packaging plugin, and check that an unpackaged build reports the backend `unavailable`
+rather than certifying a dead owner. Bun and Node package imports retain the same
+lazy loader; importing a portable leaf does not load a Darwin addon on another OS. Test
+declarations too, and check that importing an unbundled Stitchkit leaf fails in a deliberately
+isolated library distribution. A separate schema-only entry must not import the native entry.
 
 If the Darwin backend cannot load, `observeProcessInstance` still returns `unavailable`.
 Its backend `Error` preserves the original `cause`; JSON serialization carries only the stable
@@ -285,17 +399,17 @@ Stitchkit installation or create an independent lightweight npm package.
 ## Public native packaging
 
 Custom archives and installers use `stitchkit/files/packaging` at **build time**.
-`createNativePackaging` resolves the installed version and target addon with its original SHA256;
-its Bun-compatible plugin integrates that asset with the same lazy native loader.
+`createNativePackaging` resolves the installed version and target addon, reads the addon once and
+checks it against the size and SHA256 that Stitchkit published in its `native-assets.json` when the
+package was built. A ready asset carries those verified `bytes` with the published `size` and
+`sha256`; its Bun-compatible plugin integrates the same bytes with the same lazy native loader.
+Each call reads and hashes the selected addons, so call it once per build and reuse the result.
 The leaf is evolving. It requires no optional peer or Bun ambient declarations for Node imports.
 It must run unbundled from its installed package, never from an application's runtime artifact.
-This contract is available from 0.104.1; versions 0.103.13–0.104.0 use the complete-output recipe
-in the previous section.
 
 ```ts
 import { createNativePackaging } from 'stitchkit/files/packaging'
-import { createHash } from 'node:crypto'
-import { copyFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 const native = createNativePackaging({
@@ -309,14 +423,11 @@ const result = await Bun.build({
   plugins: [native.plugin],
 })
 if (!result.success) throw new AggregateError(result.logs, 'Build failed')
-// Preserve every result.outputs file under dist, then add the selected companion.
+// Preserve every result.outputs file under dist, then write the verified companion bytes.
 for (const asset of native.assets) {
-  const bytes = readFileSync(asset.sourcePath)
-  if (createHash('sha256').update(bytes).digest('hex') !== asset.sha256)
-    throw new Error('Native asset changed during build')
   const destination = join('dist', asset.outputPath)
   mkdirSync(dirname(destination), { recursive: true })
-  copyFileSync(asset.sourcePath, destination)
+  writeFileSync(destination, asset.bytes)
 }
 ```
 
@@ -325,12 +436,16 @@ absolute paths, traversal or overlapping file/directory paths. `entryPath` is fi
 Bun naming templates such as `[dir]` or `[name]`. Companion JS builds require one entry, no splitting,
 and `naming.entry` exactly matching `entryPath`; the plugin rejects a mismatching layout.
 Choose any application layout; the framework does not prescribe an app directory or installer.
-Keep every bundler output, then verify copied addon bytes against the original SHA256.
-Archive the complete output directory with an integrity manifest, unpack to a clean directory,
-verify the same hashes there, and run offline without the build tree or `node_modules`.
-A digest provides integrity, not authenticity: signature and trust policy remain application-owned.
+Keep every bundler output and write `asset.bytes`; never read the addon from `node_modules` a
+second time. An installed addon whose size or SHA256 differs from the published manifest refuses
+with `mismatch` / `NATIVE_ASSET_DIGEST_MISMATCH`, so a file substituted after installation never
+reaches an artifact. Archive the complete output directory with an integrity manifest that records
+`asset.sha256`, unpack to a clean directory, verify the same hashes there, and run offline without
+the build tree or `node_modules`. The published digest ties the bytes to the package Stitchkit
+built; the package itself is only as trusted as its tarball (the lockfile integrity of the install).
+Signature and trust policy remain application-owned.
 
-From 0.104.2, one JS artifact can run on both Darwin architectures; change only the packaging inputs:
+One JS artifact can run on both Darwin architectures; change only the packaging inputs:
 
 ```ts
 const native = createNativePackaging({
@@ -340,10 +455,10 @@ const native = createNativePackaging({
 })
 ```
 
-Use the same single plugin and copy loop above. A single-target loader deliberately refuses the
+Use the same single plugin and write loop above. A single-target loader deliberately refuses the
 other architecture; two competing plugins cannot produce a universal loader. The array form
 requires exactly one distinct output path per declared target. A ready result carries the target
-array and both original asset hashes; `NativePackagingOptions<true>` /
+array and both verified assets with their published digests; `NativePackagingOptions<true>` /
 `NativePackagingResult<true>` describe this form when explicitly annotating variables.
 The loader selects only `process.arch`: a missing or wrong-architecture selected addon refuses,
 even when the other valid addon is present. Linux runtime imports remain lazy and use Linux
@@ -352,17 +467,36 @@ Darwin arm64 and x64 machines, with both companions preserved through archive de
 Build-machine architecture and cross-build success cannot establish universal native support.
 
 For a standalone executable use `delivery: 'embedded'` and the same plugin in `Bun.build`
-with `compile: { outfile: ... }`. Bun embeds the selected addon; `assets` identifies its
-original bytes for qualification, not a companion that must be installed beside the executable.
+with `compile: { outfile: ... }`. Bun embeds the selected addon from the verified bytes the
+plugin holds, not from a second read of the file; `assets` identifies those bytes and their
+published digest for qualification, not a companion that must be installed beside the executable.
 Cross-builds must select the requested architecture explicitly; the artifact must run on that target.
 The installed package must contain that target's addon. No automatic fallback/downgrade occurs.
 
-The API returns `unsupported` / `NATIVE_TARGET_UNSUPPORTED` for non-Darwin or unsupported
-architectures, and `missing` / `NATIVE_ASSET_MISSING` for a missing addon. Portable Linux libraries
-use their normal build, without a Darwin plugin; merely importing the build leaf loads no addon.
-Malformed inputs, unsupported metadata versions and other IO errors throw before packaging.
-Runtime missing/corrupt companions preserve the native `unavailable` result and safe stage/code
-from the existing observer; they never certify a dead owner. Preserve the raw cause internally.
+`platform` is the closed set of platforms with native addons, today `'darwin'`: another name is a
+type error and a schema refusal that throws, so pass the literal (or narrow `process.platform`
+with `=== 'darwin'`) rather than a free string. The API returns `unsupported` /
+`NATIVE_TARGET_UNSUPPORTED` for an unsupported architecture, `missing` / `NATIVE_ASSET_MISSING` for
+an addon the package does not publish or whose file is gone, and `mismatch` /
+`NATIVE_ASSET_DIGEST_MISMATCH` for an addon whose bytes differ from the published size or SHA256.
+A `mismatch` names the first differing `architecture` and carries `expected` (the published
+`{ size, sha256 }`) and `actual` (the installed file's size and the SHA256 of the bytes read), so
+a build log can tell a truncated copy from a substituted one:
+
+```ts
+if (native.state === 'mismatch')
+  throw new Error(
+    `${native.architecture} addon: expected ${native.expected.size} bytes ` +
+      `${native.expected.sha256}, found ${native.actual.size} bytes ${native.actual.sha256}`,
+  )
+```
+
+Portable libraries
+and Linux builds use their normal build, without a Darwin plugin; merely importing the build leaf
+loads no addon.
+Malformed inputs, a manifest whose `formatVersion` is not 2 and other IO errors throw before packaging.
+A missing or corrupt companion at runtime yields the native `unavailable` result with the safe
+stage and code from the observer; it never certifies a dead owner. Preserve the raw cause internally.
 The plugin does not parse consumer JS or establish a second runtime native implementation.
 
 ## Qualification boundaries
@@ -381,6 +515,10 @@ the qualification for native Darwin behavior.
 
 Local filesystem tests do not attest delayed NFS visibility, shared-volume microVM or gVisor
 ownership, actual PGID reuse, power-loss durability or macOS full-sync behavior. Those
-require their actual topology or failure environment. The default ownerless grace remains
-5000 ms; stricter callers can retain `ownerlessGraceMs: null`. No age-only observation
-proves a partially published owner's process dead.
+require their actual topology or failure environment. No age-only observation proves a
+process dead; the lock's owner record exists before its name does.
+
+A sandbox admission slot is released once a direct command's pipes have closed and its owner has settled.
+A `COMMAND_CLEANUP` outcome means the death of its group was not proven, so the slot stays
+occupied, `stop` keeps rejecting with the cleanup error, and the sandbox session is recreated to
+recover.

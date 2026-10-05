@@ -1,50 +1,45 @@
 ---
-title: "ADR 0222: Кандидат релиза платит за доказательство один раз"
-description: "Полный exact-SHA CI разрешает публикацию; локальный кандидат проходит fast gate, а полный локальный результат отдельно подтверждает fast subset."
+title: "ADR 0222: A release candidate pays for evidence once"
+description: "Full exact-SHA CI authorises publication; the local candidate passes the fast gate, and a full local result separately confirms the fast subset."
 type: decision
 status: active
 created: 2026-10-01 15:43 +07:00
 updated: 2026-10-01 15:43 +07:00
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-01 15:43 +07:00
 ---
 
-# ADR 0222 — Кандидат релиза платит за доказательство один раз
+# ADR 0222 — A release candidate pays for evidence once
 
-## Решение
+## Decision
 
-Кандидат отправляется в `release/X.Y.Z` после metadata preflight и fast gate.
-Полный набор selected CI lanes проверяет точный SHA до fast-forward master и tag.
-Полный portable local gate остаётся диагностическим инструментом и защищает
-непроверенный прямой release push в master.
+The candidate is pushed to `release/X.Y.Z` after the metadata preflight and the
+fast gate. The full set of selected CI lanes checks the exact SHA before the
+fast-forward of master and the tag. The full portable local gate stays a diagnostic
+tool and protects an unverified direct release push to master.
 
-Зелёный полный или выбранный release gate сохраняет отдельную fast-attestation,
-только если выполнил каждый fast step, включая frozen-lockfile install. Ключ fast
-содержит tree/runtime; ключ heavy evidence также содержит PostgreSQL/browser
-environment. Смена окружения не отменяет доказательство lint/types/tests, но
-никогда не позволяет переиспользовать heavy evidence другого окружения.
+A green full or selected release gate stores a separate fast attestation, but only
+if it ran every fast step, including the frozen-lockfile install. The fast key
+contains tree/runtime; the heavy-evidence key also contains the PostgreSQL/browser
+environment. A change of environment does not cancel the lint/types/tests evidence,
+but never allows heavy evidence from another environment to be reused.
 
-Core publication artifact собирается один раз через существующий `prepack`.
-Все проверки сборки и реальная Darwin qualification сохраняются. Tag workflow
-публикует immutable artifact успешного exact-SHA push CI.
+The core publication artifact is built once through the existing `prepack`.
+All build checks and the real Darwin qualification stay. The tag workflow publishes
+the immutable artifact of the successful exact-SHA push CI.
 
-## Почему
+## Why
 
-Последовательный полный локальный прогон перед тем же полным CI повторяет
-portable evidence. Release branch допускает исправление красного кандидата
-до публикации; отдельный локальный heavy прогон не меняет publication authority.
-Неполный fast subset и несовпадающие fingerprints не являются доказательством
-для пропуска fast gate.
+A sequential full local run before the same full CI repeats the portable evidence.
+The release branch allows a red candidate to be fixed before publication; a
+separate local heavy run does not change the publication authority. An incomplete
+fast subset and mismatched fingerprints are not evidence for skipping the fast gate.
 
-## Границы
+## Limits
 
-Privacy scan выполняется при каждом push. Красный CI, другой SHA, отсутствующий
-artifact и несовпадающие опубликованные bytes запрещают подтверждение релиза.
-Полный local gate доступен явно; CI coverage, OIDC и protected publication
-environment не ослабляются. Время upload acceptance и реальной npm availability
-измеряется отдельно; сокращение опроса не ускоряет обработку реестром.
+The privacy scan runs on every push. A red CI, a different SHA, a missing artifact
+and mismatched published bytes forbid confirming the release. The full local gate
+is available explicitly; CI coverage, OIDC and the protected publication
+environment are not weakened. The time of upload acceptance and of real npm
+availability is measured separately; shorter polling does not speed up the
+registry's processing.
 
 Serves P.

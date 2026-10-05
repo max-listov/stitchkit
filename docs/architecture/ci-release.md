@@ -5,15 +5,6 @@ type: architecture
 status: active
 created: 2026-08-14
 updated: 2026-10-04 09:21 +07:00
-participants:
-  - role: implemented
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-03 13:36 +07:00
-  - role: implemented
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-04 09:21 +07:00
 ---
 
 # CI and exact-SHA release pipeline
@@ -25,8 +16,10 @@ SHA. They never rebuild publication input.
 ## One release train
 
 `release-train.json` is the source of truth for a release commit. It lists one or more package
-targets and their exact versions. A release commit uses the subject `release(train): …`; every tag
-selected by the manifest points at that same branch head and consumes the same CI run:
+targets and their exact versions. A release commit has the subject `release(train): … in X.Y.Z` and holds release metadata only
+(versions, changelogs, the train, the lockfile); every tag selected by the manifest points at the
+branch head and consumes the same CI run. The head is that commit, or fix commits with their own
+types stacked on it ([ADR 0237](../decisions/0237-release-commit-holds-metadata-only.md)):
 
 ```json
 {
@@ -49,17 +42,19 @@ incompatible, so the train is refused and the starter goes in the next one, afte
 `bun run update:starter`. The check reads `release-train.json` and the template manifest, never the
 registry, so it returns the same verdict on every attempt at one commit.
 `bun run release:train` creates and pushes all selected tags after the exact-SHA push CI is green.
-Every selected package is validated before the first tag; both train and single-package
-commands require remote green push CI for the full SHA before any tag mutation. API refusal
-is a refusal, and local memo evidence is insufficient. Single-package legacy commands remain valid, but a coordinated release never needs bookkeeping
-commits between tags.
+Every selected package is validated before the first tag, and an API refusal is a refusal: local
+memo evidence never replaces the remote answer. The single entry point is the train; a coordinated
+release needs no bookkeeping commits between tags. The steps are on one page:
+[how a release happens](./release-process.md#how-a-release-happens).
 
 ## Target-aware CI graph
 
 `scripts/ci-plan.ts` maps the union of release targets, changed package paths and shared inputs to named evidence.
 The complete push range is checked; a new branch selects from the complete tree. Publication
-remains limited to the train. Shared scripts, workflows, hooks and root dependency inputs
-select every package, while train metadata alone preserves package selection.
+remains limited to the train. A release commit, a schedule run or a dispatch run gets the full
+plan; a repeated push of an SHA that already has a green push run selects nothing, so the master
+fast-forward of a released candidate is an empty run. Path narrowing applies to ordinary pushes
+only, and shared scripts, workflows, hooks and root dependency inputs select every package.
 Every job starts after the small planner, not after another platform:
 
 | Job | Runs when | Guarantee |
@@ -94,9 +89,9 @@ candidates on `release/X.Y.Z` use structural lockfile/lint/types checks; complet
 CI, including all unit tests, authorises publication. Ordinary pushes use `verify:fast`.
 Only a direct unproven master release runs `bun scripts/verify.ts --release --if-changed` locally.
 Its structural checks include the frozen-lockfile install, then build and bounded heavy lanes.
-The green memo keys heavy evidence by tree, runtime and lane environment. A successful full or
-release gate separately certifies its complete fast subset by tree/runtime; any source edit
-invalidates both. Core artifact assembly delegates the single build to package prepack.
+The local green memo covers the fast subset only, keyed by tree and toolchain; any source edit
+invalidates it, and heavy lanes always run or are left to CI. Core artifact assembly delegates the
+single build to package prepack.
 
 Template unit tests are not run again at root after the generated starter lane has executed the
 same tests from the packed scaffold. Authored template type checks remain separate because they

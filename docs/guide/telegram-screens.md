@@ -204,8 +204,8 @@ the press was forged (a client can send any bytes) and goes to `onStale`.
 
 A press on a message the record does not know — an older menu higher up — is
 answered in place: a one-message view takes that message over, a longer view is
-sent below it and the pressed message is deleted. Either way the previously
-recorded view is removed: one live menu per chat.
+sent below it and the pressed message is deleted. Either way the recorded
+view is removed: one live menu per chat.
 
 For a message the screens do not own — a notification from the backend —
 `screens.button(link('🔑 Refresh token', refreshToken, { botId }))` makes a

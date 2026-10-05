@@ -4,7 +4,7 @@ description: Current schema, admission, ordering, file ownership, rotation, boun
 type: architecture
 status: active
 created: 2026-08-30
-updated: 2026-09-30 17:41 +07:00
+updated: 2026-10-05 20:52 +07:00
 ---
 
 # Bounded diagnostic journal architecture
@@ -74,9 +74,8 @@ rotated before the next append. Unexpected unrelated files are untouched.
 Rotation happens before a frame that would exceed `maxFileBytes`. A frame larger than one file is
 refused before admission. A non-empty startup tail without a newline is rotated intact,
 `partialTails` increments and the fresh process epoch begins in a new file. The usual finite
-retention policy still evicts the oldest generation when its slots are full. With `maxFiles: 1`,
-startup instead throws `DiagnosticJournalRecoveryError`, without deleting active or archived
-evidence, and releases the lock: preserving the torn file requires at least two slots.
+retention policy still evicts the oldest generation when its slots are full. With `maxFiles: 1`
+there is no slot to rotate the torn file into; it is a startup refusal (below).
 
 After acquiring the lock and rotating a torn active tail, startup uses the shared reader to
 inspect all retained generations and the active file. It validates the version-1 frame and JSON
@@ -88,6 +87,52 @@ start reconstruct the diagnosis. It does not recurse through this journal's writ
 The `.lock` is exclusive ownership, not a crash lease. Abrupt death can leave it behind. The
 default policy refuses it; `reclaim-stale` requires machine/process liveness evidence, as described
 in the guide. Inspection and recovery failures close the file and release an acquired lock.
+
+## Startup refusals and quarantine
+
+Three conditions mean opening cannot keep a file in place: a torn active file with `maxFiles: 1`
+(`torn-without-retention-slot`), a generation name that is a directory, link or other non-file
+(`not-a-regular-file`), and a retained or active file the reader cannot read to its end
+(`unreadable`). `onStartupRefusal` decides what happens:
+
+| Policy | Effect |
+| --- | --- |
+| `quarantine` (default) | the file is renamed to `<file>.quarantined-<epoch>` beside it, the journal starts, `recovery.quarantined` names it with its reason (and `code` for `unreadable`), and every later open names it again until it is removed |
+| `fail` | `DiagnosticJournalRecoveryError` with `reason`, `file` and, for a torn single slot, its `recovery` inspection; nothing moves, the lock is released |
+
+A diagnostic journal takes the default: one damaged archive must not keep the application that
+depends on it from starting, and the move removes no bytes. A journal that is a source of truth
+takes `fail`, because writing past damage there is worse than not starting. If the rename itself
+fails, the refusal stands under either policy, with `quarantineFailed: true` and both errors in the
+cause.
+
+The `<epoch>` is the opening process's `getStatus().epoch`, so a quarantined name says which run
+moved it and never collides with another. The name is outside the generation pattern: retention
+never reads, rotates or deletes it, its bytes are outside the `maxFiles × maxFileBytes` bound, and
+removing it is the operator's call. Every open lists every `<file>.quarantined-*` and
+`<file>.<n>.quarantined-*` beside the journal in `recovery.quarantined`, from the same directory
+listing that finds the generations: the files this open moved first, with their `reason` (and
+`code`), then the ones earlier opens left, by name and without a reason — their name carries the
+epoch of the open that moved them and whose status gave it. The list holds at most 32 entries;
+`quarantinedUnlisted` counts the rest, so a directory with thousands of them cannot grow the
+status. A file stays listed until the operator removes it, so quarantined files cannot pile up
+unseen.
+
+Refusals that are not about retained evidence still throw: a held lock, a path that is not
+normalized and absolute, an active path that is not a regular file, a directory that cannot be
+listed. A journal opened over them would not write.
+
+There is no journal-level `degraded` state. The kernel degrades only a resource declared
+`required: false`, and a required resource cannot depend on an optional one; a quarantining
+journal writes, so its resource is healthy and dependants read `journal.getStatus().recovery` from
+the value they hold. → [ADR 0240](../decisions/0240-a-diagnostic-journal-quarantines-what-it-cannot-keep.md).
+
+## Stability of the recovery status
+
+`DiagnosticJournalRecoveryStatusSchema` is part of `stitchkit/application` and shares its maturity
+(evolving). Consumers embed it in their own protocols, and it is `.strict()`: a reader parsing with
+an older copy refuses a key it does not know. Every change to its shape, an added optional field
+included, is a `⚠️ Breaking changes` item for `stitchkit/application` in the changelog.
 
 ## Bounded snapshot reader
 

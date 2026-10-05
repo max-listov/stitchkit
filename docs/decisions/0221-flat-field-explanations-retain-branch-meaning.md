@@ -5,11 +5,6 @@ type: decision
 status: active
 created: 2026-10-01 10:30 +07:00
 updated: 2026-10-01 10:30 +07:00
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-01 10:30 +07:00
 ---
 
 # ADR 0221 — Flat field explanations retain branch meaning

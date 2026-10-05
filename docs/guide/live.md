@@ -418,10 +418,10 @@ Every refusal answers the same bare 403. A response that said *which* rule
 refused would let a caller learn your trusted list one guess at a time; the
 reason goes to `onRefused` and the log, where you are.
 
-### One thing that changed
+### Group hooks
 
-A route group can no longer declare `onRequest`. It never worked — the framework
-dispatched only the server-level hook — and it could not be made to work without
-matching group prefixes a second time, ahead of the real router. Use the
+A route group cannot declare `onRequest`: the framework dispatches only the
+server-level hook, and a group hook would need group prefixes matched a second
+time, ahead of the real router. Use the
 server-level `hooks.onRequest` to refuse before dispatch, or the group's
 `authorize` to gate once the endpoint is known.

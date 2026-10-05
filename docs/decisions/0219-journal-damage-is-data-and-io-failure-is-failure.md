@@ -1,49 +1,47 @@
 ---
-title: "ADR 0219: Повреждение journal — данные, отказ IO — ошибка"
-description: "Общий bounded reader сохраняет валидные кадры и явно выдаёт аномалии; startup writer восстанавливает диагностику из сохранённых поколений."
+title: "ADR 0219: Journal damage is data, an IO failure is an error"
+description: "One shared bounded reader keeps valid frames and reports anomalies explicitly; the startup writer restores diagnostics from the saved generations."
 status: active
 created: 2026-09-30 17:41 +07:00
 updated: 2026-09-30 17:41 +07:00
 type: decision
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    at: 2026-09-30 17:41 +07:00
 ---
 
-# ADR 0219 — Повреждение journal — данные, отказ IO — ошибка
+# ADR 0219 — Journal damage is data, an IO failure is an error
 
-## Контекст
+## Context
 
-Writer уже ротирует незавершённый active-файл целиком. Но сохранённый NUL-хвост
-в архиве ломает consumer, который вызывает `JSON.parse` на каждой строке.
-Счётчик `partialTails` описывает только текущий запуск и не объясняет архивные
-повреждения. Причина появления NUL неизвестна; `flush()` не обещает `fsync`.
+The writer already rotates an unfinished active file as a whole. But a NUL tail
+kept in an archive breaks a consumer that calls `JSON.parse` on every line.
+The `partialTails` counter describes only the current run and does not explain
+archived damage. The cause of the NUL is unknown; `flush()` does not promise `fsync`.
 
-## Решение
+## Decision
 
-Один `readDiagnosticJournal` в filesystem leaf читает конечные snapshots с
-bounded line buffer. Общая схема кадра и schema-backed результаты остаются
-в pure application. Валидные frames проходят owner `eventSchema`; повреждённые
-строки дают отдельные anomalies с причиной, файлом, byte offset/line и объёмом
-пропуска. Ошибки доступа, небезопасный тип файла и truncation бросают исключение.
-Валидный кадр без LF остаётся доступен вместе с предупреждением.
+One `readDiagnosticJournal` in the filesystem leaf reads finite snapshots with a
+bounded line buffer. The shared frame schema and schema-backed results stay in the
+pure application part. Valid frames pass the owner's `eventSchema`; damaged lines
+produce separate anomalies with the cause, file, byte offset/line and the size of
+the skipped part. Access errors, an unsafe file type and truncation throw.
+A valid frame without a trailing LF stays available together with a warning.
 
-Startup writer использует тот же reader под эксклюзивным lock. Проверка
-исторических событий ограничивается JSON/frame-контрактом. Recovery status
-хранит counts и first/last anomaly; повторный старт восстанавливает его из
-сохранённых файлов. Повреждённый active ротируется целиком с обычной finite
-retention. `maxFiles: 1` отказывает до удаления данных и освобождает lock.
+The startup writer uses the same reader under an exclusive lock. The check of
+historical events is limited to the JSON/frame contract. The recovery status keeps
+counts and the first/last anomaly; a repeated start restores it from the saved
+files. A damaged active file is rotated as a whole with the usual finite retention.
+`maxFiles: 1` refuses before any data is deleted and releases the lock
+(amended by ADR 0240: by default the journal quarantines such a file and starts;
+the refusal is the `onStartupRefusal: 'fail'` policy).
 
-## Альтернативы и проверка
+## Alternatives and verification
 
-Молчаливое игнорирование invalid rows скрывает потерю доказательств. Отдельные
-consumer parsers раздваивают правила. Обрезка хвоста уничтожает исходные байты;
-новый quarantine/sidecar registry добавляет собственный lifecycle и хранение.
-Общий reader и восстановимая диагностика дают проверяемый результат без них.
+Silently ignoring invalid rows hides the loss of evidence. Separate consumer
+parsers split the rules in two. Truncating the tail destroys the original bytes;
+a new quarantine/sidecar registry adds its own lifecycle and storage. The shared
+reader and restorable diagnostics give a verifiable result without them.
 
-Real-file tests проверяют NUL в active/.1/.7, restart/append, сохранность байтов,
-oversized/interior rows, torn UTF-8/JSON, schema refusals, настоящий EACCES,
-symlink, truncation и cleanup при отмене. Recovery не становится durable replay
-и не отправляется рекурсивно в повреждённый writer. Решение служит I3, I8, I10 и I13.
+Real-file tests check NUL in active/.1/.7, restart/append, byte preservation,
+oversized/interior rows, torn UTF-8/JSON, schema refusals, a real EACCES, a
+symlink, truncation and cleanup on cancellation. Recovery does not become durable
+replay and is not sent recursively into a damaged writer. The decision serves I3,
+I8, I10 and I13.

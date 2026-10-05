@@ -289,6 +289,32 @@ Without an `observability` the work still runs inside a context, so trace ids,
 decision from having a context. `traceparent` continues the trace of whatever
 scheduled the work, instead of starting an unrelated one.
 
+### CPU is not attributed to work
+
+Request rows, `runUnitOfWork` rows and schedule status carry durations and
+counts, never CPU. One JavaScript thread interleaves every operation, so a
+`process.cpuUsage()` delta across an operation's start and end measures
+everything the process ran in that time — a long wait reads as the CPU of the
+timers that fired during it. The correct basis is the synchronous segment, and
+Bun gives no callback when a continuation is entered or left
+([ADR 0244](../decisions/0244-cpu-is-not-attributed-to-operations.md)).
+
+Process CPU per window is the number you can observe:
+
+```ts
+let last = process.cpuUsage()
+setInterval(() => {
+  const now = process.cpuUsage() // cumulative { user, system } in µs
+  logger.info('cpu', { cpuUserUs: now.user - last.user, cpuSystemUs: now.system - last.system })
+  last = now
+}, 60_000)
+```
+
+If you build attribution yourself: credit an operation only the CPU of the
+synchronous segments it ran, never its waiting time; put everything outside those
+segments into `unattributed`; never credit a window to the one operation in
+flight — that operation is usually the one waiting.
+
 ### Write the calls that changed something
 
 `auditChanges` is the filter most projects end up writing, shipped so they do not
@@ -363,8 +389,8 @@ needed:
 createServer({ services, logging, observability: observability.request })
 ```
 
-`wrapInRequestContext` remains available for a custom fetch pipeline that does
-not use `createHandler`; it is no longer part of built-in HTTP audit wiring:
+`wrapInRequestContext` serves a custom fetch pipeline that does not use
+`createHandler`; built-in HTTP audit wiring does not use it:
 
 ```ts
 Bun.serve({ fetch: wrapInRequestContext(customFetch) })
@@ -701,9 +727,9 @@ which the built-in **tool** row does not read: a tool event takes
 `errorCode` / `errorMessage` / `errorDetail` from the `ToolResult`, and only
 identity and `dimensions` from the context. Calling it in `onToolError` would
 leave the tool row exactly as scrubbed as before. It is right for the **HTTP**
-path, where the request *is* the record. (Since ADR 0045 a tool call runs in its
-own context, so it can no longer write into the enclosing `/mcp` request's row
-either — the call is simply not where that helper belongs.)
+path, where the request *is* the record. (A tool call runs in its own context, ADR 0045,
+so it cannot write into the enclosing `/mcp` request's row either — the call is
+simply not where that helper belongs.)
 
 ### One row that names the cause
 

@@ -62,6 +62,10 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 - Pre-1.0 a break bumps the **minor**; everything non-breaking, new API included, is a **patch**.
   → [release-process](./docs/architecture/release-process.md#which-number-moves)
 - **NEVER** add deprecation shims, compat wrappers or aliases — one clean path. → PRINCIPLES I8
+- Before 1.0 do **not** keep an unclear call site to spare consumers a migration: when a change removes a
+  concrete defect (an unreadable positional list or boolean pair, two names for one concept, a type that
+  does not infer, a refusal only readable as text), make the clean break with a mechanical migration.
+  Read the call site aloud; shape rules in [api-shape](./docs/architecture/api-shape.md). → ADR 0238
 - Write the migration in `docs/guide/upgrading.md` with a `**Who must act:**` line; a scaffolder's
   operator steps go to `packages/create-stitchkit/UPGRADING.md`. `scripts/release-plan.ts` refuses a
   breaking section without its promoted `## Released migration: X.Y.Z`. → [release-process](./docs/architecture/release-process.md#breaking-changes-and-migration)
@@ -71,10 +75,13 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 ## When you write docs and records
 
 - A new architectural decision → a new ADR in `docs/decisions/` **and** a row in its `README.md` naming
-  the invariant (or `P`, or superseded; `scripts/decisions-index.test.ts`). Never edit an existing ADR.
+  the invariant (or `P`, or superseded; `scripts/decisions-index.test.ts`). Never change an existing ADR's decision — supersede or
+  amend it; fixing its language, metadata or links, or pointing to its successor, is allowed.
   → [docs/README](./docs/README.md)
 - Write an ADR for any lesson a future reader would otherwise relearn the expensive way, a practice or
   incident included; a bug fix or small addition is a changelog line. → [engineering-rules](./docs/architecture/engineering-rules.md#the-bar-for-an-adr-is-lower-than-architecture)
+- Write public docs in English, without agent metadata (`participants`, `harness`, `model`).
+  → `scripts/publication-privacy.ts`
 - A new idea or a bug → an issue; this repository tracks decisions, not tasks. → [docs/README](./docs/README.md)
 - **NEVER** name a private or consuming project in committed docs, ADRs or the CHANGELOG — write "a
   consuming project". → ADR 0164
@@ -86,11 +93,13 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 
 - Write plain commit messages (`fix: …`) — **no `Co-Authored-By`, AI or tool-signature footer**; real
   newlines in bodies (`commit-msg` refuses a literal `\n`). → [CONTRIBUTING](./CONTRIBUTING.md#git-hooks)
-- A release commit is `release(<scope>): … in X.Y.Z`, scope `train`, `core`, `starter` or `tui`; the old
-  `release: 0.4.0` form no longer passes. → [release-process](./docs/architecture/release-process.md#order-inside-a-release)
-- Push a release candidate to `release/X.Y.Z`: `pre-push` runs the structural candidate gate; the full selected
-  CI must pass for its exact SHA before master/tag. A direct unproven master release requires
-  `bun scripts/verify.ts --release`. → [gates](./docs/architecture/gates.md)
+- Commit every feature and fix on its own (`feat(scope): …`, `fix(scope): …`) with a body; the one
+  `release(train): <summary> in X.Y.Z` commit holds release metadata only and is never empty.
+  → [release-process](./docs/architecture/release-process.md#order-inside-a-release), ADR 0237
+- Push a release candidate to `release/X.Y.Z`: `pre-push` runs the structural candidate gate plus the tests that read
+  release metadata (`test:release-metadata`); the full selected CI must pass for its exact SHA before
+  master/tag. A direct unproven master release requires `bun scripts/verify.ts --release`.
+  → [gates](./docs/architecture/gates.md), ADR 0247
 
 ### What runs where
 
@@ -100,7 +109,7 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
   (`scripts/gate-parity.test.ts`). → [gates](./docs/architecture/gates.md#verify-is-every-portable-gate-ci-runs), ADR 0135
 - Never memoise the publication-privacy scan; it runs on every push. → ADR 0164
 - Check release metadata before any machinery. → [gates](./docs/architecture/gates.md#metadata-before-machinery)
-- Key the green memo (`scripts/gate-memo.ts`) on what was checked — tree, toolchain, lane environment —
+- Key the green memo (`scripts/gate-memo.ts`) on what was checked — tree and toolchain, the fast subset only —
   never a commit, branch or clock. → [gates](./docs/architecture/gates.md#the-green-memo)
 - Only a green exact-SHA **push** run of `ci.yml` authorises publication. → [ci-release](./docs/architecture/ci-release.md)
 
@@ -111,10 +120,11 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 - Run `bun run release:check` before any gate. → [release-process](./docs/architecture/release-process.md#order-inside-a-release)
 - Rolling the core changelog moves the maturity-table cadence sentences: update the table and
   `scripts/surface-cadence.test.ts` in the same commit. → [release-process](./docs/architecture/release-process.md#two-packages-one-train)
-- Make the `release(train)` commit LAST: push it to `release/X.Y.Z`, wait for its exact-SHA push run,
-  fast-forward master, `bun run release:train`. Tag the head. → [release-process](./docs/architecture/release-process.md#order-inside-a-release)
-- Never repair a red, pushed release commit by tagging the fix — make a **new** release commit.
-  → [release-process](./docs/architecture/release-process.md#order-inside-a-release)
+- Make the metadata-only `release(train)` commit LAST: push it to `release/X.Y.Z`, wait for its exact-SHA
+  push run, fast-forward master, `bun run release:train`. The five steps: [how a release happens](./docs/architecture/release-process.md#how-a-release-happens).
+- Repair a red release commit with a commit of its own type on top; the tagged head still needs its own
+  green push run. `release:check` refuses a package identical to its previous release and a breaking
+  note in a patch. → [release-process](./docs/architecture/release-process.md#order-inside-a-release)
 - Query CI with the **full** SHA, and run any wait query once on a known answer before polling it.
   → [release-process](./docs/architecture/release-process.md#waiting-for-the-green-run--the-query-has-to-be-able-to-answer)
 - Ship the starter in a LATER train than the framework it tracks; its lockfile resolves the newest

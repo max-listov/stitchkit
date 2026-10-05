@@ -734,15 +734,17 @@ For example, an optional object `value` in `single` and a required array `value`
 in `group` advertise:
 
 ```text
-When kind = group: Two to ten references.
 When kind = single: One reference.
-Available if kind = group | single. Required if kind = group
+When kind = group: Two to ten references.
+Available if kind = single | group. Required if kind = group
 ```
 
 A third branch without `value` is absent from those labels. The object and array
 retain their separate shapes; the array's minimum length does not apply to the object.
-Discriminator values, branch explanation labels and joined property order are
-deterministic under branch reordering. → ADR [0221](../decisions/0221-flat-field-explanations-retain-branch-meaning.md).
+Discriminator values, branch explanation labels, enum values and joined
+properties keep the order of their first appearance across the variants, so the
+order you declare is the order the model reads. Alternatives of different kinds
+keep one canonical order, so one declaration always yields one document. → ADR [0221](../decisions/0221-flat-field-explanations-retain-branch-meaning.md).
 
 **A field several variants declare keeps its type.** Flattening puts every
 variant's fields side by side, so a key two variants share has to be advertised
@@ -991,6 +993,18 @@ origin or provider ignoring cancellation may continue after the local wait stops
 An explicit `AppError.retryable` boolean also survives this remote hop. `false` on502 and
 `true` on409 remain the application's recommendation through HTTP, CLI, MCP and AI tools.
 Absent metadata keeps the previous defaults and does not alter HTTP transport retries.
+
+A remote failure that carries no stitchkit error envelope — an HTML `503` from a proxy
+during a deploy, a `429` from a rate limiter, a `404` page, a refused connection — keeps
+what the caller can act on and drops what it must not see. A response with a status
+becomes `HTTP_ERROR` with that status and a fixed message; a failure with no response
+becomes `CONNECTION_REQUEST_FAILED` (`502`). Neither carries `details`: the upstream
+body, URL and credentials stay in the raw cause that `onToolError` and `AgentToolError.cause`
+expose in-process. One rule decides `retryable` for every origin: the declared value wins,
+otherwise the status decides (`408`, `429`, `502`, `503`, `504` are retryable, as for any
+local tool). A call the caller cancelled (`REQUEST_ABORTED`) declares `retryable: false`;
+a deadline the remote client hit (`REQUEST_TIMEOUT`, `408`) follows the status like a
+`408` from a local handler.
 
 ## Structured output
 

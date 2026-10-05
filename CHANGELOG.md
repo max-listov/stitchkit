@@ -15,7 +15,364 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
-## [0.104.2] - 2026-10-04
+### ⚠️ Breaking changes
+
+**Who must act:** consumers who bundle `stitchkit/files`, `stitchkit/process` or contained-file
+tools for Darwin and relied on the bundler embedding or copying the native addon, and callers
+of `withExclusiveLock` that depended on age-based reclaim of an empty lock file; code that names
+a removed runtime-tool type, imports `stitchkit/agent-runtime/harness-tools` or compares agent
+control error codes; callers that send a JSON array as text to a string-or-array tool field;
+code that constructs an `AppError` or an `ApiError` with more than its code; build scripts
+that read `sourcePath` from a `createNativePackaging` asset, pass it a `platform` other than
+`'darwin'` or parse `native-assets.json`; and
+operators of a diagnostic journal that must not start over damaged retained files, code that
+constructs or reads `DiagnosticJournalRecoveryError`, and protocols that embed
+`DiagnosticJournalRecoveryStatusSchema`; and callers of `runNativeCommand` that pass `killGraceMs`
+or rely on a helper in the command's process group outliving the command;
+and code that imports `publishCli` or its types from `stitchkit/cli`.
+
+- `stitchkit/cli` — **`publishCli` moves to the new evolving entrypoint `stitchkit/cli/publish`.**
+  `publishCli`, `CliPublicationOptions`, `CliPublicationPhase` and `CliPublicationResult` are no
+  longer exported from `stitchkit/cli`, with no re-export left behind. Publication is release
+  infrastructure whose limits, staging and recovery are still being found, and the stable CLI
+  could not hold its shape; the manifest, signatures, installer and updater it writes for stay in
+  `stitchkit/cli`, which remains stable. The call, its options and its result are unchanged.
+  `// before: import { publishCli, type CliPublicationOptions } from 'stitchkit/cli'` →
+  `// after: import { publishCli, type CliPublicationOptions } from 'stitchkit/cli/publish'`
+  **Who must act:** code that imports `publishCli` or a `CliPublication*` type from
+  `stitchkit/cli`. See [migration](docs/guide/upgrading.md#unreleased-migration-cli-publication-has-its-own-entrypoint).
+  → ADR 0245
+
+- `stitchkit/process` — **`killGraceMs` becomes the `stop` policy.** How a cancelled command
+  stops is one named object: `target` `'group'` (the signal goes to every member, as before) or
+  `'leader'` (cooperative cancellation: only the leader is signalled, its exit ends the grace and
+  whatever it left in the group gets KILL), `signal` (`SIGTERM` by default, or `SIGINT`, `SIGHUP`,
+  `SIGQUIT`, `SIGUSR1`, `SIGUSR2`), `graceMs` up to one hour (was 10 000 ms), and `killOn`, an
+  `AbortSignal` that ends any grace with KILL to the whole group. The output pipes stay open
+  through the grace and its output is dropped, so a leader writing while it shuts down does not
+  meet a broken pipe. The process surface ceiling grows by one name, `NativeCommandStopPolicy`.
+  `// before: runNativeCommand({ …, killGraceMs: 500 })` →
+  `// after: runNativeCommand({ …, stop: { target: 'group', graceMs: 500 } })`
+  **Who must act:** callers that pass `killGraceMs`. → ADR 0243
+
+- `stitchkit/process` — **a command's leftover group members are stopped after its leader
+  exits.** `runNativeCommand` takes `descendants: 'terminate-after-leader' | 'leave'`, and
+  omitting it means `'terminate-after-leader'`: once the leader has exited, whatever it left in
+  the command's process group is stopped by the `stop` policy before the pipes drain, so a
+  command no longer leaks its helpers or waits for one that holds its output pipe. A real daemon
+  leaves the group with `setsid` and is unaffected. `'leave'` keeps a helper that has to outlive
+  the command.
+  `// before: runNativeCommand({ …, timeoutMs })  (the leader's helpers kept running)` →
+  `// after: runNativeCommand({ …, timeoutMs, descendants: 'leave' })`
+  **Who must act:** callers whose command starts a helper in its own process group that must
+  keep running after the command returns. See
+  [migration](docs/guide/upgrading.md#unreleased-migration-a-command-stops-what-its-leader-left).
+  → ADR 0246
+
+- `stitchkit/server`, `stitchkit/files`, `stitchkit/process` — **bundles no longer emit Darwin
+  addons.** The packaged Darwin loader names its addon by a computed path, so a Bun bundle of
+  these entrypoints is one JS file with no `.node` output on every operating system, and
+  `bun build --outfile` works again for Linux server apps. An artifact that must carry the
+  Darwin addon is built with the `stitchkit/files/packaging` plugin; without it the bundle looks
+  for the addon beside the original package files and reports the backend `unavailable`
+  elsewhere, never a dead owner.
+  `// before: bun build src/native.ts --compile --outfile=dist/native  (addon embedded)` →
+  `// after: Bun.build({ …, plugins: [createNativePackaging({ platform: 'darwin', architecture: process.arch, delivery: 'embedded', entryPath, assetPath }).plugin] })`
+  **Who must act:** Darwin packagers of bundled or compiled artifacts using these entrypoints.
+  Linux and portable bundles need no change. See [migration](docs/guide/upgrading.md#released-migration-010313).
+  → ADR 0235
+- `stitchkit/files/packaging` — **`createNativePackaging` checks each addon against a digest the
+  package published, and returns the verified bytes.** `native-assets.json` is now written when
+  Stitchkit is built, at `formatVersion: 2`, with the `path`, `size` and `sha256` of every Darwin
+  addon present then; the reader refuses any other format version. Before, `sha256` was computed
+  from whatever file sat in `node_modules`, so an addon substituted after installation got its own
+  "original" digest. Each selected addon is now read once and compared by size and SHA256; a
+  difference returns `{ state: 'mismatch', code: 'NATIVE_ASSET_DIGEST_MISMATCH', architecture,
+  expected: { size, sha256 }, actual: { size, sha256 } }` for the first differing addon, and an
+  architecture the manifest does not list is `missing`. `platform` is the closed enum `'darwin'`:
+  another platform is a type error and a schema refusal that throws, no longer an `unsupported`
+  result, which now names only an unsupported architecture. A ready asset drops `sourcePath` and
+  carries `bytes` (the verified bytes) and the published `size` and `sha256`; embedded delivery
+  gives Bun those same bytes instead of reading the file again. Call it once per build and reuse
+  the result.
+  `// before: copyFileSync(asset.sourcePath, join(outdir, asset.outputPath))  (asset: { sourcePath, outputPath, sha256 })` →
+  `// after: writeFileSync(join(outdir, asset.outputPath), asset.bytes)  (asset: { outputPath, size, sha256, bytes })`
+  `// before: native-assets.json { formatVersion: 1, assets: { arm64: 'native/darwin-arm64.node' } }` →
+  `// after: native-assets.json { formatVersion: 2, assets: { arm64: { path, size, sha256 } } }`
+  `// before: createNativePackaging({ platform: target.platform, … })  (non-Darwin → 'unsupported')` →
+  `// after: if (target.platform === 'darwin') createNativePackaging({ platform: target.platform, … })`
+  **Who must act:** build scripts that read `asset.sourcePath`, re-hash the addon themselves,
+  switch over the refusal `code`/`state`, parse `native-assets.json`, or pass a `platform` other
+  than the literal `'darwin'`.
+  See [migration](docs/guide/upgrading.md#unreleased-migration-native-packaging-verifies-published-digests).
+  → ADR 0241
+- `stitchkit/files` — **`withExclusiveLock` publishes its lock with the owner already recorded,
+  and `ownerlessGraceMs` defaults to `null`.** The owner record is written to a temporary file
+  and hard-linked to the lock name, so the name never exists without an owner and a stalled
+  holder can no longer be displaced after the former 5 000 ms default. An empty lock file
+  left by an older writer is reclaimed by age only when asked for:
+  `// before: withExclusiveLock(path, run)  (an empty lock older than 5 s was taken)` →
+  `// after: withExclusiveLock(path, run, { ownerlessGraceMs: 5_000 })  (only for legacy empty files)`
+  The lock directory must support hard links, and a holder killed mid-publication leaves a
+  `.lock-*.tmp` sibling that the next reclaim removes.
+  **Who must act:** callers that relied on the age-based reclaim of an empty or unreadable lock
+  file, and locks on a filesystem without hard links; every other caller is unaffected.
+  See [migration](docs/guide/upgrading.md#unreleased-migration-exclusive-locks-publish-their-owner-first).
+  → ADR 0238
+- `stitchkit/tools/connections` — **a `timeoutMs` or `maxResponseBytes` that is not a positive
+  integer within range throws a `RangeError`** instead of falling back to the default. This
+  shipped in 0.104.0 without a breaking entry.
+  `// before: timeoutMs: 0  (the default applied silently)` →
+  `// after: timeoutMs: 0  (RangeError; omit the option to take the default)`
+  **Who must act:** callers that passed 0, a negative, a fractional or an oversized limit.
+  See [migration](docs/guide/upgrading.md#unreleased-migration-connection-limits-are-validated).
+- `stitchkit/testing` — **`serializeSurfaceValue` is removed.** It was a second name for the
+  package's one canonical serializer. `canonicalJson` from `stitchkit/primitives` is that
+  serializer, bounded and with a typed refusal:
+  `// before: serializeSurfaceValue(manifest)` →
+  `// after: canonicalJson(manifest, { maxBytes: 16 * 1024 * 1024 })`
+  **Who must act:** tests that call `serializeSurfaceValue`.
+  See [migration](docs/guide/upgrading.md#unreleased-migration-one-canonical-json-serializer).
+  → ADR 0199, ADR 0238
+- `stitchkit/agent-runtime` — **`canonicalAgentJson` follows the one admissibility table of
+  `canonicalJson`.** A value nested deeper than 100 levels is refused with a
+  `CanonicalJsonError`, and an `undefined` object member is omitted instead of failing. It still
+  reads a value as `z.json()` did, so `-0` hashes as `0` and an own `__proto__` member is dropped
+  (the public `canonicalJson` refuses `-0` and keeps `__proto__`). Bytes of every value both
+  accepted are unchanged, so stored digests and archives still match.
+  `// before: canonicalAgentJson({ a: undefined }) threw, a 101-level value was accepted` →
+  `// after: canonicalAgentJson({ a: undefined }) === '{}', a 101-level value throws (reason 'depth')`
+  **Who must act:** code that puts a value nested deeper than 100 levels into agent store events,
+  archives or projections. See
+  [migration](docs/guide/upgrading.md#unreleased-migration-one-canonical-json-serializer).
+- `stitchkit/application` — **`DirectoryInbox` sets a hard-linked entry file aside as
+  `invalid`, and `accept` takes the schema's input type.** A dropped file with more than one
+  link is never trusted, because another name can still rewrite it (since 0.104.0, without a
+  changelog entry). `DirectoryInboxConfig` gains the schema input type as a second type
+  parameter, and `DirectoryInbox` and `DirectoryInboxResource` take that input type as their one
+  parameter (it was the entry type); for a schema without a transform the two are equal and
+  nothing changes.
+  `// before: accept({ ...identity, entry: { amount: 42 } })  (the output of z.string().transform(Number))` →
+  `// after: accept({ ...identity, entry: { amount: '42' } })  (the input; it is stored as given and parsed on delivery)`
+  **Who must act:** producers that drop hard links into an inbox directory, and callers that pass
+  `accept` the output of a transforming schema.
+  See [migration](docs/guide/upgrading.md#unreleased-migration-directory-inbox-entries).
+- `stitchkit/application` — **`createDiagnosticJournal` checks only the last line of each file
+  when it opens** (`startupScan: 'tails'`, the default), so opening no longer parses and
+  validates every line of every retained generation. The scan still reads each file once in
+  large blocks to count lines, so opening still takes time proportional to the bytes retained,
+  at read speed. `recovery` in the status no longer reports a damaged row in the
+  middle of a file unless the journal is opened with `startupScan: 'full'`.
+  `// before: createDiagnosticJournal({ path, eventSchema, limits })  (every line of every file was parsed)` →
+  `// after: createDiagnosticJournal({ path, eventSchema, limits, startupScan: 'full' })  (the same full scan)`
+  **Who must act:** operators that read `recovery` at startup to find damaged rows in the middle
+  of a file. See [migration](docs/guide/upgrading.md#unreleased-migration-journal-startup-scan).
+- `stitchkit/application/diagnostic-journal`, `stitchkit/application` — **opening a diagnostic
+  journal moves a file it cannot keep in place aside and starts, instead of refusing to start.**
+  A torn active file with `maxFiles: 1`, a generation name that is not a regular file and a
+  retained file that cannot be read are renamed to `<file>.quarantined-<epoch>` beside the
+  journal (`onStartupRefusal: 'quarantine'`, the default) and never deleted. Every open lists
+  every quarantined file beside the journal in `getStatus().recovery.quarantined` until the
+  operator removes it: the ones it moved first, with their `reason`, then earlier ones without
+  one; at most 32, with `quarantinedUnlisted` counting the rest.
+  `onStartupRefusal: 'fail'` keeps refusing, now always with
+  one typed `DiagnosticJournalRecoveryError` whose `reason` is
+  `'torn-without-retention-slot' | 'not-a-regular-file' | 'unreadable'`; its constructor takes
+  an options object and `recovery` is present only for a torn single slot.
+  `DiagnosticJournalRecoveryStatusSchema` gains the optional `quarantined` and
+  `quarantinedUnlisted` fields; the schema is `.strict()`, so a reader parsing with an older copy
+  refuses a status that carries them.
+  `// before: createDiagnosticJournal({ path, eventSchema, limits })  (threw on a damaged or unreadable retained file)` →
+  `// after: createDiagnosticJournal({ path, eventSchema, limits, onStartupRefusal: 'fail' })  (the same refusal, typed)`
+  **Who must act:** operators of a journal that is a source of truth and must not start over
+  damage (declare `'fail'`); code that constructs `DiagnosticJournalRecoveryError` or reads its
+  `recovery`; protocols that embed `DiagnosticJournalRecoveryStatusSchema` and their readers.
+  See [migration](docs/guide/upgrading.md#unreleased-migration-journal-startup-quarantine).
+  → ADR 0240
+
+- `stitchkit/cli`, `stitchkit/tools`, `stitchkit/tools/mcp` — **one runtime-tool declaration.**
+  `RuntimeToolExecution`, `RuntimeToolExecutionWithOutput` (cli), `RuntimeMcpToolDefinition`,
+  `RuntimeMcpToolDefinitionWithOutput` (tools/mcp) and `ToolSurfaceDefinition` (tools) are removed.
+  `RuntimeToolDefinition`, `RuntimeToolDefinitionWithOutput` and `RuntimeToolDefinitionWithoutOutput`
+  are the same neutral, peer-free types on all three entrypoints, and the presenters are the
+  adapter's extension: the fourth type argument of `RuntimeToolDefinitionWithOutput`
+  (`RuntimeMcpToolPresenters<…>` on `tools/mcp`, `RuntimeToolPresenters<…>` on `tools`), or
+  `defineRuntimeTool`, which fixes it. `RuntimeToolDefinition` is the one registration type, and an
+  inline handler written in `runtimeTools: [...]` is typed again instead of failing with TS2339 on
+  `never`. `ToolSurfaceProjection` is the one surface container.
+  `// before: satisfies RuntimeToolExecutionWithOutput<typeof input, typeof output>` →
+  `// after: satisfies RuntimeToolDefinitionWithOutput<typeof input, typeof output>`
+  `// before: satisfies RuntimeMcpToolDefinitionWithOutput<typeof input, typeof output>` →
+  `// after: satisfies RuntimeToolDefinitionWithOutput<typeof input, typeof output, undefined, RuntimeMcpToolPresenters<z.output<typeof output>>>`
+  **Who must act:** code that names a removed type, and code that annotates a definition with
+  presenters as `RuntimeToolDefinitionWithOutput<I, O>` from `stitchkit/tools` (use `defineRuntimeTool`
+  or pass the presenter type as the fourth argument). Values returned by `defineRuntimeTool` and
+  `createRuntimeToolFactory` need no change.
+  See [migration](docs/guide/upgrading.md#unreleased-migration-one-runtime-tool-declaration).
+  → ADR 0236, ADR 0238
+- `stitchkit/tools`, `stitchkit/tools/mcp` — **a flattened union keeps declaration order.**
+  With `flattenUnionInput: true`, properties, enum values and branch labels are advertised in the
+  order of their first appearance across the variants instead of alphabetically, so the bytes of
+  every flattened tool listing (and any provider prompt cache keyed on them) change once.
+  Alternatives of different kinds (`anyOf`) keep their one canonical order.
+  `// before: union([{ kind: 'b', z: 1 }, { kind: 'a', a: 1 }])  → properties kind, a, z; kind enum a|b` →
+  `// after: the same union → properties kind, z, a; kind enum b|a`
+  **Who must act:** consumers with snapshot tests or caches of flattened tool schemas, and
+  anyone using `flattenUnionInput: true`: regenerate the snapshots.
+  See [migration](docs/guide/upgrading.md#unreleased-migration-flattened-unions-keep-declaration-order).
+  → ADR 0238
+- `stitchkit/tools`, `stitchkit/cli` — **a list written as text is refused in every
+  string-or-array field.** `coerceJsonArgs`, and so every tool surface, throws a validation error
+  naming the field when a union that keeps a string member receives a string that parses to an
+  array the union's array member accepts. Before, `'["a","b"]'` in `z.union([z.string(),
+  z.array(z.string())])` was read as one plain string. The `view_file`-only refusal is this rule;
+  a list written as text as an *element* of the array is no longer refused by name.
+  `// before: { paths: '["a.png"]' }  (the string "[\"a.png\"]" reached the handler)` →
+  `// after: { paths: ['a.png'] }  (the text form is VALIDATION_ERROR: "paths is a list written as text")`
+  **Who must act:** callers that send a JSON array as text to a string-or-array field; a plain
+  string, including one that is not a list the array member accepts, is unchanged.
+  → ADR 0218, ADR 0239, ADR 0238
+- `stitchkit/agent-runtime` — **the `stitchkit/agent-runtime/harness-tools` leaf is removed.** It
+  was one `mountAgent` call with the run's fence composed in; no consumer imported it.
+  `// before: tools: createAgentHarnessTools(({ context }) => ({ services: [svc], context }))` →
+  `// after: tools: ({ context, toolFenceLifecycle }) => mountAgent([svc], { context, lifecycle: composeToolLifecycle(undefined, toolFenceLifecycle) })`
+  **Who must act:** imports of `stitchkit/agent-runtime/harness-tools`. See
+  [migration](docs/guide/upgrading.md#unreleased-migration-one-runtime-tool-declaration).
+- `stitchkit/agent-runtime/realtime`, `stitchkit/agent-runtime/browser` — **control errors use one
+  vocabulary, and the binding authorizes requests, not events.** `ACCESS_DENIED` is `FORBIDDEN`, and
+  a closed connection answers `CONNECTION_CLOSED` instead of a denial. `AgentControlErrorCode`
+  (`AgentControlErrorCodeSchema`) is the closed set every response and `AgentControllerState.error`
+  carries. `authorize` receives `source: 'request' | 'delivery'` and runs once per request; the
+  events of an attached conversation flow under the grant that request created until
+  `binding.revoke(conversationId, matches?)` drops it, and a refusal then reaches the browser as an
+  `access-denied` delivery that puts the controller in `error` (`FORBIDDEN`). A reconnect rejects
+  the previous connection's requests so a small `maxPendingRequests` cannot leave the controller in
+  `connecting`. Both leaves are evolving and experimental.
+  `// before: if (state.error?.code === 'ACCESS_DENIED') …` →
+  `// after: if (state.error?.code === 'FORBIDDEN') …`
+  **Who must act:** code that compares control error codes, and applications that revoke access while
+  a stream is open (call `binding.revoke`; before, every event re-asked `authorize`).
+- `stitchkit/contract`, `stitchkit/server`, `stitchkit/node` — **`AppError` takes its fields by
+  name.** The constructor had seven positions, so a call that set only `retryable` read
+  `new AppError(code, message, 409, undefined, undefined, undefined, true)`. The code stays first;
+  everything else is one options object, and `new AppError(code)` still works:
+  `// before: new AppError('CONFLICT', 'stale', 409, { revision: 7 }, 'reload', undefined, false)` →
+  `// after: new AppError('CONFLICT', { message: 'stale', status: 409, details: { revision: 7 }, hint: 'reload', retryable: false })`
+  The options are `message`, `status` (default 500), `details`, `hint`, `traceId`, `retryable` and
+  the standard `cause`. A subclass calls `super(code, { message, status })` the same way.
+  **Who must act:** code that constructs an `AppError` or extends it with more than the code.
+  The `notFound`, `badRequest`, `unauthorized`, `forbidden`, `conflict` and `rateLimited` helpers
+  are unchanged. See [migration](docs/guide/upgrading.md#unreleased-migration-error-constructors-take-named-options).
+  → ADR 0238
+- `stitchkit` — **`ApiError` takes its fields by name.** The constructor had eight positions
+  and call sites ended in `undefined, undefined, retryable`. The code stays first and the rest
+  is one options object; `new ApiError(code)` still works:
+  `// before: new ApiError('RATE_LIMITED', 429, undefined, 'slow down', 'wait', 'trace-1', { cause }, true)` →
+  `// after: new ApiError('RATE_LIMITED', { status: 429, message: 'slow down', hint: 'wait', traceId: 'trace-1', retryable: true, cause })`
+  The options are `status` (default 0), `details`, `message`, `hint`, `traceId`, `retryable` and
+  `cause`. **Who must act:** code that constructs an `ApiError`, which is mostly tests and
+  custom transports; code that only reads `code`, `status`, `details`, `hint`, `traceId`,
+  `retryable` or `cause` is unaffected. See
+  [migration](docs/guide/upgrading.md#unreleased-migration-error-constructors-take-named-options).
+  → ADR 0238
+
+### Added
+
+- `stitchkit/files` — `isAtomicStagingName(name)` and `sweepAtomicStaging({ directory,
+  olderThanMs, signal })` recognise and remove the staging files that an atomic write killed
+  before publication leaves beside its target. The staging name `.stitchkit-<24 lowercase
+  hex>.tmp` is now a **stable public contract**: one module produces it for `writeFileAtomic`,
+  `writeFileAtomicSync`, the managed writer, the chunk spool and the agent runtime's contained
+  write, and changing it is a breaking change. The sweep removes only regular files older than
+  the required `olderThanMs`, never follows a symlink and never enters a subdirectory; sweeping
+  abandoned staging is the caller's responsibility. The files surface ceiling grows by three
+  names. → ADR 0242
+- `stitchkit/primitives` — `canonicalJson` refuses with a `CanonicalJsonError` (a `TypeError`)
+  whose `reason` is `'cycle' | 'negative-zero' | 'depth' | 'nodes' | 'bytes' | 'not-json'`
+  (`CanonicalJsonRefusal`), so an exceeded limit is told apart from a value that is not JSON.
+  The primitives surface ceiling grows by two names and the testing ceiling shrinks by one.
+- `stitchkit/application` — `FileStateStoreOptions.maxBytes` bounds the state read (default
+  64 MiB); a larger file is refused before it is parsed and is not reported as corruption.
+  `DiagnosticJournalConfig.startupScan: 'tails' | 'full'` chooses what opening reads.
+
+### Documentation
+
+- `stitchkit/observability`: request rows, `runUnitOfWork` rows and schedule status carry no
+  per-operation CPU, by decision (ADR 0244). A `process.cpuUsage()` delta across an operation's
+  wall-clock interval absorbs every interleaved operation and timer, and Bun gives no async
+  segment boundary to measure correctly. The guide
+  ([CPU is not attributed to work](docs/guide/observability.md#cpu-is-not-attributed-to-work))
+  states the process-CPU window you can observe and the rule for building attribution yourself.
+- 0.103.13 shipped two breaking changes as a patch: the Darwin native-asset delivery and the
+  refusal of repeated non-array CLI options. The upgrade guide now carries a migration for each
+  ([native assets](docs/guide/upgrading.md#released-migration-010313),
+  [repeated options](docs/guide/upgrading.md#cli-repeated-options-are-refused)). `release:check`
+  refuses a patch whose notes carry any breaking marker.
+
+### Fixed
+
+- `stitchkit/agent-runtime`: `probeAgentProcessSandbox` never rejects. A `probe()` that throws
+  synchronously, rejects or returns something that is not a grade resolves to
+  `{ grade: 'unavailable', reason }` with a fixed reason (`'sandbox probe failed'` or
+  `'sandbox probe returned no valid grade'`), cached like any grade until `refresh: true`. The
+  cause (an adapter error may carry absolute paths) stays out of the grade and is emitted as a
+  process warning. A synchronous throw used to escape raw and was not cached. The probe cache is
+  keyed by the sandbox object, so a sandbox is expected to be long-lived.
+- `stitchkit/agent-runtime/coding-tools`: a sandbox `prepare()` that throws refuses the command
+  with `SANDBOX_UNAVAILABLE` and the fixed reason `'sandbox prepare failed'`; the adapter's error
+  message no longer reaches the agent. The original error of a failed `prepare()` or `probe()`
+  rides on the refusal as its `cause`, which the mount's `hooks.onToolError` (and
+  `afterToolCall`'s `error`) receives, so an application with a structured log records it
+  there; the tool envelope carries only the code and the fixed reason, and the coding tools emit
+  no process warning. `probeAgentProcessSandbox` called directly still warns, because it
+  returns only the grade.
+- `stitchkit/process`: a group that reported `ESRCH` is not sent SIGKILL afterwards, so a
+  recycled group id is never signalled.
+- `stitchkit/agent-runtime`: a stopped coding command is classified by a typed stop reason
+  instead of its message text; the sandbox terminates a direct child's group without wrapping it
+  in a placeholder command, and a slot whose cleanup was not proven stays occupied (documented).
+- `stitchkit/application`: a `DirectoryInbox` entry whose name is already in `rejected/` no
+  longer stops the pass with `EEXIST`. Identical bytes are the entry already set aside and the
+  new file is only removed; different bytes are kept under `<name>.<first 16 hex of SHA-256>`.
+  A failure of one entry's own file is reported through `onError` and the pass continues with the
+  next entry, and an entry that changes during its read or is not a regular file is released
+  for a later attempt instead of throwing out of the pass.
+- `stitchkit/application`: `createFileStateStore` commits nothing for a transition whose
+  resulting state encodes to the bytes it started from (the directory inbox passes over
+  already-receipted files without a single write), and reads and fences the lock fewer times per update. Every update still reads and
+  rewrites the whole state, so keep `retain` of the directory inbox as small as duplicate
+  detection needs.
+- `stitchkit/cli/publish`: `publishCli` removes `.publish-*` staging directories left by a publisher that
+  died mid-build, under its publication lock, so they no longer fill the directory entry cap.
+  Each stored version is decompressed once per publication instead of up to five times.
+- `stitchkit/files`: one descriptor open and one atomic staging sequence serve every managed
+  read and write. `rejectSymlinks` alone decides whether a symlink leaf is followed, a
+  too-large file reports its observation whatever its link count, and the managed writer stages
+  through a hidden `.stitchkit-<random>.tmp` file whose length does not depend on the target name. The synchronous atomic write has the same
+  fault controls as the asynchronous one.
+- `stitchkit/remote`: `implementRemote` keeps the status and the retryability of a remote failure
+  that carries no stitchkit error envelope. A `503` page, a `429` or a `404` becomes `HTTP_ERROR`
+  with that status and a fixed message, and a refused connection becomes `CONNECTION_REQUEST_FAILED`
+  (`502`); neither carries `details`, so the upstream body, URL and credentials stay in the raw cause.
+  Before, both became `INTERNAL_SERVER_ERROR` `500`, which says `retryable: false`. One rule decides
+  `retryable` for every origin: the declared value, else the status (`408` included, so a deadline the
+  remote client hit is retryable like a local `408`; a cancelled call stays `false`).
+- `stitchkit/cli`: command help prints only the bounds a schema declares. An integer prints
+  `<integer>` instead of `[>=-9007199254740991, <=9007199254740991]`; `.min(1)` prints `>=1` and
+  `.positive()` prints `>0`. Repeating `-h` or `--help` in any spelling shows help instead of an
+  argument error.
+- `stitchkit/telegram`: a broadcast caps its own backoff between transient failures at
+  `maxRetryDelayMs` (computed by the shared backoff formula) and halts only when the provider's
+  `retry-after` exceeds that limit. With `maxRetryDelayMs: 5000` the fourth transient failure used
+  to halt the whole broadcast.
+- `stitchkit/agent-runtime`: the realtime binding's `authorize` hook gets one deadline shared
+  with every other bounded wait, and deliveries that arrive while it is deciding share its one
+  answer instead of asking again.
+- Limit options that are not positive safe integers are refused with one message that ends in the
+  value received, in `stitchkit/application`, `stitchkit/files`, `stitchkit/server`,
+  `stitchkit/agent-runtime`, `stitchkit/primitives` and `stitchkit/process`.
+
+## [0.104.2] — 2026-10-04
 
 ### Added
 
@@ -25,7 +382,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 - Native qualification waits for the helper’s actual first write instead of inferring readiness from startup timing.
 
-## [0.104.1] - 2026-10-04
+## [0.104.1] — 2026-10-04
 
 ### Added
 
@@ -40,7 +397,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   [upgrade guide](docs/guide/upgrading.md#released-migration-010313), including single-file
   packaging, complete output graphs and the distinct npm/JS/compiled delivery paths.
 
-## [0.104.0] - 2026-10-04
+## [0.104.0] — 2026-10-04
 
 ### ⚠️ Breaking changes
 
@@ -135,7 +492,7 @@ native CLI commands and ordinary one-argument state transitions remain valid.
   names, CLI +4 publisher names; connection diagnostics and policy gain named public types.
   The MCP leaf shares existing owners and gives strict MCP construction its own contracts.
 
-## [0.103.13] - 2026-10-04
+## [0.103.13] — 2026-10-04
 
 ### ⚠️ Delivery migration
 
@@ -162,7 +519,7 @@ native CLI commands and ordinary one-argument state transitions remain valid.
   argument error instead of silently selecting `false`. Single options, array repetition,
   untyped passthrough lists and command help retain their grammar.
 
-## [0.103.12] - 2026-10-03
+## [0.103.12] — 2026-10-03
 
 ### Fixed
 
@@ -181,7 +538,7 @@ native CLI commands and ordinary one-argument state transitions remain valid.
   bounds requests, bodies and waits with one elapsed deadline.
 
 
-## [0.103.11] - 2026-10-02
+## [0.103.11] — 2026-10-02
 
 ### Added
 
@@ -194,7 +551,7 @@ native CLI commands and ordinary one-argument state transitions remain valid.
 - `stitchkit/agent-runtime`: coding commands share the native execution owner while retaining forced descendant cleanup, structural sandbox launchers, bounded artifacts and UTF-8 previews.
 - Local gate evidence is saved only for stable inputs, including content changed and restored during a run. PostgreSQL fingerprint probes have finite budgets and distinguish URI connection overrides; unknown external inputs cannot authorize heavy memo reuse. Heavy concurrency accounts for visible cgroup memory limits.
 
-## [0.103.10] - 2026-10-01
+## [0.103.10] — 2026-10-01
 
 ### Added
 
@@ -202,7 +559,7 @@ native CLI commands and ordinary one-argument state transitions remain valid.
 - `stitchkit/files`: `ownerlessGraceMs: null` explicitly refuses age-based reclaim of unknown locks and guards; exact requested lock permissions survive restrictive umask, and failed descriptor setup cannot remove a replacement inode.
 - Document and qualify neutral library bundling from public imports and published declarations with Zod as its only runtime peer; full-kernel install remains a build-time choice.
 
-## [0.103.9] - 2026-10-01
+## [0.103.9] — 2026-10-01
 
 ### Added
 
@@ -215,31 +572,31 @@ native CLI commands and ordinary one-argument state transitions remain valid.
 - Effect reconciliation releases caller waits on cancellation and ignores late results, including independently cancelled coalesced observers; document the external execution lease required across processes. Historical sticky uncertain remains unchanged; automatic absence-based retries require recipient authority.
 - Managed reads preserve the primary error when descriptor cleanup also fails. Native command and reconciliation deadlines refuse timer overflow instead of silently firing after 1 ms.
 
-## [0.103.8] - 2026-10-01
+## [0.103.8] — 2026-10-01
 
 ### Fixed
 
 - Clarify core prepack build ownership in release assembly to prevent restoring a duplicate build.
 
-## [0.103.7] - 2026-10-01
+## [0.103.7] — 2026-10-01
 
 ### Fixed
 
 - Release candidates run structural preflight locally; every unit test and selected evidence lane still must pass in exact-SHA push CI before publication. Ordinary pushes retain fast checks.
 
-## [0.103.6] - 2026-10-01
+## [0.103.6] — 2026-10-01
 
 ### Fixed
 
 - Document fast-gate attestation boundaries and retained lane-environment checks for release verification.
 
-## [0.103.5] - 2026-10-01
+## [0.103.5] — 2026-10-01
 
 ### Fixed
 
 - Clarify release delivery checks: ordinary registry visibility, matching artifact bytes and fresh installed Bun/Node consumers.
 
-## [0.103.4] - 2026-10-01
+## [0.103.4] — 2026-10-01
 
 ### Fixed
 

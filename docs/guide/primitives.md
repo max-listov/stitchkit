@@ -109,15 +109,41 @@ const bytes = canonicalJson({ '2': 'two', '10': 'ten', optional: undefined, nest
 // Native crypto or browser WebCrypto hashes these same UTF-8 bytes.
 ```
 
-`canonicalJson` использует единый serializer исторических digest: object keys в UTF-16 code-unit
-order, включая integer-like keys; array order сохраняется. Optional object members с undefined
-опускаются. Top-level/array undefined, sparse arrays, functions/symbols/BigInt, non-finite numbers,
-negative zero, cycles, user prototypes, accessors, non-enumerable/symbol members отказаны до
-serialization. Приложение валидирует свою schema первым; canonical boundary не заменяет её.
+`canonicalJson` is the one serializer behind the digests: object keys sort by UTF-16 code unit,
+integer-like keys included; array order is kept; object members that are `undefined` are omitted.
+It refuses, before serializing, a top-level or array `undefined`, sparse arrays, functions, symbols,
+BigInt, non-finite numbers, negative zero, cycles, user prototypes, accessors and non-enumerable or
+symbol members. Validate your own schema first; the canonical boundary does not replace it.
 
-Defaults: depth 100 (maximum 100), nodes 100 000, UTF-8 bytes 1 MiB. Превышение или не-JSON data —
-TypeError; неверные options — Zod validation error. Это browser-safe leaf без Node/Bun/crypto,
-agent-runtime/testing или optional peers. Native и browser используют один algorithm; hashing
-остаётся platform adapter. Переносите только serializer recursion, сохраняя proof schemas и
-verification boundary. Существующие внутренние historical normalization/digest fixtures не меняются;
-новый public boundary сознательно отказывает неоднозначным values вместо фиктивной совместимости.
+Defaults: depth 100 (the maximum), nodes 100 000, UTF-8 bytes 1 MiB. Invalid options throw a Zod
+validation error. A refused value throws `CanonicalJsonError`, a `TypeError` whose `reason` is a
+`CanonicalJsonRefusal`; branch on the reason, never on the message:
+
+| `reason` | Meaning |
+|---|---|
+| `depth` | The value is nested deeper than `maxDepth`. |
+| `nodes` | The value has more nodes than `maxNodes`. |
+| `bytes` | The output is longer than `maxBytes` in UTF-8. |
+| `cycle` | The value contains a cycle. |
+| `negative-zero` | The value contains `-0`, which JSON cannot carry. |
+| `not-json` | The value is not bounded plain JSON: sparse arrays, non-finite numbers, non-plain objects, accessors. |
+
+`depth`, `nodes` and `bytes` are the caller's limits being exceeded; the other three say the value is
+not JSON data at all.
+
+```ts
+import { CanonicalJsonError, canonicalJson } from 'stitchkit/primitives'
+
+try {
+  canonicalJson(payload, { maxBytes: 4096 })
+} catch (error) {
+  if (error instanceof CanonicalJsonError && error.reason === 'bytes') {
+    // too large: reject the request
+  } else throw error
+}
+```
+
+The leaf is browser-safe: no Node, Bun or crypto, no `agent-runtime/testing`, no optional peers. Native
+and browser code run the same algorithm; hashing stays a platform adapter. A consumer that needs the
+same bytes moves only the serializer recursion and keeps its own proof schemas and verification
+boundary.

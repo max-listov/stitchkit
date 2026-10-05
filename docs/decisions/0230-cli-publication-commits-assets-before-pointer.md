@@ -5,16 +5,14 @@ status: active
 created: 2026-10-04 12:49 +07:00
 updated: 2026-10-04 12:49 +07:00
 type: decision
-participants:
-  - role: authored
-    harness: Codex Desktop
-    model: GPT-6
-    at: 2026-10-04 12:49 +07:00
 ---
 
 # CLI publication commits assets before the public pointer
 
 **Invariants:** I8, I9, I10, I11, I13.
+
+`publishCli` is exported from the evolving `stitchkit/cli/publish`, not from `stitchkit/cli`
+([ADR 0245](0245-cli-publication-is-an-evolving-leaf.md)).
 
 publishCli owns local asset publication; the application owns build orchestration, source
 admission, version policy, addresses and deployment. The build receives one shared stamp and

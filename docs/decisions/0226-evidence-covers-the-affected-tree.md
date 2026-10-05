@@ -5,11 +5,6 @@ status: active
 type: decision
 created: 2026-10-03 13:30 +07:00
 updated: 2026-10-03 13:30 +07:00
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-03 13:30 +07:00
 ---
 # Evidence covers the affected tree
 

@@ -5,11 +5,6 @@ type: decision
 status: active
 created: 2026-09-30 22:45 +07:00
 updated: 2026-09-30 23:03 +07:00
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    at: 2026-09-30 22:45 +07:00
 ---
 
 # ADR 0220 — Compose existing agent owners

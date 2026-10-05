@@ -5,11 +5,6 @@ status: active
 created: 2026-10-02 00:07 +07:00
 updated: 2026-10-02 00:07 +07:00
 type: decision
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    at: 2026-10-02 00:07 +07:00
 ---
 
 # Native libraries separate install and import closure

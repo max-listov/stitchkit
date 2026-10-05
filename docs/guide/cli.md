@@ -19,9 +19,10 @@ declarations do not require `ai`, the MCP SDK or Bun globals. Node consumers can
 use strict `NodeNext` resolution with `skipLibCheck: false` and ordinary Node
 types; the package keeps its required dependencies separate from optional SDKs.
 
-CLI runtime tools use the shared executable contract: identity, input and output
-schemas, handler, and explicit CLI exposure. SDK presenters belong to the MCP/AI
-definitions in `stitchkit/tools`, which require the corresponding peers. A typed
+CLI runtime tools use the one runtime-tool declaration: identity, input and output
+schemas, handler, and explicit CLI exposure. SDK presenters are the adapter's extension
+of that declaration (the fourth type argument of `RuntimeToolDefinitionWithOutput`, or
+`defineRuntimeTool` in `stitchkit/tools`), which requires the corresponding peers. A typed
 definition returned by `defineRuntimeTool` or `createRuntimeToolFactory` can be
 passed directly to both CLI and SDK mounts.
 
@@ -35,7 +36,7 @@ For a CLI-only managed tool, use the neutral generic construction contract to
 infer the handler from its schemas:
 
 ```ts
-import type { RuntimeToolExecutionWithOutput } from 'stitchkit/cli'
+import type { RuntimeToolDefinitionWithOutput } from 'stitchkit/cli'
 import { z } from 'zod'
 
 const input = z.object({ text: z.string() })
@@ -45,12 +46,14 @@ const measure = {
   identity: { serviceName: 'text', action: 'measure', method: 'POST' },
   transports: ['CLI'], input, output,
   handler: ({ input }) => ({ size: input.text.length }),
-} satisfies RuntimeToolExecutionWithOutput<typeof input, typeof output>
+} satisfies RuntimeToolDefinitionWithOutput<typeof input, typeof output>
 ```
 
-Pass `measure` to `runtimeTools`. The heterogeneous registration type preserves
-the definition without inventing a common handler input; execute it through
-`createCli` or `createCliInvoker` so validation remains on the canonical path.
+Pass `measure` to `runtimeTools`. `RuntimeToolDefinition`, the heterogeneous
+registration type, accepts it unchanged, and types an inline handler written directly
+in `runtimeTools` by the parsed object (use the construction type above to type the
+input from the schema). Execute it through `createCli` or `createCliInvoker` so
+validation remains on the canonical path.
 
 ## Exposure is opt-in
 
@@ -240,7 +243,9 @@ the values agree. Duplicates are refused before command execution. Array
 options accumulate across long and short forms; unknown non-dotted passthrough
 options retain their raw-list grammar. Tokens after `--` are literal data.
 Command `--help` and `-h` keep their diagnostic precedence over malformed
-operation arguments; application globals are validated before routing.
+operation arguments; application globals are validated before routing. Help is a
+request, not a setting, so repeating it in any spelling (`-h -h`, `-h --help`) asks once
+and never errors.
 
 Without presentation configuration, positional arguments fill non-boolean
 fields in declaration order, so `myapp generate "a fox"` is
@@ -467,8 +472,10 @@ Declared aliases render beside their canonical options, for example
 The argument table and `Application options:` show bounds from their JSON Schema,
 for example `<integer> [>=1, <=50]`, `<string> [length >=1, length <=12]`, and
 `<value…> [items >=2, items <=4]`. Numeric `>` and `<` are exclusive, while `>=`
-and `<=` include the endpoint; a zero limit is displayed too. Unbounded fields
-keep just their type and description. Bounds on an array's items are not bounds
+and `<=` include the endpoint; a zero limit is displayed too. Only limits the
+schema declares are shown: the safe-integer range every `z.int()` carries is the
+type, not a bound, so a bare integer prints `<integer>`, `.min(1)` prints `>=1` and
+`.positive()` prints `>0`. Unbounded fields keep just their type and description. Bounds on an array's items are not bounds
 on the array itself.
 
 Composed schemas retain their meaning: `any of:` and `one of:` separate
@@ -696,11 +703,16 @@ exists to distrust.
 
 `publishCli` is an opt-in publisher for a local application-owned distribution
 directory. It commits every target and its version manifest before atomically
-replacing the public `manifest.json`. Your application selects the CLI source
-identity and admits that snapshot at each phase:
+replacing the public `manifest.json`. It ships from its own evolving entrypoint,
+`stitchkit/cli/publish`: release infrastructure follows how distributions are
+published, so it is not held to the stable promise of `stitchkit/cli`
+([ADR 0245](../decisions/0245-cli-publication-is-an-evolving-leaf.md)). The
+manifest, signatures, installer and updater it writes for stay in
+`stitchkit/cli`. Your application selects the CLI source identity and admits
+that snapshot at each phase:
 
 ```ts
-import { publishCli } from 'stitchkit/cli'
+import { publishCli } from 'stitchkit/cli/publish'
 
 const result = await publishCli({
   storageRoot: '/srv/myapp/cli',
@@ -1025,7 +1037,7 @@ await createCli({ name: 'myapp', version, runtimeTools: discovered, commands: [.
 commands, and a connection without it still contributes nothing to the CLI —
 exposure stays explicit, as it is everywhere else in the framework.
 
-One unconvertible schema no longer takes the connection down with it. The tool
+One unconvertible schema does not take the connection down. The tool
 is skipped and **named** (`onSkippedTool`, or a stderr line by default), so a
 surface of two hundred tools is not lost to one.
 
@@ -1058,13 +1070,12 @@ credential, body, identity and stack stay with the original in-process cause in
 Unknown throws remain `INTERNAL_SERVER_ERROR`. A timeout is not proof that a
 write did not happen: verify the remote outcome before repeating an operation.
 
-**A remote refusal keeps its code.** A failed `tools/call` used to become a
-one-sentence `Error` with the result discarded, which cost three things at once:
-the code (so `exitCodes` had nothing to map and every remote failure exited `1`),
-the message the operator needed, and the error's own class — a plain `Error` is
-an *unexpected* error to the runner, so it printed a code frame of the framework
-bundle before the JSON failure and was then scrubbed to `INTERNAL_SERVER_ERROR`.
-A structured `{ error, details }` body is now relayed as the contract error it
+**A remote refusal keeps its code.** A failed `tools/call` must keep three things:
+the code (so `exitCodes` can map it instead of every remote failure exiting `1`),
+the message the operator needs, and the error's own class — a plain `Error` is
+an *unexpected* error to the runner, which would print a code frame of the framework
+bundle before the JSON failure and scrub it to `INTERNAL_SERVER_ERROR`.
+A structured `{ error, details }` body is relayed as the contract error it
 is, on every transport; anything else fails as `UPSTREAM_TOOL_ERROR` carrying
 what the server did send. Not `INTERNAL_SERVER_ERROR`, because nothing of ours
 broke.

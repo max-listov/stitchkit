@@ -366,6 +366,7 @@ schedules, transports and file generation remain application-owned.
 |---|---|---|
 | `canonicalJson` | function | bounded plain JSON, UTF-16 key sort, optional object members omitted |
 | `CanonicalJsonOptions` | type | inferred depth/node/UTF-8 bytes limits |
+| `CanonicalJsonError` / `CanonicalJsonRefusal` | class / _type_ | the `TypeError` of a refusal and its `reason`: `cycle`, `negative-zero`, `depth`, `nodes`, `bytes` or `not-json` |
 
 
 ## `stitchkit/server`
@@ -519,7 +520,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 ### Primitives
 
 | `createFileStateStore` | function | cross-process locked atomic JSON state updates over one Zod schema |
-| `FileStateStoreCorruption` / `FileStateStoreOptions` | _type_ | explicit corrupt-state report/policy and lock timing configuration |
+| `FileStateStoreCorruption` / `FileStateStoreOptions` | _type_ | explicit corrupt-state report/policy, lock timing and the state read cap `maxBytes`; a transition whose resulting state encodes to the bytes it started from writes nothing |
 | Export | Kind | Summary |
 |--------|------|---------|
 | `streamSSE` | function | an async generator → SSE `Response` — [guide](../guide/server.md#sse-streaming) |
@@ -625,7 +626,7 @@ cutovers are covered by the executable
 | `NotificationOutboxItem` / `NotificationOutboxReceipt` / `NotificationOutboxState` / `NotificationSend` / `NotificationFailureClassification` / `DroppedNotification` / `EnqueueNotification` | _type_ | versioned queue records, stable send identity and delivery decisions |
 | `notificationOutboxStateSchema` | function | strict persisted-state schema over an application payload schema |
 | `notificationOutboxResource` / `NotificationOutboxResource` / `NotificationOutboxResourceConfig` | function / _type_ | thin managed-resource scheduler over an outbox handle |
-| `createDirectoryInbox` (from `stitchkit/application/directory-inbox`) / `DirectoryInbox` / `DirectoryInboxConfig` / `DirectoryInboxDelivery` / `DirectoryInboxResource` | function / _type_ | one managed directory inbox for files or durable `accept({ source, key, entry })`; first payload wins, bounded capacity/bytes/receipts and renewable fenced leases; delivery begins after readiness and effects remain at least once |
+| `createDirectoryInbox` (from `stitchkit/application/directory-inbox`) / `DirectoryInbox` / `DirectoryInboxConfig` / `DirectoryInboxDelivery` / `DirectoryInboxResource` | function / _type_ | one managed directory inbox for files or durable `accept({ source, key, entry })` (`entry` is the schema's input, stored as given); a hard-linked file is set aside as `invalid`; first payload wins, bounded capacity/bytes/receipts and renewable fenced leases; delivery begins after readiness and effects remain at least once |
 | `DirectoryInboxIdentitySchema` / `DirectoryInboxIdentity` / `DirectoryInboxAccept` / `DirectoryInboxAcceptResultSchema` / `DirectoryInboxAcceptResult` | schema / _type_ | validated source/key, typed entry and durable accepted/duplicate result with filename; duplicates do not replace the first payload |
 | `StateStoreUpdateContext` | _type_ | real active protected transaction: `assertHeld()` refuses after ownership loss or completion; custom adapters supply this context to their transition |
 | `DirectoryInboxStateSchema` / `DirectoryInboxState` / `DirectoryInboxRejection` / `DirectoryInboxRejectionReasonSchema` / `DirectoryInboxRejectionReason` | schema / _type_ | the inbox's claims, receipts and rejections (`invalid`, `too-large`, `attempt-limit`) |
@@ -711,9 +712,10 @@ cutovers are covered by the executable
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createDiagnosticJournal` | function | create one schema-owned FIFO JSONL writer with bounded retained memory, exclusive local path ownership and finite rotation |
-| `DiagnosticJournalConfig` / `DiagnosticJournal` | _type_ | owner schema/path/limits/failure observer and the synchronous `submit`, bounded-wait `flush`/`close`, status handle |
+| `DiagnosticJournalConfig` / `DiagnosticJournal` | _type_ | owner schema/path/limits/failure observer, `startupScan` (`tails` by default, or `full`), `onStartupRefusal` (`quarantine` by default, or `fail`) and the synchronous `submit`, bounded-wait `flush`/`close`, status handle |
 | `DiagnosticJournalLimitsSchema` / `DiagnosticJournalLimits` | schema / _type_ | positive event, pending-item, pending-byte, file-byte and retained-file limits |
 | `DiagnosticJournalLockPolicySchema` / `DiagnosticJournalLockPolicy` | schema / _type_ | `refuse` (default) or `reclaim-stale`, which reclaims only a lock whose recorded owner is provably gone |
+| `DiagnosticJournalStartupScanSchema` / `DiagnosticJournalStartupScan` | schema / _type_ | how much of the retained generations opening a journal reads: `tails` (default) checks only the end of each file for a torn line, `full` parses every line |
 | `readDiagnosticJournalLockDiagnosis` / `DiagnosticJournalLockDiagnosis` | function / _type_ | why a `reclaim-stale` acquisition refused — attribution, PID liveness and optional process `identity` evidence (`matched`, `different-boot`, `reused-pid`, `pid-gone`, `legacy`, `unavailable`) — read off the thrown `EEXIST` |
 | `DiagnosticJournalSubmitResultSchema` / `DiagnosticJournalSubmitResult` | schema / _type_ | accepted epoch/sequence or explicit invalid, oversized, capacity, closed or failed refusal |
 | `DiagnosticJournalStatusSchema` / `DiagnosticJournalStatus` | schema / _type_ | state, limits, exact admission/write/failure counters, pending ownership, rotations, partial tails and last safe sequences |
@@ -726,8 +728,10 @@ cutovers are covered by the executable
 | `DiagnosticJournalWaitOptions` / `DiagnosticJournalFailure` | _type_ | caller wait signal/timeout and isolated internal failure callback record |
 | `DiagnosticJournalAnomalySchema` / `DiagnosticJournalAnomaly` | schema / _type_ | corrupt-row reason, file, zero-based byte offset, one-based line, tail/interior position and skipped bytes |
 | `createDiagnosticJournalReadResultSchema` / `DiagnosticJournalReadResult` | function / _type_ | owner-schema frame output or explicit anomaly; retains transformed event output types |
-| `DiagnosticJournalRecoveryStatusSchema` / `DiagnosticJournalRecoveryStatus` | schema / _type_ | bounded startup inspection counts and first/last anomaly locations |
-| `DiagnosticJournalRecoveryError` | class | torn single-file startup refusal carrying recovery observations, preserving evidence and releasing its lock |
+| `DiagnosticJournalRecoveryStatusSchema` / `DiagnosticJournalRecoveryStatus` | schema / _type_ | bounded startup inspection counts, first/last anomaly locations and every quarantined file beside the journal (`quarantined`, this open's moves first with their `reason`, at most 32; `quarantinedUnlisted` counts the rest); evolving and `.strict()`, so every shape change is a breaking changelog item |
+| `DiagnosticJournalStartupRefusalPolicySchema` / `DiagnosticJournalStartupRefusalPolicy` | schema / _type_ | `quarantine` (default) renames a file opening cannot keep in place to `<file>.quarantined-<epoch>` and starts; `fail` throws and moves nothing |
+| `DiagnosticJournalStartupRefusalReasonSchema` / `DiagnosticJournalStartupRefusalReason` | schema / _type_ | `torn-without-retention-slot \| not-a-regular-file \| unreadable` |
+| `DiagnosticJournalRecoveryError` / `DiagnosticJournalRecoveryErrorOptions` | class / _type_ | typed startup refusal (`reason`, `file`, optional `recovery`, `quarantineFailed`) thrown under `fail` or when moving a file aside failed; preserves evidence and releases its lock |
 
 `accepted` is bounded in-memory admission and `written` is completed append, not `fsync` or durable
 delivery. Its filesystem reader is in the diagnostic-journal leaf; there is no managed replay/upload API. See the
@@ -1033,7 +1037,7 @@ Server-only optional application runtime. See the
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `AgentConversationArchiveSchema` / `AgentConversationArchive` / `encodeAgentConversationArchive` / `decodeAgentConversationArchive` / `canonicalAgentJson` | schema / _type_ / functions | canonical validated conversation archive with exact ledger events, recovery projection and durable spill payloads |
+| `AgentConversationArchiveSchema` / `AgentConversationArchive` / `encodeAgentConversationArchive` / `decodeAgentConversationArchive` / `canonicalAgentJson` | schema / _type_ / functions | canonical validated conversation archive (`canonicalAgentJson` is `canonicalJson` with the node and byte limits at their maximum, reading `-0` as `0` like `z.json()`) with exact ledger events, recovery projection and durable spill payloads |
 | `AgentStoreEventEnvelopeSchema` / `AgentStoreEventEnvelope` / `AgentStoreEventKindSchema` / `AgentStoreEventKind` / `AgentStoreEventPageSchema` / `AgentStoreEventPage` | schema / _type_ | append-only event envelope, closed current vocabulary (including `provider/request` and `provider/response`) and bounded page |
 | `AppendAgentStoreEventSchema` / `AppendAgentStoreEvent` / `ReadAgentStoreEventsSchema` / `ReadAgentStoreEvents` | schema / _type_ | required append and bounded-read store contracts |
 | `AgentStoreTransitionSchema` / `AgentStoreTransition` / `AgentStoreEventDraft` / `AgentStoreEventDecodeAccepted` / `AgentStoreEventDecodeIgnored` / `AgentStoreEventDecodeResult` / `decodeAgentStoreEvent` | schema / _types_ / function | normalized runtime mutations, append drafts and strict current/ignorable future-event decoding outcomes |
@@ -1043,7 +1047,7 @@ Server-only optional application runtime. See the
 | `defineStateSlot` / `AgentStateSlotDefinition` / `AgentStateSlotStore` / `AgentStateSlotValue` / `AnyAgentStateSlot` / `createAgentStateSlotStore` / `renderAgentStateSlots` | functions / _types_ | typed durable state written as ledger events and injected on every provider request |
 | `agentGoalStateSlot` / `agentTodoStateSlot` / `createAgentStateTools` | constants / function | built-in goal/todo state and bound `goal_*` / `todo_write` Agent tools |
 | `AgentSandboxGradeSchema` / `AgentSandboxGrade` / `AgentSandboxRestrictionSchema` / `AgentSandboxRestriction` / `AgentProcessSandbox` | schema / _type_ | host-provided process sandbox capability and explicit restriction vocabulary |
-| `probeAgentProcessSandbox` / `missingSandboxRestrictions` / `recordAgentSandboxProbe` | functions | process-cached probe, fail-closed required-gap calculation and durable probe record |
+| `probeAgentProcessSandbox` / `missingSandboxRestrictions` / `recordAgentSandboxProbe` | functions | probe cached per sandbox object (keep the sandbox long-lived), fail-closed required-gap calculation and durable probe record; a probe that throws or returns no valid grade resolves to `unavailable` with a fixed reason, its cause emitted as a process warning (the coding tools instead carry it as the refusal's `cause` to the mount's `onToolError` hook) |
 | `AgentSandboxProcess` / `AgentSandboxOutputStream` | _types_ | structural child/output interface for optional lifecycle-owned `AgentProcessSandbox.spawn`, without Node ambient type dependencies |
 | `AgentEventSearchResultSchema` / `AgentEventSearchResult` / `createSqliteAgentEventSearch` / `createAgentEventSearchTools` | schema / _type_ / functions | authorized FTS5 search with exact event addresses and `session_*` tools |
 | `createSqliteAgentSpillStore` | function | durable content-address-checked artifact storage, bounded read/search, retention facts and archive participation |
@@ -1338,7 +1342,10 @@ terminal and provider-envelope schemas/types listed under
 including `AgentAttemptResetEventSchema` for `attempt-reset`),
 `AgentRuntimeEventCursorSchema`, `advanceAgentRuntimeEventCursor`,
 `AgentControlRequestSchema` / `AgentControlRequest`, `AgentControlResponseSchema` /
-`AgentControlResponse`, `AgentControlDeliverySchema` / `AgentControlDelivery`, `AgentMultiSessionCursorSchema` /
+`AgentControlResponse`, `AgentControlDeliverySchema` / `AgentControlDelivery`,
+`AgentControlErrorCodeSchema` / `AgentControlErrorCode` (the one vocabulary of every control
+error code: `FORBIDDEN`, `CONNECTION_CLOSED`, `REQUEST_CAPACITY`, `ATTACHMENT_CAPACITY`,
+`LEASE_CONFLICT`, `EVENT_OVERFLOW` and the rest), `AgentMultiSessionCursorSchema` /
 `AgentMultiSessionCursor`, `AgentConversationView`, `AgentControlView`,
 `advanceAgentMultiSessionCursor`, `createAgentControlView`, `reduceAgentControlSnapshot`,
 `reduceAgentControlEvent` and
@@ -1368,9 +1375,12 @@ attachment per conversation on that transport; share the controller between view
 `submit` requires a caller-owned idempotency key. Unknown-outcome mutations are never
 replayed automatically. `AgentControllerState` distinguishes connecting, ready,
 disconnected, error and closed and retains the canonical full `view` plus safe error
-code/message. Errors in automatic attach/refresh appear there. Reconnect attaches again
-and reads a snapshot; snapshot gaps coalesce, stale generations cannot overwrite state,
-and buffers/queues are bounded. Overflow or failed refresh is visible and requires
+code/message. Errors in automatic attach/refresh appear there, and so does an
+`access-denied` delivery: the server detached the conversation, the state becomes
+`error` with code `FORBIDDEN`, and nothing arrives until the controller attaches again.
+Reconnect attaches again and reads a snapshot; requests of the previous connection are
+rejected at once and release their capacity, snapshot gaps coalesce, stale generations
+cannot overwrite state, and buffers/queues are bounded. Overflow or failed refresh is visible and requires
 explicit recovery. Closing detaches without closing the shared transport or remote run.
 
 See [agent composition](../guide/agent-composition.md) for a complete wiring example.
@@ -1599,10 +1609,10 @@ payload.
 | `McpMountConfig` | _type_ | config for `mountMcp` |
 | `McpSchemaValidationConfig` | _type_ | shared `{ policy, requireTypedProperties, allowUntyped, requirePortableFormats, allowFormats }` profile |
 | `ValidateMcpSchemasConfig` | _type_ | standalone validation profile plus `services`, `extend`, flattening and logger |
-| `RuntimeToolDefinition` | _type_ | transport-neutral pathless operation with identity, schemas, handler and optional presenters |
+| `RuntimeToolDefinition` | _type_ | heterogeneous registration of pathless operations in `runtimeTools: [...]`; an inline handler is contextually typed by the parsed object, a definition constructed with its own schema registers unchanged, and the runner validates input before the handler |
 | `RuntimeToolDefinitionBase` | _type_ | common name, identity, input, exposure and MCP metadata fields |
-| `RuntimeToolDefinitionWithOutput` | _type_ | runtime definition whose handler and presenters share a validated output type |
-| `RuntimeToolDefinitionWithoutOutput` | _type_ | runtime definition with a void handler and no presentation callbacks |
+| `RuntimeToolDefinitionWithOutput` | _type_ | the one neutral construction: identity, schemas and a handler typed from them; the fourth type argument names the adapter's `present` extension (`RuntimeToolPresenters<…>` here, `RuntimeMcpToolPresenters<…>` on `stitchkit/tools/mcp`, none by default) |
+| `RuntimeToolDefinitionWithoutOutput` | _type_ | the same construction with a void handler and no presentation callbacks |
 | `RuntimeToolFactory` | _type_ | identity/context-bound runtime-tool definition factory |
 | `RuntimeToolFactoryConfig` | _type_ | factory service identity and context schema |
 | `RuntimeToolFactoryDefinitionWithOutput` | _type_ | factory-authored runtime tool with a validated output schema |
@@ -1811,10 +1821,9 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `ToolCallRecord` | _type_ | the structured record `createToolLogger` passes to `onRecord` |
 | `TransportSummary` | _type_ | `{ contractServices, runtimeTools, totals, sources }` from `summarizeTransports` |
 | `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
-| `ToolSurfaceDefinition` | _type_ | shared object-shaped `{ services?, runtimeTools? }` introspection surface |
-| `ToolSurfaceProjection` | _type_ | one readonly services/runtime container shared by full and MCP-only surfaces; executable mounts specialize the runtime definition without pulling in another adapter's peers |
+| `ToolSurfaceProjection` | _type_ | the one readonly `{ services?, runtimeTools? }` container shared by full, MCP-only and introspection surfaces (`buildToolManifest`, `listToolNames`, `summarizeTransports` take `ToolSurfaceProjection<RuntimeToolDefinition>`) |
 | `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options |
-| `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments |
+| `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments; throws a `ZodError` naming the field when a union that keeps a string member receives a string that parses to an array its array member accepts |
 | `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions into conservative object joins; scalar collisions retain provable types, object/array collisions retain structural alternatives, and field descriptions retain discriminator labels plus availability/requiredness hints; the projection never executes validation |
 | `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |
 | `MountableTool` | _type_ | one operation with separate executable CLI argument schema and model-facing presentation schema |
@@ -1833,10 +1842,9 @@ behavior and names. See [MCP guide](../guide/mcp-and-agents.md#mcp--createmcphan
 |--------|------|---------|
 | `createMcpHandler` / `createMcpHttpRoute` / `buildMcpServer` / `mountMcp` | function | the shared authenticated HTTP handler, raw-route adapter, SDK server and contract mount |
 | `createStdioMcpServer` / `bindStdioProcessSignals` | function | the shared stdio server and bounded process cleanup |
-| `RuntimeMcpToolDefinitionWithOutput` | _type_ | schema-aware MCP-only construction with concrete handler output and presenter input |
-| `RuntimeMcpToolDefinition` | _type_ | heterogeneous MCP registration; the canonical runner validates input/output before invocation |
+| `RuntimeToolDefinitionWithOutput` / `RuntimeToolDefinitionWithoutOutput` | _type_ | the one neutral construction, shared with `stitchkit/cli` and `stitchkit/tools`; MCP-only presenters are its fourth type argument, `RuntimeMcpToolPresenters<z.output<typeof output>>` |
+| `RuntimeToolDefinition` | _type_ | heterogeneous registration; the canonical runner validates input/output before invocation |
 | `RuntimeMcpToolPresenters` / `RuntimeMcpPresentation` | _type_ | official SDK content without framework-owned `structuredContent` or `isError`; one presenter owner shared with the full SDK surface |
-| `RuntimeToolDefinitionWithoutOutput` | _type_ | the shared neutral void definition |
 
 ## `stitchkit/tools/connections`
 
@@ -1936,7 +1944,6 @@ handler pipeline without opening a TCP port.
 | `McpSchemaValidationConfig` / `IncompatibleSchemaPolicy` | _type_ | canonical MCP schema-preparation policy used by real mounts and manifests |
 | `SurfaceRealtimeSchemaPairSchema` | schema | input/output digest pair for args or acknowledgements |
 | `SurfaceSchemaDigestsSchema` | schema | params/input/output/multipart digest object |
-| `serializeSurfaceValue` | function | canonical versioned serialization used for deterministic digests |
 
 ---
 
@@ -1957,8 +1964,10 @@ available from `stitchkit/contract`.
 | `ManagedFileError` / `ManagedFileErrorCode` | class / _type_ | stable boundary failures; registered `FILE_*` mistakes are caller-safe while `FILE_IO_ERROR` remains internal |
 | `ManagedFileInspector` | _type_ | bounded-prefix read/write inspection callback with a finite cancellation signal that cannot own path or size |
 | `ManagedFileInspectionInput` / `ManagedFileInspection` | _type_ | inspector prefix/name/declared media/signal input and validated metadata-only result |
-| `writeFileAtomic` / `writeFileAtomicSync` / `WriteFileAtomicOptions` | function / _type_ | replace a file atomically: a random staging name created exclusively (never through a planted link), the mode set on the descriptor before the file is visible (default `0o600`, not masked by the umask), `fsync`, rename; a failure leaves the target and no staging file. The asynchronous form keeps the event loop running |
-| `withExclusiveLock` / `ExclusiveLockOptions` / `ExclusiveLock` / `ExclusiveLockOwner` | function / _type_ | run work under an exclusive lock between processes — a file recording its owner (pid, host, machine identity, time and nullable kernel process identity); waits up to `timeoutMs` (default 10 s) and stops on `signal`; a dead owner on this machine is taken over, a live, slow or foreign one never is; an ownerless lock only after `ownerlessGraceMs` (default 5000 ms, `null` disables age-based reclaim including guards); exact `mode` is independent of umask; shared readers need a common group and traversable directories |
+| `writeFileAtomic` / `writeFileAtomicSync` / `WriteFileAtomicOptions` | function / _type_ | replace a file atomically: a random staging name created exclusively (never through a planted link), the mode set on the descriptor before the file is visible (default `0o600`, not masked by the umask), `fsync`, rename; a failure leaves the target and no staging file. The asynchronous form keeps the event loop running. A process killed before publication leaves its staging file; sweeping it is the caller's job |
+| `isAtomicStagingName` | function | true for a staging file name of an atomic write of this library (`.stitchkit-<24 lowercase hex>.tmp`, also used by the managed writer and the chunk spool); the form is a stable contract, and changing it is a breaking change ([ADR 0242](../decisions/0242-atomic-staging-name-is-a-public-contract.md)) |
+| `sweepAtomicStaging` / `SweepAtomicStagingOptions` | function / _type_ | remove abandoned staging files from one `directory`: only regular files matching `isAtomicStagingName` and older than the required `olderThanMs`, never following a symlink or entering a subdirectory; stops on `signal`; returns the removed names |
+| `withExclusiveLock` / `ExclusiveLockOptions` / `ExclusiveLock` / `ExclusiveLockOwner` | function / _type_ | run work under an exclusive lock between processes — a file recording its owner (pid, host, machine identity, time and nullable kernel process identity); waits up to `timeoutMs` (default 10 s) and stops on `signal`; a dead owner on this machine is taken over, a live, slow or foreign one never is; the lock is published with its owner already recorded (temporary file plus hard link), so a stalled holder is never displaced; a legacy empty lock file is taken by age only when `ownerlessGraceMs` is a number (default `null`: never; an abandoned empty reclaim guard is taken after 5 000 ms unless a value is set); exact `mode` is independent of umask; shared readers need a common group and traversable directories |
 | `ExclusiveLockError` | class | `LOCK_TIMEOUT` naming the resource and its holder, or `LOCK_ABORTED` with the signal's reason |
 | `createChunkSpool` | function | the server half of a chunked upload: parts on disk under `owner` + client-minted `uploadId`, each with a size+sha256 receipt; idempotent `open` and `put`, the first writer of a part wins across processes, `assemble` in order once every part is in, `sweep` of untouched uploads — [guide](../guide/client.md#chunked-uploads) |
 | `ChunkSpool` / `ChunkSpoolConfig` / `ChunkSpoolKey` / `ChunkSpoolOpen` / `ChunkSpoolPart` / `ChunkSpoolAssembly` | _type_ | the spool, its directory, part size, file limit, meta schema and age; an upload's key; its declaration; one part; the assembled parts with a concatenating `stream()` |
@@ -2336,7 +2345,6 @@ SDK nor the `ai` peer.
 | `checkCliUpdate` | function | bounded, interval-limited, never-throwing check for a newer published build |
 | `applyCliUpdate` | function | download, verify the decompressed digest and replace the binary by rename |
 | `assertCliPublishable` | function | refuse republishing one version from a different commit — takes one manifest or every manifest already published, because the promise a version makes does not stop at a channel boundary |
-| `publishCli` / `CliPublicationOptions` / `CliPublicationPhase` / `CliPublicationResult` | function / _type_ | optional bounded builder/admission over one immutable name/version/commit stamp; commit verified assets before the manifest pointer, recover exact completed versions, retain verified history; existing signatures/installer/updater own the wire contract |
 | `rollbackCliUpdate` / `CliRollbackConfig` / `RolledBackCliUpdate` | function / _types_ | put the kept previous build back, digest-checked first and written by the same atomic rename the update uses |
 | `signCliManifest` / `verifyCliManifest` / `cliManifestSigningPayload` | function | Ed25519 over `{name, version, commit, builtAt, assets[]}` — every asset's digest included, so the chain closes on the file that executes |
 | `cliSignatureAccepted` / `CliSignatureVerdict` | function / _type_ | `valid` \| `unenforced` \| `missing` \| `unknown-key` \| `invalid`; `unenforced` keeps an unpinned build updating while making the absence of a check visible |
@@ -2368,8 +2376,8 @@ SDK nor the `ai` peer.
 | `CliConfig` | _type_ | config for `createCli`; `defaultCommand`, `globalOptions`, `optionAliases` and `positionals` define the shared command presentation policy |
 | `CliPresentationPolicyConfig` | _type_ | shared command presentation-policy subset of `CliConfig` |
 | `CliSurfaceSource` | _type_ | static service/runtime array or identity-dependent factory |
-| `RuntimeToolExecution` | _type_ | neutral heterogeneous runtime-tool registration; handlers execute through the schema-validating managed runner |
-| `RuntimeToolExecutionWithOutput` | _type_ | strict neutral managed definition with schema-derived handler input/output; construct before adding to CLI `runtimeTools` |
+| `RuntimeToolDefinition` | _type_ | neutral heterogeneous runtime-tool registration; an inline handler is contextually typed, and handlers execute through the schema-validating managed runner |
+| `RuntimeToolDefinitionWithOutput` | _type_ | strict neutral managed definition with schema-derived handler input/output, the same declaration `stitchkit/tools` constructs with presenters |
 | `RuntimeToolDefinitionWithoutOutput` | _type_ | strict neutral managed void definition without an output contract or transport presenters |
 | `CliCommandDefinition` | _type_ | native command definition union |
 | `CliCommandDefinitionBase` | _type_ | native command name, description and input schema |
@@ -2383,6 +2391,22 @@ SDK nor the `ai` peer.
 | `PollParams` | _type_ | params for `pollUntilDone` |
 | `CliWriters` | _type_ | stdout/stderr sinks for `emitResult` |
 | `EmitOptions` | _type_ | options for `emitResult` |
+
+---
+
+## `stitchkit/cli/publish`
+
+Build and release tooling, evolving. Publishes a CLI distribution into a local
+application-owned directory; the manifest, signatures, installer and updater it
+writes for stay in `stitchkit/cli` — [guide](../guide/cli.md#publishing-a-complete-version),
+[ADR 0245](../decisions/0245-cli-publication-is-an-evolving-leaf.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `publishCli` | function | optional bounded builder/admission over one immutable name/version/commit stamp; commit verified assets before the manifest pointer, recover exact completed versions, retain verified history |
+| `CliPublicationOptions` | _type_ | identity, storage root, base URL, targets, limits, retention, the `admit` and `build` callbacks, optional signing and trust |
+| `CliPublicationPhase` | _type_ | the step `admit` is asked about — `prepare`, `build`, `commit` or `promote` |
+| `CliPublicationResult` | _type_ | `published` or `existing`, with the manifest ready to serve |
 
 ---
 
@@ -2474,11 +2498,20 @@ network enforcement, gateway credentials and platform/resource boundaries.
 
 ## `stitchkit/agent-runtime/realtime`
 
-Optional evolving Socket.IO server binding. `bindAgentHarnessRealtime` takes `(harness, socket, config)` and returns `close()` for its subscriptions and control connections, without closing
-socket or harness. `AgentHarnessRealtimeConfig` requires `authorize({ identity, request,
-signal })`: return `{ context }` after verifying the session principal, conversation,
-operation, files and metadata, or `null`. Identity is `socket.data` from the application's
-verified handshake. Every request and event delivery is authorized. Observe access does
+Optional evolving Socket.IO server binding, experimental: no committed consumer yet.
+`bindAgentHarnessRealtime` takes `(harness, socket, config)` and returns an
+`AgentHarnessRealtimeBinding`: `close()` for its subscriptions and control connections, without closing
+socket or harness, and `revoke(conversationId, matches?)`. `AgentHarnessRealtimeConfig` requires
+`authorize({ identity, request, source, signal })`: return `{ context }` after verifying the session
+principal, conversation, operation, files and metadata, or `null`. Identity is `socket.data` from the
+application's verified handshake. Every request is authorized on arrival. The events of an
+attached conversation are delivered under the grant the latest successful request created, so a
+token stream costs no authorization call per event. `revoke` drops the grant of every matching
+socket; the next event is re-authorized (`source: 'delivery'`, an `operation: 'snapshot'` request),
+and a refusal or failure detaches the conversation and sends an `access-denied` delivery, which
+turns the browser controller into an `error` state. Without a `revoke` call a grant lasts until the socket disconnects or the conversation
+is detached; this fail-open default is deliberate, so call `revoke` whenever access to a conversation may
+have been withdrawn. An authorization that began before a `revoke` never restores the grant. Observe access does
 not grant mutation; controller leases and approval policy still belong to the harness.
 
 `maxPendingEvents` and `maxPendingAttachments` forward to the canonical control server;
@@ -2490,22 +2523,10 @@ application transport. A transport's Engine.IO payload limit remains application
 
 ## `stitchkit/agent-runtime/react`
 
-Optional evolving React peer leaf. `useAgent` takes a controller and subscribes through
+Optional evolving React peer leaf, experimental: no committed consumer yet. `useAgent` takes a controller and subscribes through
 `useSyncExternalStore`, returning the same `AgentControllerState` as `getSnapshot()`.
 Create and close the controller at application/session scope. Multiple components can
 observe it; StrictMode and unmount release only the component's own subscription.
-
-## `stitchkit/agent-runtime/harness-tools`
-
-Optional evolving composition of the full `mountAgent` configuration with the runtime
-fence. Its runtime peer is `ai`; its full tool presenter declarations also require
-`@modelcontextprotocol/server`, as `stitchkit/tools` does. The base harness retains its
-AI-only peer boundary. Existing custom tool callbacks need no new import.
-
-| Export | Kind | Summary |
-|--------|------|---------|
-| `createAgentHarnessTools` / `AgentHarnessToolsConfig` | function / _type_ | async per-run full mount configuration (`services` plus all `AgentMountConfig` options); composes application lifecycle then runtime fence exactly once |
-
 
 ## `stitchkit/process`
 
@@ -2514,7 +2535,8 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 | Export | Kind | Purpose |
 |---|---|---|
 | `runNativeCommand` | function | caller-lifetime streaming or explicitly bounded binary capture |
-| `NativeCommandOptions` | type | executable/args, env policy, signal/deadline, bytes sink and finite cleanup limits |
+| `NativeCommandOptions` | type | executable/args, env policy, signal/deadline, bytes sink, finite cleanup limits, the `stop` policy and `descendants` (`'terminate-after-leader'`, the default: stop the group after the leader exits, or `'leave'`) |
+| `NativeCommandStopPolicy` | type | how a cancelled command stops: `target` `'group'` (signal every member) or `'leader'` (signal only the leader; its exit ends the grace), `signal` (default `SIGTERM`), `graceMs` (at most one hour) before KILL to the group, and `killOn`, an `AbortSignal` that skips the grace; default `{ target: 'group', signal: 'SIGTERM', graceMs: 100 }` |
 | `NativeCommandResult` | type | observed nullable exit code/signal and captured stdout/stderr bytes |
 | `NativeCommandError` | class | COMMAND_LIMIT with machine reason `deadline` or `output-budget`; COMMAND_UNAVAILABLE / COMMAND_CLEANUP have no limit reason. Preserves internal cause and existing constructor; caller-created limits without supplied reason remain unclassified |
 
@@ -2527,19 +2549,27 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 
 `stitchkit/files/packaging` owns `createNativePackaging` and the types
 `NativePackagingOptions`, `NativePackagingAsset`, `NativePackagingPlugin`, `NativePackagingResult`.
-It resolves the installed package's target/version and original addon SHA256.
-`platform`, `architecture`, `delivery`, `entryPath` and `assetPath` are explicit public inputs.
-The result is `ready` with assets and a structural Bun plugin, or `unsupported`/`missing` with a safe code.
-Malformed options/metadata and other filesystem errors fail rather than masquerade as missing.
+It resolves the installed package's target/version, reads each selected addon once and checks it
+against the `size` and `sha256` published in the package's `native-assets.json` (`formatVersion: 2`,
+written when Stitchkit is built). Call it once per build and reuse the result.
+`platform`, `architecture`, `delivery`, `entryPath` and `assetPath` are explicit public inputs;
+`platform` is the closed set `'darwin'`, and another name is a type error and a schema refusal.
+The result is `ready` with verified assets and a structural Bun plugin, or `unsupported` /
+`missing` / `mismatch` with the safe code `NATIVE_TARGET_UNSUPPORTED`, `NATIVE_ASSET_MISSING` or
+`NATIVE_ASSET_DIGEST_MISMATCH`. A `mismatch` names the first differing `architecture` with
+`expected` (published) and `actual` (installed) `{ size, sha256 }`.
+Malformed options, a manifest of another `formatVersion` and other filesystem errors throw rather
+than masquerade as missing.
 Companion accepts a single `architecture` string with an `assetPath` string, or an architecture
 array with an exact per-architecture `assetPath` map. `NativePackagingOptions<true>` and
 `NativePackagingResult<true>` describe the array form; default types preserve single-target signatures.
 A ready array-form result carries the architecture array; `NativePackagingAsset<true>` identifies
-each asset architecture. Default asset types and single-target runtime objects retain their three fields.
+each asset architecture. A single-target asset has four fields: `outputPath`, the verified `bytes`,
+and the published `size` and `sha256`.
 Targets must be unique; entry and all asset paths must be disjoint. One lazy loader chooses only
 the actual runtime architecture, with no fallback.
-Companion mode places external addons relative to the emitted entry; embedded mode lets
-Bun compile retain the matching addon. Keep JS builds without splitting, preserve every output,
-and copy each original asset to its `outputPath` after verifying `sha256`.
+Companion mode places external addons relative to the emitted entry; embedded mode gives
+Bun compile the verified bytes of the matching addon. Keep JS builds without splitting, preserve
+every output, and write each asset's `bytes` to its `outputPath`.
 This evolving entrypoint is a build dependency; runtime imports do not reach it.
 The detailed recipe is in [native IO](../guide/native-io.md#public-native-packaging).

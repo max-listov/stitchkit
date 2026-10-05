@@ -88,7 +88,7 @@ Three boundaries worth knowing:
 
 - A field of another scope is not a compile error on access — `RuntimeContext`
   keeps its `[key: string]: unknown` index signature (transports write through
-  it). It degrades to `unknown`, so it can no longer pose as a `string`; using it
+  it). It degrades to `unknown`, so it cannot pose as a `string`; using it
   in a typed position fails.
 - The map states what **your** `beforeHandle` / `createAuthHook.inject` puts on
   the context. The framework does not verify a hand-written claim (→ ADR 0075) —

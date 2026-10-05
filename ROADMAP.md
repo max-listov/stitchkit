@@ -45,6 +45,17 @@ section (see [Entrypoints](./docs/guide/getting-started.md#entrypoints)):
   stream loop, managed-tool fencing, recovery and run observability. The
   isolated OpenRouter adapter lives at `stitchkit/agent-runtime/openrouter`.
 - **Application kernel** — `stitchkit/application`: see the section below.
+- **Native process and files** — `stitchkit/process` (finite native commands,
+  bounded capture, process-group cancellation, process-owner evidence) and
+  `stitchkit/files/packaging` (the build-time plugin that carries the native
+  addon into a bundle). Both are evolving leaves; see
+  [Native IO](./docs/guide/native-io.md).
+- **MCP server leaf** — `stitchkit/tools/mcp`: the canonical MCP HTTP and stdio
+  server with only Zod and the MCP server SDK as peers.
+- **Agent control surfaces** — `stitchkit/agent-runtime/react` and
+  `stitchkit/agent-runtime/realtime`: a React subscription to an
+  application-owned agent controller and authorized agent control over the
+  existing Socket.IO server. Both are experimental, with no committed consumer.
 - **Project declaration** — `stitchkit/declaration`: one versioned schema for
   what a repository says about itself — identity, roles, build (including any
   declared data inputs), runtime requirements, release steps and the names of
@@ -72,8 +83,21 @@ without changing the contract and transport core:
   with `stitchkit/application/grammy`.
 
 The proof is the deletion of application-owned signal, timer, in-flight-counter
-and close-fan-out glue. Durable jobs, retry/recovery, cron/timezone policy,
-provider protocols, process restart and deployment control remain out of scope.
+and close-fan-out glue.
+
+Durable mechanics exist where one owner keeps them small, and they stay
+mechanics, not a job system (I11):
+
+- **In:** the process lifecycle ledger, the directory inbox
+  (`stitchkit/application/directory-inbox`: entries another program drops into
+  a directory, delivered at least once), and effect reconciliation in
+  `stitchkit/tools` (record the intent before an effect in another system, settle
+  an unfinished one only by the recipient's own record, never retry an
+  `uncertain` one).
+- **Out:** durable job queues and claims, retry and recovery policy,
+  cron/timezone policy, provider protocols, process restart, supervision and
+  deployment control. The application owns the business transaction and the
+  decision to retry.
 
 ## Next — toward 1.0
 

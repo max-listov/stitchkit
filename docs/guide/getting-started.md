@@ -48,6 +48,7 @@ own, recorded as an ADR.
 | `stitchkit/tools/invoker` | server | stable | peer-free `createToolInvoker` over the canonical contract tool runner |
 | `stitchkit/tools/connections` | server (Bun or Node) | evolving | consume external MCP servers and a bounded OpenAPI subset — typed reauthorization, a per-request host fence and per-call credentials |
 | `stitchkit/cli` | server | stable | `createCli` / `createCliInvoker` — runtime and strict NodeNext declarations without MCP SDK / `ai` |
+| `stitchkit/cli/publish` | build and release tooling (Bun or Node, POSIX) | evolving | `publishCli` — commit a verified CLI distribution and move its public manifest last; see [CLI guide](cli.md#publishing-a-complete-version) |
 | `stitchkit/remote` | browser **and** server | stable | peer-free `implementRemote` for thin HTTP proxy processes |
 | `stitchkit/process` | server (Bun or Node, POSIX) | evolving | finite native commands, byte sinks, bounded capture and process-group cancellation |
 | `stitchkit/files/packaging` | build time (Bun or Node) | evolving | installed native asset graph, integrity and Bun packaging plugin; no runtime install policy |
@@ -74,9 +75,8 @@ own, recorded as an ADR.
 | `stitchkit/agent-runtime/coding-tools` | server (Bun or Node) | evolving | bounded host-authorized direct file and shell tools; a root boundary, not an OS sandbox |
 | `stitchkit/agent-runtime/openrouter` | server | evolving | isolated OpenRouter language-model adapter |
 | `stitchkit/agent-runtime/browser` | browser + server | evolving | canonical agent records, events, reconnect cursor and optional conversation controller |
-| `stitchkit/agent-runtime/harness-tools` | server | evolving | full mountAgent configuration with the current run fence |
-| `stitchkit/agent-runtime/react` | browser + server | evolving | React subscription to an application-owned agent controller |
-| `stitchkit/agent-runtime/realtime` | server (Bun or Node) | evolving | authorized agent control over the existing Socket.IO server |
+| `stitchkit/agent-runtime/react` | browser + server | evolving, experimental: no committed consumer | React subscription to an application-owned agent controller |
+| `stitchkit/agent-runtime/realtime` | server (Bun or Node) | evolving, experimental: no committed consumer | authorized agent control over the existing Socket.IO server |
 | `stitchkit/agent-runtime/sqlite/bun` | server (Bun) | evolving | durable built-in SQLite store for the agent runtime |
 | `stitchkit/agent-runtime/sqlite/node` | server (Node ≥ 22.5) | evolving | durable built-in SQLite store for the agent runtime |
 | `stitchkit-tui` | terminal (Bun) | evolving | optional official OpenTUI host over a caller-composed headless runtime |
@@ -186,7 +186,6 @@ map — feature → packages:
 | MCP / agent adapters (`stitchkit/tools`) | `@modelcontextprotocol/server` `ai` |
 | Agent application runtime (`stitchkit/agent-runtime`) | `ai` |
 | Headless Agent harness (`stitchkit/agent-runtime/harness`) | `ai` |
-| Harness tools (`stitchkit/agent-runtime/harness-tools`) | `ai` `@modelcontextprotocol/server` (tool declarations) |
 | Agent coding tools (`stitchkit/agent-runtime/coding-tools`) | — |
 | OpenRouter runtime adapter (`stitchkit/agent-runtime/openrouter`) | `ai` `@openrouter/ai-sdk-provider` |
 | SQLite agent store (`stitchkit/agent-runtime/sqlite/bun` or `/node`) | — (runtime built-in) |

@@ -1,47 +1,42 @@
 ---
-title: "ADR 0218: view_file отвергает список, записанный текстом"
-description: "Семантическая проверка paths принадлежит общей схеме view_file; ошибочный список отвергается до IO с подсказкой, без изменения общего string-union coercion."
+title: "ADR 0218: view_file rejects a list encoded as text"
+description: "The semantic check of paths belongs to the shared view_file schema; a mistaken list is rejected before IO with a hint, without changing the shared string-union coercion."
 status: active
 created: 2026-09-30 15:26 +07:00
 updated: 2026-09-30 15:26 +07:00
 type: decision
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    at: 2026-09-30 15:26 +07:00
 ---
 
-# ADR 0218 — view_file отвергает список, записанный текстом
+# ADR 0218 — view_file rejects a list encoded as text
 
-## Контекст
+## Context
 
-`paths` принимает один путь строкой либо настоящий массив путей. Строка
-`'["image.png"]'` проходит обычный `z.string()`, но означает один неверный
-filename. Проверка расширения сообщает об отказе читать media, хотя причина —
-форма аргумента. Общий coercion намеренно сохраняет строки в string-union:
-автоматический JSON.parse меняет допустимые строковые значения.
+`paths` accepts one path as a string or a real array of paths. The string
+`'["image.png"]'` passes an ordinary `z.string()`, but it means one wrong
+filename. The extension check then reports a refusal to read media, although the
+cause is the shape of the argument. The shared coercion deliberately keeps strings
+in a string-union: an automatic JSON.parse changes the set of valid string values.
 
-## Решение
+## Decision
 
-Общая `ViewFileInputSchema` проверяет семантику каждого пути. Если строка
-разбирается как JSON-массив, схема отвергает её с сообщением
+The shared `ViewFileInputSchema` checks the semantics of each path. If a string
+parses as a JSON array, the schema rejects it with the message
 `paths is a list written as text — pass an array of paths or one path`.
-Правило действует и внутри массива, на managed MCP/Agent/CLI и raw MCP.
-Refinement не разбирает строку в аргумент и не меняет общий coercion.
-Корректный bracket filename `[preview].PNG` остаётся допустимым.
+The rule also applies inside an array, on the managed MCP/Agent/CLI surfaces and
+on raw MCP. The refinement does not parse the string into an argument and does not
+change the shared coercion. A correct bracket filename `[preview].PNG` stays valid.
 
-Локальный отказ по расширению до чтения файла называет переданный пользователем
-путь и найденное расширение. Скрытые пути file boundary по-прежнему скрыты.
+The local refusal by extension, before the file is read, names the path the user
+passed and the extension it found. Hidden paths of the file boundary stay hidden.
 
-## Последствия и проверка
+## Consequences and verification
 
-Валидация стала строже: выпуск 0.102.0 помечает breaking change и даёт миграцию
-из строкового JSON-массива в настоящий массив. Managed поверхности возвращают
-`VALIDATION_ERROR`; raw MCP использует свой отказ input-validation.
+Validation became stricter: release 0.102.0 marks this as a breaking change and
+provides a migration from a string-encoded JSON array to a real array. Managed
+surfaces return `VALIDATION_ERROR`; raw MCP uses its own input-validation refusal.
 
-`managed-view-file.test.ts` проверяет обе формы через реальные MCP/Agent mounts,
-отказ до file/network IO и последующее успешное чтение одного пути и массива.
-Ошибочный элемент массива, пустой список текстом и bracket filename — отдельные
-контрпримеры. Локальный отказ проверяется по коду, пути, расширению и нулю чтений.
-Решение служит I2, I3, I8 и I13.
+`managed-view-file.test.ts` checks both forms through real MCP/Agent mounts, the
+refusal before any file/network IO, and the following successful read of one path
+and of an array. A bad array element, an empty list written as text and a bracket
+filename are separate counterexamples. The local refusal is checked by code, path,
+extension and zero reads. The decision serves I2, I3, I8 and I13.

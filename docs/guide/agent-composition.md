@@ -5,11 +5,6 @@ type: architecture
 status: active
 created: 2026-09-30 22:45 +07:00
 updated: 2026-09-30 23:03 +07:00
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    at: 2026-09-30 22:45 +07:00
 ---
 
 # Compose an agent application
@@ -27,7 +22,7 @@ import {
   createAgentHarnessFileResources,
   createHeadlessAgentHarness,
 } from 'stitchkit/agent-runtime/harness';
-import { createAgentHarnessTools } from 'stitchkit/agent-runtime/harness-tools';
+import { composeToolLifecycle, mountAgent } from 'stitchkit/tools';
 
 const resources = createAgentHarnessFileResources({
   roots: [{ id: 'guide', kind: 'instruction', path: instructionRoot }],
@@ -36,26 +31,30 @@ const resources = createAgentHarnessFileResources({
 const harness = createHeadlessAgentHarness({
   protocol, store, models, promptBudget,
   resources,
-  tools: createAgentHarnessTools(({ context, run }) => ({
-    services: [catalogService],
-    context: { ...context, messageId: run.assistantMessageId },
-    runtimeTools: resources.runtimeTools,
-    lifecycle: authorizeTools,
-    hooks: observeTools,
-  })),
+  tools: ({ context, run, toolFenceLifecycle }) =>
+    mountAgent([catalogService], {
+      context: { ...context, messageId: run.assistantMessageId },
+      runtimeTools: resources.runtimeTools,
+      lifecycle: composeToolLifecycle(authorizeTools, toolFenceLifecycle),
+      hooks: observeTools,
+    }),
 });
 ```
 
-The factory composes application authorization then the runtime fence through `mountAgent`.
-The optional harness-tools leaf preserves the complete tool types, including MCP presenter
-declarations; install the same `ai` and `@modelcontextprotocol/server` peers as for
-`stitchkit/tools`. The base harness stays AI-only. Every mount option remains available, including registry, runtime tools, extension,
-coercion, output stripping, hooks and durability. Async per-run configuration is supported.
-The original tools callback still accepts arbitrary typed AI SDK tools and prepareStep.
+`tools` is called for each run with its validated context. Mount through `mountAgent` and
+compose your authorization with the run's `toolFenceLifecycle` by `composeToolLifecycle`: the
+fence rejects a call from a run that no longer owns the conversation, and it must run exactly
+once. Every mount option remains available, including registry, runtime tools, extension,
+coercion, output stripping, hooks and durability, and the callback may be async. The same callback
+still accepts arbitrary typed AI SDK tools and prepareStep. `stitchkit/tools` needs the same `ai` and
+`@modelcontextprotocol/server` peers as any `mountAgent` use; the base harness stays AI-only.
 The resource reader is explicitly selected: filtered allowlists do not gain tools merely
 because a loader exists. Root IDs, kinds, provenance and limits are unchanged.
 
 ## Server and browser
+
+`stitchkit/agent-runtime/realtime` and `stitchkit/agent-runtime/react` are evolving and
+experimental: no application has committed to them yet, so expect their shape to change.
 
 ```ts
 import { bindAgentHarnessRealtime } from 'stitchkit/agent-runtime/realtime';
@@ -68,11 +67,19 @@ const binding = bindAgentHarnessRealtime(harness, socket, {
   },
   onError: reportServerError,
 });
+
+// When an application withdraws someone's access, tell the binding.
+await removeMember(conversationId, userId);
+binding.revoke(conversationId, (identity) => identity.userId === userId);
 ```
 
 `socket` is the existing `createSocketIOServer` handle, attached to `createServer` (Bun)
-or the Node adapter. The access policy checks every operation, file/reference and metadata
-as well as snapshot/event reads. Session handshake authentication alone is insufficient.
+or the Node adapter. The access policy checks every request, file/reference and metadata, and
+the attach that opens a stream. Events then flow under that grant without a call per token;
+Without a `revoke()` call a grant lasts until the socket disconnects or the conversation is detached: events keep flowing even if your own permission data changed. That fail-open default is deliberate (one check per request, not one per token), so call `revoke` whenever access is withdrawn. `revoke` ends the grant, the next event is re-authorized (`source: 'delivery'`), and a refusal
+or failure detaches the conversation and delivers `access-denied`, which puts the controller in
+`error` with code `FORBIDDEN` instead of leaving a frozen view. Session handshake
+authentication alone is insufficient.
 Conversation ownership and observer/controller roles are application policy; the canonical
 control server additionally enforces its exclusive controller lease.
 
@@ -110,7 +117,10 @@ view does not interrupt its remote run. Use explicit `interrupt` for cancellatio
 Reconnect reattaches and reads durable state. Mutations are not retried automatically:
 if an acknowledgement is lost, retain the original idempotency key. Incoming event
 buffers and outgoing requests have finite limits; capacity/overflow/lease failures stay
-visible. A server overflow deliberately disconnects the transport; reconnect explicitly.
+visible, each with a code from the one `AgentControlErrorCode` vocabulary. A reconnect
+rejects the requests of the previous connection at once and attaches again, so they
+cannot hold capacity the new attach needs. A server overflow deliberately disconnects the
+transport; reconnect explicitly.
 
 ## Check behavior, not just admission
 

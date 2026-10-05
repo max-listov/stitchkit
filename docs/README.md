@@ -53,6 +53,8 @@ How stitchkit is built and why.
 - [`PRINCIPLES.md`](./PRINCIPLES.md) — what stitchkit is and is not: invariants I1…I15 and
   the list of what new work does not add.
 - [`VISION.md`](./VISION.md) — where stitchkit is going.
+- [`architecture/api-shape.md`](./architecture/api-shape.md) — how a public call site should read, and
+  when a clear shape justifies a breaking change.
 - [`architecture/`](./architecture/) — current subsystem design and runtime boundaries, including
   the optional [`terminal host`](./architecture/terminal-host.md) layering.
 - [`decisions/`](./decisions/) — architecture decision records (ADRs) — the **why**.
@@ -99,8 +101,9 @@ between alternatives, with lasting consequences.
 - **One decision, one file.** Don't append to a shared list.
 - **ADR filenames start with a number** — `NNNN-slug.md` — and the number is
   never reused.
-- **An ADR is immutable** — once written it is not edited, only superseded by a
-  later ADR that says so.
+- **An ADR's decision is immutable** — a changed decision is a later ADR that
+  supersedes or amends it. The old file may still be corrected where the decision
+  stays the same: language, metadata, a broken link, or a pointer to its successor.
 - Every documentation file opens with frontmatter:
 
 ```yaml

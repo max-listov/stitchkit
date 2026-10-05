@@ -158,10 +158,10 @@ guard must refuse. Filesystem mutations made inside inbox transactions call
 `assertHeld` immediately before publication or cleanup.
 
 For `createFileStateStore`, remove `staleLockMs` and `retryMs` from configuration.
-`lockTimeoutMs` remains the acquisition budget. Timestamp age no longer revokes
+`lockTimeoutMs` is the acquisition budget. Timestamp age never revokes
 a live or unknown writer. Stop and verify old writers before recovering a legacy
-pid-only lock; do not invent owner metadata. Historical temporary files are no
-longer deleted by age. See the [durable intake contract](application-kernel.md#durable-process-facts-and-owner-notifications).
+pid-only lock; do not invent owner metadata. Temporary files are never
+deleted by age. See the [durable intake contract](application-kernel.md#durable-process-facts-and-owner-notifications).
 
 ## Long-running poller
 

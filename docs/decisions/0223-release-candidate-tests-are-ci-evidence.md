@@ -1,40 +1,37 @@
 ---
-title: "ADR 0223: Unit tests кандидата проверяет обязательный CI"
-description: Структурный preflight release branch не повторяет unit tests и не выдаёт fast attestation.
+title: "ADR 0223: The candidate's unit tests are checked by the required CI"
+description: The structural preflight of a release branch does not repeat unit tests and does not issue a fast attestation.
 type: decision
 status: active
 created: 2026-10-01 16:40 +07:00
 updated: 2026-10-01 16:40 +07:00
-participants:
-  - role: authored
-    harness: Codex
-    model: GPT-6
-    title: Stitchkit
-    at: 2026-10-01 16:40 +07:00
 ---
 
-# ADR 0223 — Unit tests кандидата проверяет обязательный CI
+# ADR 0223 — The candidate's unit tests are checked by the required CI
 
-## Решение
+## Decision
 
-Для release commit в remote release branch pre-push оставляет metadata, privacy,
-frozen lockfile, lint и types. Все unit tests и selected lanes выполняет полный
-exact-SHA push CI; только зелёное доказательство разрешает master/tag/npm.
-Обычный push сохраняет fast gate, непроверенный прямой master — полный gate.
-Смешанный push с обычной веткой не получает облегчённый профиль.
+For a release commit pushed to a remote release branch, pre-push keeps metadata,
+privacy, frozen lockfile, lint and types. All unit tests and the selected lanes are
+run by the full exact-SHA push CI; only its green evidence authorises master/tag/npm.
+An ordinary push keeps the fast gate, an unverified direct master push keeps the
+full gate. A mixed push that includes an ordinary branch does not get the lighter
+profile.
 
-Candidate record называется `verify:candidate` и не является доказательством
-`verify:fast`: в нём нет tests. Full/release fast-attestation по ADR 0222 сохраняется
-только после полного fast subset. Полные diagnostic commands остаются доступными.
-Это уточняет локальный candidate профиль ADR 0222, остальные его решения действуют.
+The candidate record is called `verify:candidate` and is not evidence for
+`verify:fast`: it contains no tests. The full/release fast attestation of ADR 0222
+is stored only after the full fast subset. The full diagnostic commands stay
+available. This refines the local candidate profile of ADR 0222; its other
+decisions remain in force.
+(Amended by ADR 0247: the candidate also runs the tests that read release metadata.)
 
-## Причина и границы
+## Reason and limits
 
-Настоящие выпуски показали около 95s повторного локального test этапа перед теми
-же обязательными тестами CI. Перенос этого этапа в единственный обязательный CI
-не сокращает publication coverage. Другой SHA, PR-run и красный/отменённый CI
-не разрешают публикацию. Protected npm OIDC, pins, privacy, native qualification
-и проверка опубликованных bytes не меняются. Очереди GitHub/npm остаются измеряемым
-внешним ожиданием; локальная экономия не является гарантией их длительности.
+Real releases showed about 95s of a repeated local test stage before the same
+mandatory CI tests. Moving this stage into the single mandatory CI does not reduce
+publication coverage. A different SHA, a PR run and a red/cancelled CI do not
+authorise publication. Protected npm OIDC, pins, privacy, native qualification and
+the check of published bytes do not change. GitHub/npm queues remain a measurable
+external wait; the local saving is not a guarantee of their duration.
 
 Serves P.

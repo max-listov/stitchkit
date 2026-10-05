@@ -4,7 +4,7 @@ description: Compose process-local resources, schedules, readiness, drain and op
 type: architecture
 status: active
 created: 2026-08-23
-updated: 2026-10-04 13:28 +07:00
+updated: 2026-10-05 20:56 +07:00
 ---
 
 # Managed application kernel
@@ -190,9 +190,8 @@ lifecycle context; the application decides when a database/provider probe runs.
 
 **A `reportHealth` call inside `start` is kept.** A resource that says nothing
 is assumed healthy once it is ready; one that reports its own health has already
-answered the question, and the answer stands. (It used to be overwritten — and
-the example above hides that, because `healthy` is the same value that
-overwrote it.)
+answered the question, and the answer stands. The readiness default never
+overwrites it.
 
 **Reporting the same health again is not a change.** A resource may confirm its
 health on a timer; a report with the value it already reported publishes
@@ -688,9 +687,48 @@ The caller owns file selection and coordination with an active rotator.
 Writer startup inspects retained and active files under its lock. On damage,
 `journal.getStatus().recovery` contains counts and first/last anomaly locations, reconstructed
 again on restart from the preserved bytes. This describes startup observations, not live
-continuous inspection. `maxFiles: 1` cannot preserve a torn active file by rotation and throws
-`DiagnosticJournalRecoveryError` before removing any evidence; configure at least two slots.
-Normal rotation retains the existing finite eviction policy. → [ADR 0219](../decisions/0219-journal-damage-is-data-and-io-failure-is-failure.md).
+continuous inspection. Normal rotation retains the existing finite eviction policy.
+→ [ADR 0219](../decisions/0219-journal-damage-is-data-and-io-failure-is-failure.md).
+
+A file opening cannot keep in place — a torn active file with `maxFiles: 1`, a generation name
+that is not a regular file, a retained file it cannot read — is renamed to
+`<file>.quarantined-<epoch>` beside it, and the journal starts (`onStartupRefusal: 'quarantine'`,
+the default). Nothing is deleted; quarantined files are outside retention and yours to remove.
+Every open lists them in `getStatus().recovery.quarantined` until you do: the ones it moved
+first, with their `reason`, then the ones earlier runs left, without one — at most 32, and
+`quarantinedUnlisted` counts the rest.
+A journal whose damage must stop the process — one that is a source of truth, not diagnostics —
+declares `onStartupRefusal: 'fail'` and gets a typed `DiagnosticJournalRecoveryError`:
+
+```ts
+import { DiagnosticJournalRecoveryError } from 'stitchkit/application'
+
+// A diagnostic journal: start, then say what is set aside.
+const journal = await createDiagnosticJournal({ ...config })
+const { quarantined = [], quarantinedUnlisted = 0 } = journal.getStatus().recovery ?? {}
+for (const entry of quarantined) {
+  // `reason` is present only for a file this start moved; an earlier run's has none.
+  internalLogger.warn({ file: entry.file, movedTo: entry.quarantinedAs, reason: entry.reason })
+}
+if (quarantinedUnlisted > 0) internalLogger.warn({ quarantinedUnlisted })
+
+// A journal that is a source of truth: refuse to start over damage.
+try {
+  await createDiagnosticJournal({ ...config, onStartupRefusal: 'fail' })
+} catch (error) {
+  if (error instanceof DiagnosticJournalRecoveryError) {
+    // error.reason: 'torn-without-retention-slot' | 'not-a-regular-file' | 'unreadable'
+  }
+  throw error
+}
+```
+
+A quarantining journal writes, so the managed resource that owns it reports `healthy`, and its
+dependants read `recovery` from the value they `use()`. There is no degraded journal: the kernel
+degrades only optional resources, and a required resource cannot depend on one.
+`DiagnosticJournalRecoveryStatusSchema` is evolving and `.strict()`; if you embed it in your own
+protocol, every change to its shape is listed under breaking changes.
+→ [ADR 0240](../decisions/0240-a-diagnostic-journal-quarantines-what-it-cannot-keep.md).
 
 Shutdown performs one phase barrier at a time: stop admission everywhere,
 cancel future schedules, drain admitted work, then close in reverse stable

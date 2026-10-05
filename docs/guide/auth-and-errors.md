@@ -664,7 +664,7 @@ whether the code declares `details`:
 
 The model-facing envelope is `{ error, retryable, details?, _hint? }`; for a code with no
 details schema the framework fills `details` with `{ message }`, so declaring a
-message changes what the model reads there — it used to be the code itself. Put
+message changes what the model reads there; without one it is the code itself. Put
 anything the model must reliably read in `details` or `hint`, not in `message`.
 
 With no `details` schema, the options object forbids `details`. A required
