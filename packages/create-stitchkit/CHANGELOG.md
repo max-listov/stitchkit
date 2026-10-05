@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-10-05
+
 ### Changed
 
 - Generated projects track Stitchkit `^0.105.0`. The template's query-client test
