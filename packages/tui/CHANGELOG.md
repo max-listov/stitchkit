@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** projects that install `stitchkit-tui` without listing `stitchkit` in their own
+dependencies.
+
+- `stitchkit-tui` — **`stitchkit` is a peer dependency, not a dependency.** The project's own
+  stitchkit is the one the terminal uses, so an install holds a single copy of the framework. As a
+  dependency, the range frozen when the package was packed (`^0.94.0` in 0.1.4) gave every project
+  on a newer framework a second, older stitchkit beside its own, and errors crossing the package
+  boundary failed `instanceof`.
+
+  ```jsonc
+  // before — stitchkit arrived through stitchkit-tui
+  { "dependencies": { "stitchkit-tui": "^0.1.4" } }
+  // after — the project names the framework it runs
+  { "dependencies": { "stitchkit-tui": "^0.2.0", "stitchkit": "^0.105.0" } }
+  ```
+
 ## [0.1.4] — 2026-09-23
 
 ### Fixed

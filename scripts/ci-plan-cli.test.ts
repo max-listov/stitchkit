@@ -20,6 +20,29 @@ async function git(root: string, args: string[], input?: string): Promise<string
   return out;
 }
 
+async function runPlanner(root: string, bin: string, base: string, head = '3'.repeat(40)) {
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, 'ci-plan.ts')], {
+    cwd: root,
+    env: {
+      ...Bun.env,
+      PATH: `${bin}:${Bun.env.PATH}`,
+      CI_EVENT: 'push',
+      CI_HEAD_SHA: head,
+      CI_BASE_SHA: base,
+    },
+    stdout: 'pipe',
+    stderr: 'pipe',
+    timeout: 5000,
+    killSignal: 'SIGKILL',
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  return { out, err, code };
+}
+
 test('actual planner CLI asks the entire push range; a new branch conservatively covers its tree', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ci-plan-command-boundary-'));
   try {
@@ -31,43 +54,22 @@ test('actual planner CLI asks the entire push range; a new branch conservatively
       `#!/usr/bin/env bun
 import { appendFileSync } from 'node:fs';
 const args = Bun.argv.slice(2); appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args)+'\\n');
-if (args[0] === 'log') console.log('release(train): terminal package');
-else if (args[0] === 'diff' && args[4] === '${'1'.repeat(40)}') process.stdout.write(['packages/core/src/process/launch.ts', 'release-train.json', ''].join(String.fromCharCode(0)));
+if (args[0] === 'log') console.log('fix: two packages');
+else if (args[0] === 'diff' && args[4] === '${'1'.repeat(40)}') process.stdout.write(['packages/core/src/process/launch.ts', 'docs/guide/upgrading.md', ''].join(String.fromCharCode(0)));
 else if (args[0] === 'ls-tree') process.stdout.write(['packages/core/src/process/launch.ts', 'packages/tui/src/index.ts', 'packages/create-stitchkit/template/project.json', ''].join(String.fromCharCode(0)));
 else throw new Error('Unexpected diff boundary');
 `,
       { mode: 0o755 },
     );
-    await writeFile(
-      join(root, 'release-train.json'),
-      JSON.stringify({ schemaVersion: 1, releases: [{ target: 'tui', version: '0.1.1' }] }),
-    );
+    await writeFile(join(bin, 'gh'), '#!/bin/sh\necho "[]"\n', { mode: 0o755 });
     for (const base of ['1'.repeat(40), '0'.repeat(40)]) {
-      const child = Bun.spawn([process.execPath, join(import.meta.dir, 'ci-plan.ts')], {
-        cwd: root,
-        env: {
-          ...Bun.env,
-          PATH: `${bin}:${Bun.env.PATH}`,
-          CI_EVENT: 'push',
-          CI_HEAD_SHA: '3'.repeat(40),
-          CI_BASE_SHA: base,
-        },
-        stdout: 'pipe',
-        stderr: 'pipe',
-        timeout: 5000,
-        killSignal: 'SIGKILL',
-      });
-      const [out, err, code] = await Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ]);
-      expect(err).toBe('');
-      expect(code).toBe(0);
+      const { out, err, code } = await runPlanner(root, bin, base);
+      expect(code, err).toBe(0);
+      expect(err).toContain('no push CI run exists');
       const plan = CiPlanSchema.parse(JSON.parse(out));
       expect(plan.portable).toBe(true);
-      expect(plan.tui).toBe(true);
-      expect(plan.artifacts).toBe(true);
+      expect(plan.tui).toBe(base.startsWith('0'));
+      expect(plan.artifacts).toBe(false);
       expect(plan.starterModes).toEqual(base.startsWith('1') ? ['head'] : ['target', 'head']);
     }
     const actual = (await readFile(calls, 'utf8'))
@@ -80,6 +82,31 @@ else throw new Error('Unexpected diff boundary');
       ['log', '-1', '--format=%s', '3'.repeat(40)],
       ['ls-tree', '-r', '--name-only', '-z', '3'.repeat(40)],
     ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('actual planner CLI selects no evidence for a SHA whose push run already succeeded', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ci-plan-answered-'));
+  try {
+    const bin = join(root, 'bin');
+    await mkdir(bin);
+    const head = '3'.repeat(40);
+    await writeFile(join(bin, 'git'), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+    await writeFile(
+      join(bin, 'gh'),
+      `#!/bin/sh\necho '[{"id":7,"head_sha":"${head}","event":"push","conclusion":"success"}]'\n`,
+      { mode: 0o755 },
+    );
+    const { out, err, code } = await runPlanner(root, bin, '1'.repeat(40), head);
+    expect(code, err).toBe(0);
+    expect(err).toContain('selecting no evidence');
+    expect(CiPlanSchema.parse(JSON.parse(out))).toMatchObject({
+      targets: [],
+      artifacts: false,
+      starterModes: [],
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -98,16 +125,9 @@ test('real rename across package boundaries covers both the removed and added pa
     expect((await git(root, ['diff', '--name-only', before, after])).trim()).toBe('README.md');
     const paths = await changedCiPaths(after, before, (args) => git(root, args));
     expect(paths.sort()).toEqual(['README.md', 'packages/core/owned.ts']);
-    for (const subject of ['ordinary fix', 'release(train): terminal package']) {
-      const plan = planCi({
-        event: 'push',
-        subject,
-        changedPaths: paths,
-        releaseTargets: ['tui'],
-      });
-      expect(plan.portable).toBe(true);
-      expect(plan.darwin).toBe(true);
-    }
+    const plan = planCi({ event: 'push', subject: 'ordinary fix', changedPaths: paths });
+    expect(plan.portable).toBe(true);
+    expect(plan.darwin).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -141,11 +161,10 @@ for (const { label, leaf } of [
         expect(paths).toEqual([path]);
         const plan = planCi({
           event: 'push',
-          subject: 'release(train): terminal package',
-          releaseTargets: ['tui'],
+          subject: 'ordinary fix',
           changedPaths: paths,
         });
-        expect(plan.targets).toEqual(['tui', 'core']);
+        expect(plan.targets).toEqual(['core']);
         expect(plan.portable).toBe(true);
         expect(plan.darwin).toBe(true);
         expect(plan.starterModes).toEqual(['head']);

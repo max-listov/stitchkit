@@ -2,21 +2,17 @@ import { createHash } from 'node:crypto';
 import { type FSWatcher, watch } from 'node:fs';
 import { lstat, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { git } from './local-git';
 
 async function inputPaths(root: string): Promise<string[]> {
-  const child = Bun.spawn(
-    ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-    {
-      cwd: root,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    },
-  );
-  const names = (await new Response(child.stdout).text()).split('\0').filter(Boolean);
-  const stderr = await new Response(child.stderr).text();
-  if ((await child.exited) !== 0)
-    throw new Error(`Cannot enumerate gate inputs: ${stderr.trim()}`);
-  return names;
+  const listing = await git(root, [
+    'ls-files',
+    '--cached',
+    '--others',
+    '--exclude-standard',
+    '-z',
+  ]);
+  return listing.split('\0').filter(Boolean);
 }
 
 function inputDirectories(names: string[]): Set<string> {

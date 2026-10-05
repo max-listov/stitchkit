@@ -3,42 +3,35 @@ import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withExclusiveLock } from '../packages/core/src/internal/with-exclusive-lock';
-import { forgetGreenGate, greenGateKey, readGreenGates, writeGreenGate } from './gate-memo';
+import { readGreenGates, writeGreenGate } from './gate-memo';
 
 const record = { tree: 'one', toolchain: 'bun:test', at: 'now', commit: '(no commit)' };
 
-async function waitForFile(path: string): Promise<void> {
-  const deadline = performance.now() + 5000;
-  while (!(await Bun.file(path).exists())) {
-    if (performance.now() > deadline) throw new Error('Fixture readiness deadline expired');
-    await Bun.sleep(5);
-  }
+/** A fixture program run by Bun; its stdout reports readiness and its stdin gates the start. */
+function startFixture(name: string, ...args: string[]) {
+  return Bun.spawn([process.execPath, join(import.meta.dir, 'fixtures', name), ...args], {
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+}
+
+async function ready(child: ReturnType<typeof startFixture>): Promise<void> {
+  const reader = child.stdout.getReader();
+  const { value } = await reader.read();
+  reader.releaseLock();
+  expect(new TextDecoder().decode(value)).toContain('ready');
 }
 
 test('separate processes serialize independent writes and bound shared history', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gate-memo-processes-'));
-  const children: ReturnType<typeof Bun.spawn>[] = [];
+  const children: ReturnType<typeof startFixture>[] = [];
   try {
     const path = join(root, 'memo.json');
-    const worker = join(root, 'worker.ts');
-    await writeFile(
-      worker,
-      `
-      import { writeGreenGate } from ${JSON.stringify(join(import.meta.dir, 'gate-memo.ts'))};
-      const [root, id] = Bun.argv.slice(2);
-      await Bun.write(root + '/ready-' + id, 'ready');
-      while (!await Bun.file(root + '/start').exists()) await Bun.sleep(5);
-      const record = {tree: id, toolchain:'bun:test', at:'now', commit:'(no commit)'};
-      await writeGreenGate('gate-' + id, record, root + '/memo.json');
-      await writeGreenGate('shared', record, root + '/memo.json');
-    `,
-    );
     for (let index = 0; index < 10; index += 1)
-      children.push(
-        Bun.spawn([process.execPath, worker, root, String(index)], { stderr: 'pipe' }),
-      );
-    await Promise.all(children.map((_, index) => waitForFile(join(root, `ready-${index}`))));
-    await writeFile(join(root, 'start'), 'start');
+      children.push(startFixture('gate-memo-worker.ts', root, String(index)));
+    await Promise.all(children.map(ready));
+    for (const child of children) child.stdin.end();
     expect(await Promise.all(children.map((child) => child.exited))).toEqual(
       Array(10).fill(0),
     );
@@ -55,24 +48,6 @@ test('separate processes serialize independent writes and bound shared history',
     await rm(root, { recursive: true, force: true });
   }
 }, 15_000);
-
-test('write/forget cannot resurrect a revoked record or lose an independent update', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'gate-memo-forget-'));
-  try {
-    const path = join(root, 'memo.json');
-    for (let index = 0; index < 10; index += 1) {
-      await writeGreenGate('victim', record, path);
-      await Promise.all([
-        writeGreenGate('other', { ...record, tree: String(index) }, path),
-        forgetGreenGate('victim', greenGateKey(record), path),
-      ]);
-      expect(await readGreenGates('victim', path)).toEqual([]);
-      expect((await readGreenGates('other', path))[0]?.tree).toBe(String(index));
-    }
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
 
 test('readers see complete documents while replacements publish', async () => {
   const root = await mkdtemp(join(tmpdir(), 'gate-memo-readers-'));
@@ -112,32 +87,8 @@ test('a killed writer before publication leaves old bytes and a reclaimable tran
     const path = join(root, 'memo.json');
     await writeGreenGate('initial', record, path);
     const before = await readFile(path, 'utf8');
-    const worker = join(root, 'crash.ts');
-    await writeFile(
-      worker,
-      `
-      import { mock } from 'bun:test';
-      const fs = await import('node:fs/promises');
-      const actualOpen = fs.open;
-      mock.module('node:fs/promises', () => ({ ...fs, open: async (name, ...args) => {
-        const handle = await actualOpen(name, ...args);
-        if (!String(name).includes('/.memo.json.')) return handle;
-        return {
-          writeFile: async (...data) => {
-            await handle.writeFile(...data);
-            await Bun.write(${JSON.stringify(join(root, 'ready'))}, 'ready');
-            await new Promise(() => {});
-          },
-          chmod: handle.chmod.bind(handle), sync: handle.sync.bind(handle),
-          close: handle.close.bind(handle),
-        };
-      }}));
-      const { writeGreenGate } = await import(${JSON.stringify(join(import.meta.dir, 'gate-memo.ts'))});
-      await writeGreenGate('crashed', ${JSON.stringify(record)}, ${JSON.stringify(path)});
-    `,
-    );
-    child = Bun.spawn([process.execPath, worker], { stderr: 'pipe' });
-    await waitForFile(join(root, 'ready'));
+    child = startFixture('gate-memo-crash-worker.ts', path);
+    await ready(child);
     child.kill('SIGKILL');
     await child.exited;
     expect(await readFile(path, 'utf8')).toBe(before);
@@ -170,33 +121,8 @@ test('an occupied transaction returns the canonical lock timeout diagnosis', asy
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
     const path = join(root, 'memo.json');
-    const worker = join(root, 'timeout.ts');
-    const owner = join(
-      import.meta.dir,
-      '../packages/core/src/internal/with-exclusive-lock.ts',
-    );
-    await writeFile(
-      worker,
-      `
-      import { mock } from 'bun:test';
-      const { withExclusiveLock: actual } = await import(${JSON.stringify(owner)});
-      mock.module(${JSON.stringify(owner)}, () => ({
-        withExclusiveLock: (path, run, options) => actual(path, run, {...options, timeoutMs:30}),
-      }));
-      const { writeGreenGate } = await import(${JSON.stringify(join(import.meta.dir, 'gate-memo.ts'))});
-      try { await writeGreenGate('blocked', ${JSON.stringify(record)}, ${JSON.stringify(path)}); }
-      catch(error) {
-        console.log(JSON.stringify({code:error.code,label:error.label,message:error.message}));
-        process.exit(0);
-      }
-      throw new Error('A live transaction lock was bypassed');
-    `,
-    );
     await withExclusiveLock(`${path}.lock`, async () => {
-      const running = Bun.spawn([process.execPath, worker], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
+      const running = startFixture('gate-memo-timeout-worker.ts', path);
       child = running;
       const output = await new Response(running.stdout).text();
       expect(await running.exited).toBe(0);
@@ -211,10 +137,7 @@ test('an occupied transaction returns the canonical lock timeout diagnosis', asy
     await writeFile(`${path}.lock`, '');
     const old = new Date(Date.now() - 60_000);
     await utimes(`${path}.lock`, old, old);
-    const unknownOwner = Bun.spawn([process.execPath, worker], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    const unknownOwner = startFixture('gate-memo-timeout-worker.ts', path);
     child = unknownOwner;
     const refusal = await new Response(unknownOwner.stdout).text();
     expect(await unknownOwner.exited).toBe(0);

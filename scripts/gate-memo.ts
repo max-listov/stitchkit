@@ -1,8 +1,10 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { writeFileAtomic } from '../packages/core/src/internal/atomic-file';
 import { withExclusiveLock } from '../packages/core/src/internal/with-exclusive-lock';
+import { git } from './local-git';
 
 /**
  * One green run of one gate, remembered by what it actually checked.
@@ -57,27 +59,23 @@ export function findGreenGate(
   return history.find((entry) => greenGateKey(entry) === key);
 }
 
-function isRecord(value: unknown): value is GreenGateRecord {
-  if (typeof value !== 'object' || value === null) return false;
-  for (const field of ['tree', 'toolchain', 'at', 'commit']) {
-    if (typeof Reflect.get(value, field) !== 'string') return false;
-  }
-  return true;
-}
+const GreenGateRecordSchema = z.object({
+  tree: z.string(),
+  toolchain: z.string(),
+  at: z.string(),
+  commit: z.string(),
+});
+const GateMemoSchema = z.looseObject({
+  gates: z.record(z.string(), z.array(GreenGateRecordSchema).catch([])).default({}),
+});
 
 /** Every well-formed record for `gate`; a damaged or foreign file reads as empty. */
 export function parseGateMemo(source: string, gate: string): GreenGateRecord[] {
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(source);
+    return GateMemoSchema.parse(JSON.parse(source)).gates[gate] ?? [];
   } catch {
     return [];
   }
-  if (typeof parsed !== 'object' || parsed === null) return [];
-  const gates = Reflect.get(parsed, 'gates');
-  if (typeof gates !== 'object' || gates === null) return [];
-  const history: unknown = Reflect.get(gates, gate);
-  return Array.isArray(history) ? history.filter(isRecord) : [];
 }
 
 /**
@@ -115,29 +113,19 @@ async function updateGreenGate(
   await withExclusiveLock(
     `${path}.lock`,
     async () => {
-      let document: Record<string, unknown> = {};
+      let document: z.infer<typeof GateMemoSchema> = { gates: {} };
       try {
-        const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
-        if (typeof parsed === 'object' && parsed !== null) document = { ...parsed };
+        document = GateMemoSchema.parse(JSON.parse(await readFile(path, 'utf8')));
       } catch (error) {
-        if (
-          !(error instanceof SyntaxError) &&
-          !(error instanceof Error && 'code' in error && error.code === 'ENOENT')
-        )
+        // A missing or malformed cache is a miss; an IO refusal cannot discard history.
+        const missing = error instanceof Error && 'code' in error && error.code === 'ENOENT';
+        if (!missing && !(error instanceof SyntaxError) && !(error instanceof z.ZodError))
           throw error;
-        // Missing or malformed cache is a miss; an IO refusal cannot discard history.
       }
-      const gates = Reflect.get(document, 'gates');
-      const existing: Record<string, unknown> =
-        typeof gates === 'object' && gates !== null ? { ...gates } : {};
-      const previous: unknown = Reflect.get(existing, gate);
-      const history = Array.isArray(previous) ? previous.filter(isRecord) : [];
-      Reflect.set(existing, gate, update(history));
-      await writeFileAtomic(
-        path,
-        `${JSON.stringify({ ...document, gates: existing }, null, 2)}\n`,
-        { durability: 'none' },
-      );
+      const gates = { ...document.gates, [gate]: update(document.gates[gate] ?? []) };
+      await writeFileAtomic(path, `${JSON.stringify({ ...document, gates }, null, 2)}\n`, {
+        durability: 'none',
+      });
     },
     // An empty owner record is unknown, even when old: a live creator can pause
     // before recording itself. Cache RMW must never overlap on an age-only guess.
@@ -151,36 +139,6 @@ export function writeGreenGate(
   path: string,
 ): Promise<void> {
   return updateGreenGate(gate, path, (history) => rememberGreenGate(history, record));
-}
-
-export function forgetGreenGate(gate: string, key: string, path: string): Promise<void> {
-  return updateGreenGate(gate, path, (history) =>
-    history.filter((record) => greenGateKey(record) !== key),
-  );
-}
-
-async function git(
-  root: string,
-  args: string[],
-  env?: Record<string, string>,
-  input?: string,
-): Promise<string> {
-  const child = Bun.spawn(['git', ...args], {
-    cwd: root,
-    env: env ? { ...Bun.env, ...env } : Bun.env,
-    stdin: input === undefined ? 'ignore' : new TextEncoder().encode(input),
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  const [text, reason, code] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
-  if (code !== 0) {
-    throw new Error(`git ${args[0] ?? ''} exited with ${code}: ${reason.trim()}`);
-  }
-  return text;
 }
 
 /**
@@ -201,16 +159,15 @@ export async function worktreeTreeHash(root: string): Promise<string> {
     `stitchkit-gate-index-${process.pid}-${Bun.nanoseconds().toString(36)}`,
   );
   try {
+    const env = { GIT_INDEX_FILE: scratch };
     const tracked = await git(root, ['ls-files', '--cached', '-z']);
-    await git(root, ['add', '--all', '.'], { GIT_INDEX_FILE: scratch });
+    await git(root, ['add', '--all', '.'], { env });
     if (tracked)
-      await git(
-        root,
-        ['update-index', '--add', '--remove', '-z', '--stdin'],
-        { GIT_INDEX_FILE: scratch },
-        tracked,
-      );
-    return (await git(root, ['write-tree'], { GIT_INDEX_FILE: scratch })).trim();
+      await git(root, ['update-index', '--add', '--remove', '-z', '--stdin'], {
+        env,
+        input: tracked,
+      });
+    return (await git(root, ['write-tree'], { env })).trim();
   } finally {
     await Bun.file(scratch)
       .delete()
@@ -242,10 +199,3 @@ export async function toolchainFingerprint(): Promise<string> {
   }
   return `bun:${Bun.version} ${node} ${process.platform}/${process.arch}`;
 }
-
-export {
-  laneEnvironmentFingerprint,
-  laneEnvironmentIsReusable,
-  postgresConnectionFingerprint,
-  postgresFingerprint,
-} from './gate-lane-environment';

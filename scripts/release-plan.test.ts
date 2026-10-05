@@ -1,99 +1,20 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { selectSuccessfulCiRun } from './release-ci';
+import { askReleaseCi, selectSuccessfulCiRun } from './release-ci';
+import { assertMigrationSection, extractReleaseNotes } from './release-notes';
+import { decidePublishAction } from './release-plan';
+import { classifyPrePush } from './release-prepush';
+import { shouldRunStarterHeadLane } from './release-starter-head';
 import {
-  assertBreakingAudience,
-  assertLockfileWorkspaceVersions,
-  assertMigrationSection,
-  assertReleaseCommitSubject,
   assertReleaseSubjectForTag,
   assertTagOnReleaseHead,
-  assertTrainDoesNotOutrunTheStarter,
-  assertVersionCalibre,
-  ciAlreadyAnsweredFor,
-  classifyPrePush,
-  decidePublishAction,
-  extractReleaseNotes,
   isReleaseCommitSubject,
-  localGateProfile,
-  lockedWorkspaceVersion,
-  MIGRATION_CHANNELS,
-  prePushMetadataGate,
-  releaseCandidateIdentity,
-  releasedVersionsInOrder,
-  releasePlanForTag,
-  releaseScopeForSubject,
-  releaseScopeForTag,
-  releaseTagFor,
-  shouldRunStarterHeadLane,
-  validateReleaseCommit,
-} from './release-plan';
-import { ReleaseTrainSchema } from './release-train';
+} from './release-subject';
 
 const SHA = '1'.repeat(40);
 const ZERO = '0'.repeat(40);
 const BREAKING = '### \u26a0\ufe0f Breaking changes';
 
 describe('release plan', () => {
-  test('one train subject authorizes only exact manifest entries', async () => {
-    const root = resolve(import.meta.dir, '..');
-    const readTrain = async () =>
-      JSON.stringify({
-        schemaVersion: 1,
-        releases: [
-          { target: 'tui', version: '0.1.1' },
-          { target: 'create-stitchkit', version: '0.4.4' },
-        ],
-      });
-    await expect(
-      assertReleaseSubjectForTag(
-        root,
-        'release(train): publish terminal and starter packages',
-        'stitchkit-tui-v0.1.1',
-        '0.1.1',
-        readTrain,
-      ),
-    ).resolves.toBeUndefined();
-    await expect(
-      assertReleaseSubjectForTag(
-        root,
-        'release(train): publish terminal and starter packages',
-        'v0.70.1',
-        '0.70.1',
-        readTrain,
-      ),
-    ).rejects.toThrow(/does not select core/);
-  });
-
-  test('classifies branch, tag, deletion and mixed pushes without duplicate gates', () => {
-    expect(classifyPrePush(`refs/heads/topic ${SHA} refs/heads/topic ${ZERO}\n`)).toEqual({
-      verify: true,
-      releaseTags: [],
-      branchHeads: [SHA],
-      defaultBranchHeads: [],
-      releaseBranchesOnly: false,
-    });
-    expect(classifyPrePush(`refs/tags/v1.2.3 ${ZERO} refs/tags/v1.2.3 ${SHA}\n`)).toEqual({
-      verify: false,
-      releaseTags: [],
-      branchHeads: [],
-      defaultBranchHeads: [],
-      releaseBranchesOnly: false,
-    });
-    expect(
-      classifyPrePush(
-        `refs/heads/main ${SHA} refs/heads/main ${ZERO}\nrefs/tags/v1.2.3 ${SHA} refs/tags/v1.2.3 ${ZERO}\n`,
-      ),
-    ).toEqual({
-      verify: true,
-      releaseTags: [{ tag: 'v1.2.3', sha: SHA }],
-      branchHeads: [SHA],
-      defaultBranchHeads: [SHA],
-      releaseBranchesOnly: false,
-    });
-  });
-
   test('classifies by the REMOTE ref: HEAD:master and sha:refs/tags forms are covered', () => {
     // Regression: the classifier read the LOCAL ref, so `git push origin
     // HEAD:master` ran zero gates and `<sha>:refs/tags/v9` skipped preflight.
@@ -124,276 +45,6 @@ describe('release plan', () => {
     });
   });
 
-  test('a release tag on a non-release commit is refused, naming the honest order', () => {
-    // The 0.55.0 shape: the release commit was pushed before it was green, a
-    // follow-up fix became the head, and the tag had to land on the fix.
-    expect(() =>
-      assertReleaseCommitSubject(
-        'test(server): align shutdown timing with force budget',
-        '0.55.0',
-        'core',
-      ),
-    ).toThrow('must point at a "release(core): … in 0.55.0" commit');
-    expect(() => assertReleaseCommitSubject('', '0.55.0', 'core')).toThrow('(empty)');
-  });
-
-  test('the version must match on boundaries — prerelease and longer numbers do not pass', () => {
-    expect(() =>
-      assertReleaseCommitSubject('release(core): ship it in 0.56.0-rc.1', '0.56.0', 'core'),
-    ).toThrow('must name version 0.56.0 exactly');
-    expect(() =>
-      assertReleaseCommitSubject('release(core): bump to 10.56.0', '0.56.0', 'core'),
-    ).toThrow('must name version 0.56.0 exactly');
-    expect(() =>
-      assertReleaseCommitSubject(
-        'release(core): managed tools and CLI lifecycle in 0.54.0',
-        '0.55.0',
-        'core',
-      ),
-    ).toThrow('must name version 0.55.0 exactly');
-  });
-
-  test('the subject scope is bound to the tag namespace', () => {
-    // A starter release commit must not be able to carry a core tag when both
-    // packages happen to sit on the same version.
-    expect(releaseScopeForTag('v0.3.3')).toBe('core');
-    expect(releaseScopeForTag('create-stitchkit-v0.3.3')).toBe('starter');
-    expect(releaseScopeForTag('stitchkit-tui-v0.1.0')).toBe('tui');
-    expect(() =>
-      assertReleaseCommitSubject(
-        'release(starter): scaffolder fixes in 0.3.3',
-        '0.3.3',
-        'core',
-      ),
-    ).toThrow('release(core)');
-    expect(() =>
-      assertReleaseCommitSubject(
-        'release(core): transport policies and async operations in 0.55.0',
-        '0.55.0',
-        'core',
-      ),
-    ).not.toThrow();
-    expect(() =>
-      assertReleaseCommitSubject(
-        'release(starter): safe loopback bind default in 0.3.3',
-        '0.3.3',
-        'starter',
-      ),
-    ).not.toThrow();
-  });
-
-  test('a stale tag SHA is refused before any publication step', () => {
-    expect(() => assertTagOnReleaseHead(SHA, SHA)).not.toThrow();
-    expect(() => assertTagOnReleaseHead(SHA, '2'.repeat(40))).toThrow(
-      /current origin\/master/,
-    );
-    expect(() => assertTagOnReleaseHead('', SHA)).toThrow(/current origin\/master/);
-  });
-
-  test('a missing or failed exact-SHA CI run is a loud refusal; success selects the run', () => {
-    const runs = [
-      { id: 1, head_sha: SHA, event: 'push', conclusion: 'failure' },
-      { id: 2, head_sha: SHA, event: 'pull_request', conclusion: 'success' },
-      { id: 3, head_sha: '2'.repeat(40), event: 'push', conclusion: 'success' },
-    ];
-    expect(() => selectSuccessfulCiRun([], SHA)).toThrow(/no push CI run exists/);
-    expect(() => selectSuccessfulCiRun(runs, SHA)).toThrow(/no successful push CI run/);
-    expect(
-      selectSuccessfulCiRun(
-        [...runs, { id: 4, head_sha: SHA, event: 'push', conclusion: 'success' }],
-        SHA,
-      ),
-    ).toBe(4);
-  });
-
-  test('a repeated workflow is idempotent; a different published tarball is refused', () => {
-    expect(decidePublishAction('abc', null)).toBe('publish');
-    expect(decidePublishAction('abc', '')).toBe('publish');
-    expect(decidePublishAction('abc', 'abc')).toBe('skip');
-    expect(() => decidePublishAction('abc', 'def')).toThrow(/DIFFERENT tarball/);
-  });
-
-  test('maps both tag namespaces to one release model', () => {
-    expect(releasePlanForTag('v1.2.3')).toMatchObject({ target: 'core', version: '1.2.3' });
-    expect(releasePlanForTag('create-stitchkit-v2.0.0')).toMatchObject({
-      target: 'create-stitchkit',
-      version: '2.0.0',
-    });
-    expect(releasePlanForTag('stitchkit-tui-v0.1.0')).toMatchObject({
-      target: 'tui',
-      packageName: 'stitchkit-tui',
-      version: '0.1.0',
-    });
-    expect(() => releasePlanForTag('other-v1')).toThrow('Unsupported release tag');
-  });
-
-  test('an unaligned breaking release runs HEAD unless an exact deferred review exists', () => {
-    const breaking = '### ⚠️ Breaking changes\n\n- managed server hard cut';
-    expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking)).toBe(true);
-    expect(
-      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
-        coreVersion: '0.49.0',
-        outcome: 'deferred',
-        reason: 'The target lane must remain on the published minor until core ships.',
-      }),
-    ).toBe(false);
-    expect(
-      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
-        coreVersion: '0.48.0',
-        outcome: 'deferred',
-        reason: 'stale review',
-      }),
-    ).toBe(true);
-    expect(
-      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
-        coreVersion: '0.49.0',
-        outcome: 'deferred',
-        reason: '   ',
-      }),
-    ).toBe(true);
-    expect(
-      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
-        coreVersion: '0.49.0',
-        outcome: 'compatible',
-        reason: 'must prove compatibility by running the lane',
-      }),
-    ).toBe(true);
-    expect(shouldRunStarterHeadLane('0.49.0', '^0.49.0', breaking)).toBe(true);
-    expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', '### Added\n\n- additive')).toBe(
-      true,
-    );
-    expect(shouldRunStarterHeadLane('1.0.0', '^0.46.0', breaking)).toBe(true);
-    expect(shouldRunStarterHeadLane('0.49.0', 'workspace:*', breaking)).toBe(true);
-  });
-
-  test('extracts a non-empty exact-version changelog section', () => {
-    expect(
-      extractReleaseNotes(
-        '# Changelog\n\n## [1.2.3]\n\n### Added\n\n- one substantial release note\n\n## [1.2.2]\n- old',
-        '1.2.3',
-      ),
-    ).toContain('- one substantial release note');
-    expect(() => extractReleaseNotes('## [1.2.3]\n\n## [1.2.2]\n- old', '1.2.3')).toThrow(
-      /no (substantive|non-empty)/,
-    );
-  });
-
-  test('release notes must be SUBSTANTIVE — a lone heading, comment or dot does not pass', () => {
-    for (const body of ['### Added', '<!-- todo -->', '.', '### Added\n\n<!-- x -->\n\n.']) {
-      expect(() =>
-        extractReleaseNotes(`## [1.2.3]\n\n${body}\n\n## [1.2.2]\n- old`, '1.2.3'),
-      ).toThrow(/no (substantive|non-empty)/);
-    }
-  });
-
-  test('a version heading inside a code fence is example text, not a section boundary', () => {
-    const changelog = [
-      '## [1.2.3]',
-      '',
-      '- migration snippet below is real content',
-      '',
-      '```md',
-      '## [1.0.0]',
-      '```',
-      '',
-      '- and a second substantial note',
-      '',
-      '## [1.2.2]',
-      '- old',
-    ].join('\n');
-    const notes = extractReleaseNotes(changelog, '1.2.3');
-    expect(notes).toContain('and a second substantial note');
-    expect(notes).toContain('```md');
-  });
-  test('a breaking change may not ship as a patch — the caret would carry it silently', () => {
-    const changelog = [
-      '## [0.56.1]',
-      '',
-      `${BREAKING}`,
-      '',
-      '- **`createHandler` no longer accepts `foo`** — it moved to `bar`.',
-      '',
-      '## [0.56.0]',
-      '- the previous release',
-    ].join('\n');
-
-    expect(() => assertVersionCalibre(changelog, '0.56.1')).toThrow(
-      /patch bump from 0\.56\.0/,
-    );
-  });
-
-  test('the same breaking notes pass as a minor, and additive notes pass as a patch', () => {
-    const breakingMinor = [
-      '## [0.57.0]',
-      '',
-      `${BREAKING}`,
-      '',
-      '- **`createHandler` no longer accepts `foo`** — it moved to `bar`.',
-      '',
-      '## [0.56.0]',
-      '- the previous release',
-    ].join('\n');
-    const additivePatch = [
-      '## [0.56.1]',
-      '',
-      '### Added',
-      '',
-      '- an entirely additive option nobody has to adopt.',
-      '',
-      '## [0.56.0]',
-      '- the previous release',
-    ].join('\n');
-
-    expect(() => assertVersionCalibre(breakingMinor, '0.57.0')).not.toThrow();
-    expect(() => assertVersionCalibre(additivePatch, '0.56.1')).not.toThrow();
-  });
-
-  test('the first release in a changelog has no predecessor to compare against', () => {
-    const changelog = ['## [0.1.0]', '', `${BREAKING}`, '', '- the very first entry.'].join(
-      '\n',
-    );
-    expect(() => assertVersionCalibre(changelog, '0.1.0')).not.toThrow();
-  });
-
-  test('version headings are read in order and ignore fenced examples', () => {
-    const changelog = [
-      '## [1.2.3]',
-      '- real',
-      '',
-      '```md',
-      '## [9.9.9]',
-      '```',
-      '',
-      '## [1.2.2]',
-      '- older',
-    ].join('\n');
-    expect(releasedVersionsInOrder(changelog)).toEqual(['1.2.3', '1.2.2']);
-  });
-  test('a pushed branch tip is reported so a release push can prove the starter on HEAD', () => {
-    // `verify` alone cannot tell WHICH commit is being pushed, and the packed
-    // HEAD starter lane is worth its minutes only on the one release push.
-    const other = '2'.repeat(40);
-    expect(
-      classifyPrePush(
-        `HEAD ${SHA} refs/heads/master ${ZERO}\nHEAD ${other} refs/heads/topic ${ZERO}\n`,
-      ).branchHeads,
-    ).toEqual([SHA, other]);
-    expect(
-      classifyPrePush(`refs/heads/master ${SHA} refs/heads/master ${ZERO}\n`.repeat(2))
-        .branchHeads,
-    ).toEqual([SHA]);
-  });
-
-  test('only a release commit subject opens the extra release-push gate', () => {
-    expect(isReleaseCommitSubject('release(core): cancellations in 0.56.1')).toBe(true);
-    expect(isReleaseCommitSubject('  release(starter): a starter cut in 0.4.0  ')).toBe(true);
-    expect(isReleaseCommitSubject('fix(server): an error code map may be partial')).toBe(
-      false,
-    );
-    expect(isReleaseCommitSubject('release: 0.4.0')).toBe(false);
-    expect(isReleaseCommitSubject('chore: mention release(core): in a body')).toBe(false);
-    expect(isReleaseCommitSubject('')).toBe(false);
-  });
   test('a breaking release must carry the migration section that explains it', () => {
     const notes = `${BREAKING}\n\n- **\`createHandler\` no longer accepts \`foo\`** — it moved.`;
     const guide = '# Upgrading\n\n## Released migration: 0.56.0\n\n- old\n';
@@ -441,723 +92,210 @@ describe('release plan', () => {
     ].join('\n');
     expect(() => assertMigrationSection(guide, '0.57.0', notes)).toThrow();
   });
-});
 
-test('a release that promotes one migration section but leaves five queued is refused', () => {
-  // The half-satisfied shape: the gate proves a heading exists, and a release
-  // with six queued sections passes it by promoting the first. The leftovers
-  // are then overwritten by the next author, which is the 0.57.0 failure.
-  const notes = '### ⚠️ Breaking changes\n- something broke';
-  const promoted = [
-    '## Released migration: 0.60.0',
-    'text',
-    '## Unreleased migration: still queued',
-    'text',
-  ].join('\n');
-
-  expect(() =>
-    assertMigrationSection('## Released migration: 0.60.0', '0.60.0', notes),
-  ).not.toThrow();
-  expect(() => assertMigrationSection(promoted, '0.60.0', notes)).toThrow(/still carries 1/);
-});
-
-test('a queued heading inside a fenced block is documentation, not a queue entry', () => {
-  const notes = '### ⚠️ Breaking changes\n- something broke';
-  const fence = '```';
-  const guide = [
-    '## Released migration: 0.60.0',
-    fence,
-    '## Unreleased migration: <slug>',
-    fence,
-  ].join('\n');
-
-  expect(() => assertMigrationSection(guide, '0.60.0', notes)).not.toThrow();
-});
-
-describe('the scaffolder has a migration channel of its own', () => {
-  const breaking =
-    '### ⚠️ Breaking changes\n\n- **`app.config.json` is now `project.json`.**\n';
-
-  test('a breaking starter release without a promoted section is refused, by its own path', () => {
-    expect(() =>
-      assertMigrationSection('', '0.4.0', breaking, MIGRATION_CHANNELS['create-stitchkit']),
-    ).toThrow(
-      /packages\/create-stitchkit\/UPGRADING\.md must carry "## Released migration: 0\.4\.0"/,
-    );
-  });
-
-  test('the starter floor is its own — an older breaking release is not made retroactive', () => {
-    // The channel starts at 0.4.0. Demanding sections for releases that shipped
-    // before it existed produces documents nobody wrote for a reader nobody had.
-    expect(() =>
-      assertMigrationSection('', '0.3.3', breaking, MIGRATION_CHANNELS['create-stitchkit']),
-    ).not.toThrow();
-  });
-
-  test('a promoted section satisfies it, and a leftover queued one does not', () => {
-    const promoted = '## Released migration: 0.4.0\n\n### the project declares itself\n';
-    expect(() =>
-      assertMigrationSection(
-        promoted,
-        '0.4.0',
-        breaking,
-        MIGRATION_CHANNELS['create-stitchkit'],
-      ),
-    ).not.toThrow();
-    expect(() =>
-      assertMigrationSection(
-        `${promoted}\n## Unreleased migration: something else\n`,
-        '0.4.0',
-        breaking,
-        MIGRATION_CHANNELS['create-stitchkit'],
-      ),
-    ).toThrow(/packages\/create-stitchkit\/UPGRADING\.md still carries 1/);
-  });
-
-  test('the two channels do not share a guide', () => {
-    expect(MIGRATION_CHANNELS.core.guidePath).not.toBe(
-      MIGRATION_CHANNELS['create-stitchkit'].guidePath,
-    );
-  });
-});
-
-describe('a gate that cannot check refuses instead of passing', () => {
-  const breaking = '### ⚠️ Breaking changes';
-
-  test('a version with notes but no plain release heading is refused', () => {
-    // `extractReleaseNotes` accepts any escaped version, so a pre-release
-    // spelling produced notes while `releasedVersionsInOrder` (plain x.y.z
-    // only) did not list it — and the calibre gate returned without checking,
-    // for exactly the shape most likely to carry an unreviewed break.
-    const changelog = [
-      '## [0.56.1-rc.1]',
-      '',
-      breaking,
-      '',
-      '- **`createHandler` no longer accepts `foo`** — it moved to `bar`.',
-      '',
-      '## [0.56.0]',
-      '- the previous release',
-    ].join('\n');
-
-    expect(() => assertVersionCalibre(changelog, '0.56.1-rc.1')).toThrow(
-      /carries release notes but no "## \[0\.56\.1-rc\.1\]" heading/,
-    );
-  });
-});
-
-describe('a migration guide reads newest first', () => {
-  // A reader is told to read every section in a range. `0.49.0 → 0.46.0 →
-  // 0.48.0 → 0.47.0` gives them that range shuffled, and the two sections most
-  // likely to be misplaced are the two most recently appended — which is what
-  // happened.
-  for (const [target, channel] of Object.entries(MIGRATION_CHANNELS)) {
-    test(`${target}: sections descend by version`, () => {
-      const guide = readFileSync(resolve(import.meta.dir, '..', channel.guidePath), 'utf8');
-      const versions = [
-        ...guide.matchAll(/^## Released migration: (\d+\.\d+\.\d+)\s*$/gm),
-      ].map((match) => match[1] ?? '');
-      expect(versions.length).toBeGreaterThan(0);
-      const descending = [...versions].sort((left, right) => comparePreOne(right, left));
-      expect(versions).toEqual(descending);
-    });
-  }
-});
-
-describe('the local gate runs where a red CI run cannot be paid for', () => {
-  const toMaster = {
-    verify: true,
-    releaseTags: [],
-    branchHeads: [SHA],
-    defaultBranchHeads: [SHA],
-    releaseBranchesOnly: false,
-  };
-  const toReleaseBranch = {
-    verify: true,
-    releaseTags: [],
-    branchHeads: [SHA],
-    defaultBranchHeads: [],
-    releaseBranchesOnly: true,
-  };
-
-  test('an ordinary push runs the fast half', () => {
-    expect(localGateProfile(toMaster, [])).toBe('fast');
-  });
-
-  test('a release commit pushed to master runs everything', () => {
-    // This is the one commit whose red run cannot be repaired in place: the tag
-    // must sit on a `release(...)` commit AND on the branch head, so a red run
-    // costs a whole new release commit. That asymmetry is the entire argument
-    // for the expensive local gate — not a general distrust of CI.
-    expect(localGateProfile(toMaster, [SHA])).toBe('full');
-  });
-
-  test('the same commit pushed to a release branch leaves the gate to CI', () => {
-    // Nothing is published by that push. CI runs on the exact SHA, master is
-    // fast-forwarded to it only once that run is green, and a red one is
-    // repaired by a new candidate commit before tagging. It
-    // is the same commit and the same tree; only where it lands differs, and
-    // that is exactly what the old boolean could not say.
-    expect(localGateProfile(toReleaseBranch, [SHA])).toBe('candidate');
-  });
-
-  test('a release commit riding along to master still runs everything', () => {
-    // Pushing several branches at once must not let the release commit's own
-    // landing go ungated because a topic branch was in the same push.
-    expect(
-      localGateProfile(
-        {
-          verify: true,
-          releaseTags: [],
-          branchHeads: [SHA, '2'.repeat(40)],
-          defaultBranchHeads: [SHA],
-          releaseBranchesOnly: false,
-        },
-        [SHA],
-      ),
-    ).toBe('full');
-  });
-
-  test('a tag-only push gates on metadata alone', () => {
-    // By the time a tag is pushed its commit already has a green exact-SHA run;
-    // repeating the tree gate here would check a tree CI has already answered
-    // for.
-    expect(
-      localGateProfile(
-        {
-          verify: false,
-          releaseTags: [{ tag: 'v1.0.0', sha: SHA }],
-          branchHeads: [],
-          defaultBranchHeads: [],
-          releaseBranchesOnly: false,
-        },
-        [],
-      ),
-    ).toBe('none');
-  });
-});
-
-function comparePreOne(left: string, right: string): number {
-  const [leftMajor = 0, leftMinor = 0, leftPatch = 0] = left.split('.').map(Number);
-  const [rightMajor = 0, rightMinor = 0, rightPatch = 0] = right.split('.').map(Number);
-  return leftMajor - rightMajor || leftMinor - rightMinor || leftPatch - rightPatch;
-}
-
-describe('a breaking section says who has to act', () => {
-  const breaking = ['### ⚠️ Breaking changes', '', '- **Something moved.**'].join('\n');
-
-  test('refuses a breaking section with no audience line', () => {
-    expect(() => assertBreakingAudience(breaking, '0.9.0')).toThrow(/Who must act/);
-  });
-
-  test('accepts one that opens with it', () => {
-    const withAudience = [
-      '### ⚠️ Breaking changes',
-      '',
-      '**Who must act:** nobody — the shape moved under a helper.',
-      '',
-      '- **Something moved.**',
-    ].join('\n');
-    expect(() => assertBreakingAudience(withAudience, '0.9.0')).not.toThrow();
-  });
-
-  test('says nothing about a purely additive release', () => {
-    expect(() => assertBreakingAudience('### Added\n\n- a thing', '0.9.0')).not.toThrow();
-  });
-
-  test('the release notes this repository ships pass it', async () => {
-    const changelog = await Bun.file(`${import.meta.dir}/../CHANGELOG.md`).text();
-    const notes = extractReleaseNotes(changelog, '0.63.0');
-    expect(() => assertBreakingAudience(notes, '0.63.0')).not.toThrow();
-  });
-});
-
-describe('a release commit is checked before it costs a gate', () => {
-  const root = resolve(import.meta.dir, '..');
-
-  /** A tree the check reads instead of the repository — one file at a time. */
-  // Every tree carries the workspace manifests and a lockfile that agrees with
-  // them, unless a test says otherwise: the lockfile gate has its own tests.
-  const WORKSPACES = ['packages/core', 'packages/tui', 'packages/create-stitchkit'];
-  const lockFor = (versions: Record<string, string>) =>
-    Object.entries(versions)
-      .map(
-        ([dir, version]) =>
-          `    "${dir}": {\n      "name": "x",\n      "version": "${version}",\n    },`,
-      )
-      .join('\n');
-  const treeOf = (given: Record<string, string>) => (relativePath: string) => {
-    const files: Record<string, string> = { ...given };
-    const versions: Record<string, string> = {};
-    for (const dir of WORKSPACES) {
-      files[`${dir}/package.json`] ??= JSON.stringify({ version: '0.0.0' });
-      versions[dir] = JSON.parse(files[`${dir}/package.json`] ?? '{}').version;
+  test('release notes must be SUBSTANTIVE — a lone heading, comment or dot does not pass', () => {
+    for (const body of ['### Added', '<!-- todo -->', '.', '### Added\n\n<!-- x -->\n\n.']) {
+      expect(() =>
+        extractReleaseNotes(`## [1.2.3]\n\n${body}\n\n## [1.2.2]\n- old`, '1.2.3'),
+      ).toThrow(/no (substantive|non-empty)/);
     }
-    files['bun.lock'] ??= lockFor(versions);
-    const contents = files[relativePath];
-    if (contents === undefined) {
-      return Promise.reject(new Error(`no ${relativePath} in this tree`));
-    }
-    return Promise.resolve(contents);
-  };
-
-  const coreTree = (changelogSection: string, migration: string) =>
-    treeOf({
-      'packages/core/package.json': JSON.stringify({ version: '9.9.0' }),
-      'CHANGELOG.md': ['## [9.9.0] — x', '', changelogSection, ''].join('\n'),
-      'docs/guide/upgrading.md': migration,
-    });
-
-  const ADDITIVE = ['### Added', '', '- One genuinely new export nobody had before.'].join(
-    '\n',
-  );
-  const BREAKING_NO_AUDIENCE = [
-    '### ⚠️ Breaking changes',
-    '',
-    '- **Something moved**, and this section never says who has to act on it.',
-  ].join('\n');
-  const RELEASED_MIGRATION = ['## Released migration: 9.9.0', '', 'Do the thing.'].join('\n');
-
-  test('reads the scope out of the subject', () => {
-    expect(releaseScopeForSubject('release(core): a thing in 1.2.3')).toBe('core');
-    expect(releaseScopeForSubject('release(starter): a thing in 1.2.3')).toBe('starter');
-    expect(() => releaseScopeForSubject('fix: not a release')).toThrow(/not a release commit/);
   });
 
-  test('names the tag a scope and version would be released under', () => {
-    expect(releaseTagFor('core', '1.2.3')).toBe('v1.2.3');
-    expect(releaseTagFor('starter', '1.2.3')).toBe('create-stitchkit-v1.2.3');
-    expect(releaseTagFor('tui', '1.2.3')).toBe('stitchkit-tui-v1.2.3');
-  });
-
-  test('one candidate identity separates exact-SHA CI from tag publication', () => {
-    expect(
-      releaseCandidateIdentity(
-        {
-          target: 'core',
-          packageName: 'stitchkit',
-          packageDir: 'packages/core',
-          changelog: 'CHANGELOG.md',
-          version: '9.9.0',
-        },
-        SHA,
-      ),
-    ).toEqual({
-      schemaVersion: 1,
-      target: 'core',
-      packageName: 'stitchkit',
-      packageDir: 'packages/core',
-      changelog: 'CHANGELOG.md',
-      version: '9.9.0',
-      sha: SHA,
-      tag: 'v9.9.0',
-      ci: { workflow: 'ci.yml', event: 'push', headSha: SHA },
-      publication: { workflow: 'release.yml', event: 'push', tag: 'v9.9.0' },
-    });
-  });
-
-  test('refuses a breaking section with no audience line — at the COMMIT', async () => {
-    // The whole point: this used to be discoverable only when the tag was
-    // pushed, which is after the full local gate and a CI run, and after the
-    // commit is public. 0.67.0 paid for that with a second release commit.
-    await expect(
-      validateReleaseCommit(
-        root,
-        { sha: SHA, subject: 'release(core): a thing in 9.9.0' },
-        { read: coreTree(BREAKING_NO_AUDIENCE, RELEASED_MIGRATION) },
-      ),
-    ).rejects.toThrow(/Who must act/);
-  });
-
-  test('refuses a subject that names a version the tree does not carry', async () => {
-    await expect(
-      validateReleaseCommit(
-        root,
-        { sha: SHA, subject: 'release(core): a thing in 9.9.1' },
-        { read: coreTree(ADDITIVE, RELEASED_MIGRATION) },
-      ),
-    ).rejects.toThrow(/must name version 9\.9\.0/);
-  });
-
-  test('refuses a scope whose tag namespace the subject does not match', async () => {
-    await expect(
-      validateReleaseCommit(
-        root,
-        { sha: SHA, subject: 'release(starter): a thing in 9.9.0' },
-        {
-          read: treeOf({
-            'packages/create-stitchkit/package.json': JSON.stringify({ version: '9.9.0' }),
-          }),
-        },
-      ),
-    ).rejects.toThrow();
-  });
-
-  test('accepts a well-formed additive release commit', async () => {
-    const validated = await validateReleaseCommit(
-      root,
-      { sha: SHA, subject: 'release(core): a thing in 9.9.0' },
-      { read: coreTree(ADDITIVE, RELEASED_MIGRATION) },
+  test('a stale tag SHA is refused before any publication step', () => {
+    expect(() => assertTagOnReleaseHead(SHA, SHA)).not.toThrow();
+    expect(() => assertTagOnReleaseHead(SHA, '2'.repeat(40))).toThrow(
+      /current origin\/master/,
     );
-    expect(validated.version).toBe('9.9.0');
-    expect(validated.packageName).toBe('stitchkit');
+    expect(() => assertTagOnReleaseHead('', SHA)).toThrow(/current origin\/master/);
   });
 
-  describe('breaking metadata validation preserves disclosure without a calendar limit — ADR 0204', () => {
-    const GUIDE = [
-      '| Import | Use in | Maturity | Holds |',
-      '|--------|--------|----------|-------|',
-      '| `stitchkit/tools` | server | stable | tools |',
-      '| `stitchkit/live` | browser **and** server | evolving | watched reads |',
-    ].join('\n');
-    const MIGRATION = ['## Released migration: 9.9.0', '', 'Do the thing.'].join('\n');
-    const breaking = (entry: string) =>
-      [BREAKING, '', entry, '', '**Who must act:** anyone calling it.'].join('\n');
-    const STABLE_ENTRY =
-      '- `stitchkit/tools` — **a tool moved**, because a reason. → ADR 0198';
-    const tree = (changelog: string) =>
-      treeOf({
-        'packages/core/package.json': JSON.stringify({ version: '9.9.0' }),
-        'CHANGELOG.md': changelog,
-        'docs/guide/upgrading.md': MIGRATION,
-        'docs/guide/getting-started.md': GUIDE,
-      });
-    const commit = { sha: SHA, subject: 'release(core): a thing in 9.9.0' };
+  test('a release tag on a non-release commit is refused, naming the honest order', async () => {
+    // A tag cannot sit on a commit with no release commit beneath it.
+    const history = async () => [
+      {
+        sha: 'a'.repeat(40),
+        subject: 'test(server): align shutdown timing with force budget',
+        files: ['packages/core/tests/a.test.ts'],
+      },
+    ];
+    const train = async () =>
+      JSON.stringify({ schemaVersion: 1, releases: [{ target: 'core', version: '0.55.0' }] });
+    await expect(
+      assertReleaseSubjectForTag({
+        root: '/',
+        tag: 'v0.55.0',
+        head: SHA,
+        read: train,
+        history,
+      }),
+    ).rejects.toThrow('must point at a "release(train): … in 0.55.0" commit');
+    await expect(
+      assertReleaseSubjectForTag({
+        root: '/',
+        tag: 'v0.55.0',
+        head: SHA,
+        read: train,
+        history: async () => [{ sha: SHA, subject: '', files: ['a'] }],
+      }),
+    ).rejects.toThrow('(empty)');
+  });
 
-    test('one stable-breaking minor in the week passes', async () => {
-      const changelog = [
-        '## [9.9.0] — 2026-10-20',
-        '',
-        breaking(STABLE_ENTRY),
-        '',
-        '## [9.8.0] — 2026-10-12',
-        '',
-        breaking(STABLE_ENTRY),
-      ].join('\n');
-      const validated = await validateReleaseCommit(root, commit, { read: tree(changelog) });
-      expect(validated.version).toBe('9.9.0');
-    });
-
-    test('a second stable-breaking minor within seven days passes metadata validation', async () => {
-      const changelog = [
-        '## [9.9.0] — 2026-10-18',
-        '',
-        breaking(STABLE_ENTRY),
-        '',
-        '## [9.8.0] — 2026-10-12',
-        '',
-        breaking(STABLE_ENTRY),
-      ].join('\n');
+  test('the version must match on boundaries — prerelease and longer numbers do not pass', async () => {
+    // The train and the manifests name the version; a tag with a prerelease or longer number selects nothing.
+    const history = async () => [
+      { sha: SHA, subject: 'release(train): ship it in 0.56.0', files: ['CHANGELOG.md'] },
+    ];
+    const train = async () =>
+      JSON.stringify({ schemaVersion: 1, releases: [{ target: 'core', version: '0.56.0' }] });
+    for (const tag of ['v0.56.0-rc.1', 'v10.56.0', 'v0.56.00']) {
       await expect(
-        validateReleaseCommit(root, commit, { read: tree(changelog) }),
-      ).resolves.toMatchObject({ target: 'core', version: '9.9.0' });
-    });
-
-    test('an entry that does not lead with its entrypoint is refused', async () => {
-      const changelog = [
-        '## [9.9.0] — 2026-10-18',
-        '',
-        breaking('- **Something moved**'),
-      ].join('\n');
-      await expect(
-        validateReleaseCommit(root, commit, { read: tree(changelog) }),
-      ).rejects.toThrow(/does not start with the entrypoint/);
-    });
-  });
-
-  test('the release commit this repository last made passes it', async () => {
-    // Not a synthetic tree: the real one, read out of the real commit. Skipped
-    // rather than silently passed when HEAD is an ordinary commit — a test that
-    // returns early looks exactly like a test that checked something.
-    const subject = (await Bun.$`git log -1 --format=%s HEAD`.text()).trim();
-    if (!isReleaseCommitSubject(subject)) {
-      expect(isReleaseCommitSubject(subject)).toBe(false);
-      return;
+        assertReleaseSubjectForTag({ root: '/', tag, head: SHA, read: train, history }),
+      ).rejects.toThrow(/does not select core@/);
     }
-    const sha = (await Bun.$`git rev-parse HEAD`.text()).trim();
-    // A historical release commit must keep validating after newer versions
-    // appear on npm. Its mutable registry gate was answered before tagging;
-    // this assertion checks the immutable metadata carried by the commit.
-    const validated = await validateReleaseCommit(
-      root,
-      { sha, subject },
-      { checkStarterLockfile: false },
-    );
-    const manifest: unknown = JSON.parse(
-      await Bun.$`git show ${sha}:${validated.packageDir}/package.json`.text(),
-    );
-    expect(validated.version).toBe(
-      typeof manifest === 'object' && manifest !== null
-        ? Reflect.get(manifest, 'version')
-        : null,
-    );
-  });
-});
-
-describe('CI answering for the exact SHA replaces the local release gate', () => {
-  const green = [{ id: 7, head_sha: SHA, event: 'push', conclusion: 'success' }];
-
-  test('a green push run for the SHA means the gate has already run', async () => {
-    const answered = await ciAlreadyAnsweredFor([SHA], async () => green);
-    expect(answered.green).toBe(true);
-    expect(answered.because).toContain(SHA.slice(0, 7));
-  });
-
-  test('a red run is not an answer, and says which', async () => {
-    const answered = await ciAlreadyAnsweredFor([SHA], async () => [
-      { id: 7, head_sha: SHA, event: 'push', conclusion: 'failure' },
-    ]);
-    expect(answered.green).toBe(false);
-    expect(answered.because).toContain('failure');
-  });
-
-  test('a pull-request run for the same SHA is not the push run the release needs', async () => {
-    const answered = await ciAlreadyAnsweredFor([SHA], async () => [
-      { id: 7, head_sha: SHA, event: 'pull_request', conclusion: 'success' },
-    ]);
-    expect(answered.green).toBe(false);
-  });
-
-  test('unreachable GitHub is not green, and does not look like a red run', async () => {
-    // The distinction the gate line prints: it ran because the answer was no,
-    // or because nobody could ask. Collapsing those is how a skipped gate
-    // becomes unexplainable.
-    const answered = await ciAlreadyAnsweredFor([SHA], async () => {
-      throw new Error('gh: not authenticated');
-    });
-    expect(answered.green).toBe(false);
-    expect(answered.because).toContain('could not ask GitHub');
-  });
-
-  test('every landing commit must be answered for, not just the first', async () => {
-    const other = '2'.repeat(40);
-    const answered = await ciAlreadyAnsweredFor([SHA, other], async (sha) =>
-      sha === SHA ? green : [],
-    );
-    expect(answered.green).toBe(false);
-    expect(answered.because).toContain(other);
-  });
-
-  test('nothing landing means nothing has been answered for', async () => {
-    expect((await ciAlreadyAnsweredFor([], async () => green)).green).toBe(false);
-  });
-});
-
-describe('the cheap metadata check runs before the expensive gate', () => {
-  const order: string[] = [];
-  const recording = (releaseCommits: { sha: string; subject: string }[]) => ({
-    validateTag: async (tag: string) => {
-      order.push(`tag:${tag}`);
-    },
-    releaseCommits: async () => releaseCommits,
-    validateCommit: async (commit: { sha: string; subject: string }) => {
-      order.push(`commit:${commit.sha}`);
-    },
-  });
-
-  test('a pushed release commit is validated, and the profile is the expensive one', async () => {
-    order.length = 0;
-    const decision = await prePushMetadataGate(
-      {
-        verify: true,
-        releaseTags: [],
-        branchHeads: [SHA],
-        defaultBranchHeads: [SHA],
-        releaseBranchesOnly: false,
-      },
-      recording([{ sha: SHA, subject: 'release(core): a thing in 9.9.0' }]),
-    );
-    // The regression this whole change exists for: before it, nothing here
-    // read the release commit's changelog and `order` stayed empty.
-    expect(order).toEqual([`commit:${SHA}`]);
-    expect(decision.profile).toBe('full');
-    expect(decision.releaseCommits).toHaveLength(1);
-  });
-
-  test('a refusal stops the push before any gate is chosen', async () => {
-    const checks = recording([{ sha: SHA, subject: 'release(core): a thing in 9.9.0' }]);
     await expect(
-      prePushMetadataGate(
-        {
-          verify: true,
-          releaseTags: [],
-          branchHeads: [SHA],
-          defaultBranchHeads: [SHA],
-          releaseBranchesOnly: false,
-        },
-        {
-          ...checks,
-          validateCommit: () => Promise.reject(new Error('no Who must act line')),
-        },
-      ),
-    ).rejects.toThrow('no Who must act line');
-  });
-
-  test('an ordinary push reads no release metadata and stays fast', async () => {
-    order.length = 0;
-    const decision = await prePushMetadataGate(
-      {
-        verify: true,
-        releaseTags: [],
-        branchHeads: [SHA],
-        defaultBranchHeads: [SHA],
-        releaseBranchesOnly: false,
-      },
-      recording([]),
-    );
-    expect(order).toEqual([]);
-    expect(decision.profile).toBe('fast');
-  });
-
-  test('a tag push still checks the tag, and checks it first', async () => {
-    order.length = 0;
-    const decision = await prePushMetadataGate(
-      {
-        verify: true,
-        releaseTags: [{ tag: 'v9.9.0', sha: SHA }],
-        branchHeads: [SHA],
-        defaultBranchHeads: [SHA],
-        releaseBranchesOnly: false,
-      },
-      recording([{ sha: SHA, subject: 'release(core): a thing in 9.9.0' }]),
-    );
-    expect(order).toEqual(['tag:v9.9.0', `commit:${SHA}`]);
-    expect(decision.profile).toBe('full');
-  });
-});
-
-describe('a train cannot publish the framework its own starter must pin', () => {
-  const root = resolve(import.meta.dir, '..');
-
-  const starterTree = (range: string) => (relativePath: string) => {
-    if (relativePath.endsWith('template/package.json')) {
-      return Promise.resolve(JSON.stringify({ catalog: { stitchkit: range } }));
-    }
-    if (relativePath.endsWith('template/bun.lock')) {
-      return Promise.resolve(
-        '{ "packages": { "stitchkit": ["stitchkit@0.90.5", "", {}, "x"] } }',
-      );
-    }
-    return Promise.reject(new Error(`no ${relativePath} in this tree`));
-  };
-
-  const train = (releases: { target: string; version: string }[]) =>
-    ReleaseTrainSchema.parse({ schemaVersion: 1, releases });
-
-  test('the exact 0.6.1 train is refused, and the refusal names both versions', async () => {
-    await expect(
-      assertTrainDoesNotOutrunTheStarter(
-        root,
-        train([
-          { target: 'core', version: '0.90.6' },
-          { target: 'create-stitchkit', version: '0.6.1' },
-        ]),
-        starterTree('^0.90.5'),
-      ),
-    ).rejects.toThrow(/publishes stitchkit 0\.90\.6 and create-stitchkit 0\.6\.1 together/);
-  });
-
-  test('a starter targeting an older minor rides along with a new one', async () => {
-    // The narrow case the refusal must not swallow: the framework the train
-    // publishes is outside the starter's range, so its lockfile owes it nothing.
-    await expect(
-      assertTrainDoesNotOutrunTheStarter(
-        root,
-        train([
-          { target: 'core', version: '0.91.0' },
-          { target: 'create-stitchkit', version: '0.6.2' },
-        ]),
-        starterTree('^0.90.5'),
-      ),
+      assertReleaseSubjectForTag({
+        root: '/',
+        tag: 'v0.56.0',
+        head: SHA,
+        read: train,
+        history,
+      }),
     ).resolves.toBeUndefined();
   });
 
-  test('a train without one of the two halves is not this question', async () => {
-    for (const releases of [
-      [{ target: 'core', version: '0.90.7' }],
-      [{ target: 'create-stitchkit', version: '0.6.2' }],
-      [
-        { target: 'core', version: '0.90.7' },
-        { target: 'tui', version: '0.1.3' },
-      ],
-    ]) {
-      await expect(
-        assertTrainDoesNotOutrunTheStarter(root, train(releases), starterTree('^0.90.5')),
-      ).resolves.toBeUndefined();
+  test('the subject scope is bound to the tag namespace', async () => {
+    // Only the train subject is a release commit, and a tag namespace is accepted
+    // only when the train selects that package.
+    expect(isReleaseCommitSubject('release(starter): scaffolder fixes in 0.3.3')).toBe(false);
+    expect(isReleaseCommitSubject('release(core): transport policies in 0.55.0')).toBe(false);
+    expect(isReleaseCommitSubject('release(train): transport policies in 0.55.0')).toBe(true);
+    const history = async () => [
+      {
+        sha: SHA,
+        subject: 'release(train): scaffolder fixes in 0.3.3',
+        files: ['CHANGELOG.md'],
+      },
+    ];
+    const train = async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        releases: [{ target: 'create-stitchkit', version: '0.3.3' }],
+      });
+    await expect(
+      assertReleaseSubjectForTag({
+        root: '/',
+        tag: 'v0.3.3',
+        head: SHA,
+        read: train,
+        history,
+      }),
+    ).rejects.toThrow(/does not select core@0\.3\.3/);
+    await expect(
+      assertReleaseSubjectForTag({
+        root: '/',
+        tag: 'create-stitchkit-v0.3.3',
+        head: SHA,
+        read: train,
+        history,
+      }),
+    ).resolves.toBeUndefined();
+  });
+  test('a missing or failed exact-SHA CI run is a loud refusal; success selects the run', () => {
+    const runs = [
+      { id: 1, head_sha: SHA, event: 'push', conclusion: 'failure' },
+      { id: 2, head_sha: SHA, event: 'pull_request', conclusion: 'success' },
+      { id: 3, head_sha: '2'.repeat(40), event: 'push', conclusion: 'success' },
+    ];
+    expect(() => selectSuccessfulCiRun([], SHA)).toThrow(/no push CI run exists/);
+    expect(() => selectSuccessfulCiRun(runs, SHA)).toThrow(/no successful push CI run/);
+    expect(
+      selectSuccessfulCiRun(
+        [...runs, { id: 4, head_sha: SHA, event: 'push', conclusion: 'success' }],
+        SHA,
+      ),
+    ).toBe(4);
+  });
+
+  test('a repeated workflow is idempotent; a different published tarball is refused', () => {
+    expect(decidePublishAction('abc', null)).toBe('publish');
+    expect(decidePublishAction('abc', '')).toBe('publish');
+    expect(decidePublishAction('abc', 'abc')).toBe('skip');
+    expect(() => decidePublishAction('abc', 'def')).toThrow(/DIFFERENT tarball/);
+  });
+
+  test('an unaligned breaking release runs HEAD unless an exact deferred review exists', () => {
+    const breaking = '### ⚠️ Breaking changes\n\n- managed server hard cut';
+    expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking)).toBe(true);
+    expect(
+      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
+        coreVersion: '0.49.0',
+        outcome: 'deferred',
+        reason: 'The target lane must remain on the published minor until core ships.',
+      }),
+    ).toBe(false);
+    expect(
+      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
+        coreVersion: '0.48.0',
+        outcome: 'deferred',
+        reason: 'stale review',
+      }),
+    ).toBe(true);
+    expect(
+      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
+        coreVersion: '0.49.0',
+        outcome: 'deferred',
+        reason: '   ',
+      }),
+    ).toBe(true);
+    expect(
+      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
+        coreVersion: '0.49.0',
+        outcome: 'compatible',
+        reason: 'must prove compatibility by running the lane',
+      }),
+    ).toBe(true);
+    expect(shouldRunStarterHeadLane('0.49.0', '^0.49.0', breaking)).toBe(true);
+    expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', '### Added\n\n- additive')).toBe(
+      true,
+    );
+    expect(shouldRunStarterHeadLane('1.0.0', '^0.46.0', breaking)).toBe(true);
+    expect(shouldRunStarterHeadLane('0.49.0', 'workspace:*', breaking)).toBe(true);
+  });
+});
+
+test('the successful push run with the lowest id is selected, because later runs of the SHA are empty plans', () => {
+  const runs = [
+    { id: 9, head_sha: SHA, event: 'push', conclusion: 'success' },
+    { id: 4, head_sha: SHA, event: 'push', conclusion: 'success' },
+    { id: 2, head_sha: SHA, event: 'push', conclusion: 'failure' },
+    { id: 1, head_sha: SHA, event: 'pull_request', conclusion: 'success' },
+  ];
+  expect(selectSuccessfulCiRun(runs, SHA)).toBe(4);
+});
+
+describe('the one entrypoint', () => {
+  const plan = (...args: string[]) =>
+    Bun.spawnSync(['bun', `${import.meta.dir}/release-plan.ts`, ...args], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+  test('only the train is released: single-target releases are not a command', () => {
+    for (const target of ['core', 'create-stitchkit', 'tui']) {
+      const result = plan('release', target);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr.toString()).toContain('Usage: release-plan.ts release train');
     }
   });
-});
 
-describe('the lockfile names the versions the manifests carry', () => {
-  // `bun pm pack` writes `workspace:^` from bun.lock, not from package.json:
-  // stitchkit-tui 0.1.3 shipped depending on `stitchkit ^0.93.0` beside 0.94.0.
-  const lock = [
-    '    "packages/core": {',
-    '      "name": "stitchkit",',
-    '      "version": "0.94.0",',
-    '      "bin": {',
-    '        "stitchkit": "./dist/bin.js",',
-    '      },',
-    '    },',
-    '    "packages/tui": {',
-    '      "name": "stitchkit-tui",',
-    '      "version": "0.1.3",',
-    '    },',
-  ].join('\n');
-
-  test('reads the version each workspace entry records', () => {
-    expect(lockedWorkspaceVersion(lock, 'packages/core')).toBe('0.94.0');
-    expect(lockedWorkspaceVersion(lock, 'packages/tui')).toBe('0.1.3');
-    expect(lockedWorkspaceVersion(lock, 'packages/create-stitchkit')).toBeNull();
+  test('the root scripts carry one release command', async () => {
+    const manifest = await Bun.file(`${import.meta.dir}/../package.json`).json();
+    const names = Object.keys(manifest.scripts).filter((name) => name.startsWith('release:'));
+    expect(names.sort()).toEqual(['release:check', 'release:train']);
   });
 
-  test('accepts a lockfile that agrees and refuses one a bump left behind', () => {
-    expect(() =>
-      assertLockfileWorkspaceVersions(lock, {
-        'packages/core': '0.94.0',
-        'packages/tui': '0.1.3',
-      }),
-    ).not.toThrow();
-    expect(() =>
-      assertLockfileWorkspaceVersions(lock, {
-        'packages/core': '0.95.0',
-        'packages/tui': '0.1.3',
-      }),
-    ).toThrow('packages/core: bun.lock 0.94.0, package.json 0.95.0');
+  test('a CI question names a full SHA or is refused before it reaches GitHub', async () => {
+    await expect(askReleaseCi('/', 'abc')).rejects.toThrow('full commit SHA');
+    await expect(askReleaseCi('/', 'A'.repeat(40))).rejects.toThrow('full commit SHA');
   });
-
-  test("this repository's lockfile agrees with its manifests", () => {
-    const root = resolve(import.meta.dir, '..');
-    const manifests = Object.fromEntries(
-      ['packages/core', 'packages/tui', 'packages/create-stitchkit'].map((dir) => [
-        dir,
-        JSON.parse(readFileSync(`${root}/${dir}/package.json`, 'utf8')).version,
-      ]),
-    );
-    expect(() =>
-      assertLockfileWorkspaceVersions(readFileSync(`${root}/bun.lock`, 'utf8'), manifests),
-    ).not.toThrow();
-  });
-});
-
-test('only release tips in the remote release namespace earn the candidate preflight', () => {
-  const candidate = classifyPrePush(`HEAD ${SHA} refs/heads/release/9.9.0 ${ZERO}\n`);
-  expect(candidate.releaseBranchesOnly).toBe(true);
-  expect(localGateProfile(candidate, [SHA])).toBe('candidate');
-  expect(localGateProfile(candidate, [])).toBe('fast');
-  const topic = classifyPrePush(`refs/heads/release/9.9.0 ${SHA} refs/heads/topic ${ZERO}\n`);
-  expect(topic.releaseBranchesOnly).toBe(false);
-  expect(localGateProfile(topic, [SHA])).toBe('fast');
-  const mixed = classifyPrePush(
-    `HEAD ${SHA} refs/heads/release/9.9.0 ${ZERO}\nHEAD ${'2'.repeat(40)} refs/heads/topic ${ZERO}\n`,
-  );
-  expect(localGateProfile(mixed, [SHA])).toBe('fast');
-  const sameShaTopic = classifyPrePush(
-    `HEAD ${SHA} refs/heads/release/9.9.0 ${ZERO}\nHEAD ${SHA} refs/heads/topic ${ZERO}\n`,
-  );
-  expect(localGateProfile(sameShaTopic, [SHA])).toBe('fast');
-  const landing = classifyPrePush(
-    `HEAD ${SHA} refs/heads/release/9.9.0 ${ZERO}\nHEAD ${SHA} refs/heads/master ${ZERO}\n`,
-  );
-  expect(localGateProfile(landing, [SHA])).toBe('full');
 });

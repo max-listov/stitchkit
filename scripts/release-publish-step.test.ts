@@ -4,47 +4,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { decidePublishAction } from './release-plan';
 
 const WorkflowSchema = z.object({
   jobs: z.object({
     publish: z.object({
-      'timeout-minutes': z.number(),
-      steps: z.array(
-        z.object({
-          name: z.string().optional(),
-          run: z.string().optional(),
-          'timeout-minutes': z.number().optional(),
-        }),
-      ),
+      steps: z.array(z.object({ name: z.string().optional(), run: z.string().optional() })),
     }),
   }),
-});
-
-test('workflow assigns separate publish/wait budgets and preserves the hash-based idempotent branch', () => {
-  const workflow = WorkflowSchema.parse(
-    Bun.YAML.parse(
-      readFileSync(`${import.meta.dir}/../.github/workflows/release.yml`, 'utf8'),
-    ),
-  );
-  const publish = workflow.jobs.publish.steps.find(
-    (step) => step.name === 'Publish the validated tarball',
-  );
-  const wait = workflow.jobs.publish.steps.find(
-    (step) => step.name === 'Wait for the exact published version in the public registry',
-  );
-  expect(workflow.jobs.publish['timeout-minutes']).toBe(45);
-  expect(publish?.['timeout-minutes']).toBe(10);
-  expect(wait?.['timeout-minutes']).toBe(31);
-  expect(wait?.run).toContain('bun scripts/wait-for-npm-publication.ts "$PACKAGE" "$VERSION"');
-  expect(publish?.run).not.toContain('wait-for-npm-publication');
-  expect(publish?.run).toContain('publish-action "$EXPECTED_SHA" "$PUBLISHED_SHA"');
-  expect(publish?.run).toContain('if [ "$ACTION" = "publish" ]; then');
-  expect(publish?.run).toContain('npm publish "./$TARBALL" --provenance --access public');
-  const sha = 'a'.repeat(40);
-  expect(decidePublishAction(sha, sha)).toBe('skip');
-  expect(decidePublishAction(sha, null)).toBe('publish');
-  expect(() => decidePublishAction(sha, 'b'.repeat(40))).toThrow();
 });
 
 test('the actual publish step skips a matching tarball on rerun and refuses mismatched hashes', () => {

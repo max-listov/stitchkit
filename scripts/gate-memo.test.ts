@@ -2,13 +2,11 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { browserRuntimeFixture } from './gate-environment-fixtures';
 import {
   findGreenGate,
   type GreenGateRecord,
   gateMemoPath,
   greenGateKey,
-  laneEnvironmentFingerprint,
   parseGateMemo,
   readGreenGates,
   rememberGreenGate,
@@ -88,6 +86,9 @@ describe('a gate remembers what it checked, not when it ran', () => {
     expect(parseGateMemo('not json at all', 'verify')).toEqual([]);
     expect(parseGateMemo('{"gates":{"verify":"a string"}}', 'verify')).toEqual([]);
     expect(parseGateMemo('{"gates":{"verify":[{"tree":1}]}}', 'verify')).toEqual([]);
+    const mixed = JSON.stringify({ gates: { bad: 'x', good: [record()] } });
+    expect(parseGateMemo(mixed, 'bad')).toEqual([]);
+    expect(parseGateMemo(mixed, 'good')).toEqual([record()]);
     expect(parseGateMemo('{"gates":{"other":[]}}', 'verify')).toEqual([]);
   });
 
@@ -120,55 +121,6 @@ describe('a gate remembers what it checked, not when it ran', () => {
     );
     for (let index = 0; index < 12; index += 1)
       expect(await readGreenGates(`gate-${index}`, path)).toHaveLength(1);
-  });
-});
-
-describe('the memo knows what the lanes talk to, not only what ran them', () => {
-  test('the browser set is part of the answer', async () => {
-    // A tree hash and a runtime version cannot see a browser upgrade: same
-    // files, same Bun, different Playwright — and the memo would have answered
-    // for a run that happened under different conditions.
-    const root = await scratch('gate-memo-browsers-');
-    const context = await browserRuntimeFixture(root);
-    await writeFile(join(root, 'chromium'), 'binary');
-    await writeFile(join(root, 'webkit'), 'binary');
-    const before = await laneEnvironmentFingerprint(
-      { PLAYWRIGHT_BROWSERS_PATH: root },
-      ['browsers'],
-      context,
-    );
-    await writeFile(join(root, 'chromium'), 'upgraded binary');
-    const after = await laneEnvironmentFingerprint(
-      { PLAYWRIGHT_BROWSERS_PATH: root },
-      ['browsers'],
-      context,
-    );
-    expect(after).not.toBe(before);
-    expect(after).toContain('browsers:1.63.0:');
-  });
-
-  test('what cannot be measured gets a marker of its own, never a shared one', async () => {
-    // Fail-safe in the right direction: an environment that cannot be read
-    // produces a DIFFERENT key, so the outcome is a redundant full run rather
-    // than a skip that should not have happened.
-    const absent = await laneEnvironmentFingerprint({
-      PLAYWRIGHT_BROWSERS_PATH: '/nowhere-that-exists',
-      STARTER_TEST_DATABASE_ADMIN_URL: 'postgresql://nobody@127.0.0.1:1/none',
-    });
-    expect(absent).toContain('browsers:unknown');
-    expect(absent).toContain('pg:unreachable');
-
-    const measured = await laneEnvironmentFingerprint({
-      PLAYWRIGHT_BROWSERS_PATH: await scratch('gate-memo-empty-'),
-      STARTER_TEST_DATABASE_ADMIN_URL: 'postgresql://nobody@127.0.0.1:2/none',
-    });
-    expect(measured).not.toBe(absent);
-  });
-
-  test('a different environment is a different key', async () => {
-    const one = greenGateKey({ tree: 'same-tree', toolchain: 'bun:1 pg:16.15' });
-    const two = greenGateKey({ tree: 'same-tree', toolchain: 'bun:1 pg:17.0' });
-    expect(one).not.toBe(two);
   });
 });
 

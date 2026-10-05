@@ -12,14 +12,15 @@ function context(plan: CiPlan, phase: 'assembly' | 'result') {
 }
 
 describe('named CI evidence', () => {
-  for (const target of ['core', 'tui', 'create-stitchkit'] satisfies Array<
-    import('./release-train').ReleaseTarget
-  >) {
+  for (const [target, path] of [
+    ['core', 'packages/core/src/index.ts'],
+    ['tui', 'packages/tui/src/index.ts'],
+    ['create-stitchkit', 'packages/create-stitchkit/template/project.json'],
+  ]) {
     const plan = planCi({
       event: 'push',
-      subject: 'release(train): package',
-      changedPaths: ['release-train.json'],
-      releaseTargets: [target],
+      subject: 'fix: package',
+      changedPaths: [path ?? ''],
     });
     test(`${target}: selected successes and unselected skips satisfy both boundaries`, () => {
       for (const phase of ['assembly', 'result'] satisfies Array<'assembly' | 'result'>) {

@@ -1,628 +1,40 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
-  askReleaseCi,
-  CiRunListSchema,
-  type CiRunSummary,
-  selectSuccessfulCiRun,
-} from './release-ci';
+import { git } from './local-git';
+import { askReleaseCi, CiRunListSchema, selectSuccessfulCiRun } from './release-ci';
 import { output, run } from './release-command';
-import { type ReleaseExecution, release, releaseTrain } from './release-tagging';
+import { assertTrainCarriesItsCompanions, readFromReleaseTags } from './release-companions';
+import { parseTrainArguments, prepareTrain } from './release-prepare';
+import { ciAlreadyAnsweredFor, classifyPrePush, prePushMetadataGate } from './release-prepush';
+import { starterHeadDecision } from './release-starter-head';
 import {
-  type ReleaseTarget,
-  type ReleaseTrain,
+  assertReleaseSubjectForTag,
+  assertTagOnReleaseHead,
+  firstParentHistory,
+  isReleaseCommitSubject,
+} from './release-subject';
+import {
+  assertDefaultBranchAtOrigin,
+  type ReleaseCommands,
+  releaseTrain,
+} from './release-tagging';
+import {
   ReleaseTrainSchema,
   readReleaseTrain,
+  releasePlanForTag,
   releaseTagForTarget,
-  releaseTrainEntry,
 } from './release-train';
+import { assertPackagesChanged } from './release-unchanged';
 import {
-  assertStarterLockfileIsCurrent,
-  type FetchLike,
-  type ReleaseTreeReader,
-  readFromWorkingTree,
-  readStarterResolution,
-} from './starter-lockfile';
-import {
-  assertBreakingReleaseMetadata,
-  BREAKING_METADATA_SINCE,
-  stableBreakingCadence,
-  stableCadenceSentence,
-} from './surface-cadence';
-
-const ZERO_SHA = /^0+$/;
-
-export type ReleaseScope = 'core' | 'starter' | 'tui' | 'train';
-
-export interface ReleasePlan {
-  target: ReleaseTarget;
-  packageName: string;
-  packageDir: string;
-  changelog: string;
-  version: string;
-}
-
-export interface ReleaseCandidateIdentity extends ReleasePlan {
-  schemaVersion: 1;
-  sha: string;
-  tag: string;
-  ci: {
-    workflow: 'ci.yml';
-    event: 'push';
-    headSha: string;
-  };
-  publication: {
-    workflow: 'release.yml';
-    event: 'push';
-    tag: string;
-  };
-}
-
-export interface ReleaseTagPush {
-  tag: string;
-  /** The SHA git is actually sending — NOT whatever the local tag name resolves to. */
-  sha: string;
-}
-
-/** Branch refs a release may land on directly, and be tagged from. */
-export const DEFAULT_BRANCH_REFS = ['refs/heads/master', 'refs/heads/main'] as const;
-
-export interface PrePushPlan {
-  verify: boolean;
-  releaseTags: ReleaseTagPush[];
-  /** Local SHAs of the pushed branch tips — where a release commit can sit. */
-  branchHeads: string[];
-  /**
-   * The subset of those tips going to a branch a tag can be cut from.
-   *
-   * Which branch a release commit lands on decides who gates it. On master it
-   * is published the moment it is pushed, and a red CI run there is repaired
-   * only by a NEW release commit — so the expensive local gate runs first. On
-   * any other branch CI gates that exact SHA before master ever sees it, and a
-   * red run is repaired by amending the commit, so paying the same eight
-   * minutes locally buys nothing.
-   */
-  defaultBranchHeads: string[];
-  /** Every pushed branch ref belongs to the CI-enabled release namespace. */
-  releaseBranchesOnly: boolean;
-}
-
-function preOneMinor(version: string): number | null {
-  const match = /^0\.(\d+)\.\d+(?:[-+].*)?$/.exec(version);
-  return match?.[1] === undefined ? null : Number(match[1]);
-}
-
-function caretPreOneMinor(range: string): number | null {
-  const match = /^\^0\.(\d+)\.\d+(?:[-+].*)?$/.exec(range);
-  return match?.[1] === undefined ? null : Number(match[1]);
-}
-
-/**
- * A hard-cut core minor can temporarily outrun the still-published starter.
- * That bridge is never implicit: without an exact-version deferred review the
- * HEAD lane runs and exposes template drift on the SHA that created it.
- * Unknown version/range/review forms fail closed by running the lane.
- */
-export function shouldRunStarterHeadLane(
-  coreVersion: string,
-  starterTarget: string,
-  releaseNotes: string,
-  review?: unknown,
-): boolean {
-  if (!releaseNotes.includes('### ⚠️ Breaking changes')) return true;
-  const coreMinor = preOneMinor(coreVersion);
-  const targetMinor = caretPreOneMinor(starterTarget);
-  if (coreMinor === null || targetMinor === null) return true;
-  if (coreMinor === targetMinor) return true;
-  if (typeof review !== 'object' || review === null) return true;
-  const reviewedVersion = Reflect.get(review, 'coreVersion');
-  const outcome = Reflect.get(review, 'outcome');
-  const reason = Reflect.get(review, 'reason');
-  return !(
-    reviewedVersion === coreVersion &&
-    outcome === 'deferred' &&
-    typeof reason === 'string' &&
-    reason.trim().length > 0
-  );
-}
-
-export function releasePlanForTag(tag: string): ReleasePlan {
-  if (tag.startsWith('stitchkit-tui-v')) {
-    const version = tag.slice('stitchkit-tui-v'.length);
-    if (!version) throw new Error('stitchkit TUI release tag is missing a version');
-    return {
-      target: 'tui',
-      packageName: 'stitchkit-tui',
-      packageDir: 'packages/tui',
-      changelog: 'packages/tui/CHANGELOG.md',
-      version,
-    };
-  }
-  if (tag.startsWith('create-stitchkit-v')) {
-    const version = tag.slice('create-stitchkit-v'.length);
-    if (!version) throw new Error('create-stitchkit release tag is missing a version');
-    return {
-      target: 'create-stitchkit',
-      packageName: 'create-stitchkit',
-      packageDir: 'packages/create-stitchkit',
-      changelog: 'packages/create-stitchkit/CHANGELOG.md',
-      version,
-    };
-  }
-  if (tag.startsWith('v')) {
-    const version = tag.slice(1);
-    if (!version) throw new Error('stitchkit release tag is missing a version');
-    return {
-      target: 'core',
-      packageName: 'stitchkit',
-      packageDir: 'packages/core',
-      changelog: 'CHANGELOG.md',
-      version,
-    };
-  }
-  throw new Error(`Unsupported release tag "${tag}"`);
-}
-
-export function extractReleaseNotes(changelog: string, version: string): string {
-  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const headingPattern = new RegExp(`^## \\[${escaped}\\]`);
-  // Walk line-by-line tracking fence state — a `## [x.y.z]` INSIDE a code
-  // fence is example text, not a section boundary.
-  const lines = changelog.split('\n');
-  let inFence = false;
-  let start = -1;
-  let end = lines.length;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? '';
-    if (/^(`{3,}|~{3,})/.test(line.trim())) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    if (start === -1) {
-      if (headingPattern.test(line)) start = index + 1;
-    } else if (/^## \[/.test(line)) {
-      end = index;
-      break;
-    }
-  }
-  if (start === -1) throw new Error(`Changelog has no non-empty section for ${version}`);
-  const notes = lines.slice(start, end).join('\n').trim();
-  // Substance, not mere non-emptiness: a lone `### Added`, an HTML comment or
-  // a stray dot must not pass as release notes.
-  const meaningful = notes
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !/^#{1,6}\s/.test(line))
-    .join('\n');
-  if (meaningful.replace(/[^\p{L}\p{N}]/gu, '').length < 10) {
-    throw new Error(`Changelog section for ${version} carries no substantive notes`);
-  }
-  return notes;
-}
-
-/** The exact heading that marks a release as breaking. */
-const BREAKING_HEADING = /^### \s*\u26a0\ufe0f?\s*Breaking changes/m;
-
-/**
- * Whether a heading occurs outside every fenced block — the same rule
- * `extractReleaseNotes` applies, because a heading inside an example is
- * documentation, not structure.
- */
-function headingOutsideFences(document: string, heading: RegExp): boolean {
-  let inFence = false;
-  for (const line of document.split('\n')) {
-    if (/^(`{3,}|~{3,})/.test(line.trim())) {
-      inFence = !inFence;
-      continue;
-    }
-    if (!inFence && heading.test(line)) return true;
-  }
-  return false;
-}
-
-/**
- * Released versions in changelog order, newest first. Fence-aware for the same
- * reason `extractReleaseNotes` is: a `## [x.y.z]` inside an example block is
- * documentation, not a release.
- */
-export function releasedVersionsInOrder(changelog: string): string[] {
-  const versions: string[] = [];
-  let inFence = false;
-  for (const line of changelog.split('\n')) {
-    if (/^(`{3,}|~{3,})/.test(line.trim())) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    const heading = /^## \[(\d+\.\d+\.\d+)\]/.exec(line);
-    if (heading?.[1] !== undefined) versions.push(heading[1]);
-  }
-  return versions;
-}
-
-/**
- * A breaking change may never ship as a patch. The whole breaking-change policy
- * rests on the caret being a real gate — `^0.56.0` stops before `0.57.0`, so a
- * consumer crosses a break only on purpose. Ship that break as `0.56.1` and
- * every caret consumer takes it on a plain `install`, silently, which is the one
- * outcome the policy exists to prevent. The reverse (additive shipped as a
- * minor) only costs an upgrade nobody needed, so it is not gated.
- */
-/**
- * A migration channel: where a package's upgrade guide lives, and the oldest
- * version it holds an individual section for.
- *
- * Both packages have one, and for the same reason. The changelog says WHAT
- * changed; the guide says what else stops working because of it, which is the
- * half an agent moving a frozen consumer needs. A generated project is a
- * consumer too — its operator steps (delete these supervisor processes, rename
- * these variables) were being written into the starter changelog, where the
- * next release overwrites them.
- *
- * The floors differ because the channels started at different times. Breaking
- * releases below a floor are covered by the summary sections at the end of the
- * guide, so the gate starts there instead of demanding retroactive sections
- * nobody will read.
- */
-export interface MigrationChannel {
-  guidePath: string;
-  floor: string;
-}
-
-export const MIGRATION_CHANNELS = {
-  core: { guidePath: 'docs/guide/upgrading.md', floor: '0.44.0' },
-  'create-stitchkit': { guidePath: 'packages/create-stitchkit/UPGRADING.md', floor: '0.4.0' },
-  tui: { guidePath: 'packages/tui/UPGRADING.md', floor: '0.1.0' },
-} satisfies Record<ReleaseTarget, MigrationChannel>;
-
-function migrationChannelFor(target: ReleaseTarget): MigrationChannel {
-  if (target === 'core') return MIGRATION_CHANNELS.core;
-  if (target === 'tui') return MIGRATION_CHANNELS.tui;
-  return MIGRATION_CHANNELS['create-stitchkit'];
-}
-
-function comparePreOneVersions(left: string, right: string): number {
-  const [leftMajor = 0, leftMinor = 0, leftPatch = 0] = left.split('.').map(Number);
-  const [rightMajor = 0, rightMinor = 0, rightPatch = 0] = right.split('.').map(Number);
-  if (leftMajor !== rightMajor) return leftMajor - rightMajor;
-  if (leftMinor !== rightMinor) return leftMinor - rightMinor;
-  return leftPatch - rightPatch;
-}
-
-/**
- * A breaking release must carry the section that explains it.
- *
- * The changelog says WHAT changed in one mechanical line per item; the upgrade
- * guide says what else stops compiling because of it, which is the half an
- * agent moving a frozen consumer actually needs. That half was written twice
- * and lost twice: an author writes it under `## Unreleased migration:`, the
- * release commit does not promote it, and the next author reuses the heading.
- * Promotion is what this gate makes non-optional.
- */
-export function assertMigrationSection(
-  guide: string,
-  version: string,
-  releaseNotes: string,
-  channel: MigrationChannel = migrationChannelFor('core'),
-): void {
-  if (!BREAKING_HEADING.test(releaseNotes)) return;
-  if (comparePreOneVersions(version, channel.floor) < 0) return;
-
-  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const heading = new RegExp(`^## Released migration: ${escaped}\\s*$`, 'm');
-  if (!headingOutsideFences(guide, heading)) {
-    throw new Error(
-      `${version} carries a "### ⚠️ Breaking changes" section, so ${channel.guidePath} must carry "## Released migration: ${version}". Promote the "## Unreleased migration: …" heading that describes it in this release commit — an unpromoted section is overwritten by the next breaking change.`,
-    );
-  }
-
-  // Proving that ONE heading was promoted is half the check. A release with six
-  // queued sections satisfies it by promoting the first and forgetting five, and
-  // the leftovers are then overwritten by the next author — which is exactly the
-  // 0.57.0 failure this gate exists for. The queue has to be empty.
-  const queued = countUnreleasedMigrations(guide);
-  if (queued > 0) {
-    throw new Error(
-      `${channel.guidePath} still carries ${queued} "## Unreleased migration: …" section${queued === 1 ? '' : 's'} after releasing ${version}. Promote every one of them — a section left queued is overwritten by the next breaking change and lost.`,
-    );
-  }
-}
-
-/** Queued migration headings outside fenced blocks. */
-function countUnreleasedMigrations(guide: string): number {
-  let fenced = false;
-  let seen = 0;
-  for (const line of guide.split('\n')) {
-    if (line.startsWith('```')) fenced = !fenced;
-    else if (!fenced && line.startsWith('## Unreleased migration:')) seen += 1;
-  }
-  return seen;
-}
-
-/**
- * A breaking section says who has to act, before it says what changed.
- *
- * "Adds a member to an interface an application may implement" and "adds an
- * optional field" are both `⚠️ Breaking` today, and they are not remotely the
- * same amount of work downstream. A reader planning an upgrade across four
- * minors cannot see which one costs a day, and finds out by doing it.
- *
- * The line is deliberately the *first* thing in the section, so a reader
- * skimming for the cost never has to read the change to find it.
- */
-const AUDIENCE_LINE = /^\*\*Who must act:\*\*\s+\S/m;
-
-export function assertBreakingAudience(releaseNotes: string, version: string): void {
-  if (!BREAKING_HEADING.test(releaseNotes)) return;
-  const start = releaseNotes.search(BREAKING_HEADING);
-  const section = releaseNotes.slice(start);
-  const end = section.search(/^### (?!\s*\u26a0)/m);
-  const body = end === -1 ? section : section.slice(0, end);
-  if (AUDIENCE_LINE.test(body)) return;
-  throw new Error(
-    `${version} carries a "### \u26a0\ufe0f Breaking changes" section with no "**Who must act:**" line. ` +
-      'State who has to change code and who only has to re-read a value — a reader planning an ' +
-      'upgrade across several minors cannot tell which entry costs a day, and finds out by doing it.',
-  );
-}
-
-export function assertVersionCalibre(changelog: string, version: string): void {
-  const notes = extractReleaseNotes(changelog, version);
-  if (!BREAKING_HEADING.test(notes)) return;
-
-  const released = releasedVersionsInOrder(changelog);
-  const index = released.indexOf(version);
-  if (index === -1) {
-    // The version has release notes (`extractReleaseNotes` found them) but no
-    // `## [x.y.z]` heading — a pre-release spelling like `## [0.56.1-rc.1]`.
-    // Returning here skipped the breaking-as-patch gate entirely for exactly
-    // the shape most likely to carry an unreviewed break.
-    throw new Error(
-      `${version} carries release notes but no "## [${version}]" heading in the changelog, so its calibre cannot be checked. Release headings are plain x.y.z.`,
-    );
-  }
-  const previous = released[index + 1];
-  if (previous === undefined) return;
-
-  const current = version.split('.').map(Number);
-  const prior = previous.split('.').map(Number);
-  const isPatchBump =
-    current[0] === prior[0] && current[1] === prior[1] && (current[2] ?? 0) > (prior[2] ?? 0);
-  if (!isPatchBump) return;
-
-  throw new Error(
-    `${version} carries a "### \u26a0\ufe0f Breaking changes" section but is a patch bump from ${previous}. A caret consumer takes a patch on a plain install — bump the minor so crossing the break stays an explicit opt-in.`,
-  );
-}
-
-export function classifyPrePush(input: string): PrePushPlan {
-  let verify = false;
-  const releaseTags = new Map<string, string>();
-  const branchHeads = new Set<string>();
-  const defaultBranchHeads = new Set<string>();
-  let releaseBranchesOnly = true;
-  for (const line of input.split('\n')) {
-    const fields = line.trim().split(/\s+/);
-    if (fields.length !== 4) continue;
-    // git speaks `<local ref> <local sha> <remote ref> <remote sha>`. The
-    // REMOTE ref decides what this push changes — the local ref is `HEAD` for
-    // `git push origin HEAD:master` and a bare SHA for `<sha>:refs/tags/…`,
-    // so classifying by it misses exactly those forms.
-    const [, localSha, remoteRef] = fields;
-    if (!remoteRef || !localSha || ZERO_SHA.test(localSha)) continue;
-    if (remoteRef.startsWith('refs/heads/')) {
-      verify = true;
-      branchHeads.add(localSha);
-      if (!remoteRef.startsWith('refs/heads/release/')) releaseBranchesOnly = false;
-      if (DEFAULT_BRANCH_REFS.some((ref) => ref === remoteRef)) {
-        defaultBranchHeads.add(localSha);
-      }
-    }
-    if (remoteRef.startsWith('refs/tags/')) {
-      const tag = remoteRef.slice('refs/tags/'.length);
-      if (
-        tag.startsWith('v') ||
-        tag.startsWith('create-stitchkit-v') ||
-        tag.startsWith('stitchkit-tui-v')
-      ) {
-        // `git push origin <sha>:refs/tags/vX` sends a SHA the local tag name
-        // may not point at — classify by what is on the wire.
-        releaseTags.set(tag, localSha);
-      }
-    }
-  }
-  return {
-    verify,
-    releaseTags: [...releaseTags].map(([tag, sha]) => ({ tag, sha })),
-    branchHeads: [...branchHeads],
-    defaultBranchHeads: [...defaultBranchHeads],
-    releaseBranchesOnly: verify && releaseBranchesOnly,
-  };
-}
-
-/**
- * Whether a pushed commit is the release commit itself. The tag gates check the
- * exact version; this only needs the shape, because it answers a different
- * question — is this push the one release preparation, and therefore the last
- * cheap moment to prove the starter template still builds on HEAD.
- */
-export function isReleaseCommitSubject(subject: string): boolean {
-  return /^release\((?:core|starter|tui|train)\):/.test(subject.trim());
-}
-
-/** What the local gate runs for one push. */
-export type LocalGateProfile = 'none' | 'fast' | 'full' | 'candidate';
-
-/**
- * Unproven default-branch releases retain the full gate. A release candidate
- * pays structural preflight; the same unit tests and every selected evidence
- * lane must pass in exact-SHA push CI before master/tag. Ordinary or mixed
- * branch pushes keep fast checks, and metadata/privacy always run first.
- */
-export function localGateProfile(
-  plan: PrePushPlan,
-  releaseCommitShas: readonly string[],
-): LocalGateProfile {
-  if (!plan.verify) return 'none';
-  const landsOnDefaultBranch = releaseCommitShas.some((sha) =>
-    plan.defaultBranchHeads.includes(sha),
-  );
-  if (landsOnDefaultBranch) return 'full';
-  const onlyReleaseCandidates =
-    plan.releaseBranchesOnly &&
-    plan.branchHeads.length > 0 &&
-    plan.branchHeads.every((sha) => releaseCommitShas.includes(sha));
-  return onlyReleaseCandidates ? 'candidate' : 'fast';
-}
-
-/** Fail unless the tag points at the current release head of the default branch. */
-export function assertTagOnReleaseHead(tagSha: string, remoteHeadSha: string): void {
-  if (!tagSha || !remoteHeadSha || tagSha !== remoteHeadSha) {
-    throw new Error(
-      `release tag must point at the current origin/master SHA (tag ${tagSha || '(none)'}, master ${remoteHeadSha || '(none)'})`,
-    );
-  }
-}
-
-/** The commit-subject scope each tag namespace must carry. */
-export function releaseScopeForTag(tag: string): ReleaseScope {
-  if (tag.startsWith('create-stitchkit-v')) return 'starter';
-  if (tag.startsWith('stitchkit-tui-v')) return 'tui';
-  return 'core';
-}
-
-/**
- * Fail unless the tagged commit IS the release commit of that exact version.
- *
- * `assertTagOnReleaseHead` proves the tag sits on the branch head; it cannot
- * tell a release commit from whatever landed on top of it. 0.55.0 was tagged
- * on a follow-up test fix because the release commit was pushed before its CI
- * was green — the tag then had to move to the new head, and `git show <tag>`
- * points at the wrong change forever. Requiring the release subject makes the
- * honest order ("fixes first, release commit last, green, then tag") the only
- * one that reaches publication.
- *
- * The version is matched on digit/dot boundaries so `0.56.0-rc.1` and
- * `10.56.0` never satisfy `0.56.0`, and the scope must match the tag
- * namespace so a starter release commit cannot carry a core tag.
- */
-/** What the cheap half of a pre-push decided, and what it found on the way. */
-export interface PrePushGateDecision {
-  profile: LocalGateProfile;
-  releaseCommits: readonly { sha: string; subject: string }[];
-}
-
-/**
- * Cheap deterministic metadata first — for tags AND for release commits.
- *
- * The order is the whole guarantee, so it lives in one function that can be
- * observed rather than in the sequence of statements inside `main`. Both kinds
- * of release metadata are read before any expensive gate is chosen, because
- * both are one file and a regular expression, and because the thing they refuse
- * cannot be repaired in place once it is pushed.
- *
- * Release commits were the half that was missing. `hasReleaseCommit` already
- * recognised them — that is how the expensive profile is selected — but nothing
- * read their changelog, so a missing `**Who must act:**` line surfaced only at
- * `git push origin vX.Y.Z`, after the full local gate and a CI run, on a commit
- * that is by then public. `AGENTS.md` then requires a NEW release commit for the
- * same version: a second gate, a second CI run. 0.67.0 paid exactly that.
- */
-export async function prePushMetadataGate(
-  plan: PrePushPlan,
-  checks: {
-    validateTag(tag: string, sha: string): Promise<void>;
-    releaseCommits(
-      branchHeads: readonly string[],
-    ): Promise<{ sha: string; subject: string }[]>;
-    validateCommit(commit: { sha: string; subject: string }): Promise<void>;
-  },
-): Promise<PrePushGateDecision> {
-  for (const { tag, sha } of plan.releaseTags) {
-    await checks.validateTag(tag, sha);
-  }
-  const releaseCommits = plan.verify ? await checks.releaseCommits(plan.branchHeads) : [];
-  for (const commit of releaseCommits) {
-    await checks.validateCommit(commit);
-  }
-  return {
-    profile: localGateProfile(
-      plan,
-      releaseCommits.map((commit) => commit.sha),
-    ),
-    releaseCommits,
-  };
-}
-
-export function assertReleaseCommitSubject(
-  subject: string,
-  version: string,
-  scope: ReleaseScope,
-): void {
-  const trimmed = subject.trim();
-  const expected = `release(${scope})`;
-  if (!trimmed.startsWith(`${expected}:`)) {
-    throw new Error(
-      `release tag must point at a "${expected}: … in ${version}" commit — its subject is ${trimmed === '' ? '(empty)' : JSON.stringify(trimmed)}. Land fixes first, make the release commit last, wait for green, then tag.`,
-    );
-  }
-  if (scope === 'train') return;
-  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (!new RegExp(`(?<![\\d.])${escaped}(?![\\d.\\-+])`).test(trimmed)) {
-    throw new Error(
-      `release commit subject must name version ${version} exactly — got ${JSON.stringify(trimmed)}`,
-    );
-  }
-}
-
-/**
- * Has CI already answered for these exact commits?
- *
- * The local release gate exists because a red run on a release commit sitting
- * on master cannot be repaired in place. A commit that reached master by
- * fast-forward from a release branch has already had that run, on this exact
- * SHA, and it was green — which is a stronger statement than the local gate
- * makes, because CI also runs the two lanes no other kernel can. Re-running
- * eight local minutes to re-answer it is the duplication this whole path
- * exists to remove.
- *
- * Three outcomes, not two: green, a named refusal, and "could not ask". The
- * last one is not green — it runs the gate — but it says so, because a gate
- * that runs for eight minutes should never leave a reader guessing whether it
- * ran because the answer was no or because nobody could reach GitHub.
- */
-export async function ciAlreadyAnsweredFor(
-  shas: readonly string[],
-  ask: (sha: string) => Promise<readonly CiRunSummary[]>,
-): Promise<{ green: boolean; because: string }> {
-  if (shas.length === 0) return { green: false, because: 'no release commit in this push' };
-  for (const sha of shas) {
-    let runs: readonly CiRunSummary[];
-    try {
-      runs = await ask(sha);
-    } catch (error) {
-      return {
-        green: false,
-        because: `could not ask GitHub about ${sha.slice(0, 7)} (${
-          error instanceof Error ? error.message : String(error)
-        })`,
-      };
-    }
-    try {
-      selectSuccessfulCiRun(runs, sha);
-    } catch (error) {
-      return { green: false, because: error instanceof Error ? error.message : String(error) };
-    }
-  }
-  return {
-    green: true,
-    because: `a successful push run already exists for ${shas
-      .map((sha) => sha.slice(0, 7))
-      .join(', ')}`,
-  };
-}
+  assertTrainDoesNotOutrunTheStarter,
+  MATURITY_TABLE_PATH,
+  readFromCommit,
+  releaseCandidateIdentity,
+  validateReleaseCommit,
+  validateReleaseTag,
+} from './release-validate';
+import { readFromWorkingTree } from './starter-lockfile';
+import { stableBreakingCadence, stableCadenceSentence } from './surface-cadence';
 
 /**
  * Idempotent publish decision: absent → publish; identical tarball → skip
@@ -639,507 +51,185 @@ export function decidePublishAction(
   throw new Error('version already exists on npm with a DIFFERENT tarball — refusing');
 }
 
-/**
- * How the release-metadata gate reaches the registry.
- *
- * Injectable so the WIRING can be checked without a network — which is the half
- * that unit-testing `assertLockfileResolvesNewest` never covered. The two facts
- * worth proving are that a starter tag reaches the registry and that a core tag
- * does not, and neither is visible from the pieces.
- */
-export interface ValidateReleaseTagOptions {
-  fetch?: FetchLike;
-  /**
-   * The mutable registry check belongs to candidate creation. A tag workflow
-   * consumes the exact candidate CI already approved and must remain rerunnable
-   * after another package in the same train becomes public.
-   */
-  checkStarterLockfile?: boolean;
-  /**
-   * Which tree to judge. The working tree by default; a pre-push check reads
-   * the commit being pushed, because that is what the push publishes.
-   */
-  read?: ReleaseTreeReader;
-}
-
-/** Where ADR 0103's maturity table lives — the one list of stable entrypoints. */
-const MATURITY_TABLE_PATH = 'docs/guide/getting-started.md';
-
-export async function validateReleaseTag(
-  root: string,
-  tag: string,
-  options: ValidateReleaseTagOptions = {},
-): Promise<ReleasePlan & { notes: string }> {
-  const plan = releasePlanForTag(tag);
-  const read = options.read ?? readFromWorkingTree(root);
-  const packageVersion = manifestVersion(
-    await read(`${plan.packageDir}/package.json`),
-    plan.packageDir,
-  );
-  if (packageVersion !== plan.version) {
-    throw new Error(
-      `${tag} does not match ${plan.packageName} package version ${packageVersion}`,
-    );
-  }
-  const changelog = await read(plan.changelog);
-  const notes = extractReleaseNotes(changelog, plan.version);
-  assertVersionCalibre(changelog, plan.version);
-  assertBreakingAudience(notes, plan.version);
-  // The stable-entrypoint metadata validation is the framework's: the maturity table lists
-  // `stitchkit` entrypoints, and the other packages keep their own changelogs.
-  // The guide is read only when there is something to judge, so an additive
-  // release — and every release before the metadata rule existed — reads one file less.
-  if (
-    plan.target === 'core' &&
-    BREAKING_HEADING.test(notes) &&
-    comparePreOneVersions(plan.version, BREAKING_METADATA_SINCE) >= 0
-  ) {
-    assertBreakingReleaseMetadata({
-      changelog,
-      guide: await read(MATURITY_TABLE_PATH),
-      version: plan.version,
-    });
-  }
-  // Both packages, each through its own channel. The scaffolder's guide is for
-  // the operator of a GENERATED project — the steps a new version needs before
-  // it will start — which is a different reader from the framework's, and a
-  // reason for a second guide rather than an argument against one.
-  const channel = migrationChannelFor(plan.target);
-  assertMigrationSection(await read(channel.guidePath), plan.version, notes, channel);
-  // A starter release is the range AND the lockfile. Only the release channel
-  // checks this: outside a release a lockfile lagging its range is ordinary and
-  // legitimate, and gating it there would turn every framework publication into
-  // a template chore.
-  if (plan.target === 'create-stitchkit' && options.checkStarterLockfile !== false) {
-    await assertStarterLockfileIsCurrent(root, options.fetch, read);
-  }
-  const lock = await read('bun.lock');
-  const manifests: Record<string, string> = {};
-  for (const directory of WORKSPACE_PACKAGE_DIRS) {
-    manifests[directory] = manifestVersion(await read(`${directory}/package.json`), directory);
-  }
-  assertLockfileWorkspaceVersions(lock, manifests);
-  return { ...plan, notes };
-}
-
-/** The published workspace packages, whose versions `bun pm pack` reads from `bun.lock`. */
-const WORKSPACE_PACKAGE_DIRS = ['packages/core', 'packages/tui', 'packages/create-stitchkit'];
-
-/** The `version` `bun.lock` records for one workspace, or `null` when it lists none. */
-export function lockedWorkspaceVersion(lock: string, directory: string): string | null {
-  const escaped = directory.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const entry = new RegExp(`"${escaped}": \\{[^{}]*?"version": "([^"]+)"`).exec(lock);
-  return entry?.[1] ?? null;
-}
-
-/**
- * Every workspace version in `bun.lock` equals its manifest.
- *
- * `bun pm pack` writes a `workspace:^` dependency from the version the
- * LOCKFILE records for that workspace, not from its `package.json`, and
- * `bun install --frozen-lockfile` does not treat a bumped manifest version as
- * drift. So a version bump without an install ships a sibling package pinned to
- * the previous release: stitchkit-tui 0.1.3 was published depending on
- * `stitchkit ^0.93.0` the day core 0.94.0 went out, because the lockfile still
- * said 0.93.0. Run `bun install` after a bump; this refuses the release until then.
- */
-export function assertLockfileWorkspaceVersions(
-  lock: string,
-  manifests: Record<string, string>,
-): void {
-  const stale = Object.entries(manifests).flatMap(([directory, version]) => {
-    const locked = lockedWorkspaceVersion(lock, directory);
-    return locked === version
-      ? []
-      : [`${directory}: bun.lock ${locked ?? 'none'}, package.json ${version}`];
-  });
-  if (stale.length > 0) {
-    throw new Error(
-      `bun.lock records workspace versions its manifests no longer carry — run \`bun install\`:\n  ${stale.join('\n  ')}`,
-    );
-  }
-}
-
-/** The `version` field of a package manifest, or a refusal that names the file. */
-export function manifestVersion(source: string, packageDir: string): string {
-  const manifest: unknown = JSON.parse(source);
-  const version =
-    typeof manifest === 'object' &&
-    manifest !== null &&
-    Object.hasOwn(manifest, 'version') &&
-    typeof Reflect.get(manifest, 'version') === 'string'
-      ? Reflect.get(manifest, 'version')
-      : null;
-  if (version === null) throw new Error(`${packageDir}/package.json has no string version`);
-  return version;
-}
-
-/** Read one file out of a commit, so a pre-push check judges what is on the wire. */
-export function readFromCommit(sha: string): ReleaseTreeReader {
-  return (relativePath) => output(['git', 'show', `${sha}:${relativePath}`]);
-}
-
-/** Which package a `release(<scope>): …` subject is releasing. */
-export function releaseScopeForSubject(subject: string): ReleaseScope {
-  const match = /^release\((core|starter|tui|train)\):/.exec(subject.trim());
-  const scope = match?.[1];
-  if (scope !== 'core' && scope !== 'starter' && scope !== 'tui' && scope !== 'train') {
-    throw new Error(`not a release commit subject: ${JSON.stringify(subject.trim())}`);
-  }
-  return scope;
-}
-
-const PACKAGE_DIR_FOR_SCOPE = {
-  core: 'packages/core',
-  starter: 'packages/create-stitchkit',
-  tui: 'packages/tui',
-} as const;
-
-/** The tag a scope and version would be released under. */
-export function releaseTagFor(scope: ReleaseScope, version: string): string {
-  if (scope === 'train') throw new Error('A train has one tag per target');
-  return releaseTagForTarget(scope === 'starter' ? 'create-stitchkit' : scope, version);
-}
-
-/** Stable identity shared by an in-flight CI attempt and later publication. */
-export function releaseCandidateIdentity(
-  plan: ReleasePlan,
-  sha: string,
-): ReleaseCandidateIdentity {
-  const scope = plan.target === 'core' ? 'core' : plan.target === 'tui' ? 'tui' : 'starter';
-  const tag = releaseTagFor(scope, plan.version);
-  return {
-    schemaVersion: 1,
-    ...plan,
-    sha,
-    tag,
-    ci: { workflow: 'ci.yml', event: 'push', headSha: sha },
-    publication: { workflow: 'release.yml', event: 'push', tag },
-  };
-}
-
-/**
- * The metadata gate, run against a release COMMIT instead of a tag.
- *
- * The same checks, at the only moment they are still cheap to act on. They used
- * to run for pushed tags alone, so a release commit went through the whole local
- * gate and a CI run before a missing `**Who must act:**` line — one file, read in
- * milliseconds — refused the tag. By then the commit is public, and `AGENTS.md`
- * requires a NEW release commit for the same version: a second full gate and a
- * second CI run for ten lines of prose. 0.67.0 paid exactly that.
- *
- * The version comes from the tree being pushed, not from the subject: the
- * manifest is what publishes, and `assertReleaseCommitSubject` then holds the
- * subject to it — the same direction the tag path checks in.
- */
-export async function validateReleaseCommit(
-  root: string,
-  commit: { sha: string; subject: string },
-  options: ValidateReleaseTagOptions = {},
-): Promise<ReleasePlan & { notes: string }> {
-  const scope = releaseScopeForSubject(commit.subject);
-  const read = options.read ?? readFromCommit(commit.sha);
-  if (scope === 'train') {
-    const train = ReleaseTrainSchema.parse(JSON.parse(await read('release-train.json')));
-    assertReleaseCommitSubject(commit.subject, '', 'train');
-    // Tree-local, so it holds everywhere the train is judged — including the
-    // candidate path, which deliberately skips the mutable registry checks.
-    await assertTrainDoesNotOutrunTheStarter(root, train, read);
-    let first: (ReleasePlan & { notes: string }) | undefined;
-    for (const release of train.releases) {
-      const plan = await validateReleaseTag(
-        root,
-        releaseTagForTarget(release.target, release.version),
-        {
-          ...options,
-          read,
-        },
-      );
-      first ??= plan;
-    }
-    if (!first) throw new Error('release train has no targets');
-    return first;
-  }
-  const packageDir = PACKAGE_DIR_FOR_SCOPE[scope];
-  const version = manifestVersion(await read(`${packageDir}/package.json`), packageDir);
-  assertReleaseCommitSubject(commit.subject, version, scope);
-  return validateReleaseTag(root, releaseTagFor(scope, version), { ...options, read });
-}
-
-/**
- * Refuse a train that publishes a framework the starter in it is required to pin.
- *
- * The starter's lockfile can only resolve a version npm already serves — it is
- * written by `bun install`, which fetches. So a train carrying both core@X and
- * the starter, where X satisfies the starter's range, states two things that
- * cannot both be true: the lockfile must resolve the newest version the range
- * allows (which becomes X the moment the train publishes it), and the lockfile
- * cannot name X before that publication.
- *
- * Nothing caught this because both halves were checked against the live
- * registry, where X is simply absent until it is not: the starter passed every
- * gate at push time and became stale a minute later, when its own train
- * published the framework. 0.6.1 shipped that way and scaffolds 0.90.5 while
- * 0.90.6 is latest. The answer is not a cleverer moment to ask npm — it is that
- * the starter belongs in a LATER train than the framework it tracks.
- *
- * The check stays narrow on purpose: a starter deliberately targeting an older
- * minor is unaffected by a new minor of the framework, so the two ride together
- * without conflict, and that release is still legal.
- */
-export async function assertTrainDoesNotOutrunTheStarter(
-  root: string,
-  train: ReleaseTrain,
-  read: ReleaseTreeReader,
-): Promise<void> {
-  const core = releaseTrainEntry(train, 'core');
-  const starter = releaseTrainEntry(train, 'create-stitchkit');
-  if (!core || !starter) return;
-  const { range } = await readStarterResolution(root, read);
-  if (!Bun.semver.satisfies(core.version, range)) return;
-  throw new Error(
-    `This train publishes stitchkit ${core.version} and create-stitchkit ${starter.version} together, and the starter's range "${range}" allows ${core.version}. Its lockfile would have to resolve ${core.version} to be correct, and it cannot: a lockfile can only pin a framework npm already serves. Release the framework in this train, then run \`bun run update:starter\` and release the starter in the next one.`,
-  );
-}
-
-export async function assertReleaseSubjectForTag(
-  root: string,
-  subject: string,
-  tag: string,
-  version: string,
-  read?: ReleaseTreeReader,
-): Promise<void> {
-  if (!/^release\(train\):/.test(subject.trim())) {
-    assertReleaseCommitSubject(subject, version, releaseScopeForTag(tag));
-    return;
-  }
-  const plan = releasePlanForTag(tag);
-  const train = read
-    ? ReleaseTrainSchema.parse(JSON.parse(await read('release-train.json')))
-    : await readReleaseTrain(root);
-  const entry = releaseTrainEntry(train, plan.target);
-  if (!entry || entry.version !== version) {
-    throw new Error(`release train does not select ${plan.target}@${version}`);
-  }
-  assertReleaseCommitSubject(subject, '', 'train');
-}
-
-/**
- * Shared CI/pre-push decision. HEAD runs by default; the only skip is an
- * exact-version, explicitly deferred review of an unaligned hard cut.
- */
-async function starterHeadDecision(root: string): Promise<'run' | 'skip'> {
-  const coreManifest: unknown = JSON.parse(
-    await readFile(join(root, 'packages/core/package.json'), 'utf8'),
-  );
-  const starterManifest: unknown = JSON.parse(
-    await readFile(join(root, 'packages/create-stitchkit/template/package.json'), 'utf8'),
-  );
-  const coreVersion =
-    typeof coreManifest === 'object' && coreManifest !== null
-      ? Reflect.get(coreManifest, 'version')
-      : undefined;
-  const catalog =
-    typeof starterManifest === 'object' && starterManifest !== null
-      ? Reflect.get(starterManifest, 'catalog')
-      : undefined;
-  const starterTarget =
-    typeof catalog === 'object' && catalog !== null
-      ? Reflect.get(catalog, 'stitchkit')
-      : undefined;
-  if (typeof coreVersion !== 'string' || typeof starterTarget !== 'string') {
-    throw new Error('core version and starter catalog.stitchkit must be strings');
-  }
-  const releaseNotes = extractReleaseNotes(
-    await readFile(join(root, 'CHANGELOG.md'), 'utf8'),
-    coreVersion,
-  );
-  const reviewPath = join(root, 'scripts/starter-head-review.json');
-  const reviewFile = Bun.file(reviewPath);
-  const review: unknown = (await reviewFile.exists())
-    ? JSON.parse(await reviewFile.text())
-    : undefined;
-  return shouldRunStarterHeadLane(coreVersion, starterTarget, releaseNotes, review)
-    ? 'run'
-    : 'skip';
-}
-
 /** The pushed branch tips that are release commits, with the subject that says so. */
 async function releaseCommitsIn(
+  root: string,
   branchHeads: readonly string[],
 ): Promise<{ sha: string; subject: string }[]> {
   const commits: { sha: string; subject: string }[] = [];
   for (const sha of branchHeads) {
-    const subject = await output(['git', 'log', '-1', '--format=%s', `${sha}^{commit}`]);
+    const subject = (await git(root, ['log', '-1', '--format=%s', `${sha}^{commit}`])).trim();
     if (isReleaseCommitSubject(subject)) commits.push({ sha, subject });
   }
   return commits;
 }
 
+async function commitFiles(root: string, sha: string): Promise<string[]> {
+  const files = await git(root, [
+    '-c',
+    'core.quotepath=off',
+    'diff-tree',
+    '--no-commit-id',
+    '--name-only',
+    '-r',
+    sha,
+  ]);
+  return files.split('\n').filter((line) => line !== '');
+}
+
+/**
+ * The same metadata gate the push runs, against the working tree, before
+ * anything expensive. It derives the tags from `release-train.json`, which
+ * catches a train that names a version the manifest does not carry, and a
+ * package whose packed files equal its previous release, while the cost of
+ * being wrong is still a one-line edit.
+ */
+async function checkWorkingTree(root: string): Promise<void> {
+  const train = await readReleaseTrain(root);
+  const read = readFromWorkingTree(root);
+  await assertTrainDoesNotOutrunTheStarter(root, train, read);
+  await assertTrainCarriesItsCompanions(train, read, readFromReleaseTags(root));
+  const checked: string[] = [];
+  for (const entry of train.releases) {
+    const tag = releaseTagForTarget(entry.target, entry.version);
+    if (entry.target === 'core') {
+      // Observed cadence is informational; metadata validation remains mandatory.
+      const cadence = stableBreakingCadence({
+        changelog: await readFile(join(root, 'CHANGELOG.md'), 'utf8'),
+        guide: await readFile(join(root, MATURITY_TABLE_PATH), 'utf8'),
+        version: entry.version,
+      });
+      process.stderr.write(`[release] ${entry.version}: ${stableCadenceSentence(cadence)}\n`);
+    }
+    await validateReleaseTag(root, tag);
+    checked.push(tag);
+  }
+  await assertPackagesChanged(root, train, read);
+  process.stderr.write(
+    `[release] working tree carries release metadata for ${checked.join(', ')}\n`,
+  );
+}
+
+/** The identity of every release the candidate commit would publish, as JSON. */
+async function candidateIdentities(root: string, argument: string): Promise<string> {
+  const sha = (await git(root, ['rev-parse', `${argument}^{commit}`])).trim();
+  const subject = (await git(root, ['log', '-1', '--format=%s', sha])).trim();
+  // The mutable starter registry check ran before the release commit was
+  // pushed; repeating it would make candidate registration depend on packages
+  // published by the very same train.
+  await validateReleaseCommit(root, { sha, subject }, { checkStarterLockfile: false });
+  const train = ReleaseTrainSchema.parse(
+    JSON.parse(await readFromCommit(root, sha)('release-train.json')),
+  );
+  const releases = train.releases.map((entry) =>
+    releaseCandidateIdentity(
+      releasePlanForTag(releaseTagForTarget(entry.target, entry.version)),
+      sha,
+    ),
+  );
+  return JSON.stringify({ schemaVersion: 1, sha, releases });
+}
+
+async function prePush(root: string): Promise<void> {
+  const plan = classifyPrePush(await Bun.stdin.text());
+  const history = firstParentHistory(root);
+  const { profile, releaseCommits } = await prePushMetadataGate(plan, {
+    validateTag: async (tag, sha) => {
+      await validateReleaseTag(root, tag);
+      await assertReleaseSubjectForTag({
+        root,
+        tag,
+        head: sha,
+        read: readFromCommit(root, sha),
+        history,
+      });
+    },
+    releaseCommits: (heads) => releaseCommitsIn(root, heads),
+    validateCommit: (commit) =>
+      validateReleaseCommit(root, commit, {
+        changedFiles: (sha) => commitFiles(root, sha),
+        compareWithPublished: true,
+      }).then(() => undefined),
+  });
+  // Before the machinery, and never memoised: the scan reads the real index,
+  // which the memo's tree hash does not describe. A local refusal is the only
+  // refusal that keeps content out of a public repository.
+  await run(['bun', 'scripts/check-publication-privacy.ts']);
+  if (profile === 'candidate') {
+    process.stderr.write(
+      '[gate] release candidate: lockfile, lint, types and the release-metadata tests run here; full exact-SHA CI must pass every unit test and selected lane before master/tag.\n',
+    );
+    await run(['bun', 'scripts/verify.ts', '--candidate', '--if-changed']);
+  }
+  if (profile === 'fast') {
+    process.stderr.write(
+      '[gate] ordinary push: lint, types and tests run here; the packed lanes, smokes and consumer lane run on CI, which is the authority for publication either way.\n',
+    );
+    await run(['bun', 'scripts/verify.ts', '--fast', '--if-changed']);
+  }
+  if (profile === 'full') {
+    const landing = releaseCommits
+      .filter((commit) => plan.defaultBranchHeads.includes(commit.sha))
+      .map((commit) => commit.sha);
+    const answered = await ciAlreadyAnsweredFor(landing, (sha) => askReleaseCi(root, sha));
+    if (answered.green) {
+      process.stderr.write(
+        `[gate] release commit already gated by CI: ${answered.because}. Fast-forwarding master publishes a tree CI has answered for on this exact SHA.\n`,
+      );
+      return;
+    }
+    process.stderr.write(`[gate] running the release gate locally: ${answered.because}\n`);
+    await run(['bun', 'scripts/verify.ts', '--release', '--if-changed']);
+  }
+}
+
 async function main(): Promise<void> {
   const [command, argument] = Bun.argv.slice(2);
   const root = join(import.meta.dir, '..');
-  if (command === 'preflight') {
-    if (!argument) throw new Error('Usage: release-plan.ts preflight <tag>');
-    const plan = await validateReleaseTag(root, argument);
+  if (command === 'preflight' || command === 'release-metadata') {
+    if (!argument) throw new Error(`Usage: release-plan.ts ${command} <tag>`);
+    const plan = await validateReleaseTag(root, argument, {
+      checkStarterLockfile: command === 'preflight',
+    });
     process.stdout.write(JSON.stringify(plan));
     return;
   }
-  if (command === 'release-metadata') {
-    if (!argument) throw new Error('Usage: release-plan.ts release-metadata <tag>');
-    const plan = await validateReleaseTag(root, argument, { checkStarterLockfile: false });
-    process.stdout.write(JSON.stringify(plan));
-    return;
-  }
-  if (command === 'check') {
-    /**
-     * The same metadata gate the push runs, against the working tree, before
-     * anything expensive.
-     *
-     * `preflight` needs a tag; this one derives them from `release-train.json`,
-     * which is the point: the mistake it catches is a train that names a
-     * version the manifest no longer has. Every check here reads one file and a
-     * regular expression, and the gate behind it takes minutes. The order used
-     * to be the other way round — the train was noticed at `git push`, after
-     * the gate, and the edit that fixed it invalidated the gate's memo, so the
-     * whole suite ran a second time for a one-line file. That is a full gate
-     * run per occurrence, and it cost one on 0.87.0.
-     */
-    const train = await readReleaseTrain(root);
-    await assertTrainDoesNotOutrunTheStarter(root, train, readFromWorkingTree(root));
-    const checked: string[] = [];
-    for (const entry of train.releases) {
-      const tag = releaseTagForTarget(entry.target, entry.version);
-      if (entry.target === 'core') {
-        // Observed cadence is informational; metadata validation remains mandatory.
-        const cadence = stableBreakingCadence({
-          changelog: await readFile(join(root, 'CHANGELOG.md'), 'utf8'),
-          guide: await readFile(join(root, MATURITY_TABLE_PATH), 'utf8'),
-          version: entry.version,
-        });
-        process.stderr.write(
-          `[release] ${entry.version}: ${stableCadenceSentence(cadence)}\n`,
-        );
-      }
-      await validateReleaseTag(root, tag);
-      checked.push(tag);
-    }
-    process.stderr.write(
-      `[release] working tree carries release metadata for ${checked.join(', ')}\n`,
-    );
+  if (command === 'check') return checkWorkingTree(root);
+  if (command === 'prepare') {
+    const releases = parseTrainArguments(Bun.argv.slice(3));
+    if (releases.length === 0)
+      throw new Error('Usage: release-plan.ts prepare <target>@X.Y.Z…');
+    await prepareTrain(root, releases, new Date().toISOString().slice(0, 10));
     return;
   }
   if (command === 'candidate') {
     if (!argument) throw new Error('Usage: release-plan.ts candidate <sha>');
-    const sha = await output(['git', 'rev-parse', `${argument}^{commit}`]);
-    const subject = await output(['git', 'log', '-1', '--format=%s', sha]);
-    if (releaseScopeForSubject(subject) === 'train') {
-      // Candidate identity is immutable release metadata. The mutable starter
-      // registry check already ran before the release commit was pushed; doing
-      // it again would make late/idempotent observer registration depend on
-      // packages published by the very same train.
-      await validateReleaseCommit(root, { sha, subject }, { checkStarterLockfile: false });
-      const read = readFromCommit(sha);
-      const train = ReleaseTrainSchema.parse(JSON.parse(await read('release-train.json')));
-      const releases = await Promise.all(
-        train.releases.map(async (entry) => {
-          const plan = await validateReleaseTag(
-            root,
-            releaseTagForTarget(entry.target, entry.version),
-            { read, checkStarterLockfile: false },
-          );
-          return releaseCandidateIdentity(plan, sha);
-        }),
-      );
-      process.stdout.write(JSON.stringify({ schemaVersion: 1, sha, releases }));
-      return;
-    }
-    const plan = await validateReleaseCommit(
-      root,
-      { sha, subject },
-      { checkStarterLockfile: false },
-    );
-    process.stdout.write(JSON.stringify(releaseCandidateIdentity(plan, sha)));
+    process.stdout.write(await candidateIdentities(root, argument));
     return;
   }
-  if (command === 'pre-push') {
-    const plan = classifyPrePush(await Bun.stdin.text());
-    const { profile, releaseCommits } = await prePushMetadataGate(plan, {
-      validateTag: async (tag, sha) => {
-        const validated = await validateReleaseTag(root, tag);
-        await assertReleaseSubjectForTag(
-          root,
-          await output(['git', 'log', '-1', '--format=%s', `${sha}^{commit}`]),
-          tag,
-          validated.version,
-          readFromCommit(sha),
-        );
-      },
-      releaseCommits: releaseCommitsIn,
-      validateCommit: (commit) => validateReleaseCommit(root, commit).then(() => undefined),
-    });
-    // Before the machinery, and never memoised — the one input the memo's key
-    // cannot describe. `verify` remembers a green run by a tree hash taken with
-    // `git add --all .`, which counts untracked files; this scan reads the real
-    // index, which does not. A new file is therefore inside the key and outside
-    // the scan at the same time, `git add` changes no content and so no hash,
-    // and the push skips the suite that would have looked. That is how a real
-    // machine path reached a public repository. CI did catch it and went red —
-    // afterwards, which for a public push is after the content is public. Only
-    // a local refusal is a refusal. A third of a second, every time, is the
-    // whole cost of never needing that distinction again.
-    await run(['bun', 'scripts/check-publication-privacy.ts']);
-    if (profile === 'candidate') {
-      process.stderr.write(
-        '[gate] release candidate: lockfile, lint and types run here; full exact-SHA CI must pass every unit test and selected lane before master/tag.\n',
-      );
-      await run(['bun', 'scripts/verify.ts', '--candidate', '--if-changed']);
-    }
-    if (profile === 'fast') {
-      process.stderr.write(
-        '[gate] ordinary push: lint, types and tests run here; the packed lanes, smokes and consumer lane run on CI, which is the authority for publication either way.\n',
-      );
-      await run(['bun', 'scripts/verify.ts', '--fast', '--if-changed']);
-    }
-    if (profile === 'full') {
-      const landing = releaseCommits
-        .filter((commit) => plan.defaultBranchHeads.includes(commit.sha))
-        .map((commit) => commit.sha);
-      const answered = await ciAlreadyAnsweredFor(landing, (sha) => askReleaseCi(root, sha));
-      if (answered.green) {
-        process.stderr.write(
-          `[gate] release commit already gated by CI: ${answered.because}. Fast-forwarding master publishes a tree CI has answered for on this exact SHA.\n`,
-        );
-        return;
-      }
-      process.stderr.write(`[gate] running the release gate locally: ${answered.because}\n`);
-      await run(['bun', 'scripts/verify.ts', '--release', '--if-changed']);
-    }
-    return;
-  }
-  if (command === 'release') {
-    const execution: ReleaseExecution = {
+  if (command === 'pre-push') return prePush(root);
+  if (command === 'assert-origin' || command === 'release') {
+    const commands: ReleaseCommands = {
       root,
       run,
       output,
       validateTag: (tag) => validateReleaseTag(root, tag),
-      validateSubject: (subject, tag, version) =>
-        assertReleaseSubjectForTag(root, subject, tag, version),
+      validateSubject: (head, tag) =>
+        assertReleaseSubjectForTag({ root, tag, head, history: firstParentHistory(root) }),
       askCi: (sha) => askReleaseCi(root, sha),
     };
-    if (argument === 'train') {
-      await releaseTrain(execution);
+    if (command === 'assert-origin') {
+      await assertDefaultBranchAtOrigin(commands);
       return;
     }
-    if (argument !== 'core' && argument !== 'create-stitchkit' && argument !== 'tui') {
-      throw new Error('Usage: release-plan.ts release <core|create-stitchkit|tui>');
-    }
-    await release(argument, execution);
+    if (argument !== 'train') throw new Error('Usage: release-plan.ts release train');
+    await releaseTrain(commands);
     return;
   }
   if (command === 'assert-subject') {
-    const [, subject, version, tag] = Bun.argv.slice(2);
-    await assertReleaseSubjectForTag(root, subject ?? '', tag ?? '', version ?? '');
+    const [, head, tag] = Bun.argv.slice(2);
+    if (!head || !tag) throw new Error('Usage: release-plan.ts assert-subject <sha> <tag>');
+    await assertReleaseSubjectForTag({ root, tag, head, history: firstParentHistory(root) });
     return;
   }
   if (command === 'assert-head') {
@@ -1163,7 +253,7 @@ async function main(): Promise<void> {
     return;
   }
   throw new Error(
-    'Usage: release-plan.ts <check|preflight TAG|release-metadata TAG|candidate SHA|pre-push|release TARGET|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head>',
+    'Usage: release-plan.ts <check|prepare TARGET@X.Y.Z…|preflight TAG|release-metadata TAG|candidate SHA|pre-push|assert-origin|release train|assert-subject SHA TAG|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head>',
   );
 }
 

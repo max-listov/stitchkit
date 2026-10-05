@@ -10,6 +10,9 @@ next-env.d.ts
 .stitchkit
 *.tgz
 packages/core/native/*.node
+# the published native manifest: `build` writes it from native-layout.json with the size and
+# SHA256 of every addon present at build time
+packages/core/native-assets.json
 
 # generated consumer-agent entry points (built from docs/ by gen:llms)
 packages/core/llms.txt

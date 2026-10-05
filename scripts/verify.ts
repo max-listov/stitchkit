@@ -1,26 +1,23 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type CgroupMemoryBudget, cgroupMemoryBudget } from './gate-cgroup-memory';
 import { watchWorktreeInputs, worktreeInputGeneration } from './gate-input-generation';
 import {
   findGreenGate,
-  type GreenGateRecord,
   gateMemoPath,
   greenGateKey,
   headCommit,
-  laneEnvironmentFingerprint,
-  laneEnvironmentIsReusable,
   readGreenGates,
   toolchainFingerprint,
   worktreeTreeHash,
+  writeGreenGate,
 } from './gate-memo';
-import { invalidateGreenEvidence, saveGreenEvidence } from './verify-evidence';
 import {
+  FAST_GATE,
   FAST_STEPS,
+  FAST_SUBSET_STEPS,
   PROFILES,
   releaseProfile,
   VERIFY_FLAGS,
-  type VerifyProfile,
 } from './verify-profiles';
 
 const root = join(import.meta.dir, '..');
@@ -103,16 +100,6 @@ export function availableMemoryGib(meminfo?: string): number | undefined {
  */
 export const SWAP_EXHAUSTED_FRACTION = 0.05;
 
-/** Host headroom cannot authorize memory that the execution cgroup denies. */
-export function availableGateMemoryGib(
-  host = availableMemoryGib(),
-  cgroup: CgroupMemoryBudget = cgroupMemoryBudget(),
-): number | undefined {
-  if (cgroup.kind === 'unavailable') return undefined;
-  if (cgroup.kind !== 'bounded') return host;
-  return host === undefined ? cgroup.availableGib : Math.min(host, cgroup.availableGib);
-}
-
 export interface HeavyConcurrencyChoice {
   readonly concurrency: number;
   /** Why this number — the line the gate prints, so the choice is never silent. */
@@ -134,8 +121,9 @@ export interface HeavyConcurrencyChoice {
  * teaches its readers to disbelieve red, and the release profile is the one run
  * whose red cannot be repaired in place.
  *
- * The comment this replaces already knew all of that and left the fix to a
- * human remembering to export a variable.
+ * The host figure does not see a cgroup limit on the session; a memory-limited
+ * session sets the variable. A lane killed under such a limit is named, with the
+ * memory floor it ran through, by `runBounded`.
  */
 export function chooseHeavyConcurrency(
   raw = Bun.env.VERIFY_HEAVY_CONCURRENCY,
@@ -144,7 +132,7 @@ export function chooseHeavyConcurrency(
   // `undefined` and the default fires for both — so the unmeasurable branch was
   // unreachable from a test, and would have been unreachable from any caller
   // that wanted to state it. The test asking for that branch is what found it.
-  measure?: () => number | undefined,
+  measure: () => number | undefined = availableMemoryGib,
 ): HeavyConcurrencyChoice {
   if (raw !== undefined && raw !== '') {
     const parsed = Number(raw);
@@ -153,20 +141,18 @@ export function chooseHeavyConcurrency(
     }
     return { concurrency: parsed, because: `VERIFY_HEAVY_CONCURRENCY=${raw}` };
   }
-  const budget = measure ? undefined : cgroupMemoryBudget();
-  const available = measure ? measure() : availableGateMemoryGib(availableMemoryGib(), budget);
-  const source = budget ? ` (cgroup ${budget.kind})` : '';
+  const available = measure();
   if (available === undefined) {
     return {
       concurrency: 1,
-      because: `available memory could not be read${source}, using one heavy lane`,
+      because: 'available memory could not be read, using one heavy lane',
     };
   }
   const affordable = Math.floor(available / HEAVY_LANE_MEMORY_GIB);
   const concurrency = Math.min(MAX_HEAVY_CONCURRENCY, Math.max(1, affordable));
   return {
     concurrency,
-    because: `${available.toFixed(1)} GiB affordable${source}, ${HEAVY_LANE_MEMORY_GIB} GiB per heavy lane`,
+    because: `${available.toFixed(1)} GiB available, ${HEAVY_LANE_MEMORY_GIB} GiB per heavy lane`,
   };
 }
 
@@ -176,7 +162,7 @@ export function chooseHeavyConcurrency(
  * which is not the same fact as "there was plenty" and must not print like it.
  */
 export function startMemoryFloor(
-  measure: () => number | undefined = availableGateMemoryGib,
+  measure: () => number | undefined = availableMemoryGib,
   everyMs = 2_000,
 ): () => number | undefined {
   let floor = measure();
@@ -195,7 +181,7 @@ export function startMemoryFloor(
 /** The number alone, for callers that do not print the reason. */
 export function heavyConcurrency(
   raw = Bun.env.VERIFY_HEAVY_CONCURRENCY,
-  measure: () => number | undefined = availableGateMemoryGib,
+  measure: () => number | undefined = availableMemoryGib,
 ): number {
   return chooseHeavyConcurrency(raw, measure).concurrency;
 }
@@ -259,15 +245,6 @@ export async function runBounded(
   await Promise.all(workers);
 }
 
-async function greenRecordFor(
-  profile: VerifyProfile,
-  key: string,
-  memo: string,
-): Promise<{ gate: string; record: GreenGateRecord } | undefined> {
-  const record = findGreenGate(await readGreenGates(profile.gate, memo), key);
-  return record ? { gate: profile.gate, record } : undefined;
-}
-
 async function main(): Promise<void> {
   const args = Bun.argv.slice(2);
   const ifChanged = args.includes('--if-changed');
@@ -301,17 +278,13 @@ async function main(): Promise<void> {
   }
 
   const memo = gateMemoPath();
-  const runtimeToolchain = await toolchainFingerprint();
-  const laneEnvironment =
-    profile.requiredLaneInputs.length > 0
-      ? await laneEnvironmentFingerprint(Bun.env, profile.requiredLaneInputs)
-      : undefined;
-  const reusableEnvironment =
-    laneEnvironment === undefined || laneEnvironmentIsReusable(laneEnvironment);
-  const toolchain =
-    laneEnvironment === undefined
-      ? runtimeToolchain
-      : `${runtimeToolchain} ${laneEnvironment}`;
+  const toolchain = await toolchainFingerprint();
+  // Only the fast subset is remembered. Its steps are cheap and deterministic in
+  // the tree; heavier lanes depend on databases and browsers a tree hash cannot
+  // see, and exact-SHA CI is what answers for them.
+  const fastSteps = new Set<string>([...FAST_STEPS, ...FAST_SUBSET_STEPS]);
+  const withinFastSubset = profile.steps.every((step) => fastSteps.has(step));
+  const certifiesFast = FAST_STEPS.every((step) => profile.steps.includes(step));
   const guard = await watchWorktreeInputs(root);
   try {
     const before = await worktreeTreeHash(root);
@@ -319,14 +292,19 @@ async function main(): Promise<void> {
     const key = greenGateKey({ tree: before, toolchain });
 
     const reusableInputs = !generation.startsWith('unattested-symlinks:');
-    if (ifChanged && reusableEnvironment && reusableInputs) {
-      const green = await greenRecordFor(profile, key, memo);
+    if (ifChanged && !withinFastSubset) {
+      process.stderr.write(
+        `[gate] --if-changed reuses only the fast subset; ${profile.gate} runs in full.\n`,
+      );
+    }
+    if (ifChanged && withinFastSubset && reusableInputs) {
+      const green = findGreenGate(await readGreenGates(FAST_GATE, memo), key);
       if (green && !(await guard.finish())) {
         // Named, never silent. A gate that skips without saying so is
         // indistinguishable from a gate that is not there, and the whole value of
         // the memo is that a reader can check the claim.
         process.stderr.write(
-          `[gate] skipping ${profile.steps.join(', ')}: this exact working tree ${before.slice(0, 12)} passed \`${green.gate}\` at ${green.record.at} on ${green.record.toolchain} (HEAD was ${green.record.commit}). Any edit to any file runs it again.\n`,
+          `[gate] skipping ${profile.steps.join(', ')}: this exact working tree ${before.slice(0, 12)} passed \`${FAST_GATE}\` at ${green.at} on ${green.toolchain} (HEAD was ${green.commit}). Any edit to any file runs it again.\n`,
         );
         return;
       }
@@ -355,55 +333,35 @@ async function main(): Promise<void> {
       });
     }
 
-    const environmentAfter =
-      laneEnvironment === undefined
-        ? undefined
-        : await laneEnvironmentFingerprint(Bun.env, profile.requiredLaneInputs);
     const after = await worktreeTreeHash(root);
     const changed =
       after !== before ||
       generation !== (await worktreeInputGeneration(root)) ||
       (await guard.finish());
-    const record = {
-      tree: before,
-      toolchain,
-      at: new Date().toISOString(),
-      commit: await headCommit(root),
-    };
     if (changed) {
-      await invalidateGreenEvidence(profile, record, runtimeToolchain, memo);
       process.stderr.write(
         `[gate] ${profile.gate} completed, but its inputs changed during the run (${before.slice(0, 12)} to ${after.slice(0, 12)}); no reusable green memo was saved.\n`,
       );
       return;
     }
     if (!reusableInputs) {
-      await invalidateGreenEvidence(profile, record, runtimeToolchain, memo);
       process.stderr.write(
         `[gate] ${profile.gate} completed; symlink targets are not attested by the Git tree, no reusable memo saved.\n`,
       );
       return;
     }
-    if (
-      !reusableEnvironment ||
-      environmentAfter !== laneEnvironment ||
-      (environmentAfter !== undefined && !laneEnvironmentIsReusable(environmentAfter))
-    ) {
-      await invalidateGreenEvidence(profile, record, runtimeToolchain, memo);
-      if (FAST_STEPS.every((step) => profile.steps.includes(step))) {
-        await saveGreenEvidence(
-          PROFILES.fast,
-          { ...record, toolchain: runtimeToolchain },
-          runtimeToolchain,
-          memo,
-        );
-      }
-      process.stderr.write(
-        `[gate] ${profile.gate} completed; external inputs changed or were not fully measurable, no heavy memo saved.\n`,
+    if (certifiesFast) {
+      await writeGreenGate(
+        FAST_GATE,
+        {
+          tree: before,
+          toolchain,
+          at: new Date().toISOString(),
+          commit: await headCommit(root),
+        },
+        memo,
       );
-      return;
     }
-    await saveGreenEvidence(profile, record, runtimeToolchain, memo);
     process.stderr.write(`[gate] ${profile.gate} green for tree ${before.slice(0, 12)}.\n`);
   } finally {
     await guard.finish();

@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import {
-  NativeLayoutSchema,
+  NativeAssetManifestSchema,
   nativeLoaderSource,
 } from '../packages/core/src/files/native-packaging-layout';
 import {
@@ -68,6 +68,15 @@ try {
       join(fixture, file),
     );
   const packageRoot = join(fixture, 'node_modules/stitchkit');
+  const metadataPath = join(packageRoot, 'native-assets.json');
+  const published = NativeAssetManifestSchema.parse(
+    JSON.parse(readFileSync(metadataPath, 'utf8')),
+  );
+  for (const architecture of ['arm64', 'x64'] satisfies Array<'arm64' | 'x64'>)
+    assert.ok(
+      published.assets[architecture],
+      `Packed manifest lacks the ${architecture} digest`,
+    );
   const artifacts: UniversalManifest['artifacts'] = [];
   async function build(
     mode: UniversalManifest['artifacts'][number]['mode'],
@@ -95,8 +104,8 @@ try {
         version: z.string(),
         assets: z.array(
           z.object({
-            sourcePath: z.string(),
             outputPath: z.string(),
+            size: z.number(),
             sha256: z.string(),
             architecture: z.enum(['arm64', 'x64']),
           }),
@@ -116,7 +125,8 @@ try {
       { path: 'app/proof.js', sha256: fileDigest(join(directory, 'app/proof.js')) },
     ];
     for (const asset of packaging.assets) {
-      assert.equal(fileDigest(asset.sourcePath), asset.sha256);
+      // The digest is the one the package published at build time, not one of the local file.
+      assert.equal(asset.sha256, published.assets[asset.architecture]?.sha256);
       assert.equal(fileDigest(join(directory, asset.outputPath)), asset.sha256);
       files.push({
         path: asset.outputPath,
@@ -134,24 +144,61 @@ try {
   await build('universal', ['arm64', 'x64']);
   await build('single-arm64', 'arm64');
   await build('single-x64', 'x64');
+  // One changed byte of an installed addon refuses packaging; the file is replaced, never
+  // rewritten in place, so a shared Bun-cache inode is not touched.
+  const arm = published.assets.arm64;
+  assert.ok(arm);
+  const armPath = join(packageRoot, arm.path);
+  const original = readFileSync(armPath);
+  const tampered = Buffer.from(original);
+  tampered[0] = (tampered[0] ?? 0) ^ 0xff;
+  rmSync(armPath);
+  writeFileSync(armPath, tampered);
+  assert.throws(
+    () =>
+      run(
+        'bun',
+        [
+          join(fixture, 'universal-native-recipe.mjs'),
+          JSON.stringify({
+            platform: 'darwin',
+            architecture: 'arm64',
+            delivery: 'companion',
+            entryPath: 'app/proof.js',
+            assetPath: 'addons/owner.node',
+          }),
+          join(scratch, 'tampered'),
+        ],
+        fixture,
+      ),
+    /NATIVE_ASSET_DIGEST_MISMATCH/,
+  );
+  rmSync(armPath);
+  writeFileSync(armPath, original);
   // Owning fault injection changes metadata, imports and assets; consumer recipe stays identical.
-  const metadataPath = join(packageRoot, 'native-assets.json');
-  const layout = NativeLayoutSchema.parse(JSON.parse(readFileSync(metadataPath, 'utf8')));
   const renamed = {
-    ...layout,
+    ...published,
     loader: 'qualified/loader.cjs',
-    assets: { arm64: 'qualified/a.node', x64: 'qualified/b.node' },
+    assets: Object.fromEntries(
+      (['arm64', 'x64'] satisfies Array<'arm64' | 'x64'>).map((architecture) => {
+        const entry = published.assets[architecture];
+        assert.ok(entry);
+        const path = architecture === 'arm64' ? 'qualified/a.node' : 'qualified/b.node';
+        return [architecture, { ...entry, path }];
+      }),
+    ),
   };
   mkdirSync(join(packageRoot, 'qualified'));
-  for (const architecture of ['arm64', 'x64'] satisfies Array<'arm64' | 'x64'>)
-    renameSync(
-      join(packageRoot, layout.assets[architecture]),
-      join(packageRoot, renamed.assets[architecture]),
-    );
-  rmSync(join(packageRoot, layout.loader));
+  for (const architecture of ['arm64', 'x64'] satisfies Array<'arm64' | 'x64'>) {
+    const from = published.assets[architecture]?.path;
+    const to = renamed.assets[architecture]?.path;
+    assert.ok(from && to);
+    renameSync(join(packageRoot, from), join(packageRoot, to));
+  }
+  rmSync(join(packageRoot, published.loader));
   writeFileSync(
     join(packageRoot, renamed.loader),
-    nativeLoaderSource({ arm64: './a.node', x64: './b.node' }),
+    nativeLoaderSource({ arm64: './a.node', x64: './b.node' }, 'beside-loader'),
   );
   rmSync(metadataPath);
   writeFileSync(metadataPath, JSON.stringify(renamed));

@@ -59,9 +59,6 @@ try {
           stitchkit: `file:${coreArchive}`,
           typescript: '^7.0.0',
         },
-        overrides: {
-          stitchkit: `file:${coreArchive}`,
-        },
       },
       null,
       2,
@@ -130,6 +127,26 @@ export default defineAgentTui({
   );
   if (manifestText.includes('workspace:'))
     throw new Error('packed TUI manifest retains workspace protocol');
+  // The framework is a peer: the install has one copy of it, the project's own,
+  // with no override forcing it. A dependency would freeze a range at pack time
+  // and give every project a second, older stitchkit once the framework moves on.
+  const packed: unknown = JSON.parse(manifestText);
+  const field = (name: string): unknown =>
+    typeof packed === 'object' && packed !== null ? Reflect.get(packed, name) : undefined;
+  const declares = (name: string) => {
+    const dependencies = field(name);
+    return (
+      typeof dependencies === 'object' && dependencies !== null && 'stitchkit' in dependencies
+    );
+  };
+  if (declares('dependencies') || !declares('peerDependencies'))
+    throw new Error('packed TUI manifest must declare stitchkit as a peer, not a dependency');
+  if (
+    await Bun.file(
+      join(consumer, 'node_modules/stitchkit-tui/node_modules/stitchkit/package.json'),
+    ).exists()
+  )
+    throw new Error('the install holds a second stitchkit under stitchkit-tui');
   const contents = await run(['tar', '-tzf', tuiArchive], consumer);
   if (!contents.includes('package/dist/cli.js'))
     throw new Error('packed TUI archive omits its CLI');

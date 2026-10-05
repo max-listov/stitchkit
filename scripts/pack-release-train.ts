@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { NativeAssetManifestSchema } from '../packages/core/src/files/native-packaging-layout';
 import { packageDirectory, readReleaseTrain } from './release-train';
 
 const root = join(import.meta.dir, '..');
@@ -51,4 +52,12 @@ for (const release of train.releases) {
     await run(['bun', '--filter', 'create-stitchkit', 'build']);
   }
   await run(['bun', 'pm', 'pack', '--destination', destination], join(root, directory));
+  if (release.target === 'core') {
+    // Prepack wrote the manifest; a core release publishes the digest of every Darwin addon.
+    const published = NativeAssetManifestSchema.parse(
+      JSON.parse(await readFile(join(root, 'packages/core/native-assets.json'), 'utf8')),
+    );
+    if (!published.assets.arm64 || !published.assets.x64)
+      throw new Error('core release manifest lacks a Darwin addon digest');
+  }
 }

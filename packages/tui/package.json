@@ -44,12 +44,15 @@
     "@opentui/react": "^0.5.12",
     "ai": "^7.0.111",
     "react": "^19.3.0",
-    "stitchkit": "workspace:^",
     "zod": "^4.6.5"
+  },
+  "peerDependencies": {
+    "stitchkit": "workspace:^"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
     "@types/react": "^19.3.0",
+    "stitchkit": "workspace:^",
     "typescript": "^7.0.2"
   },
   "engines": {

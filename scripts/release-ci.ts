@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { runNativeCommand } from '../packages/core/src/process/command';
 
+/** A full lowercase commit SHA: the only form a CI query or a tag may name. */
+export const ShaSchema = z.string().regex(/^[0-9a-f]{40}$/);
+
 export const CiRunListSchema = z.array(
   z.object({
     id: z.number().int().positive(),
@@ -14,7 +17,11 @@ export type CiRunSummary = z.infer<typeof CiRunListSchema>[number];
 /** The successful exact-SHA push run of the heavy CI — or a loud, specific refusal. */
 export function selectSuccessfulCiRun(runs: readonly CiRunSummary[], sha: string): number {
   const matching = runs.filter((run) => run.head_sha === sha && run.event === 'push');
-  const successful = matching.find((run) => run.conclusion === 'success');
+  // The oldest successful run holds the packed artifacts: a later push of the
+  // same SHA (the master fast-forward) answers with an empty plan and no artifact.
+  const successful = matching
+    .filter((run) => run.conclusion === 'success')
+    .sort((left, right) => left.id - right.id)[0];
   if (successful) return successful.id;
   if (matching.length === 0) {
     throw new Error(`no push CI run exists for exact SHA ${sha}`);
@@ -28,7 +35,7 @@ export function selectSuccessfulCiRun(runs: readonly CiRunSummary[], sha: string
 
 /** Remote evidence is queried through the bounded native command owner. */
 export async function askReleaseCi(root: string, sha: string): Promise<CiRunSummary[]> {
-  if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('CI requires a full commit SHA');
+  if (!ShaSchema.safeParse(sha).success) throw new Error('CI requires a full commit SHA');
   const result = await runNativeCommand({
     executable: 'gh',
     args: [
@@ -54,6 +61,5 @@ export async function requireSuccessfulReleaseCi(
   sha: string,
   ask: (sha: string) => Promise<readonly CiRunSummary[]>,
 ): Promise<number> {
-  if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('CI requires a full commit SHA');
   return selectSuccessfulCiRun(await ask(sha), sha);
 }

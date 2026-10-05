@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { inspectPublicDocument } from './public-docs-hygiene';
 
 export type PublicationScope = 'working-tree' | 'tracked' | 'packed';
 
@@ -235,6 +236,8 @@ export function inspectPublicationText(
         findings.push({ file, line: index + 1, rule: shape.rule, scope });
     }
   }
+  for (const found of inspectPublicDocument(file, contents))
+    findings.push({ file, scope, ...found });
   return findings;
 }
 

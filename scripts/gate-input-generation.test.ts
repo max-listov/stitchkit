@@ -19,6 +19,7 @@ test('partial watcher setup refusal closes every acquired watcher', async () => 
   const root = await fixture();
   const acquired: FSWatcher[] = [];
   let closed = 0;
+  const watcherClosed = Promise.withResolvers<void>();
   try {
     await expect(
       watchWorktreeInputs(root, (path, listener) => {
@@ -26,12 +27,13 @@ test('partial watcher setup refusal closes every acquired watcher', async () => 
         const watcher = watch(path, listener);
         watcher.on('close', () => {
           closed += 1;
+          watcherClosed.resolve();
         });
         acquired.push(watcher);
         return watcher;
       }),
     ).rejects.toThrow('controlled setup refusal');
-    await Bun.sleep(10);
+    await watcherClosed.promise;
     expect(acquired).toHaveLength(1);
     expect(closed).toBe(1);
   } finally {

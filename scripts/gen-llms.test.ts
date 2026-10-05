@@ -18,6 +18,7 @@ import {
   packageExports,
   SLICE_LIMIT_BYTES,
   splitToFit,
+  stripFrontMatter,
 } from './gen-llms';
 
 const GUIDE_DIR = join(import.meta.dir, '../docs/guide');
@@ -38,6 +39,25 @@ describe('agent docs slices', () => {
     expect(() => assertSliceSizes([...slices, bloated])).toThrow('llms/bloated.txt');
     const edge = { file: 'llms/edge.txt', bytes: SLICE_LIMIT_BYTES };
     expect(() => assertSliceSizes([edge])).not.toThrow();
+  });
+
+  test('YAML front matter of a guide page never reaches a slice', () => {
+    const frontMatterOpening = /^---\ntitle:/m;
+    // Negative control: the pattern can see front matter, because some guide pages carry it.
+    const withFrontMatter = readdirSync(GUIDE_DIR)
+      .filter((file) => file.endsWith('.md'))
+      .filter((file) => frontMatterOpening.test(readFileSync(join(GUIDE_DIR, file), 'utf8')));
+    expect(withFrontMatter.length).toBeGreaterThan(0);
+    const leaking = slices.filter((slice) => frontMatterOpening.test(slice.content));
+    expect(leaking.map((slice) => slice.file)).toEqual([]);
+  });
+
+  test('stripFrontMatter removes only a block at the start of the document', () => {
+    const body = '# Title\n\ntext\n\n---\nnot: front matter\n---\n';
+    expect(
+      stripFrontMatter(`---\ntitle: x\nparticipants:\n  - role: authored\n---\n${body}`),
+    ).toBe(body);
+    expect(stripFrontMatter(body)).toBe(body);
   });
 
   test('every export in packages/core/package.json has a slice', () => {
@@ -66,7 +86,7 @@ describe('agent docs slices', () => {
     expect(() => assertNoDuplicateBodies(slices)).not.toThrow();
     // Independent of the bookkeeping: the opening of every guide section is in one slice topic.
     for (const file of readdirSync(GUIDE_DIR).filter((f) => f.endsWith('.md'))) {
-      const guide = readFileSync(join(GUIDE_DIR, file), 'utf8').trim();
+      const guide = stripFrontMatter(readFileSync(join(GUIDE_DIR, file), 'utf8')).trim();
       for (const section of guide.split(/^(?=## )/m)) {
         const opening = section.trim().slice(0, 200);
         const topics = new Set(

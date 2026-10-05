@@ -10,24 +10,20 @@ const PACKAGE = JSON.parse(readFileSync(join(import.meta.dir, '../package.json')
   scripts?: Record<string, string>;
 };
 
-const StepSchema = z
-  .object({
-    run: z.string().optional(),
-    env: z.record(z.string(), z.string()).optional(),
-    if: z.union([z.string(), z.boolean()]).optional(),
-    'continue-on-error': z.union([z.string(), z.boolean()]).optional(),
-  })
-  .passthrough();
-const JobSchema = z
-  .object({
-    if: z.union([z.string(), z.boolean()]).optional(),
-    needs: z.union([z.string(), z.array(z.string())]).optional(),
-    'continue-on-error': z.union([z.string(), z.boolean()]).optional(),
-    steps: z.array(StepSchema),
-    strategy: z.object({ matrix: z.record(z.string(), z.unknown()) }).optional(),
-  })
-  .passthrough();
-const WorkflowSchema = z.object({ jobs: z.record(z.string(), JobSchema) }).passthrough();
+const StepSchema = z.looseObject({
+  run: z.string().optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  if: z.union([z.string(), z.boolean()]).optional(),
+  'continue-on-error': z.union([z.string(), z.boolean()]).optional(),
+});
+const JobSchema = z.looseObject({
+  if: z.union([z.string(), z.boolean()]).optional(),
+  needs: z.union([z.string(), z.array(z.string())]).optional(),
+  'continue-on-error': z.union([z.string(), z.boolean()]).optional(),
+  steps: z.array(StepSchema),
+  strategy: z.object({ matrix: z.record(z.string(), z.unknown()) }).optional(),
+});
+const WorkflowSchema = z.looseObject({ jobs: z.record(z.string(), JobSchema) });
 
 /** Conditions and dependency edges carry coverage; command text alone does not. */
 function workflowCoverageProblems(source: string): string[] {
@@ -141,12 +137,15 @@ describe('local gate vocabulary', () => {
   });
 
   test('full local verification retains every portable evidence lane', () => {
-    for (const step of VERIFY_STEPS) expect(PACKAGE.scripts?.[step]).toBeDefined();
-    expect(PROFILES.fast.requiredLaneInputs).toEqual([]);
-    expect(PROFILES.candidate.steps).toEqual(['lockfile', 'lint', 'check']);
+    for (const step of [...VERIFY_STEPS, ...PROFILES.candidate.steps])
+      expect(PACKAGE.scripts?.[step]).toBeDefined();
+    expect(PROFILES.candidate.steps).toEqual([
+      'lockfile',
+      'lint',
+      'check',
+      'test:release-metadata',
+    ]);
     expect(PROFILES.fast.steps).toContain('test');
-    expect(PROFILES.candidate.requiredLaneInputs).toEqual([]);
-    expect(PROFILES.full.requiredLaneInputs).toEqual(['postgres', 'browsers']);
   });
 });
 

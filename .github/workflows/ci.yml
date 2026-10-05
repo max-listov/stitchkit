@@ -7,7 +7,8 @@ on:
     # `release/**` is where a release commit is gated before master sees it:
     # the publishing workflow needs a successful PUSH run for the exact SHA,
     # which a pull-request run is not, and master is fast-forwarded to that SHA
-    # only once this run is green.
+    # only once this run is green. The fast-forward push of that SHA finds the
+    # successful run and selects nothing (`scripts/ci-plan.ts`).
     branches: [master, main, 'release/**']
   pull_request:
   schedule:
@@ -30,6 +31,10 @@ jobs:
   plan:
     name: Evidence plan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Lists the workflow runs of the exact SHA to find an earlier green push run.
+      actions: read
     outputs:
       portable: ${{ steps.plan.outputs.portable }}
       tui: ${{ steps.plan.outputs.tui }}
@@ -54,6 +59,8 @@ jobs:
           CI_EVENT: ${{ github.event_name }}
           CI_HEAD_SHA: ${{ github.sha }}
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           plan="$(bun scripts/ci-plan.ts)"
           echo "portable=$(echo "$plan" | jq -r .portable)" >> "$GITHUB_OUTPUT"

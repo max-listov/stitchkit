@@ -3,16 +3,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, parse } from 'node:path';
 import { z } from 'zod';
+import { RelativePathSchema } from '../packages/core/src/files/native-packaging-layout';
 
-const PathSchema = z
-  .string()
-  .min(1)
-  .refine(
-    (value) =>
-      !value.startsWith('/') &&
-      !value.includes('\\') &&
-      value.split('/').every((part) => part !== '.' && part !== '..' && part.length > 0),
-  );
 export const UniversalManifestSchema = z
   .object({
     version: z.string().min(1),
@@ -20,12 +12,12 @@ export const UniversalManifestSchema = z
       .array(
         z.object({
           mode: z.enum(['universal', 'renamed', 'single-arm64', 'single-x64']),
-          entryPath: PathSchema,
+          entryPath: RelativePathSchema,
           architectures: z.array(z.enum(['arm64', 'x64'])).min(1),
           files: z
             .array(
               z.object({
-                path: PathSchema,
+                path: RelativePathSchema,
                 sha256: z.string().regex(/^[a-f0-9]{64}$/),
                 architecture: z.enum(['arm64', 'x64']).optional(),
               }),
@@ -35,9 +27,14 @@ export const UniversalManifestSchema = z
       )
       .length(4),
   })
-  .superRefine((manifest, ctx) => {
+  .check((ctx) => {
+    const manifest = ctx.value;
     if (new Set(manifest.artifacts.map((artifact) => artifact.mode)).size !== 4)
-      ctx.addIssue({ code: 'custom', message: 'Every qualification mode must occur once' });
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        message: 'Every qualification mode must occur once',
+      });
     for (const artifact of manifest.artifacts) {
       const expected =
         artifact.mode === 'single-arm64'
@@ -46,7 +43,11 @@ export const UniversalManifestSchema = z
             ? ['x64']
             : ['arm64', 'x64'];
       if (JSON.stringify(artifact.architectures) !== JSON.stringify(expected))
-        ctx.addIssue({ code: 'custom', message: 'Qualification mode has incorrect targets' });
+        ctx.issues.push({
+          code: 'custom',
+          input: ctx.value,
+          message: 'Qualification mode has incorrect targets',
+        });
       const entries = artifact.files.filter((file) => file.architecture === undefined);
       const addons = artifact.files.filter((file) => file.architecture !== undefined);
       if (
@@ -54,12 +55,17 @@ export const UniversalManifestSchema = z
         entries[0]?.path !== artifact.entryPath ||
         JSON.stringify(addons.map((file) => file.architecture)) !== JSON.stringify(expected)
       )
-        ctx.addIssue({
+        ctx.issues.push({
           code: 'custom',
+          input: ctx.value,
           message: 'Qualification requires one JS entry and every declared addon',
         });
       if (new Set(artifact.files.map((file) => file.path)).size !== artifact.files.length)
-        ctx.addIssue({ code: 'custom', message: 'Qualification paths must be unique' });
+        ctx.issues.push({
+          code: 'custom',
+          input: ctx.value,
+          message: 'Qualification paths must be unique',
+        });
     }
   });
 export type UniversalManifest = z.infer<typeof UniversalManifestSchema>;

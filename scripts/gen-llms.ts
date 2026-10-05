@@ -232,7 +232,6 @@ export const GUIDE_SLICES: GuideMap = {
     primary: './agent-runtime/harness',
     also: [
       './agent-runtime/browser',
-      './agent-runtime/harness-tools',
       './agent-runtime/react',
       './agent-runtime/realtime',
       './agent-runtime/testing',
@@ -245,7 +244,6 @@ export const GUIDE_SLICES: GuideMap = {
       './agent-runtime/harness',
       './agent-runtime/coding-tools',
       './agent-runtime/browser',
-      './agent-runtime/harness-tools',
       './agent-runtime/react',
       './agent-runtime/realtime',
       './agent-runtime/openrouter',
@@ -268,7 +266,7 @@ export const GUIDE_SLICES: GuideMap = {
   'native-io.md': { primary: './process', also: ['./files', './files/packaging'] },
   'primitives.md': { primary: './primitives' },
   'application-migration-recipes.md': { primary: './application' },
-  'cli.md': { primary: './cli' },
+  'cli.md': { primary: './cli', also: ['./cli/publish'] },
   'realtime.md': { primary: './server', also: ['.', './react', './node'] },
   'live.md': { primary: './live' },
   'auth-and-errors.md': { primary: './server', also: ['./node', './contract', '.'] },
@@ -359,6 +357,20 @@ export function assertSliceSizes(
 // ── markdown splitting (fence-aware) ──────────────────────────────────────
 
 const bytesOf = (text: string): number => Buffer.byteLength(text, 'utf8');
+
+/** A YAML front matter block at the very start of a document, with its line break. */
+const FRONT_MATTER = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
+
+/** The body of a guide page: front matter is page metadata, not documentation, so it never ships. */
+export function stripFrontMatter(markdown: string): string {
+  return markdown.replace(FRONT_MATTER, '');
+}
+
+/** One guide page as it is shipped to consumers' agents. */
+function guideText(file: string): string {
+  return stripFrontMatter(readFileSync(join(GUIDE_DIR, file), 'utf8')).trim();
+}
+
 const FENCE = /^\s*(```|~~~)/;
 
 /** Split at headings of exactly `level`, ignoring `#` lines inside code fences. */
@@ -651,7 +663,7 @@ export function buildSlices(): Slice[] {
       if (home.primary === subpath) {
         units.push({
           source: `Guide: ${title}  (docs/guide/${file})`,
-          text: readFileSync(join(GUIDE_DIR, file), 'utf8').trim(),
+          text: guideText(file),
         });
       } else if (home.also?.includes(subpath)) {
         const target = partFile(entrypointSlug(home.primary), 1);
@@ -665,7 +677,11 @@ export function buildSlices(): Slice[] {
     const slug = entrypointSlug(subpath);
     slices.push(...toSlices(slug, entrypointName(subpath), units, subpath, pointers));
   }
-  slices.push(...upgradingSlices(readFileSync(join(GUIDE_DIR, 'upgrading.md'), 'utf8')));
+  slices.push(
+    ...upgradingSlices(
+      stripFrontMatter(readFileSync(join(GUIDE_DIR, 'upgrading.md'), 'utf8')),
+    ),
+  );
   assertSliceSizes(slices);
   assertNoDuplicateBodies(slices);
   return slices;
@@ -735,7 +751,7 @@ function renderFull(): string {
   ];
   for (const [file, title] of GUIDE) {
     full.push('', '', RULE, `# Guide: ${title}  (docs/guide/${file})`, RULE, '');
-    full.push(readFileSync(join(GUIDE_DIR, file), 'utf8').trim());
+    full.push(guideText(file));
   }
   full.push('', '', RULE, `# ${API[1]}  (docs/api/${API[0]})`, RULE, '');
   full.push(readFileSync(API_FILE, 'utf8').trim());

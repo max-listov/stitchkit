@@ -20,10 +20,16 @@
  * widening one global list until the strict reader stops being strict.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { worktreeTreeHash } from './gate-memo';
+import {
+  AGENT_METADATA_RULE,
+  CYRILLIC_EXAMPLE_LITERALS,
+  CYRILLIC_RULE,
+  inspectPublicDocument,
+} from './public-docs-hygiene';
 import {
   applyPublicationExemptions,
   inspectPublicationText,
@@ -185,6 +191,91 @@ describe('the scan cannot be skipped by the gate memo', () => {
       expect(await findings()).toBe(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('public documents are English and carry no agent metadata', () => {
+  const rules = (file: string, text: string): string[] =>
+    inspectPublicationText(file, text, { scope: 'tracked' }).map((finding) => finding.rule);
+  // The Cyrillic paragraph and the key are built from code points and parts so that this
+  // file is not itself a document the rule would have to excuse.
+  const russianParagraph = String.fromCodePoint(
+    0x41f,
+    0x440,
+    0x438,
+    0x432,
+    0x435,
+    0x442,
+    0x20,
+    0x43c,
+    0x438,
+    0x440,
+  );
+  const harnessKey = ['harness', ': Codex'].join('');
+
+  test('a planted Cyrillic paragraph makes the gate red, and the finding names the rule', () => {
+    const text = `# Guide\n\nPlain English.\n\n${russianParagraph}\n`;
+    const findings = inspectPublicationText('docs/guide/example.md', text, {
+      scope: 'tracked',
+    });
+    expect(
+      findings.map((finding) => `${finding.file}:${finding.line} ${finding.rule}`),
+    ).toEqual([`docs/guide/example.md:5 ${CYRILLIC_RULE}`]);
+    expect(rules('docs/guide/example.md', '# Guide\n\nPlain English.\n')).toEqual([]);
+  });
+
+  test('a planted harness key in front matter makes the gate red, and the finding names the rule', () => {
+    const planted = `---\ntitle: Example\nparticipants:\n  - role: authored\n    ${harnessKey}\n    model: GPT-6\n---\n\n# Example\n`;
+    const findings = inspectPublicationText('docs/guide/example.md', planted, {
+      scope: 'tracked',
+    });
+    expect(findings.map((finding) => `${finding.line} ${finding.rule}`)).toEqual([
+      `3 ${AGENT_METADATA_RULE}`,
+      `5 ${AGENT_METADATA_RULE}`,
+      `6 ${AGENT_METADATA_RULE}`,
+    ]);
+    const clean = '---\ntitle: Example\nstatus: active\n---\n\n# Example\n';
+    expect(rules('docs/guide/example.md', clean)).toEqual([]);
+  });
+
+  test('a code sample that names a model option is not front matter', () => {
+    const text = '# Example\n\n```ts\nconst options = {\n  model: "m",\n};\n```\n';
+    expect(rules('docs/guide/example.md', text)).toEqual([]);
+  });
+
+  test('a top-level participants key outside front matter is refused in generated pages', () => {
+    expect(
+      rules('packages/core/llms-full.txt', 'participants:\n  - role: authored\n'),
+    ).toEqual([AGENT_METADATA_RULE]);
+  });
+
+  test('only documents are held to the rule, and the allowlist is exact', () => {
+    expect(inspectPublicDocument('scripts/example.ts', `// ${russianParagraph}`)).toEqual([]);
+    // An allowlisted literal is excused only in the files that hold it, and only itself.
+    const example = CYRILLIC_EXAMPLE_LITERALS.find((entry) => entry.literal === 'поиск');
+    if (example === undefined) throw new Error('the search example is not allowlisted');
+    const [file] = example.files;
+    if (file === undefined) throw new Error('the search example names no file');
+    expect(inspectPublicDocument(file, 'a command like `поиск` that worked')).toEqual([]);
+    expect(
+      inspectPublicDocument(file, `a command like \`поиск\` and ${russianParagraph}`),
+    ).toHaveLength(1);
+    expect(
+      inspectPublicDocument('docs/guide/other.md', 'a command like `поиск`'),
+    ).toHaveLength(1);
+  });
+
+  test('every allowlisted literal is still written in the tree', () => {
+    for (const example of CYRILLIC_EXAMPLE_LITERALS) {
+      const held = example.files.some((file) => {
+        const text = Bun.file(join(ROOT, file));
+        return (
+          text.size > 0 && readFileSync(join(ROOT, file), 'utf8').includes(example.literal)
+        );
+      });
+      expect([example.literal, held]).toEqual([example.literal, true]);
+      expect(example.because.length).toBeGreaterThan(20);
     }
   });
 });

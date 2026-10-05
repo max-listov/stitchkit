@@ -3,11 +3,10 @@ import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { copyCoreSourceFixture } from './core-source-fixture';
-import { browserRuntimeFixture } from './gate-environment-fixtures';
 import { readGreenGates } from './gate-memo';
-import { FAST_STEPS, PROFILES, VERIFY_STEPS } from './verify-profiles';
+import { FAST_STEPS, PROFILES, releaseProfile, VERIFY_STEPS } from './verify-profiles';
 
-type Scenario = 'stable' | 'drift' | 'unknown' | 'failure' | 'environment-change';
+type Scenario = 'stable' | 'drift' | 'failure';
 async function fixture(scenario: Scenario) {
   const scratch = await mkdtemp(join(tmpdir(), 'verify-profile-cli-'));
   const root = join(scratch, 'repo');
@@ -22,22 +21,6 @@ async function fixture(scenario: Scenario) {
     join(root, 'release-train.json'),
     JSON.stringify({ schemaVersion: 1, releases: [{ target: 'tui', version: '0.1.1' }] }),
   );
-  const bin = join(scratch, 'bin');
-  await mkdir(bin);
-  const version = join(scratch, 'pg-version');
-  await writeFile(version, '18.1');
-  await writeFile(
-    join(bin, 'sudo'),
-    `#!/usr/bin/env bun\nimport { readFileSync } from 'node:fs';\nconsole.log(JSON.stringify({version:readFileSync(${JSON.stringify(version)},'utf8'), database:'postgres', user:'postgres', address:'local-socket', port:0}));\n`,
-    { mode: 0o755 },
-  );
-  const browserRoot = join(scratch, 'browsers');
-  await mkdir(browserRoot);
-  for (const name of ['chromium', 'webkit'])
-    await writeFile(join(browserRoot, name), 'synthetic executable');
-  const { packageRoot } = await browserRuntimeFixture(join(scratch, 'browser-package'));
-  await mkdir(join(root, 'packages/create-stitchkit'), { recursive: true });
-  await cp(packageRoot, join(root, 'packages/create-stitchkit/template'), { recursive: true });
   await writeFile(
     join(root, 'fixture.ts'),
     `
@@ -45,27 +28,22 @@ async function fixture(scenario: Scenario) {
     const step = Bun.argv[2]; appendFileSync('.runs', step+'\\n');
     if (step === 'check' && ${JSON.stringify(scenario)} === 'failure') throw new Error('controlled step failure');
     if (step === 'build' && ${JSON.stringify(scenario)} === 'drift') writeFileSync('input.txt', 'changed by build');
-    if (step === 'build' && ${JSON.stringify(scenario)} === 'environment-change') writeFileSync(${JSON.stringify(version)}, '19.1');
   `,
   );
   await writeFile(
     join(root, 'package.json'),
     JSON.stringify({
       scripts: Object.fromEntries(
-        [...VERIFY_STEPS, 'starter-head-lane'].map((step) => [step, `bun fixture.ts ${step}`]),
+        [...new Set([...VERIFY_STEPS, ...PROFILES.candidate.steps, 'starter-head-lane'])].map(
+          (step) => [step, `bun fixture.ts ${step}`],
+        ),
       ),
     }),
   );
   const init = Bun.spawn(['git', 'init', '--quiet'], { cwd: root });
   expect(await init.exited).toBe(0);
   const memo = join(scratch, 'memo');
-  const env = {
-    ...Bun.env,
-    STARTER_TEST_DATABASE_ADMIN_URL: undefined,
-    STITCHKIT_GATE_MEMO_DIR: memo,
-    PATH: `${bin}:${Bun.env.PATH}`,
-    PLAYWRIGHT_BROWSERS_PATH: scenario === 'unknown' ? join(scratch, 'missing') : browserRoot,
-  };
+  const env = { ...Bun.env, STITCHKIT_GATE_MEMO_DIR: memo };
   async function run(flags: string[]) {
     const child = Bun.spawn(
       [process.execPath, join(root, 'scripts/verify.ts'), ...flags, '--if-changed'],
@@ -93,73 +71,116 @@ async function fixture(scenario: Scenario) {
   };
 }
 
-test('actual candidate and release CLI execute their selected steps and reuse only their own evidence', async () => {
-  for (const flag of ['--candidate', '--release']) {
+const FAST = FAST_STEPS.join('\n');
+const runs = async (root: string) =>
+  (await readFile(join(root, '.runs'), 'utf8')).trim().split('\n');
+
+test('the fast subset is remembered by tree and reused by every profile it covers', async () => {
+  const f = await fixture('stable');
+  try {
+    expect((await f.run(['--fast'])).code).toBe(0);
+    expect(await f.history(PROFILES.fast.gate)).toHaveLength(1);
+    for (const flag of ['--fast', '--candidate']) {
+      const rerun = await f.run([flag]);
+      expect(rerun.output).toContain('skipping');
+    }
+    // Neither the skip nor the candidate profile ran a step or wrote a record.
+    expect(await runs(f.root)).toEqual([...FAST_STEPS]);
+    expect(await f.history(PROFILES.candidate.gate)).toHaveLength(0);
+  } finally {
+    await rm(f.scratch, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('candidate runs structural checks and the metadata tests, and certifies nothing', async () => {
+  const f = await fixture('stable');
+  try {
+    expect((await f.run(['--candidate'])).code).toBe(0);
+    expect(await runs(f.root)).toEqual(['lockfile', 'lint', 'check', 'test:release-metadata']);
+    expect(await f.history(PROFILES.candidate.gate)).toHaveLength(0);
+    expect(await f.history(PROFILES.fast.gate)).toHaveLength(0);
+    expect((await f.run(['--candidate'])).output).not.toContain('skipping');
+  } finally {
+    await rm(f.scratch, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('release and full runs certify the fast subset and always run their heavy steps again', async () => {
+  for (const [flag, heavy] of [
+    ['--release', ['build', 'tui-packed-lane']],
+    ['', VERIFY_STEPS.slice(VERIFY_STEPS.indexOf('test') + 1)],
+  ] as const) {
     const f = await fixture('stable');
     try {
-      const result = await f.run([flag]);
+      const args = flag ? [flag] : [];
+      const result = await f.run(args);
       expect(result.code, result.output).toBe(0);
-      const expected =
-        flag === '--candidate'
-          ? ['lockfile', 'lint', 'check']
-          : [...FAST_STEPS, 'build', 'tui-packed-lane'];
-      expect((await readFile(join(f.root, '.runs'), 'utf8')).trim().split('\n')).toEqual(
-        expected,
+      // The sequential prefix keeps its order; heavy lanes run side by side, so only their set is fixed.
+      const first = await runs(f.root);
+      expect(first.slice(0, FAST_STEPS.length)).toEqual([...FAST_STEPS]);
+      expect(first.slice(FAST_STEPS.length).sort()).toEqual([...heavy].sort());
+      expect(await f.history(PROFILES.fast.gate)).toHaveLength(1);
+      expect(await f.history(flag ? 'verify:release:tui' : PROFILES.full.gate)).toHaveLength(
+        0,
       );
-      expect(
-        await f.history(
-          flag === '--candidate' ? PROFILES.candidate.gate : 'verify:release:tui',
-        ),
-      ).toHaveLength(1);
-      expect(await f.history(PROFILES.fast.gate)).toHaveLength(flag === '--candidate' ? 0 : 1);
-      expect((await f.run([flag])).output).toContain('skipping');
+      const second = await f.run(args);
+      expect(second.output).toContain('--if-changed reuses only the fast subset');
+      expect(second.output).not.toContain('skipping');
+      expect(await runs(f.root)).toHaveLength(2 * (FAST_STEPS.length + heavy.length));
+      // The fast attestation a heavy run wrote answers for the fast profile.
+      expect((await f.run(['--fast'])).output).toContain('skipping');
     } finally {
       await rm(f.scratch, { recursive: true, force: true });
     }
   }
-}, 30_000);
-
-test('actual full/head CLI distinguish stable heavy inputs from unknown required inputs', async () => {
-  for (const flag of ['', '--head'])
-    for (const scenario of ['stable', 'unknown'] satisfies Scenario[]) {
-      const f = await fixture(scenario);
-      try {
-        const result = await f.run(flag ? [flag] : []);
-        expect(result.code, result.output).toBe(0);
-        const gate = flag ? PROFILES.head.gate : PROFILES.full.gate;
-        expect(await f.history(gate)).toHaveLength(scenario === 'stable' ? 1 : 0);
-        expect(await f.history(PROFILES.fast.gate)).toHaveLength(flag ? 0 : 1);
-        const rerun = await f.run(flag ? [flag] : []);
-        expect(rerun.code).toBe(0);
-        expect(rerun.output.includes('skipping')).toBe(scenario === 'stable');
-      } finally {
-        await rm(f.scratch, { recursive: true, force: true });
-      }
-    }
 }, 60_000);
 
-test('actual full CLI refuses build drift, failed steps and external identities changed during the run', async () => {
-  for (const scenario of ['drift', 'failure', 'environment-change'] satisfies Scenario[]) {
+test('the head profile runs every time and certifies nothing', async () => {
+  const f = await fixture('stable');
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await f.run(['--head']);
+      expect(result.code, result.output).toBe(0);
+      expect(result.output).not.toContain('skipping');
+    }
+    expect(await runs(f.root)).toEqual(['starter-head-lane', 'starter-head-lane']);
+    expect(await f.history(PROFILES.fast.gate)).toHaveLength(0);
+    expect(await f.history(PROFILES.head.gate)).toHaveLength(0);
+  } finally {
+    await rm(f.scratch, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('build drift and a failed step save no memo', async () => {
+  for (const scenario of ['drift', 'failure'] satisfies Scenario[]) {
     const f = await fixture(scenario);
     try {
       const result = await f.run([]);
       expect(result.code === 0).toBe(scenario !== 'failure');
       expect(await f.history(PROFILES.full.gate)).toHaveLength(0);
-      expect(await f.history(PROFILES.fast.gate)).toHaveLength(
-        scenario === 'environment-change' ? 1 : 0,
-      );
+      expect(await f.history(PROFILES.fast.gate)).toHaveLength(0);
       expect(result.output).toContain(
-        scenario === 'failure'
-          ? 'controlled step failure'
-          : scenario === 'drift'
-            ? 'inputs changed'
-            : 'external inputs changed',
+        scenario === 'failure' ? 'controlled step failure' : 'inputs changed',
       );
     } finally {
       await rm(f.scratch, { recursive: true, force: true });
     }
   }
 }, 60_000);
+
+test('any edit to the tree runs the fast subset again', async () => {
+  const f = await fixture('stable');
+  try {
+    expect((await f.run(['--fast'])).code).toBe(0);
+    await writeFile(join(f.root, 'input.txt'), 'edited');
+    const rerun = await f.run(['--fast']);
+    expect(rerun.output).not.toContain('skipping');
+    expect((await runs(f.root)).join('\n')).toBe(`${FAST}\n${FAST}`);
+    expect(await f.history(PROFILES.fast.gate)).toHaveLength(2);
+  } finally {
+    await rm(f.scratch, { recursive: true, force: true });
+  }
+}, 30_000);
 
 test('actual CLI never reuses Git-only memo for symlink targets changed between runs', async () => {
   const f = await fixture('stable');
@@ -190,3 +211,47 @@ test('actual CLI never reuses Git-only memo for symlink targets changed between 
     await rm(f.scratch, { recursive: true, force: true });
   }
 }, 15_000);
+
+test('the release profile takes its lanes from the CI evidence lanes of the train', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'release-profile-lanes-'));
+  try {
+    const profileFor = async (releases: Array<{ target: string; version: string }>) => {
+      await writeFile(
+        join(scratch, 'release-train.json'),
+        JSON.stringify({ schemaVersion: 1, releases }),
+      );
+      return releaseProfile(scratch);
+    };
+    const core = await profileFor([
+      { target: 'core', version: '1.0.0' },
+      { target: 'tui', version: '0.1.0' },
+    ]);
+    expect(core.gate).toBe('verify:release:core+tui');
+    expect(core.steps).toEqual([
+      ...FAST_STEPS,
+      'build',
+      'test:postgres-stores',
+      'smoke:next-ssr',
+      'smoke:node',
+      'consumer-lane',
+      'tui-packed-lane',
+      'agent-template-lane',
+      'telegram-bot-template-lane',
+      'generated-templates-lane',
+      'starter-head-lane',
+      'supervised-lane',
+    ]);
+    const starter = await profileFor([{ target: 'create-stitchkit', version: '0.9.0' }]);
+    expect(starter.steps).toEqual([
+      ...FAST_STEPS,
+      'build',
+      'agent-template-lane',
+      'telegram-bot-template-lane',
+      'generated-templates-lane',
+      'starter-lane',
+      'supervised-lane',
+    ]);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});

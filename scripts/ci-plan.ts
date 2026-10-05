@@ -1,23 +1,10 @@
 import { z } from 'zod';
-import { isReleaseCommitSubject, releaseScopeForSubject } from './release-plan';
-import { type ReleaseTarget, ReleaseTargetSchema, readReleaseTrain } from './release-train';
-
-/** Evidence is a projection of affected packages, independent of publication intent. */
-export function evidenceLanes(targets: readonly ReleaseTarget[]) {
-  const core = targets.includes('core');
-  const starter = targets.includes('create-stitchkit');
-  const starterModes: Array<'target' | 'head'> = [];
-  if (starter) starterModes.push('target');
-  if (core) starterModes.push('head');
-  return {
-    portable: core,
-    tui: targets.includes('tui'),
-    starter: core || starter,
-    supervised: core || starter,
-    darwin: core,
-    starterModes,
-  };
-}
+import { evidenceLanes } from './evidence-lanes';
+import { git } from './local-git';
+import { askReleaseCi, type CiRunSummary } from './release-ci';
+import { ciAlreadyAnsweredFor } from './release-prepush';
+import { isReleaseCommitSubject } from './release-subject';
+import { type ReleaseTarget, ReleaseTargetSchema } from './release-train';
 
 export const CiPlanSchema = z
   .object({
@@ -32,10 +19,12 @@ export const CiPlanSchema = z
     starterModes: z.array(z.enum(['target', 'head'])),
   })
   .strict()
-  .superRefine((plan, context) => {
+  .check((context) => {
+    const plan = context.value;
     if (new Set(plan.targets).size !== plan.targets.length) {
-      context.addIssue({
+      context.issues.push({
         code: 'custom',
+        input: context.value,
         path: ['targets'],
         message: 'duplicate evidence target',
       });
@@ -51,8 +40,9 @@ export const CiPlanSchema = z
     ];
     for (const field of fields) {
       if (JSON.stringify(plan[field]) !== JSON.stringify(expected[field])) {
-        context.addIssue({
+        context.issues.push({
           code: 'custom',
+          input: context.value,
           path: [field],
           message: `${field} contradicts evidence targets`,
         });
@@ -61,6 +51,7 @@ export const CiPlanSchema = z
   });
 export type CiPlan = z.infer<typeof CiPlanSchema>;
 
+/** A change under any of these selects every package: they feed all lanes. */
 const GLOBAL_PATHS = [
   '.github/workflows/',
   '.githooks/',
@@ -69,41 +60,38 @@ const GLOBAL_PATHS = [
   'scripts/',
 ];
 
+const EventSchema = z.enum(['push', 'pull_request', 'schedule', 'workflow_dispatch']);
+type CiEvent = z.infer<typeof EventSchema>;
+
+/**
+ * The evidence for one commit. A release commit, a scheduled run and a manual
+ * run select every package; only an ordinary push or pull request narrows by
+ * the paths it changed.
+ */
 export function planCi(input: {
-  event: 'push' | 'pull_request' | 'schedule' | 'workflow_dispatch';
+  event: CiEvent;
   subject: string;
   changedPaths: readonly string[];
-  releaseTargets?: readonly ReleaseTarget[];
 }): CiPlan {
-  const full = input.event === 'schedule' || input.event === 'workflow_dispatch';
   const release = isReleaseCommitSubject(input.subject);
-  const scope = release ? releaseScopeForSubject(input.subject) : undefined;
+  const targets = new Set<ReleaseTarget>();
   const global = input.changedPaths.some((path) =>
     GLOBAL_PATHS.some(
       (prefix) => path === prefix || (prefix.endsWith('/') && path.startsWith(prefix)),
     ),
   );
-  const targets = new Set<ReleaseTarget>();
-
-  if (full || global) {
+  if (release || global || input.event === 'schedule' || input.event === 'workflow_dispatch') {
     targets.add('core');
     targets.add('tui');
     targets.add('create-stitchkit');
   } else {
-    if (scope === 'train') {
-      for (const target of input.releaseTargets ?? []) targets.add(target);
-    } else if (scope !== undefined) {
-      targets.add(scope === 'starter' ? 'create-stitchkit' : scope);
-    }
     if (input.changedPaths.some((path) => path.startsWith('packages/core/')))
       targets.add('core');
     if (input.changedPaths.some((path) => path.startsWith('packages/tui/')))
       targets.add('tui');
-    if (input.changedPaths.some((path) => path.startsWith('packages/create-stitchkit/'))) {
+    if (input.changedPaths.some((path) => path.startsWith('packages/create-stitchkit/')))
       targets.add('create-stitchkit');
-    }
   }
-
   return CiPlanSchema.parse({
     schemaVersion: 1,
     targets: [...targets],
@@ -112,12 +100,17 @@ export function planCi(input: {
   });
 }
 
-async function gitOutput(args: string[]): Promise<string> {
-  const child = Bun.spawn(['git', ...args], { stdout: 'pipe', stderr: 'inherit' });
-  const output = await new Response(child.stdout).text();
-  if ((await child.exited) !== 0) throw new Error(`git ${args.join(' ')} failed`);
-  return output;
+/** The plan of a push whose SHA already has a successful push run: nothing is selected. */
+export function answeredPlan(): CiPlan {
+  return CiPlanSchema.parse({
+    schemaVersion: 1,
+    targets: [],
+    ...evidenceLanes([]),
+    artifacts: false,
+  });
 }
+
+const gitOutput = (args: string[]) => git(process.cwd(), args);
 
 /** A new branch has no before SHA; its whole tree is conservative evidence. */
 export async function changedCiPaths(
@@ -132,24 +125,47 @@ export async function changedCiPaths(
   return (await read(command)).split('\0').filter(Boolean);
 }
 
-async function main(): Promise<void> {
-  const event = z
-    .enum(['push', 'pull_request', 'schedule', 'workflow_dispatch'])
-    .parse(Bun.env.CI_EVENT);
-  const head = Bun.env.CI_HEAD_SHA?.trim() || 'HEAD';
-  const base = Bun.env.CI_BASE_SHA?.trim();
-  const subject = (await gitOutput(['log', '-1', '--format=%s', head])).trim();
-  let changedPaths: string[] = [];
-  if (event !== 'schedule' && event !== 'workflow_dispatch') {
-    changedPaths = await changedCiPaths(head, base);
+/**
+ * Evidence is per SHA: when a push run for `head` already succeeded, a second
+ * push of the same SHA (the master fast-forward of a release branch) selects
+ * nothing. A failed or unreachable lookup selects by the ordinary rules.
+ */
+export async function planPush(
+  input: {
+    event: CiEvent;
+    head: string;
+    subject: () => Promise<string>;
+    paths: () => Promise<string[]>;
+  },
+  ask: (sha: string) => Promise<readonly CiRunSummary[]> = (sha) =>
+    askReleaseCi(process.cwd(), sha),
+  report: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+): Promise<CiPlan> {
+  if (input.event === 'push' && /^[0-9a-f]{40}$/.test(input.head)) {
+    const answered = await ciAlreadyAnsweredFor([input.head], ask);
+    if (answered.green) {
+      report(`[plan] ${answered.because}; selecting no evidence`);
+      return answeredPlan();
+    }
+    report(`[plan] ${answered.because}; planning from the change`);
   }
-  const releaseTargets =
-    isReleaseCommitSubject(subject) && releaseScopeForSubject(subject) === 'train'
-      ? (await readReleaseTrain(process.cwd())).releases.map((release) => release.target)
-      : undefined;
-  process.stdout.write(
-    JSON.stringify(planCi({ event, subject, changedPaths, releaseTargets })),
-  );
+  const wide = input.event === 'schedule' || input.event === 'workflow_dispatch';
+  return planCi({
+    event: input.event,
+    subject: await input.subject(),
+    changedPaths: wide ? [] : await input.paths(),
+  });
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) {
+  const event = EventSchema.parse(Bun.env.CI_EVENT);
+  const head = Bun.env.CI_HEAD_SHA?.trim() || 'HEAD';
+  const base = Bun.env.CI_BASE_SHA?.trim();
+  const plan = await planPush({
+    event,
+    head,
+    subject: async () => (await gitOutput(['log', '-1', '--format=%s', head])).trim(),
+    paths: () => changedCiPaths(head, base),
+  });
+  process.stdout.write(JSON.stringify(plan));
+}
