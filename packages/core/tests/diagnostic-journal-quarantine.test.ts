@@ -230,7 +230,10 @@ test('an unreadable retained file is quarantined with its code, with a readable 
     reason: 'unreadable',
     file: `${path}.1`,
   });
+  // The test's own user is the file's owner: mode 0 would refuse this read too (root is exempt).
+  await chmod(`${path}.1`, 0o644);
   expect(await readFile(`${path}.1`, 'utf8')).toBe(frame);
+  await chmod(`${path}.1`, 0);
 
   const started = z
     .object({
@@ -244,7 +247,9 @@ test('an unreadable retained file is quarantined with its code, with a readable 
   const [moved] = started.recovery.quarantined;
   expect(started.recovery.filesChecked).toBe(1);
   expect(moved).toMatchObject({ file: `${path}.1`, reason: 'unreadable', code: 'EACCES' });
-  expect(await readFile(z.string().parse(moved?.quarantinedAs), 'utf8')).toBe(frame);
+  const quarantined = z.string().parse(moved?.quarantinedAs);
+  await chmod(quarantined, 0o644);
+  expect(await readFile(quarantined, 'utf8')).toBe(frame);
 });
 
 test('a failed move aside keeps the refusal and carries both errors', async () => {
