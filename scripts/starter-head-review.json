@@ -1,0 +1,5 @@
+{
+  "coreVersion": "0.105.0",
+  "outcome": "deferred",
+  "reason": "The template's positional ApiError calls compile against the published target ^0.100.3 and not against 0.105.0, which takes named options; one source cannot satisfy both. The starter migrates after 0.105.0 is on npm, advances its catalog and removes this record."
+}
