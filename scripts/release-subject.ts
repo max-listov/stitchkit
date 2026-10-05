@@ -93,6 +93,30 @@ export function firstParentHistory(root: string): FirstParentHistory {
 }
 
 /**
+ * Whether `head` is a release commit, or fix commits stacked on one, that no tag contains yet.
+ * That head is what the tag will name and what the publishing workflow downloads artifacts
+ * for, so CI builds them for it: a repair of a red candidate keeps its own conventional type
+ * and must not lose the publication evidence the release commit carried.
+ */
+export async function stacksOnUnpublishedRelease(input: {
+  head: string;
+  history: FirstParentHistory;
+  isTagged: (sha: string) => Promise<boolean>;
+}): Promise<boolean> {
+  const commits = await input.history(input.head);
+  const releaseIndex = commits.findIndex((commit) => isReleaseCommitSubject(commit.subject));
+  const release = commits[releaseIndex];
+  if (!release) return false;
+  if (
+    !commits
+      .slice(0, releaseIndex)
+      .every((commit) => CONVENTIONAL_SUBJECT.test(commit.subject))
+  )
+    return false;
+  return !(await input.isTagged(release.sha));
+}
+
+/**
  * The tag sits on the release commit of that exact train, or on fix commits
  * stacked directly on it. The release commit is what the tag names: it
  * carries `release(train): … in X.Y.Z` and release metadata only. Anything

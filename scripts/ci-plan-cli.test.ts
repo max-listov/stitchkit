@@ -56,7 +56,8 @@ test('actual planner CLI asks the entire push range; a new branch conservatively
       `#!/usr/bin/env bun
 import { appendFileSync } from 'node:fs';
 const args = Bun.argv.slice(2); appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args)+'\\n');
-if (args[0] === 'log') console.log('fix: two packages');
+if (args.includes('--first-parent') || args[0] === 'tag') { /* no release commit below the head */ }
+else if (args[0] === 'log') console.log('fix: two packages');
 else if (args[0] === 'diff' && args[4] === '${'1'.repeat(40)}') process.stdout.write(['packages/core/src/process/launch.ts', 'docs/guide/upgrading.md', ''].join(String.fromCharCode(0)));
 else if (args[0] === 'ls-tree') process.stdout.write(['packages/core/src/process/launch.ts', 'packages/tui/src/index.ts', 'packages/create-stitchkit/template/project.json', ''].join(String.fromCharCode(0)));
 else throw new Error('Unexpected diff boundary');
@@ -78,11 +79,23 @@ else throw new Error('Unexpected diff boundary');
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line));
+    const history = [
+      '-c',
+      'core.quotepath=off',
+      'log',
+      '--first-parent',
+      '-n50',
+      '--format=\u001e%H\u001f%s',
+      '--name-only',
+      '3'.repeat(40),
+    ];
     expect(actual).toEqual([
       ['log', '-1', '--format=%s', '3'.repeat(40)],
       ['diff', '--no-renames', '--name-only', '-z', '1'.repeat(40), '3'.repeat(40)],
+      history,
       ['log', '-1', '--format=%s', '3'.repeat(40)],
       ['ls-tree', '-r', '--name-only', '-z', '3'.repeat(40)],
+      history,
     ]);
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -4,7 +4,11 @@ import { git } from './local-git';
 import { askReleaseCi, type CiRunSummary } from './release-ci';
 import { ciAlreadyAnsweredFor } from './release-prepush';
 import { starterHeadDecision } from './release-starter-head';
-import { isReleaseCommitSubject } from './release-subject';
+import {
+  firstParentHistory,
+  isReleaseCommitSubject,
+  stacksOnUnpublishedRelease,
+} from './release-subject';
 import { type ReleaseTarget, ReleaseTargetSchema } from './release-train';
 
 export const CiPlanSchema = z
@@ -80,8 +84,10 @@ export function planCi(input: {
   subject: string;
   changedPaths: readonly string[];
   starterHead?: 'run' | 'skip';
+  /** Fix commits stacked on a release commit no tag contains yet (`stacksOnUnpublishedRelease`). */
+  stackedOnRelease?: boolean;
 }): CiPlan {
-  const release = isReleaseCommitSubject(input.subject);
+  const release = isReleaseCommitSubject(input.subject) || input.stackedOnRelease === true;
   const targets = new Set<ReleaseTarget>();
   const global = input.changedPaths.some((path) =>
     GLOBAL_PATHS.some(
@@ -145,6 +151,7 @@ export async function planPush(
     subject: () => Promise<string>;
     paths: () => Promise<string[]>;
     starterHead?: 'run' | 'skip';
+    stackedOnRelease?: () => Promise<boolean>;
   },
   ask: (sha: string) => Promise<readonly CiRunSummary[]> = (sha) =>
     askReleaseCi(process.cwd(), sha),
@@ -164,6 +171,7 @@ export async function planPush(
     subject: await input.subject(),
     changedPaths: wide ? [] : await input.paths(),
     ...(input.starterHead && { starterHead: input.starterHead }),
+    ...(input.stackedOnRelease && { stackedOnRelease: await input.stackedOnRelease() }),
   });
 }
 
@@ -177,6 +185,12 @@ if (import.meta.main) {
     subject: async () => (await gitOutput(['log', '-1', '--format=%s', head])).trim(),
     paths: () => changedCiPaths(head, base),
     starterHead: await starterHeadDecision(process.cwd()),
+    stackedOnRelease: () =>
+      stacksOnUnpublishedRelease({
+        head,
+        history: firstParentHistory(process.cwd()),
+        isTagged: async (sha) => (await gitOutput(['tag', '--contains', sha])).trim() !== '',
+      }),
   });
   process.stdout.write(JSON.stringify(plan));
 }

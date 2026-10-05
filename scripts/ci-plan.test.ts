@@ -25,6 +25,23 @@ const releaseDiff = {
 };
 
 describe('package-aware CI planning', () => {
+  test('fix commits stacked on an untagged release commit select the publication artifacts', () => {
+    const stacked = planCi({
+      event: 'push',
+      subject: 'fix(core): repair a red candidate',
+      changedPaths: ['packages/core/tests/a.test.ts'],
+      stackedOnRelease: true,
+    });
+    expect(stacked.artifacts).toBe(true);
+    expect(stacked.targets).toEqual(ALL);
+    const ordinary = planCi({
+      event: 'push',
+      subject: 'fix(core): repair a red candidate',
+      changedPaths: ['packages/core/tests/a.test.ts'],
+    });
+    expect(ordinary.artifacts).toBe(false);
+  });
+
   test('a recorded deferred starter review drops the head lane and nothing else', () => {
     const plan = planCi({
       event: 'push',

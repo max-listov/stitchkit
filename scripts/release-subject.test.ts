@@ -8,6 +8,7 @@ import {
   type CommitFacts,
   firstParentHistory,
   isReleaseCommitSubject,
+  stacksOnUnpublishedRelease,
 } from './release-subject';
 
 const SHA = '1'.repeat(40);
@@ -125,6 +126,30 @@ describe('which commit a release tag may sit on', () => {
     await expect(run('create-stitchkit-v0.4.4')).resolves.toBeUndefined();
     await expect(run('v0.70.1')).rejects.toThrow(/does not select core/);
     await expect(run('stitchkit-tui-v0.1.2')).rejects.toThrow(/does not select tui@0\.1\.2/);
+  });
+});
+
+describe('whether a head stacks on a release no tag contains yet', () => {
+  const FIX = commit('c', 'fix(core): repair a red candidate', ['packages/core/src/a.ts']);
+  const asks = (history: CommitFacts[], tagged: boolean) =>
+    stacksOnUnpublishedRelease({
+      head: history[0]?.sha ?? SHA,
+      history: async () => history,
+      isTagged: async () => tagged,
+    });
+
+  test('the release commit itself and conventional fixes stacked on it count', async () => {
+    expect(await asks([RELEASE, FEATURE], false)).toBe(true);
+    expect(await asks([FIX, RELEASE, FEATURE], false)).toBe(true);
+  });
+
+  test('a release a tag already contains is published, so what follows it is ordinary', async () => {
+    expect(await asks([FIX, RELEASE, FEATURE], true)).toBe(false);
+  });
+
+  test('no release below the head, or a commit that is not conventional above it, does not', async () => {
+    expect(await asks([FIX, FEATURE], false)).toBe(false);
+    expect(await asks([commit('d', 'wip', ['a.ts']), RELEASE], false)).toBe(false);
   });
 });
 
