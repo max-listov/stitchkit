@@ -19,7 +19,12 @@ SHA. They never rebuild publication input.
 targets and their exact versions. A release commit has the subject `release(train): … in X.Y.Z` and holds release metadata only
 (versions, changelogs, the train, the lockfile); every tag selected by the manifest points at the
 branch head and consumes the same CI run. The head is that commit, or fix commits with their own
-types stacked on it ([ADR 0237](../decisions/0237-release-commit-holds-metadata-only.md)):
+types stacked on it ([ADR 0237](../decisions/0237-release-commit-holds-metadata-only.md)).
+CI plans such a stacked head as a release head: `stacksOnUnpublishedRelease`
+(`scripts/release-subject.ts`) finds a `release(train)` commit in the first-parent history, below
+conventional commits only, that no tag contains yet, so every package is selected and the
+`artifacts` job builds the tarballs the publishing workflow downloads for that exact SHA. Once a
+tag contains the release commit, what follows it is ordinary development again:
 
 ```json
 {
@@ -129,4 +134,10 @@ The semantic planner refuses contradictory lane flags or starter modes. Assembly
 status both use `scripts/ci-evidence.ts` over named `needs` results. Selected jobs must succeed;
 unselected jobs may succeed or be skipped; failed or cancelled jobs are refused. Plan and repository checks always succeed before assembly.
 Final status also requires successful artifacts exactly when the plan requests them.
+
+The packed local-HEAD starter lane (`starterModes` containing `head`) follows
+`starterHeadDecision` (`scripts/release-starter-head.ts`, [ADR 0099](../decisions/0099-starter-head-skips-require-versioned-review.md)):
+the planner and the local release profile both pass its answer to `evidenceLanes`, and a recorded
+deferred review for the exact core version removes the `head` mode and nothing else. The plan
+schema accepts that omission and refuses any other contradiction between the targets and the modes.
 See [ADR 0226](../decisions/0226-evidence-covers-the-affected-tree.md).
