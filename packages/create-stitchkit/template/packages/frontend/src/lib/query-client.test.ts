@@ -28,7 +28,7 @@ describe('query dehydration policy', () => {
     const defaults = getQueryClient().getDefaultOptions();
     const retry = defaults.queries?.retry;
     if (typeof retry !== 'function') throw new Error('query retry policy is required');
-    const serverFailure = new ApiError('INTERNAL_SERVER_ERROR', 500);
+    const serverFailure = new ApiError('INTERNAL_SERVER_ERROR', { status: 500 });
     expect(retry(0, serverFailure)).toBe(true);
     expect(retry(1, serverFailure)).toBe(false);
     expect(defaults.mutations?.retry).toBe(false);
@@ -39,7 +39,7 @@ describe('query dehydration policy', () => {
     const retry = defaults.queries?.retry;
     if (typeof retry !== 'function') throw new Error('query retry policy is required');
     for (const code of ['UNAUTHORIZED', 'FORBIDDEN', 'VALIDATION_ERROR']) {
-      expect(retry(0, new ApiError(code, 401))).toBe(false);
+      expect(retry(0, new ApiError(code, { status: 401 }))).toBe(false);
     }
   });
 });
