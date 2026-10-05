@@ -25,6 +25,37 @@ const releaseDiff = {
 };
 
 describe('package-aware CI planning', () => {
+  test('a recorded deferred starter review drops the head lane and nothing else', () => {
+    const plan = planCi({
+      event: 'push',
+      subject: 'release(train): publish core in 0.105.0',
+      changedPaths: releaseDiff.core,
+      starterHead: 'skip',
+    });
+    expect(plan.starterModes).toEqual(['target']);
+    expect(plan).toMatchObject({
+      portable: true,
+      starter: true,
+      supervised: true,
+      darwin: true,
+    });
+    const withoutReview = planCi({
+      event: 'push',
+      subject: 'release(train): publish core in 0.105.0',
+      changedPaths: releaseDiff.core,
+    });
+    expect(withoutReview.starterModes).toEqual(['target', 'head']);
+  });
+
+  test('a plan may omit the head mode but never the target mode or add an unselected one', () => {
+    const full = planCi({ event: 'schedule', subject: '', changedPaths: [] });
+    expect(CiPlanSchema.safeParse({ ...full, starterModes: ['target'] }).success).toBe(true);
+    expect(CiPlanSchema.safeParse({ ...full, starterModes: ['head'] }).success).toBe(false);
+    expect(CiPlanSchema.safeParse({ ...full, starterModes: [] }).success).toBe(false);
+    const none = answeredPlan();
+    expect(CiPlanSchema.safeParse({ ...none, starterModes: ['head'] }).success).toBe(false);
+  });
+
   test.each(Object.entries(releaseDiff))(
     'a release commit of the %s package selects every package and builds publication artifacts',
     (scope, changedPaths) => {

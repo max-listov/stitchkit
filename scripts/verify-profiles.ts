@@ -1,4 +1,5 @@
 import { evidenceLanes } from './evidence-lanes';
+import { starterHeadDecision } from './release-starter-head';
 import { readReleaseTrain } from './release-train';
 
 /** Every portable CI lane remains available as a local diagnostic gate. */
@@ -57,7 +58,7 @@ const STARTER_MODE_STEPS = { target: 'starter-lane', head: 'starter-head-lane' }
 export async function releaseProfile(root: string): Promise<VerifyProfile> {
   const train = await readReleaseTrain(root);
   const targets = train.releases.map((release) => release.target);
-  const lanes = evidenceLanes(targets);
+  const lanes = evidenceLanes(targets, await starterHeadDecision(root));
   const steps = [
     ...(lanes.portable
       ? ['test:postgres-stores', 'smoke:next-ssr', 'smoke:node', 'consumer-lane']

@@ -3,6 +3,7 @@ import { evidenceLanes } from './evidence-lanes';
 import { git } from './local-git';
 import { askReleaseCi, type CiRunSummary } from './release-ci';
 import { ciAlreadyAnsweredFor } from './release-prepush';
+import { starterHeadDecision } from './release-starter-head';
 import { isReleaseCommitSubject } from './release-subject';
 import { type ReleaseTarget, ReleaseTargetSchema } from './release-train';
 
@@ -30,6 +31,7 @@ export const CiPlanSchema = z
       });
     }
     const expected = evidenceLanes(plan.targets);
+    const deferred = evidenceLanes(plan.targets, 'skip');
     const fields: Array<keyof typeof expected> = [
       'portable',
       'tui',
@@ -39,7 +41,12 @@ export const CiPlanSchema = z
       'starterModes',
     ];
     for (const field of fields) {
-      if (JSON.stringify(plan[field]) !== JSON.stringify(expected[field])) {
+      // A recorded deferred review may remove the head mode and nothing else.
+      const allowed =
+        field === 'starterModes'
+          ? [expected.starterModes, deferred.starterModes]
+          : [expected[field]];
+      if (!allowed.some((value) => JSON.stringify(plan[field]) === JSON.stringify(value))) {
         context.issues.push({
           code: 'custom',
           input: context.value,
@@ -72,6 +79,7 @@ export function planCi(input: {
   event: CiEvent;
   subject: string;
   changedPaths: readonly string[];
+  starterHead?: 'run' | 'skip';
 }): CiPlan {
   const release = isReleaseCommitSubject(input.subject);
   const targets = new Set<ReleaseTarget>();
@@ -95,7 +103,7 @@ export function planCi(input: {
   return CiPlanSchema.parse({
     schemaVersion: 1,
     targets: [...targets],
-    ...evidenceLanes([...targets]),
+    ...evidenceLanes([...targets], input.starterHead),
     artifacts: release,
   });
 }
@@ -136,6 +144,7 @@ export async function planPush(
     head: string;
     subject: () => Promise<string>;
     paths: () => Promise<string[]>;
+    starterHead?: 'run' | 'skip';
   },
   ask: (sha: string) => Promise<readonly CiRunSummary[]> = (sha) =>
     askReleaseCi(process.cwd(), sha),
@@ -154,6 +163,7 @@ export async function planPush(
     event: input.event,
     subject: await input.subject(),
     changedPaths: wide ? [] : await input.paths(),
+    ...(input.starterHead && { starterHead: input.starterHead }),
   });
 }
 
@@ -166,6 +176,7 @@ if (import.meta.main) {
     head,
     subject: async () => (await gitOutput(['log', '-1', '--format=%s', head])).trim(),
     paths: () => changedCiPaths(head, base),
+    starterHead: await starterHeadDecision(process.cwd()),
   });
   process.stdout.write(JSON.stringify(plan));
 }

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { copyCoreSourceFixture } from './core-source-fixture';
 import { readGreenGates } from './gate-memo';
+import { writeStarterHeadFixture } from './starter-head-fixture';
 import { FAST_STEPS, PROFILES, releaseProfile, VERIFY_STEPS } from './verify-profiles';
 
 type Scenario = 'stable' | 'drift' | 'failure';
@@ -13,6 +14,7 @@ async function fixture(scenario: Scenario) {
   await mkdir(root);
   await cp(import.meta.dir, join(root, 'scripts'), { recursive: true });
   await copyCoreSourceFixture(root);
+  await writeStarterHeadFixture(root);
   await symlink(join(import.meta.dir, '../node_modules'), join(root, 'node_modules'));
   await writeFile(join(root, '.gitignore'), 'node_modules\n.runs\n');
   await writeFile(join(root, 'input.txt'), 'original');
@@ -215,6 +217,7 @@ test('actual CLI never reuses Git-only memo for symlink targets changed between 
 test('the release profile takes its lanes from the CI evidence lanes of the train', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'release-profile-lanes-'));
   try {
+    await writeStarterHeadFixture(scratch);
     const profileFor = async (releases: Array<{ target: string; version: string }>) => {
       await writeFile(
         join(scratch, 'release-train.json'),

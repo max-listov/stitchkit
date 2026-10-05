@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CiPlanSchema, changedCiPaths, planCi } from './ci-plan';
+import { writeStarterHeadFixture } from './starter-head-fixture';
 
 async function git(root: string, args: string[], input?: string): Promise<string> {
   const child = Bun.spawn(['git', ...args], {
@@ -46,6 +47,7 @@ async function runPlanner(root: string, bin: string, base: string, head = '3'.re
 test('actual planner CLI asks the entire push range; a new branch conservatively covers its tree', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ci-plan-command-boundary-'));
   try {
+    await writeStarterHeadFixture(root);
     const bin = join(root, 'bin');
     await mkdir(bin);
     const calls = join(root, 'calls.jsonl');
@@ -90,6 +92,7 @@ else throw new Error('Unexpected diff boundary');
 test('actual planner CLI selects no evidence for a SHA whose push run already succeeded', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ci-plan-answered-'));
   try {
+    await writeStarterHeadFixture(root);
     const bin = join(root, 'bin');
     await mkdir(bin);
     const head = '3'.repeat(40);
