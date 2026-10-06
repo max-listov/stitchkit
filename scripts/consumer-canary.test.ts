@@ -7,6 +7,7 @@ import {
   describeOutcomes,
   overrideFramework,
   parseCandidateChoice,
+  releasePackagesDownload,
   requireConsumerCanary,
   tryCandidateOnConsumers,
 } from './consumer-canary';
@@ -399,4 +400,11 @@ test('the candidate is the CI tarball by default, and a local or explicit one ne
   });
   expect(() => parseCandidateChoice(['--tarball'])).toThrow('Usage');
   expect(() => parseCandidateChoice(['--ci'])).toThrow('Usage');
+});
+
+test('the artifact download runs inside the checkout, where gh finds the repository', () => {
+  expect(releasePackagesDownload('/repo', 7, '/scratch')).toEqual({
+    command: ['gh', 'run', 'download', '7', '--name', 'release-packages', '--dir', '/scratch'],
+    cwd: '/repo',
+  });
 });

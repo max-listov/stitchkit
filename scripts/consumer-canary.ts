@@ -285,9 +285,14 @@ async function localCandidate(root: string, destination: string): Promise<Candid
   };
 }
 
-async function downloadReleasePackages(runId: number, destination: string): Promise<void> {
-  const downloaded = await capture(
-    [
+/** `gh run download` resolves the repository from its working directory, so it runs inside the checkout. */
+export function releasePackagesDownload(
+  root: string,
+  runId: number,
+  destination: string,
+): { command: string[]; cwd: string } {
+  return {
+    command: [
       'gh',
       'run',
       'download',
@@ -297,13 +302,19 @@ async function downloadReleasePackages(runId: number, destination: string): Prom
       '--dir',
       destination,
     ],
-    destination,
-    300_000,
-  );
-  if (downloaded.exitCode !== 0)
-    throw new Error(
-      `Downloading the release-packages artifact of run ${runId} failed: ${downloaded.text.trim().slice(-600)}`,
-    );
+    cwd: root,
+  };
+}
+
+function downloadReleasePackages(root: string) {
+  return async (runId: number, destination: string): Promise<void> => {
+    const { command, cwd } = releasePackagesDownload(root, runId, destination);
+    const downloaded = await capture(command, cwd, 300_000);
+    if (downloaded.exitCode !== 0)
+      throw new Error(
+        `Downloading the release-packages artifact of run ${runId} failed: ${downloaded.text.trim().slice(-600)}`,
+      );
+  };
 }
 
 export function describeOutcomes(outcomes: readonly ConsumerOutcome[]): string {
@@ -389,7 +400,7 @@ export async function runConsumerCanary(
       choice.kind === 'ci'
         ? await ciCandidate(root, scratch, {
             askCi: (sha) => askReleaseCi(root, sha),
-            download: downloadReleasePackages,
+            download: downloadReleasePackages(root),
           })
         : choice.kind === 'local'
           ? await localCandidate(root, scratch)
