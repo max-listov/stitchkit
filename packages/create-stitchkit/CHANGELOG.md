@@ -12,6 +12,10 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects track Stitchkit `^0.105.1`; the template lockfile resolves 0.105.1.
+
 ## [0.6.10] - 2026-10-05
 
 ### Changed
