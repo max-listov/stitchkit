@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.105.1] - 2026-10-06
+
 ### Added
 
 - `stitchkit/process` — `NativeCommandResult.descendantsStopped` reports that the group still had
