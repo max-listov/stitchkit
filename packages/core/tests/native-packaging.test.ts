@@ -9,6 +9,8 @@ import type { BunPlugin } from 'bun';
 import { z } from 'zod';
 import {
   createNativePackaging,
+  type NativePackagingEmbeddedOptions,
+  type NativePackagingOptions,
   type NativePackagingResult,
 } from '../src/entrypoints/files/packaging';
 import {
@@ -211,7 +213,12 @@ describe('native packaging against a published manifest', () => {
     replace(join(root, fixtureLayout.assets.arm64), fixtureBytes.arm64);
     replace(join(root, fixtureLayout.assets.x64), fixtureBytes.x64);
   };
-  const ready = (input: Parameters<typeof createNativePackaging>[0]) => {
+  const ready = (input: NativePackagingOptions<boolean>) => {
+    const result = packaging(input);
+    if (result.state !== 'ready') throw new Error(result.code);
+    return result;
+  };
+  const readyEmbedded = (input: NativePackagingEmbeddedOptions) => {
     const result = packaging(input);
     if (result.state !== 'ready') throw new Error(result.code);
     return result;
@@ -434,8 +441,44 @@ describe('native packaging against a published manifest', () => {
     );
   });
 
+  test('embedded delivery names no output path and refuses one passed anyway', () => {
+    const embedded = readyEmbedded({
+      platform: 'darwin',
+      architecture: 'arm64',
+      delivery: 'embedded',
+    });
+    expect(embedded.architecture).toBe('arm64');
+    expect(embedded.assets).toHaveLength(1);
+    expect(Object.keys(embedded.assets[0] ?? {}).sort()).toEqual(['bytes', 'sha256', 'size']);
+    expect(embedded.assets[0]?.bytes).toEqual(fixtureBytes.arm64);
+    expect(() =>
+      packaging({
+        platform: 'darwin',
+        architecture: 'arm64',
+        delivery: 'embedded',
+        // @ts-expect-error — a standalone executable has no output layout to name.
+        assetPath: 'addons/owner.node',
+      }),
+    ).toThrow(z.ZodError);
+    // A path that reaches the call untyped is refused too, never silently ignored.
+    const withPaths = { ...options, delivery: 'embedded' as const };
+    expect(() => packaging(withPaths)).toThrow(z.ZodError);
+    expect(
+      packaging({ platform: 'darwin', architecture: 'riscv64', delivery: 'embedded' }),
+    ).toEqual({
+      state: 'unsupported',
+      platform: 'darwin',
+      architecture: 'riscv64',
+      code: 'NATIVE_TARGET_UNSUPPORTED',
+    });
+  });
+
   test('embedded delivery gives Bun the verified bytes, not a second read of the file', async () => {
-    const embedded = ready({ ...options, delivery: 'embedded' });
+    const embedded = readyEmbedded({
+      platform: 'darwin',
+      architecture: 'arm64',
+      delivery: 'embedded',
+    });
     // A substitution after verification must not reach the artifact.
     replace(join(root, fixtureLayout.assets.arm64), 'substituted after verification');
     const built = await Bun.build({

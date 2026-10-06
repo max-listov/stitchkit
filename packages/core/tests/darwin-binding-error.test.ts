@@ -1,6 +1,11 @@
 import { expect, test } from 'bun:test';
 import { hasFunctions } from '../src/internal/darwin-binding';
-import { DarwinBackendError, darwinNativeCode } from '../src/internal/darwin-binding-error';
+import {
+  DarwinBackendError,
+  darwinLoadStage,
+  darwinNativeCode,
+  NATIVE_NOT_PACKAGED,
+} from '../src/internal/darwin-binding-error';
 
 test('backend JSON preserves bounded diagnostic identity and keeps the live cause private', () => {
   const native = Object.assign(new Error('/private/author/path contains secret-value'), {
@@ -46,4 +51,18 @@ test('invalid addon callable surface refuses instead of blessing a partial backe
   );
   expect(hasFunctions(null, ['processIdentity'])).toBe(false);
   expect(hasFunctions({ processIdentity: () => undefined }, ['processIdentity'])).toBe(true);
+});
+
+test('a bundle without native packaging is its own stage and names the fix', () => {
+  const refusal = Object.assign(new Error('not packaged'), { code: NATIVE_NOT_PACKAGED });
+  expect(darwinLoadStage(refusal)).toBe('packaging');
+  expect(darwinLoadStage(new Error('wrapped', { cause: refusal }))).toBe('packaging');
+  expect(darwinLoadStage(Object.assign(new Error('x'), { code: 'ENOENT' }))).toBe('resolve');
+  expect(darwinLoadStage(new Error('dlopen'))).toBe('load');
+  const error = new DarwinBackendError('packaging', refusal);
+  expect(error.message).toContain('createNativePackaging');
+  expect(error.toJSON()).toMatchObject({
+    stage: 'packaging',
+    nativeCode: NATIVE_NOT_PACKAGED,
+  });
 });

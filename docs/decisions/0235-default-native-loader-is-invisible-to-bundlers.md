@@ -28,6 +28,8 @@ and the `stitchkit/files/packaging` plugin (ADR 0233, 0234) was built on the sam
    (`require(__dirname + '/native/darwin-<arch>.node')`). A bundler does not follow it: bundles of
    `server`, `files` and `process` are one JS file with no `.node` output on every OS. Run
    unbundled from the installed package, it loads the addon exactly as before.
+   (Amended by ADR 0252: Bun inlines `__dirname` as the build machine's path, so the loader locates
+   itself through `module.filename` and refuses inside a bundle with stage `packaging`.)
 2. **Only the packaging plugin produces a static loader.** `createNativePackaging` replaces the
    loader's contents with one that requires the addon by literal path, which the bundler then embeds
    (`delivery: 'embedded'`) or leaves as a companion (`delivery: 'companion'`). One generator,

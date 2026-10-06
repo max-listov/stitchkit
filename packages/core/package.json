@@ -30,6 +30,7 @@
     "url": "https://github.com/max-listov/stitchkit/issues"
   },
   "type": "module",
+  "sideEffects": false,
   "engines": {
     "bun": ">=1.2.0",
     "node": ">=22"

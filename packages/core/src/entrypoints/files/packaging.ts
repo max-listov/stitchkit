@@ -1,5 +1,8 @@
 export type {
   NativePackagingAsset,
+  NativePackagingEmbeddedAsset,
+  NativePackagingEmbeddedOptions,
+  NativePackagingEmbeddedResult,
   NativePackagingOptions,
   NativePackagingPlugin,
   NativePackagingResult,

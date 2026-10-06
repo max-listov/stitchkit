@@ -34,8 +34,17 @@ const AssetPathSchema = RelativePathSchema.refine(
 const SingleOptionsSchema = z.object({
   ...CommonOptions,
   architecture: z.string().min(1),
-  delivery: z.enum(['companion', 'embedded']),
+  delivery: z.literal('companion'),
   assetPath: AssetPathSchema,
+});
+/**
+ * A standalone executable carries the addon inside itself, so there is no output layout to name;
+ * a path passed anyway is refused rather than ignored.
+ */
+const EmbeddedOptionsSchema = z.strictObject({
+  platform: PlatformSchema,
+  architecture: z.string().min(1),
+  delivery: z.literal('embedded'),
 });
 const MultipleOptionsSchema = z.object({
   ...CommonOptions,
@@ -45,49 +54,51 @@ const MultipleOptionsSchema = z.object({
   delivery: z.literal('companion'),
   assetPath: z.record(z.string().min(1), AssetPathSchema),
 });
-const OptionsSchema = z.union([SingleOptionsSchema, MultipleOptionsSchema]).check((ctx) => {
-  const input = ctx.value;
-  const targets =
-    typeof input.architecture === 'string' ? [input.architecture] : input.architecture;
-  if (new Set(targets).size !== targets.length)
-    ctx.issues.push({
-      code: 'custom',
-      input: ctx.value,
-      message: 'Architecture targets must be unique',
-    });
-  const assetPaths =
-    typeof input.assetPath === 'string' ? [input.assetPath] : Object.values(input.assetPath);
-  const assetMap = input.assetPath;
-  if (
-    typeof assetMap !== 'string' &&
-    (Object.keys(assetMap).length !== targets.length ||
-      targets.some((target) => !Object.hasOwn(assetMap, target)))
-  )
-    ctx.issues.push({
-      code: 'custom',
-      input: ctx.value,
-      message: 'Asset paths must name exactly the declared architectures',
-    });
-  const paths = [input.entryPath, ...assetPaths];
-  for (let at = 0; at < paths.length; at++) {
-    const left = paths[at];
-    if (!left) continue;
-    for (const right of paths.slice(at + 1)) {
-      if (left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`))
-        ctx.issues.push({
-          code: 'custom',
-          input: ctx.value,
-          message: 'Entry and addons must have non-overlapping paths',
-        });
+const CompanionOptionsSchema = z
+  .union([SingleOptionsSchema, MultipleOptionsSchema])
+  .check((ctx) => {
+    const input = ctx.value;
+    const targets =
+      typeof input.architecture === 'string' ? [input.architecture] : input.architecture;
+    if (new Set(targets).size !== targets.length)
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        message: 'Architecture targets must be unique',
+      });
+    const assetPaths =
+      typeof input.assetPath === 'string' ? [input.assetPath] : Object.values(input.assetPath);
+    const assetMap = input.assetPath;
+    if (
+      typeof assetMap !== 'string' &&
+      (Object.keys(assetMap).length !== targets.length ||
+        targets.some((target) => !Object.hasOwn(assetMap, target)))
+    )
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        message: 'Asset paths must name exactly the declared architectures',
+      });
+    const paths = [input.entryPath, ...assetPaths];
+    for (let at = 0; at < paths.length; at++) {
+      const left = paths[at];
+      if (!left) continue;
+      for (const right of paths.slice(at + 1)) {
+        if (left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`))
+          ctx.issues.push({
+            code: 'custom',
+            input: ctx.value,
+            message: 'Entry and addons must have non-overlapping paths',
+          });
+      }
     }
-  }
-});
-const AssetSchema = z.object({
-  outputPath: z.string(),
+  });
+const EmbeddedAssetSchema = z.object({
   size: z.int().nonnegative(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   bytes: z.custom<Uint8Array>((value) => value instanceof Uint8Array),
 });
+const AssetSchema = EmbeddedAssetSchema.extend({ outputPath: z.string() });
 const TargetAssetSchema = AssetSchema.extend({ architecture: ArchitectureSchema });
 const DigestSchema = z.object({
   size: z.int().nonnegative(),
@@ -119,12 +130,14 @@ const RefusalSchema = z.discriminatedUnion('state', [
 ]);
 
 /**
- * Input to `createNativePackaging`: platform, entry path, delivery and addon path per
- * architecture; `Multiple` selects one target or a list of them.
+ * Input to `createNativePackaging` for companion delivery: platform, entry path and addon path
+ * per architecture; `Multiple` selects one target or a list of them.
  */
 export type NativePackagingOptions<Multiple extends boolean = false> = Multiple extends true
   ? z.input<typeof MultipleOptionsSchema>
   : z.input<typeof SingleOptionsSchema>;
+/** Input to `createNativePackaging` for a standalone executable: platform and one architecture. */
+export type NativePackagingEmbeddedOptions = z.input<typeof EmbeddedOptionsSchema>;
 /**
  * One native addon to ship with the bundle: where it lands in the output, its `bytes` already
  * checked against the `size` and `sha256` the package published, and those published values.
@@ -133,6 +146,11 @@ export type NativePackagingOptions<Multiple extends boolean = false> = Multiple 
 export type NativePackagingAsset<Multiple extends boolean = false> = Multiple extends true
   ? z.infer<typeof TargetAssetSchema>
   : z.infer<typeof AssetSchema>;
+/**
+ * The addon a standalone executable embeds: its verified `bytes` with the published `size` and
+ * `sha256`, for qualification. The plugin hands Bun these bytes; there is nothing to write.
+ */
+export type NativePackagingEmbeddedAsset = z.infer<typeof EmbeddedAssetSchema>;
 
 /**
  * Structural Bun plugin protocol: declarations need no Bun runtime or ambient types.
@@ -179,6 +197,21 @@ export type NativePackagingResult<Multiple extends boolean = false> =
         : z.infer<typeof ArchitectureSchema>;
       packageVersion: string;
       assets: NativePackagingAsset<Multiple>[];
+      plugin: NativePackagingPlugin;
+    };
+
+/**
+ * `ready` with the verified addon and the Bun plugin that embeds it, or the refusals of
+ * {@link NativePackagingResult}.
+ */
+export type NativePackagingEmbeddedResult =
+  | z.infer<typeof RefusalSchema>
+  | {
+      state: 'ready';
+      platform: z.infer<typeof PlatformSchema>;
+      architecture: z.infer<typeof ArchitectureSchema>;
+      packageVersion: string;
+      assets: NativePackagingEmbeddedAsset[];
       plugin: NativePackagingPlugin;
     };
 
@@ -266,15 +299,162 @@ function readVerifiedAsset(
   return { sourcePath, bytes, size: published.size, sha256: published.sha256 };
 }
 
+interface InstalledPackage {
+  root: string;
+  published: z.infer<typeof NativeAssetManifestSchema>;
+  version: string;
+  loaderPath: string;
+}
+
+function installedPackage(): InstalledPackage {
+  const root = installedPackageRoot();
+  const published = NativeAssetManifestSchema.parse(
+    JSON.parse(readFileSync(resolve(root, 'native-assets.json'), 'utf8')),
+  );
+  const manifest = PackageManifestSchema.parse(
+    JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')),
+  );
+  return {
+    root,
+    published,
+    version: manifest.version,
+    loaderPath: resolve(root, published.loader),
+  };
+}
+
+/**
+ * The one Bun plugin of both deliveries: it swaps the default loader for a static one, hands Bun
+ * the verified bytes of each embedded addon, and keeps companion addons external to a build
+ * whose single entry is named exactly `entryPath`.
+ */
+function nativePlugin(
+  loaderPath: string,
+  specifiers: Readonly<Record<string, string>>,
+  embedded: ReadonlyMap<string, Uint8Array>,
+  companionEntry: string | undefined,
+): NativePackagingPlugin {
+  const contents = nativeLoaderSource(specifiers, 'static');
+  const external = new Set(Object.values(specifiers));
+  return {
+    name: 'stitchkit-native-packaging',
+    setup(build) {
+      if (companionEntry !== undefined) {
+        if (build.config.entrypoints.length !== 1)
+          throw new Error('Native companion packaging requires exactly one entrypoint');
+        if (build.config.splitting)
+          throw new Error('Native companion packaging requires splitting: false');
+        const naming = build.config.naming;
+        const entry = typeof naming === 'string' ? naming : naming?.entry;
+        if (entry !== companionEntry)
+          throw new Error('Native companion packaging naming.entry must match entryPath');
+      }
+      build.onLoad({ filter: /\.[cm]?js$/ }, (args) =>
+        args.path === loaderPath ? { contents, loader: 'js' } : undefined,
+      );
+      // Embedded delivery hands Bun the verified bytes, never a second read of the file.
+      if (embedded.size > 0)
+        build.onLoad({ filter: /\.node$/ }, (args) => {
+          const bytes = embedded.get(args.path);
+          return bytes ? { contents: bytes, loader: 'napi' } : undefined;
+        });
+      if (companionEntry !== undefined)
+        build.onResolve({ filter: /./ }, (args) =>
+          args.importer === loaderPath && external.has(args.path)
+            ? { path: args.path, external: true }
+            : undefined,
+        );
+    },
+  };
+}
+
+function embedNative(
+  input: z.infer<typeof EmbeddedOptionsSchema>,
+): NativePackagingEmbeddedResult {
+  const resolved = resolveTargets(input.platform, [input.architecture]);
+  if ('refusal' in resolved) return resolved.refusal;
+  const [architecture] = resolved.targets;
+  const installed = installedPackage();
+  const verified = readVerifiedAsset(
+    installed.root,
+    installed.published.assets[architecture],
+    input.platform,
+    architecture,
+  );
+  if ('refusal' in verified) return verified.refusal;
+  const { sourcePath, bytes, size, sha256 } = verified;
+  return {
+    state: 'ready',
+    platform: 'darwin',
+    architecture,
+    packageVersion: installed.version,
+    assets: [{ size, sha256, bytes }],
+    plugin: nativePlugin(
+      installed.loaderPath,
+      { [architecture]: sourcePath },
+      new Map([[sourcePath, new Uint8Array(bytes)]]),
+      undefined,
+    ),
+  };
+}
+
+function packageCompanion(
+  input: z.infer<typeof CompanionOptionsSchema>,
+): NativePackagingResult<boolean> {
+  const declared: [string, ...string[]] =
+    typeof input.architecture === 'string' ? [input.architecture] : input.architecture;
+  const resolved = resolveTargets(input.platform, declared);
+  if ('refusal' in resolved) return resolved.refusal;
+  const architectures = resolved.targets;
+  const installed = installedPackage();
+  const assets: NativePackagingAsset<boolean>[] = [];
+  const specifiers: Record<string, string> = {};
+  for (const architecture of architectures) {
+    const template =
+      typeof input.assetPath === 'string' ? input.assetPath : input.assetPath[architecture];
+    if (!template) throw new Error('Declared architecture has no output path');
+    const verified = readVerifiedAsset(
+      installed.root,
+      installed.published.assets[architecture],
+      input.platform,
+      architecture,
+    );
+    if ('refusal' in verified) return verified.refusal;
+    const { size, sha256, bytes } = verified;
+    // The published digest is known before the build, so a name carrying it is fixed here.
+    const outputPath = template.replaceAll(
+      ASSET_HASH_TOKEN,
+      sha256.slice(0, ASSET_HASH_LENGTH),
+    );
+    if (assets.some((asset) => asset.outputPath === outputPath))
+      throw new Error('Addons must have distinct output paths');
+    const specifier = relative(dirname(input.entryPath), outputPath).split('\\').join('/');
+    specifiers[architecture] = specifier.startsWith('.') ? specifier : `./${specifier}`;
+    const asset = { outputPath, size, sha256, bytes };
+    assets.push(typeof input.architecture === 'string' ? asset : { ...asset, architecture });
+  }
+  return {
+    state: 'ready',
+    platform: 'darwin',
+    architecture: typeof input.architecture === 'string' ? architectures[0] : architectures,
+    packageVersion: installed.version,
+    assets,
+    plugin: nativePlugin(installed.loaderPath, specifiers, new Map(), input.entryPath),
+  };
+}
+
 /**
  * Resolve this installed package's asset graph, without parsing downstream loader text.
  * `platform` is `'darwin'`, the only platform with native addons; another name throws.
  * Each selected addon is read and hashed once per call and checked against the size and
  * SHA256 published in the package's `native-assets.json`; the first one that differs refuses
  * with `NATIVE_ASSET_DIGEST_MISMATCH` and its `expected` and `actual` size and SHA256. Call it
- * once per build and reuse the result: its `assets` carry the verified bytes to write and its
- * plugin embeds those same bytes.
+ * once per build and reuse the result: its plugin integrates the same verified bytes its
+ * `assets` carry. Companion delivery names where the entry and each addon land in the output;
+ * embedded delivery (`compile`) names no path, because the executable carries the addon.
  */
+export function createNativePackaging(
+  options: NativePackagingEmbeddedOptions,
+): NativePackagingEmbeddedResult;
 export function createNativePackaging(options: NativePackagingOptions): NativePackagingResult;
 export function createNativePackaging(
   options: NativePackagingOptions<true>,
@@ -283,95 +463,12 @@ export function createNativePackaging(
   options: NativePackagingOptions<boolean>,
 ): NativePackagingResult<boolean>;
 export function createNativePackaging(
-  options: NativePackagingOptions<boolean>,
-): NativePackagingResult<boolean> {
-  const input = OptionsSchema.parse(options);
-  const declared: [string, ...string[]] =
-    typeof input.architecture === 'string' ? [input.architecture] : input.architecture;
-  const resolved = resolveTargets(input.platform, declared);
-  if ('refusal' in resolved) return resolved.refusal;
-  const architectures = resolved.targets;
-  const root = installedPackageRoot();
-  const published = NativeAssetManifestSchema.parse(
-    JSON.parse(readFileSync(resolve(root, 'native-assets.json'), 'utf8')),
-  );
-  const manifest = PackageManifestSchema.parse(
-    JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')),
-  );
-  const loaderPath = resolve(root, published.loader);
-  const assets: NativePackagingAsset<boolean>[] = [];
-  const specifiers: Record<string, string> = {};
-  const embedded = new Map<string, Uint8Array>();
-  for (const architecture of architectures) {
-    const template =
-      typeof input.assetPath === 'string' ? input.assetPath : input.assetPath[architecture];
-    if (!template) throw new Error('Declared architecture has no output path');
-    const verified = readVerifiedAsset(
-      root,
-      published.assets[architecture],
-      input.platform,
-      architecture,
-    );
-    if ('refusal' in verified) return verified.refusal;
-    const { sourcePath, bytes, size, sha256 } = verified;
-    // The published digest is known before the build, so a name carrying it is fixed here.
-    const outputPath = template.replaceAll(
-      ASSET_HASH_TOKEN,
-      sha256.slice(0, ASSET_HASH_LENGTH),
-    );
-    if (assets.some((asset) => asset.outputPath === outputPath))
-      throw new Error('Addons must have distinct output paths');
-    if (input.delivery === 'embedded') embedded.set(sourcePath, new Uint8Array(bytes));
-    const outputSpecifier = relative(dirname(input.entryPath), outputPath)
-      .split('\\')
-      .join('/');
-    specifiers[architecture] =
-      input.delivery === 'embedded'
-        ? sourcePath
-        : outputSpecifier.startsWith('.')
-          ? outputSpecifier
-          : `./${outputSpecifier}`;
-    const asset = { outputPath, size, sha256, bytes };
-    assets.push(typeof input.architecture === 'string' ? asset : { ...asset, architecture });
-  }
-  const contents = nativeLoaderSource(specifiers, 'static');
-  const external = new Set(Object.values(specifiers));
-  return {
-    state: 'ready',
-    platform: 'darwin',
-    architecture: typeof input.architecture === 'string' ? architectures[0] : architectures,
-    packageVersion: manifest.version,
-    assets,
-    plugin: {
-      name: 'stitchkit-native-packaging',
-      setup(build) {
-        if (input.delivery === 'companion') {
-          if (build.config.entrypoints.length !== 1)
-            throw new Error('Native companion packaging requires exactly one entrypoint');
-          if (build.config.splitting)
-            throw new Error('Native companion packaging requires splitting: false');
-          const naming = build.config.naming;
-          const entry = typeof naming === 'string' ? naming : naming?.entry;
-          if (entry !== input.entryPath)
-            throw new Error('Native companion packaging naming.entry must match entryPath');
-        }
-        build.onLoad({ filter: /\.[cm]?js$/ }, (args) =>
-          args.path === loaderPath ? { contents, loader: 'js' } : undefined,
-        );
-        // Embedded delivery hands Bun the verified bytes, never a second read of the file.
-        if (embedded.size > 0)
-          build.onLoad({ filter: /\.node$/ }, (args) => {
-            const bytes = embedded.get(args.path);
-            return bytes ? { contents: bytes, loader: 'napi' } : undefined;
-          });
-        if (input.delivery === 'companion') {
-          build.onResolve({ filter: /./ }, (args) =>
-            args.importer === loaderPath && external.has(args.path)
-              ? { path: args.path, external: true }
-              : undefined,
-          );
-        }
-      },
-    },
-  };
+  options: NativePackagingOptions<boolean> | NativePackagingEmbeddedOptions,
+): NativePackagingResult<boolean> | NativePackagingEmbeddedResult;
+export function createNativePackaging(
+  options: NativePackagingOptions<boolean> | NativePackagingEmbeddedOptions,
+): NativePackagingResult<boolean> | NativePackagingEmbeddedResult {
+  return options.delivery === 'embedded'
+    ? embedNative(EmbeddedOptionsSchema.parse(options))
+    : packageCompanion(CompanionOptionsSchema.parse(options));
 }

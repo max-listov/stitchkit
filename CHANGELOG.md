@@ -15,7 +15,33 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+- `stitchkit/files/packaging` — **embedded delivery names no output paths.** A standalone executable
+  carries the Darwin addon inside itself, so `createNativePackaging({ delivery: 'embedded' })` takes
+  only `platform` and `architecture`; `entryPath` and `assetPath` changed nothing in the executable
+  and are now refused by the type and the schema. The ready result types its addon as
+  `NativePackagingEmbeddedAsset` (`bytes`, `size`, `sha256`, no `outputPath`), with
+  `NativePackagingEmbeddedOptions` and `NativePackagingEmbeddedResult` beside it. Companion
+  delivery is unchanged. **Who must act:** builds with `delivery: 'embedded'`.
+  `// before: createNativePackaging({ platform: 'darwin', architecture: 'arm64', delivery: 'embedded', entryPath, assetPath })`
+  → `// after: createNativePackaging({ platform: 'darwin', architecture: 'arm64', delivery: 'embedded' })` → ADR 0252
+
 ### Fixed
+
+- `stitchkit/files`, `stitchkit/server`, `stitchkit/process` — a bundle or compiled executable
+  built without native packaging no longer carries the absolute path of the package on the build
+  machine. Since 0.105.0 the default Darwin loader computed its addon path from `__dirname`, which
+  Bun inlines as a string, so the artifact named the builder's directories and on another Mac
+  looked for the addon there. The loader now reads its own file through `module.filename`, which is
+  not an absolute path inside a bundle, and refuses there: the first call that needs the addon
+  reports the Darwin backend `unavailable` with the new stage `packaging` and native code
+  `STITCHKIT_NATIVE_NOT_PACKAGED`, and the message names `createNativePackaging`. An installed
+  package loads the addon as before (ADR 0252).
+- `stitchkit` — the package declares `"sideEffects": false`: it has no import side effects, so a
+  bundler drops what a consumer does not use. A bundle that imports only the managed file boundary
+  from `stitchkit/files` no longer carries the lock, process identity or the Darwin loader, and
+  needs no decision about native packaging.
 
 - `stitchkit/agent-runtime` — `createDeferredAgentToolSurface({ runtimeTools })` accepts a
   `RuntimeToolDefinition[]` from `stitchkit/tools` again, without a cast. Since 0.105.0 the
@@ -23,6 +49,16 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   `{ agent?: unknown }`, so the two public types of one package no longer met.
   `DeferredAgentRuntimeToolDefinition.present` is open like the registration's; a presenter that is
   not a function, or that has no `output` schema, is still refused at construction.
+
+### Documentation
+
+- The 0.105.0 entry "bundles no longer emit Darwin addons" said an unpackaged bundle looks for the
+  addon beside the original package files and reports the backend `unavailable` elsewhere. In
+  0.105.0–0.106.1 "beside the original package files" was the absolute path of the package on the
+  build machine, inlined into the artifact. The native IO guide and the 0.103.13 migration now say
+  what each release does, which calls load the addon (process identity, exclusive locks and
+  contained Agent file operations, on macOS only; never the managed file boundary), and how to
+  check an artifact by its loader instead of by the presence of `.node` bytes.
 
 ## [0.106.1] - 2026-10-06
 

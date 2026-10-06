@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { NATIVE_NOT_PACKAGED } from '../internal/darwin-binding-error';
 
 /** A relative path inside a package or an output root: no drive, backslash, traversal or empty part. */
 export const RelativePathSchema = z
@@ -57,10 +58,17 @@ export function nativeAssetDigest(bytes: Uint8Array): { size: number; sha256: st
 /**
  * How a generated loader names its addons.
  * `static`: a literal `require` the bundler follows and embeds or copies.
- * `beside-loader`: a path computed at runtime from the loader's own directory, which no bundler
- * follows. Only a packaging plugin turns the second form into the first.
+ * `beside-loader`: a path computed at runtime from the loader's own file, which no bundler
+ * follows. It reads `module.filename`, never `__dirname` or `__filename`: a bundler inlines
+ * those as the build machine's absolute path, while inside a bundle `module.filename` is not an
+ * absolute path, so the loader refuses there with {@link NATIVE_NOT_PACKAGED} instead of
+ * looking for the addon on a machine that is not this one. Only a packaging plugin turns the
+ * second form into the first.
  */
 export type NativeLoaderResolution = 'static' | 'beside-loader';
+
+const NOT_PACKAGED_MESSAGE =
+  'The Darwin addon is not packaged into this bundle: build it with createNativePackaging from stitchkit/files/packaging';
 
 const templateText = (value: string) =>
   value.replaceAll('\\', '\\\\').replaceAll('`', '\\`').replaceAll('${', '\\${');
@@ -75,7 +83,7 @@ export function nativeLoaderSource(
   const target = (asset: string) =>
     resolution === 'static'
       ? quote(asset)
-      : `\`\${__dirname}/${templateText(asset.replace(/^\.\//, ''))}\``;
+      : `\`\${directory}/${templateText(asset.replace(/^\.\//, ''))}\``;
   const branches = Object.entries(assets).map(
     ([architecture, asset]) =>
       `    if (process.arch === ${quote(architecture)}) return require(${target(asset)});`,
@@ -85,10 +93,26 @@ export function nativeLoaderSource(
     ...(resolution === 'static'
       ? []
       : [
-          '// The addon path is computed, so a bundler never follows or embeds it. A packaging',
-          '// plugin replaces this file with a static loader when an artifact must carry the addon.',
+          "// The addon path is computed from this file's own location, so a bundler never follows",
+          '// or embeds it and the build machine never becomes a literal of the artifact. Inside a',
+          '// bundle the file has no location (`module.filename` is not absolute there): loading',
+          '// refuses and names the packaging plugin, which replaces this file with a static loader',
+          '// when an artifact must carry the addon.',
         ]),
     'module.exports = function loadDarwinAddon() {',
+    ...(resolution === 'static'
+      ? []
+      : [
+          '  const location = module.filename;',
+          "  if (typeof location !== 'string' || !location.startsWith('/')) {",
+          '    const refusal = new Error(',
+          `      ${quote(NOT_PACKAGED_MESSAGE)},`,
+          '    );',
+          `    refusal.code = ${quote(NATIVE_NOT_PACKAGED)};`,
+          '    throw refusal;',
+          '  }',
+          "  const directory = location.slice(0, location.lastIndexOf('/'));",
+        ]),
     '  try {',
     ...branches,
     "    throw new Error('Unsupported Darwin addon architecture');",

@@ -2752,6 +2752,9 @@
   ],
   "stitchkit/files/packaging": [
     "NativePackagingAsset",
+    "NativePackagingEmbeddedAsset",
+    "NativePackagingEmbeddedOptions",
+    "NativePackagingEmbeddedResult",
     "NativePackagingOptions",
     "NativePackagingPlugin",
     "NativePackagingResult",

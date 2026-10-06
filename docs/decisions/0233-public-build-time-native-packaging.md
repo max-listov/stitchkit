@@ -23,7 +23,8 @@ the addon of its own architecture.
 returns the version/target of the installed package, the output path, the verified bytes
 and the published size and SHA256 of the addon, and a structurally typed Bun plugin
 (amended by ADR 0241: the digest is published when the package is built and checked on
-every call). Its declarations
+every call; amended by ADR 0252: embedded delivery names no output layout and its asset has no
+output path). Its declarations
 need neither the Bun runtime nor ambient types. One package-owned metadata graph and
 generator create a lazy loader for package imports, a custom companion output and an
 embedded compile. Runtime leaves do not import packaging. The companion recipe

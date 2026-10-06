@@ -1,6 +1,6 @@
 /** One lazy Node-API boundary for the packaged Darwin operating-system primitives. */
 import loadDarwinAddon from '#stitchkit-darwin-native';
-import { DarwinBackendError, darwinNativeCode } from './darwin-binding-error';
+import { DarwinBackendError, darwinLoadStage } from './darwin-binding-error';
 
 export interface DarwinEntry {
   name: string;
@@ -39,13 +39,7 @@ export function loadDarwinBinding(): DarwinBinding {
   try {
     loaded = loadDarwinAddon();
   } catch (cause) {
-    const code = darwinNativeCode(cause);
-    throw new DarwinBackendError(
-      code === 'MODULE_NOT_FOUND' || code === 'ERR_MODULE_NOT_FOUND' || code === 'ENOENT'
-        ? 'resolve'
-        : 'load',
-      cause,
-    );
+    throw new DarwinBackendError(darwinLoadStage(cause), cause);
   }
   const methods = [
     'openDirectoryAt',

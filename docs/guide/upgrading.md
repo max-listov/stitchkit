@@ -1,5 +1,37 @@
 # Upgrading stitchkit
 
+## Released migration: 0.107.0
+
+### embedded native packaging names no paths
+
+**Who must act:** builds that call `createNativePackaging` (`stitchkit/files/packaging`) with
+`delivery: 'embedded'`. Companion delivery is unchanged.
+
+A standalone executable carries the Darwin addon inside itself, so the embedded form takes only
+`platform`, `architecture` and `delivery`. `entryPath` and `assetPath` were required before but
+changed nothing in the executable; passing them now is a type error and a schema refusal. The
+ready result names the embedded addon by `NativePackagingEmbeddedAsset` (`bytes`, `size`,
+`sha256`), without `outputPath`, since nothing is written beside the executable.
+
+1. Drop the two paths from the embedded call:
+
+   ```ts
+   // before
+   createNativePackaging({
+     platform: 'darwin', architecture: 'arm64', delivery: 'embedded',
+     entryPath: 'cli.js', assetPath: 'native/darwin-arm64.node',
+   })
+   // after
+   createNativePackaging({ platform: 'darwin', architecture: 'arm64', delivery: 'embedded' })
+   ```
+
+   Search pattern: `delivery: 'embedded'`.
+2. Code that read `asset.outputPath` from an embedded result reads `bytes`, `size` and `sha256`
+   only; an annotation `NativePackagingOptions` / `NativePackagingResult` on an embedded call
+   becomes `NativePackagingEmbeddedOptions` / `NativePackagingEmbeddedResult`.
+3. Rebuild every artifact made without the plugin by 0.105.0–0.106.1: it carries the build
+   machine's package path (see [Darwin native assets in JS distributions](#darwin-native-assets-in-js-distributions)).
+
 ## Released migration: 0.106.0
 
 ### a stopped leader settles as stopped
@@ -600,13 +632,27 @@ Custom output layout uses the evolving build-only packaging contract in the
 Three deliveries have different rules: an ordinary npm install retains the package's
 native assets; a JS distribution must ship its complete output graph; a Bun compiled
 executable embeds the matching addon and may still use `--outfile`. In 0.103.13–0.104.2 a plain
-`bun build` carries the addon without a plugin; later releases carry it only when the build
-uses `createNativePackaging` (`delivery: 'companion'` for JS, `'embedded'` for a compiled
-executable).
-The [native IO guide](native-io.md#libraries-with-a-zod-only-runtime) is the canonical recipe.
-Check the resulting artifact offline outside the build tree and `node_modules`, including
-process identity, live-owner lock refusal, dead-owner recovery and contained IO.
-A missing or corrupt addon remains `unavailable`, never evidence that an owner died.
+`bun build` carries the addon without a plugin. Later releases load it from a bundle only when
+the build uses `createNativePackaging` (`delivery: 'companion'` for JS, `'embedded'` for a
+compiled executable). Without the plugin, Bun may still copy the addon's bytes into a compiled
+executable, but the loader never uses them, so their presence proves nothing.
+
+What an unpackaged bundle does depends on the release:
+
+- **0.105.0–0.106.1:** the bundle carries the absolute path of the package on the build machine,
+  because the loader read `__dirname`. It looks for the addon there, so it works only on that
+  machine, and the path itself leaks into a distributed artifact. Rebuild with a later release.
+- **0.107.0 and later:** no build path is in the artifact, and the first call that needs the
+  addon reports the Darwin backend `unavailable` with stage `packaging`.
+
+Only macOS is affected, and only process identity (`observeProcessInstance`,
+`probeProcessOwner`), exclusive locks and contained Agent file operations load the addon. The
+managed file boundary, atomic writes and the chunk spool never do. The
+[native IO guide](native-io.md#libraries-with-a-zod-only-runtime) is the canonical recipe and
+shows how to check an artifact by its loader without running it on a Mac. Check the resulting
+artifact offline outside the build tree and `node_modules`, including process identity,
+live-owner lock refusal, dead-owner recovery and contained IO. A missing or corrupt addon
+remains `unavailable`, never evidence that an owner died.
 
 ### CLI: repeated options are refused
 

@@ -441,14 +441,32 @@ version: carry their reachable relative `.d.ts` closure, rather than emitting re
 instead emit declarations for only that DTO contract. Keep the library's manifest at runtime
 `dependencies: {}` and `peerDependencies: { zod: ... }` when that is its declared promise.
 
-The packaged Darwin loader names its addons by a path computed at run time, so a bundler
-never follows it: bundling `stitchkit/server`, `stitchkit/files` or `stitchkit/process` yields
-the same single JS file on every operating system, with no `.node` output, and
-`bun build --outfile` works. Such a bundle looks for the addon beside the original package
-files, never inside itself. Where that file is absent (an artifact moved to another machine)
-the Darwin backend is `unavailable`: process identity cannot be recorded, so a lock held by a
-crashed owner is not reclaimed. An artifact that must carry the Darwin addon uses the packaging
-plugin of the next section; it is the only way a static loader enters a bundle.
+The packaged Darwin loader computes its addon path at run time from its own file
+(`module.filename`), so a bundler never follows it: bundling `stitchkit/server`,
+`stitchkit/files` or `stitchkit/process` yields the same single JS file on every operating
+system, with no `.node` output, `bun build --outfile` works, and no path of the build machine
+becomes a literal of the artifact. A bundle has no installed package beside it, so without the
+packaging plugin it never loads the addon: the first call that needs it reports the Darwin backend
+`unavailable` with stage `packaging`, and the message names `createNativePackaging`. An artifact
+that must carry the Darwin addon uses the packaging plugin of the next section; it is the only way
+a static loader enters a bundle.
+
+Only these calls load the addon, and only on macOS: process identity (`observeProcessInstance`
+and `probeProcessOwner`), every exclusive lock (`withExclusiveLock` and what is built on it, such
+as the file state store and the diagnostic journal) and the contained file operations of the Agent
+coding tools. Without the addon a lock still works, but it cannot record or check its owner's
+identity, so a lock held by a crashed owner is not reclaimed. The managed file boundary
+(`createManagedFileBoundary` and the transfer tools built on it), atomic writes and the chunk
+spool never load it, on any operating system. The package is free of import side effects
+(`sideEffects: false`), so a bundle that imports only those parts carries no Darwin loader at all.
+
+Check an artifact by its loader, never by whether it holds `.node` bytes: Bun can copy the addon
+into a compiled executable even without the plugin, and the unpackaged loader does not use it.
+Search the artifact for `STITCHKIT_NATIVE_NOT_PACKAGED` in both latin1 and UTF-16LE, because Bun
+stores source text with non-ASCII characters as UTF-16. Present: the unpackaged loader is inside,
+and every call above refuses on macOS. Absent in a plugin build: the static loader is inside
+(`/$bunfs/root/darwin-<arch>-<hash>.node` in an executable, the companion path in a JS build).
+Absent without the plugin: nothing in the artifact needs the addon.
 
 ```sh
 bun build src/native.ts --target=bun --minify --outfile=dist/native.js
@@ -457,7 +475,7 @@ bun build src/native.ts --target=bun --minify --outfile=dist/native.js
 Qualify the complete output outside its build tree and installed dependency graph. Test process
 identity, live-owner refusal, dead-owner recovery and contained file operations in artifacts built
 with the packaging plugin, and check that an unpackaged build reports the backend `unavailable`
-rather than certifying a dead owner. Bun and Node package imports retain the same
+with stage `packaging` rather than certifying a dead owner. Bun and Node package imports retain the same
 lazy loader; importing a portable leaf does not load a Darwin addon on another OS. Test
 declarations too, and check that importing an unbundled Stitchkit leaf fails in a deliberately
 isolated library distribution. A separate schema-only entry must not import the native entry.
@@ -465,7 +483,9 @@ isolated library distribution. A separate schema-only entry must not import the 
 If the Darwin backend cannot load, `observeProcessInstance` still returns `unavailable`.
 Its backend `Error` preserves the original `cause`; JSON serialization carries only the stable
 `DARWIN_BACKEND_UNAVAILABLE` code, architecture, safe message and failure stage
-(`architecture`, `resolve`, `load` or `surface`), plus a recognized native error code when present.
+(`architecture`, `packaging`, `resolve`, `load` or `surface`), plus a recognized native error code
+when present: `packaging` is a bundle built without the packaging plugin, with native code
+`STITCHKIT_NATIVE_NOT_PACKAGED`.
 It excludes stack, paths and nested cause. This backend diagnosis does not reclassify kernel
 failures or turn unavailable identity into proof that an owner is dead. If a runtime provides
 no recognized native error code, the stage stays `load`; the loader never infers errno from text.
@@ -512,7 +532,7 @@ for (const asset of native.assets) {
 }
 ```
 
-`entryPath` and `assetPath` are relative paths inside the application's output root, without
+In companion delivery, `entryPath` and `assetPath` are relative paths inside the application's output root, without
 absolute paths, traversal or overlapping file/directory paths. `assetPath` may contain `[hash]`,
 which becomes the first 16 hex digits of that addon's published SHA256: the digest is known before
 the build, so `addons/darwin-arm64-[hash].node` gives two installed versions of the package
@@ -551,10 +571,27 @@ process primitives without loading Darwin assets. Qualify the exact same JS byte
 Darwin arm64 and x64 machines, with both companions preserved through archive delivery.
 Build-machine architecture and cross-build success cannot establish universal native support.
 
-For a standalone executable use `delivery: 'embedded'` and the same plugin in `Bun.build`
-with `compile: { outfile: ... }`. Bun embeds the selected addon from the verified bytes the
-plugin holds, not from a second read of the file; `assets` identifies those bytes and their
-published digest for qualification, not a companion that must be installed beside the executable.
+For a standalone executable use `delivery: 'embedded'` and its plugin in `Bun.build` with
+`compile`. An executable carries the addon inside itself, so this form names no `entryPath` or
+`assetPath`; passing one is a type error and a schema refusal, never silently ignored:
+
+```ts
+const native = createNativePackaging({
+  platform: 'darwin', architecture: 'arm64', delivery: 'embedded',
+})
+if (native.state !== 'ready') throw new Error(native.code)
+const result = await Bun.build({
+  entrypoints: ['src/cli.ts'], minify: true,
+  compile: { target: 'bun-darwin-arm64', outfile: 'dist/cli' },
+  plugins: [native.plugin],
+})
+if (!result.success) throw new AggregateError(result.logs, 'Build failed')
+```
+
+Bun embeds the selected addon from the verified bytes the plugin holds, not from a second read of
+the file, and the executable loads it from `/$bunfs/root/darwin-arm64-<hash>.node`. Its `assets`
+(`NativePackagingEmbeddedAsset`: `bytes`, `size`, `sha256`) identify those bytes and their
+published digest for qualification; there is nothing to write beside the executable.
 Cross-builds must select the requested architecture explicitly; the artifact must run on that target.
 The installed package must contain that target's addon. No automatic fallback/downgrade occurs.
 

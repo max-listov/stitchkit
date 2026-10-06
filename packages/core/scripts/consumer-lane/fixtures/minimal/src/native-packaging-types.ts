@@ -1,6 +1,9 @@
 import {
   createNativePackaging,
   type NativePackagingAsset,
+  type NativePackagingEmbeddedAsset,
+  type NativePackagingEmbeddedOptions,
+  type NativePackagingEmbeddedResult,
   type NativePackagingOptions,
   type NativePackagingPlugin,
   type NativePackagingResult,
@@ -68,3 +71,26 @@ if (universal.state === 'ready') {
 }
 // @ts-expect-error — embedded compile accepts exactly one target.
 createNativePackaging({ ...universalOptions, delivery: 'embedded' });
+
+const embeddedOptions: NativePackagingEmbeddedOptions = {
+  platform: 'darwin',
+  architecture: 'arm64',
+  delivery: 'embedded',
+};
+const embedded: NativePackagingEmbeddedResult = createNativePackaging(embeddedOptions);
+if (embedded.state === 'ready') {
+  const assets: NativePackagingEmbeddedAsset[] = embedded.assets;
+  for (const asset of assets) {
+    const verified: { bytes: Uint8Array; size: number; sha256: string } = asset;
+    void verified;
+    // @ts-expect-error — an embedded addon is inside the executable; there is no output path.
+    void asset.outputPath;
+  }
+}
+createNativePackaging({
+  platform: 'darwin',
+  architecture: 'arm64',
+  delivery: 'embedded',
+  // @ts-expect-error — a standalone executable names no output layout.
+  entryPath: 'app/main.js',
+});

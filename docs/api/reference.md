@@ -2548,13 +2548,16 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 ## `stitchkit/files/packaging`
 
 `stitchkit/files/packaging` owns `createNativePackaging` and the types
-`NativePackagingOptions`, `NativePackagingAsset`, `NativePackagingPlugin`, `NativePackagingResult`.
+`NativePackagingOptions`, `NativePackagingAsset`, `NativePackagingPlugin`, `NativePackagingResult`,
+and for a standalone executable `NativePackagingEmbeddedOptions`, `NativePackagingEmbeddedAsset`,
+`NativePackagingEmbeddedResult`.
 It resolves the installed package's target/version, reads each selected addon once and checks it
 against the `size` and `sha256` published in the package's `native-assets.json` (`formatVersion: 2`,
 written when Stitchkit is built). Call it once per build and reuse the result.
-`platform`, `architecture`, `delivery`, `entryPath` and `assetPath` are explicit public inputs;
-`assetPath` accepts one template, `[hash]`, replaced by the first 16 hex digits of the addon's
-published SHA256;
+`platform`, `architecture`, `delivery`, `entryPath` and `assetPath` are the explicit inputs of
+companion delivery; embedded delivery takes `platform`, one `architecture` and `delivery` only, and
+refuses a path. `assetPath` accepts one template, `[hash]`, replaced by the first 16 hex digits of
+the addon's published SHA256;
 `platform` is the closed set `'darwin'`, and another name is a type error and a schema refusal.
 The result is `ready` with verified assets and a structural Bun plugin, or `unsupported` /
 `missing` / `mismatch` with the safe code `NATIVE_TARGET_UNSUPPORTED`, `NATIVE_ASSET_MISSING` or
@@ -2571,7 +2574,8 @@ and the published `size` and `sha256`.
 Targets must be unique; entry and all asset paths must be disjoint. One lazy loader chooses only
 the actual runtime architecture, with no fallback.
 Companion mode places external addons relative to the emitted entry; embedded mode gives
-Bun compile the verified bytes of the matching addon. Keep JS builds without splitting, preserve
-every output, and write each asset's `bytes` to its `outputPath`.
+Bun compile the verified bytes of the matching addon, and its asset (`bytes`, `size`, `sha256`)
+has no `outputPath`, because nothing is written beside the executable. Keep companion JS builds
+without splitting, preserve every output, and write each asset's `bytes` to its `outputPath`.
 This evolving entrypoint is a build dependency; runtime imports do not reach it.
 The detailed recipe is in [native IO](../guide/native-io.md#public-native-packaging).
