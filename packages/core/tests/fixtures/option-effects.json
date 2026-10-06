@@ -1134,6 +1134,12 @@
     }
   },
   "NativeCommandOptions": {
+    "onLeaderStarted": {
+      "test": "onLeaderStarted reports the pid of the leader itself, once, before it exits"
+    },
+    "drainTimeoutMs": {
+      "test": "drainTimeoutMs bounds the pipe a descendant outside the group keeps open"
+    },
     "executable": {
       "test": "command cwd args environment and bounded stdin are applied"
     },

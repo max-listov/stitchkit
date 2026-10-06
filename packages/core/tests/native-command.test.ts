@@ -194,6 +194,63 @@ test('an option the type never saw is refused by name, a removed one with its re
   );
 });
 
+test('onLeaderStarted reports the pid of the leader itself, once, before it exits', async () => {
+  const pids: number[] = [];
+  const result = await runNativeCommand({
+    executable: '/bin/sh',
+    args: ['-c', 'echo $$'],
+    timeoutMs: 5000,
+    capture: true,
+    maxOutputBytes: 64,
+    onLeaderStarted: ({ pid }) => pids.push(pid),
+  });
+  expect(pids).toEqual([Number(new TextDecoder().decode(result.stdout).trim())]);
+});
+
+test('a throwing onLeaderStarted stops the command with that error', async () => {
+  const marker = new Error('observer refused');
+  await expect(
+    runNativeCommand({
+      ...command('setInterval(()=>{},1000)'),
+      timeoutMs: 10_000,
+      onLeaderStarted: () => {
+        throw marker;
+      },
+    }),
+  ).rejects.toBe(marker);
+});
+
+test('drainTimeoutMs bounds the pipe a descendant outside the group keeps open', async () => {
+  if (!Bun.which('setsid')) return;
+  const holder = join(root, 'holder-pid');
+  const other = join(root, 'unbounded-holder-pid');
+  const started = performance.now();
+  // The leader exits at once; a session leader of its own keeps the output pipe.
+  const error = await runNativeCommand({
+    executable: '/bin/sh',
+    args: ['-c', `setsid -f /bin/sh -c 'echo $$ > "${holder}"; exec sleep 30'; exit 0`],
+    envPolicy: 'ambient',
+    timeoutMs: 20_000,
+    drainTimeoutMs: 300,
+  }).catch((caught: unknown) => caught);
+  const pid = Number((await readFile(holder, 'utf8')).trim());
+  try {
+    expect(error).toMatchObject({ code: 'COMMAND_CLEANUP' });
+    expect(performance.now() - started).toBeLessThan(5000);
+    // Without the bound the same holder keeps the command until its deadline.
+    const unbounded = await runNativeCommand({
+      executable: '/bin/sh',
+      args: ['-c', `setsid -f /bin/sh -c 'echo $$ > "${other}"; exec sleep 30'; exit 0`],
+      envPolicy: 'ambient',
+      timeoutMs: 1500,
+    }).catch((caught: unknown) => caught);
+    expect(unbounded).toMatchObject({ code: 'COMMAND_LIMIT', reason: 'deadline' });
+    process.kill(Number((await readFile(other, 'utf8')).trim()), 'SIGKILL');
+  } finally {
+    process.kill(pid, 'SIGKILL');
+  }
+});
+
 test('caller-lifetime streaming has no hidden sixty-second deadline', async () => {
   const controller = new AbortController();
   const result = await runNativeCommand({

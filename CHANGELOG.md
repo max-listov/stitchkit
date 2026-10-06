@@ -15,6 +15,19 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/process` — `runNativeCommand` takes `onLeaderStarted({ pid })`, called once right
+  after the leader exists (a throw stops the command with that error), and `drainTimeoutMs`,
+  which bounds how long the output pipes may stay open after the leader exited: a holder that
+  left the group with `setsid` otherwise keeps the command waiting until `timeoutMs` or the
+  signal, and with the bound it ends with `COMMAND_CLEANUP`.
+
+### Documentation
+
+- `stitchkit/process` — the native IO guide no longer says that `cleanupTimeoutMs` bounds the drain
+  after the leader exited; it bounds the wait after a stop, and `drainTimeoutMs` bounds the drain.
+
 ## [0.105.1] - 2026-10-06
 
 ### Added

@@ -296,14 +296,18 @@ decoder and the operator sink stay with the application. Long signal-only comman
 bounded tar or capture commands get their own explicit limits.
 
 A child the caller holds until it exits is the same call. A guardian that forwards its own SIGTERM
-passes an abort signal and `stop: { target: 'leader', signal: 'SIGTERM', graceMs }`; it reads the
-exit code in `onLeaderSettled`, before the pipes drain, and stderr through `onOutput` or `capture`
-with `maxOutputBytes`, and `cleanupTimeoutMs` bounds the drain (`COMMAND_CLEANUP` when a holder
-keeps the pipe past it). A worker whose whole group must stop on abort is the default
-`target: 'group'`. A child that inherits the caller's terminal is outside this capability: every
-command runs in a group of its own, and a background group that reads the terminal is stopped
-by the kernel (`SIGTTIN`), so an interactive re-execution stays a plain spawn in the caller's
-group. Importing one leaf does not make
+passes an abort signal and `stop: { target: 'leader', signal: 'SIGTERM', graceMs }`. It records the
+pid in `onLeaderStarted({ pid })`, which runs once right after the leader exists (a throw stops the
+command with that error), reads the exit code and signal in `onLeaderSettled` before the pipes
+drain, and reads stderr through `onOutput` or `capture` with `maxOutputBytes`. `drainTimeoutMs`
+bounds how long the output pipes may stay open after the leader exited: a holder that left the
+group with `setsid` keeps them open, and without the option the command waits for it until
+`timeoutMs` or the signal; with it the command ends with `COMMAND_CLEANUP` (a holder inside the
+group is already stopped by `descendants`). A worker whose whole group must stop on abort is the
+default `target: 'group'`. A child that inherits the caller's terminal is outside this
+capability: every command runs in a group of its own, and a background group that reads the
+terminal is stopped by the kernel (`SIGTTIN`), so an interactive re-execution stays a plain
+spawn in the caller's group. Importing one leaf does not make
 installing the whole npm package smaller; choose a dependency after measuring packed size and its
 dependency closure.
 

@@ -91,6 +91,13 @@ export const NativeCommandOptionsSchema = z
           (v) => typeof v === 'function',
         )
         .optional(),
+      // Called once, right after the leader exists, with its pid; a throw stops the command with it.
+      onLeaderStarted: z
+        .custom<(event: { pid: number }) => void>((v) => typeof v === 'function')
+        .optional(),
+      // Bounds how long the output pipes may stay open after the leader exited; without it a
+      // holder outside the group keeps the command waiting until `timeoutMs` or the signal.
+      drainTimeoutMs: z.number().int().positive().max(MAX_TIMER_MS).optional(),
       stop: NativeCommandStopPolicySchema.default({
         target: 'group',
         signal: 'SIGTERM',

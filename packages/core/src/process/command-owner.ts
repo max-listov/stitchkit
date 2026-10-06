@@ -128,7 +128,7 @@ export function startNativeCommand(
   const { stdout: output, stderr: errorOutput, leader, closed } = launched;
   const cancelCloseDeadline = createLeaderCloseDeadline(
     leader,
-    driver?.closeTimeoutMs,
+    driver?.closeTimeoutMs ?? options.drainTimeoutMs,
     controller,
   );
   const drain = async (
@@ -181,6 +181,8 @@ export function startNativeCommand(
   const run = (async (): Promise<NativeCommandResult> => {
     try {
       launched.start();
+      const pid = acquired?.child.pid;
+      if (pid !== undefined) options.onLeaderStarted?.({ pid });
       const drains = Promise.all([
         drain(output, 'stdout', stdout),
         drain(errorOutput, 'stderr', stderr),
