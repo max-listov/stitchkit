@@ -12,6 +12,12 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects track Stitchkit `^0.108.0`; the template lockfile resolves 0.108.0. The
+  template uses neither the Telegram send-failure reasons nor native packaging, so its code is
+  unchanged.
+
 ## [0.6.15] - 2026-10-06
 
 ### Changed
