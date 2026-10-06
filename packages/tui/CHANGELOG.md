@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Targets stitchkit `^0.107.0` (peer range `^0.106.0` → `^0.107.0`). No source change: the
+  terminal uses neither `stitchkit/files/packaging` nor the Darwin loader that 0.107.0 changed.
+
 ## [0.2.1] - 2026-10-06
 
 ### Changed
