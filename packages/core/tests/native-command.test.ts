@@ -182,6 +182,18 @@ test('pre-spawn abort creates no command and deadlines bound a live command', as
   );
 });
 
+test('an option the type never saw is refused by name, a removed one with its replacement', () => {
+  // A spread is not checked for excess properties; the runtime refusal is the only one.
+  const removed: Record<string, unknown> = { killGraceMs: 500 };
+  expect(() => runNativeCommand({ ...command(''), timeoutMs: 100, ...removed })).toThrow(
+    "Unknown runNativeCommand option killGraceMs; use stop: { target: 'group', graceMs }",
+  );
+  const unknown: Record<string, unknown> = { graceMillis: 500 };
+  expect(() => runNativeCommand({ ...command(''), timeoutMs: 100, ...unknown })).toThrow(
+    'Unknown runNativeCommand option graceMillis',
+  );
+});
+
 test('caller-lifetime streaming has no hidden sixty-second deadline', async () => {
   const controller = new AbortController();
   const result = await runNativeCommand({

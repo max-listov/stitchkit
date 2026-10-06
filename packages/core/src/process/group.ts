@@ -99,15 +99,14 @@ export interface CommandGroupStop {
  * A group still visible after the grace (including members holding a pipe after
  * the leader exited, or Darwin zombies awaiting the reaper) is killed. The probe
  * backs off to 250 ms, so a grace of an hour costs a few thousand probes, not millions.
+ * Resolves `true` when the group still had a member to receive the first signal.
  */
-export async function stopCommandGroup(stop: CommandGroupStop): Promise<void> {
+export async function stopCommandGroup(stop: CommandGroupStop): Promise<boolean> {
   const { pid, policy } = stop;
   const deadline = performance.now() + policy.graceMs + stop.cleanupTimeoutMs;
-  if (stop.force || policy.killOn?.aborted) {
-    await signalUntilSettled(pid, 'SIGKILL', deadline);
-    return;
-  }
-  if (!(await signalUntilSettled(pid, policy.signal, deadline))) return;
+  if (stop.force || policy.killOn?.aborted)
+    return signalUntilSettled(pid, 'SIGKILL', deadline);
+  if (!(await signalUntilSettled(pid, policy.signal, deadline))) return false;
   const until = performance.now() + policy.graceMs;
   let interval = 10;
   let present = exists(pid);
@@ -120,6 +119,7 @@ export async function stopCommandGroup(stop: CommandGroupStop): Promise<void> {
     present = exists(pid);
   }
   if (present) await signalUntilSettled(pid, 'SIGKILL', deadline);
+  return true;
 }
 
 /** The leader of a stop with `target: 'leader'`: its exit state and the promise of its exit. */
@@ -136,16 +136,19 @@ export interface CommandLeader {
  * The leader's exit ends the grace at once: the rest of the group are processes the leader
  * left behind, and nothing in them was asked to cooperate. A leader that has already
  * exited is not signalled again, because its pid may be reused once it was reaped.
+ * Resolves `true` when the leader or a member of its group received a signal.
  */
 export async function stopCommandLeader(
   stop: CommandGroupStop & { leader: CommandLeader; leaderExit: Promise<unknown> },
-): Promise<void> {
+): Promise<boolean> {
   const { pid, policy, leader } = stop;
   const deadline = performance.now() + policy.graceMs + stop.cleanupTimeoutMs;
   const running = () => leader.exitCode === null && leader.signalCode === null;
+  let signalled = false;
   if (!stop.force && !policy.killOn?.aborted && pid !== undefined && running()) {
     try {
       process.kill(pid, policy.signal);
+      signalled = true;
     } catch (error) {
       if (!isErrno(error, 'ESRCH')) throw error;
     }
@@ -158,7 +161,7 @@ export async function stopCommandLeader(
     policy.killOn?.removeEventListener('abort', end);
     grace.abort();
   }
-  await signalUntilSettled(pid, 'SIGKILL', deadline);
+  return (await signalUntilSettled(pid, 'SIGKILL', deadline)) || signalled;
 }
 
 export function commandCleanupError(cause: unknown): NativeCommandError {

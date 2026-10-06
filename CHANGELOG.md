@@ -15,6 +15,33 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/process` — `NativeCommandResult.descendantsStopped` reports that the group still had
+  members after the leader exited and that `descendants: 'terminate-after-leader'` stopped them,
+  so a helper ended this way is visible in the result instead of only missing afterwards.
+- `stitchkit/files/packaging` — `assetPath` accepts `[hash]`, replaced by the first 16 hex digits
+  of the addon's published SHA256, so two installed versions get different companion names
+  (`addons/darwin-arm64-[hash].node`); the loader requires exactly that name.
+
+### Fixed
+
+- `stitchkit/files` — `sweepAtomicStaging` returns `[]` for a `directory` that does not exist yet
+  instead of throwing `ENOENT`; any other listing failure still throws.
+- `stitchkit/process` — an option `runNativeCommand` does not know is refused by name, and the
+  removed `killGraceMs` names its replacement, `stop: { target: 'group', graceMs }`: a spread
+  object can carry a key the type never checked.
+
+### Documentation
+
+- `stitchkit/process` — the 0.105.0 note that a descendant leaving the group with `setsid` is
+  unaffected holds only when it has left before the leader exits: `setsid helper &` and
+  `nohup helper &` race the leader and are stopped, `setsid -f helper` survives. The native IO
+  guide shows the measured forms, how a guardian or worker that holds a child until it exits
+  maps onto `runNativeCommand`, and why a child inheriting the terminal stays a plain spawn.
+- `stitchkit/files/packaging` — calling `createNativePackaging` has to stay in the build step;
+  importing the leaf from a module that is also bundled is side-effect free.
+
 ## [0.105.0] - 2026-10-05
 
 ### ⚠️ Breaking changes

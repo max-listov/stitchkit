@@ -39,53 +39,81 @@ const NativeCommandStopPolicySchema = z.strictObject({
 export type NativeCommandStopPolicy = z.input<typeof NativeCommandStopPolicySchema>;
 export type ParsedNativeCommandStopPolicy = z.output<typeof NativeCommandStopPolicySchema>;
 
+/** Options a release removed, each with what replaced it; a refusal names the replacement. */
+const REMOVED_NATIVE_COMMAND_OPTIONS: Readonly<Record<string, string>> = {
+  killGraceMs: "stop: { target: 'group', graceMs } (removed in 0.105.0)",
+};
+
+function unknownOptionMessage(keys: readonly PropertyKey[]): string {
+  return keys
+    .map((key) => {
+      const name = String(key);
+      const replacement = Object.hasOwn(REMOVED_NATIVE_COMMAND_OPTIONS, name)
+        ? REMOVED_NATIVE_COMMAND_OPTIONS[name]
+        : undefined;
+      return replacement === undefined
+        ? `Unknown runNativeCommand option ${name}`
+        : `Unknown runNativeCommand option ${name}; use ${replacement}`;
+    })
+    .join('; ');
+}
+
 export const NativeCommandOptionsSchema = z
-  .strictObject({
-    executable: z.string().min(1),
-    args: z.array(z.string()).default([]),
-    cwd: z.string().optional(),
-    env: z.record(z.string(), z.string()).optional(),
-    envPolicy: z.enum(['declared-only', 'ambient']).default('declared-only'),
-    signal: z.custom<AbortSignal>((v) => v instanceof AbortSignal).optional(),
-    timeoutMs: z.number().int().positive().max(MAX_TIMER_MS).optional(),
-    maxOutputBytes: z.number().int().positive().optional(),
-    capture: z.boolean().default(false),
-    stdin: z.custom<Uint8Array>((v) => v instanceof Uint8Array).optional(),
-    maxStdinBytes: z
-      .number()
-      .int()
-      .positive()
-      .default(1024 * 1024),
-    onOutput: z
-      .custom<
-        (
-          bytes: Uint8Array,
-          channel: 'stdout' | 'stderr',
-          signal: AbortSignal,
-        ) => void | Promise<void>
-      >((v) => typeof v === 'function')
-      .optional(),
-    // Observed leader exit precedes inherited-pipe drain. Failure also settles once.
-    onLeaderSettled: z
-      .custom<(event: NativeCommandSettlement, signal: AbortSignal) => void | Promise<void>>(
-        (v) => typeof v === 'function',
-      )
-      .optional(),
-    stop: NativeCommandStopPolicySchema.default({
-      target: 'group',
-      signal: 'SIGTERM',
-      graceMs: 100,
-    }),
-    // Safe default (I9): what the leader left in its group is killed once it has exited. A
-    // daemon that leaves the group (setsid) is not a member and is never touched.
-    descendants: z.enum(['terminate-after-leader', 'leave']).default('terminate-after-leader'),
-    cleanupTimeoutMs: z
-      .number()
-      .int()
-      .positive()
-      .max(30_000)
-      .default(COMMAND_CLEANUP_TIMEOUT_MS),
-  })
+  .strictObject(
+    {
+      executable: z.string().min(1),
+      args: z.array(z.string()).default([]),
+      cwd: z.string().optional(),
+      env: z.record(z.string(), z.string()).optional(),
+      envPolicy: z.enum(['declared-only', 'ambient']).default('declared-only'),
+      signal: z.custom<AbortSignal>((v) => v instanceof AbortSignal).optional(),
+      timeoutMs: z.number().int().positive().max(MAX_TIMER_MS).optional(),
+      maxOutputBytes: z.number().int().positive().optional(),
+      capture: z.boolean().default(false),
+      stdin: z.custom<Uint8Array>((v) => v instanceof Uint8Array).optional(),
+      maxStdinBytes: z
+        .number()
+        .int()
+        .positive()
+        .default(1024 * 1024),
+      onOutput: z
+        .custom<
+          (
+            bytes: Uint8Array,
+            channel: 'stdout' | 'stderr',
+            signal: AbortSignal,
+          ) => void | Promise<void>
+        >((v) => typeof v === 'function')
+        .optional(),
+      // Observed leader exit precedes inherited-pipe drain. Failure also settles once.
+      onLeaderSettled: z
+        .custom<(event: NativeCommandSettlement, signal: AbortSignal) => void | Promise<void>>(
+          (v) => typeof v === 'function',
+        )
+        .optional(),
+      stop: NativeCommandStopPolicySchema.default({
+        target: 'group',
+        signal: 'SIGTERM',
+        graceMs: 100,
+      }),
+      // Safe default (I9): what the leader left in its group is killed once it has exited. A
+      // daemon that leaves the group (setsid) is not a member and is never touched.
+      descendants: z
+        .enum(['terminate-after-leader', 'leave'])
+        .default('terminate-after-leader'),
+      cleanupTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(30_000)
+        .default(COMMAND_CLEANUP_TIMEOUT_MS),
+    },
+    {
+      // A spread can carry a key the type never sees; it is refused by name, never dropped.
+      error: (issue) =>
+        issue.code === 'unrecognized_keys' ? unknownOptionMessage(issue.keys) : undefined,
+    },
+  )
   .check((ctx) => {
     const input = ctx.value;
     if (!input.signal && input.timeoutMs === undefined)
@@ -116,12 +144,17 @@ export type ParsedNativeCommandOptions = z.output<typeof NativeCommandOptionsSch
 const NativeCommandResultSchema = z.object({
   exitCode: z.number().int().nullable(),
   signal: z.string().nullable(),
+  /**
+   * `true` when processes the leader left in its group were still there after it exited and
+   * were stopped by `descendants: 'terminate-after-leader'`; always `false` under `'leave'`.
+   */
+  descendantsStopped: z.boolean(),
   stdout: z.instanceof(Uint8Array),
   stderr: z.instanceof(Uint8Array),
 });
 /**
- * Exit code, signal and captured stdout and stderr bytes of a finished command; the buffers
- * stay empty unless `capture` was set.
+ * Exit code, signal, whether descendants were stopped after the leader exited, and captured
+ * stdout and stderr bytes of a finished command; the buffers stay empty unless `capture` was set.
  */
 export type NativeCommandResult = z.infer<typeof NativeCommandResultSchema>;
 

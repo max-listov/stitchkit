@@ -53,6 +53,7 @@ async function grandchildAfterSuccess(descendants: 'terminate-after-leader' | 'l
   expect(Number.isInteger(pid)).toBe(true);
   pids.push(pid);
   expect(result.exitCode).toBe(0);
+  expect(result.descendantsStopped).toBe(descendants === 'terminate-after-leader');
   return pid;
 }
 
@@ -90,6 +91,39 @@ describe('descendants policy of a native command', () => {
     expect(error).toBeInstanceOf(NativeCommandError);
     expect(error).toMatchObject({ code: 'COMMAND_LIMIT', reason: 'deadline' });
   });
+
+  test('a command that left nothing behind reports no descendants stopped', async () => {
+    const result = await runNativeCommand({
+      executable: '/bin/sh',
+      args: ['-c', 'exit 0'],
+      timeoutMs: 5000,
+    });
+    expect(result).toMatchObject({ exitCode: 0, descendantsStopped: false });
+  });
+
+  // `setsid` without `-f` runs in the background job and may not have left the group when the
+  // leader exits; `-f` returns only after the new session exists, so it is out of reach.
+  test.skipIf(!Bun.which('setsid'))(
+    'a descendant that left the group before the leader exited is not touched',
+    async () => {
+      const result = await runNativeCommand({
+        executable: '/bin/sh',
+        args: [
+          '-c',
+          "setsid -f /bin/sh -c 'echo $$; exec sleep 30 >/dev/null' </dev/null 2>/dev/null",
+        ],
+        envPolicy: 'ambient',
+        capture: true,
+        maxOutputBytes: 64,
+        timeoutMs: 5000,
+      });
+      const pid = Number(new TextDecoder().decode(result.stdout).trim());
+      expect(Number.isInteger(pid)).toBe(true);
+      pids.push(pid);
+      expect(result.descendantsStopped).toBe(false);
+      expect(processAlive(pid)).toBe(true);
+    },
+  );
 
   test('an unknown descendants policy is refused before a process starts', () => {
     const parsed = NativeCommandOptionsSchema.safeParse({

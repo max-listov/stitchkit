@@ -13,7 +13,7 @@ export function createCommandLifetime(input: {
   result: Promise<NativeCommandResult>;
   controller: AbortController;
   finished: () => boolean;
-  signal: () => Promise<void>;
+  signal: () => Promise<unknown>;
   cleanupTimeoutMs: number;
 }) {
   const acceptSettlement = (error: unknown) => {

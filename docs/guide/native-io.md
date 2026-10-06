@@ -66,7 +66,8 @@ The bytes are staged beside the target under `.stitchkit-<24 lowercase hex>.tmp`
 `writeFileAtomic`, `writeFileAtomicSync`, the managed writer and the chunk spool. A process killed
 between the staging and the publication (SIGKILL, OOM, power loss) leaves that file behind, and no
 later write removes it: a random name alone cannot tell an abandoned write from one in flight.
-Removing it is the caller's responsibility:
+Removing it is the caller's responsibility. A directory that does not exist yet has nothing to
+sweep and yields `[]`; a file standing where the directory should be, or a denied listing, throws:
 
 ```ts
 import { isAtomicStagingName, sweepAtomicStaging } from 'stitchkit/files'
@@ -195,7 +196,7 @@ permanent refusal is kept in the cause. The close of every owned pipe and the le
 observed separately, including the absence of a shared `child.close` during teardown. The caller or
 sink cause is kept; a cleanup failure is a `NativeCommandError` with `COMMAND_CLEANUP` and an
 `AggregateError` cause. Even an exited parent does not exclude a helper that holds a pipe. Windows
-refuses with `COMMAND_UNAVAILABLE`; a descendant that leaves the group on its own with `setsid` is
+refuses with `COMMAND_UNAVAILABLE`; a descendant that has left the group on its own with `setsid` is
 outside this capability. This is one-shot execution, not a PTY, a supervisor or a daemon host.
 
 ### Stopping a command: the `stop` policy
@@ -250,13 +251,28 @@ successfully:
 
 | `descendants` | After the leader exits |
 |---|---|
-| `'terminate-after-leader'` (the default) | The group is stopped right after `onLeaderSettled` returns and before the pipes drain: with `target: 'group'` by the same signal, grace, KILL sequence as cancellation; with `target: 'leader'` by KILL at once, since the leader has already exited. Descendants that left the group with `setsid` stay out of reach. |
+| `'terminate-after-leader'` (the default) | The group is stopped right after `onLeaderSettled` returns and before the pipes drain: with `target: 'group'` by the same signal, grace, KILL sequence as cancellation; with `target: 'leader'` by KILL at once, since the leader has already exited. A descendant that had already left the group with `setsid` when the leader exited stays out of reach. |
 | `'leave'` | Nothing. A helper started with its stdio detached keeps running. One that inherited stdout or stderr keeps the pipes open, and the command then waits for it until its deadline or abort. |
 
 Omitting the option means `'terminate-after-leader'`: a command does not leak the helpers it
-started. A real daemon detaches into its own session (`setsid`, as `daemon(3)` does), is no member
-of the group and is unaffected. Declare `'leave'` only for a helper that has to outlive the
-command while staying in its group:
+started. The result's `descendantsStopped` is `true` when the group still had members after the
+leader exited and they were stopped, so a helper that was ended this way is visible to the caller
+rather than only missing afterwards; under `'leave'` it is always `false`.
+
+A real daemon detaches into its own session (`setsid`, as `daemon(3)` does), is no member of the
+group and is unaffected, provided it has left the group **before the leader exits**. Leaving is
+the daemon's own system call, and the group is stopped as soon as the leader's exit is observed,
+so a helper started in the background races the leader:
+
+| launched by the leader as | after the leader exits |
+|---|---|
+| `setsid -f helper` (returns once the new session exists) | survives |
+| `setsid helper &`, `(setsid helper &)`, `nohup helper &` | stopped: the leader usually exits before the background job has left the group |
+| any of these under `descendants: 'leave'` | survives |
+
+Start a daemon so that the session exists before the leader returns (`setsid -f`, or the
+daemon's own double fork followed by the leader waiting for it), or declare `'leave'`. Declare
+`'leave'` only for a helper that has to outlive the command while staying in its group:
 
 ```ts
 await runNativeCommand({
@@ -277,7 +293,17 @@ regular-file read becomes `files.read`; JSON and schema parsing, receipt conflic
 and application locks stay with the application. A spawn, drain, capture and cancellation wrapper
 becomes `runNativeCommand`; shell policy, command admission, logging, redaction, the bytes-to-text
 decoder and the operator sink stay with the application. Long signal-only commands stay streaming;
-bounded tar or capture commands get their own explicit limits. Importing one leaf does not make
+bounded tar or capture commands get their own explicit limits.
+
+A child the caller holds until it exits is the same call. A guardian that forwards its own SIGTERM
+passes an abort signal and `stop: { target: 'leader', signal: 'SIGTERM', graceMs }`; it reads the
+exit code in `onLeaderSettled`, before the pipes drain, and stderr through `onOutput` or `capture`
+with `maxOutputBytes`, and `cleanupTimeoutMs` bounds the drain (`COMMAND_CLEANUP` when a holder
+keeps the pipe past it). A worker whose whole group must stop on abort is the default
+`target: 'group'`. A child that inherits the caller's terminal is outside this capability: every
+command runs in a group of its own, and a background group that reads the terminal is stopped
+by the kernel (`SIGTTIN`), so an interactive re-execution stays a plain spawn in the caller's
+group. Importing one leaf does not make
 installing the whole npm package smaller; choose a dependency after measuring packed size and its
 dependency closure.
 
@@ -405,7 +431,11 @@ package was built. A ready asset carries those verified `bytes` with the publish
 `sha256`; its Bun-compatible plugin integrates the same bytes with the same lazy native loader.
 Each call reads and hashes the selected addons, so call it once per build and reuse the result.
 The leaf is evolving. It requires no optional peer or Bun ambient declarations for Node imports.
-It must run unbundled from its installed package, never from an application's runtime artifact.
+Calling it must happen in a process that runs it from its installed package: it locates the
+package's `native-assets.json` beside its own file and throws `Native packaging must run from its
+installed Stitchkit package` anywhere else, such as inside an application's runtime artifact.
+Importing the leaf is side-effect free (it loads no addon and reads no file), so a module that
+both builds and is bundled may import it; only the call has to stay in the build step.
 
 ```ts
 import { createNativePackaging } from 'stitchkit/files/packaging'
@@ -432,7 +462,11 @@ for (const asset of native.assets) {
 ```
 
 `entryPath` and `assetPath` are relative paths inside the application's output root, without
-absolute paths, traversal or overlapping file/directory paths. `entryPath` is fixed, without
+absolute paths, traversal or overlapping file/directory paths. `assetPath` may contain `[hash]`,
+which becomes the first 16 hex digits of that addon's published SHA256: the digest is known before
+the build, so `addons/darwin-arm64-[hash].node` gives two installed versions of the package
+different companion names, and the loader requires exactly that name. It is the only template an
+addon path accepts. `entryPath` is fixed, without
 Bun naming templates such as `[dir]` or `[name]`. Companion JS builds require one entry, no splitting,
 and `naming.entry` exactly matching `entryPath`; the plugin rejects a mismatching layout.
 Choose any application layout; the framework does not prescribe an app directory or installer.

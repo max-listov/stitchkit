@@ -16,7 +16,8 @@ interface SignalableChild extends CommandLeader {
 /**
  * Deliver the stop signals to `child` by its stop policy. A child this package spawned as a
  * group leader is stopped as a group (`target: 'group'`) or leader first (`'leader'`); any
- * other child is only a leader, killed while it still runs.
+ * other child is only a leader, killed while it still runs. Resolves `true` when a signal
+ * reached a process.
  */
 export function signalCommandChild(
   child: SignalableChild,
@@ -28,7 +29,7 @@ export function signalCommandChild(
     cleanupTimeoutMs: number;
     force: boolean;
   },
-): Promise<void> {
+): Promise<boolean> {
   if (input.group && ownsCommandGroup(child)) {
     const stop = {
       pid: child.pid,
@@ -41,8 +42,9 @@ export function signalCommandChild(
       : stopCommandGroup(stop);
   }
   return Promise.resolve().then(() => {
-    if (child.exitCode === null && child.signalCode === null && !child.kill('SIGKILL'))
-      throw new Error('Command leader termination was refused');
+    if (child.exitCode !== null || child.signalCode !== null) return false;
+    if (!child.kill('SIGKILL')) throw new Error('Command leader termination was refused');
+    return true;
   });
 }
 

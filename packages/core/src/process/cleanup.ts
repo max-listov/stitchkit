@@ -13,7 +13,7 @@ export async function cleanupNativeCommand(input: {
   transport?: NativeCommandTransport;
   settle: (event: NativeCommandSettlement) => Promise<void>;
   event?: NativeCommandSettlement;
-  signal: () => Promise<void>;
+  signal: () => Promise<unknown>;
   timeoutMs: number;
 }): Promise<void> {
   const signalled = Promise.resolve().then(input.signal);

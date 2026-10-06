@@ -1966,7 +1966,7 @@ available from `stitchkit/contract`.
 | `ManagedFileInspectionInput` / `ManagedFileInspection` | _type_ | inspector prefix/name/declared media/signal input and validated metadata-only result |
 | `writeFileAtomic` / `writeFileAtomicSync` / `WriteFileAtomicOptions` | function / _type_ | replace a file atomically: a random staging name created exclusively (never through a planted link), the mode set on the descriptor before the file is visible (default `0o600`, not masked by the umask), `fsync`, rename; a failure leaves the target and no staging file. The asynchronous form keeps the event loop running. A process killed before publication leaves its staging file; sweeping it is the caller's job |
 | `isAtomicStagingName` | function | true for a staging file name of an atomic write of this library (`.stitchkit-<24 lowercase hex>.tmp`, also used by the managed writer and the chunk spool); the form is a stable contract, and changing it is a breaking change ([ADR 0242](../decisions/0242-atomic-staging-name-is-a-public-contract.md)) |
-| `sweepAtomicStaging` / `SweepAtomicStagingOptions` | function / _type_ | remove abandoned staging files from one `directory`: only regular files matching `isAtomicStagingName` and older than the required `olderThanMs`, never following a symlink or entering a subdirectory; stops on `signal`; returns the removed names |
+| `sweepAtomicStaging` / `SweepAtomicStagingOptions` | function / _type_ | remove abandoned staging files from one `directory`: only regular files matching `isAtomicStagingName` and older than the required `olderThanMs`, never following a symlink or entering a subdirectory; stops on `signal`; returns the removed names, `[]` for a `directory` that does not exist |
 | `withExclusiveLock` / `ExclusiveLockOptions` / `ExclusiveLock` / `ExclusiveLockOwner` | function / _type_ | run work under an exclusive lock between processes — a file recording its owner (pid, host, machine identity, time and nullable kernel process identity); waits up to `timeoutMs` (default 10 s) and stops on `signal`; a dead owner on this machine is taken over, a live, slow or foreign one never is; the lock is published with its owner already recorded (temporary file plus hard link), so a stalled holder is never displaced; a legacy empty lock file is taken by age only when `ownerlessGraceMs` is a number (default `null`: never; an abandoned empty reclaim guard is taken after 5 000 ms unless a value is set); exact `mode` is independent of umask; shared readers need a common group and traversable directories |
 | `ExclusiveLockError` | class | `LOCK_TIMEOUT` naming the resource and its holder, or `LOCK_ABORTED` with the signal's reason |
 | `createChunkSpool` | function | the server half of a chunked upload: parts on disk under `owner` + client-minted `uploadId`, each with a size+sha256 receipt; idempotent `open` and `put`, the first writer of a part wins across processes, `assemble` in order once every part is in, `sweep` of untouched uploads — [guide](../guide/client.md#chunked-uploads) |
@@ -2535,9 +2535,9 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 | Export | Kind | Purpose |
 |---|---|---|
 | `runNativeCommand` | function | caller-lifetime streaming or explicitly bounded binary capture |
-| `NativeCommandOptions` | type | executable/args, env policy, signal/deadline, bytes sink, finite cleanup limits, the `stop` policy and `descendants` (`'terminate-after-leader'`, the default: stop the group after the leader exits, or `'leave'`) |
+| `NativeCommandOptions` | type | executable/args, env policy, signal/deadline, bytes sink, finite cleanup limits, the `stop` policy and `descendants` (`'terminate-after-leader'`, the default: stop the group after the leader exits, or `'leave'`); an unknown key is refused by name, a removed one (`killGraceMs`) with its replacement |
 | `NativeCommandStopPolicy` | type | how a cancelled command stops: `target` `'group'` (signal every member) or `'leader'` (signal only the leader; its exit ends the grace), `signal` (default `SIGTERM`), `graceMs` (at most one hour) before KILL to the group, and `killOn`, an `AbortSignal` that skips the grace; default `{ target: 'group', signal: 'SIGTERM', graceMs: 100 }` |
-| `NativeCommandResult` | type | observed nullable exit code/signal and captured stdout/stderr bytes |
+| `NativeCommandResult` | type | observed nullable exit code/signal, `descendantsStopped` (members left in the group after the leader exited were stopped) and captured stdout/stderr bytes |
 | `NativeCommandError` | class | COMMAND_LIMIT with machine reason `deadline` or `output-budget`; COMMAND_UNAVAILABLE / COMMAND_CLEANUP have no limit reason. Preserves internal cause and existing constructor; caller-created limits without supplied reason remain unclassified |
 
 | `NativeCommandSettlement` | type | observed leader `exit` or terminal `error`, including synchronous native launch failure; `onLeaderSettled` runs once before drain, bounded by cleanupTimeoutMs, with a cancellable settlement signal; schema/pre-abort refusal creates no settlement obligation |
@@ -2553,6 +2553,8 @@ It resolves the installed package's target/version, reads each selected addon on
 against the `size` and `sha256` published in the package's `native-assets.json` (`formatVersion: 2`,
 written when Stitchkit is built). Call it once per build and reuse the result.
 `platform`, `architecture`, `delivery`, `entryPath` and `assetPath` are explicit public inputs;
+`assetPath` accepts one template, `[hash]`, replaced by the first 16 hex digits of the addon's
+published SHA256;
 `platform` is the closed set `'darwin'`, and another name is a type error and a schema refusal.
 The result is `ready` with verified assets and a structural Bun plugin, or `unsupported` /
 `missing` / `mismatch` with the safe code `NATIVE_TARGET_UNSUPPORTED`, `NATIVE_ASSET_MISSING` or

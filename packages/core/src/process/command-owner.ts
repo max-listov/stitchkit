@@ -66,7 +66,7 @@ export function startNativeCommand(
   });
   void result.catch(() => undefined);
   const signalOwned = (force = driver?.force) => {
-    if (!acquired) return Promise.resolve();
+    if (!acquired) return Promise.resolve(false);
     return signalCommandChild(acquired.child, {
       group: driver?.group !== false,
       policy: options.stop,
@@ -166,13 +166,14 @@ export function startNativeCommand(
   };
   // After an observed leader exit the descendants are stopped (unless the caller declared
   // `descendants: 'leave'`) before the pipes drain: a member holding an inherited pipe would otherwise hold the drain.
+  let descendantsStopped = false;
   const settleLeader = async (event: NativeCommandSettlement) => {
     await settle(event);
     // A command that is already stopping has its group handled by that stop.
     if (controller.signal.aborted) return;
     if (options.descendants !== 'terminate-after-leader' || event.kind !== 'exit') return;
     try {
-      await signalOwned();
+      descendantsStopped = await signalOwned();
     } catch (cause) {
       throw commandCleanupError(cause);
     }
@@ -187,7 +188,12 @@ export function startNativeCommand(
       await raceAbort(Promise.all([drains, leader.then(settleLeader)]), controller.signal);
       const status = await raceAbort(closed, controller.signal);
       if (spawnFailure !== undefined) throw spawnFailure;
-      return { ...status, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) };
+      return {
+        ...status,
+        descendantsStopped,
+        stdout: Buffer.concat(stdout),
+        stderr: Buffer.concat(stderr),
+      };
     } catch (error) {
       controller.abort(error);
       await cleanupNativeCommand({
