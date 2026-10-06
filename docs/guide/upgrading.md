@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: a stopped leader settles as stopped
+## Released migration: 0.106.0
+
+### a stopped leader settles as stopped
 
 **Who must act:** code passed to `onLeaderSettled` of `runNativeCommand` (`stitchkit/process`) that
 reads `kind: 'error'` as "the command was stopped". Code that only handles `kind: 'exit'`, or does
