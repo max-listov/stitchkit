@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.108.0] - 2026-10-06
+
 ### ⚠️ Breaking changes
 
 **Who must act:** code with an exhaustive `switch` or `Record` over `TelegramSendFailureReason` or
