@@ -24,11 +24,18 @@ const CommonOptions = {
     'Expected a fixed entry path without Bun naming templates',
   ),
 };
+/** Stands for the first {@link ASSET_HASH_LENGTH} hex digits of the addon's published SHA256. */
+const ASSET_HASH_TOKEN = '[hash]';
+const ASSET_HASH_LENGTH = 16;
+const AssetPathSchema = RelativePathSchema.refine(
+  (value) => !/[[\]]/.test(value.replaceAll(ASSET_HASH_TOKEN, '')),
+  'Expected an addon path whose only template is [hash]',
+);
 const SingleOptionsSchema = z.object({
   ...CommonOptions,
   architecture: z.string().min(1),
   delivery: z.enum(['companion', 'embedded']),
-  assetPath: RelativePathSchema,
+  assetPath: AssetPathSchema,
 });
 const MultipleOptionsSchema = z.object({
   ...CommonOptions,
@@ -36,7 +43,7 @@ const MultipleOptionsSchema = z.object({
     .array(z.string().min(1))
     .refine((targets): targets is [string, ...string[]] => targets.length > 0),
   delivery: z.literal('companion'),
-  assetPath: z.record(z.string().min(1), RelativePathSchema),
+  assetPath: z.record(z.string().min(1), AssetPathSchema),
 });
 const OptionsSchema = z.union([SingleOptionsSchema, MultipleOptionsSchema]).check((ctx) => {
   const input = ctx.value;
@@ -296,9 +303,9 @@ export function createNativePackaging(
   const specifiers: Record<string, string> = {};
   const embedded = new Map<string, Uint8Array>();
   for (const architecture of architectures) {
-    const outputPath =
+    const template =
       typeof input.assetPath === 'string' ? input.assetPath : input.assetPath[architecture];
-    if (!outputPath) throw new Error('Declared architecture has no output path');
+    if (!template) throw new Error('Declared architecture has no output path');
     const verified = readVerifiedAsset(
       root,
       published.assets[architecture],
@@ -307,6 +314,13 @@ export function createNativePackaging(
     );
     if ('refusal' in verified) return verified.refusal;
     const { sourcePath, bytes, size, sha256 } = verified;
+    // The published digest is known before the build, so a name carrying it is fixed here.
+    const outputPath = template.replaceAll(
+      ASSET_HASH_TOKEN,
+      sha256.slice(0, ASSET_HASH_LENGTH),
+    );
+    if (assets.some((asset) => asset.outputPath === outputPath))
+      throw new Error('Addons must have distinct output paths');
     if (input.delivery === 'embedded') embedded.set(sourcePath, new Uint8Array(bytes));
     const outputSpecifier = relative(dirname(input.entryPath), outputPath)
       .split('\\')

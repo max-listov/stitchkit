@@ -401,6 +401,39 @@ describe('native packaging against a published manifest', () => {
     );
   });
 
+  test('[hash] names a companion by its published digest, and the loader requires that name', async () => {
+    const hashed = ready({
+      ...options,
+      architecture: ['arm64', 'x64'],
+      assetPath: {
+        arm64: 'addons/darwin-arm64-[hash].node',
+        x64: 'addons/darwin-x64-[hash].node',
+      },
+    });
+    expect(hashed.assets.map((asset) => asset.outputPath)).toEqual([
+      `addons/darwin-arm64-${publishedManifest.assets.arm64.sha256.slice(0, 16)}.node`,
+      `addons/darwin-x64-${publishedManifest.assets.x64.sha256.slice(0, 16)}.node`,
+    ]);
+    const output = join(root, 'hashed');
+    const built = await Bun.build({
+      entrypoints: [join(root, 'input.js')],
+      outdir: output,
+      target: 'node',
+      naming: { entry: options.entryPath },
+      plugins: [hashed.plugin],
+    });
+    expect(built.success).toBe(true);
+    const edges = [
+      ...readFileSync(join(output, options.entryPath), 'utf8').matchAll(
+        /require\("([^"]+\.node)"\)/g,
+      ),
+    ].map((match) => resolve(dirname(join(output, options.entryPath)), match[1] ?? ''));
+    expect(edges).toEqual(hashed.assets.map((asset) => join(output, asset.outputPath)));
+    expect(() => packaging({ ...options, assetPath: 'addons/[name].node' })).toThrow(
+      'only template is [hash]',
+    );
+  });
+
   test('embedded delivery gives Bun the verified bytes, not a second read of the file', async () => {
     const embedded = ready({ ...options, delivery: 'embedded' });
     // A substitution after verification must not reach the artifact.
