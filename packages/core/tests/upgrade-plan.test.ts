@@ -72,3 +72,18 @@ describe('upgrade plan', () => {
     ).toBe(true);
   });
 });
+
+describe('the breaking heading', () => {
+  test('a heading the release gate accepts is one the plan finds', () => {
+    for (const heading of [
+      '### ⚠️ Breaking changes',
+      '### ⚠ Breaking changes',
+      '###  ⚠️  Breaking changes (0.5)',
+    ]) {
+      const document = `# Changelog\n\n## [0.2.0] — 2026-01-01\n\n${heading}\n\n**Who must act:** everyone.\n\n- Foo changed.\n\n## [0.1.0] — 2025-12-31\n`;
+      const plan = planUpgrade(document, '0.1.0', '0.2.0');
+      expect(plan.map(({ version }) => version)).toEqual(['0.2.0']);
+      expect(plan[0]?.whoMustAct).toBe('everyone.');
+    }
+  });
+});

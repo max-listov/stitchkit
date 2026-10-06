@@ -9,6 +9,7 @@ import type { BunPlugin } from 'bun';
 import { z } from 'zod';
 import {
   createNativePackaging,
+  inspectNativeArtifact,
   type NativePackagingEmbeddedOptions,
   type NativePackagingOptions,
   type NativePackagingResult,
@@ -491,5 +492,138 @@ describe('native packaging against a published manifest', () => {
     const addon = built.outputs.find((file) => file.path.endsWith('.node'));
     if (!addon) throw new Error('Embedded delivery did not give Bun the addon');
     expect(new Uint8Array(readFileSync(addon.path))).toEqual(fixtureBytes.arm64);
+  });
+
+  /** A second `stitchkit` installation beside the fixture, with its own default loader. */
+  const foreignInstallation = (directory: string, version: string) => {
+    const other = join(root, directory);
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'package.json'), JSON.stringify({ name: 'stitchkit', version }));
+    writeFileSync(
+      join(other, fixtureLayout.loader),
+      nativeLoaderSource({ arm64: './assets/arm.node' }, 'beside-loader'),
+    );
+    const entry = join(root, `${directory}-input.js`);
+    writeFileSync(
+      entry,
+      `export { default as load } from './${directory}/${fixtureLayout.loader}';`,
+    );
+    return { other, entry };
+  };
+
+  test('a loader of another installation fails the build and names both', async () => {
+    const companion = ready(options);
+    const embedded = readyEmbedded({
+      platform: 'darwin',
+      architecture: 'arm64',
+      delivery: 'embedded',
+    });
+    for (const [directory, version] of [
+      ['other-version', '9.9.9'],
+      ['same-version-elsewhere', '0.0.0-test'],
+    ] as const) {
+      const { other, entry } = foreignInstallation(directory, version);
+      for (const [plugin, extra] of [
+        [companion.plugin, { naming: { entry: options.entryPath }, splitting: false }],
+        [embedded.plugin, {}],
+      ] as const) {
+        const failure = await Bun.build({
+          entrypoints: [entry],
+          outdir: join(root, `foreign-${directory}`),
+          target: 'node',
+          plugins: [plugin],
+          ...extra,
+        }).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        const text = String(
+          failure instanceof AggregateError ? failure.errors.join('\n') : failure,
+        );
+        expect(text).toContain(`stitchkit 0.0.0-test (${root})`);
+        expect(text).toContain(`stitchkit ${version} (${other})`);
+        expect(text).toContain(
+          'Call createNativePackaging from the stitchkit the entry imports',
+        );
+      }
+    }
+  });
+
+  test('an entry of the managed file boundary and atomic writes builds with the plugin', async () => {
+    writeFileSync(
+      join(root, 'boundary.js'),
+      `export { createManagedFileBoundary, writeFileAtomic } from '${resolve(import.meta.dir, '../src/entrypoints/files.ts')}';`,
+    );
+    const built = await Bun.build({
+      entrypoints: [join(root, 'boundary.js')],
+      outdir: join(root, 'boundary'),
+      target: 'node',
+      naming: { entry: options.entryPath },
+      splitting: false,
+      plugins: [ready(options).plugin],
+    });
+    expect(built.success).toBe(true);
+    const [output] = built.outputs;
+    if (!output) throw new Error('no output');
+    expect(inspectNativeArtifact(new Uint8Array(await output.arrayBuffer()))).toBe(
+      'no-loader',
+    );
+  });
+
+  test('inspectNativeArtifact reads the loader an artifact carries', async () => {
+    const build = async (
+      name: string,
+      entry: string,
+      plugin?: NativePackagingResult<boolean>,
+    ) => {
+      const result = await Bun.build({
+        entrypoints: [join(root, entry)],
+        outdir: join(root, `inspect-${name}`),
+        target: 'node',
+        minify: name.endsWith('min'),
+        ...(plugin?.state === 'ready'
+          ? {
+              plugins: [plugin.plugin],
+              naming: { entry: options.entryPath },
+              splitting: false,
+            }
+          : {}),
+      });
+      const output = result.outputs.find((file) => file.kind === 'entry-point');
+      if (!output) throw new Error('no entry output');
+      return new Uint8Array(await output.arrayBuffer());
+    };
+    writeFileSync(
+      join(root, 'no-loader.js'),
+      'export const value = "STITCHKIT_NATIVE_NOT_PACKAGED";',
+    );
+    const packaging = ready(options);
+    expect(inspectNativeArtifact(await build('packaged', 'input.js', packaging))).toBe(
+      'packaged',
+    );
+    expect(inspectNativeArtifact(await build('packaged-min', 'input.js', packaging))).toBe(
+      'packaged',
+    );
+    expect(inspectNativeArtifact(await build('unpackaged', 'input.js'))).toBe('unpackaged');
+    expect(inspectNativeArtifact(await build('unpackaged-min', 'input.js'))).toBe(
+      'unpackaged',
+    );
+    // A compiled executable with the embedded plugin carries the plugin's loader.
+    const executable = join(root, 'inspect-compiled', 'proof');
+    const compiled = await Bun.build({
+      entrypoints: [join(root, 'input.js')],
+      compile: { outfile: executable },
+      plugins: [
+        readyEmbedded({ platform: 'darwin', architecture: 'arm64', delivery: 'embedded' })
+          .plugin,
+      ],
+    });
+    expect(compiled.success).toBe(true);
+    expect(inspectNativeArtifact(new Uint8Array(readFileSync(executable)))).toBe('packaged');
+    // Negative control: the error code alone is not a loader.
+    expect(inspectNativeArtifact(await build('no-loader', 'no-loader.js'))).toBe('no-loader');
+    // Bun stores source with a non-ASCII character as UTF-16; the marker is found there too.
+    const utf16 = Buffer.from(`"é" ${nativeLoaderSource({}, 'beside-loader')}`, 'utf16le');
+    expect(inspectNativeArtifact(new Uint8Array(utf16))).toBe('unpackaged');
   });
 });

@@ -10,6 +10,8 @@
 
 import { BOT_TOKEN_SECRET } from '../internal/secret-shapes';
 import { isRecord } from '../internal/typed';
+import { isTelegramNotDispatchedError } from './not-dispatched';
+import type { TelegramFetch } from './transport';
 
 /**
  * The secret half of a bot token — what follows the bot's numeric id and the
@@ -59,7 +61,11 @@ export interface TelegramBotApiCall {
   /** A local Bot API server, e.g. `http://127.0.0.1:8081`. Default: Telegram's. */
   readonly apiRoot?: string;
   readonly signal?: AbortSignal;
-  readonly fetch?: typeof fetch;
+  /**
+   * Default: the global `fetch`. `createTelegramBotTransport()` separates a request that never
+   * left (`TelegramNotDispatchedError`, safe to repeat) from one whose outcome is unknown.
+   */
+  readonly fetch?: TelegramFetch;
 }
 
 function numberField(value: unknown, key: string): number | undefined {
@@ -71,9 +77,10 @@ function numberField(value: unknown, key: string): number | undefined {
 /**
  * Call one Bot API method and return its `result`.
  *
- * A refusal throws `TelegramBotApiError`; a transport failure throws an error
- * whose message names the method and never the URL, since the URL holds the
- * token.
+ * A refusal throws `TelegramBotApiError`; a request that never left throws the
+ * transport's `TelegramNotDispatchedError` unchanged; any other transport failure
+ * throws an error whose message names the method and never the URL, since the URL
+ * holds the token.
  */
 export async function callTelegramBotApi(call: TelegramBotApiCall): Promise<unknown> {
   const root = (call.apiRoot ?? DEFAULT_API_ROOT).replace(/\/+$/, '');
@@ -87,6 +94,8 @@ export async function callTelegramBotApi(call: TelegramBotApiCall): Promise<unkn
     });
   } catch (error) {
     if (call.signal?.aborted) throw call.signal.reason;
+    // Its message names no URL; it is what tells a sender the request never left.
+    if (isTelegramNotDispatchedError(error)) throw error;
     const kind = error instanceof Error ? error.name : 'Error';
     throw new Error(`Telegram ${call.method} request failed (${kind})`);
   }

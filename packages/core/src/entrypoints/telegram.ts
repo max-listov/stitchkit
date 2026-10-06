@@ -37,6 +37,10 @@ export {
   type TelegramLocalFilesConfig,
 } from '../telegram/local-files';
 export {
+  TelegramNotDispatchedError,
+  type TelegramNotDispatchedStage,
+} from '../telegram/not-dispatched';
+export {
   createTelegramOperatorChannel,
   type TelegramChatId,
   type TelegramOperatorChannel,
@@ -57,6 +61,14 @@ export {
   type TelegramSendFailure,
   type TelegramSendFailureReason,
 } from '../telegram/send-failure';
+export {
+  createTelegramBotTransport,
+  type TelegramBotTransportOpen,
+  type TelegramBotTransportOptions,
+  type TelegramBotTransportResolve,
+  type TelegramBotTransportSocket,
+  type TelegramFetch,
+} from '../telegram/transport';
 export {
   createTelegramUpdateIntake,
   type TelegramUpdateEnvelope,

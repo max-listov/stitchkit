@@ -1,5 +1,61 @@
 # Upgrading stitchkit
 
+## Released migration: 0.108.0
+
+### a request that never left is its own send outcome
+
+**Who must act:** code with an exhaustive `switch` or `Record` over `TelegramSendFailureReason` or
+over `TelegramSendFailure['evidence']` (`stitchkit/telegram`). Code that reads `retryable` and
+`recipientUnreachable` needs no change.
+
+`classifyTelegramSendFailure` now returns `reason: 'not-dispatched'` with `evidence: 'transport'`
+for a `TelegramNotDispatchedError`: the request never left, so it is `retryable` and repeating it
+cannot duplicate a message
+([ADR 0253](../decisions/0253-a-telegram-request-that-never-left-is-safe-to-repeat.md)). Only
+`createTelegramBotTransport` throws that error; with the default `fetch` nothing changes at run time.
+
+1. Add the reason and the evidence to every exhaustive mapping:
+
+   ```ts
+   // before
+   const code: Record<TelegramSendFailureReason, string> = { /* … */ unknown: 'E_UNKNOWN' }
+   // after
+   const code: Record<TelegramSendFailureReason, string> = {
+     /* … */ 'not-dispatched': 'E_NOT_SENT', unknown: 'E_UNKNOWN',
+   }
+   ```
+
+   Search pattern: `TelegramSendFailureReason`, `TELEGRAM_SEND_FAILURE_REASONS` and `evidence ===`.
+2. Type-check: a `Record` or an exhaustive `switch` without the new members fails to compile.
+3. To use the distinction, pass `fetch: createTelegramBotTransport()` to the senders that need it
+   (see the [Telegram guide](telegram.md#a-transport-that-knows-whether-a-request-left)).
+
+### a packaging plugin packages only its own installation
+
+**Who must act:** builds that call `createNativePackaging` (`stitchkit/files/packaging`) from a
+`stitchkit` installation other than the one the bundled entry imports — typically a build tool that
+carries its own copy. Builds whose entry and plugin come from one installation are unchanged.
+
+Such a build used to succeed and ship the other installation's default Darwin loader, which refuses
+the addon on macOS at run time. It now fails, naming both versions and roots
+([ADR 0254](../decisions/0254-a-packaging-plugin-owns-one-loader-and-names-what-it-finds.md)).
+
+1. Create the plugin from the `stitchkit` the entry resolves, not from the build tool's copy:
+
+   ```ts
+   // before: the build tool's own stitchkit
+   import { createNativePackaging } from 'stitchkit/files/packaging'
+   // after: resolved from the project that owns the entry
+   const { createNativePackaging } = await import(
+     Bun.resolveSync('stitchkit/files/packaging', projectRoot)
+   )
+   ```
+
+   Search pattern: `createNativePackaging` in build tooling that is installed apart from the project.
+2. Check the artifact with `inspectNativeArtifact`: a correct build reads `packaged`. An artifact
+   built by 0.107.0 or earlier carries no loader marker and reads `no-loader` whatever it holds, so
+   rebuild before relying on the check; a test of `=== 'unpackaged'` alone passes such an artifact.
+
 ## Released migration: 0.107.0
 
 ### embedded native packaging names no paths
@@ -1248,6 +1304,38 @@ of the range if you want a different one.
 
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
 current one *up to* your target, and apply each snippet.
+
+### Does an item touch your project?
+
+Every breaking item since 0.104.0 carries one machine line, `**Affects:**`, naming what it changes
+in a form that is read without guessing from prose:
+
+```md
+**Affects:** `stitchkit/files/packaging` createNativePackaging(delivery: 'embedded')
+**Affects:** `stitchkit/contract`, `stitchkit/server` AppError; `stitchkit` ApiError
+**Affects:** `stitchkit/process` behaviour
+**Affects:** `stitchkit/agent-runtime/harness-tools` *
+```
+
+Targets are separated by `; `. Each starts with one or more backticked entrypoints, then lists the
+exports it changes (an optional parenthesised qualifier names the option or member), or says
+`behaviour` for a change of semantics no import name reveals, or `*` for every import of a removed
+entrypoint. `stitchkit upgrade` reads your project's imports (`--cwd`, default `.`; TypeScript, JavaScript,
+Vue and Svelte files; not `node_modules`, and not a `dist`, `build`, `out` or `coverage` folder
+beside a `package.json`, which is build output) and gives each item one verdict:
+
+- **affects this project** — with every `path:line` that imports a named export, or a namespace;
+- **not used here** — nothing imported matches;
+- **behavioural — check by hand** — with the files that import the entrypoint;
+- **not declared — check by hand** — an item from before the line existed, with the files that
+  import the entrypoints it leads with.
+
+`--json` prints the same verdicts per item for a CI step. The scan reads static `import` and
+`export … from` declarations, bare imports and `import()` / `require()` of a literal specifier; a
+specifier built at run time is invisible to it, and so is a file of another kind (`.astro`,
+`.mdx`). A directory or file the process may not read is
+listed under **Not scanned** (`unscanned` in `--json`) instead of ending the plan: the verdicts do
+not cover it.
 
 ## Released migration: 0.88.0
 

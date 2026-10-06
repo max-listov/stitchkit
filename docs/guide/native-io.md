@@ -4,7 +4,7 @@ description: Native IO for Bun and Node with an explicitly chosen durability, sa
 type: guide
 status: active
 created: 2026-10-01 20:44 +07:00
-updated: 2026-10-05 18:05 +07:00
+updated: 2026-10-06 19:45 +07:00
 ---
 
 # Native IO
@@ -462,11 +462,20 @@ spool never load it, on any operating system. The package is free of import side
 
 Check an artifact by its loader, never by whether it holds `.node` bytes: Bun can copy the addon
 into a compiled executable even without the plugin, and the unpackaged loader does not use it.
-Search the artifact for `STITCHKIT_NATIVE_NOT_PACKAGED` in both latin1 and UTF-16LE, because Bun
-stores source text with non-ASCII characters as UTF-16. Present: the unpackaged loader is inside,
-and every call above refuses on macOS. Absent in a plugin build: the static loader is inside
-(`/$bunfs/root/darwin-<arch>-<hash>.node` in an executable, the companion path in a JS build).
-Absent without the plugin: nothing in the artifact needs the addon.
+`inspectNativeArtifact(bytes)` from `stitchkit/files/packaging` reads the marker every generated
+loader carries and answers `packaged` (the plugin's static loader is inside), `unpackaged` (the
+default loader is inside, and every call above refuses on macOS) or `no-loader` (nothing in the
+artifact loads the addon). It reads both latin1 and UTF-16LE, because Bun stores source text with
+non-ASCII characters as UTF-16, and it does not mistake the `STITCHKIT_NATIVE_NOT_PACKAGED` error
+code, which every bundle with a lock carries, for a loader. Artifacts built by 0.107.0 or earlier
+carry no marker and read `no-loader`.
+
+```ts
+import { inspectNativeArtifact } from 'stitchkit/files/packaging'
+
+const loader = inspectNativeArtifact(await Bun.file('dist/cli').bytes())
+if (loader === 'unpackaged') throw new Error('dist/cli was built without native packaging')
+```
 
 ```sh
 bun build src/native.ts --target=bun --minify --outfile=dist/native.js
@@ -546,6 +555,11 @@ addon path accepts. `entryPath` is fixed, without
 Bun naming templates such as `[dir]` or `[name]`. Companion JS builds require one entry, no splitting,
 and `naming.entry` exactly matching `entryPath`; the plugin rejects a mismatching layout.
 Choose any application layout; the framework does not prescribe an app directory or installer.
+The plugin packages the loader of the installation it was created from. A build whose entry
+imports another `stitchkit` installation — another version, or the same version under another
+path, as when a build tool carries its own copy — fails with an error naming both versions and
+roots: that installation's loader would refuse the addon at run time, so the artifact is never
+written. Call `createNativePackaging` from the `stitchkit` the entry imports.
 Keep every bundler output and write `asset.bytes`; never read the addon from `node_modules` a
 second time. An installed addon whose size or SHA256 differs from the published manifest refuses
 with `mismatch` / `NATIVE_ASSET_DIGEST_MISMATCH`, so a file substituted after installation never

@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createNativePackaging } from 'stitchkit/files/packaging';
+import { createNativePackaging, inspectNativeArtifact } from 'stitchkit/files/packaging';
 
 const marker = 'Darwin artifact native controls: ok';
 const entry = path.join(import.meta.dirname, 'darwin-artifact-controls.mjs');
@@ -106,6 +106,12 @@ async function buildArtifact(name, target, stage, supported = false) {
   }
   if (compiled) executable = path.join(isolated, 'proof');
   assert.ok(executable);
+  // The artifact names its own loader: the plugin's static one, or the default one that refuses.
+  assert.equal(
+    inspectNativeArtifact(readFileSync(executable)),
+    supported ? 'packaged' : 'unpackaged',
+    `${name} carries the wrong loader`,
+  );
   const expectedFiles = result.outputs.map((artifact) => ({
     relative: path.relative(output, artifact.path),
     sha256: hash(readFileSync(artifact.path)),

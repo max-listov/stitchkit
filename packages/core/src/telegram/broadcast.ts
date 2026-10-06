@@ -29,6 +29,7 @@ import {
   type TelegramBroadcastRecipient,
   writeRecipients,
 } from './broadcast-state';
+import type { TelegramFetch } from './transport';
 
 export type { TelegramBroadcastOutcome, TelegramBroadcastRecipient } from './broadcast-state';
 
@@ -229,7 +230,7 @@ export interface TelegramBroadcastSenderConfig {
   readonly token: string;
   readonly message: TelegramBroadcastMessage;
   readonly apiRoot?: string;
-  readonly fetch?: typeof fetch;
+  readonly fetch?: TelegramFetch;
 }
 
 /** The standard `send`: `sendMessage` or `copyMessage` through the Bot API, no bot library. */

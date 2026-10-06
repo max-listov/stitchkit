@@ -6,9 +6,13 @@ import {
   type NativeAssetEntrySchema,
   NativeAssetManifestSchema,
   nativeAssetDigest,
-  nativeLoaderSource,
   RelativePathSchema,
 } from './native-packaging-layout';
+import {
+  type NativePackagingOwner,
+  type NativePackagingPlugin,
+  nativePlugin,
+} from './native-packaging-plugin';
 
 const PackageManifestSchema = z.object({
   name: z.literal('stitchkit'),
@@ -153,36 +157,6 @@ export type NativePackagingAsset<Multiple extends boolean = false> = Multiple ex
 export type NativePackagingEmbeddedAsset = z.infer<typeof EmbeddedAssetSchema>;
 
 /**
- * Structural Bun plugin protocol: declarations need no Bun runtime or ambient types.
- */
-export type NativePackagingPlugin = {
-  name: string;
-  setup: (build: {
-    config: {
-      splitting?: boolean;
-      naming?: string | { entry?: string };
-      entrypoints: string[];
-    };
-    onLoad: (
-      options: { filter: RegExp },
-      callback: (args: {
-        path: string;
-      }) =>
-        | { contents: string; loader: 'js' }
-        | { contents: Uint8Array; loader: 'napi' }
-        | undefined,
-    ) => unknown;
-    onResolve: (
-      options: { filter: RegExp },
-      callback: (args: {
-        path: string;
-        importer: string;
-      }) => { path: string; external: boolean } | undefined,
-    ) => unknown;
-  }) => void;
-};
-
-/**
  * `ready` with the verified assets to write and the Bun plugin to add, or a refusal naming an
  * unsupported architecture, a missing asset or an asset whose bytes differ from the published
  * digest (`mismatch` carries the `expected` and `actual` size and SHA256); check `state` first.
@@ -299,11 +273,8 @@ function readVerifiedAsset(
   return { sourcePath, bytes, size: published.size, sha256: published.sha256 };
 }
 
-interface InstalledPackage {
-  root: string;
+interface InstalledPackage extends NativePackagingOwner {
   published: z.infer<typeof NativeAssetManifestSchema>;
-  version: string;
-  loaderPath: string;
 }
 
 function installedPackage(): InstalledPackage {
@@ -319,51 +290,7 @@ function installedPackage(): InstalledPackage {
     published,
     version: manifest.version,
     loaderPath: resolve(root, published.loader),
-  };
-}
-
-/**
- * The one Bun plugin of both deliveries: it swaps the default loader for a static one, hands Bun
- * the verified bytes of each embedded addon, and keeps companion addons external to a build
- * whose single entry is named exactly `entryPath`.
- */
-function nativePlugin(
-  loaderPath: string,
-  specifiers: Readonly<Record<string, string>>,
-  embedded: ReadonlyMap<string, Uint8Array>,
-  companionEntry: string | undefined,
-): NativePackagingPlugin {
-  const contents = nativeLoaderSource(specifiers, 'static');
-  const external = new Set(Object.values(specifiers));
-  return {
-    name: 'stitchkit-native-packaging',
-    setup(build) {
-      if (companionEntry !== undefined) {
-        if (build.config.entrypoints.length !== 1)
-          throw new Error('Native companion packaging requires exactly one entrypoint');
-        if (build.config.splitting)
-          throw new Error('Native companion packaging requires splitting: false');
-        const naming = build.config.naming;
-        const entry = typeof naming === 'string' ? naming : naming?.entry;
-        if (entry !== companionEntry)
-          throw new Error('Native companion packaging naming.entry must match entryPath');
-      }
-      build.onLoad({ filter: /\.[cm]?js$/ }, (args) =>
-        args.path === loaderPath ? { contents, loader: 'js' } : undefined,
-      );
-      // Embedded delivery hands Bun the verified bytes, never a second read of the file.
-      if (embedded.size > 0)
-        build.onLoad({ filter: /\.node$/ }, (args) => {
-          const bytes = embedded.get(args.path);
-          return bytes ? { contents: bytes, loader: 'napi' } : undefined;
-        });
-      if (companionEntry !== undefined)
-        build.onResolve({ filter: /./ }, (args) =>
-          args.importer === loaderPath && external.has(args.path)
-            ? { path: args.path, external: true }
-            : undefined,
-        );
-    },
+    loaderName: published.loader,
   };
 }
 
@@ -389,7 +316,7 @@ function embedNative(
     packageVersion: installed.version,
     assets: [{ size, sha256, bytes }],
     plugin: nativePlugin(
-      installed.loaderPath,
+      installed,
       { [architecture]: sourcePath },
       new Map([[sourcePath, new Uint8Array(bytes)]]),
       undefined,
@@ -438,7 +365,7 @@ function packageCompanion(
     architecture: typeof input.architecture === 'string' ? architectures[0] : architectures,
     packageVersion: installed.version,
     assets,
-    plugin: nativePlugin(installed.loaderPath, specifiers, new Map(), input.entryPath),
+    plugin: nativePlugin(installed, specifiers, new Map(), input.entryPath),
   };
 }
 

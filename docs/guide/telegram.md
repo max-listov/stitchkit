@@ -220,8 +220,8 @@ and pacing/progress intervals must fit native timers. The optional
 when the signal aborts if a custom sleeper ignores it. A send already in flight
 finishes and is recorded before stopping.
 
-Without `classify`, known Bot API 429, unreachable-recipient, malformed-message
-and server-error behavior remains. Unknown/no-status failures now halt as
+Without `classify`, known Bot API 429, unreachable-recipient, malformed-message,
+server-error and not-dispatched behavior remains. Unknown/no-status failures now halt as
 uncertain, rather than being automatically retried. Existing custom `send`
 implementations that relied on those retries must supply an explicit classifier
 for proven pre-effect failures. `report.halt` now carries
@@ -239,6 +239,36 @@ The installed
 [`telegram-broadcast-classifier.mjs`](../../packages/core/scripts/consumer-lane/fixtures/minimal/src/telegram-broadcast-classifier.mjs)
 fixture checks injected rate limits, ambiguity/no resend, wait budgets and abort
 on Bun and Node without a client SDK.
+
+## A transport that knows whether a request left
+
+`fetch` folds establishing the connection and waiting for the answer into one failure. From that
+failure nobody can say whether Telegram saw the message, so the senders above treat every network
+failure as unknown: a broadcast records the recipient `uncertain` and the operator channel drops
+the message rather than risk a duplicate. On a route that sometimes fails to connect at all, that
+loses messages that never left.
+
+`createTelegramBotTransport()` connects first and writes the request only on an established
+connection. Every failure before the first byte is written is `TelegramNotDispatchedError`
+(`stage`: `lookup`, `connect` or `request`), and `classifyTelegramSendFailure` reads it as
+`not-dispatched` — `retryable`, with `evidence: 'transport'`. A broadcast retries it as
+`transient`; the operator channel sends it again. A failure after the request was written stays
+an outcome nobody can know.
+
+```ts
+import { createTelegramBotTransport, telegramOperatorSender } from 'stitchkit/telegram'
+
+const transport = createTelegramBotTransport()
+const send = telegramOperatorSender({ token: env.BOT_TOKEN, fetch: transport })
+```
+
+Pass it as `fetch` to `callTelegramBotApi`, `telegramBroadcastSender`, `telegramOperatorSender`
+or the webhook calls. Addresses come in the system resolver's order with no family forced; the
+next address starts 250 ms later (Happy Eyeballs), and a round with no connection is repeated
+with new sockets inside `connectBudgetMs` (default 5 s, which also bounds the address lookup; each
+round waits `connectAttemptMs`, default 2 s). The answer must arrive within `responseTimeoutMs` (default 30 s) and fit
+`maxResponseBytes` (default 1 MiB). It speaks HTTP/1.1 over `https:`, and over `http:` for a
+local Bot API server, and it uses no proxy: where the network needs one, keep `fetch`.
 
 ## Message markup
 

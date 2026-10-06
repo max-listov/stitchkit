@@ -141,6 +141,7 @@ describe('the reasons as a list', () => {
       'rate-limited': 'E_LIMIT',
       'message-invalid': 'E_MESSAGE',
       'server-error': 'E_TELEGRAM',
+      'not-dispatched': 'E_NOT_SENT',
       unknown: 'E_UNKNOWN',
     };
     expect(Object.keys(codes).sort()).toEqual([...TELEGRAM_SEND_FAILURE_REASONS].sort());

@@ -51,9 +51,9 @@ own, recorded as an ADR.
 | `stitchkit/cli/publish` | build and release tooling (Bun or Node, POSIX) | evolving | `publishCli` — commit a verified CLI distribution and move its public manifest last; see [CLI guide](cli.md#publishing-a-complete-version) |
 | `stitchkit/remote` | browser **and** server | stable | peer-free `implementRemote` for thin HTTP proxy processes |
 | `stitchkit/process` | server (Bun or Node, POSIX) | evolving | finite native commands, byte sinks, bounded capture and process-group cancellation |
-| `stitchkit/files/packaging` | build time (Bun or Node) | evolving | installed native asset graph, integrity and Bun packaging plugin; no runtime install policy |
+| `stitchkit/files/packaging` | build time (Bun or Node) | evolving | installed native asset graph, integrity, Bun packaging plugin and the artifact loader check; no runtime install policy |
 | `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
-| `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, resumable broadcasts, the operator channel with dedupe, local Bot API files, webhook ownership and durable webhook update intake |
+| `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, resumable broadcasts, the operator channel with dedupe, a Bot API transport that separates a request that never left from an unknown outcome, local Bot API files, webhook ownership and durable webhook update intake |
 | `stitchkit/telegram/html` | browser and server | evolving | Telegram's HTML as a tree — clean any markup to what Telegram accepts, cut long text into valid parts by what the reader sees, check markup before it is sent |
 | `stitchkit/telegram/screens` | server (Bun or Node) | evolving | a bot's menus as declared screens over grammY — typed paths, actions and input, message reconciliation, state in any `StorageAdapter`, a test chat |
 | `stitchkit/tracking` | browser **and** server | evolving | visitor-tracking mechanics — `createTrackingClient`, the tab-shared outbox, the page-leave beacon, attribution, the contract factory; no event vocabulary, no React |
@@ -64,7 +64,7 @@ own, recorded as an ADR.
 | `stitchkit/oauth` | browser **and** server | evolving | provider-neutral Authorization Code + PKCE request and one-shot callback transaction mechanics |
 | `stitchkit/google` | server (Bun or Node) | evolving | optional Google code exchange and verified OIDC identity adapter |
 | `stitchkit/observability` | server | stable<br>_redefined in 2 of the 52 minors since 0.56.2, most recently 0.92.0_ | request/tool event projections — `createObservability`, trace context, sanitisation |
-| `stitchkit/testing` | tests on Bun or Node | stable | in-process generated clients over a real Fetch handler, plus the managed-resource conformance kit |
+| `stitchkit/testing` | tests on Bun or Node | stable | in-process generated clients over a real Fetch handler, the managed-resource conformance kit and manual time for schedules and retries |
 | `stitchkit/declaration` | browser + build and deployment tooling (Bun or Node) | evolving | `ProjectDeclarationSchema` — the one machine-readable statement a repository makes about itself |
 | `stitchkit/react` | browser + server rendering | stable | `createCursorQuery`, `createCacheBridge`, QueryClient and `ApiError` retry policy |
 | `stitchkit/react/keyboard` | browser | evolving | which part of a screen gets a key — ordered layers, one Escape per level, list zones with real focus; see [keyboard guide](keyboard.md) |

@@ -62,7 +62,9 @@ schema.
   a valid-looking absolute path; reading it is exactly what puts the path into the artifact.
 - **A build-time warning when the loader enters an unpackaged bundle.** Only a plugin can see the
   build, and a build without the plugin is the case to detect; the named runtime refusal and the
-  documented artifact check cover it without a second mechanism.
+  documented artifact check cover it without a second mechanism. (Amended by ADR 0254: the check is
+  `inspectNativeArtifact`, which reads a loader marker; the error code alone is in every bundle with a
+  lock and proves nothing.)
 - **Keep `entryPath`/`assetPath` optional for embedded delivery and ignore them.** An accepted input
   that does nothing is the confusion being removed.
 

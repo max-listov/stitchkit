@@ -20,6 +20,7 @@ import { TELEGRAM_TEXT_LIMIT } from './html/nodes';
 import { truncateTelegramHtml } from './html/render';
 import { createTelegramOperatorDedupe, type TelegramOperatorDedupe } from './operator-dedupe';
 import { classifyTelegramSendFailure, type TelegramSendFailure } from './send-failure';
+import type { TelegramFetch } from './transport';
 
 export type TelegramChatId = number | string;
 
@@ -292,7 +293,7 @@ export interface TelegramOperatorSenderConfig {
   readonly apiRoot?: string;
   /** Default: plain text, so an operator message never fails on entity parsing. */
   readonly parseMode?: 'HTML' | 'MarkdownV2';
-  readonly fetch?: typeof fetch;
+  readonly fetch?: TelegramFetch;
 }
 
 /**

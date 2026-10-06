@@ -75,8 +75,11 @@ The browser-and-server entrypoint. Re-exports everything from
 | `LiveStateSource` / `LiveStateSourceOpenInput` / `LiveStateSourceOpenResult` | _types_ | host binding for one continuous snapshot/event boundary; transport retry and cursor semantics remain host-owned |
 | `LiveStateControllerError` / `LiveStateSubscriberError` | _types_ | isolated observer failure payloads that do not change source or subscriber truth |
 | `createRetainedTopics` | function | retained last-value store for sticky events — [guide](../guide/realtime.md#sticky-events) |
-| `parseSSE` | function | parse an SSE `Response` into an async generator — [guide](../guide/client.md#sse) |
-| `parseNDJSON` | function | parse bounded fatal-UTF-8 NDJSON; blank keep-alives are skipped and `finalLine: 'require-newline'` can make the delimiter mandatory — [guide](../guide/client.md#ndjson) |
+| `parseSSE` | function | parse SSE from a `Response`, a web stream or an async byte iterable into an async generator — [guide](../guide/client.md#sse) |
+| `parseNDJSON` | function | parse bounded fatal-UTF-8 NDJSON from a `Response`, a `ReadableStream<Uint8Array>` or an `AsyncIterable<Uint8Array>` (a child's stdout); blank keep-alives are skipped, `finalLine: 'require-newline'` makes the delimiter mandatory and `signal` cancels the source — [guide](../guide/client.md#any-byte-source) |
+| `createNDJSONDecoder` / `NDJSONDecoder` | function / _type_ | the same bounded NDJSON reading driven by `push(chunk)` / `end()`, for a socket `data` callback |
+| `StreamByteSource` | _type_ | `Response \| ReadableStream<Uint8Array> \| AsyncIterable<Uint8Array>`, what the NDJSON and SSE readers accept |
+| `StreamLineLimitError` / `StreamTruncatedLineError` | class | a line past `maxLineBytes` (`limitBytes`, `lineBytes`; a `RangeError`) and a source ended inside a line under `require-newline` (`lineBytes`; a `SyntaxError`) |
 | `resumableIterator` | function | re-open a long-lived stream from the last delivered cursor, with jittered backoff, a caller-owned terminal item and prompt abort — [guide](../guide/client.md#resumable-streams) |
 | `createBackoff` | function | exponential backoff with subtractive jitter as a value: `next()` / `reset()` |
 | `ContractStreamFrameSchema` / `ContractStreamFrame` | schema / _type_ | default on-the-wire `data` / safe `error` / `end` envelope of a contract-first stream |
@@ -1890,6 +1893,9 @@ handler pipeline without opening a TCP port.
 |--------|------|---------|
 | `createHandlerTestClient` | function | one contract client backed by an in-process `FetchHandler` |
 | `createHandlerTestClients` | function | exact contract-registry batch form |
+| `createManualClock` / `ManualClock` | function / _type_ | manual time for schedules, retries and deadlines: `now`, `wallNow`, `schedule`, `advance(ms)` firing due timers in order with real event-loop yields between them, `until`, `pending` and `hold`; a `ManagedScheduleClock`, `DurabilityClock`, `RevisionSignalClock` and `BoundedAdmissionClock` — [guide](../guide/testing-and-deployment.md#manual-time-for-schedules-and-retries) |
+| `ManualClockOptions` / `ManualClockUntilOptions` / `ManualClockTimer` / `ManualClockHold` | _types_ | start and wall instants, event-loop turns per firing and the real-time hold limit; `until` step and manual limit; a cancellable timer; a hold that is released or parked |
+| `ManualClockError` / `ManualClockErrorCode` | class / _type_ | `MANUAL_CLOCK_HOLD_TIMEOUT` naming the open holds, or `MANUAL_CLOCK_LIMIT` when `until` runs out |
 | `runManagedResourceConformance` | function | run the canonical deterministic lifecycle matrix against a fresh consumer-owned `ManagedResource` fixture; resolves `void` or throws `ManagedResourceConformanceError` with a stable scenario ID and normalized trace |
 | `ManagedResourceConformanceScenarioIdSchema` / `ManagedResourceConformanceScenarioId` | schema / _type_ | stable clean, rollback, readiness/completion, activation, shutdown-race and forced-cleanup scenario vocabulary |
 | `ManagedResourceConformanceScenarioSchema` / `ManagedResourceConformanceScenario` | schema / _type_ | discriminated scenario record including whether the controlled resource is required |
@@ -1999,7 +2005,10 @@ injected grammY bot. → ADR 0143, ADR 0201 — [guide](../guide/telegram.md)
 | `TelegramInitDataRefusal` | _type_ | `missing-hash` / `signature-mismatch` / `malformed` / `expired` — an expired string is not a forged one |
 | `classifyTelegramSendFailure` | function | name a refused Bot API send and separate "retry this send" from "stop addressing this recipient" |
 | `TelegramSendFailure` | _type_ | reason, `status`, Telegram-stated `retryAfterSeconds`, `retryable`, `recipientUnreachable` and which evidence produced the answer |
-| `TelegramSendFailureReason` / `TELEGRAM_SEND_FAILURE_REASONS` | _type_ / constant | `blocked-by-user` / `user-deactivated` / `chat-not-found` / `not-started` / `rate-limited` / `message-invalid` / `server-error` / `unknown`, and the same as a list; a `Record<TelegramSendFailureReason, …>` over them fails to compile when a reason is added |
+| `createTelegramBotTransport` / `TelegramBotTransportOptions` | function / _type_ | a `fetch` for the Bot API senders that connects before it writes, so a failure before the first byte is `TelegramNotDispatchedError`; connection attempt and budget, answer timeout and size, injectable resolver and socket factory — [guide](../guide/telegram.md#a-transport-that-knows-whether-a-request-left) |
+| `TelegramFetch` / `TelegramBotTransportOpen` / `TelegramBotTransportResolve` / `TelegramBotTransportSocket` | _types_ | the `(url, init) => Promise<Response>` the senders take; the transport's socket factory, resolver and the structural socket it needs (a Node `net.Socket` or `tls.TLSSocket` fits) |
+| `TelegramNotDispatchedError` / `TelegramNotDispatchedStage` | class / _type_ | a request that provably never left (`lookup`, `connect` or `request`), so repeating it cannot duplicate a message |
+| `TelegramSendFailureReason` / `TELEGRAM_SEND_FAILURE_REASONS` | _type_ / constant | `blocked-by-user` / `user-deactivated` / `chat-not-found` / `not-started` / `rate-limited` / `message-invalid` / `server-error` / `not-dispatched` / `unknown`, and the same as a list; a `Record<TelegramSendFailureReason, …>` over them fails to compile when a reason is added |
 | `runTelegramBroadcast` | function | a resumable broadcast by `name` under a state `directory`: audience and journal durably recorded, pacing at `ratePerSecond` (25), exact retry delays within the finite declared budget, injected classifier, uncertain send outcomes never replayed, `dryRun`, one fenced runner per name |
 | `TelegramBroadcastConfig` / `TelegramBroadcastSend` / `TelegramBroadcastReport` / `TelegramBroadcastRunOutcome` / `TelegramBroadcastOutcome` / `TelegramBroadcastRecipient` | _type_ | `name`, `directory`, `recipients()`, `send({ recipient, attempt })`, `maxAttempts`, `signal`, `onProgress`; counts `delivered` / `unreachable` / `failed` / `uncertain` / `pending` and `finished` / `stopped` / `halted` / `dry-run` |
 | `TelegramBroadcastFailureSchema` / `TelegramBroadcastFailure` | schema / _type_ | injected `classify` answers retry-after/transient/permanent/ambiguous; exact provider delay is bounded by `maxRetryDelayMs` without shortening, unknown outcome remains uncertain and is never replayed |
@@ -2550,7 +2559,10 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 `stitchkit/files/packaging` owns `createNativePackaging` and the types
 `NativePackagingOptions`, `NativePackagingAsset`, `NativePackagingPlugin`, `NativePackagingResult`,
 and for a standalone executable `NativePackagingEmbeddedOptions`, `NativePackagingEmbeddedAsset`,
-`NativePackagingEmbeddedResult`.
+`NativePackagingEmbeddedResult`. `inspectNativeArtifact` classifies a built artifact's bytes by the
+loader it carries as a `NativeArtifactLoader`: `packaged`, `unpackaged` or `no-loader`. The plugin
+fails a build whose entry imports the default loader of another `stitchkit` installation, naming
+both versions and roots.
 It resolves the installed package's target/version, reads each selected addon once and checks it
 against the `size` and `sha256` published in the package's `native-assets.json` (`formatVersion: 2`,
 written when Stitchkit is built). Call it once per build and reuse the result.

@@ -10,7 +10,6 @@
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { platform } from 'node:os';
-import { promisify } from 'node:util';
 import { isRecord } from './typed';
 
 /**
@@ -42,7 +41,23 @@ async function firstReadableLine(paths: readonly string[]): Promise<string | nul
   return null;
 }
 
-const run = promisify(execFile);
+/**
+ * A bounded command's stdout. A function, not `promisify(execFile)` at module scope: a module of
+ * this graph may be loaded where `node:util` is an empty shim (a browser bundle that reaches the
+ * server leaf for an error class), and loading it must not run Node.
+ */
+function run(
+  file: string,
+  args: readonly string[],
+  options: { timeout: number; maxBuffer: number },
+): Promise<{ stdout: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { ...options, encoding: 'utf8' }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve({ stdout });
+    });
+  });
+}
 
 /**
  * `IOPlatformUUID` out of an `ioreg` dump, or `null` when the dump does not carry one.
@@ -68,7 +83,6 @@ export async function readDarwinPlatformUuid(command = 'ioreg'): Promise<string 
     const { stdout } = await run(command, ['-rd1', '-c', 'IOPlatformExpertDevice'], {
       timeout: 2_000,
       maxBuffer: 1 << 20,
-      encoding: 'utf8',
     });
     return parsePlatformUuid(stdout);
   } catch {
@@ -153,7 +167,6 @@ export async function isZombieProcess(
     const { stdout } = await run(psCommand, ['-o', 'state=', '-p', String(pid)], {
       timeout: 2_000,
       maxBuffer: 1 << 16,
-      encoding: 'utf8',
     });
     return stdout.trim().startsWith('Z');
   } catch {

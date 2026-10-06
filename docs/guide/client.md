@@ -961,6 +961,47 @@ Set `finalLine: 'require-newline'` when the final newline is part of the
 protocol's truncation proof. The default `allow` continues to accept one valid
 final JSON document without a newline.
 
+### Any byte source
+
+`parseNDJSON` (and `parseSSE`) read more than a `Response`: a `ReadableStream<Uint8Array>`
+(a fetch body, a Bun child's `stdout`) or any `AsyncIterable<Uint8Array>` (a Node child's
+`stdout`). `signal` stops reading and cancels or returns the source:
+
+```ts
+import { parseNDJSON } from 'stitchkit'
+
+const child = Bun.spawn(['worker'], { stdout: 'pipe' })
+for await (const progress of parseNDJSON(child.stdout, {
+  maxLineBytes: 64 * 1024,
+  finalLine: 'require-newline',
+})) report(progress)
+```
+
+A source that hands over bytes through a callback — a `Bun.listen` or `Bun.connect` socket's
+`data` handler — uses `createNDJSONDecoder`, the same reader driven by pushes:
+
+```ts
+import { createNDJSONDecoder } from 'stitchkit'
+
+const decoder = createNDJSONDecoder<ControlRequest>({ maxLineBytes: 16 * 1024 })
+Bun.listen({
+  unix: socketPath,
+  socket: {
+    data(socket, bytes) {
+      for (const request of decoder.push(bytes)) handle(socket, request)
+    },
+  },
+})
+```
+
+Use one decoder per connection. Lines are split in bytes and decoded only once complete, so a
+character split across chunks is never torn. A line that crosses `maxLineBytes` throws
+`StreamLineLimitError` (`limitBytes`, `lineBytes`) at the chunk that crossed it: the reader
+retains at most the limit, however long the line. With `finalLine: 'require-newline'`, a source
+that ends inside a line throws `StreamTruncatedLineError` (`lineBytes`) instead of yielding the
+fragment as a value — the right policy for a socket or a child process, where a missing newline
+means the writer died. Both errors extend the `RangeError` / `SyntaxError` they replace.
+
 ## Resumable streams
 
 A stream that survives a dropped connection needs four things beyond opening it:

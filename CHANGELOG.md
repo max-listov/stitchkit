@@ -15,6 +15,76 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** code with an exhaustive `switch` or `Record` over `TelegramSendFailureReason` or
+`TelegramSendFailure['evidence']`; builds whose entry imports a `stitchkit` installation other
+than the one their native packaging plugin came from.
+
+- `stitchkit/telegram` — **a request that never left is its own send outcome.**
+  `TelegramSendFailureReason` gains `not-dispatched` (retryable, recipient reachable) and
+  `TelegramSendFailure.evidence` gains `transport`: `classifyTelegramSendFailure` returns them for a
+  `TelegramNotDispatchedError` anywhere in the cause chain, so a broadcast retries such a send as
+  `transient` and the operator channel sends it again, where both used to give it up as unknown.
+  `// before: const code: Record<TelegramSendFailureReason, string> = { …, unknown: 'E_UNKNOWN' }`
+  → `// after: const code: Record<TelegramSendFailureReason, string> = { …, 'not-dispatched': 'E_NOT_SENT', unknown: 'E_UNKNOWN' }`
+  **Who must act:** exhaustive code over the reasons or the evidence. See
+  [migration](docs/guide/upgrading.md#a-request-that-never-left-is-its-own-send-outcome). → ADR 0253
+  **Affects:** `stitchkit/telegram` TelegramSendFailureReason, TelegramSendFailure(evidence), TELEGRAM_SEND_FAILURE_REASONS, classifyTelegramSendFailure(reason)
+- `stitchkit/files/packaging` — **a packaging plugin fails a build that carries another
+  installation's loader.** The plugin packages only the default Darwin loader of the `stitchkit` it
+  was created from; an entry that imports another installation (another version, or the same
+  version under another path, as when a build tool brings its own copy) used to build, ship that
+  installation's default loader and refuse the addon on macOS at run time. The build now fails with
+  an error naming both versions and roots.
+  `// before: Bun.build({ plugins: [toolCopy.createNativePackaging(…).plugin] }) // entry imports another stitchkit`
+  → `// after: Bun.build({ plugins: [entryCopy.createNativePackaging(…).plugin] })`
+  **Who must act:** builds that take the plugin from a `stitchkit` the entry does not import. See
+  [migration](docs/guide/upgrading.md#a-packaging-plugin-packages-only-its-own-installation). → ADR 0254
+  **Affects:** `stitchkit/files/packaging` createNativePackaging(plugin)
+
+### Added
+
+- `stitchkit/telegram` — `createTelegramBotTransport()`, a `fetch` for the Bot API senders that
+  connects before it writes: a failure before the first byte is `TelegramNotDispatchedError`
+  (`stage`: `lookup`, `connect`, `request`), any later one stays unknown. Addresses race in the
+  resolver's order (Happy Eyeballs); the lookup, the connection rounds, the answer's time and its size are bounded.
+  The senders' `fetch` option is now typed `TelegramFetch` (`(url, init) => Promise<Response>`), which
+  the global `fetch` still satisfies. → ADR 0253
+- `stitchkit` — `parseNDJSON` and `parseSSE` read any byte source: a `Response`, a
+  `ReadableStream<Uint8Array>` (a Bun child's `stdout`) or an `AsyncIterable<Uint8Array>` (a Node
+  child's `stdout`), with `signal` cancelling the source. `createNDJSONDecoder` drives the same
+  bounded reader by `push(chunk)` / `end()` for a socket's `data` callback. A line past
+  `maxLineBytes` throws `StreamLineLimitError` (`limitBytes`, `lineBytes`) at the chunk that crossed
+  the limit, so memory stays bounded; a source ended inside a line under `finalLine:
+  'require-newline'` throws `StreamTruncatedLineError`. They extend the `RangeError` and `SyntaxError`
+  thrown before, so `instanceof` still holds; their `name` is now the class name and their message
+  ends with the bytes seen. A decoder stops at
+  its first error, and an abort rejects with the signal's reason even when `onParseError` is set.
+- `stitchkit/files/packaging` — `inspectNativeArtifact(bytes)` classifies a built artifact as
+  `packaged`, `unpackaged` or `no-loader` by a marker every generated loader now carries
+  (`module.exports.stitchkitNativeLoader`), in latin1 and UTF-16LE. It replaces the documented search
+  for `STITCHKIT_NATIVE_NOT_PACKAGED`, which every bundle with a lock carries as an error code and so
+  refused correct builds. → ADR 0254
+- `stitchkit upgrade` — every breaking item from 0.104.0 carries an `**Affects:**` line naming its
+  entrypoints and exports (or `behaviour`), and `release:check` refuses a breaking item without it.
+  The CLI reads the project's imports (`--cwd`, default `.`) and gives each item a verdict:
+  `affects this project` with `path:line`, `not used here`, `behavioural — check by hand` with the
+  importing files, or `not declared — check by hand` for older items; `--json` prints the verdicts.
+- `stitchkit/testing` — `createManualClock()`: manual time for schedules, retries and deadlines. Due
+  timers fire in deadline order with real event-loop yields between them, so `advance(10_000)` does
+  not skip a retry armed at the fifth second; `hold` keeps time still while real work of unknown
+  length runs and fails naming it past `holdLimitMs`; `until` moves deadline to deadline; one move
+  runs at a time. It is the
+  clock of `createManagedSchedule`, a durable sleep, a revision signal and bounded admission.
+
+### Fixed
+
+- `stitchkit/server`, `stitchkit/process`, `stitchkit/files` — loading these leaves no longer calls
+  a Node API: process identity built its command runner with `promisify(execFile)` at module scope,
+  so a browser bundle that reached the server leaf for an error class (where `node:util` is an empty
+  module) threw `promisify is not a function` while loading, although nothing called it.
+
 ## [0.107.0] - 2026-10-06
 
 ### ⚠️ Breaking changes
@@ -33,6 +103,7 @@ any artifact made without the packaging plugin by 0.105.0–0.106.1.
   → `// after: createNativePackaging({ platform: 'darwin', architecture: 'arm64', delivery: 'embedded' })`
   **Who must act:** builds with `delivery: 'embedded'`. See
   [migration](docs/guide/upgrading.md#embedded-native-packaging-names-no-paths). → ADR 0252
+  **Affects:** `stitchkit/files/packaging` createNativePackaging(delivery: 'embedded'), NativePackagingOptions, NativePackagingResult, NativePackagingAsset
 
 ### Fixed
 
@@ -99,6 +170,7 @@ or a failing sink).
   `// after: onLeaderSettled: (e) => { if (e.kind === 'stopped') stopped(e.cause, e.signal) }`
   **Who must act:** code that handles a stop in `kind === 'error'`. See
   [migration](docs/guide/upgrading.md#a-stopped-leader-settles-as-stopped). → ADR 0248
+  **Affects:** `stitchkit/process` runNativeCommand(onLeaderSettled), NativeCommandOptions(onLeaderSettled), NativeCommandSettlement
 
 ### Added
 
@@ -183,6 +255,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   **Who must act:** code that imports `publishCli` or a `CliPublication*` type from
   `stitchkit/cli`. See [migration](docs/guide/upgrading.md#cli-publication-has-its-own-entrypoint).
   → ADR 0245
+  **Affects:** `stitchkit/cli` publishCli, CliPublicationOptions, CliPublicationPhase, CliPublicationResult
 
 - `stitchkit/process` — **`killGraceMs` becomes the `stop` policy.** How a cancelled command
   stops is one named object: `target` `'group'` (the signal goes to every member, as before) or
@@ -195,6 +268,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// before: runNativeCommand({ …, killGraceMs: 500 })` →
   `// after: runNativeCommand({ …, stop: { target: 'group', graceMs: 500 } })`
   **Who must act:** callers that pass `killGraceMs`. → ADR 0243
+  **Affects:** `stitchkit/process` runNativeCommand(killGraceMs), NativeCommandOptions(killGraceMs)
 
 - `stitchkit/process` — **a command's leftover group members are stopped after its leader
   exits.** `runNativeCommand` takes `descendants: 'terminate-after-leader' | 'leave'`, and
@@ -209,6 +283,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   keep running after the command returns. See
   [migration](docs/guide/upgrading.md#a-command-stops-what-its-leader-left).
   → ADR 0246
+  **Affects:** `stitchkit/process` runNativeCommand(descendants), NativeCommandOptions(descendants)
 
 - `stitchkit/server`, `stitchkit/files`, `stitchkit/process` — **bundles no longer emit Darwin
   addons.** The packaged Darwin loader names its addon by a computed path, so a Bun bundle of
@@ -222,6 +297,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   **Who must act:** Darwin packagers of bundled or compiled artifacts using these entrypoints.
   Linux and portable bundles need no change. See [migration](docs/guide/upgrading.md#released-migration-010313).
   → ADR 0235
+  **Affects:** `stitchkit/server`, `stitchkit/files`, `stitchkit/process` behaviour
 - `stitchkit/files/packaging` — **`createNativePackaging` checks each addon against a digest the
   package published, and returns the verified bytes.** `native-assets.json` is now written when
   Stitchkit is built, at `formatVersion: 2`, with the `path`, `size` and `sha256` of every Darwin
@@ -247,6 +323,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   than the literal `'darwin'`.
   See [migration](docs/guide/upgrading.md#native-packaging-verifies-published-digests).
   → ADR 0241
+  **Affects:** `stitchkit/files/packaging` createNativePackaging(platform), NativePackagingAsset(sourcePath), NativePackagingResult(code)
 - `stitchkit/files` — **`withExclusiveLock` publishes its lock with the owner already recorded,
   and `ownerlessGraceMs` defaults to `null`.** The owner record is written to a temporary file
   and hard-linked to the lock name, so the name never exists without an owner and a stalled
@@ -260,6 +337,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   file, and locks on a filesystem without hard links; every other caller is unaffected.
   See [migration](docs/guide/upgrading.md#exclusive-locks-publish-their-owner-first).
   → ADR 0238
+  **Affects:** `stitchkit/files` withExclusiveLock(ownerlessGraceMs), ExclusiveLockOptions(ownerlessGraceMs)
 - `stitchkit/tools/connections` — **a `timeoutMs` or `maxResponseBytes` that is not a positive
   integer within range throws a `RangeError`** instead of falling back to the default. This
   shipped in 0.104.0 without a breaking entry.
@@ -267,6 +345,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// after: timeoutMs: 0  (RangeError; omit the option to take the default)`
   **Who must act:** callers that passed 0, a negative, a fractional or an oversized limit.
   See [migration](docs/guide/upgrading.md#connection-limits-are-validated).
+  **Affects:** `stitchkit/tools/connections` defineMcpClientConnection(timeoutMs), defineOpenApiConnection(timeoutMs), McpConnectionLimits, ConnectionOperationLimits
 - `stitchkit/testing` — **`serializeSurfaceValue` is removed.** It was a second name for the
   package's one canonical serializer. `canonicalJson` from `stitchkit/primitives` is that
   serializer, bounded and with a typed refusal:
@@ -275,6 +354,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   **Who must act:** tests that call `serializeSurfaceValue`.
   See [migration](docs/guide/upgrading.md#one-canonical-json-serializer).
   → ADR 0199, ADR 0238
+  **Affects:** `stitchkit/testing` serializeSurfaceValue
 - `stitchkit/agent-runtime` — **`canonicalAgentJson` follows the one admissibility table of
   `canonicalJson`.** A value nested deeper than 100 levels is refused with a
   `CanonicalJsonError`, and an `undefined` object member is omitted instead of failing. It still
@@ -286,6 +366,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   **Who must act:** code that puts a value nested deeper than 100 levels into agent store events,
   archives or projections. See
   [migration](docs/guide/upgrading.md#one-canonical-json-serializer).
+  **Affects:** `stitchkit/agent-runtime` canonicalAgentJson
 - `stitchkit/application` — **`DirectoryInbox` sets a hard-linked entry file aside as
   `invalid`, and `accept` takes the schema's input type.** A dropped file with more than one
   link is never trusted, because another name can still rewrite it (since 0.104.0, without a
@@ -298,6 +379,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   **Who must act:** producers that drop hard links into an inbox directory, and callers that pass
   `accept` the output of a transforming schema.
   See [migration](docs/guide/upgrading.md#directory-inbox-entries).
+  **Affects:** `stitchkit/application` DirectoryInbox, DirectoryInboxConfig, DirectoryInboxResource; `stitchkit/application/directory-inbox` createDirectoryInbox
 - `stitchkit/application` — **`createDiagnosticJournal` checks only the last line of each file
   when it opens** (`startupScan: 'tails'`, the default), so opening no longer parses and
   validates every line of every retained generation. The scan still reads each file once in
@@ -308,6 +390,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// after: createDiagnosticJournal({ path, eventSchema, limits, startupScan: 'full' })  (the same full scan)`
   **Who must act:** operators that read `recovery` at startup to find damaged rows in the middle
   of a file. See [migration](docs/guide/upgrading.md#journal-startup-scan).
+  **Affects:** `stitchkit/application/diagnostic-journal` createDiagnosticJournal(startupScan)
 - `stitchkit/application/diagnostic-journal`, `stitchkit/application` — **opening a diagnostic
   journal moves a file it cannot keep in place aside and starts, instead of refusing to start.**
   A torn active file with `maxFiles: 1`, a generation name that is not a regular file and a
@@ -330,6 +413,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `recovery`; protocols that embed `DiagnosticJournalRecoveryStatusSchema` and their readers.
   See [migration](docs/guide/upgrading.md#journal-startup-quarantine).
   → ADR 0240
+  **Affects:** `stitchkit/application/diagnostic-journal` createDiagnosticJournal(onStartupRefusal); `stitchkit/application` DiagnosticJournalRecoveryError, DiagnosticJournalRecoveryStatusSchema
 
 - `stitchkit/cli`, `stitchkit/tools`, `stitchkit/tools/mcp` — **one runtime-tool declaration.**
   `RuntimeToolExecution`, `RuntimeToolExecutionWithOutput` (cli), `RuntimeMcpToolDefinition`,
@@ -351,6 +435,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `createRuntimeToolFactory` need no change.
   See [migration](docs/guide/upgrading.md#one-runtime-tool-declaration).
   → ADR 0236, ADR 0238
+  **Affects:** `stitchkit/cli` RuntimeToolExecution, RuntimeToolExecutionWithOutput; `stitchkit/tools/mcp` RuntimeMcpToolDefinition, RuntimeMcpToolDefinitionWithOutput; `stitchkit/tools` ToolSurfaceDefinition, RuntimeToolDefinitionWithOutput
 - `stitchkit/tools`, `stitchkit/tools/mcp` — **a flattened union keeps declaration order.**
   With `flattenUnionInput: true`, properties, enum values and branch labels are advertised in the
   order of their first appearance across the variants instead of alphabetically, so the bytes of
@@ -362,6 +447,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   anyone using `flattenUnionInput: true`: regenerate the snapshots.
   See [migration](docs/guide/upgrading.md#flattened-unions-keep-declaration-order).
   → ADR 0238
+  **Affects:** `stitchkit/tools`, `stitchkit/tools/mcp` behaviour
 - `stitchkit/tools`, `stitchkit/cli` — **a list written as text is refused in every
   string-or-array field.** `coerceJsonArgs`, and so every tool surface, throws a validation error
   naming the field when a union that keeps a string member receives a string that parses to an
@@ -373,12 +459,14 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   **Who must act:** callers that send a JSON array as text to a string-or-array field; a plain
   string, including one that is not a list the array member accepts, is unchanged.
   → ADR 0218, ADR 0239, ADR 0238
+  **Affects:** `stitchkit/tools`, `stitchkit/cli` behaviour
 - `stitchkit/agent-runtime` — **the `stitchkit/agent-runtime/harness-tools` leaf is removed.** It
   was one `mountAgent` call with the run's fence composed in; no consumer imported it.
   `// before: tools: createAgentHarnessTools(({ context }) => ({ services: [svc], context }))` →
   `// after: tools: ({ context, toolFenceLifecycle }) => mountAgent([svc], { context, lifecycle: composeToolLifecycle(undefined, toolFenceLifecycle) })`
   **Who must act:** imports of `stitchkit/agent-runtime/harness-tools`. See
   [migration](docs/guide/upgrading.md#one-runtime-tool-declaration).
+  **Affects:** `stitchkit/agent-runtime/harness-tools` *
 - `stitchkit/agent-runtime/realtime`, `stitchkit/agent-runtime/browser` — **control errors use one
   vocabulary, and the binding authorizes requests, not events.** `ACCESS_DENIED` is `FORBIDDEN`, and
   a closed connection answers `CONNECTION_CLOSED` instead of a denial. `AgentControlErrorCode`
@@ -393,6 +481,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `// after: if (state.error?.code === 'FORBIDDEN') …`
   **Who must act:** code that compares control error codes, and applications that revoke access while
   a stream is open (call `binding.revoke`; before, every event re-asked `authorize`).
+  **Affects:** `stitchkit/agent-runtime/browser` AgentControlErrorCode, AgentControlErrorCodeSchema, AgentControllerState(error); `stitchkit/agent-runtime/realtime` bindAgentHarnessRealtime(authorize), AgentHarnessRealtimeBinding(revoke)
 - `stitchkit/contract`, `stitchkit/server`, `stitchkit/node` — **`AppError` takes its fields by
   name.** The constructor had seven positions, so a call that set only `retryable` read
   `new AppError(code, message, 409, undefined, undefined, undefined, true)`. The code stays first;
@@ -405,6 +494,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   The `notFound`, `badRequest`, `unauthorized`, `forbidden`, `conflict` and `rateLimited` helpers
   are unchanged. See [migration](docs/guide/upgrading.md#error-constructors-take-named-options).
   → ADR 0238
+  **Affects:** `stitchkit/contract`, `stitchkit/server`, `stitchkit/node` AppError
 - `stitchkit` — **`ApiError` takes its fields by name.** The constructor had eight positions
   and call sites ended in `undefined, undefined, retryable`. The code stays first and the rest
   is one options object; `new ApiError(code)` still works:
@@ -416,6 +506,7 @@ and code that imports `publishCli` or its types from `stitchkit/cli`.
   `retryable` or `cause` is unaffected. See
   [migration](docs/guide/upgrading.md#error-constructors-take-named-options).
   → ADR 0238
+  **Affects:** `stitchkit` ApiError
 
 ### Added
 
@@ -559,16 +650,19 @@ native CLI commands and ordinary one-argument state transitions remain valid.
   in `CliConfig.runtimeTools` / `CliInvokerConfig.runtimeTools`. Existing typed definitions and
   native `commands` need no change. See [migration](docs/guide/upgrading.md#released-migration-01040).
   → ADR 0227
+  **Affects:** `stitchkit/cli` CliConfig(runtimeTools), CliInvokerConfig(runtimeTools)
 - `stitchkit/application` — custom state adapters must supply an active, fenced
   `StateStoreUpdateContext`: `transition(current)` → `transition(current, context)` inside
   their protected transaction. Remove file-store `staleLockMs` / `retryMs`:
   `{ staleLockMs, retryMs, lockTimeoutMs }` → `{ lockTimeoutMs }`. Live and unknown owners
   cannot be reclaimed by age; legacy lock recovery requires proof that the owner stopped.
   Ordinary one-argument transition callbacks still work. → ADR 0228
+  **Affects:** `stitchkit/application` StateStore, StateStoreUpdate, StateStoreUpdateContext; `stitchkit/server` createFileStateStore(staleLockMs), FileStateStoreOptions(retryMs)
 - `stitchkit/telegram` — broadcast halt uses `TelegramBroadcastFailure`:
   `report.halt.reason` → `report.halt.kind`. An unknown send outcome becomes durable
   `uncertain` and halts without replay; explicit retry classifiers certify that the failed
   attempt did not apply its effect. → ADR 0228
+  **Affects:** `stitchkit/telegram` runTelegramBroadcast(halt), TelegramBroadcastReport(halt)
 - `stitchkit/tools`, `stitchkit/tools/mcp` — construct schema-dependent MCP tools before
   heterogeneous registration: `runtimeTools: [{ input, output, handler, present }]` →
   `const tool = { … } satisfies RuntimeMcpToolDefinitionWithOutput<typeof input, typeof output>; runtimeTools: [tool]`.
@@ -576,16 +670,19 @@ native CLI commands and ordinary one-argument state transitions remain valid.
   official SDK's required content and metadata types: `present: { mcp: () => ({}) }` →
   `present: { mcp: () => ({ content: [] }) }`. **Who must act:** inline MCP constructors
   and presenters returning malformed content or metadata. → ADR 0231
+  **Affects:** `stitchkit/tools` createMcpHandler(runtimeTools), mountMcp(runtimeTools); `stitchkit/tools/mcp` buildMcpServer(runtimeTools), RuntimeMcpToolPresenters
 - `stitchkit/contract`, `stitchkit/remote` — error envelopes and framed errors admit an
   optional boolean `retryable`. A closed error schema must add
   `retryable: z.boolean().optional()` before upgrading producers that declare it; envelopes
   without a declaration remain unchanged. See [migrations](docs/guide/upgrading.md).
   These migrations require a minor release. → ADR 0232
+  **Affects:** `stitchkit/contract`, `stitchkit/remote` behaviour
 - `stitchkit/tools`, `stitchkit/cli` — raw unexpected tool errors are observed through
   `hooks.onToolError` / `hooks.afterToolCall` instead of being printed on protocol stderr.
   **Who must act:** applications collecting raw tool causes from `console.error`; configure
   an internal hook sink instead. MCP resolver failures reach the same observing hooks without
   rerunning the handler or its lifecycle. → ADR 0229
+  **Affects:** `stitchkit/tools`, `stitchkit/cli` behaviour
 
 ### Fixed
 

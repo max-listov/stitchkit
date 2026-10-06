@@ -38,3 +38,12 @@ named after the release.
 - `git log` of a release shows one commit per change and one metadata commit.
 - A release commit that carries source or documentation changes is refused before it is pushed.
 - The window searched below the tagged head is 50 first-parent commits.
+
+## Amendment — the work is not split per change
+
+The release commit's rule stands: it holds release metadata only. The sentence "every feature and
+fix is a separate commit before it" is withdrawn: a release's work is committed before the release
+commit as one commit, or as many as the work needs, each with a conventional subject
+(`feat(scope): …`, `fix(scope): …`) and a body that says what changed and why. Nothing refuses a
+release for how its work was divided; `scripts/release-subject.ts` refuses only a release commit that
+carries more than metadata.

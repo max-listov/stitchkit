@@ -23,6 +23,7 @@
  */
 
 import { isRecord } from '../internal/typed';
+import { isTelegramNotDispatched } from './not-dispatched';
 
 /**
  * Why a send did not arrive.
@@ -42,6 +43,7 @@ export type TelegramSendFailureReason =
   | 'rate-limited'
   | 'message-invalid'
   | 'server-error'
+  | 'not-dispatched'
   | 'unknown';
 
 export interface TelegramSendFailure {
@@ -71,9 +73,10 @@ export interface TelegramSendFailure {
   /**
    * How the reason was reached. `parameters` and `status` are Telegram stating
    * its own answer in a structured field; `description` is us reading its
-   * prose, which changes without notice.
+   * prose, which changes without notice; `transport` is the transport stating
+   * that the request never left (`TelegramNotDispatchedError`).
    */
-  evidence: 'parameters' | 'status' | 'description' | 'none';
+  evidence: 'parameters' | 'status' | 'description' | 'transport' | 'none';
 }
 
 /**
@@ -112,6 +115,8 @@ const TRAITS: {
   'rate-limited': { retryable: true, recipientUnreachable: false },
   'message-invalid': { retryable: false, recipientUnreachable: false },
   'server-error': { retryable: true, recipientUnreachable: false },
+  // Nothing was written, so Telegram never saw it: repeating cannot duplicate a message.
+  'not-dispatched': { retryable: true, recipientUnreachable: false },
   unknown: { retryable: false, recipientUnreachable: false },
 };
 
@@ -173,6 +178,9 @@ function descriptionOf(value: unknown, depth = 0): string {
  * which asserts nothing about the recipient and permits no retry.
  */
 export function classifyTelegramSendFailure(error: unknown): TelegramSendFailure {
+  // A request that never left carries no answer to read; the transport's word is the fact.
+  if (isTelegramNotDispatched(error))
+    return { reason: 'not-dispatched', ...TRAITS['not-dispatched'], evidence: 'transport' };
   const status = statusOf(error);
   const retryAfterSeconds = retryAfterOf(error);
   const description = descriptionOf(error);

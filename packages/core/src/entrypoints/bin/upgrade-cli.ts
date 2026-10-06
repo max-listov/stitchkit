@@ -11,10 +11,17 @@
  *
  * Node built-ins only, and a `node` shebang: `npx` must work as well as `bunx`.
  */
-import { readFileSync, realpathSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { type Dirent, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { planUpgrade, renderUpgradePlan } from '../../internal/upgrade-plan';
+import {
+  type ProjectSource,
+  renderUpgradeVerdicts,
+  scanStitchkitImports,
+  upgradeVerdicts,
+  upgradeVerdictsJson,
+} from '../../internal/upgrade-usage';
 
 const USAGE = `stitchkit upgrade — print every breaking change between the installed version and this one
 
@@ -24,9 +31,89 @@ const USAGE = `stitchkit upgrade — print every breaking change between the ins
 Options
   --from <version>     installed version (default: the stitchkit in ./node_modules)
   --to <version>       target version (default: the version of this package)
-  --cwd <dir>          project to read the installed version from (default: .)
+  --cwd <dir>          project to read the installed version and imports from (default: .)
   --changelog <path>   changelog to plan from (default: the one in this package)
+  --json               print the breaking items and their verdicts as JSON
+
+Each breaking item is matched against what the project imports from stitchkit:
+"affects this project" (with file:line), "not used here", "behavioural — check
+by hand" or, for an item written before machine lines, "not declared — check by hand".
 `;
+
+/** Directories that hold dependencies or tooling state, never project source, at any depth. */
+const SKIPPED_DIRECTORIES = new Set(['node_modules', '.git', '.next', '.turbo', '.cache']);
+/**
+ * Build output sits beside a package's `package.json`; a `build/` or `out/` folder deeper in
+ * `src/` is source, and skipping it would call a project that imports there "not used here".
+ */
+const OUTPUT_DIRECTORIES = new Set(['dist', 'build', 'out', 'coverage']);
+const SOURCE_FILE = /\.(?:[cm]?[jt]sx?|vue|svelte)$/;
+
+/** How the scan reads the project; a test substitutes a refusal no file mode produces for root. */
+export interface ProjectSourceIo {
+  readdir(path: string): readonly Dirent[];
+  readFile(path: string): string;
+}
+
+/** A directory or file the scan could not read, by path relative to the project root. */
+export interface Unscanned {
+  readonly path: string;
+  readonly code: string;
+}
+
+const DENIED = new Set(['EACCES', 'EPERM']);
+
+/** The code of a permission refusal, or undefined for any other error. */
+function deniedCode(error: unknown): string | undefined {
+  const code =
+    typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined;
+  return typeof code === 'string' && DENIED.has(code) ? code : undefined;
+}
+
+/**
+ * Every source file of the project, by path relative to its root; links are not followed. A
+ * directory or file the process may not read is listed as unscanned rather than ending the plan.
+ */
+export function projectSources(
+  root: string,
+  io: ProjectSourceIo = {
+    readdir: (path) => readdirSync(path, { withFileTypes: true }),
+    readFile: (path) => readFileSync(path, 'utf8'),
+  },
+): { sources: ProjectSource[]; unscanned: Unscanned[] } {
+  const sources: ProjectSource[] = [];
+  const unscanned: Unscanned[] = [];
+  const attempt = <T>(path: string, read: () => T): T | undefined => {
+    try {
+      return read();
+    } catch (error) {
+      const code = deniedCode(error);
+      if (code === undefined) throw error;
+      unscanned.push({ path: relative(root, path) || '.', code });
+      return undefined;
+    }
+  };
+  const walk = (directory: string) => {
+    const entries = attempt(directory, () => io.readdir(directory));
+    const packageRoot =
+      directory === root || (entries ?? []).some((entry) => entry.name === 'package.json');
+    for (const entry of entries ?? []) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        const skipped =
+          SKIPPED_DIRECTORIES.has(entry.name) ||
+          (packageRoot && OUTPUT_DIRECTORIES.has(entry.name));
+        if (!skipped) walk(path);
+      } else if (entry.isFile() && SOURCE_FILE.test(entry.name)) {
+        const text = attempt(path, () => io.readFile(path));
+        if (text !== undefined) sources.push({ path: relative(root, path), text });
+      }
+    }
+  };
+  walk(root);
+  unscanned.sort((left, right) => (left.path < right.path ? -1 : 1));
+  return { sources, unscanned };
+}
 
 /** `--name value`, or undefined. A flag with no value is an error, not an absence. */
 function option(argv: readonly string[], name: string): string | undefined {
@@ -98,8 +185,14 @@ export function runUpgradeCli(argv: readonly string[]): UpgradeCliResult {
     );
   }
 
+  const json = argv.includes('--json');
   if (from === to) {
-    return { output: `Already on ${to}. Nothing to upgrade.\n`, code: 0 };
+    return json
+      ? {
+          output: `${JSON.stringify({ from, to, items: [], unscanned: [] }, null, 2)}\n`,
+          code: 0,
+        }
+      : { output: `Already on ${to}. Nothing to upgrade.\n`, code: 0 };
   }
 
   const changelogPath = option(argv, 'changelog') ?? join(root, 'CHANGELOG.md');
@@ -110,7 +203,27 @@ export function runUpgradeCli(argv: readonly string[]): UpgradeCliResult {
     throw new Error(`Cannot read the changelog at ${changelogPath}`);
   }
 
-  return { output: renderUpgradePlan(planUpgrade(changelog, from, to), from, to), code: 0 };
+  const plan = planUpgrade(changelog, from, to);
+  const { sources, unscanned } = projectSources(cwd);
+  const verdicts = upgradeVerdicts(
+    plan.flatMap((change) => change.items),
+    scanStitchkitImports(sources),
+  );
+  if (json) {
+    const document = { from, to, items: upgradeVerdictsJson(verdicts), unscanned };
+    return { output: `${JSON.stringify(document, null, 2)}\n`, code: 0 };
+  }
+  const usage = renderUpgradeVerdicts(verdicts);
+  const skipped =
+    unscanned.length === 0
+      ? ''
+      : `\n## Not scanned\n\nThe verdicts above do not include these paths (no permission to read them):\n\n${unscanned
+          .map((entry) => `- ${entry.path} (${entry.code})`)
+          .join('\n')}\n`;
+  return {
+    output: `${renderUpgradePlan(plan, from, to)}${usage ? `\n${usage}` : ''}${skipped}`,
+    code: 0,
+  };
 }
 
 /**

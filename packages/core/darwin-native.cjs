@@ -22,3 +22,4 @@ module.exports = function loadDarwinAddon() {
     throw new Error('Darwin addon loading failed', { cause });
   }
 };
+module.exports.stitchkitNativeLoader = 'stitchkit-native-loader:unpackaged';

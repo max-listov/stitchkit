@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Targets stitchkit `^0.108.0` (peer range `^0.107.0` → `^0.108.0`). No source change: the
+  terminal uses none of the `stitchkit/telegram`, `stitchkit/files/packaging` or stream-reader
+  names 0.108.0 changed.
+
 ## [0.2.2] - 2026-10-06
 
 ### Changed

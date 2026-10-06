@@ -23,6 +23,16 @@ export {
   runManagedResourceConformance,
 } from '../testing/managed-resource-conformance';
 export {
+  createManualClock,
+  type ManualClock,
+  ManualClockError,
+  type ManualClockErrorCode,
+  type ManualClockHold,
+  type ManualClockOptions,
+  type ManualClockTimer,
+  type ManualClockUntilOptions,
+} from '../testing/manual-clock';
+export {
   type CreateRealtimeProbeDriverConfig,
   createRealtimeProbeDriver,
   type DefineRealtimeProbeConfig,

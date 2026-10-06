@@ -68,6 +68,10 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
   concrete defect (an unreadable positional list or boolean pair, two names for one concept, a type that
   does not infer, a refusal only readable as text), make the clean break with a mechanical migration.
   Read the call site aloud; shape rules in [api-shape](./docs/architecture/api-shape.md). → ADR 0238
+- End every breaking item with one `**Affects:**` line: backticked entrypoint(s), then the exports it
+  changes (`name(qualifier)`), `behaviour` or `*`; targets separated by `; `. `release:check` refuses an
+  item without it, and `stitchkit upgrade` matches it against a project's imports.
+  → [upgrading](./docs/guide/upgrading.md#does-an-item-touch-your-project)
 - Write the migration in `docs/guide/upgrading.md` with a `**Who must act:**` line; a scaffolder's
   operator steps go to `packages/create-stitchkit/UPGRADING.md`. `scripts/release-plan.ts` refuses a
   breaking section without its promoted `## Released migration: X.Y.Z`. → [release-process](./docs/architecture/release-process.md#breaking-changes-and-migration)
@@ -95,9 +99,9 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 
 - Write plain commit messages (`fix: …`) — **no `Co-Authored-By`, AI or tool-signature footer**; real
   newlines in bodies (`commit-msg` refuses a literal `\n`). → [CONTRIBUTING](./CONTRIBUTING.md#git-hooks)
-- Commit every feature and fix on its own (`feat(scope): …`, `fix(scope): …`) with a body; the one
-  `release(train): <summary> in X.Y.Z` commit holds release metadata only and is never empty.
-  → [release-process](./docs/architecture/release-process.md#order-inside-a-release), ADR 0237
+- Commit a release's work as one commit (`feat(scope): …` or `fix(scope): …`) with a body; the
+  `release(train): <summary> in X.Y.Z` commit that follows holds release metadata only and is never
+  empty. → [release-process](./docs/architecture/release-process.md#order-inside-a-release), ADR 0237
 - Push a release candidate to `release/X.Y.Z`: `pre-push` runs the structural candidate gate plus the tests that read
   release metadata (`test:release-metadata`); the full selected CI must pass for its exact SHA before
   master/tag. A direct unproven master release requires `bun scripts/verify.ts --release`.

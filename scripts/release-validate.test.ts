@@ -205,11 +205,16 @@ describe('a release commit is checked before it costs a gate', () => {
     const MIGRATION = ['## Released migration: 9.9.0', '', 'Do the thing.'].join('\n');
     const breaking = (entry: string) =>
       [BREAKING, '', entry, '', '**Who must act:** anyone calling it.'].join('\n');
-    const STABLE_ENTRY =
-      '- `stitchkit/tools` — **a tool moved**, because a reason. → ADR 0198';
+    const STABLE_ENTRY = [
+      '- `stitchkit/tools` — **a tool moved**, because a reason. → ADR 0198',
+      '  **Affects:** `stitchkit/tools` mountAgent(lifecycle)',
+    ].join('\n');
     const tree = (changelog: string) =>
       treeOf({
-        'packages/core/package.json': JSON.stringify({ version: '9.9.0' }),
+        'packages/core/package.json': JSON.stringify({
+          version: '9.9.0',
+          exports: { './tools': {} },
+        }),
         'CHANGELOG.md': changelog,
         'docs/guide/upgrading.md': MIGRATION,
         'docs/guide/getting-started.md': GUIDE,
@@ -254,6 +259,100 @@ describe('a release commit is checked before it costs a gate', () => {
       await expect(
         validateReleaseCommit(root, commit, { read: tree(changelog) }),
       ).rejects.toThrow(/does not start with the entrypoint/);
+    });
+  });
+
+  describe('every breaking item names what it touches', () => {
+    const tree = (item: string) =>
+      treeOf({
+        'packages/core/package.json': JSON.stringify({
+          version: '9.9.0',
+          exports: { '.': {}, './live': {} },
+        }),
+        'CHANGELOG.md': [
+          '## [9.9.0] — 2026-10-20',
+          '',
+          BREAKING,
+          '',
+          '**Who must act:** callers of the moved thing.',
+          '',
+          item,
+        ].join('\n'),
+        'docs/guide/upgrading.md': ['## Released migration: 9.9.0', '', 'Do it.'].join('\n'),
+        'docs/guide/getting-started.md':
+          '| `stitchkit/live` | browser **and** server | evolving | watched reads |',
+      });
+    const commit = { sha: SHA, subject: 'release(train): a thing in 9.9.0' };
+    const entry = '- `stitchkit/live` — **a read moved**, because a reason.';
+
+    test('an item without an Affects line is refused, naming the item', async () => {
+      await expect(validateReleaseCommit(root, commit, { read: tree(entry) })).rejects.toThrow(
+        /9\.9\.0: breaking item "- `stitchkit\/live` — \*\*a read moved\*\*, because a reason\." has no "\*\*Affects:\*\*" line/,
+      );
+    });
+
+    test('a malformed Affects line is refused with the part that is wrong', async () => {
+      await expect(
+        validateReleaseCommit(root, commit, {
+          read: tree(`${entry}\n  **Affects:** createLiveState`),
+        }),
+      ).rejects.toThrow(
+        /malformed "\*\*Affects:\*\*" line: "createLiveState" does not start with/,
+      );
+    });
+
+    test('a star or plus bullet still needs its line, and a section without items is refused', async () => {
+      await expect(
+        validateReleaseCommit(root, commit, { read: tree(entry.replace(/^- /, '* ')) }),
+      ).rejects.toThrow(/has no "\*\*Affects:\*\*" line/);
+      await expect(
+        validateReleaseCommit(root, commit, { read: tree(entry.replace(/^- /, '+ ')) }),
+      ).rejects.toThrow(/has no "\*\*Affects:\*\*" line/);
+      await expect(
+        validateReleaseCommit(root, commit, {
+          read: tree('The live read moved, because a reason.'),
+        }),
+      ).rejects.toThrow(/section has no items/);
+    });
+
+    test('two Affects lines are refused, not reduced to the first', async () => {
+      await expect(
+        validateReleaseCommit(root, commit, {
+          read: tree(
+            `${entry}\n  **Affects:** \`stitchkit/live\` createLiveState\n  **Affects:** \`stitchkit\` ApiError`,
+          ),
+        }),
+      ).rejects.toThrow(/carries 2 "\*\*Affects:\*\*" lines/);
+    });
+
+    test('an entrypoint the package does not export is refused unless it is removed (*)', async () => {
+      await expect(
+        validateReleaseCommit(root, commit, {
+          read: tree(`${entry}\n  **Affects:** \`stitchkit/lvie\` createLiveState`),
+        }),
+      ).rejects.toThrow(
+        /names `stitchkit\/lvie` in its "\*\*Affects:\*\*" line, which packages\/core\/package.json does not export/,
+      );
+      await expect(
+        validateReleaseCommit(root, commit, {
+          read: tree(`${entry}\n  **Affects:** \`stitchkit/lvie\` behaviour`),
+        }),
+      ).rejects.toThrow(/does not export/);
+    });
+
+    test('names, behaviour and a removed leaf are each accepted', async () => {
+      for (const line of [
+        '`stitchkit/live` createLiveState(maxSubscribers), LiveStateSnapshot',
+        '`stitchkit/live` behaviour',
+        '`stitchkit/live-old` *',
+        '`stitchkit/live`, `stitchkit` createLiveState; `stitchkit/live` behaviour',
+      ]) {
+        await expect(
+          validateReleaseCommit(root, commit, {
+            read: tree(`${entry}\n  **Affects:** ${line}`),
+          }),
+        ).resolves.toMatchObject({ version: '9.9.0' });
+      }
     });
   });
 

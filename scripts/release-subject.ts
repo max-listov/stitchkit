@@ -21,7 +21,7 @@ export function isReleaseCommitSubject(subject: string): boolean {
  * Files a release commit may change. The commit carries metadata only: the
  * versions, the changelogs, the train, the lockfile, the promoted migration
  * sections and the maturity-cadence sentences that rolling a changelog moves.
- * Everything else is a feature or fix commit with its own conventional subject.
+ * Everything else is the work commit that precedes it, with its own conventional subject.
  */
 const RELEASE_METADATA_PATHS: readonly RegExp[] = [
   /^release-train\.json$/,
@@ -45,7 +45,7 @@ export function assertReleaseMetadataOnly(sha: string, files: readonly string[])
   );
   if (foreign.length > 0) {
     throw new Error(
-      `release commit ${sha.slice(0, 7)} carries more than release metadata (${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? ', …' : ''}). Commit each feature or fix on its own with its own subject and body; the release commit holds versions, changelogs, the train and the lockfile only.`,
+      `release commit ${sha.slice(0, 7)} carries more than release metadata (${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? ', …' : ''}). Commit the work first, with its own subject and body; the release commit holds versions, changelogs, the train and the lockfile only.`,
     );
   }
 }

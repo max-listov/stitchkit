@@ -89,10 +89,15 @@ export type {
 } from '../browser/socket-io';
 export { createRealtimeClient, createSocketIOClient } from '../browser/socket-io';
 export {
+  createNDJSONDecoder,
+  type NDJSONDecoder,
   type ParseNDJSONOptions,
   type ParseSSEOptions,
   parseNDJSON,
   parseSSE,
+  type StreamByteSource,
+  StreamLineLimitError,
+  StreamTruncatedLineError,
 } from '../browser/stream';
 export {
   type Backoff,

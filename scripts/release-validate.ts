@@ -1,3 +1,11 @@
+import {
+  affectsLineOf,
+  breakingItems,
+  parseAffectsLine,
+  UpgradeAffectsError,
+  type UpgradeAffectsTarget,
+} from '../packages/core/src/internal/upgrade-affects';
+import { BREAKING_HEADING } from '../packages/core/src/internal/upgrade-plan';
 import { git } from './local-git';
 import { assertTrainCarriesItsCompanions, readFromReleaseTags } from './release-companions';
 import {
@@ -9,7 +17,6 @@ import {
   assertBreakingAudience,
   assertMigrationSection,
   assertVersionCalibre,
-  BREAKING_HEADING,
   comparePreOneVersions,
   extractReleaseNotes,
 } from './release-notes';
@@ -90,6 +97,69 @@ export interface ValidateReleaseTagOptions {
 /** Where ADR 0103's maturity table lives — the one list of stable entrypoints. */
 export const MATURITY_TABLE_PATH = 'docs/guide/getting-started.md';
 
+/** The first core release whose breaking items must each carry an `**Affects:**` line. */
+export const AFFECTS_LINE_SINCE = '0.107.1';
+
+/** The entrypoints `stitchkit` publishes, from the `exports` of its manifest. */
+export function publishedEntrypoints(manifest: string): Set<string> {
+  const parsed: unknown = JSON.parse(manifest);
+  const exports =
+    typeof parsed === 'object' && parsed !== null ? Reflect.get(parsed, 'exports') : undefined;
+  const names = new Set<string>();
+  if (typeof exports !== 'object' || exports === null) return names;
+  for (const key of Object.keys(exports))
+    names.add(key === '.' ? 'stitchkit' : `stitchkit/${key.replace(/^\.\//, '')}`);
+  return names;
+}
+
+/**
+ * Every breaking item names what it touches in the one machine line
+ * `stitchkit upgrade` matches against a project's imports. Prose cannot be
+ * matched without guessing; the author knows the answer at release time. A named
+ * entrypoint must be one the package publishes, unless the target is `*`: an
+ * entrypoint the release removes.
+ */
+export function assertBreakingAffects(
+  notes: string,
+  version: string,
+  entrypoints: ReadonlySet<string>,
+): void {
+  if (!BREAKING_HEADING.test(notes)) return;
+  const start = notes.search(BREAKING_HEADING);
+  const section = notes.slice(start).replace(/^[^\n]*\n/, '');
+  const end = section.search(/^### /m);
+  const body = end === -1 ? section : section.slice(0, end);
+  const items = breakingItems(body);
+  if (items.length === 0)
+    throw new Error(
+      `${version}: the "### ⚠️ Breaking changes" section has no items. Write each breaking change as a "- " item ending with its "**Affects:**" line.`,
+    );
+  for (const { markdown } of items) {
+    const first = JSON.stringify(markdown.split('\n')[0]?.slice(0, 120));
+    let targets: UpgradeAffectsTarget[];
+    try {
+      const line = affectsLineOf(markdown);
+      if (line === undefined)
+        throw new Error(
+          `${version}: breaking item ${first} has no "**Affects:**" line. Name what it touches so \`stitchkit upgrade\` can tell a project whether it is affected, e.g. "**Affects:** \`stitchkit/files/packaging\` createNativePackaging(delivery: 'embedded')", "**Affects:** \`stitchkit/process\` behaviour" or "**Affects:** \`stitchkit/old-leaf\` *".`,
+        );
+      targets = parseAffectsLine(line);
+    } catch (error) {
+      if (!(error instanceof UpgradeAffectsError)) throw error;
+      throw new Error(
+        `${version}: breaking item ${first} has a malformed "**Affects:**" line: ${error.message}`,
+      );
+    }
+    const unknown = targets.filter(
+      (target) => target.kind !== 'any-import' && !entrypoints.has(target.entrypoint),
+    );
+    if (unknown.length > 0)
+      throw new Error(
+        `${version}: breaking item ${first} names ${unknown.map((target) => `\`${target.entrypoint}\``).join(', ')} in its "**Affects:**" line, which packages/core/package.json does not export. Name a published entrypoint, or write "\`<entrypoint>\` *" for one this release removes.`,
+      );
+  }
+}
+
 export async function validateReleaseTag(
   root: string,
   tag: string,
@@ -124,6 +194,12 @@ export async function validateReleaseTag(
       version: plan.version,
     });
   }
+  if (plan.target === 'core' && comparePreOneVersions(plan.version, AFFECTS_LINE_SINCE) >= 0)
+    assertBreakingAffects(
+      notes,
+      plan.version,
+      publishedEntrypoints(await read(`${plan.packageDir}/package.json`)),
+    );
   // Each package has its own migration channel: the scaffolder's guide is for
   // the operator of a GENERATED project, a different reader from the framework's.
   const channel = RELEASE_TARGETS[plan.target].migration;

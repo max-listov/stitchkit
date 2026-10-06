@@ -1,7 +1,5 @@
+import { BREAKING_HEADING } from '../packages/core/src/internal/upgrade-plan';
 import { RELEASE_TARGETS, type ReleaseTargetInfo } from './release-train';
-
-/** The exact heading that marks a release as breaking. */
-export const BREAKING_HEADING = /^### \s*⚠️?\s*Breaking changes/m;
 
 const FENCE = /^(`{3,}|~{3,})/;
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

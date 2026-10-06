@@ -4,7 +4,7 @@ description: How a breaking change is marked and migrated, which number moves, a
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-10-03 13:36 +07:00
+updated: 2026-10-06 19:45 +07:00
 ---
 
 # Release process — breaking changes, versions and the release train
@@ -20,7 +20,7 @@ Five steps, one command each. Every command is idempotent until the last one.
 
 | # | Do | Command | What it guarantees |
 | --- | --- | --- | --- |
-| 1 | Commit each feature or fix on its own, with its own conventional subject and a body | `git commit` | `git log`, `bisect` and `revert` work per change |
+| 1 | Commit the release's work as one commit, with a conventional subject and a body | `git commit` | the release commit that follows carries metadata only |
 | 2 | Write the release metadata: version, changelog roll, train | `bun scripts/release-plan.ts prepare core@X.Y.Z && bun install --ignore-scripts` | next patch or minor only; the notes carry real content |
 | 3 | Check it before anything expensive | `bun run release:check` | version matches manifest and lockfile; a break is a minor and carries `**Who must act:**` and its promoted migration; the package differs from its previous release |
 | 4 | Commit the metadata as `release(train): <summary> in X.Y.Z`, push `release/X.Y.Z`, wait for its push CI run, fast-forward master | `git push -u origin release/X.Y.Z` | a green exact-SHA push run exists before anything is public |
@@ -60,7 +60,15 @@ changed default, stricter validation):
 
    - `stitchkit/tools` — **`createMcpHandler` no longer accepts `foo`** — it moved to `bar` because …
      `// before: createMcpHandler({ foo })` → `// after: createMcpHandler({ bar })` → ADR NNNN
+     **Affects:** `stitchkit/tools` createMcpHandler(foo)
    ```
+
+   Each item ends with one `**Affects:**` line, on one line: backticked entrypoint(s), then the
+   exports it changes (each optionally `name(qualifier)`), `behaviour` for a change no import name
+   reveals, or `*` for every import of a removed entrypoint; targets are separated by `; `.
+   `release:check` refuses a breaking item without it, or with one it cannot parse, from the release
+   after 0.107.0 on; `stitchkit upgrade` matches it against a consumer's imports
+   ([upgrading](../guide/upgrading.md#does-an-item-touch-your-project)).
 
    A version with **no** `### ⚠️ Breaking changes` section is purely additive — safe to adopt
    without code changes. (0.1.0–0.7.0 had none.)
@@ -149,8 +157,8 @@ outside this and still rides along.
 
 `release-train.json` lists every package and version to publish. The `release(train): … in X.Y.Z`
 commit carries release metadata only: versions, changelogs, the train, the lockfile, the promoted
-migration heading and the maturity-cadence sentences. Every feature or fix is its own commit
-before it, with a conventional subject and a body
+migration heading and the maturity-cadence sentences. The release's work is one commit before it,
+with a conventional subject and a body
 ([ADR 0237](../decisions/0237-release-commit-holds-metadata-only.md)).
 
 ```bash

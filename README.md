@@ -359,11 +359,13 @@ import { parseSSE } from 'stitchkit'           // client: Response → AsyncGene
 | **Cache Bridge** | `createCacheBridge()` — socket events → TanStack Query cache |
 | **Auth** | `createAuthHook()` / `createBearerResolver()` — scope-aware auth from `contract.scope` |
 | **SSE Streaming** | `streamSSE()` / `parseSSE()` — async generator ↔ SSE |
+| **NDJSON** | `ndjsonRoute()` / `parseNDJSON()` / `createNDJSONDecoder()` — bounded lines from a response, a child's stdout or a socket |
 | **Events** | `createEventBus<EventMap>()` — typed in-process pub/sub |
 | **Multipart** | typed buffered or streaming single/multi-file uploads with limits and MIME policy |
 | **Rate Limiting** | `createRateLimiter()` — token bucket, per-key |
 | **Cache** | `createCache()` — in-memory with TTL + `cacheHeaders()` |
 | **Errors** | `AppError`, `notFound()`, `badRequest()`, `unauthorized()` |
+| **Manual time** | `createManualClock()` (`stitchkit/testing`) — schedules, retries and deadlines advanced by the test, in order |
 
 ## How it compares
 

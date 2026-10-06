@@ -67,6 +67,20 @@ export function nativeAssetDigest(bytes: Uint8Array): { size: number; sha256: st
  */
 export type NativeLoaderResolution = 'static' | 'beside-loader';
 
+/**
+ * Joined at run time so that no module of the package carries a marker as one literal: only a
+ * generated loader does, and a search of an artifact finds the loader, not this code.
+ */
+const LOADER_MARK = ['stitchkit', 'native', 'loader'].join('-');
+
+/**
+ * The string a generated loader carries as `module.exports.stitchkitNativeLoader`: `packaged` for
+ * the static loader a packaging plugin writes, `unpackaged` for the default beside-loader.
+ */
+export function nativeLoaderMarker(state: 'packaged' | 'unpackaged'): string {
+  return `${LOADER_MARK}:${state}`;
+}
+
 const NOT_PACKAGED_MESSAGE =
   'The Darwin addon is not packaged into this bundle: build it with createNativePackaging from stitchkit/files/packaging';
 
@@ -120,6 +134,10 @@ export function nativeLoaderSource(
     "    throw new Error('Darwin addon loading failed', { cause });",
     '  }',
     '};',
+    // A property assignment, so a minifier keeps it: `inspectNativeArtifact` reads it.
+    `module.exports.stitchkitNativeLoader = ${quote(
+      nativeLoaderMarker(resolution === 'static' ? 'packaged' : 'unpackaged'),
+    )};`,
     '',
   ].join('\n');
 }

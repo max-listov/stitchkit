@@ -212,6 +212,50 @@ The suite in `packages/core/tests` is the working reference for testing each
 piece. Its size changes with the public surface, so the guide does not pin a
 count that can drift independently from the test runner.
 
+### Manual time for schedules and retries
+
+`createManualClock()` from `stitchkit/testing` stands time still until the test moves it. It is
+the `clock` of `createManagedSchedule`, a durable sleep, a revision signal or bounded admission,
+and the `schedule` a retrier of your own takes:
+
+```ts
+import { createManagedSchedule } from 'stitchkit/application'
+import { createManualClock } from 'stitchkit/testing'
+
+const clock = createManualClock()
+const schedule = createManagedSchedule({ id: 'sweep', everyMs: 1_000, clock, run })
+// …start and activate it…
+await clock.advance(3_500) // runs at 1 s, 2 s and 3 s of manual time; the test takes milliseconds
+```
+
+Only one `advance` (or `until`) runs at a time; a second one started before the first settled is
+refused, because two interleaved moves would run time backwards.
+
+Due timers fire in deadline order, ties in scheduling order. After each firing the clock yields
+real event-loop turns, not just microtasks: a continuation that arms the next retry after an
+already-readable socket or another macrotask has armed it before the clock moves on, so
+`advance(10_000)` does not skip a retry armed at the fifth second. Real work of unknown length —
+a request to a fake server, a hash in the thread pool — outruns any number of turns; the test
+wraps the dependency it injects in a `hold`:
+
+```ts
+const request = async (body) => {
+  const held = clock.hold('upload to the fake server')
+  try {
+    return await fakeServer.send(body)
+  } finally {
+    held.release()
+  }
+}
+```
+
+Time does not move while a hold is open; past `holdLimitMs` of real time (default 5 s)
+`advance` fails with `ManualClockError` `MANUAL_CLOCK_HOLD_TIMEOUT`, naming every open hold. A
+held operation that waits for the clock itself — a request timing out on a deadline — `park`s
+its hold so the deadline can come. `until(done)` moves from deadline to deadline until `done()`
+holds and fails with `MANUAL_CLOCK_LIMIT` past `limitMs` of manual time; `pending()` counts the
+timers still waiting, so a timer leaked past `close()` shows as a number, not as a hang.
+
 ### Managed-resource conformance
 
 Consumer-owned resource adapters can run the framework's deterministic

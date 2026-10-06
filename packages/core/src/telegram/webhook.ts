@@ -22,6 +22,7 @@
 import { isRecord } from '../internal/typed';
 import { callTelegramBotApi } from './bot-api';
 import { digestsEqual, hmacSha256, toHex } from './crypto';
+import type { TelegramFetch } from './transport';
 
 const OWNER_PARAMETER = 'owner';
 const OWNER_CONTEXT = 'stitchkit:telegram-webhook-owner';
@@ -39,7 +40,7 @@ export interface TelegramWebhookConfig {
   readonly secret: string;
   /** A local Bot API server. Default: Telegram's. */
   readonly apiRoot?: string;
-  readonly fetch?: typeof fetch;
+  readonly fetch?: TelegramFetch;
   readonly signal?: AbortSignal;
 }
 
