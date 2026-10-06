@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-06
+
 ### Changed
 
 - Targets stitchkit `^0.107.0` (peer range `^0.106.0` → `^0.107.0`). No source change: the

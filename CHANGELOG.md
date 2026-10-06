@@ -15,7 +15,12 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.107.0] - 2026-10-06
+
 ### ⚠️ Breaking changes
+
+**Who must act:** builds that call `createNativePackaging` with `delivery: 'embedded'`; also rebuild
+any artifact made without the packaging plugin by 0.105.0–0.106.1.
 
 - `stitchkit/files/packaging` — **embedded delivery names no output paths.** A standalone executable
   carries the Darwin addon inside itself, so `createNativePackaging({ delivery: 'embedded' })` takes
@@ -23,9 +28,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   and are now refused by the type and the schema. The ready result types its addon as
   `NativePackagingEmbeddedAsset` (`bytes`, `size`, `sha256`, no `outputPath`), with
   `NativePackagingEmbeddedOptions` and `NativePackagingEmbeddedResult` beside it. Companion
-  delivery is unchanged. **Who must act:** builds with `delivery: 'embedded'`.
+  delivery is unchanged.
   `// before: createNativePackaging({ platform: 'darwin', architecture: 'arm64', delivery: 'embedded', entryPath, assetPath })`
-  → `// after: createNativePackaging({ platform: 'darwin', architecture: 'arm64', delivery: 'embedded' })` → ADR 0252
+  → `// after: createNativePackaging({ platform: 'darwin', architecture: 'arm64', delivery: 'embedded' })`
+  **Who must act:** builds with `delivery: 'embedded'`. See
+  [migration](docs/guide/upgrading.md#embedded-native-packaging-names-no-paths). → ADR 0252
 
 ### Fixed
 
