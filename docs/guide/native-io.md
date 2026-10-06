@@ -472,6 +472,11 @@ Absent without the plugin: nothing in the artifact needs the addon.
 bun build src/native.ts --target=bun --minify --outfile=dist/native.js
 ```
 
+That plain build serves Linux and the parts that never load the addon. A library whose consumers
+take locks or read process identity on macOS builds each native entry with the companion plugin of
+the next section (one entry per build, `naming.entry` equal to `entryPath`) and ships the addon it
+writes beside the entries.
+
 Qualify the complete output outside its build tree and installed dependency graph. Test process
 identity, live-owner refusal, dead-owner recovery and contained file operations in artifacts built
 with the packaging plugin, and check that an unpackaged build reports the backend `unavailable`

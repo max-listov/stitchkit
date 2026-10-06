@@ -61,22 +61,48 @@ export function qualifyNeutralLibrary(author) {
         );
       }
     };
+    // The library's build step, run from the author's install as a consumer would run it. On macOS
+    // the native entries carry the Darwin addon as a companion through the packaging plugin: an
+    // unpackaged bundle refuses to load it anywhere (ADR 0252).
+    writeFileSync(
+      join(author, 'build-neutral.mjs'),
+      `import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { createNativePackaging } from 'stitchkit/files/packaging';
+const [entry, outdir, name] = process.argv.slice(2);
+const entryPath = \`entrypoints/\${name}.js\`;
+const native =
+  process.platform === 'darwin'
+    ? createNativePackaging({
+        platform: 'darwin',
+        architecture: process.arch,
+        delivery: 'companion',
+        entryPath,
+        assetPath: 'native/darwin-[hash].node',
+      })
+    : undefined;
+if (native && native.state !== 'ready') throw new Error(native.code);
+const result = await Bun.build({
+  entrypoints: [entry],
+  target: 'node',
+  external: ['zod'],
+  outdir,
+  naming: { entry: entryPath },
+  splitting: false,
+  plugins: native ? [native.plugin] : [],
+});
+if (!result.success) throw new AggregateError(result.logs, 'Build failed');
+for (const asset of native?.assets ?? []) {
+  const destination = join(outdir, asset.outputPath);
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, asset.bytes);
+}
+`,
+    );
     for (const name of ['files', 'primitives', 'process']) {
       const entry = join(author, `neutral-${name}.mjs`);
       writeFileSync(entry, `export * from 'stitchkit/${name}';\n`);
-      run(
-        'bun',
-        [
-          'build',
-          entry,
-          '--target=node',
-          '--external=zod',
-          '--outdir',
-          join(lib, 'entrypoints'),
-          `--entry-naming=${name}.js`,
-        ],
-        author,
-      );
+      run('bun', ['build-neutral.mjs', entry, lib, name], author);
       copyDeclaration(`entrypoints/${name}.d.ts`);
       exports[`./${name}`] = {
         types: `./lib/entrypoints/${name}.d.ts`,
