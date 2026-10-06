@@ -226,8 +226,10 @@ const NativeCommandLimitReasonSchema = z.enum(['deadline', 'output-budget']);
 
 /**
  * Thrown by `runNativeCommand`; `code` is `COMMAND_LIMIT` (see `reason`),
- * `COMMAND_UNAVAILABLE` (could not start) or `COMMAND_CLEANUP` (handles stayed open past
- * `cleanupTimeoutMs`).
+ * `COMMAND_UNAVAILABLE` (could not start) or `COMMAND_CLEANUP` (the command's resources were not
+ * proven closed): handles stayed open past `cleanupTimeoutMs` after a stop, or the output pipes
+ * stayed open past `drainTimeoutMs` after the leader exited. `cause` holds the failure of the
+ * bound that tripped.
  */
 export class NativeCommandError extends Error {
   /** Observed owner limit; set only by `COMMAND_LIMIT` errors that carry evidence of which limit tripped. */

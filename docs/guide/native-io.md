@@ -268,13 +268,15 @@ so a helper started in the background races the leader:
 
 | launched by the leader as | after the leader exits |
 |---|---|
-| `setsid -f helper` (returns once the new session exists) | survives |
+| `setsid -f helper` | usually survives: `setsid -f` forks and returns at once, and the child calls `setsid()` a moment later, so a leader that exits immediately can still catch it in the group (13 of 300 launches under CPU load) |
 | `setsid helper &`, `(setsid helper &)`, `nohup helper &` | stopped: the leader usually exits before the background job has left the group |
+| a launch the leader waits on until the helper reports it has left the group | survives |
 | any of these under `descendants: 'leave'` | survives |
 
-Start a daemon so that the session exists before the leader returns (`setsid -f`, or the
-daemon's own double fork followed by the leader waiting for it), or declare `'leave'`. Declare
-`'leave'` only for a helper that has to outlive the command while staying in its group:
+Start a daemon so that the leader waits for the session to exist before it returns: the helper
+writes its pid, or prints a line, only after its own `setsid()`, and the leader waits for that.
+Or declare `'leave'`. Declare `'leave'` only for a helper that has to outlive the command while
+staying in its group:
 
 ```ts
 await runNativeCommand({

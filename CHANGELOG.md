@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Documentation
+
+- `stitchkit/process` — the native IO guide no longer says `setsid -f helper` returns once the new
+  session exists: it forks and returns at once, its child calls `setsid()` a moment later, and a
+  leader that exits immediately still caught it in the group in 13 of 300 launches under load. The
+  deterministic form is a leader that waits until the helper has reported, after its own
+  `setsid()`, that it left.
+- `stitchkit/process` — `NativeCommandError` names both causes of `COMMAND_CLEANUP`: handles left
+  open past `cleanupTimeoutMs` after a stop, and output pipes left open past `drainTimeoutMs` after
+  the leader exited. The error's `cause` holds the failure of the bound that tripped.
+
 ## [0.106.0] - 2026-10-06
 
 ### ⚠️ Breaking changes

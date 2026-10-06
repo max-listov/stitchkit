@@ -44,7 +44,8 @@ the default: a detached group is still the safe shape for everything that is not
 
 **The `setsid` condition of ADR 0246 is a race, and the guide says so.** A descendant is out of
 reach when it *had already left* the group when the leader exited. A background `setsid helper &`
-usually has not; `setsid -f helper` returns only after the new session exists.
+usually has not; `setsid -f helper` forks and returns at once, its child leaves the group a moment
+later, and only a leader that waits for the helper to report it has left is deterministic.
 
 ## Consequences
 
