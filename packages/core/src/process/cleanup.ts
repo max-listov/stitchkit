@@ -32,8 +32,26 @@ export async function cleanupNativeCommand(input: {
   };
   // A refused stop is reported once, by `signalled`; the handles are awaited only after a stop.
   const released = signalled.then(awaitRelease, () => undefined);
+  // The leader settles once its exit after the stop is observed, so the event carries what the
+  // kernel reported; with no transport, or no exit within the bound, it is a bare `error`.
+  const stopped = async (): Promise<NativeCommandSettlement> => {
+    const failed: NativeCommandSettlement = { kind: 'error', cause: input.error };
+    if (!input.transport) return failed;
+    await signalled.catch(() => undefined);
+    const leader = await waitForCommandClose(input.transport.leader, input.timeoutMs).catch(
+      () => undefined,
+    );
+    return leader?.kind === 'exit'
+      ? {
+          kind: 'stopped',
+          cause: input.error,
+          exitCode: leader.exitCode,
+          signal: leader.signal,
+        }
+      : failed;
+  };
   const cleanup = await Promise.allSettled([
-    input.settle(input.event ?? { kind: 'error', cause: input.error }),
+    input.event ? input.settle(input.event) : stopped().then(input.settle),
     destroyed,
     signalled,
     released,

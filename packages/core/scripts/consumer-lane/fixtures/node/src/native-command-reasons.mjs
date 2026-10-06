@@ -68,23 +68,66 @@ assert.equal(missing.cause.code, 'ENOENT');
 const cleanupCause = new Error('cleanup failure');
 let calls = 0;
 let eventCause;
+let leaderSignal = null;
 const cleanup = await failure({
   ...command('setInterval(()=>{},1000)'),
   timeoutMs: 30,
   stop: { target: 'group', graceMs: 0 },
   onLeaderSettled: (event) => {
     calls++;
-    assert.equal(event.kind, 'error');
-    eventCause = event.cause;
+    // A stopped leader settles with the stop's cause and the exit the kernel reported.
+    if (event.kind === 'stopped') {
+      eventCause = event.cause;
+      leaderSignal = event.signal;
+    }
     throw cleanupCause;
   },
 });
+assert.notEqual(leaderSignal, null);
 assert.equal(cleanup.code, 'COMMAND_CLEANUP');
 assert.equal(cleanup.reason, undefined);
 assert.ok(cleanup.cause instanceof AggregateError);
 assert.equal(cleanup.cause.errors[0], eventCause);
 assert.equal(eventCause.reason, 'deadline');
 assert.equal(calls, 1);
+
+// The packed process entry joins the caller's group on request and refuses a pipe option with
+// inherited stdio, by name.
+const groupOf = async (group) => {
+  const run = await runNativeCommand({
+    executable: '/bin/sh',
+    args: ['-c', 'ps -o pgid= -p $$'],
+    envPolicy: 'ambient',
+    timeoutMs: 5000,
+    capture: true,
+    maxOutputBytes: 64,
+    group,
+  });
+  return Number(new TextDecoder().decode(run.stdout).trim());
+};
+assert.equal(await groupOf('caller'), await groupOf('caller'));
+assert.notEqual(await groupOf('own'), await groupOf('caller'));
+assert.throws(
+  () =>
+    runNativeCommand({
+      executable: '/bin/sh',
+      timeoutMs: 100,
+      stdio: 'inherit',
+      capture: true,
+      maxOutputBytes: 1,
+    }),
+  /stdio: 'inherit' leaves no pipe for capture/,
+);
+assert.throws(
+  () =>
+    runNativeCommand({
+      executable: '/bin/sh',
+      timeoutMs: 100,
+      group: 'caller',
+      descendants: 'leave',
+    }),
+  /descendants does not apply/,
+);
 
 const root = await mkdtemp(join(tmpdir(), 'packed-command-reasons-'));
 try {

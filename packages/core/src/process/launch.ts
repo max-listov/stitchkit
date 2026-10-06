@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { NativeCommandError, type ParsedNativeCommandOptions } from './contract';
-import { spawnOwnedCommand } from './owned-child';
+import { spawnInheritedCommand, spawnOwnedCommand } from './owned-child';
 import { createCommandTransport, type NativeCommandTransport } from './transport';
 
 /** A structural host launcher may supply pipes without importing Node ambient types. */
@@ -162,18 +162,25 @@ export function launchNativeCommand({
 }) {
   let native: ChildProcessWithoutNullStreams | undefined;
   const launch = driver?.launch;
-  if (!launch)
-    native = spawnOwnedCommand({
-      executable: options.executable,
-      args: options.args,
-      cwd: options.cwd,
-      env:
-        options.envPolicy === 'ambient'
-          ? { ...process.env, ...options.env }
-          : (options.env ?? {}),
-      group: driver?.group ?? true,
-    });
-  const child: NativeCommandLaunchedProcess | undefined = launch ? launch() : native;
+  const spawnInput = {
+    executable: options.executable,
+    args: options.args,
+    cwd: options.cwd,
+    env:
+      options.envPolicy === 'ambient'
+        ? { ...process.env, ...options.env }
+        : (options.env ?? {}),
+    // A command in the caller's group is never a group leader of its own.
+    group: options.group === 'own' && (driver?.group ?? true),
+  };
+  let inherited: NativeCommandLaunchedProcess | undefined;
+  if (!launch) {
+    if (options.stdio === 'inherit') inherited = spawnInheritedCommand(spawnInput);
+    else native = spawnOwnedCommand(spawnInput);
+  }
+  const child: NativeCommandLaunchedProcess | undefined = launch
+    ? launch()
+    : (native ?? inherited);
   if (!child) throw new Error('Native command launcher did not supply a process');
   const transport = createCommandTransport(child);
   onAcquired(transport);

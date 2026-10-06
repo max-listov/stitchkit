@@ -121,8 +121,9 @@ export async function runCodingShell(input: {
           channel === 'stdout' ? artifactStdout : artifactStderr,
           bytes,
         ),
+      // On its own or after a stop, the leader's exit as the kernel reported it.
       onLeaderSettled: (event) => {
-        if (event.kind !== 'exit') return;
+        if (event.kind === 'error') return;
         exitCode = event.exitCode;
         signal = event.signal;
       },
@@ -166,8 +167,6 @@ export async function runCodingShell(input: {
       outcome = error.reason === 'deadline' ? 'timeout' : 'output-limit';
     else if (error instanceof CommandStopped) outcome = 'cancelled';
     else throw error;
-    exitCode = child?.exitCode ?? exitCode;
-    signal = child?.signalCode ?? signal;
   }
   const hasArtifact = input.artifacts && artifactBytes > input.maxOutputBytes;
   const completeStdout = Buffer.concat(artifactStdout);

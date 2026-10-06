@@ -15,6 +15,34 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** code passed to `runNativeCommand`'s `onLeaderSettled` that treats
+`kind: 'error'` as "the command was stopped" (a caller abort, `timeoutMs`, an exceeded output budget
+or a failing sink).
+
+- `stitchkit/process` — **a stopped leader settles as `'stopped'`, with its exit.**
+  `NativeCommandSettlement` gains `{ kind: 'stopped', cause, exitCode, signal }`: a stopped command
+  waits for the stop signals and the leader's exit, then settles with the stop's `cause` and the
+  exit code and signal the kernel reported (`SIGTERM`, or `SIGKILL` once the grace ended), which
+  were lost before. `'error'` now means only that no exit of the leader was observed (it could not
+  start, or its exit did not arrive within `cleanupTimeoutMs`); `'exit'` is unchanged. The hook
+  still runs once, after the stop sequence instead of beside it.
+  `// before: onLeaderSettled: (e) => { if (e.kind === 'error') stopped(e.cause) }` →
+  `// after: onLeaderSettled: (e) => { if (e.kind === 'stopped') stopped(e.cause, e.signal) }`
+  **Who must act:** code that handles a stop in `kind === 'error'`. See
+  [migration](docs/guide/upgrading.md#a-stopped-leader-settles-as-stopped). → ADR 0248
+
+### Added
+
+- `stitchkit/process` — `runNativeCommand` takes `stdio: 'inherit'`: the command gets the caller's
+  stdin, stdout and stderr, so a terminal stays a terminal (colour, prompts, `isatty`); `capture`,
+  `onOutput`, `stdin`, `maxOutputBytes` and `drainTimeoutMs` are refused by name with it.
+- `stitchkit/process` — `runNativeCommand` takes `group: 'caller'`: the command joins the caller's
+  process group, so a Ctrl-C at the terminal reaches it; only its leader is stopped (default stop
+  `{ target: 'leader', signal: 'SIGTERM', graceMs: 100 }`), and `descendants` and a group stop are
+  refused, since its group is the caller's. → ADR 0248
+
 ## [0.105.2] - 2026-10-06
 
 ### Added

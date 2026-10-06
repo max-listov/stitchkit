@@ -1,6 +1,6 @@
 # 0246 — A native command stops what its leader left in the group by default
 
-**Status:** Accepted
+**Status:** Accepted, amended by [ADR 0248](0248-a-stopped-leader-settles-with-its-exit-and-a-command-may-join-the-callers-group.md)
 **Date:** 2026-10-05
 
 Builds on ADR 0224, ADR 0238 and ADR 0243. Invariants I8, I9 and I10.

@@ -211,7 +211,9 @@ command the same way, by its `stop` policy:
 | `graceMs` | How long the leader (or the group) has to leave before the whole group gets KILL. 0 to 3 600 000 (one hour). Required. |
 | `killOn` | Optional `AbortSignal`. Its abort stops the command with KILL to the whole group at once, also in the middle of a grace. |
 
-Omitting `stop` means `{ target: 'group', signal: 'SIGTERM', graceMs: 100 }`.
+Omitting `stop` means `{ target: 'group', signal: 'SIGTERM', graceMs: 100 }`; a command in the
+caller's group (`group: 'caller'`) stops its leader alone, so its default is `target: 'leader'`
+and a group target is refused (see [Terminal commands](#terminal-commands-inherited-stdio-and-the-callers-group)).
 
 ```ts
 // Cooperative cancellation: the leader rolls its work back, its helpers are not asked.
@@ -282,7 +284,8 @@ await runNativeCommand({
 })
 ```
 
-A command whose group this package did not create (a structural
+A command in the caller's group (`group: 'caller'`) has no group of its own: `descendants` is
+refused there and nothing is stopped after its leader exits. A command whose group this package did not create (a structural
 launcher supplied by a host) has no group to stop, and `descendants` has nothing to act on there.
 
 
@@ -298,26 +301,68 @@ bounded tar or capture commands get their own explicit limits.
 A child the caller holds until it exits is the same call. A guardian that forwards its own SIGTERM
 passes an abort signal and `stop: { target: 'leader', signal: 'SIGTERM', graceMs }`. It records the
 pid in `onLeaderStarted({ pid })`, which runs once right after the leader exists (a throw stops the
-command with that error), reads the exit code and signal in `onLeaderSettled` before the pipes
-drain, and reads stderr through `onOutput` or `capture` with `maxOutputBytes`. `drainTimeoutMs`
-bounds how long the output pipes may stay open after the leader exited: a holder that left the
-group with `setsid` keeps them open, and without the option the command waits for it until
-`timeoutMs` or the signal; with it the command ends with `COMMAND_CLEANUP` (a holder inside the
-group is already stopped by `descendants`). A worker whose whole group must stop on abort is the
-default `target: 'group'`. A child that inherits the caller's terminal is outside this
-capability: every command runs in a group of its own, and a background group that reads the
-terminal is stopped by the kernel (`SIGTTIN`), so an interactive re-execution stays a plain
-spawn in the caller's group. Importing one leaf does not make
+command with that error), and the leader's exit code and signal in `onLeaderSettled`: `'exit'`
+when the leader ended on its own, `'stopped'` with the same fields when the guardian stopped it.
+It reads stderr through `onOutput` or `capture` with `maxOutputBytes`. `drainTimeoutMs` bounds how
+long the output pipes may stay open after the leader exited: a holder that left the group with
+`setsid` keeps them open, and without the option the command waits for it until `timeoutMs` or
+the signal; with it the command ends with `COMMAND_CLEANUP` (a holder inside the group is already
+stopped by `descendants`). A worker whose whole group must stop on abort is the default
+`target: 'group'`. A command that uses the caller's terminal is the next section. Importing one leaf does not make
 installing the whole npm package smaller; choose a dependency after measuring packed size and its
 dependency closure.
+
+## Terminal commands: inherited stdio and the caller's group
+
+An operator CLI that re-runs itself, or any command that prompts or prints in colour, needs the
+caller's terminal itself rather than pipes. Two options give it that:
+
+```ts
+const { exitCode } = await runNativeCommand({
+  executable: process.execPath, args: [cliPath, ...argv], envPolicy: 'ambient',
+  signal: shutdown.signal,
+  stdio: 'inherit',   // the command's stdin, stdout and stderr are the caller's: a TTY stays a TTY
+  group: 'caller',    // it joins the caller's process group, so a Ctrl-C at the terminal reaches it
+})
+process.exitCode = exitCode ?? 1
+```
+
+`stdio: 'inherit'` hands the caller's three descriptors to the command; its bytes never pass
+through this package, so `capture`, `onOutput`, `stdin`, `maxOutputBytes` and `drainTimeoutMs` are
+refused by name with it, and the result's buffers stay empty.
+
+`group: 'caller'` keeps the command in the caller's process group instead of a group of its own.
+That is what an interactive command needs: the terminal sends Ctrl-C to its foreground group,
+and a command in a group of its own is a background group there, which the kernel stops
+(`SIGTTIN`) as soon as it reads the terminal. In the caller's group the command has no group of
+its own, so:
+
+- a stop signals the leader alone: `stop.target` is `'leader'` (the default here is
+  `{ target: 'leader', signal: 'SIGTERM', graceMs: 100 }`), and `target: 'group'` is refused,
+  because a group signal would reach the caller;
+- `descendants` does not apply and is refused: what the leader leaves behind belongs to the
+  caller's group, and `descendantsStopped` is always `false`;
+- a Ctrl-C reaches the caller too; handle `SIGINT` in the caller when it must outlive the command.
+
+The two options are independent: `stdio: 'inherit'` alone keeps colour and `isatty` for a command
+that never reads the terminal, and `group: 'caller'` alone forwards Ctrl-C to a piped command.
 
 ## Resource-scoped launchers and shared owners
 
 `onLeaderSettled(event, signal)` observes leader exit before inherited stdout/stderr pipes
 close. A resource owner can stop its external scope there, allowing pipe drain to complete.
-The callback runs once: `event.kind === 'exit'` carries observed `exitCode`/`signal`; a terminal
-failure uses `kind: 'error'` and preserves its cause. Unavailable executables, output sink
-failure and caller cancellation settle through the same owner. Synchronous native launch
+The callback runs once, with one of three events:
+
+| `event.kind` | when | carries |
+|---|---|---|
+| `'exit'` | the leader ended on its own | `exitCode`, `signal` as the kernel reported them |
+| `'stopped'` | the command was stopped (caller abort, `timeoutMs`, output budget, failing sink) and the leader's exit after the stop signals was observed | the stop's `cause`, and the leader's `exitCode` and `signal` (for example `SIGTERM`, or `SIGKILL` once the grace ended) |
+| `'error'` | no exit of the leader was observed: it could not start, or its exit did not arrive within `cleanupTimeoutMs` | the `cause` |
+
+A leader that ended on its own settles before the pipes drain; a stopped one settles after the
+stop sequence, once its exit is known. A stop that comes after the leader already exited (a
+deadline while a helper holds the pipe) does not change its `'exit'` event. Unavailable
+executables, output sink failure and caller cancellation settle through the same owner. Synchronous native launch
 failures such as `E2BIG` also return a rejected result after this bounded settlement;
 schema-invalid and already-aborted inputs refuse before native ownership and do not invoke
 the hook. A failing hook preserves both the initial launch error and cleanup cause.

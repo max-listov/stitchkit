@@ -164,6 +164,44 @@ export async function stopCommandLeader(
   return (await signalUntilSettled(pid, 'SIGKILL', deadline)) || signalled;
 }
 
+/**
+ * Stop a command that is no group leader of its own (it joined the caller's group): the
+ * policy's signal to the leader alone, a grace its exit ends, then KILL to the leader alone.
+ * Its group is the caller's and is never signalled; a leader that has already exited is never
+ * signalled again. Resolves `true` when a signal reached the leader.
+ */
+export async function stopLeaderAlone(stop: {
+  leader: CommandLeader;
+  policy: ParsedNativeCommandStopPolicy;
+  leaderExit: Promise<unknown>;
+  force: boolean;
+}): Promise<boolean> {
+  const { leader, policy } = stop;
+  const running = () => leader.exitCode === null && leader.signalCode === null;
+  const send = (signal: NodeJS.Signals) => {
+    if (leader.pid === undefined || !running()) return false;
+    try {
+      process.kill(leader.pid, signal);
+      return true;
+    } catch (error) {
+      if (isErrno(error, 'ESRCH')) return false;
+      throw error;
+    }
+  };
+  if (stop.force || policy.killOn?.aborted) return send('SIGKILL');
+  const signalled = send(policy.signal);
+  if (signalled) {
+    const grace = new AbortController();
+    const end = () => grace.abort();
+    policy.killOn?.addEventListener('abort', end, { once: true });
+    void stop.leaderExit.then(end, end);
+    await sleep(policy.graceMs, grace.signal).catch(() => undefined);
+    policy.killOn?.removeEventListener('abort', end);
+    grace.abort();
+  }
+  return send('SIGKILL') || signalled;
+}
+
 export function commandCleanupError(cause: unknown): NativeCommandError {
   return new NativeCommandError('COMMAND_CLEANUP', 'Command cleanup did not complete', {
     cause,

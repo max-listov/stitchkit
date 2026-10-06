@@ -7,11 +7,20 @@ const NativeCommandSettlementSchema = z.discriminatedUnion('kind', [
     exitCode: z.number().int().nullable(),
     signal: z.string().nullable(),
   }),
+  z.object({
+    kind: z.literal('stopped'),
+    cause: z.unknown(),
+    exitCode: z.number().int().nullable(),
+    signal: z.string().nullable(),
+  }),
   z.object({ kind: z.literal('error'), cause: z.unknown() }),
 ]);
 /**
- * How a command's main process ended: `exit` with code and signal, or `error` with the cause;
- * `onLeaderSettled` receives it before inherited pipes finish draining.
+ * How a command's main process ended: `exit` with code and signal when it ended on its own;
+ * `stopped` when the command was stopped (abort, deadline, output budget, failing sink) and the
+ * kernel then reported how the leader ended, with the stop's `cause`; `error` when no exit of the
+ * leader was observed (it could not start, or its exit never arrived). A leader that ends on its
+ * own settles before inherited pipes finish draining, a stopped one after the stop signals.
  */
 export type NativeCommandSettlement = z.infer<typeof NativeCommandSettlementSchema>;
 
@@ -34,7 +43,8 @@ const NativeCommandStopPolicySchema = z.strictObject({
 /**
  * How a cancelled command is stopped: `signal` goes to the whole group (`target: 'group'`) or
  * only to the leader (`'leader'`), the group gets KILL once the grace ends (for `'leader'`, as
- * soon as the leader has exited), and an abort of `killOn` stops at once with KILL.
+ * soon as the leader has exited), and an abort of `killOn` stops at once with KILL. A command in
+ * the caller's group (`group: 'caller'`) takes `'leader'` only, and KILL reaches its leader alone.
  */
 export type NativeCommandStopPolicy = z.input<typeof NativeCommandStopPolicySchema>;
 export type ParsedNativeCommandStopPolicy = z.output<typeof NativeCommandStopPolicySchema>;
@@ -57,6 +67,18 @@ function unknownOptionMessage(keys: readonly PropertyKey[]): string {
     })
     .join('; ');
 }
+
+/** The stop of a command that leads its own group, and of one that joined the caller's. */
+const DEFAULT_GROUP_STOP: ParsedNativeCommandStopPolicy = {
+  target: 'group',
+  signal: 'SIGTERM',
+  graceMs: 100,
+};
+const DEFAULT_LEADER_STOP: ParsedNativeCommandStopPolicy = {
+  target: 'leader',
+  signal: 'SIGTERM',
+  graceMs: 100,
+};
 
 export const NativeCommandOptionsSchema = z
   .strictObject(
@@ -98,16 +120,17 @@ export const NativeCommandOptionsSchema = z
       // Bounds how long the output pipes may stay open after the leader exited; without it a
       // holder outside the group keeps the command waiting until `timeoutMs` or the signal.
       drainTimeoutMs: z.number().int().positive().max(MAX_TIMER_MS).optional(),
-      stop: NativeCommandStopPolicySchema.default({
-        target: 'group',
-        signal: 'SIGTERM',
-        graceMs: 100,
-      }),
+      // `'own'`: the command leads a process group of its own and is stopped as a group.
+      // `'caller'`: it joins the caller's group, so a terminal's Ctrl-C reaches it, and only its
+      // leader is ever signalled.
+      group: z.enum(['own', 'caller']).default('own'),
+      // `'inherit'` hands the caller's stdin, stdout and stderr to the command: a TTY stays a TTY.
+      stdio: z.enum(['pipe', 'inherit']).default('pipe'),
+      // Omitted: TERM to the group for `group: 'own'`, to the leader for `'caller'`, 100 ms, KILL.
+      stop: NativeCommandStopPolicySchema.optional(),
       // Safe default (I9): what the leader left in its group is killed once it has exited. A
-      // daemon that leaves the group (setsid) is not a member and is never touched.
-      descendants: z
-        .enum(['terminate-after-leader', 'leave'])
-        .default('terminate-after-leader'),
+      // daemon that has left the group (setsid) is not a member and is never touched.
+      descendants: z.enum(['terminate-after-leader', 'leave']).optional(),
       cleanupTimeoutMs: z
         .number()
         .int()
@@ -141,7 +164,41 @@ export const NativeCommandOptionsSchema = z
         input: ctx.value,
         message: 'stdin exceeds maxStdinBytes',
       });
-  });
+    // In the caller's group the command has no group of its own to stop or to clean up.
+    if (input.group === 'caller' && input.stop?.target === 'group')
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        message: "group: 'caller' stops only the leader; use stop.target 'leader'",
+      });
+    if (input.group === 'caller' && input.descendants !== undefined)
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        message: "group: 'caller' has no group of its own, so descendants does not apply",
+      });
+    // Inherited channels never pass through this package: nothing to capture, sink or bound.
+    if (input.stdio === 'inherit') {
+      const piped = [
+        input.capture && 'capture',
+        input.onOutput && 'onOutput',
+        input.stdin && 'stdin',
+        input.maxOutputBytes !== undefined && 'maxOutputBytes',
+        input.drainTimeoutMs !== undefined && 'drainTimeoutMs',
+      ].filter((name) => typeof name === 'string');
+      for (const name of piped)
+        ctx.issues.push({
+          code: 'custom',
+          input: ctx.value,
+          message: `stdio: 'inherit' leaves no pipe for ${name}`,
+        });
+    }
+  })
+  .transform((input) => ({
+    ...input,
+    stop: input.stop ?? (input.group === 'caller' ? DEFAULT_LEADER_STOP : DEFAULT_GROUP_STOP),
+    descendants: input.descendants ?? 'terminate-after-leader',
+  }));
 /**
  * Input to `runNativeCommand`: the executable and args, plus a caller signal or finite
  * timeout; capturing output also requires `maxOutputBytes`.

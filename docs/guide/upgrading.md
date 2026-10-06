@@ -1,5 +1,40 @@
 # Upgrading stitchkit
 
+## Unreleased migration: a stopped leader settles as stopped
+
+**Who must act:** code passed to `onLeaderSettled` of `runNativeCommand` (`stitchkit/process`) that
+reads `kind: 'error'` as "the command was stopped". Code that only handles `kind: 'exit'`, or does
+not pass `onLeaderSettled`, needs no change.
+
+A command stopped by a caller abort, its `timeoutMs`, an exceeded output budget or a failing sink
+used to settle at once as `{ kind: 'error', cause }`. It now waits for the stop signals and settles
+as `{ kind: 'stopped', cause, exitCode, signal }`, with how the kernel reported the leader's end
+([ADR 0248](../decisions/0248-a-stopped-leader-settles-with-its-exit-and-a-command-may-join-the-callers-group.md)).
+`'error'` is left for a leader whose exit was never observed.
+
+1. Where the hook handled a stop under `'error'`, handle `'stopped'` there, and take the exit from
+   the event instead of reading the child process:
+
+   ```ts
+   // before
+   onLeaderSettled: (event) => {
+     if (event.kind === 'exit') record(event.exitCode, event.signal)
+     else stopped(event.cause)
+   }
+   // after
+   onLeaderSettled: (event) => {
+     if (event.kind === 'error') return failed(event.cause)
+     record(event.exitCode, event.signal)
+     if (event.kind === 'stopped') stopped(event.cause)
+   }
+   ```
+
+   Search pattern: `onLeaderSettled` together with `kind === 'error'` or `kind !== 'exit'`.
+2. Type-check: an exhaustive `switch (event.kind)` without a `'stopped'` case fails on the new kind.
+3. A hook that stops an external scope on a stopped command now runs once the leader is gone,
+   still bounded by `cleanupTimeoutMs`; no change is needed unless the leader waited for that scope
+   to exit (it gets KILL when the grace ends either way).
+
 ## Released migration: 0.105.0
 
 ### CLI publication has its own entrypoint

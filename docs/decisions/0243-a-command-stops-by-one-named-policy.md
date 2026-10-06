@@ -1,6 +1,6 @@
 # 0243 — A native command stops by one named policy, and the host bounds only what it outlives
 
-**Status:** Accepted
+**Status:** Accepted, amended by [ADR 0248](0248-a-stopped-leader-settles-with-its-exit-and-a-command-may-join-the-callers-group.md)
 **Date:** 2026-10-05
 
 Amends ADR 0224. Invariants I8, I9, I10 and I11.

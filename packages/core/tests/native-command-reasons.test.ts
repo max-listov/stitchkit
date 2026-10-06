@@ -119,17 +119,23 @@ test('cleanup aggregate and exactly-once settlement preserve the initial structu
   const cleanupCause = new Error('external cleanup failed');
   let calls = 0;
   let eventCause: unknown;
+  let leaderSignal: string | null = null;
   const error = await failure({
     ...command('setInterval(()=>{},1000)'),
     timeoutMs: 20,
     stop: { target: 'group', graceMs: 0 },
     onLeaderSettled: (event) => {
       calls++;
-      expect(event.kind).toBe('error');
-      if (event.kind === 'error') eventCause = event.cause;
+      // A stopped command settles with its cause and the exit the kernel reported after the stop.
+      expect(event.kind).toBe('stopped');
+      if (event.kind === 'stopped') {
+        eventCause = event.cause;
+        leaderSignal = event.signal;
+      }
       throw cleanupCause;
     },
   });
+  expect(leaderSignal).not.toBeNull();
   expect(error.code).toBe('COMMAND_CLEANUP');
   expect(error.reason).toBeUndefined();
   expect(error.cause).toBeInstanceOf(AggregateError);
@@ -139,7 +145,7 @@ test('cleanup aggregate and exactly-once settlement preserve the initial structu
   expect(initial).toMatchObject({ code: 'COMMAND_LIMIT', reason: 'deadline' });
   expect(error.cause.errors[1]).toMatchObject({
     code: 'COMMAND_CLEANUP',
-    cause: { errors: [{ kind: 'error', cause: initial }, cleanupCause] },
+    cause: { errors: [{ kind: 'stopped', cause: initial }, cleanupCause] },
   });
   expect(calls).toBe(1);
 });

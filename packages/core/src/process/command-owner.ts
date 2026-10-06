@@ -17,6 +17,7 @@ import {
   registerNativeCommandOwner,
 } from './launch';
 import { createLeaderCloseDeadline, createLeaderSettlement } from './leader-settlement';
+import { createOutputDrain } from './output-drain';
 import { failedCommandStart } from './start-failure';
 import { signalCommandChild } from './terminate';
 import type { NativeCommandTransport } from './transport';
@@ -68,7 +69,8 @@ export function startNativeCommand(
   const signalOwned = (force = driver?.force) => {
     if (!acquired) return Promise.resolve(false);
     return signalCommandChild(acquired.child, {
-      group: driver?.group !== false,
+      group: driver?.group !== false && options.group === 'own',
+      callerGroup: options.group === 'caller',
       policy: options.stop,
       leaderExit: acquired.leader,
       cleanupTimeoutMs,
@@ -122,55 +124,24 @@ export function startNativeCommand(
     ).then(completion.resolve, completion.reject);
     return owner;
   }
-  const stdout: Uint8Array[] = [];
-  const stderr: Uint8Array[] = [];
-  let total = 0;
-  const { stdout: output, stderr: errorOutput, leader, closed } = launched;
+  const output = createOutputDrain(options, controller.signal);
+  const { stdout, stderr, leader, closed } = launched;
   const cancelCloseDeadline = createLeaderCloseDeadline(
     leader,
     driver?.closeTimeoutMs ?? options.drainTimeoutMs,
     controller,
   );
-  const drain = async (
-    stream: AsyncIterable<Uint8Array>,
-    channel: 'stdout' | 'stderr',
-    captured: Uint8Array[],
-  ) => {
-    for await (const chunk of stream) {
-      // A stopping command's output is read and dropped until cleanup closes the pipe: the
-      // leader keeps a reader through its grace instead of meeting a broken pipe, and no
-      // sink starts after the abort.
-      if (controller.signal.aborted) continue;
-      // Node's binary Readable boundary; reject an unexpected text-mode adapter.
-      if (!(chunk instanceof Uint8Array))
-        throw new TypeError('Expected binary command output');
-      total += chunk.byteLength;
-      if (options.maxOutputBytes !== undefined && total > options.maxOutputBytes)
-        throw new NativeCommandError('COMMAND_LIMIT', 'Command output budget exceeded', {
-          reason: 'output-budget',
-        });
-      if (options.capture) captured.push(Uint8Array.from(chunk));
-      if (options.onOutput)
-        try {
-          await raceAbort(
-            Promise.resolve().then(() => {
-              controller.signal.throwIfAborted();
-              return options.onOutput?.(chunk, channel, controller.signal);
-            }),
-            controller.signal,
-          );
-        } catch (error) {
-          if (!controller.signal.aborted || error !== controller.signal.reason) throw error;
-        }
-    }
-  };
   // After an observed leader exit the descendants are stopped (unless the caller declared
   // `descendants: 'leave'`) before the pipes drain: a member holding an inherited pipe would otherwise hold the drain.
   let descendantsStopped = false;
   const settleLeader = async (event: NativeCommandSettlement) => {
-    await settle(event);
-    // A command that is already stopping has its group handled by that stop.
+    // A command that is already stopping settles through its stop, with the cause, once the
+    // stop has observed the leader's exit; it also has its group handled by that stop.
     if (controller.signal.aborted) return;
+    await settle(event);
+    if (controller.signal.aborted) return;
+    // In the caller's group there is no group of the command's own to clean up.
+    if (options.group === 'caller') return;
     if (options.descendants !== 'terminate-after-leader' || event.kind !== 'exit') return;
     try {
       descendantsStopped = await signalOwned();
@@ -184,8 +155,8 @@ export function startNativeCommand(
       const pid = acquired?.child.pid;
       if (pid !== undefined) options.onLeaderStarted?.({ pid });
       const drains = Promise.all([
-        drain(output, 'stdout', stdout),
-        drain(errorOutput, 'stderr', stderr),
+        output.drain(stdout, 'stdout'),
+        output.drain(stderr, 'stderr'),
       ]);
       await raceAbort(Promise.all([drains, leader.then(settleLeader)]), controller.signal);
       const status = await raceAbort(closed, controller.signal);
@@ -193,8 +164,7 @@ export function startNativeCommand(
       return {
         ...status,
         descendantsStopped,
-        stdout: Buffer.concat(stdout),
-        stderr: Buffer.concat(stderr),
+        ...output.captured(),
       };
     } catch (error) {
       controller.abort(error);

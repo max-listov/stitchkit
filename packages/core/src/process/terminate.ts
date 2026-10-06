@@ -4,6 +4,7 @@ import {
   commandCleanupError,
   stopCommandGroup,
   stopCommandLeader,
+  stopLeaderAlone,
   waitForCommandClose,
 } from './group';
 import { ownsCommandGroup } from './owned-child';
@@ -28,6 +29,8 @@ export function signalCommandChild(
     leaderExit: Promise<unknown>;
     cleanupTimeoutMs: number;
     force: boolean;
+    /** The child joined the caller's group (`group: 'caller'`): only its leader is stopped. */
+    callerGroup?: boolean;
   },
 ): Promise<boolean> {
   if (input.group && ownsCommandGroup(child)) {
@@ -41,6 +44,15 @@ export function signalCommandChild(
       ? stopCommandLeader({ ...stop, leader: child, leaderExit: input.leaderExit })
       : stopCommandGroup(stop);
   }
+  // No group of its own: a command in the caller's group stops its leader by the policy; any
+  // other child is killed while it still runs.
+  if (input.callerGroup)
+    return stopLeaderAlone({
+      leader: child,
+      policy: input.policy,
+      leaderExit: input.leaderExit,
+      force: input.force,
+    });
   return Promise.resolve().then(() => {
     if (child.exitCode !== null || child.signalCode !== null) return false;
     if (!child.kill('SIGKILL')) throw new Error('Command leader termination was refused');

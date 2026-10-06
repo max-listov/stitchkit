@@ -1134,6 +1134,12 @@
     }
   },
   "NativeCommandOptions": {
+    "group": {
+      "test": "the command joins the caller’s group; by default it leads one of its own"
+    },
+    "stdio": {
+      "test": "the bytes go straight to the caller’s descriptors, and the result carries none"
+    },
     "onLeaderStarted": {
       "test": "onLeaderStarted reports the pid of the leader itself, once, before it exits"
     },
