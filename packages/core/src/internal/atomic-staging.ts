@@ -68,7 +68,8 @@ function isMissing(error: unknown): boolean {
  * Remove the abandoned staging files of atomic writes from one directory and return their
  * names. Only regular files matching {@link isAtomicStagingName} and older than `olderThanMs`
  * are removed; a symlink, a directory or any other entry is left alone, and nothing is
- * followed or recursed into.
+ * followed or recursed into. A `directory` that does not exist holds nothing to sweep and
+ * yields `[]`; any other listing failure (a file in its place, a denied read) throws.
  */
 export async function sweepAtomicStaging(
   options: SweepAtomicStagingOptions,
@@ -78,7 +79,14 @@ export async function sweepAtomicStaging(
   signal?.throwIfAborted();
   const cutoff = Date.now() - olderThanMs;
   const removed: string[] = [];
-  for (const name of await readdir(directory)) {
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch (error) {
+    if (isMissing(error)) return removed;
+    throw error;
+  }
+  for (const name of names) {
     signal?.throwIfAborted();
     if (!isAtomicStagingName(name)) continue;
     const path = join(directory, name);

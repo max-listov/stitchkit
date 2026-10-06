@@ -156,4 +156,17 @@ describe('sweepAtomicStaging', () => {
     ).rejects.toThrow('stopped');
     expect(await readdir(root)).toEqual([name]);
   });
+
+  test('a directory that does not exist yet has nothing to sweep', async () => {
+    expect(
+      await sweepAtomicStaging({ directory: join(root, 'not-created'), olderThanMs: HOUR }),
+    ).toEqual([]);
+  });
+
+  test('a file standing where the directory should be is refused, not read as empty', async () => {
+    await writeFile(join(root, 'registry'), 'not a directory');
+    await expect(
+      sweepAtomicStaging({ directory: join(root, 'registry'), olderThanMs: HOUR }),
+    ).rejects.toMatchObject({ code: 'ENOTDIR' });
+  });
 });
