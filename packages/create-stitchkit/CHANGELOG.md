@@ -12,6 +12,11 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects track Stitchkit `^0.106.0`; the template lockfile resolves 0.106.0. The
+  template does not use `onLeaderSettled`, so the 0.106.0 migration needs no change in it.
+
 ## [0.6.12] - 2026-10-06
 
 ### Changed
