@@ -42,6 +42,7 @@ bun run verify:fast    # lockfile + lint + check + test, the part that is faster
 bun scripts/verify.ts --release # package-aware release train gate, max two heavy lanes
 bun run update:starter # move the template's framework range and lockfile together
 bun run release:check # release metadata of the WORKING TREE, before the gate — one second
+bun run consumer-canary # try the candidate on the controlled consumers; required for a breaking or process release
 bun run release:train # push every tag selected by release-train.json after green exact-SHA CI
 bun run lint:fix  # auto-fix formatting / safe lint
 bun packages/core/src/entrypoints/bin/upgrade-cli.ts upgrade --from X.Y.Z  # the plan a consumer gets, from this tree

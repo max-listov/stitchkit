@@ -63,6 +63,11 @@ export const RELEASE_TARGETS = {
 
 export const ReleaseTrainSchema = z.object({
   schemaVersion: z.literal(1),
+  /**
+   * Why this release goes out without the consumer canary it would otherwise need (ADR 0250). The
+   * reason is committed with the release; an empty or token reason is refused.
+   */
+  consumerCanaryWaiver: z.string().min(20).optional(),
   releases: z
     .array(
       z.object({

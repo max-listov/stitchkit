@@ -24,6 +24,7 @@ const releaseCommit: CommitFacts = {
 async function fixture(
   runs: readonly CiRunSummary[] | Error,
   history: readonly CommitFacts[] = [releaseCommit],
+  canary?: Error,
 ) {
   const root = await mkdtemp(join(tmpdir(), 'release-tag-boundary-'));
   roots.push(root);
@@ -69,6 +70,10 @@ async function fixture(
       calls.push(['ci', sha]);
       if (runs instanceof Error) throw runs;
       return runs;
+    },
+    requireConsumerCanary: async () => {
+      calls.push(['canary']);
+      if (canary) throw canary;
     },
   };
   return { calls, execution, invoke: () => releaseTrain(execution) };
@@ -151,4 +156,27 @@ test('CI disk/API boundary rejects malformed summaries', () => {
   expect(CiRunListSchema.safeParse([green]).success).toBe(true);
   for (const bad of [null, {}, [{ ...green, id: -1 }], [{ ...green, conclusion: undefined }]])
     expect(CiRunListSchema.safeParse(bad).success).toBe(false);
+});
+
+test('a release that needs a consumer canary and has none is refused after CI and before any tag', async () => {
+  const { calls, invoke } = await fixture(
+    [green],
+    [releaseCommit],
+    new Error('no canary recorded'),
+  );
+  await expect(invoke()).rejects.toThrow('no canary recorded');
+  expect(calls.map((call) => call[0])).toContain('canary');
+  expect(calls.findIndex((call) => call[0] === 'ci')).toBeLessThan(
+    calls.findIndex((call) => call[0] === 'canary'),
+  );
+  expect(calls.filter((call) => ['tag', 'push'].includes(call[1] ?? ''))).toEqual([]);
+});
+
+test('a satisfied canary check lets the tags go, after it', async () => {
+  const { calls, invoke } = await fixture([green]);
+  await invoke();
+  const canary = calls.findIndex((call) => call[0] === 'canary');
+  const tag = calls.findIndex((call) => call[1] === 'tag');
+  expect(canary).toBeGreaterThan(-1);
+  expect(tag).toBeGreaterThan(canary);
 });

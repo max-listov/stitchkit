@@ -42,6 +42,7 @@
     "update:starter": "bun scripts/update-starter.ts",
     "release:check": "bun scripts/release-plan.ts check",
     "release:train": "bun scripts/release-plan.ts release train",
+    "consumer-canary": "bun scripts/consumer-canary.ts",
     "sync:readme": "bun scripts/sync-package-readme.ts && bun run gen:llms",
     "test:template": "cd packages/create-stitchkit/template && bun test scripts",
     "test:agent-template": "cd packages/create-stitchkit/templates/agent && bun test",

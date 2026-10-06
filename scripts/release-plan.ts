@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { requireConsumerCanary } from './consumer-canary';
 import { git } from './local-git';
 import { askReleaseCi, CiRunListSchema, selectSuccessfulCiRun } from './release-ci';
 import { output, run } from './release-command';
@@ -217,6 +218,7 @@ async function main(): Promise<void> {
       validateSubject: (head, tag) =>
         assertReleaseSubjectForTag({ root, tag, head, history: firstParentHistory(root) }),
       askCi: (sha) => askReleaseCi(root, sha),
+      requireConsumerCanary: () => requireConsumerCanary(root),
     };
     if (command === 'assert-origin') {
       await assertDefaultBranchAtOrigin(commands);

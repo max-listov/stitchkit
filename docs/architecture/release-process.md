@@ -29,6 +29,31 @@ Five steps, one command each. Every command is idempotent until the last one.
 The tag workflow publishes nothing CI did not build for that SHA. Details of each rule are below;
 the pre-push and tag-time gates refuse every shape that skips a step.
 
+### The consumer canary
+
+A release that is breaking, or that changes `stitchkit/process`, is tried on the consumers the owner
+controls before it is tagged. After step 4's CI run is green and before the fast-forward, run
+`bun run consumer-canary` on the release commit: it downloads the tarball CI built for it (the file
+that will be published), runs each consumer's own tests on a scratch clone of its committed HEAD with
+`stitchkit` overridden to the tarball, judges a failure against the consumer's own pinned version,
+and records a green result for that tree. `bun run release:train` (step 5) refuses a required canary
+without a record. `--local` and `--tarball <path>` give a first look before CI and are never
+recorded. A consumer that fails because the release breaks it on purpose is released by committing
+the reason in `release-train.json` as `consumerCanaryWaiver`. The consumers live in the machine
+profile `STITCHKIT_CONSUMER_CANARY_PROFILE` (default `~/.config/stitchkit/consumer-canary.json`), not
+in this repository:
+
+```json
+{
+  "schemaVersion": 1,
+  "consumers": [
+    { "name": "app", "path": "/abs/path/of/its/checkout", "test": ["bun", "run", "test"] }
+  ]
+}
+```
+
+`install` (default `bun install`) and `timeoutMs` (default twenty minutes) are optional. → ADR 0250.
+
 ### Measuring the pipeline
 
 A pipeline benchmark never needs a published version. Run steps 2 to 4 on a throwaway branch and
