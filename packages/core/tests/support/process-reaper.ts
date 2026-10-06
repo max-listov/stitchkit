@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
  * `onLeaderStarted`, a child it spawns itself by pid, a member the test only learns from a file by
  * that file's path. `reapAfterEachTest()` kills them in `afterEach` and when the runner is
  * interrupted; a runner killed with SIGKILL runs nothing, and the leak gate of `bun run test`
- * (`scripts/test-gate.ts`) reports what it left.
+ * (`scripts/test-leak-gate.ts`) reports what it left.
  */
 const groups = new Set<number>();
 const pids = new Set<number>();

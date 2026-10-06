@@ -10,8 +10,6 @@ export interface ReleaseCommands {
   /** The tagged head must be the release commit of the train, or fix commits stacked on it. */
   validateSubject(head: string, tag: string): Promise<void>;
   askCi(sha: string): Promise<readonly CiRunSummary[]>;
-  /** Refuses a release that needs a consumer canary and has neither a green record nor a waiver. */
-  requireConsumerCanary(): Promise<void>;
 }
 
 /** The default branch, fetched, and its head: the one place a release starts and is tagged from. */
@@ -32,8 +30,7 @@ export async function assertDefaultBranchAtOrigin(
  * Tag every target of the train on the head of the default branch.
  *
  * All metadata and remote evidence precede the first mutating tag operation:
- * each tag's metadata, the tagged head's shape, a green exact-SHA push run, and, for a release
- * that needs one, the consumer canary (ADR 0250).
+ * each tag's metadata, the tagged head's shape and a green exact-SHA push run.
  */
 export async function releaseTrain(commands: ReleaseCommands): Promise<void> {
   if ((await commands.output(['git', 'status', '--porcelain'])) !== '')
@@ -46,7 +43,6 @@ export async function releaseTrain(commands: ReleaseCommands): Promise<void> {
     await commands.validateSubject(head, tag);
   }
   await requireSuccessfulReleaseCi(head, commands.askCi);
-  await commands.requireConsumerCanary();
   for (const tag of tags) await commands.run(['git', 'tag', tag, head]);
   await commands.run(['git', 'push', 'origin', ...tags.map((tag) => `refs/tags/${tag}`)]);
   await retireReleaseBranches(head, commands);

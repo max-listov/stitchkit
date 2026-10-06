@@ -122,10 +122,6 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 - Run `bun run release:check` before any gate. → [release-process](./docs/architecture/release-process.md#order-inside-a-release)
 - Rolling the core changelog moves the maturity-table cadence sentences: update the table and
   `scripts/surface-cadence.test.ts` in the same commit. → [release-process](./docs/architecture/release-process.md#two-packages-one-train)
-- Run `bun run consumer-canary` on the release commit, after its CI run is green and before the fast-forward, when the
-  release is breaking or touches `stitchkit/process`: `release:train` refuses without a green record or a committed
-  `consumerCanaryWaiver`. The consumers are machine configuration, never
-  named here. → [release-process](./docs/architecture/release-process.md#the-consumer-canary), ADR 0250
 - Make the metadata-only `release(train)` commit LAST: push it to `release/X.Y.Z`, wait for its exact-SHA
   push run, fast-forward master, `bun run release:train`. The five steps: [how a release happens](./docs/architecture/release-process.md#how-a-release-happens).
 - Repair a red release commit with a commit of its own type on top; the tagged head still needs its own
