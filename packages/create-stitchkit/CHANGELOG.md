@@ -12,6 +12,12 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects track Stitchkit `^0.107.0`; the template lockfile resolves 0.107.0. The
+  template uses neither native packaging nor a bundled Darwin loader, so its code is unchanged; a
+  bundle of the generated backend now carries no path of the machine that built it.
+
 ## [0.6.14] - 2026-10-06
 
 ### Changed
