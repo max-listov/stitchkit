@@ -61,13 +61,17 @@ async function buildArtifact(name, target, stage, supported = false) {
   mkdirSync(isolated);
   const compiled = target === 'compiled';
   const packaging = supported
-    ? createNativePackaging({
-        platform: 'darwin',
-        architecture: process.arch,
-        delivery: compiled ? 'embedded' : 'companion',
-        entryPath: 'app/proof.js',
-        assetPath: 'addons/owner.node',
-      })
+    ? createNativePackaging(
+        compiled
+          ? { platform: 'darwin', architecture: process.arch, delivery: 'embedded' }
+          : {
+              platform: 'darwin',
+              architecture: process.arch,
+              delivery: 'companion',
+              entryPath: 'app/proof.js',
+              assetPath: 'addons/owner.node',
+            },
+      )
     : undefined;
   if (packaging) assert.equal(packaging.state, 'ready');
   const result = await Bun.build({
@@ -91,6 +95,14 @@ async function buildArtifact(name, target, stage, supported = false) {
     if (artifact.kind === 'entry-point') executable = destination;
     // Only the packaging plugin may carry an addon; an unpackaged bundle never emits one.
     if (!supported) assert.equal(artifact.path.endsWith('.node'), false);
+    // No artifact names the package's location on the build machine, in either encoding Bun uses.
+    const bytes = readFileSync(artifact.path);
+    for (const encoding of ['latin1', 'utf16le'])
+      assert.equal(
+        bytes.includes(Buffer.from(packageRoot, encoding)),
+        false,
+        `${name} carries the build path of the package (${encoding})`,
+      );
   }
   if (compiled) executable = path.join(isolated, 'proof');
   assert.ok(executable);
@@ -185,9 +197,9 @@ try {
     );
     console.log(`packed Darwin source ${runtime}: ok`);
   }
-  // Without the packaging plugin the default loader names its addon by a computed path:
-  // the bundle carries no addon and the native backend is reported unavailable.
-  await buildModes('unpackaged', 'missing');
+  // Without the packaging plugin the bundle carries no addon and no path of this machine, and
+  // the native backend is reported unavailable at stage `packaging`.
+  await buildModes('unpackaged', 'unpackaged');
   await buildModes('supported', undefined, true);
   for (const stage of ['missing', 'corrupt']) {
     for (const target of ['bun', 'node'])
@@ -238,7 +250,9 @@ try {
     };
     writeFileSync(metadataPath, JSON.stringify(metadata));
     assert.equal(existsSync(native), false, 'Old hardcoded addon path must fail resolution');
-    await buildArtifact('old-hardcoded-layout', 'bun', 'missing');
+    // Without the plugin no layout of the installed package reaches the bundle: it refuses as
+    // unpackaged whatever the package holds, so a moved addon changes nothing.
+    await buildArtifact('old-hardcoded-layout', 'bun', 'unpackaged');
     await buildModes('supported-mutated', undefined, true);
   } finally {
     rmSync(metadataPath, { force: true });

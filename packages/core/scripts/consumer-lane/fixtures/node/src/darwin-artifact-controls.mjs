@@ -151,7 +151,7 @@ async function lockControls() {
 
 async function refusedBackend() {
   const expected = process.argv[process.argv.indexOf('--expect-unavailable') + 1];
-  assert.ok(['missing', 'corrupt', 'unsupported'].includes(expected));
+  assert.ok(['unpackaged', 'missing', 'corrupt', 'unsupported'].includes(expected));
   const observation = await observeProcessInstance(process.pid);
   assert.equal(observation.state, 'unavailable');
   assert.ok(observation.cause instanceof Error);
@@ -162,10 +162,15 @@ async function refusedBackend() {
   const resolvedMissing = ['MODULE_NOT_FOUND', 'ERR_MODULE_NOT_FOUND', 'ENOENT'].includes(
     diagnostic.nativeCode,
   );
-  assert.equal(
-    diagnostic.stage,
-    expected === 'missing' && resolvedMissing ? 'resolve' : 'load',
-  );
+  if (expected === 'unpackaged') {
+    // A bundle built without the packaging plugin never looks for the addon on disk.
+    assert.equal(diagnostic.stage, 'packaging');
+    assert.equal(diagnostic.nativeCode, 'STITCHKIT_NATIVE_NOT_PACKAGED');
+  } else
+    assert.equal(
+      diagnostic.stage,
+      expected === 'missing' && resolvedMissing ? 'resolve' : 'load',
+    );
   assert.equal(diagnostic.architecture, process.arch);
   assert.equal(Object.hasOwn(diagnostic, 'stack'), false);
   assert.equal(Object.hasOwn(diagnostic, 'cause'), false);
