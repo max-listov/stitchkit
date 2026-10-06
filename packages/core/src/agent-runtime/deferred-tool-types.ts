@@ -1,10 +1,9 @@
 import type { ToolSet } from 'ai';
-import { type ZodObject, type ZodType, z } from 'zod';
-import type { HttpMethod, ToolTransport } from '../contract/define';
-import type { EndpointToolAnnotations, EndpointUiMeta } from '../contract/tool-options';
+import { z } from 'zod';
 import type { ServiceDef } from '../server/types';
 import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../tools/execute-hooks';
 import type { ToolExtend } from '../tools/mount';
+import type { DeferredAgentRuntimeToolDefinition } from '../tools/runtime-tool-declaration';
 import type { AgentRuntimePrepareStep, AgentRuntimeRunContext } from './runtime';
 
 export const DeferredAgentToolSearchInputSchema = z.object({
@@ -43,24 +42,6 @@ export const DeferredAgentToolReceiptSchema = z
   });
 
 export type DeferredAgentToolReceipt = z.infer<typeof DeferredAgentToolReceiptSchema>;
-export interface DeferredAgentRuntimeToolDefinition {
-  name: string;
-  description: string;
-  identity: {
-    serviceName: string;
-    action: string;
-    method: HttpMethod;
-    scope?: string;
-    meta?: Record<string, unknown>;
-  };
-  input: ZodObject;
-  output?: ZodType;
-  transports?: readonly ToolTransport[];
-  annotations?: EndpointToolAnnotations;
-  ui?: EndpointUiMeta;
-  handler: unknown;
-  present?: { agent?: unknown };
-}
 export interface DeferredAgentToolManifestEntry {
   name: string;
   description: string;

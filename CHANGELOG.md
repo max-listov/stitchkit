@@ -15,6 +15,15 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/agent-runtime` — `createDeferredAgentToolSurface({ runtimeTools })` accepts a
+  `RuntimeToolDefinition[]` from `stitchkit/tools` again, without a cast. Since 0.105.0 the
+  registration type holds `present` as `unknown` while the deferred catalog expected
+  `{ agent?: unknown }`, so the two public types of one package no longer met.
+  `DeferredAgentRuntimeToolDefinition.present` is open like the registration's; a presenter that is
+  not a function, or that has no `output` schema, is still refused at construction.
+
 ## [0.106.1] - 2026-10-06
 
 ### Documentation

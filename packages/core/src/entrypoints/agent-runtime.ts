@@ -51,7 +51,6 @@ export {
 } from '../agent-runtime/coordinator';
 export {
   createDeferredAgentToolSurface,
-  type DeferredAgentRuntimeToolDefinition,
   type DeferredAgentToolCommonConfig,
   type DeferredAgentToolController,
   type DeferredAgentToolEvent,
@@ -372,3 +371,4 @@ export {
   type ReadAgentStoreEvents,
   ReadAgentStoreEventsSchema,
 } from '../durability/events';
+export type { DeferredAgentRuntimeToolDefinition } from '../tools/runtime-tool-declaration';

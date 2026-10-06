@@ -5,12 +5,10 @@ import type { EndpointMcpPolicy } from '../contract/tool-options';
 import { isRecord } from '../internal/typed';
 import type { OperationIdentity } from '../server/types';
 import type { ToolOperation } from './execute';
-import {
-  projectRuntimeTool,
-  type SurfaceAgentRuntimeToolDefinition,
-} from './internal/surface-projector';
+import { projectRuntimeTool } from './internal/surface-projector';
 import type { MountableTool } from './mount';
 import type {
+  DeferredAgentRuntimeToolDefinition,
   RuntimeToolDefinition,
   RuntimeToolDefinitionWithOutput,
   RuntimeToolDefinitionWithoutOutput,
@@ -277,16 +275,17 @@ export function runtimeToolMountable(
  * boundary (ADR 0003): the checks above are what make the cast true.
  */
 export function executableAgentRuntimeTools(
-  tools: readonly SurfaceAgentRuntimeToolDefinition[],
+  tools: readonly DeferredAgentRuntimeToolDefinition[],
 ): readonly RuntimeToolDefinition[] {
   for (const tool of tools) {
     if (typeof tool.handler !== 'function') {
       throw new TypeError(`Runtime tool "${tool.name}" must provide a handler`);
     }
-    if (tool.present?.agent !== undefined && typeof tool.present.agent !== 'function') {
+    const presenter = isRecord(tool.present) ? tool.present.agent : undefined;
+    if (presenter !== undefined && typeof presenter !== 'function') {
       throw new TypeError(`Runtime tool "${tool.name}" Agent presenter must be a function`);
     }
-    if (tool.present?.agent !== undefined && tool.output === undefined) {
+    if (presenter !== undefined && tool.output === undefined) {
       throw new TypeError(
         `Runtime tool "${tool.name}" Agent presenter requires an output schema`,
       );

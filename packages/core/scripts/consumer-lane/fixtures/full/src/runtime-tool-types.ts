@@ -1,5 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { Tool } from 'ai';
+import { createDeferredAgentToolSurface } from 'stitchkit/agent-runtime';
 import {
   type CliConfig,
   type CliInvokerConfig,
@@ -12,6 +13,7 @@ import {
   mountAgent,
   type RuntimeAgentModelOutput,
   type RuntimeMcpPresentation,
+  type RuntimeToolDefinition,
   type RuntimeToolDefinitionWithOutput,
   type RuntimeToolPresenters,
 } from 'stitchkit/tools';
@@ -47,6 +49,13 @@ const invoker: CliInvokerConfig<{ id: string }> = {
 void createCli(cli);
 void createCliInvoker(invoker);
 void mountAgent([], { runtimeTools: [typed] });
+// A registered list is the deferred Agent surface's catalog without a conversion.
+const catalog: readonly RuntimeToolDefinition[] = [typed];
+void createDeferredAgentToolSurface({
+  runtimeTools: catalog,
+  search: { name: 'tool_search', maxQueryBytes: 10, maxResults: 1, maxResultBytes: 512 },
+  activation: { maxSelectedTools: 1, maxActiveTools: 2, maxSchemaBytes: 1_000 },
+});
 const sdkMcp = { content: [{ type: 'text', text: 'hello' }] } satisfies CallToolResult;
 const mcp: RuntimeMcpPresentation = sdkMcp;
 const model: RuntimeAgentModelOutput = { type: 'text', value: 'hello' };

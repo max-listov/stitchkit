@@ -6,6 +6,10 @@
  */
 import { z } from 'zod';
 import {
+  createDeferredAgentToolSurface,
+  type DeferredAgentToolSurfaceDefinition,
+} from '../src/entrypoints/agent-runtime';
+import {
   type CliConfig,
   type CliInvokerConfig,
   createCliInvoker,
@@ -104,6 +108,15 @@ const measured = {
   handler: ({ input: parsed }) => ({ size: parsed.text.length }),
 } satisfies RuntimeToolDefinitionWithOutput<typeof input, typeof output>;
 const registered: readonly RuntimeToolDefinition[] = [measured];
+
+// A registered list is the deferred surface's catalog without a conversion.
+const deferredCatalog: DeferredAgentToolSurfaceDefinition['runtimeTools'] = registered;
+void deferredCatalog;
+createDeferredAgentToolSurface({
+  runtimeTools: registered,
+  search: { name: 'tool_search', maxQueryBytes: 10, maxResults: 1, maxResultBytes: 512 },
+  activation: { maxSelectedTools: 1, maxActiveTools: 2, maxSchemaBytes: 1_000 },
+});
 void createCliInvoker({ name: 'typed', runtimeTools: registered });
 
 // Construction stays strict: a callback may not require a field the schema omits.
@@ -147,3 +160,15 @@ if (first) {
   // @ts-expect-error The registered handler needs the runner's call context.
   first.handler({ input: { text: 'x' } });
 }
+
+// The deferred catalog still demands an executable declaration.
+const notExecutable: DeferredAgentToolSurfaceDefinition['runtimeTools'] = [
+  // @ts-expect-error A catalog entry without a handler is refused.
+  {
+    name: 'x',
+    description: 'x',
+    identity: { serviceName: 'p', action: 'x', method: 'POST' },
+    input,
+  },
+];
+void notExecutable;

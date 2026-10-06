@@ -254,6 +254,22 @@ describe('deferred Agent tool surface', () => {
     expect(AgentContextOverflowError).toBeDefined();
   });
 
+  test('refuses an Agent presenter that is not a function or has no output schema', () => {
+    const base = runtimeTool('presented', []);
+    const surface = (tool: unknown) => () =>
+      createDeferredAgentToolSurface({
+        runtimeTools: [Object.assign({}, base, tool)],
+        search: { name: 'tool_search', maxQueryBytes: 10, maxResults: 1, maxResultBytes: 512 },
+        activation: { maxSelectedTools: 1, maxActiveTools: 2, maxSchemaBytes: 1_000 },
+      });
+    expect(surface({ present: { agent: 5 } })).toThrow(/Agent presenter must be a function/);
+    expect(surface({ output: undefined, present: { agent: () => 'x' } })).toThrow(
+      /Agent presenter requires an output schema/,
+    );
+    expect(surface({ present: {} })).not.toThrow();
+    expect(surface({ present: 'opaque' })).not.toThrow();
+  });
+
   test('rebuilds replacement selection from durable receipts and isolates runs and surfaces', async () => {
     const memberTools = ['member_one', 'member_two', 'member_three', 'member_pin'].map(
       (name) => runtimeTool(name, []),

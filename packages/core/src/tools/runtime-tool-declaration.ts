@@ -140,3 +140,16 @@ export type RuntimeToolDefinition =
     > & {
       handler(context: RegisteredHandlerContext): void | Promise<void>;
     });
+
+/**
+ * The peer-free executable shape the Agent-only entrypoints accept (the deferred catalog,
+ * `executableAgentRuntimeTools`). `present` is open like `RuntimeToolDefinition`'s, so a
+ * registered list is a catalog without a cast; construction validates the Agent presenter
+ * (a function, with an `output` schema).
+ */
+export interface DeferredAgentRuntimeToolDefinition
+  extends RuntimeToolDefinitionBase<ZodObject, EndpointMcpPolicy | undefined> {
+  output?: ZodType;
+  handler: unknown;
+  present?: unknown;
+}
