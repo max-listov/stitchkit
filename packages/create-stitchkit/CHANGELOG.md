@@ -12,6 +12,11 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects track Stitchkit `^0.106.1`; the template lockfile resolves 0.106.1, which
+  corrects the `COMMAND_CLEANUP` documentation and the `setsid -f` guide and changes no behaviour.
+
 ## [0.6.13] - 2026-10-06
 
 ### Changed
