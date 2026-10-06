@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Targets stitchkit `^0.106.0` (peer range `^0.105.0` → `^0.106.0`). No source change: the
+  terminal uses none of the `stitchkit/process` names 0.106.0 changed.
+
 ## [0.2.0] - 2026-10-05
 
 ### ⚠️ Breaking changes
