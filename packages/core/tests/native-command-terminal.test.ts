@@ -8,6 +8,7 @@ import {
   NativeCommandOptionsSchema,
   type NativeCommandSettlement,
 } from '../src/process/contract';
+import { reapAfterEachTest, trackProcess } from './support/process-reaper';
 import { processAlive } from './support/process-state';
 
 // The pseudo-terminal tests use util-linux `script -qec`; BSD `script` takes another syntax.
@@ -15,15 +16,9 @@ const UTIL_LINUX_SCRIPT = process.platform === 'linux' && Bun.which('script') !=
 
 const PROBE = fileURLToPath(new URL('./fixtures/native-inherit-probe.ts', import.meta.url));
 
-const pids: number[] = [];
 const roots: string[] = [];
+reapAfterEachTest();
 afterEach(async () => {
-  for (const pid of pids.splice(0))
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // Already gone.
-    }
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
@@ -181,7 +176,7 @@ describe("group: 'caller'", () => {
       group: 'caller',
     });
     const helper = Number(new TextDecoder().decode(result.stdout).trim());
-    pids.push(helper);
+    trackProcess(helper);
     expect(result.descendantsStopped).toBe(false);
     expect(processAlive(helper)).toBe(true);
   });

@@ -153,9 +153,10 @@ export async function verifyCommandLifecycle(root) {
   // Source suite covers the Bun owner for 61s; this control exercises the installed Node owner.
   if (!process.versions.bun) {
     const deadline = new AbortController();
+    // The control takes 61 s by itself; the watchdog adds what a loaded host costs.
     const watchdog = setTimeout(
       () => deadline.abort(new Error('61s control watchdog')),
-      65_000,
+      120_000,
     );
     try {
       const result = await runNativeCommand({

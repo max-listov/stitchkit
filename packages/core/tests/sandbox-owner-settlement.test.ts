@@ -8,8 +8,11 @@ import { sandboxProcessOwner } from '../src/agent-runtime/sandbox-process-owner'
 import { startNativeCommand } from '../src/process/command-owner';
 import { waitForCommandClose } from '../src/process/group';
 import { nativeCommandOwner } from '../src/process/launch';
+import { reapAfterEachTest, trackGroupLeader, trackPidFile } from './support/process-reaper';
 import { processAlive } from './support/process-state';
 import { eventLoopTurn, observe, until } from './support/until';
+
+reapAfterEachTest();
 
 test('Sandbox admission waits for both native close and successful owner settlement', async () => {
   const admission = sandboxProcessOwner(() => undefined, 1);
@@ -88,6 +91,7 @@ test('a direct natural close retains output and settles without a command owner'
     cwd: tmpdir(),
     environment: {},
   });
+  if (child.pid !== undefined) trackGroupLeader({ pid: child.pid });
   let output = '';
   child.stdout.on('data', (bytes) => {
     output += String(bytes);
@@ -123,6 +127,7 @@ test('a direct child that exits leaves no descendant: its group is stopped and i
     cwd: tmpdir(),
     environment: {},
   });
+  if (child.pid !== undefined) trackGroupLeader({ pid: child.pid });
   let output = '';
   child.stdout.on('data', (bytes) => {
     output += String(bytes);
@@ -158,6 +163,7 @@ test('stop terminates a running direct child group without reading its output', 
     cwd: tmpdir(),
     environment: {},
   });
+  if (child.pid !== undefined) trackGroupLeader({ pid: child.pid });
   let output = '';
   const ready = new Promise<number>((resolve) => {
     child.stdout.on('data', (bytes) => {
@@ -191,6 +197,7 @@ test('a direct launch error remains observable and releases its admission', asyn
       cwd: root,
       environment: {},
     });
+    if (child.pid !== undefined) trackGroupLeader({ pid: child.pid });
     const error = new Promise<Error>((resolve) => child.once('error', resolve));
     const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
     expect(await waitForCommandClose(error, 3000)).toMatchObject({ code: 'ENOENT' });
@@ -234,6 +241,7 @@ test.skipIf(process.platform !== 'linux')(
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'sandbox-direct-descendant-'));
     const marker = join(root, 'member.json');
+    trackPidFile(marker);
     const release = join(root, 'release');
     const admission = sandboxProcessOwner(() => undefined, 1);
     const child = admission.spawn({
@@ -246,6 +254,7 @@ test.skipIf(process.platform !== 'linux')(
       cwd: root,
       environment: {},
     });
+    if (child.pid !== undefined) trackGroupLeader({ pid: child.pid });
     const closed = new Promise<void>((resolve, reject) => {
       child.once('close', () => resolve());
       child.once('error', reject);

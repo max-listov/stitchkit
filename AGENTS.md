@@ -39,6 +39,8 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 - **NEVER** publish a runtime internal because it looks useful: it leaves `agent-runtime` only when it
   needs no store and no run protocol, already exists proven by tests, and is typed against what the
   caller holds. → ADR 0142
+- **ALWAYS** register every process a test starts with `packages/core/tests/support/process-reaper.ts` before it can
+  exist; `bun run test` fails the run, naming the survivor, when one is left. → ADR 0249
 - Keep functions ≤200 and files ≤500 lines (`packages/core/tests/code-size.test.ts`); an exception is a
   reasoned entry in `packages/core/tests/fixtures/code-size-exceptions.json`, and the list only shrinks. → ADR 0199
 - Put an endpoint's tool options in the one `tool` group (`tool: { name, view, ui, annotations, mcp }`);

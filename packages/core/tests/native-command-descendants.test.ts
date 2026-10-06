@@ -10,6 +10,7 @@ import { startNativeCommand } from '../src/process/command-owner';
 import { NativeCommandError, NativeCommandOptionsSchema } from '../src/process/contract';
 import { nativeCommandOwner } from '../src/process/launch';
 import { spawnOwnedCommand } from '../src/process/owned-child';
+import { reapAfterEachTest, trackProcess } from './support/process-reaper';
 import { processAlive } from './support/process-state';
 import { until } from './support/until';
 
@@ -17,15 +18,7 @@ const COOPERATIVE_LEADER = fileURLToPath(
   new URL('./fixtures/native-cooperative-leader.mjs', import.meta.url),
 );
 
-const pids: number[] = [];
-afterEach(() => {
-  for (const pid of pids.splice(0))
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // Already gone.
-    }
-});
+reapAfterEachTest();
 
 async function dies(pid: number): Promise<boolean> {
   const deadline = performance.now() + 3000;
@@ -51,7 +44,7 @@ async function grandchildAfterSuccess(descendants: 'terminate-after-leader' | 'l
   const result = await command.result;
   const pid = Number(new TextDecoder().decode(result.stdout).trim());
   expect(Number.isInteger(pid)).toBe(true);
-  pids.push(pid);
+  trackProcess(pid);
   expect(result.exitCode).toBe(0);
   expect(result.descendantsStopped).toBe(descendants === 'terminate-after-leader');
   return pid;
@@ -77,7 +70,7 @@ describe('descendants policy of a native command', () => {
     }).result;
     expect(result.exitCode).toBe(0);
     const stoppedPid = Number(new TextDecoder().decode(result.stdout).trim());
-    pids.push(stoppedPid);
+    trackProcess(stoppedPid);
     expect(await dies(stoppedPid)).toBe(true);
 
     const error = await startNativeCommand({
@@ -101,8 +94,9 @@ describe('descendants policy of a native command', () => {
     expect(result).toMatchObject({ exitCode: 0, descendantsStopped: false });
   });
 
-  // `setsid` without `-f` runs in the background job and may not have left the group when the
-  // leader exits; `-f` returns only after the new session exists, so it is out of reach.
+  // `setsid` forks and returns before the child has called `setsid()`, with `-f` or without it: a
+  // leader that exits at once can still catch the helper in its group. The helper here writes its
+  // pid only after it left, and the leader waits for that.
   test.skipIf(!Bun.which('setsid'))(
     'a descendant that left the group before the leader exited is not touched',
     async () => {
@@ -110,7 +104,7 @@ describe('descendants policy of a native command', () => {
         executable: '/bin/sh',
         args: [
           '-c',
-          "setsid -f /bin/sh -c 'echo $$; exec sleep 30 >/dev/null' </dev/null 2>/dev/null",
+          `f="$(mktemp)"; setsid -f /bin/sh -c 'echo $$ > "'"$f"'"; exec sleep 30' </dev/null >/dev/null 2>&1; while [ ! -s "$f" ]; do :; done; cat "$f"; rm -f "$f"`,
         ],
         envPolicy: 'ambient',
         capture: true,
@@ -119,7 +113,7 @@ describe('descendants policy of a native command', () => {
       });
       const pid = Number(new TextDecoder().decode(result.stdout).trim());
       expect(Number.isInteger(pid)).toBe(true);
-      pids.push(pid);
+      trackProcess(pid);
       expect(result.descendantsStopped).toBe(false);
       expect(processAlive(pid)).toBe(true);
     },
@@ -159,7 +153,7 @@ describe('default descendants policy', () => {
     });
     expect(result.exitCode).toBe(0);
     const pid = Number(await readFile(join(dir, 'member-pid'), 'utf8'));
-    pids.push(pid);
+    trackProcess(pid);
     return pid;
   }
 

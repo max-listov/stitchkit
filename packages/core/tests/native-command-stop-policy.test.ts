@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type NativeCommandOptions, runNativeCommand } from '../src/entrypoints/process';
 import { NativeCommandOptionsSchema } from '../src/process/contract';
+import { reapAfterEachTest, trackGroupLeader } from './support/process-reaper';
 import { processAlive } from './support/process-state';
 import { until } from './support/until';
 
@@ -14,17 +15,11 @@ const LEADER = fileURLToPath(
 );
 
 let dir: string;
-const members: number[] = [];
+reapAfterEachTest();
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'stitchkit-stop-policy-'));
 });
 afterEach(async () => {
-  for (const pid of members.splice(0))
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // Already gone.
-    }
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -38,9 +33,7 @@ async function received(who: 'leader' | 'member'): Promise<string[]> {
 }
 
 async function memberPid(): Promise<number> {
-  const pid = Number(await readFile(join(dir, 'member-pid'), 'utf8'));
-  members.push(pid);
-  return pid;
+  return Number(await readFile(join(dir, 'member-pid'), 'utf8'));
 }
 
 /** Runs the fixture leader and aborts it once its member is ready, unless it exits by itself. */
@@ -51,6 +44,7 @@ async function stopped(mode: LeaderMode, options: Pick<NativeCommandOptions, 'st
     executable: process.execPath,
     args: [LEADER, dir, mode],
     signal: controller.signal,
+    onLeaderStarted: trackGroupLeader,
     ...options,
     onOutput: () => {
       began.at = performance.now();
@@ -120,6 +114,7 @@ describe('stop policy of a native command', () => {
       executable: process.execPath,
       args: [LEADER, dir, 'ignore-signal'],
       signal: controller.signal,
+      onLeaderStarted: trackGroupLeader,
       stop: { target: 'leader', graceMs: 3_600_000, killOn: kill.signal },
       onOutput: () => controller.abort(new Error('stop requested')),
     }).catch((error: unknown) => error);
@@ -140,6 +135,7 @@ describe('stop policy of a native command', () => {
       executable: process.execPath,
       args: [LEADER, dir, 'exit-when-ready'],
       timeoutMs: 10_000,
+      onLeaderStarted: trackGroupLeader,
       descendants: 'terminate-after-leader',
       stop: { target: 'leader', signal: 'SIGTERM', graceMs: 60_000 },
     });

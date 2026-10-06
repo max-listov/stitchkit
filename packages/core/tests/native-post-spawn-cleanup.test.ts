@@ -6,6 +6,9 @@ import { NativeCommandError } from '../src/process/contract';
 import { waitForCommandClose } from '../src/process/group';
 import { nativeCommandOwner } from '../src/process/launch';
 import { spawnOwnedCommand } from '../src/process/owned-child';
+import { reapAfterEachTest, trackGroupLeader, trackProcess } from './support/process-reaper';
+
+reapAfterEachTest();
 
 function output(source: Readable, failure?: Error, destroyFailure?: Error) {
   return {
@@ -42,6 +45,7 @@ for (const channel of ['stdout', 'stderr']) {
         args: ['-e', 'setInterval(()=>{},1000)'],
         group: true,
       });
+      if (child.pid !== undefined) trackGroupLeader({ pid: child.pid });
       const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
       let observedClose = false;
       void closed.then(() => {
@@ -93,6 +97,7 @@ test.skipIf(process.platform === 'win32')(
         args: ['-e', 'setInterval(()=>{},1000)'],
         group: false,
       });
+      trackProcess(child.pid);
       const kill = child.kill.bind(child);
       const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
       const source = child.stdout;

@@ -73,6 +73,19 @@ The local gate then has nothing left to prove, and `ciAlreadyAnsweredFor` says s
 than skipping silently: it prints whether it skipped because the run was green, because it was not,
 or because GitHub could not be reached. Everywhere else, red is two and a half minutes and a fix.
 
+## A test run leaves no process behind
+
+A test of the process primitives starts real processes, and one that fails or times out before it
+records them leaks them: the suite is green and they live on with `PPID=1`. Two halves, because a
+runner killed with SIGKILL runs no cleanup. A test registers what it starts before it can exist
+(`tests/support/process-reaper.ts`: `trackGroupLeader` as `onLeaderStarted`, `trackProcess`,
+`trackPidFile`) and `reapAfterEachTest()` kills it in `afterEach` and on an interrupt. `bun run test`
+and `bun run consumer-lane` of the core package then run under `scripts/test-leak-gate.ts`, which makes itself the
+subreaper of the run, so every orphan reparents to the gate whatever its session, group,
+environment or working directory. A live child of the gate once the command has exited is a leak:
+the gate names it, kills it and fails the run. Where the kernel cannot do this (no Linux
+`prctl`), the gate says the check was not measurable and runs the command unchecked. → ADR 0249.
+
 ## The publication-privacy scan is never memoised
 
 The scan runs on both pushes and is never memoised. It reads the index, and the memo's key is a

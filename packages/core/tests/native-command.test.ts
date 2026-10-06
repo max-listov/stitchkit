@@ -6,10 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runNativeCommand } from '../src/entrypoints/process';
+import { reapAfterEachTest, trackPidFile, trackProcess } from './support/process-reaper';
 import { processAlive } from './support/process-state';
 import { eventLoopTurn } from './support/until';
 
 let root: string;
+reapAfterEachTest();
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'stitchkit-command-'));
 });
@@ -109,6 +111,8 @@ test('blocked sink abort releases wait and terminates TERM-resistant descendant 
   const counter = join(root, 'counter');
   const pidfile = join(root, 'pid');
   const unrelated = spawn(NODE, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+  trackProcess(unrelated.pid);
+  trackPidFile(pidfile);
   const controller = new AbortController();
   let sinkEntered!: () => void;
   const entered = new Promise<void>((resolve) => {
@@ -220,15 +224,26 @@ test('a throwing onLeaderStarted stops the command with that error', async () =>
   ).rejects.toBe(marker);
 });
 
+/**
+ * Shell that starts a pipe holder in a session of its own and waits until it has left the group.
+ * `setsid -f` returns before its child calls `setsid()`, so a leader that exits at once can still
+ * catch the holder in its group; the holder writes its pid only after it left, and the wait is on that.
+ */
+function holderOutsideTheGroup(pidFile: string): string {
+  return `setsid -f /bin/sh -c 'echo $$ > "${pidFile}"; exec sleep 30'; while [ ! -s "${pidFile}" ]; do :; done`;
+}
+
 test('drainTimeoutMs bounds the pipe a descendant outside the group keeps open', async () => {
   if (!Bun.which('setsid')) return;
   const holder = join(root, 'holder-pid');
   const other = join(root, 'unbounded-holder-pid');
+  trackPidFile(holder);
+  trackPidFile(other);
   const started = performance.now();
   // The leader exits at once; a session leader of its own keeps the output pipe.
   const error = await runNativeCommand({
     executable: '/bin/sh',
-    args: ['-c', `setsid -f /bin/sh -c 'echo $$ > "${holder}"; exec sleep 30'; exit 0`],
+    args: ['-c', `${holderOutsideTheGroup(holder)}; exit 0`],
     envPolicy: 'ambient',
     timeoutMs: 20_000,
     drainTimeoutMs: 300,
@@ -236,11 +251,15 @@ test('drainTimeoutMs bounds the pipe a descendant outside the group keeps open',
   const pid = Number((await readFile(holder, 'utf8')).trim());
   try {
     expect(error).toMatchObject({ code: 'COMMAND_CLEANUP' });
+    // The cause is the drain bound's failure, not the stop-cleanup one.
+    expect(error).toMatchObject({
+      cause: { message: expect.stringContaining('after leader exit') },
+    });
     expect(performance.now() - started).toBeLessThan(5000);
     // Without the bound the same holder keeps the command until its deadline.
     const unbounded = await runNativeCommand({
       executable: '/bin/sh',
-      args: ['-c', `setsid -f /bin/sh -c 'echo $$ > "${other}"; exec sleep 30'; exit 0`],
+      args: ['-c', `${holderOutsideTheGroup(other)}; exit 0`],
       envPolicy: 'ambient',
       timeoutMs: 1500,
     }).catch((caught: unknown) => caught);
@@ -260,12 +279,14 @@ test('caller-lifetime streaming has no hidden sixty-second deadline', async () =
     maxOutputBytes: 10,
   });
   expect(new TextDecoder().decode(result.stdout)).toBe('done');
-}, 65000);
+  // The command takes 61 s by itself; the budget is the wait plus what a loaded host adds.
+}, 120_000);
 
 test('physically undrained native pipe abort completes before reader teardown', async () => {
   const reader = spawn(NODE, ['-e', 'process.stdin.pause();setInterval(()=>{},1000)'], {
     stdio: ['pipe', 'ignore', 'ignore'],
   });
+  trackProcess(reader.pid);
   reader.stdin.on('error', () => undefined);
   // The reader never reads: this backlog exceeds any pipe buffer, so every later write stays pending.
   expect(reader.stdin.write(Buffer.alloc(4 * 1024 * 1024))).toBe(false);
