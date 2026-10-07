@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.108.1] - 2026-10-07
+
 ### Fixed
 
 - `stitchkit/process` — **under Bun, `runNativeCommand` no longer waits for its deadline on a command
