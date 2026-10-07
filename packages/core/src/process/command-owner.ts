@@ -1,5 +1,5 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { raceAbort } from '../internal/abort-race';
+import type { OwnedChild } from './bun-child';
 import { cleanupNativeCommand } from './cleanup';
 import { createCommandLifetime } from './command-lifetime';
 import {
@@ -25,7 +25,7 @@ import type { NativeCommandTransport } from './transport';
 /** One-shot native execution; sandbox policy/admission is composed above this owner. */
 export function startNativeCommand(
   input: NativeCommandOptions,
-  onSpawn?: (child: ChildProcessWithoutNullStreams) => void,
+  onSpawn?: (child: OwnedChild) => void,
   driver?: NativeCommandLaunchDriver,
 ) {
   const options = NativeCommandOptionsSchema.parse(input);

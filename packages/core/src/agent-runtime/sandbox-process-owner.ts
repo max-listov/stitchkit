@@ -1,4 +1,4 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { OwnedChild } from '../process/bun-child';
 import { COMMAND_CLEANUP_TIMEOUT_MS, NativeCommandError } from '../process/contract';
 import { nativeCommandOwner } from '../process/launch';
 import { spawnOwnedCommand } from '../process/owned-child';
@@ -16,19 +16,16 @@ import { SandboxError } from './sandbox-contract';
  * may still run would defeat the limit; the sandbox session is recreated to recover.
  */
 export function sandboxProcessOwner(assertActive: () => void, maximum: number) {
-  const children = new Map<
-    ChildProcessWithoutNullStreams,
-    { closed: Promise<void>; closeEvent: Promise<void> }
-  >();
+  const children = new Map<OwnedChild, { closed: Promise<void>; closeEvent: Promise<void> }>();
   const admit = () => {
     assertActive();
     if (children.size >= maximum)
       throw new SandboxError('SANDBOX_BUSY', 'Sandbox command concurrency limit reached');
   };
-  const terminate = (child: ChildProcessWithoutNullStreams, closeEvent: Promise<void>) =>
+  const terminate = (child: OwnedChild, closeEvent: Promise<void>) =>
     nativeCommandOwner(child)?.terminate() ??
     terminateOwnedGroup(child, closeEvent, COMMAND_CLEANUP_TIMEOUT_MS);
-  const track = (child: ChildProcessWithoutNullStreams) => {
+  const track = (child: OwnedChild) => {
     const closeEvent = new Promise<void>((resolve) => {
       child.once('close', () => resolve());
     });

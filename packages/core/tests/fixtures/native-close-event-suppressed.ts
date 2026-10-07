@@ -1,14 +1,16 @@
 // Child `close` is never emitted: cleanup must still settle from the leader and pipe closure it observes itself.
-import { ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 
-const emit = ChildProcess.prototype.emit;
+// The command's child (a Node child process or the Bun adapter) is the emitter that has a
+// `kill`; its pipes keep emitting `close`.
+const emit = EventEmitter.prototype.emit;
 let suppressed = 0;
-ChildProcess.prototype.emit = function (
-  this: ChildProcess,
+EventEmitter.prototype.emit = function (
+  this: EventEmitter,
   event: string | symbol,
   ...args: unknown[]
 ) {
-  if (event === 'close') {
+  if (event === 'close' && 'kill' in this) {
     suppressed++;
     return false;
   }

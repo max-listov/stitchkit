@@ -1,6 +1,6 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import type { OwnedChild } from './bun-child';
 import { NativeCommandError, type ParsedNativeCommandOptions } from './contract';
 import { spawnInheritedCommand, spawnOwnedCommand } from './owned-child';
 import { createCommandTransport, type NativeCommandTransport } from './transport';
@@ -152,7 +152,7 @@ export function launchNativeCommand({
   options: ParsedNativeCommandOptions;
   driver: NativeCommandLaunchDriver | undefined;
   /** Called once the real child exists, when the command starts. */
-  onSpawn?: (child: ChildProcessWithoutNullStreams) => void;
+  onSpawn?: (child: OwnedChild) => void;
   /** The process failed to start or reported an error. */
   onFailure: (error: Error) => void;
   /** Writing stdin failed for a reason other than a closed pipe. */
@@ -160,7 +160,7 @@ export function launchNativeCommand({
   /** The transport exists; fires before any observation or stdin write. */
   onAcquired: (transport: NativeCommandTransport) => void;
 }) {
-  let native: ChildProcessWithoutNullStreams | undefined;
+  let native: OwnedChild | undefined;
   const launch = driver?.launch;
   const spawnInput = {
     executable: options.executable,

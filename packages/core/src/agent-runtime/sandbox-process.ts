@@ -1,4 +1,4 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { OwnedChild } from '../process/bun-child';
 import { startNativeCommand } from '../process/command-owner';
 import { NativeCommandError } from '../process/contract';
 import { SandboxError, type SandboxProcess, type SandboxRunOptions } from './sandbox-contract';
@@ -9,7 +9,7 @@ export function spawnSandboxProcess(
   args: string[],
   limits: { timeoutMs: number; maxOutputBytes: number },
   options: SandboxRunOptions = {},
-  onSpawn?: (child: ChildProcessWithoutNullStreams) => void,
+  onSpawn?: (child: OwnedChild) => void,
 ): SandboxProcess {
   const command = startNativeCommand(
     {

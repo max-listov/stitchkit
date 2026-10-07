@@ -15,6 +15,16 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/process` — **under Bun, `runNativeCommand` no longer waits for its deadline on a command
+  that has already exited.** Bun's `node:child_process` can lose a child's `exit` event while the host
+  is heavily loaded inside `bun test` (a bare `spawn` of `sh -c 'echo x; exit 1'` received no event at
+  all in 4 of 30 parallel runs at load average ~90), so the call hung until `timeoutMs` and failed with
+  `Command deadline exceeded`. Under Bun a command is now launched through `Bun.spawn`, presented to the
+  command owner with the same events, streams, group ownership and failure reporting; Node still uses
+  `node:child_process`. The deadline, stop policy and process-group cleanup are unchanged.
+
 ## [0.108.0] - 2026-10-06
 
 ### ⚠️ Breaking changes
