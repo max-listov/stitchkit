@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.108.4] - 2026-10-09
+
 ### Fixed
 
 - `stitchkit/agent-runtime/coding-tools` — `edit_file` now inserts `newText` literally when
