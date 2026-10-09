@@ -44,6 +44,74 @@ await createCli({
 assert.equal(code, 0);
 assert.equal(stderr, '');
 assert.deepEqual(JSON.parse(stdout), { size: 10 });
+
+// Consumer control: a catalog client rebuilds its CLI schema from JSON Schema rather than importing
+// the producer's Zod object. Numeric and boolean `const` values must retain their primitive type
+// through that boundary and invalid values must stop before the handler.
+const RestoredLiterals = z.fromJSONSchema({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    behind: { type: 'number', const: 1 },
+    ahead: { type: 'number', enum: [2, 3] },
+    enabled: { type: 'boolean', const: true },
+    code: { type: 'string', const: '007' },
+  },
+  required: ['behind', 'ahead', 'enabled', 'code'],
+});
+assert.ok(RestoredLiterals instanceof z.ZodObject);
+let literalCalls = 0;
+const literalCommand = defineCliCommand({
+  name: 'literal',
+  description: 'Read catalog-restored primitive literals',
+  input: RestoredLiterals,
+  output: z.object({ behind: z.number(), ahead: z.number(), code: z.string() }),
+  handler: ({ input }) => {
+    literalCalls++;
+    return { behind: input.behind, ahead: input.ahead, code: input.code };
+  },
+});
+async function runLiteral(argv) {
+  let literalOut = '';
+  let literalCode;
+  await createCli({
+    name: 'literal-probe',
+    version: '1.0.0',
+    commands: [literalCommand],
+    argv: ['literal', ...argv, '--json'],
+    stdout: (text) => {
+      literalOut += text;
+    },
+    stderr: () => undefined,
+    exit: (value) => {
+      literalCode = value;
+    },
+    stdin: async () => null,
+  });
+  return { literalCode, literalOut };
+}
+for (const [argv, ahead] of [
+  [['--behind', '1', '--ahead', '2', '--enabled', '--code', '007'], 2],
+  [['--behind=1', '--ahead=3', '--enabled=true', '--code=007'], 3],
+]) {
+  const result = await runLiteral(argv);
+  assert.equal(result.literalCode, 0);
+  assert.deepEqual(JSON.parse(result.literalOut), {
+    behind: 1,
+    ahead,
+    code: '007',
+  });
+}
+for (const argv of [
+  ['--behind=2', '--ahead=2', '--enabled', '--code=007'],
+  ['--behind=1', '--ahead=2', '--no-enabled', '--code=007'],
+]) {
+  const before = literalCalls;
+  assert.notEqual((await runLiteral(argv)).literalCode, 0);
+  assert.equal(literalCalls, before);
+}
+assert.equal(literalCalls, 2);
+
 const managed = {
   name: 'managed',
   description: 'A managed operation',

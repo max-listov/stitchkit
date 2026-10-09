@@ -267,6 +267,19 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   },
   {
     ...native,
+    id: 'native-owner-loss-lazy-bundle',
+    fixture: 'node',
+    entry: 'native-owner-loss-lazy-bundle.mjs',
+    files: [
+      'native-owner-loss-lazy-app.ts',
+      'native-owner-loss-static-app.ts',
+      'native-owner-loss-lazy-no-bootstrap.ts',
+    ],
+    runtimes: ['bun'],
+    marker: 'packed lazy owner-loss bundle: ok',
+  },
+  {
+    ...native,
     id: 'effect-lease',
     fixture: 'node',
     entry: 'effect-lease.mjs',

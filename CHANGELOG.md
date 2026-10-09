@@ -15,6 +15,20 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/process/owner-loss` — `bootstrapNativeCommandOwnerLoss()` lets a single-file Bun
+  application keep `stitchkit/process` behind a dynamic import while carrying the same package-owned
+  owner-loss guard in its bundle. Call it before application argv routing and skip that routing when
+  it returns `true`; consumers do not inspect or copy the private guard protocol. → ADR 0255
+
+### Fixed
+
+- `stitchkit/cli` — numeric, bigint and boolean `z.literal()` fields now receive their primitive
+  values from argv, including homogeneous literal sets, unions, wrappers and array elements. String
+  literals retain their lexical form (`007` stays `"007"`), and mixed-type literal sets remain raw
+  rather than guessing a type from spelling.
+
 ## [0.108.2] - 2026-10-09
 
 ### Added

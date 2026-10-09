@@ -51,6 +51,7 @@ own, recorded as an ADR.
 | `stitchkit/cli/publish` | build and release tooling (Bun or Node, POSIX) | evolving | `publishCli` — commit a verified CLI distribution and move its public manifest last; see [CLI guide](cli.md#publishing-a-complete-version) |
 | `stitchkit/remote` | browser **and** server | stable | peer-free `implementRemote` for thin HTTP proxy processes |
 | `stitchkit/process` | server (Bun or Node, POSIX) | evolving | finite native commands, byte sinks, bounded capture, process-group cancellation and opt-in Linux/Darwin owner-loss cleanup |
+| `stitchkit/process/owner-loss` | bundled server entry (Bun, POSIX) | evolving | narrow bootstrap that keeps the process runner lazy while carrying its owner-loss guard in a single-file bundle |
 | `stitchkit/files/packaging` | build time (Bun or Node) | evolving | installed native asset graph, integrity, Bun packaging plugin and the artifact loader check; no runtime install policy |
 | `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
 | `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, resumable broadcasts, the operator channel with dedupe, a Bot API transport that separates a request that never left from an unknown outcome, local Bot API files, webhook ownership and durable webhook update intake |

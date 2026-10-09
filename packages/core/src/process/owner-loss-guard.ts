@@ -173,15 +173,33 @@ function runOwnerLossGuard(
   else spawnBunTarget(executable, args, targetStarted, targetExit, targetUnavailable);
 }
 
+let guardInvocation = false;
+
+function startOwnerLossGuardEntry(): void {
+  if (process.argv[2] !== OWNER_LOSS_GUARD_FLAG) return;
+  const entry = process.argv[1];
+  if (entry === undefined || fileURLToPath(import.meta.url) !== entry) return;
+  runOwnerLossGuard(process.argv[3], process.argv[4], process.argv.slice(5));
+  guardInvocation = true;
+}
+
+/**
+ * Bootstrap the private owner-loss service before an application's own argv dispatcher.
+ *
+ * Call this once before routing argv in a single-file application that lazy-imports
+ * `stitchkit/process`. `false` means the application owns this invocation and may dispatch it;
+ * `true` means the package guard owns it and the application must skip its dispatcher. The guard's
+ * child and control channel keep the process alive for exactly their own lifetime.
+ */
+export function bootstrapNativeCommandOwnerLoss(): boolean {
+  return guardInvocation;
+}
+
 /** The built or source module that executes the guard protocol when launched directly. */
 export function ownerLossGuardEntry(): string {
   return fileURLToPath(import.meta.url);
 }
 
-// Keep the ordinary `stitchkit/process` import inert when a bundler supplies empty Node shims.
-// Only the deliberately launched guard process may inspect this module's filesystem location.
-if (process.argv[2] === OWNER_LOSS_GUARD_FLAG) {
-  const entry = process.argv[1];
-  if (entry !== undefined && fileURLToPath(import.meta.url) === entry)
-    runOwnerLossGuard(process.argv[3], process.argv[4], process.argv.slice(5));
-}
+// Keep the ordinary import inert when a bundler supplies empty Node shims. Only the deliberately
+// launched guard process may inspect this module's filesystem location and start the protocol.
+startOwnerLossGuardEntry();

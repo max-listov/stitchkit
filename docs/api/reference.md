@@ -2554,6 +2554,14 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 | `ProcessInstanceSchema` / `ProcessInstance` | schema / type | platform, boot ID, namespace and process start identity from the shared native reader |
 | `probeProcessOwner` / `ProcessOwnerEvidence` | function / type | compare lifetimes on one caller-established machine; matched, boot change, reused PID, gone, legacy or unavailable with cause |
 
+## `stitchkit/process/owner-loss`
+
+Narrow startup entry for single-file applications that lazy-import `stitchkit/process`.
+
+| Export | Kind | Purpose |
+|---|---|---|
+| `bootstrapNativeCommandOwnerLoss` | function | call before application argv routing; returns `true` only when the package guard owns this invocation, so the application skips its dispatcher while preserving a lazy import of the full command runner |
+
 ## `stitchkit/files/packaging`
 
 `stitchkit/files/packaging` owns `createNativePackaging` and the types

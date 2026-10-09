@@ -224,10 +224,18 @@ string, the schema says what it should be:
 | `z.string()`         | `--name "box"` or a positional                 |
 | `z.number()`         | `--count 3` → `3`                              |
 | `z.boolean()`        | `--active` (presence) / `--active false` / `--no-active` |
+| `z.literal(1)` / `z.literal([1, 2])` | `--level 1` → `1`              |
+| `z.literal(true)`    | `--enabled` / `--no-enabled`                    |
+| `z.literal('007')`   | `--code 007` → `"007"`                          |
 | `z.enum([...])`      | `--size large`                                 |
 | `z.array(z.string())`| `--tag a --tag b` → `["a","b"]`                |
 | `z.object({...})`    | `--opts '{"k":"v"}'` (JSON) or `--opts.k v`    |
 | `.optional()` / `.default()` | not required                           |
+
+Primitive literals use the same coercion through optional, nullable and default wrappers and as
+array elements. A literal set whose members have different primitive types stays lexical because
+argv has no type tag: for `z.literal([7, '007'])`, `--value 007` remains the string `"007"` rather
+than being guessed as the number `7`. The unchanged Zod schema makes the final admission decision.
 
 After a bare boolean flag, the next token is its value when it is exactly
 `true` or `false` — `--active false` turns it off, as it reads. Any other word

@@ -211,6 +211,24 @@ and Darwin under Bun and Node, requires `group: 'own'`, and other platforms refu
 is opt-in. `onLeaderStarted({ pid })` reports the guard/group leader with this option; output, stdin,
 exit status, deadlines, cancellation and `onLeaderSettled` retain the requested command's behaviour.
 
+An unbundled application already launches the package's own guard module. A single-file bundle
+whose application entry also owns argv routing must load the narrow bootstrap before its dispatcher
+and skip dispatch when it claims the private guard invocation. This is especially relevant when the
+full command runner stays behind a dynamic import:
+
+```ts
+import { bootstrapNativeCommandOwnerLoss } from 'stitchkit/process/owner-loss'
+
+if (!bootstrapNativeCommandOwnerLoss()) {
+  await dispatch(process.argv.slice(2)) // may lazy-import `stitchkit/process`
+}
+```
+
+The bootstrap carries the package-owned guard into the bundle. It returns `false` for application
+argv and `true` only for the private child started by `runNativeCommand`, so the application does
+not read a guard flag or filename. The built file is self-contained; no installed `node_modules`
+is needed beside it.
+
 ### Stopping a command: the `stop` policy
 
 A caller abort, the `timeoutMs` deadline, an exceeded output budget and a failing sink all stop the

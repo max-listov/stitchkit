@@ -249,6 +249,10 @@
       "types": "./dist/entrypoints/process.d.ts",
       "import": "./dist/entrypoints/process.js"
     },
+    "./process/owner-loss": {
+      "types": "./dist/entrypoints/process/owner-loss.d.ts",
+      "import": "./dist/entrypoints/process/owner-loss.js"
+    },
     "./files/packaging": {
       "types": "./dist/entrypoints/files/packaging.d.ts",
       "import": "./dist/entrypoints/files/packaging.js"

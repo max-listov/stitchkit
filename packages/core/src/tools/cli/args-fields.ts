@@ -60,6 +60,31 @@ function unwrap(field: z.core.$ZodType): z.core.$ZodType {
   return field;
 }
 
+/**
+ * The one primitive kind every literal branch accepts. Mixed primitive kinds stay raw: argv has
+ * no type tag with which to distinguish the number `7` from the string `"7"`, and guessing from
+ * its spelling would corrupt string literals such as `007`.
+ */
+function literalKind(field: z.core.$ZodType): FieldKind | undefined {
+  const base = unwrap(field);
+  if (base instanceof z.ZodLiteral) {
+    const kinds = new Set<FieldKind>();
+    for (const value of base.values) {
+      const kind = typeof value;
+      if (kind !== 'boolean' && kind !== 'number' && kind !== 'bigint' && kind !== 'string')
+        return undefined;
+      kinds.add(kind);
+    }
+    return kinds.size === 1 ? kinds.values().next().value : undefined;
+  }
+  if (base instanceof z.ZodUnion) {
+    const kinds = base.def.options.map(literalKind);
+    const first = kinds[0];
+    return first !== undefined && kinds.every((kind) => kind === first) ? first : undefined;
+  }
+  return undefined;
+}
+
 function classify(field: z.core.$ZodType): FieldKind {
   if (field instanceof z.ZodBoolean) return 'boolean';
   if (field instanceof z.ZodNumber) return 'number';
@@ -68,7 +93,9 @@ function classify(field: z.core.$ZodType): FieldKind {
   if (field instanceof z.ZodEnum) return 'enum';
   if (field instanceof z.ZodArray) return 'array';
   if (field instanceof z.ZodObject) return 'object';
-  if (field instanceof z.ZodString || field instanceof z.ZodLiteral) return 'string';
+  const primitiveLiteral = literalKind(field);
+  if (primitiveLiteral !== undefined) return primitiveLiteral;
+  if (field instanceof z.ZodString) return 'string';
   return 'other';
 }
 

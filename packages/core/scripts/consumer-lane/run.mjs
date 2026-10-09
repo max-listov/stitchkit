@@ -199,6 +199,7 @@ try {
                 'native-cross-entry-owner',
                 'native-command-reasons',
                 'native-owner-loss',
+                'native-owner-loss-lazy-bundle',
               ]
             : undefined,
         requireCapabilities: nativeUIDOnly,

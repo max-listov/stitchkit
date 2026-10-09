@@ -46,6 +46,11 @@ to retain kernel ownership continuously rather than infer it after a gap.
 5. **Availability is certified, not guessed.** The option is available on Linux and Darwin under
    Bun and Node. Other kernels return `COMMAND_UNAVAILABLE`. A process that deliberately leaves the
    group with `setsid` remains outside this process-group capability, as it is for every other stop.
+6. **A lazy bundle bootstraps the same guard before application routing.** The narrow
+   `stitchkit/process/owner-loss` entry carries the package implementation into a single output file.
+   `bootstrapNativeCommandOwnerLoss()` tells the application only whether the guard owns this
+   invocation; the private flag, filename and protocol stay inside the package. The full
+   `stitchkit/process` entry may remain behind the application's ordinary dynamic dispatch.
 
 The guard is a finite implementation detail of one command call. It has no durable state, restart
 policy, discovery endpoint or shared daemon, so durable jobs and application supervision remain in
@@ -63,3 +68,5 @@ their existing owners.
   hanging operation under Bun and Node. Linux runs it in the portable lane; both Darwin
   architectures run it in the packed native lane. The negative control proves the same target
   survives without the option, and an unrelated detached group survives every guarded cleanup.
+- The same phases also run from an isolated single-file Bun bundle built from packed bytes, beside
+  no `node_modules`; a bundle without the bootstrap is the negative control for entry dispatch.
