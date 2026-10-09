@@ -192,6 +192,7 @@ function undocumentedExports(
 const FULLY_DOCUMENTED = [
   'stitchkit/cli/publish',
   'stitchkit/process',
+  'stitchkit/process/owner-loss',
   'stitchkit/files/packaging',
   'stitchkit/tools/mcp',
   'stitchkit/agent-runtime/react',

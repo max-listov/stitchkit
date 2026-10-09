@@ -2260,6 +2260,7 @@
     "probeProcessOwner",
     "runNativeCommand"
   ],
+  "stitchkit/process/owner-loss": ["bootstrapNativeCommandOwnerLoss"],
   "stitchkit/files": [
     "AtomicFilePublicationError",
     "CHUNK_SPOOL_ERROR_CODES",
