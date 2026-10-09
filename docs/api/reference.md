@@ -1301,7 +1301,7 @@ artifact store is supplied, `read_output`.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createAgentCodingTools` | function | construct direct host-authorized bounded file, listing, glob, search, exact-snippet edit, shell and artifact runtime-tool definitions; every ordinary refusal is a typed code with an instructive `hint`, and filesystem operations use Linux `/proc/self/fd` or the packaged macOS Node-API backend and otherwise fail closed |
+| `createAgentCodingTools` | function | construct direct host-authorized bounded file, listing, glob, search, exact-snippet edit, shell and artifact runtime-tool definitions; `edit_file` inserts `newText` literally in both single and `replaceAll` modes; every ordinary refusal is a typed code with an instructive `hint`, and filesystem operations use Linux `/proc/self/fd` or the packaged macOS Node-API backend and otherwise fail closed |
 | `AGENT_CODING_TOOL_NAMES` | const | the mounted tool names — `read_file`, `write_file`, `edit_file`, `list_directory`, `glob`, `search_files`, `run_command`, `read_output` |
 | `AgentCodingToolDefinition` | _type_ | peer-free structural direct-tool shape accepted by the canonical runtime-tool surface |
 | `AgentCodingToolConfig` | _type_ | absolute root, required operation authorization, optional async/sync `authorizePath({ path })` shared by direct file effects and discovery, finite executable alias map, exact child environment and optional limits |

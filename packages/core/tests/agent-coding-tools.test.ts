@@ -115,6 +115,126 @@ describe('host-authorized Agent coding tools', () => {
     );
   });
 
+  test('edit_file inserts newText literally for single, replaceAll and dry-run edits', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-literal-edit-'));
+    roots.push(root);
+    const authorizations: AgentCodingToolAuthorization[] = [];
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: (request) => {
+          authorizations.push(request);
+          return true;
+        },
+      }),
+    });
+    const edit = executable(tools, 'edit_file');
+    const options = { toolCallId: 'literal-edit', messages: [], context: undefined };
+    const replacementTexts = [
+      '$&',
+      '$$',
+      '$`',
+      "$'",
+      '$1',
+      'PLAIN',
+      '\\u041F\\path\nПривет 😀',
+    ];
+
+    for (const replaceAll of [false, true]) {
+      for (const [index, newText] of replacementTexts.entries()) {
+        const file = `${replaceAll ? 'all' : 'single'}-${index}.txt`;
+        const source = replaceAll ? 'TARGET TARGET' : 'head-TARGET-tail';
+        const expected = replaceAll ? `${newText} ${newText}` : `head-${newText}-tail`;
+        await writeFile(path.join(root, file), source);
+        const result = await edit(
+          { path: file, oldText: 'TARGET', newText, replaceAll },
+          options,
+        );
+        expect(result).toMatchObject({
+          applied: true,
+          replacements: replaceAll ? 2 : 1,
+          bytes: Buffer.byteLength(expected),
+          sha256: createHash('sha256').update(expected).digest('hex'),
+        });
+        expect(await readFile(path.join(root, file), 'utf8')).toBe(expected);
+      }
+    }
+
+    await writeFile(path.join(root, 'dry.txt'), 'TARGET TARGET');
+    const projected = '$& $&';
+    const dryRun = await edit(
+      {
+        path: 'dry.txt',
+        oldText: 'TARGET',
+        newText: '$&',
+        replaceAll: true,
+        dryRun: true,
+      },
+      options,
+    );
+    const projectedSha256 = createHash('sha256').update(projected).digest('hex');
+    expect(dryRun).toMatchObject({
+      applied: false,
+      replacements: 2,
+      bytes: Buffer.byteLength(projected),
+      sha256: projectedSha256,
+    });
+    expect(authorizations.at(-1)).toMatchObject({
+      operation: 'edit',
+      resultSha256: projectedSha256,
+      resultBytes: Buffer.byteLength(projected),
+      replacements: 2,
+      dryRun: true,
+    });
+    expect(await readFile(path.join(root, 'dry.txt'), 'utf8')).toBe('TARGET TARGET');
+  });
+
+  test('edit_file refuses missing, ambiguous and oversized literal results before authorization', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-literal-bounds-'));
+    roots.push(root);
+    const authorizations: AgentCodingToolAuthorization[] = [];
+    await writeFile(path.join(root, 'source.txt'), 'x x');
+    const tools = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: (request) => {
+          authorizations.push(request);
+          return true;
+        },
+        limits: { maxWriteBytes: 4 },
+      }),
+    });
+    const edit = executable(tools, 'edit_file');
+    const options = { toolCallId: 'literal-bounds', messages: [], context: undefined };
+    const originalError = console.error;
+    console.error = () => undefined;
+    const missing = edit(
+      { path: 'source.txt', oldText: 'missing', newText: 'y', replaceAll: true },
+      options,
+    );
+    const ambiguous = edit(
+      { path: 'source.txt', oldText: 'x', newText: 'y', replaceAll: false },
+      options,
+    );
+    const oversized = edit(
+      { path: 'source.txt', oldText: 'x', newText: '$$', replaceAll: true },
+      options,
+    );
+    console.error = originalError;
+
+    await expect(missing).rejects.toMatchObject({ output: { error: 'NOT_FOUND' } });
+    await expect(ambiguous).rejects.toMatchObject({ output: { error: 'CONFLICT' } });
+    await expect(oversized).rejects.toMatchObject({
+      output: { error: 'BAD_REQUEST', details: { bytes: 5, maxWriteBytes: 4 } },
+    });
+    expect(authorizations).toHaveLength(0);
+    const unchanged = await readFile(path.join(root, 'source.txt'));
+    expect(unchanged.equals(Buffer.from('x x'))).toBe(true);
+    expect(createHash('sha256').update(unchanged).digest('hex')).toBe(
+      createHash('sha256').update('x x').digest('hex'),
+    );
+  });
+
   test('publishes anchored include semantics and explains zero post-filter coverage', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-include-'));
     roots.push(root);

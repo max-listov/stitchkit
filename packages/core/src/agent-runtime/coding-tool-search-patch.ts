@@ -311,9 +311,10 @@ async function editFile(
         );
       }
       const replacements = input.replaceAll ? count : 1;
+      const literalReplacement = () => input.newText;
       const changed = input.replaceAll
-        ? source.replaceAll(input.oldText, input.newText)
-        : source.replace(input.oldText, () => input.newText);
+        ? source.replaceAll(input.oldText, literalReplacement)
+        : source.replace(input.oldText, literalReplacement);
       const bytes = Buffer.byteLength(changed);
       const resultSha256 = sha256(changed);
       if (bytes > limits.maxWriteBytes) {

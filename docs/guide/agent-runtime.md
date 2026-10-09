@@ -316,8 +316,9 @@ includes the exact workspace-relative `recoveryPath`; an absolute path outside t
 suggested replacement. Applying the suggestion still passes the same descriptor-relative
 containment and symlink checks.
 
-`edit_file` replaces one exact snippet. `oldText` is itself the freshness guard for the region it
-changes, so the digest is the optional `expectedSha256` and an edit is one call; pass the digest
+`edit_file` replaces one exact snippet. It inserts `newText` literally in both single and
+`replaceAll` modes, including JavaScript replacement tokens such as `$$`, `$&`, `` $` `` and `$'`.
+`oldText` is itself the freshness guard for the region it changes, so the digest is the optional `expectedSha256` and an edit is one call; pass the digest
 `read_file` returned when you want the whole-file guarantee, and read the `sha256` it returns to
 chain the next edit without re-reading. The read, the occurrence count and the construction of the
 new content all happen inside one per-target lock, so two concurrent edits of different snippets in

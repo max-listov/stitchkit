@@ -15,6 +15,12 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/agent-runtime/coding-tools` — `edit_file` now inserts `newText` literally when
+  `replaceAll: true`; JavaScript replacement tokens such as `$$`, `$&`, `` $` `` and `$'` no
+  longer rewrite the requested text. Single replacements already had this literal behavior.
+
 ## [0.108.3] - 2026-10-09
 
 ### Added

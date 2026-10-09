@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -67,6 +68,23 @@ async function ordinaryOperations() {
   assert.equal(chained.applied, true);
   assert.equal(await readFile(path.join(root, 'nested', 'file.txt'), 'utf8'), 'chained value');
   assert.equal(await readFile(path.join(root, 'nested', 'new.txt'), 'utf8'), 'overwritten');
+
+  await writeFile(path.join(root, 'literal.txt'), 'TARGET TARGET');
+  const literalExpected = '$$ $$';
+  const literal = await edit(
+    {
+      path: 'literal.txt',
+      oldText: 'TARGET',
+      newText: '$$',
+      replaceAll: true,
+    },
+    options,
+  );
+  assert.equal(literal.applied, true);
+  assert.equal(literal.replacements, 2);
+  assert.equal(literal.bytes, Buffer.byteLength(literalExpected));
+  assert.equal(literal.sha256, createHash('sha256').update(literalExpected).digest('hex'));
+  assert.equal(await readFile(path.join(root, 'literal.txt'), 'utf8'), literalExpected);
 
   const instructions = path.join(root, 'instructions');
   const skills = path.join(root, 'skills');
