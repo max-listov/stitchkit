@@ -9,6 +9,7 @@ import {
   firstParentHistory,
   isReleaseCommitSubject,
   stacksOnUnpublishedRelease,
+  unpublishedReleaseCommitAtHead,
 } from './release-subject';
 
 const SHA = '1'.repeat(40);
@@ -141,6 +142,13 @@ describe('whether a head stacks on a release no tag contains yet', () => {
   test('the release commit itself and conventional fixes stacked on it count', async () => {
     expect(await asks([RELEASE, FEATURE], false)).toBe(true);
     expect(await asks([FIX, RELEASE, FEATURE], false)).toBe(true);
+    await expect(
+      unpublishedReleaseCommitAtHead({
+        head: FIX.sha,
+        history: async () => [FIX, RELEASE, FEATURE],
+        isTagged: async () => false,
+      }),
+    ).resolves.toEqual(RELEASE);
   });
 
   test('a release a tag already contains is published, so what follows it is ordinary', async () => {

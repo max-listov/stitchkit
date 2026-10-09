@@ -93,33 +93,42 @@ export function firstParentHistory(root: string): FirstParentHistory {
 }
 
 /**
- * Whether `head` is a release commit, or fix commits stacked on one, that no tag contains yet.
+ * The release metadata commit at `head`, or below conventional repairs, when no tag contains it.
  * That head is what the tag will name and what the publishing workflow downloads artifacts
  * for, so CI builds them for it: a repair of a red candidate keeps its own conventional type
  * and must not lose the publication evidence the release commit carried.
  */
-export async function stacksOnUnpublishedRelease(input: {
+export async function unpublishedReleaseCommitAtHead(input: {
   head: string;
   history: FirstParentHistory;
   isTagged: (sha: string) => Promise<boolean>;
-}): Promise<boolean> {
+}): Promise<CommitFacts | undefined> {
   const commits = await input.history(input.head);
   const releaseIndex = commits.findIndex((commit) => isReleaseCommitSubject(commit.subject));
   const release = commits[releaseIndex];
-  if (!release) return false;
+  if (!release) return undefined;
   if (
     !commits
       .slice(0, releaseIndex)
       .every((commit) => CONVENTIONAL_SUBJECT.test(commit.subject))
   )
-    return false;
-  return !(await input.isTagged(release.sha));
+    return undefined;
+  return (await input.isTagged(release.sha)) ? undefined : release;
+}
+
+/** Whether `head` is the metadata commit, or conventional repairs above its unpublished tree. */
+export async function stacksOnUnpublishedRelease(input: {
+  head: string;
+  history: FirstParentHistory;
+  isTagged: (sha: string) => Promise<boolean>;
+}): Promise<boolean> {
+  return (await unpublishedReleaseCommitAtHead(input)) !== undefined;
 }
 
 /**
  * The tag sits on the release commit of that exact train, or on fix commits
- * stacked directly on it. The release commit is what the tag names: it
- * carries `release(train): … in X.Y.Z` and release metadata only. Anything
+ * stacked directly on it. The tagged tree contains a commit that carries
+ * `release(train): … in X.Y.Z` and release metadata only. Anything
  * above it is a repair of a red candidate and keeps its own conventional
  * type, because exact-SHA CI has to be green for the tagged head itself.
  * Empty commits are refused wherever they stand.

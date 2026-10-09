@@ -11,7 +11,7 @@ import {
   assertReleaseSubjectForTag,
   assertTagOnReleaseHead,
   firstParentHistory,
-  isReleaseCommitSubject,
+  unpublishedReleaseCommitAtHead,
 } from './release-subject';
 import {
   assertDefaultBranchAtOrigin,
@@ -51,15 +51,26 @@ export function decidePublishAction(
   throw new Error('version already exists on npm with a DIFFERENT tarball — refusing');
 }
 
-/** The pushed branch tips that are release commits, with the subject that says so. */
+/** Resolve each pushed release tree to its metadata commit without losing the actual tip SHA. */
 async function releaseCommitsIn(
   root: string,
   branchHeads: readonly string[],
-): Promise<{ sha: string; subject: string }[]> {
-  const commits: { sha: string; subject: string }[] = [];
+): Promise<{ sha: string; subject: string; metadataSha?: string }[]> {
+  const commits: { sha: string; subject: string; metadataSha?: string }[] = [];
+  const history = firstParentHistory(root);
   for (const sha of branchHeads) {
-    const subject = (await git(root, ['log', '-1', '--format=%s', `${sha}^{commit}`])).trim();
-    if (isReleaseCommitSubject(subject)) commits.push({ sha, subject });
+    const release = await unpublishedReleaseCommitAtHead({
+      head: sha,
+      history,
+      isTagged: async (commit) =>
+        (await git(root, ['tag', '--contains', commit])).trim() !== '',
+    });
+    if (!release) continue;
+    commits.push({
+      sha,
+      subject: release.subject,
+      ...(release.sha === sha ? {} : { metadataSha: release.sha }),
+    });
   }
   return commits;
 }
@@ -113,11 +124,15 @@ async function checkWorkingTree(root: string): Promise<void> {
 /** The identity of every release the candidate commit would publish, as JSON. */
 async function candidateIdentities(root: string, argument: string): Promise<string> {
   const sha = (await git(root, ['rev-parse', `${argument}^{commit}`])).trim();
-  const subject = (await git(root, ['log', '-1', '--format=%s', sha])).trim();
+  const [release] = await releaseCommitsIn(root, [sha]);
+  if (!release) throw new Error(`no unpublished release commit found at ${sha}`);
   // The mutable starter registry check ran before the release commit was
   // pushed; repeating it would make candidate registration depend on packages
   // published by the very same train.
-  await validateReleaseCommit(root, { sha, subject }, { checkStarterLockfile: false });
+  await validateReleaseCommit(root, release, {
+    checkStarterLockfile: false,
+    changedFiles: (commit) => commitFiles(root, commit),
+  });
   const train = ReleaseTrainSchema.parse(
     JSON.parse(await readFromCommit(root, sha)('release-train.json')),
   );

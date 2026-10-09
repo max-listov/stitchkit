@@ -224,7 +224,7 @@ export function readFromCommit(root: string, sha: string): ReleaseTreeReader {
 }
 
 export interface ValidateReleaseCommitOptions extends ValidateReleaseTagOptions {
-  /** The files the commit changes. When given, the commit must hold release metadata only. */
+  /** The files the metadata commit changes. When given, it must hold release metadata only. */
   changedFiles?: (sha: string) => Promise<readonly string[]>;
   /**
    * Judge the train against the releases already tagged: refuse a package whose packed files
@@ -244,15 +244,16 @@ export interface ValidateReleaseCommitOptions extends ValidateReleaseTagOptions 
  */
 export async function validateReleaseCommit(
   root: string,
-  commit: { sha: string; subject: string },
+  commit: { sha: string; subject: string; metadataSha?: string },
   options: ValidateReleaseCommitOptions = {},
 ): Promise<ReleasePlan & { notes: string }> {
   if (!isReleaseCommitSubject(commit.subject)) {
     throw new Error(`not a release commit subject: ${JSON.stringify(commit.subject.trim())}`);
   }
   const read = options.read ?? readFromCommit(root, commit.sha);
+  const metadataSha = commit.metadataSha ?? commit.sha;
   if (options.changedFiles) {
-    assertReleaseMetadataOnly(commit.sha, await options.changedFiles(commit.sha));
+    assertReleaseMetadataOnly(metadataSha, await options.changedFiles(metadataSha));
   }
   const train = ReleaseTrainSchema.parse(JSON.parse(await read('release-train.json')));
   // Tree-local, so it holds everywhere the train is judged — including the

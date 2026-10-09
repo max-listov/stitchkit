@@ -95,7 +95,8 @@ export function localGateProfile(
 /** What the cheap half of a pre-push decided, and what it found on the way. */
 export interface PrePushGateDecision {
   profile: LocalGateProfile;
-  releaseCommits: readonly { sha: string; subject: string }[];
+  /** `sha` is the pushed tree; `metadataSha` names its lower release commit when repaired. */
+  releaseCommits: readonly { sha: string; subject: string; metadataSha?: string }[];
 }
 
 /**
@@ -113,8 +114,12 @@ export async function prePushMetadataGate(
     validateTag(tag: string, sha: string): Promise<void>;
     releaseCommits(
       branchHeads: readonly string[],
-    ): Promise<{ sha: string; subject: string }[]>;
-    validateCommit(commit: { sha: string; subject: string }): Promise<void>;
+    ): Promise<{ sha: string; subject: string; metadataSha?: string }[]>;
+    validateCommit(commit: {
+      sha: string;
+      subject: string;
+      metadataSha?: string;
+    }): Promise<void>;
   },
 ): Promise<PrePushGateDecision> {
   for (const { tag, sha } of plan.releaseTags) {

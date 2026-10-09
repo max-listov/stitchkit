@@ -185,6 +185,29 @@ describe('a release commit is checked before it costs a gate', () => {
     ).resolves.toMatchObject({ version: '9.9.0' });
   });
 
+  test('a repaired release checks files on its metadata commit', async () => {
+    const metadataSha = '2'.repeat(40);
+    let inspected = '';
+    await expect(
+      validateReleaseCommit(
+        root,
+        {
+          sha: SHA,
+          metadataSha,
+          subject: 'release(train): a repaired thing in 9.9.0',
+        },
+        {
+          read: coreTree(ADDITIVE, RELEASED_MIGRATION),
+          changedFiles: async (sha) => {
+            inspected = sha;
+            return ['CHANGELOG.md', 'release-train.json', 'bun.lock'];
+          },
+        },
+      ),
+    ).resolves.toMatchObject({ version: '9.9.0' });
+    expect(inspected).toBe(metadataSha);
+  });
+
   test('accepts a well-formed additive release commit', async () => {
     const validated = await validateReleaseCommit(
       root,

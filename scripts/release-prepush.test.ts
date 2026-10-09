@@ -207,6 +207,42 @@ describe('the cheap metadata check runs before the expensive gate', () => {
     expect(decision.releaseCommits).toHaveLength(1);
   });
 
+  test('a repair tip validates its lower metadata commit and profiles the pushed tree', async () => {
+    order.length = 0;
+    const metadataSha = '2'.repeat(40);
+    const decision = await prePushMetadataGate(
+      {
+        verify: true,
+        releaseTags: [],
+        branchHeads: [SHA],
+        defaultBranchHeads: [],
+        releaseBranchesOnly: true,
+      },
+      {
+        validateTag: async () => undefined,
+        releaseCommits: async () => [
+          {
+            sha: SHA,
+            metadataSha,
+            subject: 'release(train): a repaired thing in 9.9.0',
+          },
+        ],
+        validateCommit: async (commit) => {
+          order.push(`commit:${commit.metadataSha}->${commit.sha}`);
+        },
+      },
+    );
+    expect(order).toEqual([`commit:${metadataSha}->${SHA}`]);
+    expect(decision.profile).toBe('candidate');
+    expect(decision.releaseCommits).toEqual([
+      {
+        sha: SHA,
+        metadataSha,
+        subject: 'release(train): a repaired thing in 9.9.0',
+      },
+    ]);
+  });
+
   test('a refusal stops the push before any gate is chosen', async () => {
     const checks = recording([{ sha: SHA, subject: 'release(train): a thing in 9.9.0' }]);
     await expect(
