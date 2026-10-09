@@ -3,6 +3,8 @@ import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import type { OwnedChild } from './bun-child';
 import { NativeCommandError, type ParsedNativeCommandOptions } from './contract';
 import { spawnInheritedCommand, spawnOwnedCommand } from './owned-child';
+import { awaitCommandStart } from './owner-loss-control';
+import { ownerLossGuardEntry } from './owner-loss-guard';
 import { createCommandTransport, type NativeCommandTransport } from './transport';
 
 /** A structural host launcher may supply pipes without importing Node ambient types. */
@@ -172,6 +174,10 @@ export function launchNativeCommand({
         : (options.env ?? {}),
     // A command in the caller's group is never a group leader of its own.
     group: options.group === 'own' && (driver?.group ?? true),
+    ownerLoss:
+      options.ownerLoss === 'terminate'
+        ? { entry: ownerLossGuardEntry(), signalTarget: options.stop.target }
+        : undefined,
   };
   let inherited: NativeCommandLaunchedProcess | undefined;
   if (!launch) {
@@ -206,9 +212,11 @@ export function launchNativeCommand({
     ...transport,
     stdout: stdout.bytes,
     stderr: stderr.bytes,
-    start() {
+    async start() {
       if (native) onSpawn?.(native);
+      const pid = await awaitCommandStart(child);
       stdin?.end(options.stdin);
+      return pid;
     },
   };
 }

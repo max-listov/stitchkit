@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/process` — `runNativeCommand` takes `ownerLoss: 'terminate'`: on Linux and Darwin under
+  Bun or Node, a package-owned per-command guard binds the command's process group to a private
+  inherited kernel channel. If the JavaScript caller is killed or crashes, channel EOF makes the
+  guard KILL its own group without polling, `finally` or PID reclamation. The option requires
+  `group: 'own'`; unsupported platforms refuse with `COMMAND_UNAVAILABLE`. It is opt-in because each
+  guarded call uses one extra short-lived process and descriptor. Output, stdin, target exit status,
+  deadlines and cancellation retain the existing contract; `onLeaderStarted` reports the guard that
+  leads the owned group. → ADR 0255
+
 ## [0.108.1] - 2026-10-07
 
 ### Fixed

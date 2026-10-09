@@ -124,6 +124,9 @@ export const NativeCommandOptionsSchema = z
       // `'caller'`: it joins the caller's group, so a terminal's Ctrl-C reaches it, and only its
       // leader is ever signalled.
       group: z.enum(['own', 'caller']).default('own'),
+      // A package-owned guard holds a private inherited control socket. Kernel EOF after an
+      // abrupt caller death makes it KILL the command's group without caller cleanup code.
+      ownerLoss: z.enum(['terminate']).optional(),
       // `'inherit'` hands the caller's stdin, stdout and stderr to the command: a TTY stays a TTY.
       stdio: z.enum(['pipe', 'inherit']).default('pipe'),
       // Omitted: TERM to the group for `group: 'own'`, to the leader for `'caller'`, 100 ms, KILL.
@@ -176,6 +179,12 @@ export const NativeCommandOptionsSchema = z
         code: 'custom',
         input: ctx.value,
         message: "group: 'caller' has no group of its own, so descendants does not apply",
+      });
+    if (input.group === 'caller' && input.ownerLoss !== undefined)
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        message: "ownerLoss: 'terminate' requires group: 'own'",
       });
     // Inherited channels never pass through this package: nothing to capture, sink or bound.
     if (input.stdio === 'inherit') {

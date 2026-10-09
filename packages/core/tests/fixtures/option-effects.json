@@ -1137,6 +1137,9 @@
     "group": {
       "test": "the command joins the caller’s group; by default it leads one of its own"
     },
+    "ownerLoss": {
+      "test": "ownerLoss terminates the complete group after target initialization"
+    },
     "stdio": {
       "test": "the bytes go straight to the caller’s descriptors, and the result carries none"
     },

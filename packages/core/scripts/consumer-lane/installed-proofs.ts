@@ -259,6 +259,14 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   },
   {
     ...native,
+    id: 'native-owner-loss',
+    fixture: 'node',
+    entry: 'native-owner-loss.mjs',
+    files: ['native-owner-loss-owner.mjs', 'native-owner-loss-target.mjs'],
+    marker: 'packed native owner loss: ok',
+  },
+  {
+    ...native,
     id: 'effect-lease',
     fixture: 'node',
     entry: 'effect-lease.mjs',

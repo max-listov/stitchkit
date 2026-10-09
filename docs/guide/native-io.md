@@ -137,6 +137,7 @@ console.log(captured.exitCode, new TextDecoder().decode(captured.stdout))
 const lifetime = new AbortController()
 await runNativeCommand({
   executable: '/usr/bin/git', args: ['status'], signal: lifetime.signal,
+  ownerLoss: 'terminate', // also stop its group if this JavaScript process is SIGKILLed
   onOutput: async (bytes, channel, outputSignal) => {
     outputSignal.throwIfAborted()
     await output.write(bytes, channel, outputSignal) // application-owned bounded sink
@@ -199,6 +200,17 @@ sink cause is kept; a cleanup failure is a `NativeCommandError` with `COMMAND_CL
 refuses with `COMMAND_UNAVAILABLE`; a descendant that has left the group on its own with `setsid` is
 outside this capability. This is one-shot execution, not a PTY, a supervisor or a daemon host.
 
+`ownerLoss: 'terminate'` binds the command group to this JavaScript process even when it cannot run
+cleanup. A package-owned guard becomes the process-group leader, starts the requested executable in
+that group and holds one end of a private inherited kernel channel. The caller holds the other end.
+`SIGKILL`, a crash or any abrupt caller exit closes that end; EOF makes the guard KILL its own group.
+There is no liveness polling and no later PID lookup. Because the guard is still the group leader
+when it signals, its PGID cannot have been reused by a neighbour. The option is available on Linux
+and Darwin under Bun and Node, requires `group: 'own'`, and other platforms refuse it with
+`COMMAND_UNAVAILABLE`. It adds one short-lived process and one descriptor per guarded command, so it
+is opt-in. `onLeaderStarted({ pid })` reports the guard/group leader with this option; output, stdin,
+exit status, deadlines, cancellation and `onLeaderSettled` retain the requested command's behaviour.
+
 ### Stopping a command: the `stop` policy
 
 A caller abort, the `timeoutMs` deadline, an exceeded output budget and a failing sink all stop the
@@ -233,13 +245,13 @@ dropped, never passed to `onOutput` and never captured, so a leader that writes 
 does not meet a broken pipe. The result rejects with the abort reason once the group is gone and the
 pipes are closed, so it can take `graceMs` plus `cleanupTimeoutMs` after the abort.
 
-The grace is a timer inside the process that runs the command. If that process exits first, the
-timer is gone and the group, which is detached into its own session, keeps running: nothing in this
-package can bound it from outside. Abort `killOn` in your shutdown path, so the group is killed
-before the process exits, and let the supervisor own the case where the process dies without a
-shutdown. Under systemd, keep `KillMode=control-group` (the default) so the stop of the unit
-reaches every process in its cgroup, whatever its process group; launchd only kills the job's own
-process group, which a command's group is not.
+The grace is a timer inside the process that runs the command. Without `ownerLoss`, if that process
+exits first, the timer is gone and the group, which is detached into its own session, keeps running.
+Abort `killOn` in your shutdown path so a deliberate shutdown kills the group before exit. For an
+abrupt-exit guarantee, choose `ownerLoss: 'terminate'`; for all groups in a service, let the service
+supervisor own the wider boundary. Under systemd, keep `KillMode=control-group` (the default) so the
+stop of the unit reaches every process in its cgroup, whatever its process group; launchd only kills
+the job's own process group, which an unguarded detached command's group is not.
 
 ### Stopping a group and its descendants
 
@@ -300,7 +312,7 @@ becomes `runNativeCommand`; shell policy, command admission, logging, redaction,
 decoder and the operator sink stay with the application. Long signal-only commands stay streaming;
 bounded tar or capture commands get their own explicit limits.
 
-A child the caller holds until it exits is the same call. A guardian that forwards its own SIGTERM
+A child the caller holds until it exits is the same call. A host that forwards its own SIGTERM
 passes an abort signal and `stop: { target: 'leader', signal: 'SIGTERM', graceMs }`. It records the
 pid in `onLeaderStarted({ pid })`, which runs once right after the leader exists (a throw stops the
 command with that error), and the leader's exit code and signal in `onLeaderSettled`: `'exit'`
@@ -310,7 +322,9 @@ long the output pipes may stay open after the leader exited: a holder that left 
 `setsid` keeps them open, and without the option the command waits for it until `timeoutMs` or
 the signal; with it the command ends with `COMMAND_CLEANUP` (a holder inside the group is already
 stopped by `descendants`). A worker whose whole group must stop on abort is the default
-`target: 'group'`. A command that uses the caller's terminal is the next section. Importing one leaf does not make
+`target: 'group'`. Add `ownerLoss: 'terminate'` when the worker must also die after an abrupt host
+loss; in that mode `onLeaderStarted` reports the package guard that leads the same group. A command
+that uses the caller's terminal is the next section. Importing one leaf does not make
 installing the whole npm package smaller; choose a dependency after measuring packed size and its
 dependency closure.
 
@@ -344,6 +358,7 @@ its own, so:
   because a group signal would reach the caller;
 - `descendants` does not apply and is refused: what the leader leaves behind belongs to the
   caller's group, and `descendantsStopped` is always `false`;
+- `ownerLoss` is refused: an owner-loss guard must lead a group that belongs only to the command;
 - a Ctrl-C reaches the caller too; handle `SIGINT` in the caller when it must outlive the command.
 
 The two options are independent: `stdio: 'inherit'` alone keeps colour and `isatty` for a command

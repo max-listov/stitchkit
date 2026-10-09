@@ -194,7 +194,12 @@ try {
         ids: nativeUIDOnly
           ? ['native-owner-uid']
           : nativeOwnersOnly
-            ? ['native-owners', 'native-cross-entry-owner', 'native-command-reasons']
+            ? [
+                'native-owners',
+                'native-cross-entry-owner',
+                'native-command-reasons',
+                'native-owner-loss',
+              ]
             : undefined,
         requireCapabilities: nativeUIDOnly,
         run: async (proof, runtime) =>

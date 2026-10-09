@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { Duplex } from 'node:stream';
 import {
   hostIsBun,
   type ObservableChild,
@@ -7,6 +8,12 @@ import {
   spawnBunInheritedChild,
 } from './bun-child';
 import type { NativeCommandLaunchedOutput, NativeCommandLaunchedProcess } from './launch';
+import {
+  abortOwnerLossLaunch,
+  attachOwnerLossControl,
+  transferOwnerLossControl,
+} from './owner-loss-control';
+import { type OwnerLossGuardInvocation, ownerLossGuardCommand } from './owner-loss-protocol';
 
 const groups = new WeakSet<object>();
 
@@ -17,6 +24,7 @@ export function spawnOwnedCommand(input: {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   group: boolean;
+  ownerLoss?: OwnerLossGuardInvocation;
 }): OwnedChild {
   const child = hostIsBun() ? spawnBunChild(input) : nodeChild(input);
   if (input.group) groups.add(child);
@@ -29,13 +37,33 @@ function nodeChild(input: {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   group: boolean;
+  ownerLoss?: OwnerLossGuardInvocation;
 }): OwnedChild {
-  return spawn(input.executable, [...input.args], {
+  if (input.ownerLoss === undefined)
+    return spawn(input.executable, [...input.args], {
+      cwd: input.cwd,
+      env: input.env,
+      detached: input.group,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  const [executable, ...args] = ownerLossGuardCommand(
+    input.ownerLoss,
+    input.executable,
+    input.args,
+  );
+  const child = spawn(executable, args, {
     cwd: input.cwd,
     env: input.env,
     detached: input.group,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
   });
+  const control = child.stdio[3];
+  if (!(control instanceof Duplex)) {
+    abortOwnerLossLaunch(child.pid);
+    throw new Error('Owner-loss guard supplied no control pipe');
+  }
+  attachOwnerLossControl(child, control);
+  return child;
 }
 
 /** A channel the command inherited: this package holds no pipe for it, so there is nothing to read. */
@@ -94,17 +122,39 @@ export function spawnInheritedCommand(input: {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   group: boolean;
+  ownerLoss?: OwnerLossGuardInvocation;
 }): NativeCommandLaunchedProcess {
-  const child = new InheritedChild(
-    hostIsBun()
-      ? spawnBunInheritedChild(input)
-      : spawn(input.executable, [...input.args], {
+  const observable = hostIsBun()
+    ? spawnBunInheritedChild(input)
+    : (() => {
+        if (input.ownerLoss === undefined)
+          return spawn(input.executable, [...input.args], {
+            cwd: input.cwd,
+            env: input.env,
+            detached: input.group,
+            stdio: 'inherit',
+          });
+        const [executable, ...args] = ownerLossGuardCommand(
+          input.ownerLoss,
+          input.executable,
+          input.args,
+        );
+        const spawned = spawn(executable, args, {
           cwd: input.cwd,
           env: input.env,
           detached: input.group,
-          stdio: 'inherit',
-        }),
-  );
+          stdio: ['inherit', 'inherit', 'inherit', 'pipe'],
+        });
+        const control = spawned.stdio[3];
+        if (!(control instanceof Duplex)) {
+          abortOwnerLossLaunch(spawned.pid);
+          throw new Error('Owner-loss guard supplied no control pipe');
+        }
+        attachOwnerLossControl(spawned, control);
+        return spawned;
+      })();
+  const child = new InheritedChild(observable);
+  transferOwnerLossControl(observable, child);
   if (input.group) groups.add(child);
   return child;
 }

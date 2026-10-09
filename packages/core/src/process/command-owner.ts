@@ -18,6 +18,7 @@ import {
 } from './launch';
 import { createLeaderCloseDeadline, createLeaderSettlement } from './leader-settlement';
 import { createOutputDrain } from './output-drain';
+import { ownerLossAvailable } from './owner-loss-protocol';
 import { failedCommandStart } from './start-failure';
 import { signalCommandChild } from './terminate';
 import type { NativeCommandTransport } from './transport';
@@ -34,6 +35,19 @@ export function startNativeCommand(
   killOn?.throwIfAborted();
   if (process.platform === 'win32' && driver?.group !== false)
     throw new NativeCommandError('COMMAND_UNAVAILABLE', 'POSIX process groups are required');
+  if (options.ownerLoss === 'terminate' && !ownerLossAvailable(process.platform))
+    throw new NativeCommandError(
+      'COMMAND_UNAVAILABLE',
+      "ownerLoss: 'terminate' is available on Linux and Darwin",
+    );
+  if (
+    options.ownerLoss === 'terminate' &&
+    (driver?.launch !== undefined || driver?.group === false)
+  )
+    throw new NativeCommandError(
+      'COMMAND_UNAVAILABLE',
+      "ownerLoss: 'terminate' requires the package-owned process-group launcher",
+    );
   const { cleanupTimeoutMs, timeoutMs } = nativeCommandBudgets(options, driver);
   const controller = new AbortController();
   const abort = () => controller.abort(options.signal?.reason);
@@ -151,8 +165,7 @@ export function startNativeCommand(
   };
   const run = (async (): Promise<NativeCommandResult> => {
     try {
-      launched.start();
-      const pid = acquired?.child.pid;
+      const pid = await raceAbort(launched.start(), controller.signal);
       if (pid !== undefined) options.onLeaderStarted?.({ pid });
       const drains = Promise.all([
         output.drain(stdout, 'stdout'),

@@ -1,5 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { Readable, Writable } from 'node:stream';
+import { abortOwnerLossLaunch, attachOwnerLossControl } from './owner-loss-control';
+import { type OwnerLossGuardInvocation, ownerLossGuardCommand } from './owner-loss-protocol';
+import { connectOwnerLossSocket } from './owner-loss-socket';
 
 /** What a spawned command exposes to its owner: the subset of a Node child the package uses. */
 export interface OwnedChild extends EventEmitter {
@@ -26,6 +29,7 @@ interface BunSpawnInput {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   group: boolean;
+  ownerLoss?: OwnerLossGuardInvocation;
 }
 
 /**
@@ -95,6 +99,7 @@ interface BunSubprocess {
   readonly exitCode: number | null;
   readonly signalCode: NodeJS.Signals | null;
   readonly exited: Promise<unknown>;
+  readonly stdio: readonly (number | null)[];
   kill(signal: NodeJS.Signals): void;
 }
 
@@ -203,20 +208,40 @@ function sinkWritable(sink: {
 export function spawnBunChild(input: BunSpawnInput): OwnedChild {
   const { BunChild } = children();
   try {
-    const subprocess = Bun.spawn([input.executable, ...input.args], {
-      cwd: input.cwd,
-      env: input.env,
-      detached: input.group,
-      stdin: 'pipe',
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    const ownerLoss = input.ownerLoss;
+    const guarded = ownerLoss !== undefined;
+    const command = guarded
+      ? ownerLossGuardCommand(ownerLoss, input.executable, input.args)
+      : [input.executable, ...input.args];
+    const subprocess = guarded
+      ? Bun.spawn(command, {
+          cwd: input.cwd,
+          env: input.env,
+          detached: input.group,
+          stdio: ['pipe', 'pipe', 'pipe', 'socket-fd'],
+        })
+      : Bun.spawn(command, {
+          cwd: input.cwd,
+          env: input.env,
+          detached: input.group,
+          stdin: 'pipe',
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
     const child = new BunChild(
       sinkWritable(subprocess.stdin),
       readableOf(subprocess.stdout),
       readableOf(subprocess.stderr),
     );
     child.watch(subprocess);
+    if (guarded) {
+      const fd = subprocess.stdio[3];
+      if (typeof fd !== 'number') {
+        abortOwnerLossLaunch(subprocess.pid);
+        throw new Error('Owner-loss guard supplied no control socket');
+      }
+      attachOwnerLossControl(child, connectOwnerLossSocket(fd));
+    }
     return child;
   } catch (cause) {
     if (!reportedSpawnFailure(cause)) throw cause;
@@ -235,19 +260,57 @@ export function spawnBunInheritedChild(input: BunSpawnInput): ObservableChild {
   const { BunProcess } = children();
   const child = new BunProcess([]);
   try {
-    child.watch(
-      Bun.spawn([input.executable, ...input.args], {
-        cwd: input.cwd,
-        env: input.env,
-        detached: input.group,
-        stdin: 'inherit',
-        stdout: 'inherit',
-        stderr: 'inherit',
-      }),
-    );
+    const ownerLoss = input.ownerLoss;
+    const guarded = ownerLoss !== undefined;
+    const command = guarded
+      ? ownerLossGuardCommand(ownerLoss, input.executable, input.args)
+      : [input.executable, ...input.args];
+    const subprocess = guarded
+      ? Bun.spawn(command, {
+          cwd: input.cwd,
+          env: input.env,
+          detached: input.group,
+          stdio: ['inherit', 'inherit', 'inherit', 'socket-fd'],
+        })
+      : Bun.spawn(command, {
+          cwd: input.cwd,
+          env: input.env,
+          detached: input.group,
+          stdin: 'inherit',
+          stdout: 'inherit',
+          stderr: 'inherit',
+        });
+    child.watch(subprocess);
+    if (guarded) {
+      const fd = subprocess.stdio[3];
+      if (typeof fd !== 'number') {
+        abortOwnerLossLaunch(subprocess.pid);
+        throw new Error('Owner-loss guard supplied no control socket');
+      }
+      attachOwnerLossControl(child, connectOwnerLossSocket(fd));
+    }
   } catch (cause) {
     if (!reportedSpawnFailure(cause)) throw cause;
     child.fail(cause);
   }
   return child;
+}
+
+export interface BunGuardTarget {
+  readonly pid: number;
+  readonly exitCode: number | null;
+  readonly signalCode: string | number | null;
+  readonly exited: Promise<unknown>;
+}
+
+/** Bun-native target observation for the standalone owner-loss guard. */
+export function spawnBunGuardTarget(
+  executable: string,
+  args: readonly string[],
+): BunGuardTarget {
+  return Bun.spawn([executable, ...args], {
+    stdin: 'inherit',
+    stdout: 'inherit',
+    stderr: 'inherit',
+  });
 }

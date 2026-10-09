@@ -1,6 +1,6 @@
 # 0243 — A native command stops by one named policy, and the host bounds only what it outlives
 
-**Status:** Accepted, amended by [ADR 0248](0248-a-stopped-leader-settles-with-its-exit-and-a-command-may-join-the-callers-group.md)
+**Status:** Accepted, amended by [ADR 0248](0248-a-stopped-leader-settles-with-its-exit-and-a-command-may-join-the-callers-group.md) and [ADR 0255](0255-an-owner-loss-guard-belongs-to-the-command-group.md)
 **Date:** 2026-10-05
 
 Amends ADR 0224. Invariants I8, I9, I10 and I11.
@@ -44,7 +44,7 @@ sequence; while it runs, output is read and dropped, never handed to a sink or c
 that writes while it shuts down would otherwise meet a broken pipe and die of it, which turns
 cooperative cancellation into a kill.
 
-**Nothing in this package bounds a group after its host exits.** The command's group is detached
+**Nothing in this package bounds a group after its host exits by default.** The command's group is detached
 into its own session, so it gets no signal when the host dies, and every timer of the grace dies
 with the host. A reaper or watchdog process would be a supervisor, which ADR 0224 rules out and
 I11 keeps out of the composition. The bound belongs to the process supervisor: systemd's default
@@ -58,7 +58,8 @@ signal binding can each pass a smaller budget at the call, a shutdown is never r
 supervisor's stop timeout, the bound that really ends the process, is invisible to the
 application. The existing mechanism answers the question instead: a resource reads
 `context.deadlineAt` and `context.forceDeadlineAt` in its `drain`, and its `force` aborts the
-`killOn` of the commands it still runs.
+`killOn` of the commands it still runs. ADR 0255 later adds an opt-in, per-command owner-loss guard;
+the default and the external-supervisor boundary described here remain unchanged.
 
 ## Consequences
 
