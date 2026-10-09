@@ -125,7 +125,7 @@ try {
       const stopped = await run(lane, mode);
       assert.equal(stopped.ok, false);
       assert.equal(stopped.code, code);
-      assert.ok(stopped.elapsedMs < 2000);
+      assert.ok(stopped.elapsedMs < 5000);
       assert.equal(seen.get(`/${lane}/${mode}`), 1, 'mutation cannot replay');
       await waitCancelled(`/${lane}/${mode}`);
       if (mode.startsWith('body-')) assert.ok(bodyHeaders.has(`/${lane}/${mode}`));

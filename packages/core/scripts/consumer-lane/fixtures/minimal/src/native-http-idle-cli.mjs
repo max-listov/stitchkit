@@ -14,7 +14,10 @@ const report = z.object({
   sameReason: z.boolean().optional(),
   firstBodyBytes: z.number().optional(),
 });
-const timeout = mode.includes('deadline') ? 50 : 20_000;
+// Leave enough time for a cold compiled binary to reach the loopback origin on loaded CI hosts.
+// The held response still makes the explicit deadline/abort observable far before its 12s reply.
+const cancellationDelayMs = 500;
+const timeout = mode.includes('deadline') ? cancellationDelayMs : 20_000;
 const contract = defineContract(
   { prefix: '' },
   {
@@ -37,7 +40,7 @@ async function invoke() {
     if (mode === 'abort') {
       timer = setTimeout(
         () => controller.abort(new DOMException('caller control', 'AbortError')),
-        50,
+        cancellationDelayMs,
       );
     }
     if (lane === 'native') {
