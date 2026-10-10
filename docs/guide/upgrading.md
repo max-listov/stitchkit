@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Upcoming migration: 0.109.0
+## Released migration: 0.109.0
 
 ### free CLI record leaves are lexical
 
