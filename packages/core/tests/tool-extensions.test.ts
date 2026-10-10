@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/entrypoints/contract';
 import { implement } from '../src/server/implement';
+import { zodObjectFromJsonSchema } from '../src/tools/connections/runtime';
 import { executeToolMethod } from '../src/tools/execute';
 import { buildToolManifest } from '../src/tools/manifest';
 import { collectTools, formatToolError } from '../src/tools/mount';
@@ -28,6 +29,141 @@ describe('coerceJsonArgs', () => {
   test('coerces through optional / nullable wrappers', () => {
     const schema = z.object({ tags: z.array(z.string()).optional() });
     expect(coerceJsonArgs({ tags: '["x"]' }, schema)).toEqual({ tags: ['x'] });
+  });
+
+  test('coerces native records and object guards restored from JSON Schema', () => {
+    const record = z.record(z.string(), z.unknown());
+    const native = z.object({
+      required: record,
+      optional: record.optional(),
+      nullable: record.nullable(),
+    });
+    const raw = {
+      required: '{"code":"007"}',
+      optional: '{"nested":{"enabled":true}}',
+      nullable: '{"count":2}',
+    };
+    expect(native.parse(coerceJsonArgs(raw, native))).toEqual({
+      required: { code: '007' },
+      optional: { nested: { enabled: true } },
+      nullable: { count: 2 },
+    });
+
+    const restored = zodObjectFromJsonSchema(z.toJSONSchema(native));
+    expect(restored.shape.required).toBeInstanceOf(z.ZodPipe);
+    const coerced = coerceJsonArgs(
+      {
+        required: '{"email":"cli-json@example.invalid","sentinel":"007"}',
+        optional: '{"nested":{"enabled":true}}',
+        nullable: '{"count":2}',
+      },
+      restored,
+    );
+    expect(restored.parse(coerced)).toEqual({
+      required: { email: 'cli-json@example.invalid', sentinel: '007' },
+      optional: { nested: { enabled: true } },
+      nullable: { count: 2 },
+    });
+  });
+
+  test('coerces restored object guards through read-only and allOf wrappers', () => {
+    const restored = zodObjectFromJsonSchema({
+      type: 'object',
+      properties: {
+        readOnly: {
+          type: 'object',
+          readOnly: true,
+          propertyNames: { pattern: '^[a-z]+$' },
+          additionalProperties: {},
+        },
+        composed: {
+          type: 'object',
+          propertyNames: { pattern: '^[a-z]+$' },
+          additionalProperties: {},
+          allOf: [
+            {
+              type: 'object',
+              properties: {
+                nested: {
+                  type: 'object',
+                  properties: { code: { type: 'string' } },
+                  required: ['code'],
+                },
+              },
+              required: ['nested'],
+            },
+          ],
+        },
+      },
+      required: ['readOnly', 'composed'],
+    });
+    const coerced = coerceJsonArgs(
+      {
+        readOnly: '{"ok":"007"}',
+        composed: '{"nested":{"code":"007"}}',
+      },
+      restored,
+    );
+    expect(restored.parse(coerced)).toEqual({
+      readOnly: { ok: '007' },
+      composed: { nested: { code: '007' } },
+    });
+    expect(() =>
+      restored.parse(
+        coerceJsonArgs(
+          { readOnly: '{"Bad":1}', composed: '{"nested":{"code":"007"}}' },
+          restored,
+        ),
+      ),
+    ).toThrow('Invalid key in record');
+  });
+
+  test('does not run or borrow structure from a lookalike application transform pipe', async () => {
+    let transforms = 0;
+    const applicationPipe = z
+      .transform((value) => {
+        transforms++;
+        return value;
+      })
+      .check(() => undefined)
+      .pipe(z.object({ code: z.string() }))
+      .meta({ propertyNames: { type: 'string' } });
+    const raw = { data: '{"code":"007"}' };
+    const input = z.object({ data: applicationPipe });
+    expect(coerceJsonArgs(raw, input)).toEqual(raw);
+    expect(transforms).toBe(0);
+
+    let calls = 0;
+    const service = implement(
+      defineContract(
+        { prefix: '/application-pipe', scope: 'public' },
+        {
+          run: {
+            method: 'POST',
+            path: '/',
+            desc: 'Run',
+            input,
+            output: z.object({ ok: z.boolean() }),
+          },
+        },
+      ),
+      {
+        run: () => {
+          calls++;
+          return { ok: true };
+        },
+      },
+    );
+    const method = service.methods.run;
+    if (!method) throw new Error('expected method');
+    const result = await executeToolMethod(
+      method,
+      { toolName: 'run', rawArgs: raw, context: { source: 'agent' } },
+      { coerceJson: true },
+    );
+    expect(result.ok).toBe(false);
+    expect(transforms).toBe(1);
+    expect(calls).toBe(0);
   });
 
   test('a non-JSON string for an array field is left for validation to reject', () => {

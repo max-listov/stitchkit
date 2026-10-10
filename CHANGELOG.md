@@ -15,6 +15,14 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/cli` — JSON object and record flags now keep working after an MCP input schema is
+  restored through `z.fromJSONSchema`, including schemas with `propertyNames`, `minProperties` or
+  `maxProperties`. The CLI accepts both `--data '{"code":"007"}'` and
+  `--data='{"code":"007"}'`, preserves lexical strings and nested values, and still applies the
+  restored object guards before remote dispatch. Application transform pipes remain untouched.
+
 ## [0.108.4] - 2026-10-09
 
 ### Fixed

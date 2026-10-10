@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
+import { jsonSchemaObjectCoercionMembers } from './json-schema-origin';
 
 /** True for a schema whose value should be JSON-parsed when it arrives as a string. */
 function needsJsonCoercion(schema: z.core.$ZodType): boolean {
@@ -117,6 +118,14 @@ function coerceValue(
     schema instanceof z.ZodDefault
   ) {
     return coerceValue(value, schema.unwrap(), path);
+  }
+
+  const guardedMembers = jsonSchemaObjectCoercionMembers(schema);
+  if (guardedMembers) {
+    return guardedMembers.reduce(
+      (current, member) => coerceValue(current, member, path),
+      value,
+    );
   }
 
   // A string where the schema wants a structure → JSON-parse, then recurse into

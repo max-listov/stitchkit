@@ -9,6 +9,7 @@
  * hundred is lost to one schema.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import { z } from 'zod';
 import type { SkippedConnectionTool } from '../src/entrypoints/tools/connections';
 import {
   defineMcpClientConnection,
@@ -130,6 +131,209 @@ describe('discovered tools on the CLI surface', () => {
     // The answer, not the envelope carrying it: what is printed is what a pipe
     // and a view will see.
     expect(JSON.parse(out)).toEqual({ echoed: { value: 'hello' } });
+  });
+
+  test('JSON object flags survive the MCP schema round-trip before remote dispatch', async () => {
+    const input = z.object({
+      data: z.record(z.string().regex(/^[a-z][a-z0-9_]*$/), z.unknown()),
+    });
+    const upsert = {
+      name: 'upsert',
+      description: 'Upsert structured data',
+      inputSchema: z.toJSONSchema(input),
+    };
+    const guarded = {
+      name: 'guarded',
+      description: 'Apply referenced object guards',
+      inputSchema: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          data: {
+            type: 'object',
+            propertyNames: { $ref: '#/$defs/Key' },
+            minProperties: 1,
+            maxProperties: 2,
+            additionalProperties: {},
+          },
+        },
+        required: ['data'],
+        additionalProperties: false,
+        $defs: { Key: { type: 'string', pattern: '^[a-z]+$' } },
+      },
+    };
+    const readOnly = {
+      name: 'read-only',
+      description: 'Apply a read-only object guard',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          data: {
+            type: 'object',
+            readOnly: true,
+            propertyNames: { pattern: '^[a-z]+$' },
+            additionalProperties: {},
+          },
+        },
+        required: ['data'],
+        additionalProperties: false,
+      },
+    };
+    const composed = {
+      name: 'composed',
+      description: 'Apply a composed object guard',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          data: {
+            type: 'object',
+            propertyNames: { pattern: '^[a-z]+$' },
+            additionalProperties: {},
+            allOf: [
+              {
+                type: 'object',
+                properties: {
+                  nested: {
+                    type: 'object',
+                    properties: { code: { type: 'string' } },
+                    required: ['code'],
+                    additionalProperties: false,
+                  },
+                },
+                required: ['nested'],
+              },
+            ],
+          },
+        },
+        required: ['data'],
+        additionalProperties: false,
+      },
+    };
+    let calls = 0;
+    const url = startMcp([upsert, guarded, readOnly, composed], (args) => {
+      calls++;
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ echoed: args }) }],
+        structuredContent: { echoed: args },
+      };
+    });
+    const discovered = await mountConnections([
+      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+    ]);
+    const value = '{"email":"cli-json@example.invalid","nested":{"code":"007"}}';
+
+    for (const argv of [
+      ['upsert', '--data', value, '--json'],
+      ['upsert', `--data=${value}`, '--json'],
+    ]) {
+      const { out, err, code } = await runCli(discovered, argv);
+      expect({ err, code }).toEqual({ err: '', code: 0 });
+      expect(JSON.parse(out)).toEqual({
+        echoed: {
+          data: { email: 'cli-json@example.invalid', nested: { code: '007' } },
+        },
+      });
+    }
+
+    const dotted = await runCli(discovered, [
+      'upsert',
+      '--data.email=cli-json@example.invalid',
+      '--data.nested.code=kept',
+      '--json',
+    ]);
+    expect({ err: dotted.err, code: dotted.code }).toEqual({ err: '', code: 0 });
+    expect(JSON.parse(dotted.out)).toEqual({
+      echoed: {
+        data: { email: 'cli-json@example.invalid', nested: { code: 'kept' } },
+      },
+    });
+    for (const [command, data] of [
+      ['read-only', { ok: '007' }],
+      ['composed', { nested: { code: '007' } }],
+    ] as const) {
+      const result = await runCli(discovered, [
+        command,
+        `--data=${JSON.stringify(data)}`,
+        '--json',
+      ]);
+      expect({ err: result.err, code: result.code }).toEqual({ err: '', code: 0 });
+      expect(JSON.parse(result.out)).toEqual({ echoed: { data } });
+    }
+    expect(calls).toBe(5);
+
+    for (const invalid of [
+      {
+        argv: ['upsert', '--data', '{"email":', '--json'],
+        reason: 'data: Invalid input: expected object, received string',
+      },
+      {
+        argv: ['upsert', '--data', '[]', '--json'],
+        reason: 'data: Invalid input: expected object, received array',
+      },
+      {
+        argv: ['upsert', '--data', '{"Bad-Key":"x"}', '--json'],
+        reason: 'data.Bad-Key: Invalid key in record',
+      },
+    ]) {
+      const result = await runCli(discovered, invalid.argv);
+      expect(result.code).not.toBe(0);
+      expect(result.err).toContain('VALIDATION_ERROR');
+      expect(result.err).toContain(invalid.reason);
+      expect(calls).toBe(5);
+    }
+
+    for (const invalid of [
+      {
+        command: 'read-only',
+        value: '{"Bad":1}',
+        reason: 'data.Bad: Invalid key in record',
+      },
+      {
+        command: 'composed',
+        value: '{"nested":{"code":7}}',
+        reason: 'data.nested.code: Invalid input: expected string, received number',
+      },
+    ]) {
+      const result = await runCli(discovered, [
+        invalid.command,
+        `--data=${invalid.value}`,
+        '--json',
+      ]);
+      expect(result.code).not.toBe(0);
+      expect(result.err).toContain(invalid.reason);
+      expect(calls).toBe(5);
+    }
+
+    const bounded = await runCli(discovered, [
+      'guarded',
+      '--data={"first":1,"second":2}',
+      '--json',
+    ]);
+    expect({ err: bounded.err, code: bounded.code }).toEqual({ err: '', code: 0 });
+    expect(JSON.parse(bounded.out)).toEqual({
+      echoed: { data: { first: 1, second: 2 } },
+    });
+    expect(calls).toBe(6);
+    for (const invalid of [
+      {
+        value: '{}',
+        reason: 'data: Too small: expected object to have >=1 properties',
+      },
+      {
+        value: '{"a":1,"b":2,"c":3}',
+        reason: 'data: Too big: expected object to have <=2 properties',
+      },
+      { value: '{"Bad":1}', reason: 'data.Bad: Invalid key in record' },
+    ]) {
+      const result = await runCli(discovered, [
+        'guarded',
+        `--data=${invalid.value}`,
+        '--json',
+      ]);
+      expect(result.code).not.toBe(0);
+      expect(result.err).toContain(invalid.reason);
+      expect(calls).toBe(6);
+    }
   });
 
   test('a connection without the opt-in contributes nothing to the CLI', async () => {

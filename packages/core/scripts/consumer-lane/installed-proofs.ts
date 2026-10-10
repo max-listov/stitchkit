@@ -214,6 +214,17 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
     marker: 'packed CLI help limits: ok',
   },
   {
+    id: 'cli-json-object-roundtrip',
+    fixture: 'node',
+    entry: 'cli-json-object-roundtrip.mjs',
+    files: [],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin', 'win32'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed CLI JSON object round-trip: ok',
+  },
+  {
     ...native,
     id: 'native-primitives',
     fixture: 'minimal',

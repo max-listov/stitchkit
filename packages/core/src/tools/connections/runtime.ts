@@ -2,6 +2,7 @@ import { type ZodObject, z } from 'zod';
 import type { RuntimeContext } from '../../contract/runtime-context';
 import { declaresDraft07, withDefsDialect } from '../../json-schema/dialect';
 import type { RuntimeToolDefinition } from '../runtime-tool';
+import { markJsonSchemaObjectGuards } from '../schema/json-schema-origin';
 import { ConnectionAuthorizationRequiredError } from './errors';
 
 /** A connection's optional principal-scoped credential resolver. */
@@ -49,7 +50,10 @@ export function zodObjectFromJsonSchema(
 ): ZodObject {
   if (!schema || Object.keys(schema).length === 0) return z.looseObject({});
   const parsed = z.fromJSONSchema(reconcileDefinitionKeyword(schema));
-  if (parsed instanceof z.ZodObject) return parsed;
+  if (parsed instanceof z.ZodObject) {
+    markJsonSchemaObjectGuards(parsed);
+    return parsed;
+  }
   return z.looseObject({});
 }
 

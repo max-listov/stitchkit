@@ -230,12 +230,16 @@ string, the schema says what it should be:
 | `z.enum([...])`      | `--size large`                                 |
 | `z.array(z.string())`| `--tag a --tag b` → `["a","b"]`                |
 | `z.object({...})`    | `--opts '{"k":"v"}'` (JSON) or `--opts.k v`    |
+| `z.record(z.string(), z.unknown())` | `--data '{"code":"007"}'` (JSON) |
 | `.optional()` / `.default()` | not required                           |
 
 Primitive literals use the same coercion through optional, nullable and default wrappers and as
 array elements. A literal set whose members have different primitive types stays lexical because
 argv has no type tag: for `z.literal([7, '007'])`, `--value 007` remains the string `"007"` rather
 than being guessed as the number `7`. The unchanged Zod schema makes the final admission decision.
+Object and record JSON keeps the same behavior when a CLI discovers a tool through MCP. Restored
+`propertyNames`, `minProperties` and `maxProperties` constraints still run before dispatch; CLI
+coercion does not execute application transforms.
 
 After a bare boolean flag, the next token is its value when it is exactly
 `true` or `false` — `--active false` turns it off, as it reads. Any other word

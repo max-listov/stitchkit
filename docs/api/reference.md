@@ -1826,7 +1826,7 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
 | `ToolSurfaceProjection` | _type_ | the one readonly `{ services?, runtimeTools? }` container shared by full, MCP-only and introspection surfaces (`buildToolManifest`, `listToolNames`, `summarizeTransports` take `ToolSurfaceProjection<RuntimeToolDefinition>`) |
 | `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options |
-| `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments; throws a `ZodError` naming the field when a union that keeps a string member receives a string that parses to an array its array member accepts |
+| `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments, including object guards restored from JSON Schema; arbitrary transform pipes stay untouched; throws a `ZodError` naming the field when a union that keeps a string member receives a string that parses to an array its array member accepts |
 | `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions into conservative object joins; scalar collisions retain provable types, object/array collisions retain structural alternatives, and field descriptions retain discriminator labels plus availability/requiredness hints; the projection never executes validation |
 | `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |
 | `MountableTool` | _type_ | one operation with separate executable CLI argument schema and model-facing presentation schema |
@@ -2345,7 +2345,7 @@ SDK nor the `ai` peer.
 | `parseCliArgs` | function | argv → typed tool args against a schema (advanced) |
 | `routeCliArgv` | function | select the command out of argv without duplicating the global-option grammar (advanced) |
 | `extractCliGlobalOptions` | function | lift the application's own global options out of argv before routing (advanced) |
-| `coerceJsonArgs` | function | the second half of `parseCliArgs` — parse array/object values a consumer sends itself, without the `stitchkit/tools` barrel |
+| `coerceJsonArgs` | function | the second half of `parseCliArgs` — parse array/object values a consumer sends itself, including discovered MCP object guards restored from JSON Schema, without the `stitchkit/tools` barrel |
 | `CliArgumentError` | class | the refusal `parseCliArgs` and the view flags raise; a CLI reports it and exits `2` |
 | `renderCliView` | function | compute an aggregate over a result (`--count-by`, `--sum`, `--top`, `--table`) — [guide](../guide/cli.md#aggregate-views) |
 | `createCliProfileStore` | function | named `0600` credential profiles resolved by name, with the never-substitute rule built in — [guide](../guide/cli.md#named-profiles) |
