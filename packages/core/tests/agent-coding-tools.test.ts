@@ -208,25 +208,24 @@ describe('host-authorized Agent coding tools', () => {
     const options = { toolCallId: 'literal-bounds', messages: [], context: undefined };
     const originalError = console.error;
     console.error = () => undefined;
-    const missing = edit(
-      { path: 'source.txt', oldText: 'missing', newText: 'y', replaceAll: true },
-      options,
-    );
-    const ambiguous = edit(
-      { path: 'source.txt', oldText: 'x', newText: 'y', replaceAll: false },
-      options,
-    );
-    const oversized = edit(
-      { path: 'source.txt', oldText: 'x', newText: '$$', replaceAll: true },
-      options,
-    );
-    console.error = originalError;
-
-    await expect(missing).rejects.toMatchObject({ output: { error: 'NOT_FOUND' } });
-    await expect(ambiguous).rejects.toMatchObject({ output: { error: 'CONFLICT' } });
-    await expect(oversized).rejects.toMatchObject({
-      output: { error: 'BAD_REQUEST', details: { bytes: 5, maxWriteBytes: 4 } },
-    });
+    try {
+      await expect(
+        edit(
+          { path: 'source.txt', oldText: 'missing', newText: 'y', replaceAll: true },
+          options,
+        ),
+      ).rejects.toMatchObject({ output: { error: 'NOT_FOUND' } });
+      await expect(
+        edit({ path: 'source.txt', oldText: 'x', newText: 'y', replaceAll: false }, options),
+      ).rejects.toMatchObject({ output: { error: 'CONFLICT' } });
+      await expect(
+        edit({ path: 'source.txt', oldText: 'x', newText: '$$', replaceAll: true }, options),
+      ).rejects.toMatchObject({
+        output: { error: 'BAD_REQUEST', details: { bytes: 5, maxWriteBytes: 4 } },
+      });
+    } finally {
+      console.error = originalError;
+    }
     expect(authorizations).toHaveLength(0);
     const unchanged = await readFile(path.join(root, 'source.txt'));
     expect(unchanged.equals(Buffer.from('x x'))).toBe(true);
