@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { runNativeCommand } from '../src/entrypoints/process';
 import { reapAfterEachTest, trackPidFile, trackProcess } from './support/process-reaper';
 import { processAlive } from './support/process-state';
-import { eventLoopTurn } from './support/until';
+import { eventLoopTurn, until } from './support/until';
 
 let root: string;
 reapAfterEachTest();
@@ -110,6 +110,7 @@ test('native streaming fully drains multi-megabyte output per channel before com
 test('blocked sink abort releases wait and terminates TERM-resistant descendant without touching unrelated child', async () => {
   const counter = join(root, 'counter');
   const pidfile = join(root, 'pid');
+  const cleanupTimeoutMs = 1000;
   const unrelated = spawn(NODE, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
   trackProcess(unrelated.pid);
   trackPidFile(pidfile);
@@ -126,7 +127,7 @@ test('blocked sink abort releases wait and terminates TERM-resistant descendant 
     ...fixture('native-term-resistant-leader.mjs', counter, pidfile),
     signal: controller.signal,
     stop: { target: 'group', graceMs: 10 },
-    cleanupTimeoutMs: 1000,
+    cleanupTimeoutMs,
     onOutput: async () => {
       sinkEntered();
       await held;
@@ -136,7 +137,12 @@ test('blocked sink abort releases wait and terminates TERM-resistant descendant 
     await entered;
     controller.abort(new Error('cancel'));
     await expect(promise).rejects.toThrow('cancel');
-    expect(processAlive(Number(await readFile(pidfile, 'utf8')))).toBe(false);
+    const descendant = Number(await readFile(pidfile, 'utf8'));
+    await until(
+      () => !processAlive(descendant),
+      'the TERM-resistant descendant to observe SIGKILL',
+      cleanupTimeoutMs,
+    );
     expect(unrelated.exitCode).toBeNull();
   } finally {
     release();
