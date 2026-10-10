@@ -323,9 +323,10 @@ import { Database } from 'bun:sqlite'
 import type { Update } from 'grammy/types'
 
 const webhook = { token: env.BOT_TOKEN, url: env.WEBHOOK_URL, secret: env.WEBHOOK_SECRET }
+const updateStore = sqliteTelegramUpdateStore({ database: new Database(env.UPDATES_DB) })
 
 const intake = createTelegramUpdateIntake<Update>({
-  store: sqliteTelegramUpdateStore({ database: new Database(env.UPDATES_DB) }),
+  store: updateStore,
   handle: (update) => bot.handleUpdate(update),
   onFailure: (failure) => logger.warn('Update failed', { ...failure }),
 })
@@ -369,13 +370,55 @@ fix (a refused message, a blocked user) is abandoned; `maxAttempts` (5) ends
 the rest. Delivery is at least once: a handler that finished but could not be
 recorded as finished runs again.
 
+Use `handleAttempt` when the handler needs the immutable attempt fence and an
+ownership-loss signal. A signal asks slow work to stop; the fence is what
+authorizes a domain write. Check it through a transaction-bound reference store
+inside the same database transaction as that write:
+
+```ts
+handleAttempt: async (update, { fence, ownerLost }) => {
+  ownerLost.throwIfAborted()
+  await database.transaction(async (tx) => {
+    const transactionStore = postgresTelegramUpdateStore({
+      query: (text, parameters) => tx.query(text, parameters),
+      createTable: false,
+    })
+    if (!(await transactionStore.owns(fence, Date.now()))) return
+    await applyDomainTransition(tx, update)
+  })
+}
+```
+
+The fence contains the claim's own `{ updateId, attempt, claimId }`. The opaque
+`claimId` is persisted and never reused, so an old handler cannot adopt either
+a newer attempt or a pruned and recreated `updateId`. Existing `handle(update)`
+remains unchanged, including direct functions whose own optional second
+argument has a different meaning.
+
+For a final obligation, configure `handleExhaustion`. The reference store keeps
+the terminal record unacknowledged until this handler resolves, including
+across restart; a throw leaves it for the next sweep. Delivery is at least once,
+so use the complete `{ updateId, attempt, claimId }` as an idempotency key in
+the consumer database:
+
+```ts
+handleExhaustion: ({ updateId, attempt, claimId, update, error }) =>
+  recordFinalFailureOnce({ key: `telegram:${updateId}:${attempt}:${claimId}`, update, error })
+```
+
+This reuses the update row and table. Without `handleExhaustion`, terminal
+abandonment retains its previous behavior.
+
 With grammY the handler is `bot.handleUpdate`, which wraps a middleware's error
 in a `BotError`; the intake unwraps it, so `retry`, `onFailure` and the error
 stored with the update are what the middleware threw — a `retry` that returns
 `false` for the bot's own terminal error sees that error.
 
-The store is an interface of six atomic steps (`TelegramUpdateStore`), so the
-bot's own database holds it:
+The base store remains the six atomic steps of `TelegramUpdateStore`. A
+`TelegramUpdateFencedStore` adds `claimOwned`, `renewOwned`, `owns` and
+`settleOwned`; `TelegramUpdateDurableStore` adds the final-obligation methods.
+Reference stores implement both, so the bot's own database holds the fence and
+final obligation without a second queue:
 
 | Store | Takes |
 |---|---|
@@ -402,7 +445,12 @@ postgresTelegramUpdateStore({
 Each rule is one conditional statement, so a claim is atomic across every
 process sharing the table. By default the table is created on first use; where
 migrations own the schema, `postgresTelegramUpdateStoreSchema(table)` is the
-statement to put in one.
+statement to put in one. Apply it before using `handleAttempt` or
+`handleExhaustion`; it adds `claim_id` idempotently. Legacy `handle(update)`
+uses base PostgreSQL operations that do not reference that column. SQLite adds
+the column automatically and tolerates two rolling processes racing the
+migration. A direct base-store claim with `durableExhaustion: true` also opts
+into the column-backed durable capability.
 
 A store of your own — over an ORM, another database — is put through the same
 rules the shipped ones are, concurrent claims included:

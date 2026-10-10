@@ -989,6 +989,50 @@
       "test": "a local Bot API root and an abort signal reach every call"
     }
   },
+  "TelegramUpdateAttemptIntakeConfig": {
+    "store": {
+      "test": "answers before a slow update finishes, keeps chat order, runs other chats alongside"
+    },
+    "handleAttempt": {
+      "test": "owner loss aborts the old handler and its fence cannot authorize the reclaimed attempt"
+    },
+    "retry": {
+      "test": "an update stops after maxAttempts"
+    },
+    "maxAttempts": {
+      "test": "an update stops after maxAttempts"
+    },
+    "now": {
+      "test": "an update stops after maxAttempts"
+    },
+    "leaseMs": {
+      "test": "a live handler's lease keeps a second process off it; a dead one's lapses to the second"
+    },
+    "pendingGraceMs": {
+      "test": "a pending update waits pendingGraceMs for its own process, then any process takes it; finished ones are forgotten after retainMs"
+    },
+    "retainMs": {
+      "test": "a pending update waits pendingGraceMs for its own process, then any process takes it; finished ones are forgotten after retainMs"
+    },
+    "sweepEveryMs": {
+      "test": "the sweep runs on its own every sweepEveryMs"
+    },
+    "maxConcurrent": {
+      "test": "at most maxConcurrent chats are handled at once"
+    },
+    "onFailure": {
+      "test": "a failure is retried from the stored body when due; a refusal repeating cannot fix is abandoned"
+    },
+    "handleExhaustion": {
+      "test": "a durable exhaustion survives a restart and repeats until acknowledgement"
+    },
+    "onExhaustionFailure": {
+      "test": "a durable exhaustion survives a restart and repeats until acknowledgement"
+    },
+    "onStoreError": {
+      "test": "a store that fails a step is reported, and the update is not lost"
+    }
+  },
   "TelegramUpdateIntakeConfig": {
     "store": {
       "test": "answers before a slow update finishes, keeps chat order, runs other chats alongside"
@@ -1022,6 +1066,12 @@
     },
     "onFailure": {
       "test": "a failure is retried from the stored body when due; a refusal repeating cannot fix is abandoned"
+    },
+    "handleExhaustion": {
+      "test": "a durable exhaustion survives a restart and repeats until acknowledgement"
+    },
+    "onExhaustionFailure": {
+      "test": "a durable exhaustion survives a restart and repeats until acknowledgement"
     },
     "onStoreError": {
       "test": "a store that fails a step is reported, and the update is not lost"

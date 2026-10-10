@@ -71,17 +71,28 @@ export {
 } from '../telegram/transport';
 export {
   createTelegramUpdateIntake,
+  type TelegramUpdateAttemptContext,
+  type TelegramUpdateAttemptIntakeConfig,
   type TelegramUpdateEnvelope,
+  type TelegramUpdateExhaustion,
+  type TelegramUpdateExhaustionFailure,
   type TelegramUpdateFailure,
   type TelegramUpdateIntake,
   type TelegramUpdateIntakeConfig,
+  type TelegramUpdateIntakeOptions,
+  TelegramUpdateOwnershipLostError,
   type TelegramUpdateStoreStep,
 } from '../telegram/update-intake';
 export {
   memoryTelegramUpdateStore,
   type StoredTelegramUpdate,
+  type StoredTelegramUpdateExhaustion,
+  type TelegramUpdateAttemptIdentity,
   type TelegramUpdateClaimOptions,
   type TelegramUpdateDueQuery,
+  type TelegramUpdateDurableStore,
+  type TelegramUpdateExhaustionQuery,
+  type TelegramUpdateFencedStore,
   type TelegramUpdateSettlement,
   type TelegramUpdateState,
   type TelegramUpdateStore,

@@ -194,9 +194,10 @@ function assertTransportChoice(config: HttpClientConfig): void {
  */
 function requestFailure(error: unknown, emit: (event: ApiEvent) => void): ApiError {
   if (error instanceof RequestCancellationError) {
-    return new ApiError(error.cause === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT', {
+    return new ApiError(error.origin === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT', {
       status: 0,
       message: error.message,
+      ...(error.cause !== undefined && { cause: error.cause }),
     });
   }
   if (ApiError.is(error)) return error;

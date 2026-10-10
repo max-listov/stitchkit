@@ -238,24 +238,25 @@ describe('discovered tools on the CLI surface', () => {
     const dotted = await runCli(discovered, [
       'upsert',
       '--data.email=cli-json@example.invalid',
-      '--data.nested.code=kept',
+      '--data.nested.code=007',
       '--json',
     ]);
     expect({ err: dotted.err, code: dotted.code }).toEqual({ err: '', code: 0 });
     expect(JSON.parse(dotted.out)).toEqual({
       echoed: {
-        data: { email: 'cli-json@example.invalid', nested: { code: 'kept' } },
+        data: { email: 'cli-json@example.invalid', nested: { code: '007' } },
       },
     });
     for (const [command, data] of [
       ['read-only', { ok: '007' }],
       ['composed', { nested: { code: '007' } }],
     ] as const) {
-      const result = await runCli(discovered, [
-        command,
-        `--data=${JSON.stringify(data)}`,
-        '--json',
-      ]);
+      const result = await runCli(
+        discovered,
+        command === 'composed'
+          ? [command, '--data.nested.code=007', '--json']
+          : [command, `--data=${JSON.stringify(data)}`, '--json'],
+      );
       expect({ err: result.err, code: result.code }).toEqual({ err: '', code: 0 });
       expect(JSON.parse(result.out)).toEqual({ echoed: { data } });
     }

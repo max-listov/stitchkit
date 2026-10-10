@@ -342,6 +342,13 @@ preserve facts the generic client cannot invent — for example a Unix transport
 an effect from `UNKNOWN_ERROR` alone; inspect the owned adapter's cause and retry
 only when it proves that dispatch did not happen.
 
+The same evidence survives when caller abort or the request deadline wins the
+race: the public code remains `REQUEST_ABORTED` or `REQUEST_TIMEOUT`, while
+the exact rejection produced by the transport remains in `ApiError.cause`.
+That cause is internal diagnostic data — it is not included by JSON/string
+rendering — so delivery state and trace metadata remain available without
+putting transport payloads or credentials in a client-facing error.
+
 For an endpoint without contract arguments, pass only the options object:
 
 ```ts

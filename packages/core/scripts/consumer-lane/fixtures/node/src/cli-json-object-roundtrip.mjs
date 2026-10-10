@@ -139,7 +139,19 @@ try {
     assert.deepEqual({ err: result.err, code: result.code }, { err: '', code: 0 });
     assert.deepEqual(JSON.parse(result.out), { echoed: { data } });
   }
-  assert.equal(calls, 4);
+  for (const [command, argv, data] of [
+    [
+      'upsert',
+      ['--data.email=dotted@example.invalid', '--data.code=007'],
+      { email: 'dotted@example.invalid', code: '007' },
+    ],
+    ['composed', ['--data.nested.code=007'], { nested: { code: '007' } }],
+  ]) {
+    const result = await run(runtimeTools, [command, ...argv, '--json']);
+    assert.deepEqual({ err: result.err, code: result.code }, { err: '', code: 0 });
+    assert.deepEqual(JSON.parse(result.out), { echoed: { data } });
+  }
+  assert.equal(calls, 6);
   for (const [command, value] of [
     ['upsert', '{"email":'],
     ['upsert', '[]'],
@@ -150,7 +162,7 @@ try {
     const result = await run(runtimeTools, [command, `--data=${value}`, '--json']);
     assert.notEqual(result.code, 0);
     assert.match(result.err, /VALIDATION_ERROR/);
-    assert.equal(calls, 4);
+    assert.equal(calls, 6);
   }
 } finally {
   await new Promise((resolve, reject) =>

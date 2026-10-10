@@ -1,9 +1,15 @@
-type CancellationCause = 'caller' | 'timeout';
+export type RequestCancellationOrigin = 'caller' | 'timeout';
 
-/** Internal transport cancellation with the first abort cause preserved. */
+/** Internal transport cancellation with its first origin and transport failure preserved. */
 export class RequestCancellationError extends Error {
-  constructor(public readonly cause: CancellationCause) {
-    super(cause === 'caller' ? 'Request was aborted' : 'Request timed out');
+  constructor(
+    public readonly origin: RequestCancellationOrigin,
+    cause?: unknown,
+  ) {
+    super(
+      origin === 'caller' ? 'Request was aborted' : 'Request timed out',
+      cause === undefined ? undefined : { cause },
+    );
     this.name = 'RequestCancellationError';
   }
 }
@@ -26,18 +32,18 @@ export function createRequestCancellation(
     caller && timeoutController
       ? AbortSignal.any([caller, timeoutController.signal])
       : (caller ?? timeoutController?.signal);
-  let cause: CancellationCause | undefined;
+  let origin: RequestCancellationOrigin | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const abortFromCaller = (): void => {
-    if (cause) return;
-    cause = 'caller';
+    if (origin) return;
+    origin = 'caller';
   };
   if (caller?.aborted) abortFromCaller();
   else caller?.addEventListener('abort', abortFromCaller, { once: true });
   if (timeoutMs !== undefined && timeoutController) {
     timer = setTimeout(() => {
-      if (cause) return;
-      cause = 'timeout';
+      if (origin) return;
+      origin = 'timeout';
       timeoutController.abort(new DOMException('Request timed out', 'TimeoutError'));
     }, timeoutMs);
   }
@@ -46,10 +52,11 @@ export function createRequestCancellation(
     signal,
     async run(operation) {
       try {
-        if (cause === 'caller') throw cancellationError(cause);
+        if (origin === 'caller') throw cancellationError(origin);
         return await operation(signal);
       } catch (error) {
-        if (cause) throw cancellationError(cause);
+        if (error instanceof RequestCancellationError) throw error;
+        if (origin) throw cancellationError(origin, error);
         throw error;
       } finally {
         if (timer !== undefined) clearTimeout(timer);
@@ -59,6 +66,9 @@ export function createRequestCancellation(
   };
 }
 
-function cancellationError(cause: CancellationCause): RequestCancellationError {
-  return new RequestCancellationError(cause);
+function cancellationError(
+  origin: RequestCancellationOrigin,
+  cause?: unknown,
+): RequestCancellationError {
+  return new RequestCancellationError(origin, cause);
 }

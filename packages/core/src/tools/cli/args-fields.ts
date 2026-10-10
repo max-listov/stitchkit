@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { isUnsafeKey } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
+import { jsonSchemaObjectCoercionMembers } from '../schema/json-schema-origin';
 import { CliArgumentError } from './argument-error';
 
 export type FieldKind =
@@ -37,7 +38,7 @@ export function appendCliOptionValue(
   const existing = raw.get(name);
   // Explicitly untyped passthrough fields retain their raw-list grammar.
   // Dotted leaves and declared fields only repeat when the schema says array.
-  const repeatable = !name.includes('.') && (info === undefined || info.kind === 'array');
+  const repeatable = info?.kind === 'array' || (!name.includes('.') && info === undefined);
   if (existing !== undefined) {
     if (!repeatable) {
       throw new CliArgumentError(`--${name} was passed ${existing.length + 1} times`);
@@ -111,7 +112,12 @@ function mergeField(fields: Map<string, FieldInfo>, name: string, info: FieldInf
     fields.set(name, info);
     return;
   }
-  if (existing.kind === info.kind) return;
+  if (existing.kind === info.kind) {
+    if (existing.kind === 'array' && existing.elementKind !== info.elementKind) {
+      fields.set(name, { kind: 'array', elementKind: 'other' });
+    }
+    return;
+  }
   if (existing.kind === 'boolean' || info.kind === 'boolean') {
     fields.set(name, { kind: 'boolean' });
     return;
@@ -160,6 +166,98 @@ export function describeSchemaFields(schema: z.ZodType | undefined): Map<string,
   const fields = new Map<string, FieldInfo>();
   if (schema) collectSchemaFields(schema, fields);
   return fields;
+}
+
+function infoOf(field: z.core.$ZodType): FieldInfo {
+  const base = unwrap(field);
+  const kind = classify(base);
+  if (kind === 'array' && base instanceof z.ZodArray) {
+    return { kind, elementKind: classify(unwrap(base.element)) };
+  }
+  return {
+    kind,
+    ...(base instanceof z.ZodNumber && base.isInt && { integer: true }),
+  };
+}
+
+function mergePathInfos(
+  infos: readonly (FieldInfo | undefined)[],
+  composition: 'union' | 'intersection',
+): FieldInfo | undefined {
+  const present = infos.filter((info): info is FieldInfo => info !== undefined);
+  if (present.length === 0) return undefined;
+  // A union may accept the raw text through its free branch, so coercing for a
+  // different branch would choose semantics the schema did not declare.
+  if (composition === 'union' && present.some((info) => info.kind === 'other')) {
+    return { kind: 'other' };
+  }
+  const concrete = present.filter((info) => info.kind !== 'other');
+  const candidates =
+    composition === 'intersection' && concrete.length > 0 ? concrete : present;
+  const first = candidates[0];
+  if (!first) return undefined;
+  if (candidates.every((info) => info.kind === first.kind)) {
+    const elementKind =
+      first.kind === 'array'
+        ? candidates.every((info) => info.elementKind === first.elementKind)
+          ? first.elementKind
+          : 'other'
+        : undefined;
+    return {
+      kind: first.kind,
+      ...(elementKind && { elementKind }),
+      ...(first.integer && candidates.every((info) => info.integer) && { integer: true }),
+    };
+  }
+  return candidates.some((info) => info.kind === 'boolean')
+    ? { kind: 'boolean' }
+    : { kind: 'other' };
+}
+
+function pathInfo(schema: z.core.$ZodType, path: readonly string[]): FieldInfo | undefined {
+  const guarded = jsonSchemaObjectCoercionMembers(schema);
+  if (guarded) {
+    return mergePathInfos(
+      guarded.map((member) => pathInfo(member, path)),
+      'intersection',
+    );
+  }
+  const base = unwrap(schema);
+  if (base !== schema) return pathInfo(base, path);
+  if (base instanceof z.ZodUnion) {
+    return mergePathInfos(
+      base.def.options.map((member) => pathInfo(member, path)),
+      'union',
+    );
+  }
+  if (base instanceof z.ZodIntersection) {
+    return mergePathInfos(
+      [pathInfo(base.def.left, path), pathInfo(base.def.right, path)],
+      'intersection',
+    );
+  }
+  if (path.length === 0) return infoOf(base);
+  const [name, ...rest] = path;
+  if (name === undefined) return infoOf(base);
+  if (base instanceof z.ZodObject) {
+    const member = base.shape[name] ?? base.def.catchall;
+    return member ? pathInfo(member, rest) : undefined;
+  }
+  if (base instanceof z.ZodRecord) return pathInfo(base.valueType, rest);
+  return undefined;
+}
+
+/**
+ * Resolve the declared leaf of a dotted option. An intersection's concrete
+ * constraint can refine a free member; a union with a free member stays raw,
+ * because coercion must not choose one accepted branch for the caller.
+ */
+export function describeSchemaPath(
+  schema: z.ZodType | undefined,
+  path: readonly string[],
+): FieldInfo | undefined {
+  if (!schema || path.length === 0) return undefined;
+  return pathInfo(schema, path);
 }
 
 const TRUE_WORDS = new Set(['true', '1', 'yes', 'on']);
@@ -220,12 +318,12 @@ function coerceScalar(kind: FieldKind, value: string): unknown {
   }
 }
 
-/** Best-effort coercion for a dotted-path leaf, where the schema type is unknown. */
+/** Preserve the legacy best-effort grammar for a wholly unknown passthrough option. */
 export function looseCoerce(value: string): unknown {
   if (value === 'true') return true;
   if (value === 'false') return false;
-  const n = Number(value);
-  return value.trim() !== '' && !Number.isNaN(n) ? n : value;
+  const number = Number(value);
+  return value.trim() !== '' && !Number.isNaN(number) ? number : value;
 }
 
 function looksLikeJson(value: string): boolean {

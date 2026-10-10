@@ -38,7 +38,7 @@
     "stitchkit/release": 17,
     "stitchkit/remote": 2,
     "stitchkit/server": 215,
-    "stitchkit/telegram": 87,
+    "stitchkit/telegram": 98,
     "stitchkit/telegram/html": 19,
     "stitchkit/telegram/screens": 76,
     "stitchkit/testing": 81,
@@ -675,6 +675,23 @@
       "entrypoint": "stitchkit/telegram",
       "names": ["TelegramBroadcastFailure", "TelegramBroadcastFailureSchema"],
       "reason": "One validated failure union enables injected send classification, bounded exact delays and explicit uncertain outcomes without a transport-specific retry engine (ADR 0228)."
+    },
+    {
+      "entrypoint": "stitchkit/telegram",
+      "names": [
+        "StoredTelegramUpdateExhaustion",
+        "TelegramUpdateAttemptContext",
+        "TelegramUpdateAttemptIdentity",
+        "TelegramUpdateAttemptIntakeConfig",
+        "TelegramUpdateIntakeOptions",
+        "TelegramUpdateDurableStore",
+        "TelegramUpdateExhaustion",
+        "TelegramUpdateExhaustionFailure",
+        "TelegramUpdateExhaustionQuery",
+        "TelegramUpdateFencedStore",
+        "TelegramUpdateOwnershipLostError"
+      ],
+      "reason": "These eleven names form one reviewed persisted-claim fence and recoverable terminal-obligation contract over the existing Telegram update row; consumers need the shared options, attempt-aware config, identities, ordered exhaustion page and store capabilities to make their own domain transaction atomic and idempotent (ADR 0256)."
     },
     {
       "entrypoint": "stitchkit/tools/connections",

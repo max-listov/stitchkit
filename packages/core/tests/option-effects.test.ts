@@ -74,6 +74,7 @@ const COVERED: Record<string, string> = {
   TelegramLocalFilesConfig: 'entrypoints/telegram.ts',
   TelegramOperatorDedupe: 'entrypoints/telegram.ts',
   ClaimTelegramWebhookConfig: 'entrypoints/telegram.ts',
+  TelegramUpdateAttemptIntakeConfig: 'entrypoints/telegram.ts',
   TelegramUpdateIntakeConfig: 'entrypoints/telegram.ts',
   SqliteTelegramUpdateStoreConfig: 'entrypoints/telegram.ts',
   PostgresTelegramUpdateStoreConfig: 'entrypoints/telegram.ts',

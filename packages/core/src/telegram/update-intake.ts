@@ -19,9 +19,19 @@
  * handler that finished but could not be recorded as finished runs again.
  */
 
-import { isRecord, transportResult } from '../internal/typed';
+import { isRecord } from '../internal/typed';
 import { classifyTelegramSendFailure } from './send-failure';
-import type { TelegramUpdateStore } from './update-store';
+import {
+  createTelegramUpdateAttemptRunner,
+  createTelegramUpdateExhaustionScheduler,
+  createTelegramUpdateWorkSlots,
+} from './update-intake-work';
+import type {
+  TelegramUpdateAttemptIdentity,
+  TelegramUpdateDurableStore,
+  TelegramUpdateFencedStore,
+  TelegramUpdateStore,
+} from './update-store';
 import type { TelegramUpdateAcceptance } from './webhook';
 
 /** An update as Telegram sends it; name grammY's `Update` to get its full type. */
@@ -37,16 +47,42 @@ export interface TelegramUpdateFailure {
   readonly retrying: boolean;
 }
 
+/** One handler invocation under one immutable store claim. */
+export interface TelegramUpdateAttemptContext extends TelegramUpdateAttemptIdentity {
+  /** Pass this exact identity to a fenced store check inside the consumer's DB transaction. */
+  readonly fence: TelegramUpdateAttemptIdentity;
+  /** Aborted once renewal proves the attempt lost ownership or its last proven lease expires. */
+  readonly ownerLost: AbortSignal;
+}
+
+/** A terminal update failure recovered from the same durable update store. */
+export interface TelegramUpdateExhaustion<TUpdate extends TelegramUpdateEnvelope>
+  extends TelegramUpdateAttemptIdentity {
+  readonly update: TUpdate;
+  readonly exhaustedAt: number;
+  readonly error: string;
+}
+
+/** A failed delivery of a durable terminal-update obligation. */
+export interface TelegramUpdateExhaustionFailure<TUpdate extends TelegramUpdateEnvelope> {
+  readonly exhaustion: TelegramUpdateExhaustion<TUpdate>;
+  readonly error: unknown;
+}
+
+/** The reason carried by `ownerLost` when an attempt no longer owns its lease. */
+export class TelegramUpdateOwnershipLostError extends Error {
+  constructor(public readonly identity: TelegramUpdateAttemptIdentity) {
+    super(
+      `[stitchkit] telegram update ${identity.updateId} attempt ${identity.attempt} lost ownership`,
+    );
+    this.name = 'TelegramUpdateOwnershipLostError';
+  }
+}
+
 export type TelegramUpdateStoreStep = 'claim' | 'renew' | 'settle' | 'sweep';
 
-export interface TelegramUpdateIntakeConfig<TUpdate extends TelegramUpdateEnvelope> {
-  readonly store: TelegramUpdateStore;
-  /**
-   * Handle one update — with grammY, `(update) => bot.handleUpdate(update)`.
-   * A grammY `BotError` is unwrapped: `retry`, `onFailure` and the stored
-   * error see what the middleware threw.
-   */
-  readonly handle: (update: TUpdate) => unknown;
+/** Retry, lease, scheduling and observation options shared by both handler forms. */
+export interface TelegramUpdateIntakeOptions<TUpdate extends TelegramUpdateEnvelope> {
   /**
    * After a failed attempt: milliseconds until the next, or `false` to
    * abandon the update. Default: abandon what Telegram said repeating cannot
@@ -68,11 +104,39 @@ export interface TelegramUpdateIntakeConfig<TUpdate extends TelegramUpdateEnvelo
   readonly maxConcurrent?: number;
   /** Every failed attempt. */
   readonly onFailure?: (failure: TelegramUpdateFailure) => void;
+  /**
+   * A durable final obligation. Resolving acknowledges it; throwing leaves it
+   * in the same store for a later sweep. Requires a `TelegramUpdateDurableStore`.
+   * Delivery is at least once, so persist by the supplied update/attempt identity.
+   */
+  readonly handleExhaustion?: (exhaustion: TelegramUpdateExhaustion<TUpdate>) => unknown;
+  /** An observational report that `handleExhaustion` threw; it never acknowledges the row. */
+  readonly onExhaustionFailure?: (failure: TelegramUpdateExhaustionFailure<TUpdate>) => void;
   /** The store refused a step; the update is retried when its lease lapses. */
   readonly onStoreError?: (error: unknown, step: TelegramUpdateStoreStep) => void;
   /** Default `Date.now`. */
   readonly now?: () => number;
 }
+
+/** Existing one-argument intake configuration. */
+export interface TelegramUpdateIntakeConfig<TUpdate extends TelegramUpdateEnvelope>
+  extends TelegramUpdateIntakeOptions<TUpdate> {
+  readonly store: TelegramUpdateStore;
+  /** Direct grammY handlers keep their optional second argument private. */
+  readonly handle: (update: TUpdate) => unknown;
+}
+
+/** Intake configuration for a handler that needs attempt ownership metadata. */
+export interface TelegramUpdateAttemptIntakeConfig<TUpdate extends TelegramUpdateEnvelope>
+  extends TelegramUpdateIntakeOptions<TUpdate> {
+  readonly store: TelegramUpdateFencedStore;
+  /** Handle an update with its immutable attempt fence and ownership-loss signal. */
+  readonly handleAttempt: (update: TUpdate, context: TelegramUpdateAttemptContext) => unknown;
+}
+
+type TelegramUpdateAnyIntakeConfig<TUpdate extends TelegramUpdateEnvelope> =
+  | TelegramUpdateIntakeConfig<TUpdate>
+  | TelegramUpdateAttemptIntakeConfig<TUpdate>;
 
 export interface TelegramUpdateIntake {
   /** Record one webhook body; handling starts after, once the intake is started. */
@@ -132,22 +196,6 @@ function parsed(body: string): Record<string, unknown> | undefined {
   }
 }
 
-/**
- * The handler's own error. grammY's `bot.handleUpdate` wraps whatever a
- * middleware threw in a `BotError` — "Error in middleware: …", the original on
- * `.error` — so a retry policy asking "is this my terminal error?" and the
- * error recorded with the update would see the wrapper instead. Matched by
- * shape: this module does not import grammY.
- */
-function handlerError(error: unknown): unknown {
-  return error instanceof Error &&
-    error.name === 'BotError' &&
-    'ctx' in error &&
-    'error' in error
-    ? error.error
-    : error;
-}
-
 function positive(name: string, value: number): number {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new RangeError(`[stitchkit] telegram update intake: ${name} is a positive integer`);
@@ -155,10 +203,68 @@ function positive(name: string, value: number): number {
   return value;
 }
 
+function isTelegramUpdateFencedStore(
+  store: TelegramUpdateStore,
+): store is TelegramUpdateFencedStore {
+  return (
+    'claimOwned' in store &&
+    typeof store.claimOwned === 'function' &&
+    'renewOwned' in store &&
+    typeof store.renewOwned === 'function' &&
+    'owns' in store &&
+    typeof store.owns === 'function' &&
+    'settleOwned' in store &&
+    typeof store.settleOwned === 'function'
+  );
+}
+
+function isTelegramUpdateDurableStore(
+  store: TelegramUpdateStore,
+): store is TelegramUpdateDurableStore {
+  return (
+    isTelegramUpdateFencedStore(store) &&
+    'exhaust' in store &&
+    typeof store.exhaust === 'function' &&
+    'dueExhaustions' in store &&
+    typeof store.dueExhaustions === 'function' &&
+    'acknowledgeExhaustion' in store &&
+    typeof store.acknowledgeExhaustion === 'function'
+  );
+}
+
 export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelope>(
   config: TelegramUpdateIntakeConfig<TUpdate>,
+): TelegramUpdateIntake;
+export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelope>(
+  config: TelegramUpdateAttemptIntakeConfig<TUpdate>,
+): TelegramUpdateIntake;
+export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelope>(
+  config: TelegramUpdateAnyIntakeConfig<TUpdate>,
 ): TelegramUpdateIntake {
   const { store } = config;
+  const exhaustionHandler = config.handleExhaustion;
+  const attemptAware = 'handleAttempt' in config;
+  const fenced =
+    attemptAware || exhaustionHandler !== undefined
+      ? isTelegramUpdateFencedStore(store)
+        ? store
+        : undefined
+      : undefined;
+  const durable = exhaustionHandler
+    ? isTelegramUpdateDurableStore(store)
+      ? store
+      : undefined
+    : undefined;
+  if (attemptAware && !fenced) {
+    throw new TypeError(
+      '[stitchkit] telegram update intake: handleAttempt requires a TelegramUpdateFencedStore',
+    );
+  }
+  if (exhaustionHandler && !durable) {
+    throw new TypeError(
+      '[stitchkit] telegram update intake: handleExhaustion requires a TelegramUpdateDurableStore',
+    );
+  }
   const now = config.now ?? Date.now;
   const retry = config.retry ?? defaultRetry;
   const maxAttempts = positive('maxAttempts', config.maxAttempts ?? 5);
@@ -169,10 +275,11 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
   const maxConcurrent = positive('maxConcurrent', config.maxConcurrent ?? 32);
   const lines = new Map<string, Promise<void>>();
   const scheduled = new Set<number>();
-  const waiting: (() => void)[] = [];
-  let running = 0;
   let started = false;
+  let starting: Promise<void> | undefined;
+  let lifecycleGeneration = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let exhaustionCursor: number | undefined;
 
   const storeError = (error: unknown, step: TelegramUpdateStoreStep): void => {
     try {
@@ -182,72 +289,43 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
     }
   };
 
-  const slot = async (): Promise<void> => {
-    if (running < maxConcurrent) {
-      running += 1;
-      return;
-    }
-    await new Promise<void>((resolve) => waiting.push(resolve));
-  };
-  const release = (): void => {
-    const next = waiting.shift();
-    if (next) next();
-    else running -= 1;
-  };
+  const slots = createTelegramUpdateWorkSlots(maxConcurrent);
+  const exhaustionScheduler = createTelegramUpdateExhaustionScheduler({
+    config,
+    store: durable,
+    now,
+    slots,
+    parse: parsed,
+    reportStoreError: storeError,
+  });
+  const attempt = createTelegramUpdateAttemptRunner({
+    config,
+    store,
+    fenced,
+    durable,
+    now,
+    retry,
+    maxAttempts,
+    leaseMs,
+    reportStoreError: storeError,
+    scheduleExhaustion: (row) => {
+      exhaustionScheduler.schedule(row, started);
+    },
+    ownershipLostReason: (identity) => new TelegramUpdateOwnershipLostError(identity),
+  });
 
-  const attempt = async (update: Record<string, unknown>, updateId: number): Promise<void> => {
-    const taken = now();
-    const number = await store
-      .claim(updateId, { now: taken, leaseUntil: taken + leaseMs, maxAttempts })
-      .catch((error: unknown) => storeError(error, 'claim'));
-    if (number === undefined) return;
-    const renewal = setInterval(
-      () => {
-        store
-          .renew(updateId, number, now() + leaseMs)
-          .catch((error: unknown) => storeError(error, 'renew'));
-      },
-      Math.max(1, Math.floor(leaseMs / 4)),
-    );
-    let settlement: Parameters<TelegramUpdateStore['settle']>[2];
-    try {
-      // The body passed the secret check and carries an `update_id`; its full
-      // shape is the Bot API's, named by the caller's type argument.
-      await config.handle(transportResult<TUpdate>(update));
-      settlement = { state: 'completed', at: now() };
-    } catch (thrown) {
-      const error = handlerError(thrown);
-      const delay = number >= maxAttempts ? false : retry(error, number);
-      const message = error instanceof Error ? error.message : String(error);
-      settlement =
-        delay === false
-          ? { state: 'abandoned', at: now(), error: message }
-          : { state: 'failed', at: now(), retryAt: now() + delay, error: message };
-      try {
-        config.onFailure?.({ updateId, attempt: number, error, retrying: delay !== false });
-      } catch {
-        // Reporting a failure cannot become a second one.
-      }
-    } finally {
-      clearInterval(renewal);
-    }
-    await store
-      .settle(updateId, number, settlement)
-      .catch((error: unknown) => storeError(error, 'settle'));
-  };
-
-  const schedule = (update: Record<string, unknown>): void => {
+  const schedule = (update: Record<string, unknown>): boolean => {
     const updateId = Number(update.update_id);
-    if (!started || scheduled.has(updateId)) return;
+    if (!started || scheduled.has(updateId)) return false;
     scheduled.add(updateId);
     const line = lineOf(update);
     const next = (lines.get(line) ?? Promise.resolve())
       .then(async () => {
-        await slot();
+        await slots.take();
         try {
           await attempt(update, updateId);
         } finally {
-          release();
+          slots.release();
         }
       })
       .finally(() => {
@@ -255,6 +333,7 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
         if (lines.get(line) === next) lines.delete(line);
       });
     lines.set(line, next);
+    return true;
   };
 
   const sweep = async (pendingBefore: number): Promise<number> => {
@@ -263,9 +342,20 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
     let count = 0;
     for (const row of due) {
       const update = parsed(row.body);
-      if (update && !scheduled.has(row.updateId)) {
-        schedule(update);
-        count += 1;
+      if (update && schedule(update)) count += 1;
+    }
+    if (durable) {
+      let exhaustions = await durable.dueExhaustions({
+        limit: SWEEP_BATCH,
+        ...(exhaustionCursor !== undefined && { afterUpdateId: exhaustionCursor }),
+      });
+      if (exhaustions.length === 0 && exhaustionCursor !== undefined) {
+        exhaustionCursor = undefined;
+        exhaustions = await durable.dueExhaustions({ limit: SWEEP_BATCH });
+      }
+      exhaustionCursor = exhaustions.at(-1)?.updateId;
+      for (const exhaustion of exhaustions) {
+        if (exhaustionScheduler.schedule(exhaustion, started)) count += 1;
       }
     }
     await store.prune(at - retainMs);
@@ -282,24 +372,53 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
       schedule(update);
       return 'accepted';
     },
-    async start() {
-      if (started) return;
+    start() {
+      if (starting) return starting;
+      if (started) return Promise.resolve();
       started = true;
-      await sweep(now());
-      timer = setInterval(() => {
-        sweep(now() - pendingGraceMs).catch((error: unknown) => storeError(error, 'sweep'));
-      }, sweepEveryMs);
-      timer.unref?.();
+      const generation = ++lifecycleGeneration;
+      const operation = (async () => {
+        try {
+          await sweep(now());
+        } catch (error) {
+          if (started && lifecycleGeneration === generation) started = false;
+          throw error;
+        }
+        if (!started || lifecycleGeneration !== generation) return;
+        timer = setInterval(() => {
+          if (!started || lifecycleGeneration !== generation) return;
+          sweep(now() - pendingGraceMs).catch((error: unknown) => storeError(error, 'sweep'));
+        }, sweepEveryMs);
+        timer.unref?.();
+      })();
+      starting = operation;
+      const clearStarting = (): void => {
+        if (starting === operation) starting = undefined;
+      };
+      void operation.then(clearStarting, clearStarting);
+      return operation;
     },
     sweep: () => sweep(now() - pendingGraceMs),
     async idle() {
-      while (lines.size > 0) await Promise.all(lines.values());
+      while (lines.size > 0 || exhaustionScheduler.pending().length > 0) {
+        await Promise.all([...lines.values(), ...exhaustionScheduler.pending()]);
+      }
     },
     async close() {
       started = false;
+      lifecycleGeneration += 1;
       if (timer) clearInterval(timer);
       timer = undefined;
-      while (lines.size > 0) await Promise.all(lines.values());
+      const pendingStart = starting;
+      if (pendingStart) {
+        await pendingStart.then(
+          () => undefined,
+          () => undefined,
+        );
+      }
+      while (lines.size > 0 || exhaustionScheduler.pending().length > 0) {
+        await Promise.all([...lines.values(), ...exhaustionScheduler.pending()]);
+      }
     },
   };
 }

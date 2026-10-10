@@ -7,6 +7,7 @@ import {
 } from '../src/browser/cancellation';
 import { createClient } from '../src/browser/client';
 import { createHttpClient } from '../src/browser/http';
+import type { ClientFetch } from '../src/browser/transport';
 import { defineContract } from '../src/entrypoints/contract';
 
 const contract = defineContract(
@@ -51,6 +52,13 @@ const contract = defineContract(
       desc: 'Timeout probe',
       timeout: 5,
       output: z.object({ ok: z.boolean() }),
+    },
+    stream: {
+      method: 'GET',
+      path: '/stream',
+      desc: 'Streaming cancellation probe',
+      timeout: 5,
+      stream: { item: z.object({ ok: z.boolean() }) },
     },
   },
 );
@@ -196,7 +204,7 @@ test('the first cancellation cause wins the caller/timeout race', async () => {
   await expect(callerPending).rejects.toBeInstanceOf(RequestCancellationError);
   await callerPending.catch((error: unknown) => {
     expect(error).toBeInstanceOf(RequestCancellationError);
-    if (error instanceof RequestCancellationError) expect(error.cause).toBe('caller');
+    if (error instanceof RequestCancellationError) expect(error.origin).toBe('caller');
   });
 
   const timeoutFirst = new AbortController();
@@ -204,9 +212,102 @@ test('the first cancellation cause wins the caller/timeout race', async () => {
   const timeoutPending = timeoutCancellation.run(waitForCancellation);
   await timeoutPending.catch((error: unknown) => {
     expect(error).toBeInstanceOf(RequestCancellationError);
-    if (error instanceof RequestCancellationError) expect(error.cause).toBe('timeout');
+    if (error instanceof RequestCancellationError) expect(error.origin).toBe('timeout');
   });
   timeoutFirst.abort();
+});
+
+test('a streaming open keeps an earlier caller origin when its transport rejects after the timeout', async () => {
+  const evidence = new Error('transport closed after cancellation');
+  const transport: ClientFetch = (input, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      if (!signal) throw new Error('Expected a transport signal');
+      const rejectLater = (): void => {
+        setTimeout(() => reject(evidence), 15);
+      };
+      if (signal.aborted) rejectLater();
+      else signal.addEventListener('abort', rejectLater, { once: true });
+    });
+  const api = createClient(contract, { baseUrl, fetch: transport });
+  const controller = new AbortController();
+  const pending = api.stream.withOptions({ signal: controller.signal });
+  controller.abort();
+  const failure = await pending.catch((error: unknown) => error);
+  expect(ApiError.is(failure)).toBe(true);
+  if (!ApiError.is(failure)) throw failure;
+  expect(failure.code).toBe('REQUEST_ABORTED');
+  expect(failure.cause).toBe(evidence);
+});
+
+class TransportEvidence extends Error {
+  readonly delivery = 'not-dispatched';
+  readonly traceId = 'private-trace';
+}
+
+function rejectOnAbort(failure: Error): ClientFetch {
+  return (input, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      if (!signal) throw new Error('Expected a transport signal');
+      if (signal.aborted) {
+        reject(failure);
+        return;
+      }
+      signal.addEventListener('abort', () => reject(failure), { once: true });
+    });
+}
+
+function chainIncludes(error: unknown, expected: unknown): boolean {
+  const visited = new Set<unknown>();
+  let current = error;
+  while (typeof current === 'object' && current !== null && !visited.has(current)) {
+    if (current === expected) return true;
+    visited.add(current);
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return false;
+}
+
+describe.each([
+  [
+    'bare fetch',
+    (transport: ClientFetch) => createClient(contract, { baseUrl, fetch: transport }),
+  ],
+  [
+    'Ky adapter',
+    (transport: ClientFetch) =>
+      createClient(
+        contract,
+        createHttpClient({ baseUrl, fetch: transport, retry: { limit: 0 } }),
+      ),
+  ],
+])('typed client cancellation evidence — %s', (_name, makeClientWith) => {
+  test.each([['caller', 'REQUEST_ABORTED'] as const, ['timeout', 'REQUEST_TIMEOUT'] as const])(
+    '%s cancellation keeps the transport cause without exposing it publicly',
+    async (kind, code) => {
+      const evidence = new TransportEvidence('credential=must-not-be-public');
+      const api = makeClientWith(rejectOnAbort(evidence));
+      const controller = new AbortController();
+      const pending =
+        kind === 'caller'
+          ? api.ping.withOptions({ signal: controller.signal })
+          : api.timeout();
+      if (kind === 'caller') controller.abort();
+      const failure = await pending.catch((error: unknown) => error);
+      expect(ApiError.is(failure)).toBe(true);
+      if (!ApiError.is(failure)) throw failure;
+      expect(failure.code).toBe(code);
+      expect(chainIncludes(failure, evidence)).toBe(true);
+      expect(JSON.stringify(failure)).not.toContain('must-not-be-public');
+      expect(failure.message).not.toContain('must-not-be-public');
+    },
+  );
+
+  test('a successful custom transport is unchanged', async () => {
+    const api = makeClientWith(async () => Response.json({ ok: true }));
+    await expect(api.ping()).resolves.toEqual({ ok: true });
+  });
 });
 
 // Compile-time surface: ordinary calls carry only contract arguments; transport

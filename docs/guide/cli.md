@@ -230,7 +230,7 @@ string, the schema says what it should be:
 | `z.enum([...])`      | `--size large`                                 |
 | `z.array(z.string())`| `--tag a --tag b` → `["a","b"]`                |
 | `z.object({...})`    | `--opts '{"k":"v"}'` (JSON) or `--opts.k v`    |
-| `z.record(z.string(), z.unknown())` | `--data '{"code":"007"}'` (JSON) |
+| `z.record(z.string(), z.unknown())` | `--data '{"code":"007"}'` or `--data.code=007` → `"007"` |
 | `.optional()` / `.default()` | not required                           |
 
 Primitive literals use the same coercion through optional, nullable and default wrappers and as
@@ -240,6 +240,14 @@ than being guessed as the number `7`. The unchanged Zod schema makes the final a
 Object and record JSON keeps the same behavior when a CLI discovers a tool through MCP. Restored
 `propertyNames`, `minProperties` and `maxProperties` constraints still run before dispatch; CLI
 coercion does not execute application transforms.
+
+A dotted leaf follows the leaf schema, including through optional/nullable wrappers and restored
+MCP object guards. A declared number or boolean is coerced; a string stays byte-for-byte lexical.
+For a free `z.record(z.string(), z.unknown())`, argv provides no JSON type tag, so the dotted
+value also stays a string: `007`, `+007`, `1e3`, `true` and `false` keep those spellings.
+Use the whole-object JSON form when a free record value must be a JSON number or boolean. This
+avoids silently changing identifiers while keeping `z.record(..., z.number())` and
+`z.record(..., z.boolean())` explicitly typed.
 
 After a bare boolean flag, the next token is its value when it is exactly
 `true` or `false` — `--active false` turns it off, as it reads. Any other word

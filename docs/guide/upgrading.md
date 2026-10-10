@@ -1,5 +1,72 @@
 # Upgrading stitchkit
 
+## Upcoming migration: 0.109.0
+
+### free CLI record leaves are lexical
+
+**Who must act:** scripts that pass dotted values into a free `record<string, unknown>` and rely on
+stitchkit guessing numbers or booleans from their spelling. Declared object leaves and whole-object
+JSON keep their typed behavior.
+
+Free record values have no schema type to justify coercion. They now preserve argv text, so values
+such as `007`, `1e3`, `true` and `false` arrive exactly as written.
+See [ADR 0257](../decisions/0257-cli-dotted-values-follow-their-declared-schema.md).
+
+1. Pass typed free-record values as one JSON object:
+
+   ```sh
+   # before: produced { count: 5 } by spelling-based inference
+   app command --data.count=5
+   # after: JSON says explicitly that 5 is a number
+   app command --data='{"count":5}'
+   ```
+
+2. If dotted flags are the intended interface, declare their object shape; a `z.number()` or
+   `z.boolean()` leaf still coerces and validates its own CLI value.
+
+### Opting into Telegram attempt fencing
+
+Existing `handle(update)` callbacks and the six-method `TelegramUpdateStore` need no change. The
+new capability is opt-in
+([ADR 0256](../decisions/0256-a-telegram-attempt-is-fenced-by-a-persisted-claim.md)).
+
+1. To fence a domain write, move only that handler to the explicit context-aware option:
+
+   ```ts
+   createTelegramUpdateIntake({
+     store,
+     handleAttempt: async (update, { fence, ownerLost }) => {
+       ownerLost.throwIfAborted()
+       await domainTransaction(async (tx) => {
+         if (await transactionStore(tx).owns(fence, Date.now())) await apply(tx, update)
+       })
+     },
+   })
+   ```
+
+2. A direct grammY handler remains `handle: bot.handleUpdate.bind(bot)`; stitchkit does not pass its
+   attempt context into grammY's optional webhook-envelope parameter.
+
+3. A custom store used by `handleAttempt` implements `claimOwned`, `renewOwned`, `owns` and
+   `settleOwned` over the full `{ updateId, attempt, claimId }` identity. If it also delivers
+   `handleExhaustion`, implement `exhaust`, `dueExhaustions` and `acknowledgeExhaustion`. Run
+   `checkTelegramUpdateStore` against a fresh database; it checks base, fenced and durable rules
+   according to the methods the store exposes.
+
+4. SQLite stores add `claim_id` automatically. PostgreSQL stores with the default
+   `createTable: true` do the same. When migrations own a PostgreSQL table, apply the returned
+   schema before enabling `handleAttempt` or `handleExhaustion`:
+
+   ```ts
+   await sql.unsafe(postgresTelegramUpdateStoreSchema('telegram_updates'))
+   // Equivalent addition for an existing table:
+   // ALTER TABLE telegram_updates ADD COLUMN IF NOT EXISTS claim_id TEXT;
+   ```
+
+   Legacy `handle(update)` continues to use base operations that do not reference `claim_id`, so
+   the migration is required only when the new capability or an explicit base
+   `claim(..., { durableExhaustion: true })` is enabled.
+
 ## Released migration: 0.108.0
 
 ### a request that never left is its own send outcome

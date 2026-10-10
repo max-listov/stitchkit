@@ -15,6 +15,42 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** CLI commands whose schema accepts a free `record<string, unknown>` and whose
+scripts relied on spelling-based conversion of dotted values.
+
+- `stitchkit/cli` — **free record leaves preserve argv text instead of guessing a primitive.**
+  `--data.count=5` under `z.record(z.string(), z.unknown())` now produces `{ count: "5" }`, where it
+  previously produced `{ count: 5 }`. Pass the whole record as JSON when it contains typed values,
+  or declare a structured object schema so each dotted leaf has a type.
+  `// before: --data.count=5` → `// after: --data='{"count":5}'`
+  **Who must act:** scripts that depended on automatic number/boolean inference inside a free
+  record. See [migration](docs/guide/upgrading.md#free-cli-record-leaves-are-lexical).
+  **Affects:** `stitchkit/cli` runCli(dotted record values)
+  → ADR 0257
+
+### Added
+
+- `stitchkit/telegram` — `handleAttempt` receives an immutable
+  `{ updateId, attempt, claimId }` fence and an `ownerLost` signal. The memory, SQLite and PostgreSQL
+  stores add `claimOwned`, `renewOwned`, `owns` and `settleOwned` for that exact claim; optional
+  `handleExhaustion` delivery keeps a terminal failure in the same update row until exact
+  acknowledgement. Existing `handle(update)` callbacks are still called with exactly one argument
+  and legacy PostgreSQL base operations do not require the new column. A `createTable: false`
+  consumer applies `postgresTelegramUpdateStoreSchema(table)` before opting into the new capability.
+  Shared intake scheduling options are exported as `TelegramUpdateIntakeOptions`.
+  → ADR 0256
+
+### Fixed
+
+- `stitchkit/cli` — dotted object flags now follow their declared leaf schema. String fields and
+  free `record<string, unknown>` values preserve lexical input such as `007`, `+007`, `1e3`,
+  `true` and `false`, while declared number and boolean leaves still coerce before validation.
+- Typed clients now retain the exact custom-transport rejection in `ApiError.cause` when caller
+  cancellation or an endpoint deadline wins. Public errors remain `REQUEST_ABORTED` or
+  `REQUEST_TIMEOUT`, and the private cause is absent from JSON and string rendering.
+
 ## [0.108.5] - 2026-10-10
 
 ### Fixed

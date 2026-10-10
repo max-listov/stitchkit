@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Targets stitchkit `^0.109.0` (peer range `^0.108.0` → `^0.109.0`). No terminal source
+  change is needed; the companion release keeps consumers on one framework copy when they adopt
+  the new core version.
+
 ## [0.2.3] - 2026-10-06
 
 ### Changed

@@ -8,7 +8,11 @@
 import type { ClientRequestOptions } from '../contract/client-types';
 import type { EndpointDef } from '../contract/define';
 import { ApiError } from './api-error';
-import { createRequestCancellation, RequestCancellationError } from './cancellation';
+import {
+  createRequestCancellation,
+  RequestCancellationError,
+  type RequestCancellationOrigin,
+} from './cancellation';
 import type { ClientConfig, ContractClientConfig } from './client';
 import { buildMultipartForm } from './client-multipart';
 import { joinClientBaseUrl, planClientRequest } from './client-url';
@@ -189,20 +193,27 @@ export function createFetchExecutor<K extends string>(
       ? {
           signal: requestSignal,
           async run<T>(operation: (signal?: AbortSignal) => Promise<T>): Promise<T> {
-            let timedOut = false;
+            let origin: RequestCancellationOrigin | undefined;
+            const abortFromCaller = (): void => {
+              origin ??= 'caller';
+            };
+            if (options?.signal?.aborted) abortFromCaller();
+            else options?.signal?.addEventListener('abort', abortFromCaller, { once: true });
             const timer = setTimeout(() => {
-              timedOut = true;
+              if (origin) return;
+              origin = 'timeout';
               streamAbort.abort(new DOMException('Request timed out', 'TimeoutError'));
             }, openTimeoutMs);
             try {
-              if (options?.signal?.aborted) throw new RequestCancellationError('caller');
+              if (origin === 'caller') throw new RequestCancellationError(origin);
               return await operation(requestSignal);
             } catch (error) {
-              if (timedOut) throw new RequestCancellationError('timeout');
-              if (options?.signal?.aborted) throw new RequestCancellationError('caller');
+              if (error instanceof RequestCancellationError) throw error;
+              if (origin) throw new RequestCancellationError(origin, error);
               throw error;
             } finally {
               clearTimeout(timer);
+              options?.signal?.removeEventListener('abort', abortFromCaller);
             }
           },
         }
@@ -265,9 +276,10 @@ export function createFetchExecutor<K extends string>(
       });
     } catch (error) {
       if (error instanceof RequestCancellationError) {
-        throw new ApiError(error.cause === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT', {
+        throw new ApiError(error.origin === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT', {
           status: 0,
           message: error.message,
+          ...(error.cause !== undefined && { cause: error.cause }),
         });
       }
       if (ApiError.is(error)) throw error;

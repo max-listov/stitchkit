@@ -254,7 +254,21 @@ const DOCUMENTED_ADDITIONS: Record<string, readonly string[]> = {
     'readDiagnosticJournal',
   ],
   'stitchkit/files': ['AtomicFilePublicationError', 'FileObservation'],
-  'stitchkit/telegram': ['TelegramBroadcastFailure', 'TelegramBroadcastFailureSchema'],
+  'stitchkit/telegram': [
+    'StoredTelegramUpdateExhaustion',
+    'TelegramBroadcastFailure',
+    'TelegramBroadcastFailureSchema',
+    'TelegramUpdateAttemptContext',
+    'TelegramUpdateAttemptIdentity',
+    'TelegramUpdateAttemptIntakeConfig',
+    'TelegramUpdateIntakeOptions',
+    'TelegramUpdateDurableStore',
+    'TelegramUpdateExhaustion',
+    'TelegramUpdateExhaustionFailure',
+    'TelegramUpdateExhaustionQuery',
+    'TelegramUpdateFencedStore',
+    'TelegramUpdateOwnershipLostError',
+  ],
 };
 
 describe('public exports explain themselves in one line', () => {

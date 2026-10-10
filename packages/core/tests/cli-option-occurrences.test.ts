@@ -207,6 +207,17 @@ describe('CLI option occurrences before coercion', () => {
     const parsed = parseCliArgs(['--feature.enabled=false'], NestedInput).toolArgs;
     expect(parsed).toEqual({ feature: { enabled: false } });
     expect(NestedInput.parse(parsed)).toEqual({ feature: { enabled: false } });
+    const NestedOnlyInput = z.strictObject({
+      feature: z.object({ enabled: z.boolean() }),
+    });
+    for (const [flag, enabled] of [
+      ['--feature.enabled', true],
+      ['--no-feature.enabled', false],
+    ] as const) {
+      const nested = parseCliArgs([flag], NestedOnlyInput).toolArgs;
+      expect(nested).toEqual({ feature: { enabled } });
+      expect(NestedOnlyInput.parse(nested)).toEqual({ feature: { enabled } });
+    }
     expect(() =>
       parseCliArgs(['--feature.enabled=false', '--feature={"enabled":true}'], NestedInput),
     ).toThrow('--feature conflicts with --feature.enabled');

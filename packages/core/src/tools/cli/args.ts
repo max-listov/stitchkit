@@ -24,6 +24,8 @@ import {
   appendCliOptionValue,
   coerceField,
   describeSchemaFields,
+  describeSchemaPath,
+  type FieldInfo,
   looseCoerce,
   parseReservedBool,
   separateBoolValue,
@@ -72,10 +74,11 @@ export interface ParsedCliArgs {
  * Supported forms:
  *  - `--key value` / `--key=value` / `-` repeated for arrays
  *  - `--flag` boolean presence, `--flag true|false` as a separate token, `--no-flag` to negate
- *  - `--a.b=c` dotted path → nested object (loose-coerced leaf)
+ *  - `--a.b=c` dotted path → nested object (leaf coerced only when its schema says so)
  *  - positional args fill non-boolean fields in schema-declaration order
  */
 type CliConfigForParse = NonNullable<Parameters<typeof parseCliArgs>[2]>;
+type FieldResolver = (name: string) => FieldInfo | undefined;
 
 /** One invocation's argv, sorted into what each token is for. */
 interface CliTokens {
@@ -97,6 +100,7 @@ interface CliTokens {
 function readCliTokens(
   argv: readonly string[],
   fields: ReturnType<typeof describeSchemaFields>,
+  fieldFor: FieldResolver,
   config: CliConfigForParse,
 ): CliTokens {
   const options: CliRunOptions = {
@@ -115,7 +119,7 @@ function readCliTokens(
   const positionals: string[] = [];
 
   const pushFlag = (name: string, value: string): void => {
-    appendCliOptionValue(flags, name, value, fields.get(name));
+    appendCliOptionValue(flags, name, value, fieldFor(name));
   };
 
   let optionsEnded = false;
@@ -140,7 +144,7 @@ function readCliTokens(
       const field = alias === undefined ? undefined : config.optionAliases?.get(alias);
       if (!alias || !field) throw new CliArgumentError(`Unknown option "${tok}"`);
       const inline = match?.[2];
-      const info = fields.get(field);
+      const info = fieldFor(field);
       if (info?.kind === 'boolean') {
         const separate = inline === undefined ? separateBoolValue(argv[i + 1]) : undefined;
         if (separate !== undefined) i++;
@@ -212,7 +216,7 @@ function readCliTokens(
     if (
       value === undefined &&
       name.startsWith('no-') &&
-      fields.get(name.slice(3))?.kind === 'boolean'
+      fieldFor(name.slice(3))?.kind === 'boolean'
     ) {
       pushFlag(name.slice(3), 'false');
       literalBooleanFlags.add(name.slice(3));
@@ -225,7 +229,7 @@ function readCliTokens(
     if (unsafeSegment !== undefined) {
       throw new CliArgumentError(`Unsafe option name "--${name}"`);
     }
-    const info = fields.get(name);
+    const info = fieldFor(name);
     const rootName = name.split('.')[0] ?? name;
     if (!fields.has(rootName) && !config.allowUnknown) {
       throw new CliArgumentError(`Unknown option "--${name}"`);
@@ -260,7 +264,9 @@ function readCliTokens(
 function buildToolArgs(
   tokens: CliTokens,
   fields: ReturnType<typeof describeSchemaFields>,
+  fieldFor: FieldResolver,
   declaredPositionals: readonly string[] | undefined,
+  allowUnknown: boolean,
 ): Record<string, unknown> {
   const { flags, literalBooleanFlags, positionals } = tokens;
   // ── Build the tool-argument object ──
@@ -316,7 +322,8 @@ function buildToolArgs(
   const dottedRoots = new Map<string, string>();
   for (const key of flags.keys()) {
     const dot = key.indexOf('.');
-    if (dot > 0 && !literalBooleanFlags.has(key)) {
+    const exactLiteralBoolean = literalBooleanFlags.has(key) && fields.has(key);
+    if (dot > 0 && !exactLiteralBoolean) {
       dottedRoots.set(key.slice(0, dot), key);
     }
   }
@@ -329,11 +336,17 @@ function buildToolArgs(
   }
 
   for (const [key, values] of flags) {
-    const info = fields.get(key);
+    const info = fieldFor(key);
     // Presence and aliases address an exact boolean field; canonical inline
     // dotted options retain the nested-path grammar of value options.
-    if (key.includes('.') && !literalBooleanFlags.has(key)) {
-      setNested(toolArgs, key.split('.'), looseCoerce(values[0] ?? ''));
+    const exactLiteralBoolean = literalBooleanFlags.has(key) && fields.has(key);
+    if (key.includes('.') && !exactLiteralBoolean) {
+      const root = key.split('.')[0] ?? key;
+      const value =
+        info === undefined && allowUnknown && !fields.has(root)
+          ? looseCoerce(values[0] ?? '')
+          : coerceField(info, values, `--${key}`);
+      setNested(toolArgs, key.split('.'), value);
       continue;
     }
     toolArgs[key] = coerceField(info, values, `--${key}`);
@@ -355,11 +368,23 @@ export function parseCliArgs(
   for (const name of config.knownFields ?? []) {
     if (!fields.has(name)) fields.set(name, { kind: 'other' });
   }
-  const tokens = readCliTokens(argv, fields, config);
+  const fieldFor: FieldResolver = (name) =>
+    fields.get(name) ??
+    (name.includes('.') ? describeSchemaPath(schema, name.split('.')) : undefined);
+  const tokens = readCliTokens(argv, fields, fieldFor, config);
   const { options } = tokens;
   const view = resolveCliView(tokens.viewFlags, tokens.ascending);
   if (view) options.view = view;
-  return { toolArgs: buildToolArgs(tokens, fields, config.positionals), options };
+  return {
+    toolArgs: buildToolArgs(
+      tokens,
+      fields,
+      fieldFor,
+      config.positionals,
+      config.allowUnknown === true,
+    ),
+    options,
+  };
 }
 
 /** The application's own global options, lifted out of one invocation's argv. */
