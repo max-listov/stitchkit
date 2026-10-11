@@ -170,7 +170,7 @@ function countedBody(
 
 interface NativeSend {
   readonly signal: AbortSignal | null | undefined;
-  readonly credentials: RequestCredentials | undefined;
+  readonly credentials: RequestInit['credentials'];
   readonly report: (sentBytes: number, totalBytes: number) => void;
 }
 
@@ -181,7 +181,7 @@ interface NativeSend {
  * `withCredentials`, anything else keeps the platform default.
  */
 function sendNative(
-  input: RequestInfo | URL,
+  input: string | URL | Request,
   init: RequestInit | undefined,
   body: XMLHttpRequestBodyInit | null,
   { signal, credentials, report }: NativeSend,

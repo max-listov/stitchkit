@@ -28,7 +28,11 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { declarationProofArguments, runInstalledConsumerProofs } from './installed-proofs.ts';
+import {
+  declarationProofArguments,
+  declarationProofVariants,
+  runInstalledConsumerProofs,
+} from './installed-proofs.ts';
 import { qualifyNeutralLibrary } from './neutral-library.mjs';
 import { runOptionalPeerMatrix } from './optional-peer-matrix.mjs';
 import { runSelfContainedSocketProof } from './self-contained-socket.mjs';
@@ -71,7 +75,17 @@ const FIXTURES = containedFilesOnly
   ? ['minimal', 'node']
   : narrowNative
     ? ['node']
-    : ['minimal', 'nodenext', 'mcp-only', 'full', 'node', 'grammy', 'geo', 'google'];
+    : [
+        'minimal',
+        'declarations',
+        'nodenext',
+        'mcp-only',
+        'full',
+        'node',
+        'grammy',
+        'geo',
+        'google',
+      ];
 const PEER_FREE_FIXTURES = ['minimal', 'nodenext'];
 const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
 
@@ -186,7 +200,12 @@ try {
 
     step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
 
-    if (name === 'minimal' || name === 'node' || name === 'mcp-only') {
+    if (
+      name === 'minimal' ||
+      name === 'node' ||
+      name === 'mcp-only' ||
+      name === 'declarations'
+    ) {
       await runInstalledConsumerProofs({
         fixture: name,
         platform: process.platform,
@@ -203,25 +222,33 @@ try {
               ]
             : undefined,
         requireCapabilities: nativeUIDOnly,
-        run: async (proof, runtime) =>
-          step(`${name}: ${proof.id} (${runtime})`, () =>
-            runtime === 'types'
-              ? run(
-                  'bun',
-                  [
-                    join(pkgRoot, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc'),
-                    ...declarationProofArguments(`src/${proof.entry}`, proof.resolution),
-                  ],
-                  dir,
-                )
-              : run(runtime, [`src/${proof.entry}`], dir),
-          ),
+        run: async (proof, runtime) => {
+          if (runtime !== 'types')
+            return step(`${name}: ${proof.id} (${runtime})`, () =>
+              run(runtime, [`src/${proof.entry}`], dir),
+            );
+          let output = '';
+          for (const variant of declarationProofVariants(proof))
+            output += step(`${name}: ${proof.id} (${variant.id})`, () =>
+              run(
+                'bun',
+                [
+                  join(pkgRoot, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc'),
+                  ...declarationProofArguments(`src/${proof.entry}`, variant),
+                ],
+                dir,
+              ),
+            );
+          return output;
+        },
         verdict: (proof, runtime, state) =>
           console.log(`[consumer-lane] ${proof.id}/${runtime}: ${state}`),
       });
       if (name === 'node' && !narrowNative)
         step('neutral library install and types', () => qualifyNeutralLibrary(dir));
     }
+
+    if (name === 'declarations') continue;
 
     if (narrowNative) continue;
 

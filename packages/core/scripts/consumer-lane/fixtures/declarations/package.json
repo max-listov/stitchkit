@@ -1,0 +1,18 @@
+{
+  "name": "stitchkit-consumer-declarations",
+  "private": true,
+  "type": "module",
+  "comment": "Strict packed root/server/contract/application declarations with Bun types, with and without DOM. Socket peers are installed so this fixture isolates the Fetch declaration boundary.",
+  "dependencies": {
+    "stitchkit": "TARBALL",
+    "zod": "^4.6.5",
+    "@socket.io/bun-engine": "^0.1.2",
+    "@socket.io/component-emitter": "^3.1.2",
+    "socket.io": "^4.8.4",
+    "socket.io-client": "^4.8.4",
+    "srvx": "^1.0.5"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2"
+  }
+}

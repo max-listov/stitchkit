@@ -1,8 +1,17 @@
 import { z } from 'zod';
 
+const DeclarationVariantSchema = z.object({
+  id: z.string().min(1),
+  target: z.string().min(1),
+  module: z.enum(['Preserve', 'NodeNext']),
+  resolution: z.enum(['bundler', 'NodeNext']),
+  lib: z.array(z.string().min(1)).min(1),
+  types: z.array(z.string().min(1)).min(1),
+});
+
 const ProofSchema = z.object({
   id: z.string().min(1),
-  fixture: z.enum(['minimal', 'node', 'mcp-only']),
+  fixture: z.enum(['minimal', 'node', 'mcp-only', 'declarations']),
   entry: z.string().min(1),
   files: z.array(z.string().min(1)),
   peers: z.array(z.string()),
@@ -10,6 +19,7 @@ const ProofSchema = z.object({
   runtimes: z.array(z.enum(['bun', 'node'])),
   kind: z.enum(['runtime', 'declarations']),
   resolution: z.enum(['bundler', 'NodeNext']).optional(),
+  declarationVariants: z.array(DeclarationVariantSchema).min(1).optional(),
   marker: z.string().min(1),
   capability: z.literal('linux-root').optional(),
 });
@@ -247,6 +257,59 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
     marker: 'packed typed-client cancellation cause: ok',
   },
   {
+    id: 'public-declarations',
+    fixture: 'declarations',
+    entry: 'public-declarations.ts',
+    files: [],
+    peers: [
+      'zod',
+      '@socket.io/bun-engine',
+      '@socket.io/component-emitter',
+      'socket.io',
+      'socket.io-client',
+      'srvx',
+      '@types/bun',
+    ],
+    platforms: ['linux', 'darwin', 'win32'],
+    runtimes: [],
+    kind: 'declarations',
+    marker: 'strict packed public declaration matrix: ok',
+    declarationVariants: [
+      {
+        id: 'bundler/no-DOM',
+        target: 'ES2023',
+        module: 'Preserve',
+        resolution: 'bundler',
+        lib: ['ES2023'],
+        types: ['bun'],
+      },
+      {
+        id: 'bundler/DOM',
+        target: 'ES2023',
+        module: 'Preserve',
+        resolution: 'bundler',
+        lib: ['ES2023', 'DOM'],
+        types: ['bun'],
+      },
+      {
+        id: 'NodeNext/no-DOM',
+        target: 'ES2023',
+        module: 'NodeNext',
+        resolution: 'NodeNext',
+        lib: ['ES2023'],
+        types: ['bun'],
+      },
+      {
+        id: 'NodeNext/DOM',
+        target: 'ES2023',
+        module: 'NodeNext',
+        resolution: 'NodeNext',
+        lib: ['ES2023', 'DOM'],
+        types: ['bun'],
+      },
+    ],
+  },
+  {
     ...native,
     id: 'native-primitives',
     fixture: 'minimal',
@@ -390,9 +453,28 @@ export async function runInstalledConsumerProofs(input: {
   }
 }
 
+export type DeclarationVariant = z.infer<typeof DeclarationVariantSchema>;
+
+export function declarationProofVariants(
+  proof: InstalledConsumerProof,
+): readonly DeclarationVariant[] {
+  return (
+    proof.declarationVariants ?? [
+      {
+        id: proof.resolution ?? 'bundler',
+        target: 'ES2022',
+        module: proof.resolution === 'NodeNext' ? 'NodeNext' : 'Preserve',
+        resolution: proof.resolution ?? 'bundler',
+        lib: ['ES2023', 'DOM'],
+        types: ['node'],
+      },
+    ]
+  );
+}
+
 export function declarationProofArguments(
   entry: string,
-  resolution: InstalledConsumerProof['resolution'] = 'bundler',
+  variant: DeclarationVariant,
 ): string[] {
   return [
     '--ignoreConfig',
@@ -401,15 +483,15 @@ export function declarationProofArguments(
     '--skipLibCheck',
     'false',
     '--target',
-    'ES2022',
+    variant.target,
     '--module',
-    resolution === 'NodeNext' ? 'NodeNext' : 'Preserve',
+    variant.module,
     '--moduleResolution',
-    resolution,
+    variant.resolution,
     '--lib',
-    'ES2023,DOM',
+    variant.lib.join(','),
     '--types',
-    'node',
+    variant.types.join(','),
     entry,
   ];
 }

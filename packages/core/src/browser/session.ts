@@ -20,7 +20,10 @@ export interface SessionOperation<T> {
   /** Synchronous application/transport boundary. False means nothing was delivered. */
   deliver(delivery: () => void): boolean;
   /** Guards every fetch attempt; wrap the whole generated-client call in run() as well. */
-  bindFetch(fetch: ClientFetch, headers?: () => HeadersInit): ClientFetch;
+  bindFetch(
+    fetch: ClientFetch,
+    headers?: () => NonNullable<RequestInit['headers']>,
+  ): ClientFetch;
 }
 
 export interface SessionScope<T> {

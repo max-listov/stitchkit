@@ -15,6 +15,13 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- Public declarations for `stitchkit`, `stitchkit/server`, `stitchkit/contract` and
+  `stitchkit/application` no longer depend on the DOM-only aliases `RequestInfo`,
+  `RequestCredentials` or `HeadersInit`. Strict Bun consumers can typecheck them without adding
+  `DOM` to `lib`; browser Fetch inputs, credentials and headers keep their narrow standard types.
+
 ## [0.109.0] - 2026-10-10
 
 ### ⚠️ Breaking changes

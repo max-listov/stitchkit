@@ -91,7 +91,7 @@ export type HeaderProvider =
 export interface HttpClientConfig {
   baseUrl: string;
   timeout?: number;
-  credentials?: RequestCredentials;
+  credentials?: NonNullable<RequestInit['credentials']>;
   /**
    * Transport retry. `limit` counts retries after the initial attempt, so the
    * default `2` permits at most three total attempts. Defaults: GET only and

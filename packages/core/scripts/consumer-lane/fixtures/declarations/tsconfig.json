@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "paths": {
+      "stitchkit": ["../../../../src/entrypoints/index.ts"],
+      "stitchkit/*": ["../../../../src/entrypoints/*"]
+    },
+    "noEmit": true,
+    "skipLibCheck": false,
+    "types": ["bun"]
+  },
+  "include": ["src"]
+}

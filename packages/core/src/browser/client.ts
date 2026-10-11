@@ -25,7 +25,7 @@ export interface ClientConfig {
   fetch?: ClientFetch;
   timeout?: number;
   headers?: Record<string, string> | (() => Record<string, string>);
-  credentials?: RequestCredentials;
+  credentials?: NonNullable<RequestInit['credentials']>;
   onError?: (status: number, body: unknown) => void;
 }
 
