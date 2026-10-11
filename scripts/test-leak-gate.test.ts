@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseProcessStat } from './test-leak-gate';
+import { isMissingProcess, parseProcessStat } from './test-leak-gate';
 
 const GATE = join(import.meta.dir, 'test-leak-gate.ts');
 const hasProcfs = existsSync('/proc/self/stat') && process.platform === 'linux';
@@ -22,7 +22,7 @@ function alive(pid: number): boolean {
   try {
     return parseProcessStat(readFileSync(`/proc/${pid}/stat`, 'utf8')).state !== 'Z';
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    if (isMissingProcess(error)) return false;
     throw error;
   }
 }
@@ -34,6 +34,44 @@ test('a process name with spaces and parentheses does not shift the stat fields'
   });
   expect(() => parseProcessStat('42 (x)')).toThrow('Unreadable process stat');
 });
+
+test('only process disappearance errors count as missing, never an unreadable process', () => {
+  for (const code of ['ENOENT', 'ESRCH'])
+    expect(isMissingProcess(Object.assign(new Error('gone'), { code }))).toBe(true);
+  for (const code of ['EACCES', 'EIO', 'EMFILE'])
+    expect(isMissingProcess(Object.assign(new Error('unreadable'), { code }))).toBe(false);
+  expect(isMissingProcess(new Error('unknown read failure'))).toBe(false);
+  expect(isMissingProcess({ code: 'ESRCH' })).toBe(false);
+});
+
+test.skipIf(!hasProcfs)(
+  'a retired procfs descriptor returns ESRCH after a real process exits',
+  async () => {
+    const child = Bun.spawn(['sleep', '30'], { stdio: ['ignore', 'ignore', 'ignore'] });
+    let descriptor: number | undefined;
+    try {
+      descriptor = openSync(`/proc/${child.pid}/stat`, 'r');
+      expect(alive(child.pid)).toBe(true);
+      child.kill('SIGKILL');
+      await child.exited;
+      let failure: unknown;
+      try {
+        readFileSync(descriptor, 'utf8');
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toMatchObject({ code: 'ESRCH' });
+      expect(isMissingProcess(failure)).toBe(true);
+      expect(alive(child.pid)).toBe(false);
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+      if (child.exitCode === null) {
+        child.kill('SIGKILL');
+        await child.exited;
+      }
+    }
+  },
+);
 
 test.skipIf(!hasProcfs)(
   'a clean command keeps its own exit code and reports nothing',

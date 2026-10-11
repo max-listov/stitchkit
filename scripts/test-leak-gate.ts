@@ -33,6 +33,15 @@ export function parseProcessStat(text: string): { state: string; ppid: number } 
   return { state, ppid: Number(ppid) };
 }
 
+/** Procfs can return ESRCH when the process disappears after open but before read. */
+export function isMissingProcess(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    (error.code === 'ENOENT' || error.code === 'ESRCH')
+  );
+}
+
 /** Whether this process now adopts every orphan of its descendants; false where the kernel cannot. */
 export function becomeSubreaper(): boolean {
   if (process.platform !== 'linux') return false;
@@ -63,7 +72,7 @@ export function liveChildren(parent: number, proc = '/proc'): ProcessInfo[] {
         .trim();
       children.push({ pid, args });
     } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      if (!isMissingProcess(error)) throw error;
     }
   }
   return children;
