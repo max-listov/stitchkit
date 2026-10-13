@@ -12,7 +12,7 @@
     "check:agent-template": "cd packages/create-stitchkit/templates/agent && bun run check",
     "check:telegram-bot-template": "cd packages/create-stitchkit/templates/telegram-bot && bun run check",
     "check:scripts": "bun x tsc -p scripts/tsconfig.json",
-    "test": "bun --filter stitchkit test && bun --filter stitchkit-tui test && bun --filter create-stitchkit test && bun test scripts/*.test.ts",
+    "test": "bun scripts/test-suites.ts",
     "gen:llms": "bun scripts/gen-llms.ts",
     "build": "bun run gen:llms && bun run gen:example-declarations && bun --filter stitchkit build && bun --filter stitchkit-tui build && bun --filter create-stitchkit build",
     "lint": "biome check --error-on-warnings . && bun run lint:template && bun run lint:agent-template && bun run lint:telegram-bot-template",

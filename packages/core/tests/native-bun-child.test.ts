@@ -35,7 +35,9 @@ test('the Bun child reports exit and signal like a Node child, close after its p
   expect(Buffer.concat(chunks).toString()).toBe('out\n');
   expect(events).toEqual(['exit:3:null', 'close']);
 
-  const killed = spawnShell('sleep 30');
+  // `exec`: the shell becomes `sleep`, so the one process killed is the whole command; a forked
+  // `sleep` would outlive a SIGKILL sent to the shell alone.
+  const killed = spawnShell('exec sleep 30');
   const [code, signal] = await new Promise<[number | null, string | null]>((resolve) => {
     killed.on('exit', (exitCode, termination) => resolve([exitCode, termination]));
     killed.kill('SIGKILL');

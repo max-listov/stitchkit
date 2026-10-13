@@ -4,7 +4,7 @@ description: Which local gate a push earns, why the release rows cost what they 
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-10-04 09:21 +07:00
+updated: 2026-10-13 14:30 +07:00
 ---
 
 # Local gates — what runs where, and why
@@ -85,6 +85,18 @@ subreaper of the run, so every orphan reparents to the gate whatever its session
 environment or working directory. A live child of the gate once the command has exited is a leak:
 the gate names it, kills it and fails the run. Where the kernel cannot do this (no Linux
 `prctl`), the gate says the check was not measurable and runs the command unchecked. → ADR 0249.
+
+## The suites run side by side
+
+The root `bun run test` (`scripts/test-suites.ts`) starts every suite as its own process at once:
+the core suite in four file shards, the same `--shard=N/4` split CI runs on four runners, then the
+terminal, scaffolder and repository-script suites. Each is an ordinary sequential `bun test`; each
+core shard has its own leak gate, and a process can only reparent to the gate of its own shard.
+Output is printed whole per suite when it ends, and one failed suite fails the step and is named.
+The step answers in the time of its slowest shard rather than the sum of all suites. Running
+side by side is load, so a test must hold under it: a shell it kills is `exec`ed into its command,
+or the whole group is killed, because a forked child outlives a signal sent to the shell alone; and
+a wait derives its delay from the same clock read that decided to wait.
 
 ## The publication-privacy scan is never memoised
 
