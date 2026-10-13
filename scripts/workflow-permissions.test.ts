@@ -73,7 +73,8 @@ describe('target-aware CI graph', () => {
   test('Darwin proves and ships the one leaf its native job built', () => {
     const leaf = section('darwin-native', 'darwin-contained-files');
     const lane = section('darwin-contained-files', 'universal-native-build');
-    expect(leaf).toContain('bun --filter stitchkit build:native-contained-files');
+    expect(leaf).toContain('node packages/core/scripts/build-contained-files-native.mjs');
+    expect(leaf).not.toContain('bun install');
     expect(leaf).toContain('name: darwin-contained-files-');
     expect(leaf).not.toContain('contained-files-packed-lane');
     expect(lane).not.toContain('build:native-contained-files');

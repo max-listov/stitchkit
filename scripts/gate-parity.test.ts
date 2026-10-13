@@ -269,7 +269,7 @@ describe('CI evidence parity', () => {
   test('real Darwin qualification is packed and deliberately narrow', () => {
     expect(CI).toContain('runner: macos-15');
     expect(CI).toContain('runner: macos-15-intel');
-    expect(CI).toContain('bun --filter stitchkit build:native-contained-files');
+    expect(CI).toContain('node packages/core/scripts/build-contained-files-native.mjs');
     expect(CI).toContain('bun run contained-files-packed-lane');
   });
 

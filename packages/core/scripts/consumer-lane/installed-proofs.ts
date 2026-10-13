@@ -22,8 +22,12 @@ const ProofSchema = z.object({
   declarationVariants: z.array(DeclarationVariantSchema).min(1).optional(),
   marker: z.string().min(1),
   capability: z.literal('linux-root').optional(),
-  /** Waits on a real clock for tens of seconds; started first so it overlaps the short proofs. */
-  long: z.literal(true).optional(),
+  /**
+   * About how long the slower runtime of this proof takes on a hosted runner (measured 2026-10-13 on
+   * macos-15-intel). The pool starts the longest first, so the lane lasts about as long as its
+   * slowest proof; an unmeasured proof counts as short. Only order depends on it, never a verdict.
+   */
+  expectedMs: z.number().int().positive().optional(),
   /**
    * Runs with nothing beside it: it changes the fixture's shared install (hides `node_modules`), or
    * its guarded launch failed beside other proofs on a 3-core macOS runner, a load sensitivity
@@ -121,7 +125,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   },
   {
     id: 'cli-publication',
-    long: true,
+    expectedMs: 23_000,
     fixture: 'minimal',
     entry: 'cli-publication.mjs',
     files: ['cli-publication-support.mjs', 'cli-publication-binary.ts'],
@@ -167,7 +171,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   },
   {
     id: 'native-http-idle',
-    long: true,
+    expectedMs: 18_000,
     fixture: 'minimal',
     entry: 'native-http-idle.mjs',
     files: ['native-http-idle-cli.mjs'],
@@ -323,7 +327,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   {
     ...native,
     id: 'native-primitives',
-    long: true,
+    expectedMs: 63_000,
     fixture: 'minimal',
     entry: 'native-primitives.mjs',
     files: ['command-lifecycle.mjs'],

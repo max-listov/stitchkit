@@ -13,7 +13,7 @@ const runs = minimal.reduce(
   0,
 );
 
-test('the pool never exceeds its width and starts the long proofs first', async () => {
+test('the pool never exceeds its width and starts the longest proofs first', async () => {
   let active = 0;
   let widest = 0;
   const started: InstalledConsumerProof[] = [];
@@ -34,9 +34,10 @@ test('the pool never exceeds its width and starts the long proofs first', async 
   });
   expect(started).toHaveLength(runs);
   expect(widest).toBe(3);
-  const firstShort = started.findIndex((proof) => proof.long !== true);
-  expect(firstShort).toBeGreaterThan(0);
-  expect(started.slice(firstShort).some((proof) => proof.long === true)).toBe(false);
+  const expected = started.map((proof) => proof.expectedMs ?? 0);
+  expect(expected[0]).toBe(Math.max(...expected));
+  expect(expected[0]).toBeGreaterThan(0);
+  expect(expected).toEqual([...expected].sort((a, b) => b - a));
 });
 
 test('a failure starts nothing new, lets proofs in flight settle and is thrown', async () => {

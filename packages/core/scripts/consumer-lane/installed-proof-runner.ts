@@ -60,10 +60,10 @@ export async function runInstalledConsumerProofs(input: {
     }
   };
 
-  // Long proofs first: the lane then lasts as long as its slowest proof, not that proof plus a tail.
+  // Longest first: the lane then lasts as long as its slowest proof, not that proof plus a tail.
   const shared = jobs
     .filter((job) => job.proof.exclusive !== true)
-    .sort((a, b) => Number(b.proof.long === true) - Number(a.proof.long === true));
+    .sort((a, b) => (b.proof.expectedMs ?? 0) - (a.proof.expectedMs ?? 0));
   // The first failure stops new proofs from starting; the ones in flight settle before it is thrown.
   let next = 0;
   const worker = async (): Promise<void> => {

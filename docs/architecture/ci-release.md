@@ -100,17 +100,20 @@ took its sibling down with it. A test still must not depend on what else runs on
 its own descriptors, not the process's, waits for an event rather than a sleep, and bounds a command
 with a limit a loaded host can meet. The packed consumer
 lane runs its installed proofs through a pool as wide as the host, each proof in its own temporary
-directories; proofs that wait on a real clock (`long` in `installed-proofs.ts`) start first, so the
-lane lasts about as long as its slowest proof rather than the sum of all of them. A proof marked
+directories; the pool starts the longest proofs first (`expectedMs` in `installed-proofs.ts`, a
+measured duration that orders the pool and decides nothing else), so the lane lasts about as long as
+its slowest proof rather than the sum of all of them. A proof marked
 `exclusive` runs after the pool, with nothing beside it: the Darwin artifact proof, because it hides
 the shared `node_modules`, and the two owner-loss proofs, whose guarded launch failed beside other
 proofs on a 3-core macOS runner.
 
-Every evidence job restores Bun's package cache (`~/.bun/install/cache`, keyed by the hash of
+Every Linux evidence job restores Bun's package cache (`~/.bun/install/cache`, keyed by the hash of
 `bun.lock`) before `bun install --frozen-lockfile`, so an install reads the registry only for what
-the lockfile changed; a slow or hanging registry had held single installs for three to eight
-minutes. `artifacts` and `result` install without the cache, so the job that packs the published
-bytes fetches its dependencies exactly as before.
+the lockfile changed; a hanging registry had held one install for eight minutes. On macOS the
+restore itself took 19–30 s against an ordinary 11–18 s install, so the macOS jobs install directly,
+and `darwin-native` installs nothing: it compiles one C file against the runner's Node headers.
+`artifacts` and `result` install without the cache, so the job that packs the published bytes
+fetches its dependencies exactly as before.
 
 ## Local gate
 
