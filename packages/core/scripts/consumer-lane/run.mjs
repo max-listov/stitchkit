@@ -206,55 +206,56 @@ try {
     writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`);
 
     step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
+  }
 
-    if (
-      name === 'minimal' ||
-      name === 'node' ||
-      name === 'mcp-only' ||
-      name === 'declarations'
-    ) {
-      await runInstalledConsumerProofs({
-        fixture: name,
-        platform: process.platform,
-        uid: process.getuid?.(),
-        ids: nativeUIDOnly
-          ? ['native-owner-uid']
-          : nativeOwnersOnly
-            ? [
-                'native-owners',
-                'native-cross-entry-owner',
-                'native-command-reasons',
-                'native-owner-loss',
-                'native-owner-loss-lazy-bundle',
-              ]
-            : undefined,
-        requireCapabilities: nativeUIDOnly,
-        concurrency: availableParallelism(),
-        run: async (proof, runtime) => {
-          if (runtime !== 'types')
-            return asyncStep(`${name}: ${proof.id} (${runtime})`, () =>
-              runAsync(runtime, [`src/${proof.entry}`], dir),
-            );
-          let output = '';
-          for (const variant of declarationProofVariants(proof))
-            output += await asyncStep(`${name}: ${proof.id} (${variant.id})`, () =>
-              runAsync(
-                'bun',
-                [
-                  join(pkgRoot, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc'),
-                  ...declarationProofArguments(`src/${proof.entry}`, variant),
-                ],
-                dir,
-              ),
-            );
-          return output;
-        },
-        verdict: (proof, runtime, state) =>
-          console.log(`[consumer-lane] ${proof.id}/${runtime}: ${state}`),
-      });
-      if (name === 'node' && !narrowNative)
-        step('neutral library install and types', () => qualifyNeutralLibrary(dir));
-    }
+  // Every fixture's installed proofs share one pool, so the slowest proof of one fixture overlaps
+  // the proofs of the others instead of holding them back.
+  await runInstalledConsumerProofs({
+    fixtures: FIXTURES,
+    platform: process.platform,
+    uid: process.getuid?.(),
+    ids: nativeUIDOnly
+      ? ['native-owner-uid']
+      : nativeOwnersOnly
+        ? [
+            'native-owners',
+            'native-cross-entry-owner',
+            'native-command-reasons',
+            'native-owner-loss',
+            'native-owner-loss-lazy-bundle',
+          ]
+        : undefined,
+    requireCapabilities: nativeUIDOnly,
+    concurrency: availableParallelism(),
+    run: async (proof, runtime) => {
+      const name = proof.fixture;
+      const dir = fixtureDirectories[name];
+      if (runtime !== 'types')
+        return asyncStep(`${name}: ${proof.id} (${runtime})`, () =>
+          runAsync(runtime, [`src/${proof.entry}`], dir),
+        );
+      let output = '';
+      for (const variant of declarationProofVariants(proof))
+        output += await asyncStep(`${name}: ${proof.id} (${variant.id})`, () =>
+          runAsync(
+            'bun',
+            [
+              join(pkgRoot, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc'),
+              ...declarationProofArguments(`src/${proof.entry}`, variant),
+            ],
+            dir,
+          ),
+        );
+      return output;
+    },
+    verdict: (proof, runtime, state) =>
+      console.log(`[consumer-lane] ${proof.id}/${runtime}: ${state}`),
+  });
+
+  for (const name of FIXTURES) {
+    const dir = fixtureDirectories[name];
+    if (name === 'node' && !narrowNative)
+      step('neutral library install and types', () => qualifyNeutralLibrary(dir));
 
     if (name === 'declarations') continue;
 

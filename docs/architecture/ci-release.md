@@ -103,9 +103,11 @@ lane runs its installed proofs through a pool as wide as the host, each proof in
 directories; the pool starts the longest proofs first (`expectedMs` in `installed-proofs.ts`, a
 measured duration that orders the pool and decides nothing else), so the lane lasts about as long as
 its slowest proof rather than the sum of all of them. A proof marked
-`exclusive` runs after the pool, with nothing beside it: the Darwin artifact proof, because it hides
-the shared `node_modules`, and the two owner-loss proofs, whose guarded launch failed beside other
-proofs on a 3-core macOS runner.
+`exclusive` runs after the pool with nothing beside it but `idle` proofs: the Darwin artifact proof,
+because it hides the shared `node_modules`, and the native process-lifetime proofs (owner loss, the
+packed command lifecycle), which failed beside other proofs on a loaded macOS runner. An `idle`
+proof only waits — the 61 s control that a command without `timeoutMs` has no hidden deadline — so it
+starts with the lane and runs beside everything.
 
 Every Linux evidence job restores Bun's package cache (`~/.bun/install/cache`, keyed by the hash of
 `bun.lock`) before `bun install --frozen-lockfile`, so an install reads the registry only for what

@@ -29,11 +29,13 @@ const ProofSchema = z.object({
    */
   expectedMs: z.number().int().positive().optional(),
   /**
-   * Runs with nothing beside it: it changes the fixture's shared install (hides `node_modules`), or
-   * its guarded launch failed beside other proofs on a 3-core macOS runner, a load sensitivity
-   * tracked as its own task.
+   * Runs with nothing beside it but `idle` proofs: it changes the fixture's shared install (hides
+   * `node_modules`), or it proves native process lifetimes that failed beside other proofs on a
+   * loaded macOS runner, a load sensitivity tracked as its own task.
    */
   exclusive: z.literal(true).optional(),
+  /** Only waits on a real clock and loads nothing, so it runs from the start beside everything. */
+  idle: z.literal(true).optional(),
 });
 export type InstalledConsumerProof = z.infer<typeof ProofSchema>;
 
@@ -327,11 +329,22 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   {
     ...native,
     id: 'native-primitives',
-    expectedMs: 63_000,
+    exclusive: true,
     fixture: 'minimal',
     entry: 'native-primitives.mjs',
     files: ['command-lifecycle.mjs'],
     marker: 'packed native primitives: ok',
+  },
+  {
+    ...native,
+    id: 'native-command-no-hidden-deadline',
+    idle: true,
+    expectedMs: 63_000,
+    fixture: 'minimal',
+    entry: 'native-command-no-hidden-deadline.mjs',
+    files: [],
+    runtimes: ['node'],
+    marker: 'packed command without a hidden deadline: ok',
   },
   {
     ...native,

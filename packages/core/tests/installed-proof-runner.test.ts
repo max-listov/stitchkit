@@ -23,6 +23,7 @@ test('the pool never exceeds its width and starts the longest proofs first', asy
     uid: 1000,
     concurrency: 3,
     run: async (proof) => {
+      if (proof.idle === true) return proof.marker;
       started.push(proof);
       active += 1;
       widest = Math.max(widest, active);
@@ -32,7 +33,7 @@ test('the pool never exceeds its width and starts the longest proofs first', asy
     },
     verdict: () => undefined,
   });
-  expect(started).toHaveLength(runs);
+  expect(started).toHaveLength(runs - minimal.filter((proof) => proof.idle === true).length);
   expect(widest).toBe(3);
   const expected = started.map((proof) => proof.expectedMs ?? 0);
   expect(expected[0]).toBe(Math.max(...expected));
@@ -44,7 +45,7 @@ test('a failure starts nothing new, lets proofs in flight settle and is thrown',
   const settled: string[] = [];
   let starts = 0;
   const outcome = runInstalledConsumerProofs({
-    fixture: 'minimal',
+    fixture: 'node',
     platform: 'linux',
     uid: 1000,
     concurrency: 2,
@@ -107,4 +108,56 @@ test('an exclusive proof runs with nothing else in flight', async () => {
   });
   expect(besideExclusive.length).toBeGreaterThan(0);
   expect(besideExclusive.every((others) => others === 0)).toBe(true);
+});
+
+test('an idle proof starts first and may run beside an exclusive one', async () => {
+  const running = new Set<string>();
+  const besideExclusive: string[][] = [];
+  const order: string[] = [];
+  let releaseIdle = (): void => undefined;
+  const idleHeld = new Promise<void>((resolve) => {
+    releaseIdle = resolve;
+  });
+  await runInstalledConsumerProofs({
+    fixtures: ['minimal'],
+    platform: 'darwin',
+    uid: 501,
+    concurrency: 3,
+    run: async (proof, runtime) => {
+      const key = `${proof.id}/${runtime}`;
+      order.push(key);
+      running.add(key);
+      if (proof.exclusive === true)
+        besideExclusive.push([...running].filter((k) => k !== key));
+      if (proof.idle === true) await idleHeld;
+      else await Bun.sleep(1);
+      running.delete(key);
+      if (proof.exclusive === true) releaseIdle();
+      return proof.marker;
+    },
+    verdict: () => undefined,
+  });
+  const idle = installedConsumerProofs.find((proof) => proof.idle === true);
+  expect(idle).toBeDefined();
+  expect(order[0]).toBe(`${idle?.id}/node`);
+  expect(besideExclusive.length).toBeGreaterThan(0);
+  expect(besideExclusive[0]).toEqual([`${idle?.id}/node`]);
+  for (const others of besideExclusive)
+    expect(others.every((key) => key === `${idle?.id}/node`)).toBe(true);
+});
+
+test('several fixtures share one pool and no other fixture runs', async () => {
+  const fixtures = new Set<string>();
+  await runInstalledConsumerProofs({
+    fixtures: ['minimal', 'node'],
+    platform: 'linux',
+    uid: 1000,
+    concurrency: 4,
+    run: async (proof) => {
+      fixtures.add(proof.fixture);
+      return proof.marker;
+    },
+    verdict: () => undefined,
+  });
+  expect([...fixtures].sort()).toEqual(['minimal', 'node']);
 });

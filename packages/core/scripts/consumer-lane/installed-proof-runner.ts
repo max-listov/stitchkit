@@ -6,6 +6,8 @@ import { type InstalledConsumerProof, installedConsumerProofs } from './installe
  */
 export async function runInstalledConsumerProofs(input: {
   fixture?: InstalledConsumerProof['fixture'];
+  /** Several fixtures in one pool; a proof of a fixture outside the list is not run. */
+  fixtures?: readonly string[];
   platform: NodeJS.Platform;
   uid?: number;
   ids?: readonly string[];
@@ -26,6 +28,7 @@ export async function runInstalledConsumerProofs(input: {
   for (const proof of installedConsumerProofs) {
     if (input.ids && !input.ids.includes(proof.id)) continue;
     if (input.fixture && proof.fixture !== input.fixture) continue;
+    if (input.fixtures && !input.fixtures.includes(proof.fixture)) continue;
     if (proof.capability === 'linux-root' && (input.platform !== 'linux' || input.uid !== 0)) {
       if (input.requireCapabilities) {
         input.verdict(proof, 'platform', 'failed');
@@ -60,9 +63,14 @@ export async function runInstalledConsumerProofs(input: {
     }
   };
 
+  // With room for more than one proof, an idle proof loads nothing and shares nothing, so it starts
+  // now and runs beside all the rest; one proof at a time means exactly that.
+  const parallel = (input.concurrency ?? 1) > 1;
+  const aside = (job: Job) => parallel && job.proof.idle === true;
+  const idle = Promise.all(jobs.filter(aside).map(runJob));
   // Longest first: the lane then lasts as long as its slowest proof, not that proof plus a tail.
   const shared = jobs
-    .filter((job) => job.proof.exclusive !== true)
+    .filter((job) => job.proof.exclusive !== true && !aside(job))
     .sort((a, b) => (b.proof.expectedMs ?? 0) - (a.proof.expectedMs ?? 0));
   // The first failure stops new proofs from starting; the ones in flight settle before it is thrown.
   let next = 0;
@@ -76,10 +84,11 @@ export async function runInstalledConsumerProofs(input: {
   };
   const width = Math.max(1, Math.min(input.concurrency ?? 1, shared.length));
   await Promise.all(Array.from({ length: width }, worker));
-  // An exclusive proof changes what the others read, so it runs once nothing else is in flight.
+  // An exclusive proof runs once nothing but idle proofs is in flight.
   for (const job of jobs) {
     if (failure !== undefined) break;
     if (job.proof.exclusive === true) await runJob(job);
   }
+  await idle;
   if (failure !== undefined) throw failure.error;
 }

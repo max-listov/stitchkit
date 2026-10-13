@@ -150,26 +150,5 @@ export async function verifyCommandLifecycle(root) {
     /packed sink failure/,
   );
   assert.throws(() => runNativeCommand({ ...command(''), timeoutMs: 2_147_483_648 }));
-  // Source suite covers the Bun owner for 61s; this control exercises the installed Node owner.
-  if (!process.versions.bun) {
-    const deadline = new AbortController();
-    // The control takes 61 s by itself; the watchdog adds what a loaded host costs.
-    const watchdog = setTimeout(
-      () => deadline.abort(new Error('61s control watchdog')),
-      120_000,
-    );
-    try {
-      const result = await runNativeCommand({
-        ...command("setTimeout(()=>process.stdout.write('done'),61000)"),
-        signal: deadline.signal,
-        capture: true,
-        maxOutputBytes: 4,
-      });
-      assert.equal(new TextDecoder().decode(result.stdout), 'done');
-      assert.equal(result.exitCode, 0);
-    } finally {
-      clearTimeout(watchdog);
-    }
-  }
   console.log('packed command lifecycle: ok');
 }
