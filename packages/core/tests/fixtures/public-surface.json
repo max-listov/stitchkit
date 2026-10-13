@@ -2014,6 +2014,7 @@
     "ManagedScheduleStatus",
     "ManagedScheduleStatusSchema",
     "ManagedScheduleTimer",
+    "ManagedScheduleTrigger",
     "ManagedServerResource",
     "ManagedServerResourceConfig",
     "NotificationDeliveryConfig",

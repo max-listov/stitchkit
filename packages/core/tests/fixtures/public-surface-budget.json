@@ -13,7 +13,7 @@
     "stitchkit/agent-runtime/react": 1,
     "stitchkit/agent-runtime/realtime": 3,
     "stitchkit/agent-runtime/testing": 16,
-    "stitchkit/application": 309,
+    "stitchkit/application": 310,
     "stitchkit/application/diagnostic-journal": 3,
     "stitchkit/application/directory-inbox": 1,
     "stitchkit/application/grammy": 13,

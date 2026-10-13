@@ -287,6 +287,7 @@ export {
   type ManagedScheduleStatus,
   ManagedScheduleStatusSchema,
   type ManagedScheduleTimer,
+  type ManagedScheduleTrigger,
 } from '../application/schedule';
 export {
   type ManagedServerResource,

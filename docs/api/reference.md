@@ -753,7 +753,7 @@ delivery. Its filesystem reader is in the diagnostic-journal leaf; there is no m
 | `ManagedScheduleStatusSchema` / `ManagedScheduleStatus` | schema / _type_ | absolute schedule state, revision, counters and timestamps |
 
 Schedule authoring additionally exports `ManagedSchedule`, `ManagedScheduleConfig`,
-`ManagedScheduleRunContext`, `ManagedScheduleClock` and `ManagedScheduleTimer`.
+`ManagedScheduleRunContext`, `ManagedScheduleClock`, `ManagedScheduleTimer` and `ManagedScheduleTrigger`.
 The clock exposes monotonic cadence/deadline arithmetic and a wall-clock projection for portable
 status timestamps; it is a deterministic test boundary, not a durable scheduler.
 A `ManagedSchedule` also has `wake()`: the owner of the event that creates work asks for one run now,

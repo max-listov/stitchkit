@@ -29,7 +29,7 @@ export type ManagedScheduleErrorPolicy = z.infer<typeof ManagedScheduleErrorPoli
 
 const ManagedScheduleTriggerSchema = z.enum(['timer', 'wake']);
 /** What started a run: the period elapsing, or the owner's `wake()`. */
-type ManagedScheduleTrigger = z.infer<typeof ManagedScheduleTriggerSchema>;
+export type ManagedScheduleTrigger = z.infer<typeof ManagedScheduleTriggerSchema>;
 
 export const ManagedScheduleDescriptorSchema = z
   .object({
