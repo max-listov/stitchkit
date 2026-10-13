@@ -15,6 +15,13 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/application` — `createApplicationOpenTelemetry` reports
+  `stitchkit.application.schedule.runs_woken` and `.wakes_coalesced` beside the existing schedule
+  counters, so a dashboard shows how many runs came from `wake()` and how many came from the
+  period.
+
 ## [0.109.2] - 2026-10-13
 
 ### Added

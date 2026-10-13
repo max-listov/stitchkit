@@ -135,6 +135,51 @@ test('OpenTelemetry adapter pulls absolute bounded snapshots and removes exact c
   await application.shutdown();
 });
 
+test('OpenTelemetry adapter reports wake-started runs and coalesced wakes beside timer runs', async () => {
+  let release = (): void => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const schedule = createManagedSchedule({
+    id: 'drain',
+    everyMs: 60_000,
+    run: () => gate,
+  });
+  const application = createApplication({ id: 'wake-metrics', resources: [schedule] });
+  await application.start();
+  const meter = new FakeMeter();
+  const binding = createApplicationOpenTelemetry({
+    meter,
+    application,
+    schedules: [schedule],
+  });
+  const attributes = {
+    'application.id': 'wake-metrics',
+    'schedule.id': 'drain',
+    'schedule.state': 'running',
+  };
+
+  schedule.wake();
+  await Promise.resolve();
+  await Promise.resolve();
+  schedule.wake();
+  schedule.wake();
+  schedule.wake();
+  expect(await meter.one('stitchkit.application.schedule.runs_woken').collect()).toEqual([
+    { value: 1, attributes },
+  ]);
+  expect(await meter.one('stitchkit.application.schedule.wakes_coalesced').collect()).toEqual([
+    { value: 2, attributes },
+  ]);
+  expect(await meter.one('stitchkit.application.schedule.runs_started').collect()).toEqual([
+    { value: 1, attributes },
+  ]);
+
+  binding.close();
+  release();
+  await application.shutdown();
+});
+
 test('OpenTelemetry adapter isolates collection and diagnostic failures', async () => {
   const application = createApplication({ id: 'telemetry-errors' });
   const meter = new FakeMeter();

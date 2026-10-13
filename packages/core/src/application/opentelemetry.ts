@@ -199,6 +199,16 @@ const scheduleMetrics = [
     (value) => value.runsFailed,
   ),
   scheduleMetric(
+    'stitchkit.application.schedule.runs_woken',
+    'Absolute schedule runs started by a wake request.',
+    (value) => value.runsWoken,
+  ),
+  scheduleMetric(
+    'stitchkit.application.schedule.wakes_coalesced',
+    'Absolute wake requests folded into a run that was already pending.',
+    (value) => value.wakesCoalesced,
+  ),
+  scheduleMetric(
     'stitchkit.application.schedule.ticks_skipped',
     'Absolute schedule ticks skipped.',
     (value) => value.ticksSkipped,

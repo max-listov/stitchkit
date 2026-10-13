@@ -343,7 +343,7 @@ Every instrument uses unit `1` and reports an absolute current/lifetime value:
 | `stitchkit.application.lifecycle`, `.ready` | current lifecycle/health fact and readiness |
 | `stitchkit.application.admission.accepting`, `.accepted`, `.completed`, `.pending` | current gate and absolute lifetime admission counts |
 | `stitchkit.application.resource.ready` | readiness for each declared resource with required/state/health attributes |
-| `stitchkit.application.schedule.accepting`, `.active`, `.queued`, `.runs_started`, `.runs_completed`, `.runs_failed`, `.ticks_skipped` | current schedule state and absolute run/tick counts |
+| `stitchkit.application.schedule.accepting`, `.active`, `.queued`, `.runs_started`, `.runs_completed`, `.runs_failed`, `.runs_woken`, `.wakes_coalesced`, `.ticks_skipped` | current schedule state and absolute run, wake and tick counts |
 | `stitchkit.application.activity.active`, `.queued`, `.completed`, `.failed` | absolute stage projections for declared activity sources |
 
 ## Replacing part of the graph without stopping the process
