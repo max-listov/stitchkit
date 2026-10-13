@@ -101,9 +101,10 @@ its own descriptors, not the process's, waits for an event rather than a sleep, 
 with a limit a loaded host can meet. The packed consumer
 lane runs its installed proofs through a pool as wide as the host, each proof in its own temporary
 directories; proofs that wait on a real clock (`long` in `installed-proofs.ts`) start first, so the
-lane lasts about as long as its slowest proof rather than the sum of all of them. A proof that
-changes the shared install (`exclusive`, the Darwin artifact proof that hides `node_modules`) runs
-after the pool, with nothing beside it.
+lane lasts about as long as its slowest proof rather than the sum of all of them. A proof marked
+`exclusive` runs after the pool, with nothing beside it: the Darwin artifact proof, because it hides
+the shared `node_modules`, and the two owner-loss proofs, whose guarded launch failed beside other
+proofs on a 3-core macOS runner.
 
 Every evidence job restores Bun's package cache (`~/.bun/install/cache`, keyed by the hash of
 `bun.lock`) before `bun install --frozen-lockfile`, so an install reads the registry only for what

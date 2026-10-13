@@ -24,7 +24,11 @@ const ProofSchema = z.object({
   capability: z.literal('linux-root').optional(),
   /** Waits on a real clock for tens of seconds; started first so it overlaps the short proofs. */
   long: z.literal(true).optional(),
-  /** Changes the fixture's shared install (hides `node_modules`), so it runs with nothing beside it. */
+  /**
+   * Runs with nothing beside it: it changes the fixture's shared install (hides `node_modules`), or
+   * its guarded launch failed beside other proofs on a 3-core macOS runner, a load sensitivity
+   * tracked as its own task.
+   */
   exclusive: z.literal(true).optional(),
 });
 export type InstalledConsumerProof = z.infer<typeof ProofSchema>;
@@ -364,6 +368,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   {
     ...native,
     id: 'native-owner-loss',
+    exclusive: true,
     fixture: 'node',
     entry: 'native-owner-loss.mjs',
     files: ['native-owner-loss-owner.mjs', 'native-owner-loss-target.mjs'],
@@ -372,6 +377,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   {
     ...native,
     id: 'native-owner-loss-lazy-bundle',
+    exclusive: true,
     fixture: 'node',
     entry: 'native-owner-loss-lazy-bundle.mjs',
     files: [
