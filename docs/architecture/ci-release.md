@@ -105,6 +105,12 @@ lane lasts about as long as its slowest proof rather than the sum of all of them
 changes the shared install (`exclusive`, the Darwin artifact proof that hides `node_modules`) runs
 after the pool, with nothing beside it.
 
+Every evidence job restores Bun's package cache (`~/.bun/install/cache`, keyed by the hash of
+`bun.lock`) before `bun install --frozen-lockfile`, so an install reads the registry only for what
+the lockfile changed; a slow or hanging registry had held single installs for three to eight
+minutes. `artifacts` and `result` install without the cache, so the job that packs the published
+bytes fetches its dependencies exactly as before.
+
 ## Local gate
 
 `bun run verify` remains the exhaustive portable diagnostic gate. Release
