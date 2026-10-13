@@ -15,6 +15,16 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/application` — `ManagedSchedule.wake()` runs the schedule now, for the owner of the
+  event that creates its work. The run takes the timer's path (`dependsOn`, `overlap`,
+  `errorPolicy`, `onError`, counters); calls in one tick or during a busy run collapse into one
+  following run; before activation and after stop it does nothing. The period keeps its grid, so
+  `everyMs: 1000` polling becomes `everyMs: 60_000` plus `wake()`. `ManagedScheduleRunContext`
+  gains `trigger` (`'timer' | 'wake'`) and `ManagedScheduleStatus` gains `runsWoken`,
+  `wakesCoalesced` and `lastTrigger`.
+
 ## [0.109.1] - 2026-10-11
 
 ### Fixed

@@ -777,6 +777,35 @@ those semantics in a durable application scheduler when they are required.
 Schedule cadence stays monotonic, while status snapshots expose ISO wall-clock
 `capturedAt`, `changedAt` and next/last-run timestamps for portable observation.
 
+### Wake a schedule when work appears
+
+An owner that knows the moment work arrives keeps a long period as the check for a lost event and
+calls `wake()` from the place that enqueues:
+
+```ts
+const drain = createManagedSchedule({
+  id: 'drain-queue',
+  everyMs: 60_000,
+  run: ({ trigger, signal }) => drainQueue(signal, trigger),
+})
+
+function enqueue(job: Job) {
+  queue.push(job)
+  drain.wake()
+}
+```
+
+- `wake()` asks for one run now and takes the timer's path: `dependsOn`, `overlap`, `errorPolicy`,
+  `onError`, the shutdown signal and the counters all apply.
+- Calls made in one tick, or while a run holds every slot, collapse into one following run, under
+  every overlap policy (a wake is an event, so `skip` defers it instead of dropping it).
+- Before the schedule is activated (its dependencies are not ready) and after it stops accepting
+  (shutdown, `stop-schedule`), `wake()` does nothing and is not remembered.
+- The period keeps its own fixed-rate grid and is not moved by a wake, so it stays a single timer
+  chain and never becomes a second queue.
+- `run` receives `trigger` (`'timer'` or `'wake'`); status reports `runsWoken`, `wakesCoalesced` and
+  `lastTrigger`.
+
 ## Operational projection
 
 Declare aggregate activity stages, then update them with anonymous handles:

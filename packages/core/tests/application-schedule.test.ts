@@ -526,3 +526,235 @@ describe('managed application schedule', () => {
     expect(schedule.status.active).toBe(0);
   });
 });
+
+describe('managed schedule wake', () => {
+  function started(config: Partial<Parameters<typeof createManagedSchedule>[0]> = {}) {
+    const clock = new FakeClock();
+    const triggers: string[] = [];
+    const gates: Array<ReturnType<typeof deferred>> = [];
+    const schedule = createManagedSchedule({
+      id: 'queue',
+      everyMs: 1000,
+      clock,
+      run: async ({ trigger }) => {
+        triggers.push(trigger);
+        const gate = deferred();
+        gates.push(gate);
+        await gate.promise;
+      },
+      ...config,
+    });
+    const { context } = resourceContext(clock);
+    schedule.start(context);
+    schedule.activate?.(context);
+    return { clock, schedule, triggers, gates };
+  }
+
+  test('runs at once instead of waiting for the period, and the period keeps its grid', async () => {
+    const { clock, schedule, triggers, gates } = started();
+    schedule.wake();
+    expect(triggers).toEqual([]);
+    await flushMicrotasks();
+    expect(triggers).toEqual(['wake']);
+    expect(schedule.status).toMatchObject({
+      runsStarted: 1,
+      runsWoken: 1,
+      lastTrigger: 'wake',
+      nextRunAt: wallTimestamp(1000),
+    });
+    gates[0]?.resolve();
+    await flushMicrotasks();
+    expect(schedule.status).toMatchObject({
+      state: 'scheduled',
+      runsCompleted: 1,
+      queued: false,
+    });
+    await clock.advanceBy(1000);
+    expect(triggers).toEqual(['wake', 'timer']);
+    expect(schedule.status).toMatchObject({ lastTrigger: 'timer', runsWoken: 1 });
+    expect(clock.pendingTimers()).toBe(1);
+  });
+
+  test('a wake in the middle of a period does not move the next tick', async () => {
+    const { clock, schedule, triggers, gates } = started();
+    await clock.advanceBy(400);
+    schedule.wake();
+    await flushMicrotasks();
+    gates[0]?.resolve();
+    await flushMicrotasks();
+    expect(triggers).toEqual(['wake']);
+    expect(schedule.status.nextRunAt).toBe(wallTimestamp(1000));
+    await clock.advanceBy(599);
+    expect(triggers).toEqual(['wake']);
+    await clock.advanceBy(1);
+    expect(triggers).toEqual(['wake', 'timer']);
+    expect(schedule.status.nextRunAt).toBe(wallTimestamp(2000));
+  });
+
+  test('collapses a burst in one tick into one run', async () => {
+    const { schedule, triggers, gates } = started();
+    for (let call = 0; call < 50; call += 1) schedule.wake();
+    await flushMicrotasks();
+    expect(triggers).toEqual(['wake']);
+    expect(schedule.status.wakesCoalesced).toBe(49);
+    gates[0]?.resolve();
+    await flushMicrotasks();
+    expect(triggers).toEqual(['wake']);
+    expect(schedule.status.runsStarted).toBe(1);
+  });
+
+  for (const overlap of [
+    { mode: 'skip' },
+    { mode: 'queue-one' },
+    { mode: 'parallel', maxConcurrent: 1 },
+  ] as const) {
+    test(`defers a wake during a run into one following run under ${overlap.mode}`, async () => {
+      const { schedule, triggers, gates } = started({ overlap });
+      schedule.wake();
+      await flushMicrotasks();
+      for (let call = 0; call < 5; call += 1) schedule.wake();
+      await flushMicrotasks();
+      expect(triggers).toEqual(['wake']);
+      expect(schedule.status).toMatchObject({ active: 1, queued: true, wakesCoalesced: 4 });
+      gates[0]?.resolve();
+      await flushMicrotasks();
+      expect(triggers).toEqual(['wake', 'wake']);
+      expect(schedule.status).toMatchObject({ active: 1, queued: false });
+      gates[1]?.resolve();
+      await flushMicrotasks();
+      expect(triggers).toEqual(['wake', 'wake']);
+      expect(schedule.status).toMatchObject({ active: 0, runsCompleted: 2, ticksSkipped: 0 });
+    });
+  }
+
+  test('starts a wake beside a running run while a parallel slot is free', async () => {
+    const { schedule, triggers, gates } = started({
+      overlap: { mode: 'parallel', maxConcurrent: 2 },
+    });
+    schedule.wake();
+    await flushMicrotasks();
+    schedule.wake();
+    await flushMicrotasks();
+    expect(triggers).toEqual(['wake', 'wake']);
+    schedule.wake();
+    await flushMicrotasks();
+    expect(schedule.status).toMatchObject({ active: 2, queued: true });
+    gates[0]?.resolve();
+    await flushMicrotasks();
+    expect(triggers).toEqual(['wake', 'wake', 'wake']);
+  });
+
+  test('a timer tick that starts a run absorbs a pending wake', async () => {
+    const { clock, schedule, triggers, gates } = started();
+    schedule.wake();
+    await flushMicrotasks();
+    gates[0]?.resolve();
+    await flushMicrotasks();
+    await clock.advanceBy(999);
+    schedule.wake();
+    clock.jumpBy(1);
+    await clock.runOneDueTimer();
+    expect(triggers).toEqual(['wake', 'timer']);
+    expect(schedule.status.queued).toBe(false);
+    gates[1]?.resolve();
+    await flushMicrotasks();
+    expect(triggers).toEqual(['wake', 'timer']);
+  });
+
+  test('does nothing before activation and after stop, and remembers nothing', async () => {
+    const clock = new FakeClock();
+    const triggers: string[] = [];
+    const schedule = createManagedSchedule({
+      id: 'late',
+      everyMs: 1000,
+      clock,
+      run: ({ trigger }) => {
+        triggers.push(trigger);
+      },
+    });
+    const { context } = resourceContext(clock);
+    schedule.wake();
+    schedule.start(context);
+    schedule.wake();
+    await flushMicrotasks();
+    expect(schedule.status).toMatchObject({
+      state: 'inactive',
+      queued: false,
+      runsStarted: 0,
+    });
+    schedule.activate?.(context);
+    await flushMicrotasks();
+    expect(triggers).toEqual([]);
+
+    schedule.wake();
+    schedule.stopAdmission?.(context);
+    await flushMicrotasks();
+    expect(triggers).toEqual([]);
+    schedule.wake();
+    await flushMicrotasks();
+    expect(triggers).toEqual([]);
+    expect(schedule.status).toMatchObject({ state: 'stopped', queued: false, runsStarted: 0 });
+  });
+
+  test('a wake run that fails is counted and reported like a timer run', async () => {
+    const reported: string[] = [];
+    const { schedule } = started({
+      run: ({ trigger }) => {
+        throw new Error(`boom:${trigger}`);
+      },
+      onError: (error) => {
+        reported.push(error instanceof Error ? error.message : String(error));
+      },
+      errorPolicy: 'stop-schedule',
+    });
+    schedule.wake();
+    await flushMicrotasks();
+    expect(reported).toEqual(['boom:wake']);
+    expect(schedule.status).toMatchObject({ runsFailed: 1, runsWoken: 1, accepting: false });
+    schedule.wake();
+    await flushMicrotasks();
+    expect(schedule.status.runsStarted).toBe(1);
+  });
+
+  test('in an application: nothing before the dependency is ready, a run after, nothing after shutdown', async () => {
+    const clock = new FakeClock();
+    const triggers: string[] = [];
+    let releaseDependency: () => void = () => undefined;
+    const dependencyReady = new Promise<void>((resolve) => {
+      releaseDependency = resolve;
+    });
+    const schedule = createManagedSchedule({
+      id: 'dependent',
+      dependsOn: ['dependency'],
+      everyMs: 1000,
+      clock,
+      run: ({ trigger }) => {
+        triggers.push(trigger);
+      },
+    });
+    const app = createApplication({
+      id: 'wake-in-application',
+      resources: [{ id: 'dependency', start: () => ({ ready: dependencyReady }) }, schedule],
+    });
+    const starting = app.start();
+    await flushMicrotasks();
+    schedule.wake();
+    await flushMicrotasks();
+    expect(triggers).toEqual([]);
+    expect(schedule.status).toMatchObject({ state: 'inactive', queued: false });
+
+    releaseDependency();
+    await starting;
+    await flushMicrotasks();
+    expect(triggers).toEqual([]);
+    schedule.wake();
+    await flushMicrotasks();
+    expect(triggers).toEqual(['wake']);
+
+    await app.shutdown({ gracePeriodMs: 100, forceTimeoutMs: 100 });
+    schedule.wake();
+    await flushMicrotasks();
+    expect(triggers).toEqual(['wake']);
+    expect(schedule.status).toMatchObject({ state: 'stopped', queued: false });
+  });
+});

@@ -756,6 +756,9 @@ Schedule authoring additionally exports `ManagedSchedule`, `ManagedScheduleConfi
 `ManagedScheduleRunContext`, `ManagedScheduleClock` and `ManagedScheduleTimer`.
 The clock exposes monotonic cadence/deadline arithmetic and a wall-clock projection for portable
 status timestamps; it is a deterministic test boundary, not a durable scheduler.
+A `ManagedSchedule` also has `wake()`: the owner of the event that creates work asks for one run now,
+and the run follows the timer path (`overlap`, `errorPolicy`, `onError`, counters). Run context
+carries `trigger` (`'timer'` or `'wake'`); status adds `runsWoken`, `wakesCoalesced` and `lastTrigger`.
 
 ### Application and activity projection
 

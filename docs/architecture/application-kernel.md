@@ -224,6 +224,14 @@ queued-one successor was not admitted and is discarded. Running callbacks see
 the application shutdown signal, which aborts only when the shared chain is
 forced.
 
+`wake()` is the owner's request for one run now. It never starts work while the schedule is not
+accepting (before activation, after `stop-schedule` or shutdown) and is not remembered then. While
+accepting it sets one pending run, begun after the caller's tick; further calls coalesce into it,
+including when every slot is busy, under all three overlap policies. The pending run starts as soon
+as the overlap policy admits another run, and a timer run that starts first absorbs it. A woken run
+counts, reports and obeys `errorPolicy` exactly as a timer run, and the fixed-rate grid is not
+shifted by it.
+
 There is deliberately no durable cursor, missed-run replay, automatic retry,
 leader election, cron parser, timezone policy or cross-process mutex.
 

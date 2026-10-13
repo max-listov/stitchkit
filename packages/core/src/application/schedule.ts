@@ -27,6 +27,10 @@ export type ManagedScheduleOverlap = z.infer<typeof ManagedScheduleOverlapSchema
 export const ManagedScheduleErrorPolicySchema = z.enum(['continue', 'stop-schedule']);
 export type ManagedScheduleErrorPolicy = z.infer<typeof ManagedScheduleErrorPolicySchema>;
 
+const ManagedScheduleTriggerSchema = z.enum(['timer', 'wake']);
+/** What started a run: the period elapsing, or the owner's `wake()`. */
+type ManagedScheduleTrigger = z.infer<typeof ManagedScheduleTriggerSchema>;
+
 export const ManagedScheduleDescriptorSchema = z
   .object({
     id: ApplicationIdSchema,
@@ -51,7 +55,10 @@ export const ManagedScheduleStatusSchema = z
     runsStarted: NonNegativeSafeIntegerSchema,
     runsCompleted: NonNegativeSafeIntegerSchema,
     runsFailed: NonNegativeSafeIntegerSchema,
+    runsWoken: NonNegativeSafeIntegerSchema,
     ticksSkipped: NonNegativeSafeIntegerSchema,
+    wakesCoalesced: NonNegativeSafeIntegerSchema,
+    lastTrigger: ManagedScheduleTriggerSchema.nullable(),
     nextRunAt: z.string().datetime({ offset: true }).nullable(),
     lastScheduledAt: z.string().datetime({ offset: true }).nullable(),
     lastStartedAt: z.string().datetime({ offset: true }).nullable(),
@@ -87,6 +94,7 @@ export interface ManagedScheduleRunContext {
   readonly signal: AbortSignal;
   readonly scheduledAt: number;
   readonly startedAt: number;
+  readonly trigger: ManagedScheduleTrigger;
   now(): number;
 }
 
@@ -109,6 +117,14 @@ export interface ManagedScheduleConfig {
 
 export interface ManagedSchedule extends ManagedResource {
   readonly status: ManagedScheduleStatus;
+  /**
+   * Ask for one run now, because the owner knows work has appeared. The run takes the same path
+   * as a timer run: `overlap`, `onError`, `errorPolicy` and the counters apply, and the period
+   * keeps its own cadence as the check for an event that was lost. Calls made in one tick, or
+   * while a run holds every slot, collapse into one following run. Before the schedule is
+   * activated and after it stops accepting, the call does nothing and is not remembered.
+   */
+  wake(): void;
 }
 
 const DEFAULT_OVERLAP: ManagedScheduleOverlap = { mode: 'skip' };
@@ -118,7 +134,10 @@ interface ScheduleCounts {
   runsStarted: number;
   runsCompleted: number;
   runsFailed: number;
+  runsWoken: number;
   ticksSkipped: number;
+  wakesCoalesced: number;
+  lastTrigger: ManagedScheduleTrigger | null;
   lastScheduledAt: string | null;
   lastStartedAt: string | null;
   lastFinishedAt: string | null;
@@ -144,7 +163,8 @@ function wallAt(
   return new Date(anchor.wallNow + monotonicAt - anchor.monotonicNow).toISOString();
 }
 
-/** What a due tick does under the overlap policy, given how many runs are active. */
+/** What a due tick does under the overlap policy, given how many runs are active. A wake that
+ *  is not `start` waits for a free slot under every policy: it is an event, not a missed tick. */
 function overlapDecision(
   overlap: ManagedScheduleOverlap,
   active: number,
@@ -208,7 +228,11 @@ interface RunDeps {
  * One execution of the schedule's `run`, counted and timestamped, with its
  * outcome turned into health under the error policy. Never rejects.
  */
-async function executeRun(deps: RunDeps, scheduledAt: number): Promise<void> {
+async function executeRun(
+  deps: RunDeps,
+  scheduledAt: number,
+  trigger: ManagedScheduleTrigger,
+): Promise<void> {
   const { config, descriptor, clock, counts, resourceContext } = deps;
   const startedAt = clock.now();
   const wallStartedAt = clock.wallNow().getTime();
@@ -217,9 +241,12 @@ async function executeRun(deps: RunDeps, scheduledAt: number): Promise<void> {
     signal: resourceContext.signal,
     scheduledAt,
     startedAt,
+    trigger,
     now: () => clock.now(),
   };
   counts.runsStarted += 1;
+  if (trigger === 'wake') counts.runsWoken += 1;
+  counts.lastTrigger = trigger;
   counts.lastScheduledAt = new Date(wallStartedAt + scheduledAt - startedAt).toISOString();
   counts.lastStartedAt = new Date(wallStartedAt).toISOString();
   deps.changed();
@@ -269,12 +296,15 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
   let timer: ManagedScheduleTimer | null = null;
   let activationContext: ManagedResourceContext | null = null;
   let nextRunAt: number | null = null;
-  let queuedAt: number | null = null;
+  let queued: { readonly at: number; readonly trigger: ManagedScheduleTrigger } | null = null;
   const counts: ScheduleCounts = {
     runsStarted: 0,
     runsCompleted: 0,
     runsFailed: 0,
+    runsWoken: 0,
     ticksSkipped: 0,
+    wakesCoalesced: 0,
+    lastTrigger: null,
     lastScheduledAt: null,
     lastStartedAt: null,
     lastFinishedAt: null,
@@ -291,7 +321,7 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
     timer?.cancel();
     timer = null;
     nextRunAt = null;
-    queuedAt = null;
+    queued = null;
   };
 
   const stopAdmission = (): void => {
@@ -313,25 +343,30 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
       changedAt,
       accepting,
       active: active.size,
-      queued: queuedAt !== null,
+      queued: queued !== null,
       ...counts,
       nextRunAt: wallAt(nextRunAt, anchor),
     });
   };
 
-  let startExecution: (scheduledAt: number) => void = () => undefined;
+  let startExecution: (scheduledAt: number, trigger: ManagedScheduleTrigger) => void = () =>
+    undefined;
 
+  /** Start the one pending run once a slot is free. */
   const settleExecution = (): void => {
-    if (!accepting || queuedAt === null || active.size !== 0) return;
-    const successorAt = queuedAt;
-    queuedAt = null;
+    if (!accepting || queued === null) return;
+    if (overlapDecision(descriptor.overlap, active.size) !== 'start') return;
+    const successor = queued;
+    queued = null;
     changed();
-    startExecution(successorAt);
+    startExecution(successor.at, successor.trigger);
   };
 
-  startExecution = (scheduledAt): void => {
+  startExecution = (scheduledAt, trigger): void => {
     const resourceContext = activationContext;
     if (!accepting || !resourceContext) return;
+    // A run that starts now sees everything a pending request was waiting for.
+    queued = null;
     const tracked = executeRun(
       {
         config,
@@ -344,6 +379,7 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
         isAccepting: () => accepting,
       },
       scheduledAt,
+      trigger,
     ).finally(() => {
       active.delete(tracked);
       changed();
@@ -356,12 +392,27 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
     if (!accepting) return;
     const decision = overlapDecision(descriptor.overlap, active.size);
     if (decision === 'start') {
-      startExecution(scheduledAt);
+      startExecution(scheduledAt, 'timer');
       return;
     }
-    if (decision === 'queue') queuedAt = scheduledAt;
+    if (decision === 'queue')
+      queued = { at: scheduledAt, trigger: queued?.trigger ?? 'timer' };
     else counts.ticksSkipped += 1;
     changed();
+  };
+
+  const wake = (): void => {
+    if (!accepting) return;
+    if (queued) {
+      counts.wakesCoalesced += 1;
+      queued = { at: queued.at, trigger: 'wake' };
+      changed();
+      return;
+    }
+    queued = { at: clock.now(), trigger: 'wake' };
+    changed();
+    // The run is begun after the caller's tick, so a burst of calls in it becomes one run.
+    queueMicrotask(settleExecution);
   };
 
   const arm = (): void => {
@@ -397,6 +448,7 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
     get status() {
       return status();
     },
+    wake,
     start(): void {
       // A new generation, not a refusal.
       //
@@ -422,7 +474,7 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
       accepting = false;
       activated = false;
       activationContext = null;
-      queuedAt = null;
+      queued = null;
       changed();
     },
     activate(context): void {
