@@ -193,9 +193,11 @@ async function catalogProof() {
 async function deadlineProof() {
   const mock = await fixture();
   try {
+    // A budget that must hold is wide; one that must run out runs out against a hang or a delay
+    // longer than itself, so a loaded host cannot turn either into the other.
     const cli = await invoker(mock, {
-      discovery: { timeoutMs: 60 },
-      call: { timeoutMs: 250 },
+      discovery: { timeoutMs: 1000 },
+      call: { timeoutMs: 2000 },
     });
     mock.state.callDelay = 90;
     assert.equal((await cli.invoke()).ok, true);
@@ -208,7 +210,7 @@ async function deadlineProof() {
       reason: 'deadline-exceeded',
       operation: 'initialize',
       phase: 'discovery',
-      timeoutMs: 60,
+      timeoutMs: 1000,
       observedReadBytes: 0,
     });
     assert.equal(stopped.exitCode, 7);
@@ -216,13 +218,13 @@ async function deadlineProof() {
     assert.ok(cli.raw[0] instanceof ConnectionTimeoutError);
     mock.state.hangInitialize = false;
     const short = await invoker(mock, {
-      discovery: { timeoutMs: 250 },
+      discovery: { timeoutMs: 2000 },
       call: { timeoutMs: 30 },
     });
     assert.equal((await short.invoke()).error?.details.operation, 'tools/call');
     mock.state.hangList = true;
     await assert.rejects(
-      mounted(mock, { discovery: { timeoutMs: 40 }, call: { timeoutMs: 250 } }),
+      mounted(mock, { discovery: { timeoutMs: 1000 }, call: { timeoutMs: 2000 } }),
       (error) => error instanceof ConnectionTimeoutError && error.operation === 'tools/list',
     );
   } finally {
