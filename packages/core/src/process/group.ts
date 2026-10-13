@@ -73,10 +73,11 @@ async function signalUntilSettled(
     } catch (error) {
       // Do not suppress permission failures. Success requires an actual
       // delivered signal or ESRCH; a persistent refusal keeps its own cause.
-      if (!deniedOnDarwin(error) || performance.now() >= deadline) throw error;
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.min(10, deadline - performance.now())),
-      );
+      // One read of the clock decides both whether to wait and how long, or a
+      // loaded host passes the deadline between them and the wait goes negative.
+      const remaining = deadline - performance.now();
+      if (!deniedOnDarwin(error) || remaining <= 0) throw error;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(10, remaining)));
     }
   }
 }
@@ -110,11 +111,11 @@ export async function stopCommandGroup(stop: CommandGroupStop): Promise<boolean>
   const until = performance.now() + policy.graceMs;
   let interval = 10;
   let present = exists(pid);
-  while (present && !policy.killOn?.aborted && performance.now() < until) {
+  while (present && !policy.killOn?.aborted) {
+    const remaining = until - performance.now();
+    if (remaining <= 0) break;
     // An abort ends the wait early; the loop condition then sees it.
-    await sleep(Math.min(interval, until - performance.now()), policy.killOn).catch(
-      () => undefined,
-    );
+    await sleep(Math.min(interval, remaining), policy.killOn).catch(() => undefined);
     interval = Math.min(interval * 2, 250);
     present = exists(pid);
   }

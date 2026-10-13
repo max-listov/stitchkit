@@ -97,6 +97,48 @@ test('forced cleanup retains ESRCH success and the exact persistent Darwin permi
   expect(result.stdout.trim()).toBe('isolated group refusal controls: ok');
 });
 
+test('a stop never asks a timer for a negative delay, however far the clock moves between reads', () => {
+  const entry = new URL('../src/process/group.ts', import.meta.url).href;
+  const script = `
+    import assert from 'node:assert/strict';
+    import { stopCommandGroup } from ${JSON.stringify(entry)};
+    // Every read of the clock is 19 ms after the last, as on a host too loaded to run the next line;
+    // with that step both waits read a remaining time that is already past on the read after.
+    let clock = 0;
+    Object.defineProperty(performance, 'now', { value: () => (clock += 19) });
+    const delays = [];
+    const schedule = globalThis.setTimeout;
+    globalThis.setTimeout = (callback, ms, ...rest) => {
+      delays.push(ms);
+      return schedule(callback, 0, ...rest);
+    };
+    const policy = { target: 'group', signal: 'SIGTERM', graceMs: 30 };
+    // A grace that is waited out: the group answers every probe until the SIGKILL.
+    process.kill = () => true;
+    await stopCommandGroup({ pid: 2147483600, policy, cleanupTimeoutMs: 40 });
+    // A Darwin refusal retried until the deadline.
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const cause = Object.assign(new Error('permission refused'), { code: 'EPERM' });
+    process.kill = () => { throw cause; };
+    await assert.rejects(
+      stopCommandGroup({ pid: 2147483600, policy, cleanupTimeoutMs: 40, force: true }),
+      (error) => error === cause,
+    );
+    assert.ok(delays.length > 0, 'the stops waited');
+    assert.deepEqual(delays.filter((ms) => !(ms >= 0)), [], JSON.stringify(delays));
+    console.log('non-negative stop delays: ok');
+  `;
+  const result = spawnSync(process.execPath, ['--eval', script], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    maxBuffer: 16_384,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.stderr).toBe('');
+  expect(result.status).toBe(0);
+  expect(result.stdout.trim()).toBe('non-negative stop delays: ok');
+});
+
 test('an observed ESRCH ends the stop: no SIGKILL reaches a group id that may now be unrelated', () => {
   const entry = new URL('../src/process/group.ts', import.meta.url).href;
   const script = `

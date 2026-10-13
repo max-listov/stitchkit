@@ -15,6 +15,13 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/process` — stopping a command's process group no longer passes a negative delay to a
+  timer on a loaded host. The grace wait and the Darwin permission retry read the clock once for both
+  the decision to wait and the length of the wait, so Node no longer prints `TimeoutNegativeWarning`
+  to the application's stderr when the deadline passes between two reads.
+
 ## [0.109.3] - 2026-10-13
 
 ### Added
