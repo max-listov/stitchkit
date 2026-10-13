@@ -20,11 +20,11 @@ import {
   memoryKeyspaceBackend,
 } from '../src/application/keyspace';
 import type { ManagedResource } from '../src/application/resource';
-import {
-  createManagedSchedule,
-  type ManagedScheduleClock,
-  type ManagedScheduleTimer,
-} from '../src/application/schedule';
+import { createManagedSchedule } from '../src/application/schedule';
+import type {
+  ManagedScheduleClock,
+  ManagedScheduleTimer,
+} from '../src/application/schedule-contract';
 import { managedServerResource } from '../src/application/server-resource';
 import type { ManagedServerHandle, ShutdownResult } from '../src/server/shutdown';
 

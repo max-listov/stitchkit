@@ -272,8 +272,8 @@ export {
   type RevisionSignalWaitResult,
   RevisionSignalWaitResultSchema,
 } from '../application/revision-signal';
+export { createManagedSchedule } from '../application/schedule';
 export {
-  createManagedSchedule,
   type ManagedSchedule,
   type ManagedScheduleClock,
   type ManagedScheduleConfig,
@@ -288,7 +288,7 @@ export {
   ManagedScheduleStatusSchema,
   type ManagedScheduleTimer,
   type ManagedScheduleTrigger,
-} from '../application/schedule';
+} from '../application/schedule-contract';
 export {
   type ManagedServerResource,
   type ManagedServerResourceConfig,

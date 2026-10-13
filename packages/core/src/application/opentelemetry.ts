@@ -8,8 +8,8 @@ import type {
 import type { ActivityProjection } from './activity';
 import { type ActivitySnapshot, ActivitySnapshotSchema } from './activity';
 import type { ApplicationHandle } from './kernel-contract';
-import type { ManagedSchedule } from './schedule';
-import { type ManagedScheduleStatus, ManagedScheduleStatusSchema } from './schedule';
+import type { ManagedSchedule } from './schedule-contract';
+import { type ManagedScheduleStatus, ManagedScheduleStatusSchema } from './schedule-contract';
 import {
   type ApplicationSnapshot,
   ApplicationSnapshotSchema,

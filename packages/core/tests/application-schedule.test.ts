@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { createApplication } from '../src/application/kernel';
 import type { ManagedResourceContext } from '../src/application/resource';
-import {
-  createManagedSchedule,
-  type ManagedScheduleClock,
-  type ManagedScheduleTimer,
-} from '../src/application/schedule';
+import { createManagedSchedule } from '../src/application/schedule';
+import type {
+  ManagedScheduleClock,
+  ManagedScheduleTimer,
+} from '../src/application/schedule-contract';
 
 interface FakeTimerEntry {
   readonly id: number;
