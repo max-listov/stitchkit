@@ -10,11 +10,11 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { runInstalledConsumerProofs } from './installed-proof-runner.ts';
 import {
   declarationProofArguments,
   declarationProofVariants,
   installedConsumerProofs,
-  runInstalledConsumerProofs,
 } from './installed-proofs.ts';
 
 const here = import.meta.dirname;

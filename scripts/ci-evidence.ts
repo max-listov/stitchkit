@@ -20,6 +20,7 @@ export function expectedCiEvidence(plan: CiPlan, phase: CiEvidencePhase) {
     'portable-lanes': plan.portable,
     tui: plan.tui,
     'starter-package': plan.starter,
+    'darwin-native': plan.darwin,
     'darwin-contained-files': plan.darwin,
     'universal-native-build': plan.darwin,
     'universal-native-run': plan.darwin,

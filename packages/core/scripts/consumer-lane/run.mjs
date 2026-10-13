@@ -24,15 +24,12 @@
  * it still packs and installs the public package, but executes only the surface
  * whose platform implementation differs.
  */
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  declarationProofArguments,
-  declarationProofVariants,
-  runInstalledConsumerProofs,
-} from './installed-proofs.ts';
+import { runInstalledConsumerProofs } from './installed-proof-runner.ts';
+import { declarationProofArguments, declarationProofVariants } from './installed-proofs.ts';
 import { qualifyNeutralLibrary } from './neutral-library.mjs';
 import { runOptionalPeerMatrix } from './optional-peer-matrix.mjs';
 import { runSelfContainedSocketProof } from './self-contained-socket.mjs';
@@ -109,6 +106,16 @@ async function asyncStep(label, fn) {
 
 function run(cmd, args, cwd) {
   return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+/** `run` without blocking the lane, so independent proofs can overlap; rejects as `run` throws. */
+function runAsync(cmd, args, cwd) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { cwd, encoding: 'utf8' }, (error, stdout, stderr) => {
+      if (error) reject(Object.assign(error, { stdout, stderr }));
+      else resolve(stdout);
+    });
+  });
 }
 
 /**
@@ -222,15 +229,16 @@ try {
               ]
             : undefined,
         requireCapabilities: nativeUIDOnly,
+        concurrency: availableParallelism(),
         run: async (proof, runtime) => {
           if (runtime !== 'types')
-            return step(`${name}: ${proof.id} (${runtime})`, () =>
-              run(runtime, [`src/${proof.entry}`], dir),
+            return asyncStep(`${name}: ${proof.id} (${runtime})`, () =>
+              runAsync(runtime, [`src/${proof.entry}`], dir),
             );
           let output = '';
           for (const variant of declarationProofVariants(proof))
-            output += step(`${name}: ${proof.id} (${variant.id})`, () =>
-              run(
+            output += await asyncStep(`${name}: ${proof.id} (${variant.id})`, () =>
+              runAsync(
                 'bun',
                 [
                   join(pkgRoot, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc'),

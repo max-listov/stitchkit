@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -182,10 +183,18 @@ test.skipIf(process.platform !== 'linux')(
   async () => {
     const path = fixture();
     execFileSync('mkfifo', [path]);
-    const count = readdirSync('/proc/self/fd').length;
+    // Only descriptors on this FIFO: the process may open or close others meanwhile.
+    const onFifo = () =>
+      readdirSync('/proc/self/fd').filter((fd) => {
+        try {
+          return readlinkSync(`/proc/self/fd/${fd}`) === path;
+        } catch {
+          return false;
+        }
+      }).length;
     for (let i = 0; i < 50; i++)
       await expect(readLockRecord(path)).rejects.toThrow(LockRecordError);
-    expect(readdirSync('/proc/self/fd').length).toBe(count);
+    expect(onFifo()).toBe(0);
   },
 );
 

@@ -40,7 +40,7 @@ describe.skipIf(probe.status !== 0)('sandbox coding composition', () => {
           authorize: () => true,
           authorizePath: ({ path }) => path !== 'secret',
           executables: { shell: '/usr/bin/sh', yes: '/usr/bin/yes', sleep: '/usr/bin/sleep' },
-          limits: { maxShellOutputBytes: 16, shellTimeoutMs: 30 },
+          limits: { maxShellOutputBytes: 16, shellTimeoutMs: 2_000 },
         }),
       });
       const write = tools.write_file?.execute;

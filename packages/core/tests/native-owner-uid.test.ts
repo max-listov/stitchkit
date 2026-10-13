@@ -1,10 +1,8 @@
 import { expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import {
-  installedConsumerProofs,
-  runInstalledConsumerProofs,
-} from '../scripts/consumer-lane/installed-proofs';
+import { runInstalledConsumerProofs } from '../scripts/consumer-lane/installed-proof-runner';
+import { installedConsumerProofs } from '../scripts/consumer-lane/installed-proofs';
 
 const capable = process.platform === 'linux' && process.getuid?.() === 0;
 const helper = new URL(

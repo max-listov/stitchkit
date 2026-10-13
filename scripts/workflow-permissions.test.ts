@@ -48,7 +48,7 @@ describe('target-aware CI graph', () => {
   });
 
   test('generated starter matrices replace source-template duplication while Agent stays explicit', () => {
-    const scaffolder = section('starter-package', 'darwin-contained-files');
+    const scaffolder = section('starter-package', 'darwin-native');
     expect(scaffolder).not.toContain('bun run check:template');
     expect(scaffolder).toContain('bun --filter stitchkit-tui build');
     expect(scaffolder).toContain('bun run agent-template-lane');
@@ -68,6 +68,19 @@ describe('target-aware CI graph', () => {
     expect(darwin).toContain('macos-15-intel');
     expect(darwin).toContain('bun run contained-files-packed-lane');
     expect(darwin).not.toContain('bun run consumer-lane');
+  });
+
+  test('Darwin proves and ships the one leaf its native job built', () => {
+    const leaf = section('darwin-native', 'darwin-contained-files');
+    const lane = section('darwin-contained-files', 'universal-native-build');
+    expect(leaf).toContain('bun --filter stitchkit build:native-contained-files');
+    expect(leaf).toContain('name: darwin-contained-files-');
+    expect(leaf).not.toContain('contained-files-packed-lane');
+    expect(lane).not.toContain('build:native-contained-files');
+    expect(lane).toContain('actions/download-artifact');
+    expect(lane.indexOf('actions/download-artifact')).toBeLessThan(
+      lane.indexOf('bun --filter stitchkit build'),
+    );
   });
 
   test('starter modes come from the plan and full audits are scheduled', () => {

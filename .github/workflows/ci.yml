@@ -202,8 +202,10 @@ jobs:
       - run: bun run telegram-bot-template-lane
       - run: bun run generated-templates-lane
 
-  darwin-contained-files:
-    name: Packed contained files / ${{ matrix.arch }}
+  # One leaf per arch, built once: the packed lane, the universal chain and the release pack all use
+  # those bytes, and the universal chain starts when the leaves exist rather than after the lane.
+  darwin-native:
+    name: Darwin native leaf / ${{ matrix.arch }}
     if: needs.plan.outputs.darwin == 'true'
     needs: plan
     runs-on: ${{ matrix.runner }}
@@ -225,10 +227,8 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bun --filter stitchkit build:native-contained-files
       - run: test "$(node -p process.arch)" = "${{ matrix.arch }}"
-      - run: bun --filter stitchkit build
-      - run: bun run contained-files-packed-lane
+      - run: bun --filter stitchkit build:native-contained-files
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: darwin-contained-files-${{ matrix.arch }}
@@ -236,10 +236,41 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  darwin-contained-files:
+    name: Packed contained files / ${{ matrix.arch }}
+    if: needs.plan.outputs.darwin == 'true'
+    needs: [plan, darwin-native]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: test "$(node -p process.arch)" = "${{ matrix.arch }}"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: darwin-contained-files-${{ matrix.arch }}
+          path: packages/core/native
+      - run: bun --filter stitchkit build
+      - run: bun run contained-files-packed-lane
+
   universal-native-build:
     name: Shared universal native archive
     if: needs.plan.outputs.darwin == 'true'
-    needs: [plan, darwin-contained-files]
+    needs: [plan, darwin-native]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -384,6 +415,7 @@ jobs:
         portable-lanes,
         tui,
         starter-package,
+        darwin-native,
         darwin-contained-files,
         universal-native-build,
         universal-native-run,
@@ -427,6 +459,7 @@ jobs:
         portable-lanes,
         tui,
         starter-package,
+        darwin-native,
         darwin-contained-files,
         universal-native-build,
         universal-native-run,

@@ -22,6 +22,8 @@ const ProofSchema = z.object({
   declarationVariants: z.array(DeclarationVariantSchema).min(1).optional(),
   marker: z.string().min(1),
   capability: z.literal('linux-root').optional(),
+  /** Waits on a real clock for tens of seconds; started first so it overlaps the short proofs. */
+  long: z.literal(true).optional(),
 });
 export type InstalledConsumerProof = z.infer<typeof ProofSchema>;
 
@@ -113,6 +115,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   },
   {
     id: 'cli-publication',
+    long: true,
     fixture: 'minimal',
     entry: 'cli-publication.mjs',
     files: ['cli-publication-support.mjs', 'cli-publication-binary.ts'],
@@ -158,6 +161,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   },
   {
     id: 'native-http-idle',
+    long: true,
     fixture: 'minimal',
     entry: 'native-http-idle.mjs',
     files: ['native-http-idle-cli.mjs'],
@@ -192,6 +196,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   },
   {
     id: 'darwin-artifacts',
+    long: true,
     fixture: 'node',
     entry: 'darwin-artifacts.mjs',
     files: ['darwin-artifact-controls.mjs', 'contained-files.mjs'],
@@ -312,6 +317,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   {
     ...native,
     id: 'native-primitives',
+    long: true,
     fixture: 'minimal',
     entry: 'native-primitives.mjs',
     files: ['command-lifecycle.mjs'],
@@ -404,55 +410,6 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
 ]);
 
 /** Both installation lanes execute this list; failures never count as a skipped proof. */
-export async function runInstalledConsumerProofs(input: {
-  fixture?: InstalledConsumerProof['fixture'];
-  platform: NodeJS.Platform;
-  uid?: number;
-  ids?: readonly string[];
-  requireCapabilities?: boolean;
-  run: (proof: InstalledConsumerProof, runtime: 'bun' | 'node' | 'types') => Promise<string>;
-  verdict: (
-    proof: InstalledConsumerProof,
-    runtime: 'bun' | 'node' | 'types' | 'platform',
-    state: 'succeeded' | 'not-applicable' | 'failed',
-  ) => void;
-}): Promise<void> {
-  for (const proof of installedConsumerProofs) {
-    if (input.ids && !input.ids.includes(proof.id)) continue;
-    if (input.fixture && proof.fixture !== input.fixture) continue;
-    if (proof.capability === 'linux-root' && (input.platform !== 'linux' || input.uid !== 0)) {
-      if (input.requireCapabilities) {
-        input.verdict(proof, 'platform', 'failed');
-        throw new Error(`Installed proof ${proof.id} requires Linux UID0`);
-      }
-      input.verdict(proof, 'platform', 'not-applicable');
-      continue;
-    }
-    if (!proof.platforms.some((platform) => platform === input.platform)) {
-      input.verdict(proof, 'platform', 'not-applicable');
-      continue;
-    }
-    const runtimes: ('bun' | 'node' | 'types')[] =
-      proof.kind === 'declarations' ? ['types'] : proof.runtimes;
-    for (const runtime of runtimes) {
-      try {
-        const output = await input.run(proof, runtime);
-        if (
-          proof.kind === 'runtime' &&
-          !output.split(/\r?\n/).some((line) => line === proof.marker)
-        )
-          throw new Error(
-            `Installed proof ${proof.id}/${runtime} has no exact success marker`,
-          );
-        input.verdict(proof, runtime, 'succeeded');
-      } catch (error) {
-        input.verdict(proof, runtime, 'failed');
-        throw error;
-      }
-    }
-  }
-}
-
 export type DeclarationVariant = z.infer<typeof DeclarationVariantSchema>;
 
 export function declarationProofVariants(

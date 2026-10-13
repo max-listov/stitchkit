@@ -303,6 +303,7 @@ describe('one full run per SHA', () => {
       'portable-lanes': { result: 'skipped' },
       tui: { result: 'skipped' },
       'starter-package': { result: 'skipped' },
+      'darwin-native': { result: 'skipped' },
       'darwin-contained-files': { result: 'skipped' },
       'universal-native-build': { result: 'skipped' },
       'universal-native-run': { result: 'skipped' },

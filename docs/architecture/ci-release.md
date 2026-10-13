@@ -4,7 +4,7 @@ description: Package-aware evidence lanes, one-SHA release trains and immutable 
 type: architecture
 status: active
 created: 2026-08-14
-updated: 2026-10-04 09:21 +07:00
+updated: 2026-10-13 10:36 +07:00
 ---
 
 # CI and exact-SHA release pipeline
@@ -60,7 +60,8 @@ remains limited to the train. A release commit, a schedule run or a dispatch run
 plan; a repeated push of an SHA that already has a green push run selects nothing, so the master
 fast-forward of a released candidate is an empty run. Path narrowing applies to ordinary pushes
 only, and shared scripts, workflows, hooks and root dependency inputs select every package.
-Every job starts after the small planner, not after another platform:
+Every job starts after the small planner, not after another platform; the only other edge is a
+Darwin proof waiting for the native leaf it proves:
 
 | Job | Runs when | Guarantee |
 | --- | --- | --- |
@@ -68,7 +69,8 @@ Every job starts after the small planner, not after another platform:
 | `portable` | core/shared change | core types/tests/build, PostgreSQL adapter, smokes and packed consumer |
 | `tui` | TUI target/change | terminal package types/tests/build and packed host |
 | `starter-package` | starter compatibility is selected | scaffolder and authored template types |
-| `darwin-contained-files` | core target/change | real arm64/x64 native build; packed Bun/Node process/files proofs and relocated JS/standalone artifacts with asset integrity and missing/corrupt-backend controls |
+| `darwin-native` | core target/change | builds the arm64/x64 native leaf once on its own architecture and uploads it |
+| `darwin-contained-files` | core target/change | the `darwin-native` leaf, packed: Bun/Node process/files proofs and relocated JS/standalone artifacts with asset integrity and missing/corrupt-backend controls |
 | `supervised` | core or starter | generated roles under the pinned PM2 supervisor |
 | `starter` | core or starter | two variants × two browsers on the compatibility edge that can differ |
 | `artifacts` | release train | waits for selected evidence, downloads Darwin leaves only for core, packs selected packages |
@@ -84,8 +86,17 @@ the public package, but `--contained-files-only` executes only the surface whose
 platform-specific. Each native runner also checks minified Bun/Node JS and Bun standalone artifacts
 after hiding the build tree and installed dependency graph. Process identity, exclusive locks,
 contained files, addon bytes and refusal controls share that installed-package proof. Each runner
-qualifies its actual architecture; a cross-build is not native execution evidence. Artifact
-assembly is the sole consumer of both validated native leaves.
+qualifies its actual architecture; a cross-build is not native execution evidence. Each leaf is
+built once, by `darwin-native`; the packed lane, the universal archive and artifact assembly all
+download those bytes, so the shipped leaf is the one every Darwin proof ran, and the universal chain
+starts when the leaves exist instead of after the packed lane.
+
+Inside a lane, independent work runs at once. The core suite runs `bun test --parallel`, one worker
+per core, so a test must not depend on what else the process does: it counts its own descriptors,
+not the process's, and bounds a command with a limit a loaded host can meet. The packed consumer
+lane runs its installed proofs through a pool as wide as the host, each proof in its own temporary
+directories; proofs that wait on a real clock (`long` in `installed-proofs.ts`) start first, so the
+lane lasts about as long as its slowest proof rather than the sum of all of them.
 
 ## Local gate
 

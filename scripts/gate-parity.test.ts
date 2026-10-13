@@ -34,15 +34,21 @@ function workflowCoverageProblems(source: string): string[] {
     'portable-lanes': 'portable',
     tui: 'tui',
     'starter-package': 'starter',
+    'darwin-native': 'darwin',
     'darwin-contained-files': 'darwin',
     supervised: 'supervised',
     starter: 'starter',
   };
+  // A lane that proves a shared leaf waits for that leaf and for nothing else.
+  const leafConsumers: Record<string, string> = { 'darwin-contained-files': 'darwin-native' };
   for (const [name, selector] of Object.entries(selectors)) {
     const job = jobs[name];
     if (job?.if !== `needs.plan.outputs.${selector} == 'true'`)
       problems.push(`${name}: selector`);
-    if (job?.needs !== 'plan') problems.push(`${name}: planning dependency`);
+    const leaf = leafConsumers[name];
+    const planned = leaf === undefined ? 'plan' : JSON.stringify(['plan', leaf]);
+    const needs = typeof job?.needs === 'string' ? job.needs : JSON.stringify(job?.needs);
+    if (needs !== planned) problems.push(`${name}: planning dependency`);
   }
   for (const [name, job] of Object.entries(jobs)) {
     if (job['continue-on-error'] !== undefined && job['continue-on-error'] !== false)
@@ -96,8 +102,10 @@ function workflowCoverageProblems(source: string): string[] {
   const darwin = jobs['darwin-contained-files']?.strategy?.matrix;
   if (!Array.isArray(darwin?.include) || darwin.include.length !== 2)
     problems.push('darwin: incomplete matrix');
+  if (JSON.stringify(jobs['darwin-native']?.strategy?.matrix) !== JSON.stringify(darwin))
+    problems.push('darwin: leaf matrix differs from its proofs');
   for (const [name, dependency] of [
-    ['universal-native-build', 'darwin-contained-files'],
+    ['universal-native-build', 'darwin-native'],
     ['universal-native-run', 'universal-native-build'],
   ]) {
     if (!name || !dependency) throw new Error('Invalid universal evidence edge');
@@ -256,6 +264,20 @@ describe('CI evidence parity', () => {
         CI.replace('needs: [plan, universal-native-build]', 'needs: [plan]'),
       ),
     ).toContain('universal-native-run: shared dependency');
+    expect(
+      workflowCoverageProblems(
+        // The first such edge in the file is the packed lane's.
+        CI.replace('needs: [plan, darwin-native]', 'needs: plan'),
+      ),
+    ).toContain('darwin-contained-files: planning dependency');
+    expect(
+      workflowCoverageProblems(
+        CI.replace(
+          'needs: [plan, darwin-native]\n    runs-on: ubuntu-latest',
+          'needs: [plan, darwin-contained-files]\n    runs-on: ubuntu-latest',
+        ),
+      ),
+    ).toContain('universal-native-build: shared dependency');
     expect(
       workflowCoverageProblems(CI.replace('        universal-native-run,\n', '')),
     ).toContain('artifacts: missing universal-native-run');
