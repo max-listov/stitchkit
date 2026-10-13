@@ -43,35 +43,43 @@ export async function runInstalledConsumerProofs(input: {
     for (const runtime of runtimes) jobs.push({ proof, runtime });
   }
 
-  // Long proofs first: the lane then lasts as long as its slowest proof, not that proof plus a tail.
-  jobs.sort((a, b) => Number(b.proof.long === true) - Number(a.proof.long === true));
-
-  // The first failure stops new proofs from starting; the ones in flight settle before it is thrown.
-  let next = 0;
+  type Job = (typeof jobs)[number];
   let failure: { error: unknown } | undefined;
-  const worker = async (): Promise<void> => {
-    while (failure === undefined) {
-      const job = jobs[next];
-      if (job === undefined) return;
-      next += 1;
-      const { proof, runtime } = job;
-      try {
-        const output = await input.run(proof, runtime);
-        if (
-          proof.kind === 'runtime' &&
-          !output.split(/\r?\n/).some((line) => line === proof.marker)
-        )
-          throw new Error(
-            `Installed proof ${proof.id}/${runtime} has no exact success marker`,
-          );
-        input.verdict(proof, runtime, 'succeeded');
-      } catch (error) {
-        input.verdict(proof, runtime, 'failed');
-        failure ??= { error };
-      }
+  const runJob = async ({ proof, runtime }: Job): Promise<void> => {
+    try {
+      const output = await input.run(proof, runtime);
+      if (
+        proof.kind === 'runtime' &&
+        !output.split(/\r?\n/).some((line) => line === proof.marker)
+      )
+        throw new Error(`Installed proof ${proof.id}/${runtime} has no exact success marker`);
+      input.verdict(proof, runtime, 'succeeded');
+    } catch (error) {
+      input.verdict(proof, runtime, 'failed');
+      failure ??= { error };
     }
   };
-  const width = Math.max(1, Math.min(input.concurrency ?? 1, jobs.length));
+
+  // Long proofs first: the lane then lasts as long as its slowest proof, not that proof plus a tail.
+  const shared = jobs
+    .filter((job) => job.proof.exclusive !== true)
+    .sort((a, b) => Number(b.proof.long === true) - Number(a.proof.long === true));
+  // The first failure stops new proofs from starting; the ones in flight settle before it is thrown.
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (failure === undefined) {
+      const job = shared[next];
+      if (job === undefined) return;
+      next += 1;
+      await runJob(job);
+    }
+  };
+  const width = Math.max(1, Math.min(input.concurrency ?? 1, shared.length));
   await Promise.all(Array.from({ length: width }, worker));
+  // An exclusive proof changes what the others read, so it runs once nothing else is in flight.
+  for (const job of jobs) {
+    if (failure !== undefined) break;
+    if (job.proof.exclusive === true) await runJob(job);
+  }
   if (failure !== undefined) throw failure.error;
 }

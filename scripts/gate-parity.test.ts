@@ -118,6 +118,21 @@ function workflowCoverageProblems(source: string): string[] {
     JSON.stringify(jobs['universal-native-run']?.strategy?.matrix) !== JSON.stringify(darwin)
   )
     problems.push('universal: incomplete native matrix');
+  // Every shard of the core suite runs, or some test files silently never do.
+  const shards = jobs.portable?.strategy?.matrix?.shard;
+  const sharded = jobs.portable?.steps
+    .map((step) =>
+      step.run?.match(
+        /^bun --filter stitchkit test --shard=\$\{\{ matrix\.shard \}\}\/(\d+)$/,
+      ),
+    )
+    .find((match) => match !== null && match !== undefined);
+  const total = Number(sharded?.[1]);
+  if (
+    !Number.isInteger(total) ||
+    JSON.stringify(shards) !== JSON.stringify(Array.from({ length: total }, (_, i) => i + 1))
+  )
+    problems.push('portable: incomplete test shards');
   if (jobs.result?.if !== 'always()') problems.push('result: must always check');
   if (jobs.artifacts?.if !== "always() && needs.plan.outputs.artifacts == 'true'")
     problems.push('artifacts: selection');
@@ -270,6 +285,12 @@ describe('CI evidence parity', () => {
         CI.replace('needs: [plan, darwin-native]', 'needs: plan'),
       ),
     ).toContain('darwin-contained-files: planning dependency');
+    expect(
+      workflowCoverageProblems(CI.replace('shard: [1, 2, 3, 4]', 'shard: [1, 2, 3]')),
+    ).toContain('portable: incomplete test shards');
+    expect(workflowCoverageProblems(CI.replace('}}/4\n', '}}/5\n'))).toContain(
+      'portable: incomplete test shards',
+    );
     expect(
       workflowCoverageProblems(
         CI.replace(

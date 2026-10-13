@@ -82,3 +82,28 @@ test('one proof at a time remains the default', async () => {
   });
   expect(widest).toBe(1);
 });
+
+test('an exclusive proof runs with nothing else in flight', async () => {
+  const node = installedConsumerProofs.filter(
+    (proof) => proof.fixture === 'node' && proof.platforms.includes('darwin'),
+  );
+  expect(node.some((proof) => proof.exclusive === true)).toBe(true);
+  let active = 0;
+  const besideExclusive: number[] = [];
+  await runInstalledConsumerProofs({
+    fixture: 'node',
+    platform: 'darwin',
+    uid: 501,
+    concurrency: 4,
+    run: async (proof) => {
+      active += 1;
+      if (proof.exclusive === true) besideExclusive.push(active - 1);
+      await Bun.sleep(1);
+      active -= 1;
+      return proof.marker;
+    },
+    verdict: () => undefined,
+  });
+  expect(besideExclusive.length).toBeGreaterThan(0);
+  expect(besideExclusive.every((others) => others === 0)).toBe(true);
+});

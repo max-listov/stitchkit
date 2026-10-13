@@ -99,12 +99,20 @@ describe('createDirectoryInbox', () => {
     const clock = clockAt();
     await drop(dir, 'cut.json', { from: '1', to: '2' });
     // The first process takes the entry and never finishes.
-    const dying = await open(dir, () => new Promise<void>(() => undefined), {
-      clock: clock.now,
-      leaseMs: 60_000,
+    let taken = (): void => undefined;
+    const takenByDying = new Promise<void>((resolve) => {
+      taken = resolve;
     });
+    const dying = await open(
+      dir,
+      () => {
+        taken();
+        return new Promise<void>(() => undefined);
+      },
+      { clock: clock.now, leaseMs: 60_000 },
+    );
     void dying.inbox.flush();
-    await Bun.sleep(50);
+    await takenByDying;
 
     const attempts: number[] = [];
     const successor = await open(

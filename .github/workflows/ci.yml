@@ -89,12 +89,18 @@ jobs:
       - run: bun --filter stitchkit build
       - run: bun test scripts/*.test.ts
 
+  # The core suite is split by file across four runners: each shard is an ordinary sequential
+  # `bun test` in its own process, so the suite answers in the time of its longest shard.
   portable:
-    name: Framework portable surface
+    name: Framework portable surface / ${{ matrix.shard }}
     if: needs.plan.outputs.portable == 'true'
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:18-alpine
@@ -118,7 +124,7 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun --filter stitchkit check
-      - run: bun --filter stitchkit test
+      - run: bun --filter stitchkit test --shard=${{ matrix.shard }}/4
       - run: bun --filter stitchkit build
       - name: Qualify privileged Linux UID refusal through the installed package
         working-directory: packages/core

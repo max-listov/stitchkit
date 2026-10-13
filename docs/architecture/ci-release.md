@@ -66,7 +66,8 @@ Darwin proof waiting for the native leaf it proves:
 | Job | Runs when | Guarantee |
 | --- | --- | --- |
 | `repository` | always | workflow/release contracts, formatting and script types/tests |
-| `portable` | core/shared change | core types/tests/build, PostgreSQL adapter, smokes and packed consumer |
+| `portable` | core/shared change | four shards of the core suite, each with core types and build |
+| `portable-lanes` | core/shared change | PostgreSQL stores, Next SSR and Node smokes, packed consumer lane |
 | `tui` | TUI target/change | terminal package types/tests/build and packed host |
 | `starter-package` | starter compatibility is selected | scaffolder and authored template types |
 | `darwin-native` | core target/change | builds the arm64/x64 native leaf once on its own architecture and uploads it |
@@ -91,12 +92,18 @@ built once, by `darwin-native`; the packed lane, the universal archive and artif
 download those bytes, so the shipped leaf is the one every Darwin proof ran, and the universal chain
 starts when the leaves exist instead of after the packed lane.
 
-Inside a lane, independent work runs at once. The core suite runs `bun test --parallel`, one worker
-per core, so a test must not depend on what else the process does: it counts its own descriptors,
-not the process's, and bounds a command with a limit a loaded host can meet. The packed consumer
+Inside a lane, independent work runs at once. The core suite is split by file across four `portable`
+runners (`bun test --shard=N/4`); each shard is an ordinary sequential `bun test` in its own process,
+and the graph check refuses a shard list that does not cover every file. In-process worker
+parallelism (`bun test --parallel`) is not used: on a hosted runner a worker crashed with SIGSEGV and
+took its sibling down with it. A test still must not depend on what else runs on the host: it counts
+its own descriptors, not the process's, waits for an event rather than a sleep, and bounds a command
+with a limit a loaded host can meet. The packed consumer
 lane runs its installed proofs through a pool as wide as the host, each proof in its own temporary
 directories; proofs that wait on a real clock (`long` in `installed-proofs.ts`) start first, so the
-lane lasts about as long as its slowest proof rather than the sum of all of them.
+lane lasts about as long as its slowest proof rather than the sum of all of them. A proof that
+changes the shared install (`exclusive`, the Darwin artifact proof that hides `node_modules`) runs
+after the pool, with nothing beside it.
 
 ## Local gate
 

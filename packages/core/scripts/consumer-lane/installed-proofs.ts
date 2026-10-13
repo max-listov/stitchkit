@@ -24,6 +24,8 @@ const ProofSchema = z.object({
   capability: z.literal('linux-root').optional(),
   /** Waits on a real clock for tens of seconds; started first so it overlaps the short proofs. */
   long: z.literal(true).optional(),
+  /** Changes the fixture's shared install (hides `node_modules`), so it runs with nothing beside it. */
+  exclusive: z.literal(true).optional(),
 });
 export type InstalledConsumerProof = z.infer<typeof ProofSchema>;
 
@@ -196,7 +198,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   },
   {
     id: 'darwin-artifacts',
-    long: true,
+    exclusive: true,
     fixture: 'node',
     entry: 'darwin-artifacts.mjs',
     files: ['darwin-artifact-controls.mjs', 'contained-files.mjs'],
