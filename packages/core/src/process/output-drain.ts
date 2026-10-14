@@ -8,8 +8,19 @@ import { NativeCommandError, type ParsedNativeCommandOptions } from './contract'
 export function createOutputDrain(options: ParsedNativeCommandOptions, signal: AbortSignal) {
   const captured = { stdout: [] as Uint8Array[], stderr: [] as Uint8Array[] };
   let total = 0;
-  const drain = async (stream: AsyncIterable<Uint8Array>, channel: 'stdout' | 'stderr') => {
+  const drain = async (
+    stream: AsyncIterable<Uint8Array>,
+    channel: 'stdout' | 'stderr',
+    admitted?: Promise<void>,
+  ) => {
+    let admission = admitted;
     for await (const chunk of stream) {
+      // Claim the reader before the start handshake, but retain normal backpressure and
+      // defer capture/sinks until the owner's start callback has accepted this command.
+      if (admission) {
+        await admission;
+        admission = undefined;
+      }
       // A stopping command's output is read and dropped until cleanup closes the pipe: the
       // leader keeps a reader through its grace instead of meeting a broken pipe, and no
       // sink starts after the abort.

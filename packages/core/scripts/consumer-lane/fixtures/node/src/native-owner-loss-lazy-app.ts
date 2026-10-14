@@ -37,7 +37,13 @@ async function main(): Promise<void> {
       result.exitCode !== 0 ||
       new TextDecoder().decode(result.stdout).trim() !== 'lazy-owner-loss'
     )
-      throw new Error('lazy owner-loss probe returned the wrong result');
+      throw new Error(
+        `lazy owner-loss probe returned the wrong result: ${JSON.stringify({
+          exitCode: result.exitCode,
+          signal: result.signal,
+          stdout: new TextDecoder().decode(result.stdout),
+        })}`,
+      );
     console.log('lazy owner-loss probe: ok');
     return;
   }

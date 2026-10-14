@@ -163,14 +163,20 @@ export function startNativeCommand(
       throw commandCleanupError(cause);
     }
   };
+  const admitted = Promise.withResolvers<void>();
   const run = (async (): Promise<NativeCommandResult> => {
     try {
-      const pid = await raceAbort(launched.start(), controller.signal);
-      if (pid !== undefined) options.onLeaderStarted?.({ pid });
+      const started = launched.start();
+      // A short target may exit before its control handshake arrives. Own the readers
+      // immediately: the child otherwise auto-drains unread pipes on exit and loses bytes.
       const drains = Promise.all([
-        output.drain(stdout, 'stdout'),
-        output.drain(stderr, 'stderr'),
+        output.drain(stdout, 'stdout', admitted.promise),
+        output.drain(stderr, 'stderr', admitted.promise),
       ]);
+      void drains.catch((error) => controller.abort(error));
+      const pid = await raceAbort(started, controller.signal);
+      if (pid !== undefined) options.onLeaderStarted?.({ pid });
+      admitted.resolve();
       await raceAbort(Promise.all([drains, leader.then(settleLeader)]), controller.signal);
       const status = await raceAbort(closed, controller.signal);
       if (spawnFailure !== undefined) throw spawnFailure;
@@ -181,6 +187,7 @@ export function startNativeCommand(
       };
     } catch (error) {
       controller.abort(error);
+      admitted.resolve();
       await cleanupNativeCommand({
         error,
         transport: acquired,

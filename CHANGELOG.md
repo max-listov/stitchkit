@@ -26,7 +26,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ### Fixed
 
-- A fast owner-loss guard exit no longer overtakes a buffered start handshake. The control stream, rather than the process exit event, determines whether the handshake was missing. Native lifetime qualification checks descendant death within its cleanup window before asserting stable output.
+- A fast owner-loss guard exit no longer overtakes a buffered start handshake or discards captured output while the handshake is in flight. The control stream determines whether the handshake was missing, and output readers attach before waiting for it. Native lifetime qualification checks descendant death within its cleanup window before asserting stable output.
 
 ### Added
 
