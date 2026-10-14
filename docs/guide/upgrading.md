@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: 0.110.0
+## Released migration: 0.110.0
 
 ### Interrupted process drains
 

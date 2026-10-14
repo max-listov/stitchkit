@@ -15,7 +15,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.110.0] - 2026-10-14
+
 ### ⚠️ Breaking changes
+
+**Who must act:** applications with exhaustive lifecycle termination/previous-exit switches must handle `interrupted`. Other applications can adopt the HTTP and native cleanup fixes without code changes.
 
 - `stitchkit/application` — an abandoned `draining` process now ends as `interrupted`, including a drain before readiness. Before: `previousExit === "abnormal"` (or `"startup-failed"`) mixed unfinished shutdowns with crashes; after: add `case "interrupted"` to exhaustive handlers. Handoff and hot reload stay unchanged. `StartFact.previousDrainUpperBoundMs` measures the recorded drain-to-successor upper bound without claiming a kill signal or exact death time.
   **Affects:** `stitchkit/application` LifecycleTerminationSchema, LifecycleTermination, PreviousExitSchema, PreviousExit, StartFact, transitionProcessStart
