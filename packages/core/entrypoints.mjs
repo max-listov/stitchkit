@@ -18,6 +18,7 @@
 export const ENTRYPOINTS = [
   { subpath: '.', source: 'src/entrypoints/index.ts', browser: true },
   { subpath: './http', source: 'src/entrypoints/http.ts', browser: true },
+  { subpath: './realtime', source: 'src/entrypoints/realtime.ts', browser: true },
   { subpath: './live', source: 'src/entrypoints/live.ts', browser: true },
   { subpath: './react', source: 'src/entrypoints/react.ts', browser: true },
   { subpath: './react/keyboard', source: 'src/entrypoints/react/keyboard.ts', browser: true },

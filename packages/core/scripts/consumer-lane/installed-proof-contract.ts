@@ -11,7 +11,7 @@ export const DeclarationVariantSchema = z.object({
 
 export const InstalledConsumerProofSchema = z.object({
   id: z.string().min(1),
-  fixture: z.enum(['minimal', 'node', 'mcp-only', 'declarations']),
+  fixture: z.enum(['minimal', 'node', 'mcp-only', 'declarations', 'native-client']),
   entry: z.string().min(1),
   files: z.array(z.string().min(1)),
   peers: z.array(z.string()),

@@ -13,6 +13,36 @@ const native = {
 };
 export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).parse([
   {
+    id: 'native-client-types',
+    fixture: 'native-client',
+    entry: 'native-client-types.ts',
+    files: [],
+    peers: ['zod', 'socket.io-client'],
+    platforms: ['linux', 'darwin', 'win32'],
+    runtimes: [],
+    kind: 'declarations',
+    resolution: 'NodeNext',
+    marker: 'strict native realtime declarations: ok',
+  },
+  {
+    id: 'native-client-hermes',
+    fixture: 'native-client',
+    entry: 'native-client-hermes.mjs',
+    files: ['native-client-graph.mjs'],
+    peers: [
+      'zod',
+      'socket.io-client',
+      'socket.io',
+      '@tanstack/react-query',
+      'react',
+      'react-query-kit',
+    ],
+    platforms: ['linux', 'darwin'],
+    runtimes: ['bun'],
+    kind: 'runtime',
+    marker: 'packed Hermes native HTTP query realtime graph: ok',
+  },
+  {
     id: 'lifecycle-interrupted',
     fixture: 'minimal',
     entry: 'lifecycle-interrupted.mjs',

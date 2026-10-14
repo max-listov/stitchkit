@@ -2617,3 +2617,24 @@ An HTTP-only entrypoint for browsers, React Native/Hermes and servers. It export
 import { createClients, createHttpClient } from 'stitchkit/http';
 import { defineContract } from 'stitchkit/contract';
 ```
+
+## `stitchkit/realtime`
+
+Hermes-safe realtime clients reuse the root transport and contract implementation. Both
+`createRealtimeClient` and `createSocketIOClient` require `peers.client` here; no default
+computed import enters this graph. Root clients retain their optional lazy runtime loader.
+
+```ts
+import { createRealtimeClient, defineRealtimeContract } from 'stitchkit/realtime';
+const client = createRealtimeClient(contract, {
+  url,
+  peers: { client: () => import('socket.io-client') },
+});
+```
+
+Native consumers import HTTP factories, `ApiError`, `createUrlBuilder`,
+`contractEndpointMatchers` and `uploadInChunks` from `stitchkit/http`; schema factories,
+`ContractDef` and `paginatedSchema` from `stitchkit/contract`; realtime factories,
+`RealtimeClient`, `defineRealtimeContract`, `InferRealtimeEventMap`, `createRetainedTopics`
+and `RetainedTopics` from `stitchkit/realtime`. `createQueryClientFactory` remains in
+`stitchkit/react`. Shared modules must use the same public leaves throughout their graph.

@@ -1,6 +1,14 @@
 /** HTTP clients without the optional realtime peer graph; usable in React Native/Hermes. */
 export { ApiError } from '../browser/api-error';
 export {
+  type ChunkedUploadConfig,
+  type ChunkedUploadPart,
+  type ChunkedUploadProgress,
+  type ChunkedUploadStart,
+  type ChunkSource,
+  uploadInChunks,
+} from '../browser/chunked-upload';
+export {
   type ClientConfig,
   type ClientContract,
   type ClientFetch,

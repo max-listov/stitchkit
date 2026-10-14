@@ -76,6 +76,7 @@ const FIXTURES = containedFilesOnly
       : ['node']
     : [
         'minimal',
+        'native-client',
         'declarations',
         'nodenext',
         'mcp-only',

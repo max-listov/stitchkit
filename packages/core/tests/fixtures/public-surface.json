@@ -2800,6 +2800,11 @@
     "ApiError",
     "ApiEvent",
     "ApiEventListener",
+    "ChunkSource",
+    "ChunkedUploadConfig",
+    "ChunkedUploadPart",
+    "ChunkedUploadProgress",
+    "ChunkedUploadStart",
     "ClientConfig",
     "ClientContract",
     "ClientFetch",
@@ -2824,6 +2829,23 @@
     "createScopedClients",
     "createScopedUrlBuilders",
     "createUrlBuilder",
-    "createUrlBuilders"
+    "createUrlBuilders",
+    "uploadInChunks"
+  ],
+  "stitchkit/realtime": [
+    "InferRealtimeEventMap",
+    "RealtimeClient",
+    "RealtimeClientOptions",
+    "RealtimeContract",
+    "RealtimeEventRegistry",
+    "RetainedTopics",
+    "SocketEventMap",
+    "SocketIOClient",
+    "SocketIOClientConfig",
+    "SocketIOClientPeerLoaders",
+    "createRealtimeClient",
+    "createRetainedTopics",
+    "createSocketIOClient",
+    "defineRealtimeContract"
   ]
 }

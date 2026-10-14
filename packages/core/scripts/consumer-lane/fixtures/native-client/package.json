@@ -1,0 +1,21 @@
+{
+  "name": "stitchkit-consumer-native-client",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "stitchkit": "TARBALL",
+    "zod": "^4.4.3",
+    "socket.io-client": "^4.8.3",
+    "socket.io": "^4.8.3",
+    "@tanstack/react-query": "^5.103.2",
+    "react": "^19.2.4",
+    "react-query-kit": "^3.3.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "hermes-compiler": "250829098.0.19",
+    "@babel/core": "8.0.7",
+    "@babel/plugin-transform-async-generator-functions": "8.0.6",
+    "@types/react": "^19.3.0"
+  }
+}

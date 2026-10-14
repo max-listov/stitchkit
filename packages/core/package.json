@@ -260,6 +260,10 @@
     "./http": {
       "types": "./dist/entrypoints/http.d.ts",
       "import": "./dist/entrypoints/http.js"
+    },
+    "./realtime": {
+      "types": "./dist/entrypoints/realtime.d.ts",
+      "import": "./dist/entrypoints/realtime.js"
     }
   },
   "publishConfig": {

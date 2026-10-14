@@ -38,6 +38,17 @@ function featureSource(subpath, name) {
  */
 export const OPTIONAL_PEER_MATRIX = [
   {
+    id: 'explicit-realtime-client',
+    subpath: './realtime',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit/realtime', 'createRealtimeClient'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
     id: 'http-client',
     subpath: './http',
     fixture: 'minimal',

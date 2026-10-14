@@ -1,5 +1,5 @@
 {
-  "$comment": "Ceilings on the public surface. Raising a limit or adding a shared name is a reviewed change with its reason, not a regenerated snapshot; the reason for each raise lives in its commit and the CHANGELOG. \u2192 ADR 0198, docs/PRINCIPLES.md I8.",
+  "$comment": "Ceilings on the public surface. Raising a limit or adding a shared name is a reviewed change with its reason, not a regenerated snapshot; the reason for each raise lives in its commit and the CHANGELOG. → ADR 0198, docs/PRINCIPLES.md I8.",
   "limits": {
     "stitchkit": 235,
     "stitchkit/agent-runtime": 364,
@@ -51,7 +51,8 @@
     "stitchkit/process": 12,
     "stitchkit/process/owner-loss": 1,
     "stitchkit/tools/mcp": 47,
-    "stitchkit/http": 28
+    "stitchkit/http": 34,
+    "stitchkit/realtime": 14
   },
   "overlaps": [
     {
@@ -631,6 +632,11 @@
         "ApiError",
         "ApiEvent",
         "ApiEventListener",
+        "ChunkSource",
+        "ChunkedUploadConfig",
+        "ChunkedUploadPart",
+        "ChunkedUploadProgress",
+        "ChunkedUploadStart",
         "ClientConfig",
         "ClientContract",
         "ClientFetch",
@@ -655,7 +661,28 @@
         "createScopedClients",
         "createScopedUrlBuilders",
         "createUrlBuilder",
-        "createUrlBuilders"
+        "createUrlBuilders",
+        "uploadInChunks"
+      ]
+    },
+    {
+      "entrypoints": ["stitchkit", "stitchkit/realtime"],
+      "reason": "The explicit-peer realtime leaf reuses the canonical transport contracts and retained-topic owners while excluding the root default peer loader.",
+      "names": [
+        "InferRealtimeEventMap",
+        "RealtimeClient",
+        "RealtimeClientOptions",
+        "RealtimeContract",
+        "RealtimeEventRegistry",
+        "RetainedTopics",
+        "SocketEventMap",
+        "SocketIOClient",
+        "SocketIOClientConfig",
+        "SocketIOClientPeerLoaders",
+        "createRealtimeClient",
+        "createRetainedTopics",
+        "createSocketIOClient",
+        "defineRealtimeContract"
       ]
     }
   ],
@@ -672,7 +699,7 @@
     {
       "entrypoint": "stitchkit/tools",
       "names": ["MountableTool", "ToolOperation"],
-      "reason": "Documented shapes a caller holds: MountableTool is what collectTools returns, ToolOperation the path-free operation both runners execute; exported so the value can be named, not re-derived with Parameters<\u2026>."
+      "reason": "Documented shapes a caller holds: MountableTool is what collectTools returns, ToolOperation the path-free operation both runners execute; exported so the value can be named, not re-derived with Parameters<…>."
     },
     {
       "entrypoint": "stitchkit/tools",
