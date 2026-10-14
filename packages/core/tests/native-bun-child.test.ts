@@ -46,8 +46,9 @@ test('the Bun child reports exit and signal like a Node child, close after its p
   expect(killed.kill('SIGKILL')).toBe(false);
 });
 
-test('a pipe nobody reads is drained so the child still closes', async () => {
-  const child = spawnShell('head -c 300000 /dev/zero');
+test('an unread pipe is drained after its producer exits so the child still closes', async () => {
+  // Unread output must fit in the native pipe: Node also blocks a producer that fills it.
+  const child = spawnShell('printf unread');
   child.stdin.end();
   await once(child, 'close');
   expect(child.exitCode).toBe(0);

@@ -71,7 +71,9 @@ const narrowNative = nativeUIDOnly || nativeOwnersOnly;
 const FIXTURES = containedFilesOnly
   ? ['minimal', 'node']
   : narrowNative
-    ? ['node']
+    ? nativeOwnersOnly
+      ? ['minimal', 'node']
+      : ['node']
     : [
         'minimal',
         'declarations',
@@ -218,6 +220,7 @@ try {
       ? ['native-owner-uid']
       : nativeOwnersOnly
         ? [
+            'native-primitives',
             'native-owners',
             'native-cross-entry-owner',
             'native-command-reasons',

@@ -2,6 +2,7 @@ import { raceAbort } from '../internal/abort-race';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { MAX_TIMER_MS, sleep } from '../internal/timers';
 import { NativeCommandError, type ParsedNativeCommandStopPolicy } from './contract';
+import { waitForProcessGroupExit } from './group-settlement';
 
 /** Chain native-sized timers; internal callers retain their declared safe-integer deadline. */
 export function createCommandDeadline(timeoutMs: number, reason: unknown) {
@@ -82,6 +83,17 @@ async function signalUntilSettled(
   }
 }
 
+async function killAndSettleGroup(
+  pid: number | undefined,
+  deadline: number,
+  cleanupTimeoutMs: number,
+): Promise<boolean> {
+  const cleanupDeadline = Math.min(deadline, performance.now() + cleanupTimeoutMs);
+  const signalled = await signalUntilSettled(pid, 'SIGKILL', cleanupDeadline);
+  if (signalled) await waitForProcessGroupExit(pid, cleanupDeadline);
+  return signalled;
+}
+
 /** One stop of a command's group: the policy, the bound for retries and whether to skip the grace. */
 export interface CommandGroupStop {
   readonly pid: number | undefined;
@@ -106,7 +118,7 @@ export async function stopCommandGroup(stop: CommandGroupStop): Promise<boolean>
   const { pid, policy } = stop;
   const deadline = performance.now() + policy.graceMs + stop.cleanupTimeoutMs;
   if (stop.force || policy.killOn?.aborted)
-    return signalUntilSettled(pid, 'SIGKILL', deadline);
+    return killAndSettleGroup(pid, deadline, stop.cleanupTimeoutMs);
   if (!(await signalUntilSettled(pid, policy.signal, deadline))) return false;
   const until = performance.now() + policy.graceMs;
   let interval = 10;
@@ -119,7 +131,7 @@ export async function stopCommandGroup(stop: CommandGroupStop): Promise<boolean>
     interval = Math.min(interval * 2, 250);
     present = exists(pid);
   }
-  if (present) await signalUntilSettled(pid, 'SIGKILL', deadline);
+  if (present) await killAndSettleGroup(pid, deadline, stop.cleanupTimeoutMs);
   return true;
 }
 
@@ -162,7 +174,7 @@ export async function stopCommandLeader(
     policy.killOn?.removeEventListener('abort', end);
     grace.abort();
   }
-  return (await signalUntilSettled(pid, 'SIGKILL', deadline)) || signalled;
+  return (await killAndSettleGroup(pid, deadline, stop.cleanupTimeoutMs)) || signalled;
 }
 
 /**

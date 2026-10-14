@@ -93,9 +93,12 @@ async function lateServerProbe() {
     const pending = http.get<{ ok: boolean }>('/probe');
     void pending.catch(() => undefined);
     const firstError = await withDeadline(probe.firstFailure, 'first connection failure');
-    if (ownCode(firstError) !== 'ConnectionRefused') {
+    if (
+      ownCode(firstError) !== 'ConnectionRefused' &&
+      ownCode(firstError) !== 'ECONNREFUSED'
+    ) {
       throw new Error(
-        `Expected Bun ConnectionRefused, received ${String(ownCode(firstError))}`,
+        `Expected Bun connection refusal, received ${String(ownCode(firstError))}`,
       );
     }
     server = Bun.serve({ port, fetch: () => Response.json({ ok: true }) });

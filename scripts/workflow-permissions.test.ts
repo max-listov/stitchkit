@@ -62,11 +62,13 @@ describe('target-aware CI graph', () => {
     expect(section('artifacts', 'result')).toContain('darwin-contained-files');
   });
 
-  test('Darwin runs only the packed platform-specific proof', () => {
+  test('Darwin qualifies packed filesystem and concurrent command lifetimes', () => {
     const darwin = section('darwin-contained-files', 'supervised');
     expect(darwin).toContain('macos-15');
     expect(darwin).toContain('macos-15-intel');
     expect(darwin).toContain('bun run contained-files-packed-lane');
+    expect(darwin).toContain('for attempt in 1 2 3; do');
+    expect(darwin).toContain('consumer-lane --native-owners-only');
     expect(darwin).not.toContain('bun run consumer-lane');
   });
 

@@ -4,11 +4,13 @@ import { z } from 'zod';
  * Where a run is. `active` and `draining` are open: the run is alive, and
  * `draining` means it has stopped admitting work — from `unavailableAt` on
  * nobody new is answered. The rest are how it ended. `clean`, `forced` and
- * `startup-failed` are recorded by the run itself; `hot-reload` and `abnormal`
+ * `startup-failed` are recorded by the run itself; `hot-reload`, `interrupted` and `abnormal`
  * by its successor, because the run never got to say — the same pid started
  * again, or a different pid found it still open. `abnormal` is a crash
  * observed from outside, not a kill the process acknowledged, so the two stay
- * distinct. `startup-failed` is a run that ended before it was ever ready,
+ * distinct. `interrupted` means a successor found an unfinished drain; the ledger
+ * cannot establish the signal that killed it or its exact death time.
+ * `startup-failed` is a run that ended before it was ever ready,
  * whether it said so itself or a successor found it open.
  */
 export const LifecycleTerminationSchema = z.enum([
@@ -19,6 +21,7 @@ export const LifecycleTerminationSchema = z.enum([
   'startup-failed',
   'hot-reload',
   'abnormal',
+  'interrupted',
 ]);
 export type LifecycleTermination = z.infer<typeof LifecycleTerminationSchema>;
 
@@ -60,6 +63,7 @@ export const PreviousExitSchema = z.enum([
   'startup-failed',
   'handoff',
   'abnormal',
+  'interrupted',
 ]);
 export type PreviousExit = z.infer<typeof PreviousExitSchema>;
 
@@ -79,6 +83,8 @@ export interface StartFact {
    * processes, not the time nobody answered — that is `ReadyFact.downtimeMs`.
    */
   readonly processGapMs: number | null;
+  /** From recorded admission stop to this start: an upper bound, not a measured kill time. */
+  readonly previousDrainUpperBoundMs: number | null;
 }
 
 export interface ReadyFact {
@@ -213,7 +219,14 @@ function previousExitOf(
     ? overlap.versionChange
     : overlap.sameVersion;
   if (declared === 'handoff') return 'handoff';
-  return previous.readyAt === null ? 'startup-failed' : 'abnormal';
+  return abandonedTermination(previous);
+}
+
+function abandonedTermination(
+  run: LifecycleRun,
+): 'startup-failed' | 'abnormal' | 'interrupted' {
+  if (run.termination === 'draining') return 'interrupted';
+  return run.readyAt === null ? 'startup-failed' : 'abnormal';
 }
 
 /**
@@ -240,7 +253,7 @@ function closeAbandoned(
   if (candidate.runId === previous?.runId && previousExit === 'handoff') return candidate;
   return {
     ...closed,
-    termination: candidate.readyAt === null ? 'startup-failed' : 'abnormal',
+    termination: abandonedTermination(candidate),
   };
 }
 
@@ -293,6 +306,13 @@ export function transitionProcessStart(
       previousVersion: previous?.version ?? null,
       versionChanged: previous !== null && isVersionChange(previous.version, run.version),
       processGapMs,
+      previousDrainUpperBoundMs:
+        previousExit === 'interrupted' &&
+        previous?.unavailableAt !== null &&
+        previous?.unavailableAt !== undefined &&
+        epoch(run.startedAt) >= epoch(previous.unavailableAt)
+          ? elapsed(run.startedAt, previous.unavailableAt)
+          : null,
     },
   };
 }

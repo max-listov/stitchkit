@@ -1,9 +1,7 @@
 import { expect, test } from 'bun:test';
+import type { InstalledConsumerProof } from '../scripts/consumer-lane/installed-proof-contract';
 import { runInstalledConsumerProofs } from '../scripts/consumer-lane/installed-proof-runner';
-import {
-  type InstalledConsumerProof,
-  installedConsumerProofs,
-} from '../scripts/consumer-lane/installed-proofs';
+import { installedConsumerProofs } from '../scripts/consumer-lane/installed-proofs';
 
 const minimal = installedConsumerProofs.filter(
   (proof) => proof.fixture === 'minimal' && proof.platforms.includes('linux'),
@@ -17,14 +15,17 @@ test('the pool never exceeds its width and starts the longest proofs first', asy
   let active = 0;
   let widest = 0;
   const started: InstalledConsumerProof[] = [];
+  const jobs = new Set<string>();
   await runInstalledConsumerProofs({
     fixture: 'minimal',
     platform: 'linux',
     uid: 1000,
     concurrency: 3,
-    run: async (proof) => {
+    run: async (proof, runtime) => {
       if (proof.idle === true) return proof.marker;
-      started.push(proof);
+      const key = `${proof.id}/${runtime}`;
+      if (!jobs.has(key)) started.push(proof);
+      jobs.add(key);
       active += 1;
       widest = Math.max(widest, active);
       await Bun.sleep(1);
@@ -39,6 +40,37 @@ test('the pool never exceeds its width and starts the longest proofs first', asy
   expect(expected[0]).toBe(Math.max(...expected));
   expect(expected[0]).toBeGreaterThan(0);
   expect(expected).toEqual([...expected].sort((a, b) => b - a));
+});
+
+test('every repetition must pass before a native lifetime proof succeeds', async () => {
+  let calls = 0;
+  const verdicts: string[] = [];
+  await runInstalledConsumerProofs({
+    ids: ['native-primitives'],
+    platform: 'linux',
+    run: async (proof) => {
+      calls += 1;
+      return proof.marker;
+    },
+    verdict: (_proof, runtime, state) => verdicts.push(`${runtime}:${state}`),
+  });
+  expect(calls).toBe(6);
+  expect(verdicts).toEqual(['bun:succeeded', 'node:succeeded']);
+  calls = 0;
+  verdicts.length = 0;
+  await expect(
+    runInstalledConsumerProofs({
+      ids: ['native-primitives'],
+      platform: 'linux',
+      run: async (proof) => {
+        calls += 1;
+        return calls === 3 ? 'missing marker on final repetition' : proof.marker;
+      },
+      verdict: (_proof, runtime, state) => verdicts.push(`${runtime}:${state}`),
+    }),
+  ).rejects.toThrow('no exact success marker');
+  expect(calls).toBe(3);
+  expect(verdicts).toEqual(['bun:failed']);
 });
 
 test('a failure starts nothing new, lets proofs in flight settle and is thrown', async () => {
@@ -119,7 +151,7 @@ test('an idle proof starts first and may run beside an exclusive one', async () 
     releaseIdle = resolve;
   });
   await runInstalledConsumerProofs({
-    fixtures: ['minimal'],
+    fixtures: ['minimal', 'node'],
     platform: 'darwin',
     uid: 501,
     concurrency: 3,

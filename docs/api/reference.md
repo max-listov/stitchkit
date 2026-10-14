@@ -607,6 +607,9 @@ lane never reaches the hooks on either runtime.
 
 ## `stitchkit/application`
 
+`StartFact` also carries `previousDrainUpperBoundMs`: the time from a predecessor's recorded admission stop to this start when its exit is `interrupted`, otherwise `null`. This is an upper bound, and does not identify a kill signal or supervisor deadline.
+
+
 Server-only process-local application composition. See the
 [application kernel guide](../guide/application-kernel.md) and
 [architecture](../architecture/application-kernel.md). Complete consumer
@@ -2605,3 +2608,12 @@ has no `outputPath`, because nothing is written beside the executable. Keep comp
 without splitting, preserve every output, and write each asset's `bytes` to its `outputPath`.
 This evolving entrypoint is a build dependency; runtime imports do not reach it.
 The detailed recipe is in [native IO](../guide/native-io.md#public-native-packaging).
+
+## `stitchkit/http`
+
+An HTTP-only entrypoint for browsers, React Native/Hermes and servers. It exports the same `createClient`, `createClients`, `createHttpClient`, URL builders, client configuration types and `ApiError` as the root, without loading its optional Socket.IO graph. Import shared contracts from `stitchkit/contract`.
+
+```ts
+import { createClients, createHttpClient } from 'stitchkit/http';
+import { defineContract } from 'stitchkit/contract';
+```

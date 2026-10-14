@@ -62,7 +62,11 @@ export function shouldRetryBunNetworkError(error: unknown): true | undefined {
   if (!(error instanceof Error)) return undefined;
 
   const code = Object.getOwnPropertyDescriptor(error, 'code');
-  return code && 'value' in code && code.value === 'ConnectionRefused' ? true : undefined;
+  return code &&
+    'value' in code &&
+    (code.value === 'ConnectionRefused' || code.value === 'ECONNREFUSED')
+    ? true
+    : undefined;
 }
 
 /**

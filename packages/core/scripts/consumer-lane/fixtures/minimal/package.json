@@ -8,6 +8,9 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4"
+    "@types/node": "^26.6.4",
+    "hermes-compiler": "250829098.0.19",
+    "@babel/core": "8.0.7",
+    "@babel/plugin-transform-async-generator-functions": "8.0.6"
   }
 }

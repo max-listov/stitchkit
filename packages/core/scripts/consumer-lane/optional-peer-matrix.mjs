@@ -38,6 +38,17 @@ function featureSource(subpath, name) {
  */
 export const OPTIONAL_PEER_MATRIX = [
   {
+    id: 'http-client',
+    subpath: './http',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit/http', 'createHttpClient'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
     id: 'native-packaging',
     subpath: './files/packaging',
     fixture: 'minimal',

@@ -1,4 +1,5 @@
-import { type InstalledConsumerProof, installedConsumerProofs } from './installed-proofs';
+import type { InstalledConsumerProof } from './installed-proof-contract';
+import { installedConsumerProofs } from './installed-proofs';
 
 /**
  * Run the registered installed-package proofs that apply to one fixture and platform. Platform and
@@ -50,12 +51,16 @@ export async function runInstalledConsumerProofs(input: {
   let failure: { error: unknown } | undefined;
   const runJob = async ({ proof, runtime }: Job): Promise<void> => {
     try {
-      const output = await input.run(proof, runtime);
-      if (
-        proof.kind === 'runtime' &&
-        !output.split(/\r?\n/).some((line) => line === proof.marker)
-      )
-        throw new Error(`Installed proof ${proof.id}/${runtime} has no exact success marker`);
+      for (let attempt = 0; attempt < (proof.repetitions ?? 1); attempt++) {
+        const output = await input.run(proof, runtime);
+        if (
+          proof.kind === 'runtime' &&
+          !output.split(/\r?\n/).some((line) => line === proof.marker)
+        )
+          throw new Error(
+            `Installed proof ${proof.id}/${runtime} has no exact success marker`,
+          );
+      }
       input.verdict(proof, runtime, 'succeeded');
     } catch (error) {
       input.verdict(proof, runtime, 'failed');

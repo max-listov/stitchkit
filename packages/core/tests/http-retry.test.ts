@@ -128,6 +128,9 @@ test('Bun classifier is exact, own-property-only and leaves Ky semantics untouch
   const connectionRefused = new Error('Bun fetch failed');
   Object.defineProperty(connectionRefused, 'code', { value: 'ConnectionRefused' });
   expect(shouldRetryBunNetworkError(connectionRefused)).toBe(true);
+  const errnoRefused = new Error('Bun 1.4.3 connection refusal');
+  Object.defineProperty(errnoRefused, 'code', { value: 'ECONNREFUSED' });
+  expect(shouldRetryBunNetworkError(errnoRefused)).toBe(true);
 
   const unknown = new Error('unknown runtime error');
   Object.defineProperty(unknown, 'code', { value: 'ConnectionReset' });

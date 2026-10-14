@@ -37,6 +37,7 @@ own, recorded as an ADR.
 | Import | Use in | Maturity | Holds |
 |--------|--------|----------|-------|
 | `stitchkit` | browser **and** server | stable | `defineContract`, `createClient`, `createHttpClient`, `createSocketIOClient`, `parseSSE`, the error model |
+| `stitchkit/http` | browser, React Native/Hermes **and** server | evolving | typed HTTP client factories and `ApiError`, without optional realtime peers |
 | `stitchkit/contract` | browser **and** server | stable | the contract layer alone — `defineContract`, errors, pagination |
 | `stitchkit/live` | browser **and** server | evolving | `defineEvents` — topic declarations beside the operation contract — and watched reads: `createWatchClient`, the value/difference frame and its reassembly |
 | `stitchkit/primitives` | browser **and** server | evolving | generic values and declarations for lifecycle, access, audit, delivery and exports |

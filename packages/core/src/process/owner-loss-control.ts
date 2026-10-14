@@ -95,7 +95,8 @@ export function attachOwnerLossControl(child: GuardedChild, control: Duplex): vo
   control.once('end', onMissing);
   control.once('close', onMissing);
   control.once('error', onError);
-  child.on('exit', onMissing);
+  // Process exit can precede delivery of bytes already written to fd 3. Only the
+  // control stream's end/close proves that its complete handshake has been read.
   guards.set(child, { control, started: settled.promise });
 }
 

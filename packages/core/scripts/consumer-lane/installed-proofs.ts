@@ -1,43 +1,9 @@
 import { z } from 'zod';
-
-const DeclarationVariantSchema = z.object({
-  id: z.string().min(1),
-  target: z.string().min(1),
-  module: z.enum(['Preserve', 'NodeNext']),
-  resolution: z.enum(['bundler', 'NodeNext']),
-  lib: z.array(z.string().min(1)).min(1),
-  types: z.array(z.string().min(1)).min(1),
-});
-
-const ProofSchema = z.object({
-  id: z.string().min(1),
-  fixture: z.enum(['minimal', 'node', 'mcp-only', 'declarations']),
-  entry: z.string().min(1),
-  files: z.array(z.string().min(1)),
-  peers: z.array(z.string()),
-  platforms: z.array(z.enum(['linux', 'darwin', 'win32'])),
-  runtimes: z.array(z.enum(['bun', 'node'])),
-  kind: z.enum(['runtime', 'declarations']),
-  resolution: z.enum(['bundler', 'NodeNext']).optional(),
-  declarationVariants: z.array(DeclarationVariantSchema).min(1).optional(),
-  marker: z.string().min(1),
-  capability: z.literal('linux-root').optional(),
-  /**
-   * About how long the slower runtime of this proof takes on a hosted runner (measured 2026-10-13 on
-   * macos-15-intel). The pool starts the longest first, so the lane lasts about as long as its
-   * slowest proof; an unmeasured proof counts as short. Only order depends on it, never a verdict.
-   */
-  expectedMs: z.number().int().positive().optional(),
-  /**
-   * Runs with nothing beside it but `idle` proofs: it changes the fixture's shared install (hides
-   * `node_modules`), or it proves native process lifetimes that failed beside other proofs on a
-   * loaded macOS runner, a load sensitivity tracked as its own task.
-   */
-  exclusive: z.literal(true).optional(),
-  /** Only waits on a real clock and loads nothing, so it runs from the start beside everything. */
-  idle: z.literal(true).optional(),
-});
-export type InstalledConsumerProof = z.infer<typeof ProofSchema>;
+import {
+  type DeclarationVariantSchema,
+  type InstalledConsumerProof,
+  InstalledConsumerProofSchema,
+} from './installed-proof-contract';
 
 const native = {
   peers: ['zod'],
@@ -45,7 +11,29 @@ const native = {
   runtimes: ['bun', 'node'],
   kind: 'runtime',
 };
-export const installedConsumerProofs = z.array(ProofSchema).parse([
+export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).parse([
+  {
+    id: 'lifecycle-interrupted',
+    fixture: 'minimal',
+    entry: 'lifecycle-interrupted.mjs',
+    files: [],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin', 'win32'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed interrupted process lifecycle: ok',
+  },
+  {
+    id: 'http-hermes',
+    fixture: 'minimal',
+    entry: 'http-hermes.mjs',
+    files: ['http-hermes-client.mjs'],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin'],
+    runtimes: ['bun'],
+    kind: 'runtime',
+    marker: 'packed Hermes HTTP client: ok',
+  },
   {
     id: 'native-packaging',
     fixture: 'minimal',
@@ -329,7 +317,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   {
     ...native,
     id: 'native-primitives',
-    exclusive: true,
+    repetitions: 3,
     fixture: 'minimal',
     entry: 'native-primitives.mjs',
     files: ['command-lifecycle.mjs'],
@@ -385,7 +373,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   {
     ...native,
     id: 'native-owner-loss',
-    exclusive: true,
+    repetitions: 3,
     fixture: 'node',
     entry: 'native-owner-loss.mjs',
     files: ['native-owner-loss-owner.mjs', 'native-owner-loss-target.mjs'],
@@ -394,7 +382,7 @@ export const installedConsumerProofs = z.array(ProofSchema).parse([
   {
     ...native,
     id: 'native-owner-loss-lazy-bundle',
-    exclusive: true,
+    repetitions: 3,
     fixture: 'node',
     entry: 'native-owner-loss-lazy-bundle.mjs',
     files: [

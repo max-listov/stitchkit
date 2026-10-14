@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Targets stitchkit `^0.110.0`, keeping consumers on one framework copy when they adopt the core lifecycle classification change. No terminal source change is needed.
+
 ## [0.2.4] - 2026-10-10
 
 ### Changed

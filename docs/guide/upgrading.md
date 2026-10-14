@@ -1,5 +1,16 @@
 # Upgrading stitchkit
 
+## Unreleased migration: 0.110.0
+
+### Interrupted process drains
+
+**Who must act:** applications with exhaustive switches or schemas over `LifecycleTermination` or `PreviousExit` from `stitchkit/application`.
+
+A successor that closes an abandoned `draining` run now reports `interrupted`, rather than `abnormal` (or `startup-failed` before readiness). Add an `interrupted` case for an unfinished shutdown. `abnormal` still describes an abandoned active run. Handoff and same-pid hot reload retain their meaning.
+
+`StartFact.previousDrainUpperBoundMs` measures from recorded admission stop to successor start, or is `null` without those facts. It is an upper bound: the ledger does not observe the actual kill signal, supervisor deadline, or death time. Before: `previousExit === "abnormal"` included unfinished drains; after: handle `previousExit === "interrupted"` separately.
+
+
 ## Released migration: 0.109.0
 
 ### free CLI record leaves are lexical

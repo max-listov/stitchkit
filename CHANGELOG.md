@@ -15,6 +15,19 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+- `stitchkit/application` — an abandoned `draining` process now ends as `interrupted`, including a drain before readiness. Before: `previousExit === "abnormal"` (or `"startup-failed"`) mixed unfinished shutdowns with crashes; after: add `case "interrupted"` to exhaustive handlers. Handoff and hot reload stay unchanged. `StartFact.previousDrainUpperBoundMs` measures the recorded drain-to-successor upper bound without claiming a kill signal or exact death time.
+  **Affects:** `stitchkit/application` LifecycleTerminationSchema, LifecycleTermination, PreviousExitSchema, PreviousExit, StartFact, transitionProcessStart
+
+### Fixed
+
+- A fast owner-loss guard exit no longer overtakes a buffered start handshake. The control stream, rather than the process exit event, determines whether the handshake was missing. Native lifetime qualification checks descendant death within its cleanup window before asserting stable output.
+
+### Added
+
+- `stitchkit/http` exposes the existing typed HTTP client factories and `ApiError` without the optional Socket.IO graph, so React Native/Hermes can compile HTTP-only applications. Contracts remain available from `stitchkit/contract`. The shared exports deliberately reuse the same HTTP implementation (I7, I8).
+
 ## [0.109.4] - 2026-10-13
 
 ### Fixed

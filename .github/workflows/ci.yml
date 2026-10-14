@@ -299,6 +299,11 @@ jobs:
           path: packages/core/native
       - run: bun --filter stitchkit build
       - run: bun run contained-files-packed-lane
+      - name: Qualify concurrent command lifetimes three consecutive times
+        run: |
+          for attempt in 1 2 3; do
+            bun --filter stitchkit consumer-lane --native-owners-only
+          done
 
   universal-native-build:
     name: Shared universal native archive

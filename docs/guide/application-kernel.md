@@ -964,12 +964,13 @@ ever became ready:
 | newest run | same pid | version | `previousExit` | predecessor's `termination` |
 |---|---|---|---|---|
 | none | — | — | `first-boot` | — |
-| recorded `stoppedAt` | — | — | `clean` / `forced` / `startup-failed` / `abnormal` as recorded | unchanged |
+| recorded `stoppedAt` | — | — | the recorded termination, including `interrupted` | unchanged |
 | still open | yes | — | `hot-reload` | `hot-reload`, closed at the new start |
 | still open | no | changed | `handoff` (default) | stays open; it records its own stop later |
-| still open | no | changed, `versionChangeOverlap: 'abnormal'` | `abnormal` / `startup-failed` | closed at the new start, as for the same version |
-| still open, was ready | no | same | `abnormal` (default) | `abnormal`, closed at the new start — an upper bound, the crash time is unknown |
-| still open, never ready | no | same | `startup-failed` (default) | `startup-failed`, closed at the new start |
+| still open | no | changed, `versionChangeOverlap: 'abnormal'` | `interrupted` / `abnormal` / `startup-failed` | closed at the new start, as for the same version |
+| still draining | no | same or non-overlapping build | `interrupted` | closed at the new start; its death time and kill signal are unknown |
+| still active, was ready | no | same | `abnormal` (default) | `abnormal`, closed at the new start — an upper bound, the crash time is unknown |
+| still active, never ready | no | same | `startup-failed` (default) | `startup-failed`, closed at the new start |
 
 Every other open run the start finds was abandoned too and is closed the same
 way — two crashes in a row leave two open runs, and both are closed, not only
@@ -998,9 +999,11 @@ The ledger records what the process says while it can say it. stitchkit never
 calls `process.exit` (ADR 0074), so a stop is recorded on the kernel's `close`
 or `force` path, both awaited. An application that exits the process on its
 own before its shutdown settles loses that last write; the successor then
-finds the run open and closes it as `abnormal`, keeping the `unavailableAt`
+finds the unfinished drain and closes it as `interrupted`, keeping the `unavailableAt`
 already recorded — which is why the drain moment is written first, at
 `stopAdmission`, and the downtime survives a stop that was never recorded.
+
+An abandoned `draining` run closes as `interrupted`, including before readiness. `StartFact.previousDrainUpperBoundMs` is the elapsed time from recorded admission stop to successor start, or `null` when unknown. This is an upper bound, not proof of a supervisor timeout or a particular kill signal. Live handoff predecessors remain open; same-pid restarts remain `hot-reload`.
 
 The `abnormal` default is a choice, and it is the single-process deployment:
 one process per build, a new pid of the same build means the old one stopped
