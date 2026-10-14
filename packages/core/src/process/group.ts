@@ -2,6 +2,7 @@ import { raceAbort } from '../internal/abort-race';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { MAX_TIMER_MS, sleep } from '../internal/timers';
 import { NativeCommandError, type ParsedNativeCommandStopPolicy } from './contract';
+import { processGroupExists } from './group-presence';
 import { waitForProcessGroupExit } from './group-settlement';
 
 /** Chain native-sized timers; internal callers retain their declared safe-integer deadline. */
@@ -50,16 +51,7 @@ export function signalGroup(pid: number | undefined, signal: NodeJS.Signals): bo
 }
 function exists(pid: number | undefined): boolean {
   if (pid === undefined) return false;
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (error) {
-    if (isErrno(error, 'ESRCH')) return false;
-    // Darwin filters zombies out of killpg and can report EPERM until they
-    // are reaped. It is still an existing/unknown group, never proof of death.
-    if (deniedOnDarwin(error)) return true;
-    throw error;
-  }
+  return processGroupExists(pid);
 }
 
 /** Resolves `true` when a signal was delivered and `false` when the group was already gone. */

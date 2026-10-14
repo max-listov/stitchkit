@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { sleep } from '../internal/timers';
+import { processGroupExists } from './group-presence';
 
 /** `killpg(..., 0)` also sees Linux zombies; only live members can still perform work. */
 export function hasLiveGroupMember(table: string, group: number): boolean {
@@ -35,11 +36,28 @@ export async function waitForProcessGroupExit(
   deadline: number,
 ): Promise<void> {
   if (pid === undefined) return;
+  let observations = 0;
+  let lastStates: string[] = [];
   for (;;) {
     const remaining = Math.ceil(deadline - performance.now());
-    if (remaining <= 0) throw new Error('Command process group remained alive after SIGKILL');
+    if (remaining <= 0)
+      throw new Error('Command process group settlement was not confirmed after SIGKILL', {
+        cause: { groupId: pid, observations, lastStates },
+      });
+    if (!processGroupExists(pid)) return;
     const table = await processGroups(remaining);
+    observations++;
     if (!hasLiveGroupMember(table, pid)) return;
+    lastStates = table
+      .split(/\r?\n/)
+      .flatMap((row) => {
+        const fields = /^\s*(\d+)\s+(\S+)\s*$/.exec(row);
+        return Number(fields?.[1]) === pid ? [fields?.[2] ?? 'unknown'] : [];
+      })
+      .slice(0, 16);
+    // ps is a snapshot: do not let a stale row override a newer kernel absence,
+    // including a snapshot that used the last of the observation budget.
+    if (!processGroupExists(pid)) return;
     await sleep(Math.min(5, Math.max(0, deadline - performance.now())));
   }
 }

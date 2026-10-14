@@ -117,7 +117,7 @@ test('a stop never asks a timer for a negative delay, however far the clock move
     process.kill = () => true;
     await assert.rejects(
       stopCommandGroup({ pid: 2147483600, policy, cleanupTimeoutMs: 40 }),
-      /Command process group remained alive after SIGKILL/,
+      /Command process group settlement was not confirmed after SIGKILL/,
     );
     // A Darwin refusal retried until the deadline.
     Object.defineProperty(process, 'platform', { value: 'darwin' });

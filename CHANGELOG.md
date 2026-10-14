@@ -23,6 +23,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ### Fixed
 
+- Process-group cleanup accepts a fresh kernel absence after SIGKILL instead of relying only on a potentially stale process-table snapshot. Permission refusals and unknown/exiting states still require proof; the same cleanup deadline applies and failures retain their last observed states.
 - A synchronously throwing injected Socket.IO peer loader now reaches `onConnectError`, clears connection intent and allows the next `connect()` to retry, just like an asynchronously rejected loader.
 
 ## [0.110.0] - 2026-10-14
