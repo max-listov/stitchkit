@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.110.1] - 2026-10-14
+
 ### Added
 
 - `stitchkit/realtime` provides the shared typed Socket.IO client and retained-topic helpers through an explicit-peer graph that Hermes can compile. Pass `peers: { client: () => import('socket.io-client') }`; root Node/Web clients keep optional lazy peer resolution. HTTP uploads are also available from `stitchkit/http`, so native/shared modules can use public leaves throughout their graph (I7, I8).
