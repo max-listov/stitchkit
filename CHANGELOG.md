@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.110.5] - 2026-10-15
+
 ### Added
 
 - `stitchkit/cli`: `--field:=JSON` assigns a whole JSON value, including explicit `null` for nullable fields, through the existing schema-driven parser. Ordinary `--field null` remains the string `"null"`; optional omission stays absent. Native/discovered help advertises the syntax; malformed JSON and conflicting assignments refuse before dispatch.
