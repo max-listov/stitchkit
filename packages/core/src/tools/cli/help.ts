@@ -78,6 +78,25 @@ function fieldTypeLabel(schema: Record<string, unknown>): string {
   return `<${typeLabel(schema)}>${constraintLabel(schema)}`;
 }
 
+function nullableField(schema: Record<string, unknown>): boolean {
+  if (schema.type === 'null') return true;
+  if (Array.isArray(schema.type) && schema.type.includes('null')) return true;
+  return (
+    Array.isArray(schema.anyOf) &&
+    schema.anyOf.some((member) => isRecord(member) && nullableField(member))
+  );
+}
+
+function jsonValueHelp(fields: readonly JsonSchemaField[]): string[] {
+  const example = fields.find((field) => nullableField(field.schema))?.name;
+  return [
+    'Assign a whole JSON value with --field:=JSON; the declared schema still validates it.',
+    ...(example === undefined
+      ? []
+      : [`JSON null: --${example}:=null. The literal string stays --${example} null.`]),
+  ];
+}
+
 function padRight(text: string, width: number): string {
   return text.length >= width ? text : text + ' '.repeat(width - text.length);
 }
@@ -179,6 +198,7 @@ export function renderTopHelp(input: {
   for (const [flag, desc] of GLOBAL_OPTIONS)
     lines.push(`  ${padRight(flag, optWidth)}  ${desc}`);
   lines.push(...applicationOptionLines(input.applicationOptions));
+  lines.push('', ...jsonValueHelp(input.applicationOptions));
   lines.push('', `Run "${name} <command> --help" for command-specific flags.`);
   return `${lines.join('\n')}\n`;
 }
@@ -244,7 +264,7 @@ export function renderCommandHelp(
         `A boolean flag is on alone or takes true/false: --${flag}, --${flag} false, --no-${flag}`,
       );
     }
-    lines.push('');
+    lines.push('', ...jsonValueHelp(fields), '');
   }
   const applicationLines = applicationOptionLines(applicationOptions);
   if (applicationLines.length > 0) lines.push(...applicationLines.slice(1), '');

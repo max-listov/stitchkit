@@ -18,27 +18,24 @@
  * call does (ADR 0014 parity).
  */
 import { z } from 'zod';
-import { isUnsafeKey } from '../../internal/safe-json';
 import { coerceJsonArgs } from '../schema/coerce';
 import {
-  appendCliOptionValue,
   coerceField,
   describeSchemaFields,
   describeSchemaPath,
   type FieldInfo,
   looseCoerce,
-  parseReservedBool,
   separateBoolValue,
   setNested,
 } from './args-fields';
-import {
-  classifyLongOptionToken,
-  isOptionToken,
-  looksLikeOption,
-  VIEW_OPTIONS,
-} from './args-route';
+import { appendCliFieldValue, cliFieldOption, coerceCliFieldValue } from './args-json';
+import { classifyLongOptionToken, isOptionToken } from './args-route';
+import { type CliTokens, readCliTokens } from './args-tokens';
 import { type CliResultView, resolveCliView } from './args-view';
+
 import { CliArgumentError } from './argument-error';
+
+type FieldResolver = (name: string) => FieldInfo | undefined;
 
 /** CLI-behaviour flags, parsed out of argv before the tool arguments. */
 export interface CliRunOptions {
@@ -68,196 +65,6 @@ export interface ParsedCliArgs {
 }
 
 /**
- * Parse a command's argv slice (everything after the command name) against its
- * merged tool schema.
- *
- * Supported forms:
- *  - `--key value` / `--key=value` / `-` repeated for arrays
- *  - `--flag` boolean presence, `--flag true|false` as a separate token, `--no-flag` to negate
- *  - `--a.b=c` dotted path → nested object (leaf coerced only when its schema says so)
- *  - positional args fill non-boolean fields in schema-declaration order
- */
-type CliConfigForParse = NonNullable<Parameters<typeof parseCliArgs>[2]>;
-type FieldResolver = (name: string) => FieldInfo | undefined;
-
-/** One invocation's argv, sorted into what each token is for. */
-interface CliTokens {
-  options: CliRunOptions;
-  /** Raw values per flag, in order; only an array field may have several. */
-  flags: Map<string, string[]>;
-  /** Boolean presence and aliases name exact fields, even when the name has a dot. */
-  literalBooleanFlags: Set<string>;
-  viewFlags: Map<string, string>;
-  ascending: boolean;
-  positionals: string[];
-}
-
-/**
- * Phase one: tokenise. Every refusal about the SHAPE of the command line —
- * an unknown option, a missing value, a prototype-polluting name, a repeated
- * non-array flag — happens here, before its raw multiplicity can be lost.
- */
-function readCliTokens(
-  argv: readonly string[],
-  fields: ReturnType<typeof describeSchemaFields>,
-  fieldFor: FieldResolver,
-  config: CliConfigForParse,
-): CliTokens {
-  const options: CliRunOptions = {
-    json: false,
-    wait: false,
-    quiet: false,
-    dryRun: false,
-    help: false,
-  };
-
-  const flags = new Map<string, string[]>();
-  const literalBooleanFlags = new Set<string>();
-  const frameworkFlags = new Map<string, string[]>();
-  const viewFlags = new Map<string, string>();
-  let ascending = false;
-  const positionals: string[] = [];
-
-  const pushFlag = (name: string, value: string): void => {
-    appendCliOptionValue(flags, name, value, fieldFor(name));
-  };
-
-  let optionsEnded = false;
-  for (let i = 0; i < argv.length; i++) {
-    const tok = argv[i];
-    if (tok === undefined) continue;
-    if (!optionsEnded && tok === '--') {
-      optionsEnded = true;
-      continue;
-    }
-    if (optionsEnded || !looksLikeOption(tok)) {
-      positionals.push(tok);
-      continue;
-    }
-    if (tok === '-h') {
-      options.help = true;
-      continue;
-    }
-    if (!tok.startsWith('--')) {
-      const match = /^-([A-Za-z])(?:=(.*))?$/.exec(tok);
-      const alias = match?.[1];
-      const field = alias === undefined ? undefined : config.optionAliases?.get(alias);
-      if (!alias || !field) throw new CliArgumentError(`Unknown option "${tok}"`);
-      const inline = match?.[2];
-      const info = fieldFor(field);
-      if (info?.kind === 'boolean') {
-        const separate = inline === undefined ? separateBoolValue(argv[i + 1]) : undefined;
-        if (separate !== undefined) i++;
-        pushFlag(field, inline ?? String(separate ?? true));
-        if (inline !== undefined) parseReservedBool(field, inline);
-        literalBooleanFlags.add(field);
-        continue;
-      }
-      let value = inline;
-      if (value === undefined) {
-        const next = argv[i + 1];
-        if (next !== undefined && !isOptionToken(next)) {
-          value = next;
-          i++;
-        } else {
-          throw new CliArgumentError(`--${field} requires a value`);
-        }
-      }
-      pushFlag(field, value);
-      continue;
-    }
-    const option = classifyLongOptionToken(tok);
-    if (!option) throw new CliArgumentError(`Unknown option "${tok}"`);
-    const { name } = option;
-    let { value } = option;
-    if (name.length === 0) throw new CliArgumentError('Invalid empty option name');
-
-    if (option.globalKind === 'boolean') {
-      const separate = value === undefined ? separateBoolValue(argv[i + 1]) : undefined;
-      if (separate !== undefined) i++;
-      // Help is a request, not a setting: asking twice asks once.
-      if (name !== 'help') {
-        appendCliOptionValue(frameworkFlags, name, value ?? String(separate ?? true), {
-          kind: 'boolean',
-        });
-      }
-      const enabled =
-        value === undefined ? (separate ?? true) : parseReservedBool(name, value);
-      if (name === 'dry-run') options.dryRun = enabled;
-      else if (name === 'json') options.json = enabled;
-      else if (name === 'wait') options.wait = enabled;
-      else if (name === 'quiet') options.quiet = enabled;
-      else if (name === 'ascending') ascending = enabled;
-      else options.help = options.help || enabled;
-      continue;
-    }
-    if (option.globalKind === 'value') {
-      const next = argv[i + 1];
-      value = value ?? next;
-      if (value === undefined || (!option.inline && isOptionToken(value))) {
-        throw new CliArgumentError(`--${name} requires a value`);
-      }
-      if (!option.inline) i++;
-      appendCliOptionValue(frameworkFlags, name, value, { kind: 'string' });
-      if (name === 'wait-timeout') {
-        const timeout = Number(value);
-        if (!Number.isFinite(timeout) || timeout <= 0) {
-          throw new CliArgumentError('--wait-timeout must be a positive number');
-        }
-        options.waitTimeout = timeout;
-      } else if (VIEW_OPTIONS.has(name)) {
-        viewFlags.set(name, value);
-      } else {
-        options.outputDir = value;
-      }
-      continue;
-    }
-
-    if (
-      value === undefined &&
-      name.startsWith('no-') &&
-      fieldFor(name.slice(3))?.kind === 'boolean'
-    ) {
-      pushFlag(name.slice(3), 'false');
-      literalBooleanFlags.add(name.slice(3));
-      continue;
-    }
-
-    // Client-controlled names — refuse a prototype-polluting segment loudly
-    // instead of silently dropping the argument.
-    const unsafeSegment = name.split('.').find(isUnsafeKey);
-    if (unsafeSegment !== undefined) {
-      throw new CliArgumentError(`Unsafe option name "--${name}"`);
-    }
-    const info = fieldFor(name);
-    const rootName = name.split('.')[0] ?? name;
-    if (!fields.has(rootName) && !config.allowUnknown) {
-      throw new CliArgumentError(`Unknown option "--${name}"`);
-    }
-    if (value === undefined) {
-      if (info?.kind === 'boolean') {
-        const separate = separateBoolValue(argv[i + 1]);
-        if (separate !== undefined) i++;
-        pushFlag(name, String(separate ?? true));
-        literalBooleanFlags.add(name);
-        continue;
-      }
-      // The next token is the value unless it is itself an option: `--grep
-      // -foo` and `--count -5` are values, `--grep --json` is a missing one.
-      const next = argv[i + 1];
-      if (next !== undefined && !isOptionToken(next)) {
-        value = next;
-        i++;
-      } else {
-        throw new CliArgumentError(`--${name} requires a value`);
-      }
-    }
-    pushFlag(name, value);
-  }
-  return { options, flags, literalBooleanFlags, viewFlags, ascending, positionals };
-}
-
-/**
  * Phase two: build the argument object from the sorted tokens — positionals
  * into their fields, flags coerced to their field kinds, dotted paths nested.
  */
@@ -268,7 +75,7 @@ function buildToolArgs(
   declaredPositionals: readonly string[] | undefined,
   allowUnknown: boolean,
 ): Record<string, unknown> {
-  const { flags, literalBooleanFlags, positionals } = tokens;
+  const { flags, jsonFields, literalBooleanFlags, positionals } = tokens;
   // ── Build the tool-argument object ──
   const toolArgs: Record<string, unknown> = {};
 
@@ -335,6 +142,16 @@ function buildToolArgs(
     }
   }
 
+  for (const key of jsonFields) {
+    for (const other of flags.keys()) {
+      if (other.startsWith(`${key}.`) || key.startsWith(`${other}.`)) {
+        throw new CliArgumentError(
+          `--${key} conflicts with --${other} — pass one form, not both`,
+        );
+      }
+    }
+  }
+
   for (const [key, values] of flags) {
     const info = fieldFor(key);
     // Presence and aliases address an exact boolean field; canonical inline
@@ -343,17 +160,21 @@ function buildToolArgs(
     if (key.includes('.') && !exactLiteralBoolean) {
       const root = key.split('.')[0] ?? key;
       const value =
-        info === undefined && allowUnknown && !fields.has(root)
+        !jsonFields.has(key) && info === undefined && allowUnknown && !fields.has(root)
           ? looseCoerce(values[0] ?? '')
-          : coerceField(info, values, `--${key}`);
+          : coerceCliFieldValue(info, values, `--${key}`, jsonFields.has(key));
       setNested(toolArgs, key.split('.'), value);
       continue;
     }
-    toolArgs[key] = coerceField(info, values, `--${key}`);
+    toolArgs[key] = coerceCliFieldValue(info, values, `--${key}`, jsonFields.has(key));
   }
   return toolArgs;
 }
 
+/**
+ * Parse one command's argv against its schema: lexical/coerced flags, explicit
+ * `--field:=JSON`, dotted paths, boolean presence and declared positionals.
+ */
 export function parseCliArgs(
   argv: string[],
   schema: z.ZodType | undefined,
@@ -429,6 +250,7 @@ export function extractCliGlobalOptions(
   const fields = describeSchemaFields(schema);
   const rest: string[] = [];
   const raw = new Map<string, string[]>();
+  const jsonFields = new Set<string>();
   let ended = false;
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -437,9 +259,10 @@ export function extractCliGlobalOptions(
     const option = ended ? undefined : classifyLongOptionToken(token);
     // A framework-global name wins — an application may not redeclare one, and
     // that is refused at startup rather than silently resolved here.
+    const field = option ? cliFieldOption(option, fields) : undefined;
     const info =
-      option && option.globalKind === undefined ? fields.get(option.name) : undefined;
-    if (!option || !info) {
+      field && option?.globalKind === undefined ? fields.get(field.name) : undefined;
+    if (!option || !field || !info) {
       rest.push(token);
       continue;
     }
@@ -457,12 +280,17 @@ export function extractCliGlobalOptions(
         throw new CliArgumentError(`--${option.name} requires a value`);
       }
     }
-    appendCliOptionValue(raw, option.name, value, info);
+    appendCliFieldValue(raw, jsonFields, field.name, value, info, field.json);
   }
 
   const args: Record<string, unknown> = {};
   for (const [name, values] of raw) {
-    args[name] = coerceField(fields.get(name), values, `--${name}`);
+    args[name] = coerceCliFieldValue(
+      fields.get(name),
+      values,
+      `--${name}`,
+      jsonFields.has(name),
+    );
   }
   let coerced: Record<string, unknown>;
   try {

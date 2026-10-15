@@ -112,6 +112,73 @@ for (const argv of [
 }
 assert.equal(literalCalls, 2);
 
+const NullableInput = z.fromJSONSchema({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    productId: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+    count: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+    text: { type: 'string' },
+    note: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+  },
+  required: ['productId'],
+});
+assert.ok(NullableInput instanceof z.ZodObject);
+const nullableCommand = defineCliCommand({
+  name: 'nullable',
+  description: 'Inspect a schema-restored JSON assignment',
+  input: NullableInput,
+  output: NullableInput,
+  handler: ({ input }) => input,
+});
+async function runNullable(argv) {
+  let out = '';
+  let err = '';
+  let code;
+  await createCli({
+    name: 'json-probe',
+    version: '1',
+    commands: [nullableCommand],
+    argv: ['nullable', ...argv],
+    stdin: async () => null,
+    stdout: (text) => {
+      out += text;
+    },
+    stderr: (text) => {
+      err += text;
+    },
+    exit: (value) => {
+      code = value;
+    },
+  });
+  return { out, err, code };
+}
+const jsonNull = await runNullable([
+  '--productId:=null',
+  '--count:=null',
+  '--text=null',
+  '--json',
+]);
+assert.equal(jsonNull.code, 0);
+assert.equal(jsonNull.err, '');
+assert.deepEqual(JSON.parse(jsonNull.out), { productId: null, count: null, text: 'null' });
+assert.deepEqual(JSON.parse((await runNullable(['--productId=null', '--json'])).out), {
+  productId: 'null',
+});
+for (const flags of [
+  ['--productId:=null', '--text:=null'],
+  ['--productId:=undefined'],
+  ['--productId:=null', '--productId=null'],
+]) {
+  const refusal = await runNullable(flags);
+  assert.notEqual(refusal.code, 0);
+  assert.equal(refusal.out, '');
+}
+const nullableHelp = await runNullable(['--help']);
+assert.equal(nullableHelp.code, 0);
+assert.match(nullableHelp.out, /--productId:=null/);
+assert.match(nullableHelp.out, /--productId null/);
+
 const managed = {
   name: 'managed',
   description: 'A managed operation',

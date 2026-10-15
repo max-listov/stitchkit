@@ -233,6 +233,23 @@ string, the schema says what it should be:
 | `z.record(z.string(), z.unknown())` | `--data '{"code":"007"}'` or `--data.code=007` → `"007"` |
 | `.optional()` / `.default()` | not required                           |
 
+Use the inline `:=` form to assign a whole JSON value without scalar coercion:
+
+```bash
+myapp upsert --productId:=null --count:=null
+myapp upsert --productId null            # the literal string "null"
+myapp upsert --productId:='"null"'        # the same string, written as JSON
+```
+
+`null` is accepted only when the unchanged command schema permits it. Omitting an
+optional field leaves it absent; it does not imply `null`. The same syntax works
+for application global options and dotted leaves (`--settings.note:=null`). A
+JSON assignment supplies the whole field, so an array uses one assignment such as
+`--tags:='["a","b"]'`; mixing it with repeated element flags or another assignment
+is refused. Invalid JSON is a usage error before the handler runs. Framework
+options such as `--json` retain their existing grammar. An exact declared field
+name ending in `:` retains its existing inline spelling.
+
 Primitive literals use the same coercion through optional, nullable and default wrappers and as
 array elements. A literal set whose members have different primitive types stays lexical because
 argv has no type tag: for `z.literal([7, '007'])`, `--value 007` remains the string `"007"` rather
@@ -1095,10 +1112,15 @@ the code (so `exitCodes` can map it instead of every remote failure exiting `1`)
 the message the operator needs, and the error's own class — a plain `Error` is
 an *unexpected* error to the runner, which would print a code frame of the framework
 bundle before the JSON failure and scrub it to `INTERNAL_SERVER_ERROR`.
-A structured `{ error, details }` body is relayed as the contract error it
+A `tools/call` response with `isError: true` and a structured `{ error, details }` body is relayed as the contract error it
 is, on every transport; anything else fails as `UPSTREAM_TOOL_ERROR` carrying
 what the server did send. Not `INTERNAL_SERVER_ERROR`, because nothing of ours
 broke.
+
+The CLI writes this refusal to stderr, leaves stdout empty and exits with the
+mapped nonzero error code (`1` for an unmapped code). A successful response may
+contain an ordinary field named `error`; its payload alone does not establish a
+tool failure.
 
 **On the CLI a discovered command prints the answer, not the envelope.**
 `tools/call` returns `{ content: [...], structuredContent? }`, and an agent mount

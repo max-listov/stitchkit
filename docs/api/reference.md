@@ -2355,7 +2355,7 @@ SDK nor the `ai` peer.
 |--------|------|---------|
 | `createCli` | function | build and run a CLI from contracts — [guide](../guide/cli.md) |
 | `defineCliCommand` | function | define one Zod-typed CLI-only executable command with optional validated-result presentation/exit policy |
-| `parseCliArgs` | function | argv → typed tool args against a schema (advanced) |
+| `parseCliArgs` | function | argv → typed tool args against a schema; inline `--field:=JSON` assigns a whole JSON value, including null, while ordinary string flags remain lexical (advanced) |
 | `routeCliArgv` | function | select the command out of argv without duplicating the global-option grammar (advanced) |
 | `extractCliGlobalOptions` | function | lift the application's own global options out of argv before routing (advanced) |
 | `coerceJsonArgs` | function | the second half of `parseCliArgs` — parse array/object values a consumer sends itself, including discovered MCP object guards restored from JSON Schema, without the `stitchkit/tools` barrel |
