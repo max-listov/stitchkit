@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.110.6] - 2026-10-15
+
 ### Added
 
 - `stitchkit/server`: `createServer({ proxyOrigin: { trustedPeer } })` restores the external HTTP/HTTPS scheme from a single trusted ingress before fetch composition and routing. It validates the real TCP peer and one `X-Forwarded-Proto`, rejects competing URL headers, preserves wire Host/ports and native cancellation, peer lookup and WebSocket upgrade. `trustProxy` remains client-IP-only. The server surface grows by one configuration type, `ProxyOriginConfig`, owned by this entrypoint so the trust decision is explicit and independently testable (I8, I9, I12).
