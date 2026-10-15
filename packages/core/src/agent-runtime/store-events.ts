@@ -8,7 +8,7 @@ import {
   AppendAgentStoreEventSchema,
 } from '../durability/events';
 import { canonicalZodJson } from '../primitives/canonical-json';
-import { AgentMessageSchema } from './schemas';
+import { AgentMessageSchema, AgentUsageSchema } from './schemas';
 import {
   AcceptInputAndAssignRunSchema,
   AcquireAgentRunSchema,
@@ -40,6 +40,49 @@ export const AgentStoreTransitionSchema = z.discriminatedUnion('type', [
 ]);
 
 export type AgentStoreTransition = z.infer<typeof AgentStoreTransitionSchema>;
+
+export const AgentStoreCheckpointRecordSchema = z
+  .object({
+    type: z.literal('checkpoint'),
+    input: z
+      .object({
+        conversationId: z.string().min(1),
+        runId: z.string().min(1),
+        expectedRevision: z.int().nonnegative(),
+        ownerId: z.string().min(1),
+        fencingToken: z.int().nonnegative().optional(),
+        assistant: z
+          .object({
+            id: z.string().min(1),
+            status: z.literal('streaming'),
+            sha256: z
+              .string()
+              .regex(/^[a-f0-9]{64}$/)
+              .optional(),
+            sourceSha256: z
+              .string()
+              .regex(/^[a-f0-9]{64}$/)
+              .optional(),
+            parts: z.int().nonnegative(),
+            bytes: z.int().nonnegative(),
+          })
+          .strict(),
+        usage: AgentUsageSchema.optional(),
+      })
+      .strict(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      Boolean(value.input.assistant.sha256) !== Boolean(value.input.assistant.sourceSha256),
+  );
+
+/** Persisted journal records: operations and compact hash-only checkpoint observations. */
+export const AgentStoreTransitionRecordSchema = z.union([
+  AgentStoreTransitionSchema,
+  AgentStoreCheckpointRecordSchema,
+]);
+export type AgentStoreTransitionRecord = z.infer<typeof AgentStoreTransitionRecordSchema>;
 
 export type AgentStoreEventDraft = Omit<AgentStoreEventEnvelope, 'seq'>;
 

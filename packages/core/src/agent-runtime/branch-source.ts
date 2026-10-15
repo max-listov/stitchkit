@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { AgentStoreEventEnvelope } from '../durability/events';
+import { ArchiveProjectionSchema } from './archive-projection';
 import { ArchiveSpillSchema } from './archive-spill';
 import type { BranchAgentConversationInput } from './branch-contract';
 import { rekeyBranchEvents } from './branch-events';
@@ -82,7 +83,9 @@ export function prepareBranchSource(
     if (event.seq !== index + 1)
       throw new TypeError('Branch source event sequence is incomplete');
   }
-  const projections = archive.projections.map((value) => SnapshotProjection.parse(value));
+  const projections = archive.projections.map((value) =>
+    z.union([SnapshotProjection, ArchiveProjectionSchema]).parse(value),
+  );
   if (
     projections.some(
       (value, index) =>
@@ -90,11 +93,19 @@ export function prepareBranchSource(
     )
   )
     throw new TypeError('Branch archive snapshot contains an unknown opaque field');
-  if (projections.length !== 1)
-    throw new TypeError(
-      'Branch archive requires exactly one runtime snapshot and no opaque projections',
-    );
-  const expected = projections[0]?.snapshot;
+  const snapshots = projections.filter((value) => 'archiveType' in value);
+  if (snapshots.length !== 1)
+    throw new TypeError('Branch archive requires exactly one runtime snapshot');
+  const names = new Set<string>();
+  for (const projection of projections) {
+    if (!('name' in projection)) continue;
+    if (names.has(projection.name) || projection.uptoSeq > archive.events.length)
+      throw new TypeError('Branch companion projection has an inconsistent checkpoint');
+    names.add(projection.name);
+  }
+  // Companions are derived caches with application-defined values, never an
+  // authority transfer codec. Rebuild them from the rekeyed destination ledger.
+  const expected = snapshots[0]?.snapshot;
   if (!expected || expected.conversationId !== archive.conversationId)
     throw new TypeError('Branch archive has a foreign snapshot');
   const allSpills = archive.spills.map((value) => ArchiveSpillSchema.parse(value));

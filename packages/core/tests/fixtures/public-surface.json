@@ -1447,6 +1447,8 @@
     "AgentStoreMutationResultSchema",
     "AgentStoreNotFoundSchema",
     "AgentStoreTransition",
+    "AgentStoreTransitionRecord",
+    "AgentStoreTransitionRecordSchema",
     "AgentStoreTransitionSchema",
     "AgentStoredRun",
     "AgentStoredRunSchema",

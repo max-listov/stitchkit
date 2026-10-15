@@ -4,7 +4,7 @@ description: Current ownership, state transitions, linearization points and resi
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-10-15 08:08 +07:00
+updated: 2026-10-15 13:36 +07:00
 ---
 
 # Agent application runtime architecture
@@ -244,7 +244,17 @@ Normalized terminal runs carry no owner or fencing token, approval signatures ar
 no schedule, child, projection or effect claim is instantiated. Spills require explicit fresh
 `artifactAuthorization`; source authorization is discarded. The destination owner still authorizes
 every artifact read. Unknown event/payload versions, opaque provider envelopes, encrypted invocation
-artifacts and arbitrary cached projections refuse until their owning transfer codec exists.
+artifacts refuse until their owning transfer codec exists. `archive-projection.ts` owns ordinary
+companion cache envelopes, shared by SQLite import and branch validation. Branch checks unique
+names and checkpoints within the full journal, then discards the caches: application-defined values
+are never interpreted as transfer codecs. Destination folds rebuild from the rekeyed ledger.
+
+`AgentStoreTransitionRecordSchema` owns the persisted transition vocabulary, including hash-only
+checkpoints; the writer and branch replay use the same checkpoint schema. Executable mutations
+remain described by `AgentStoreTransitionSchema`. `store-replay.ts` persists baseline/history,
+run, seed and admission effects for both archive import and branching; the latter additionally
+removes terminal owners and fences. Archive import retains the snapshot's exact live assistant
+draft while replay reconstructs inactive compacted history omitted from that snapshot.
 
 See [ADR 0258](../decisions/0258-conversation-branches-have-new-identity-and-no-inherited-authority.md)
 and the [public branch contract](../guide/agent-runtime.md#branch-or-restore-with-a-new-identity).

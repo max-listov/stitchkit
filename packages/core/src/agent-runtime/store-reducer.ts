@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { AgentSnapshot } from './schemas';
-import { canonicalAgentJson } from './store-events';
+import { AgentStoreCheckpointRecordSchema, canonicalAgentJson } from './store-events';
 import { reduceAccept, reduceCompact, reduceSeed } from './store-reduce-history';
 import {
   reduceAcquire,
@@ -35,7 +35,7 @@ export function transitionRecord(
   if (operation.type !== 'checkpoint') return operation;
   const { assistant, ...rest } = operation.input;
   const body = canonicalAgentJson(assistant);
-  return {
+  return AgentStoreCheckpointRecordSchema.parse({
     type: operation.type,
     input: {
       ...rest,
@@ -47,7 +47,7 @@ export function transitionRecord(
         bytes: Buffer.byteLength(body),
       },
     },
-  };
+  });
 }
 
 /**

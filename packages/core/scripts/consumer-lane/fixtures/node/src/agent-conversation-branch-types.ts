@@ -3,6 +3,8 @@ import {
   AgentConversationBranchReceiptSchema,
   type AgentConversationBranchResult,
   AgentConversationBranchResultSchema,
+  type AgentStoreTransitionRecord,
+  AgentStoreTransitionRecordSchema,
   type BranchAgentConversationInput,
   BranchAgentConversationInputSchema,
   createMemoryAgentRuntimeStore,
@@ -10,6 +12,11 @@ import {
 import { createNodeSqliteAgentRuntimeStore } from 'stitchkit/agent-runtime/sqlite/node';
 
 async function branchDeclarations(bytes: Uint8Array) {
+  const record: AgentStoreTransitionRecord = AgentStoreTransitionRecordSchema.parse({});
+  if (record.type === 'checkpoint' && typeof record.input.assistant.parts === 'number') {
+    const count: number = record.input.assistant.parts;
+    void count;
+  }
   const input: BranchAgentConversationInput = {
     requestKey: 'restore',
     destinationConversationId: 'copy',

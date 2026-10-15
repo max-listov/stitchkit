@@ -15,6 +15,14 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/agent-runtime`: `AgentStoreTransitionRecordSchema` and its inferred `AgentStoreTransitionRecord` type inspect the persisted journal, including full transitions and compact hash-only streaming checkpoints. `AgentStoreTransitionSchema` continues to describe executable mutations. These two names belong to the runtime entrypoint (I3, I8, I15).
+
+### Fixed
+
+- `stitchkit/agent-runtime`: branch and restore accept complete SQLite streaming exports with companion projections, including schema v4 exports written by 0.109.4. Companion cache envelopes are validated and their values discarded; destination projections rebuild from the rekeyed ledger without importing source state or effects. Ordinary archive import also restores compacted history and admissions through the shared replay writer. Unknown journal payloads still refuse atomically; see ADR 0259.
+
 ## [0.110.2] - 2026-10-15
 
 ### Added

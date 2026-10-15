@@ -4,19 +4,19 @@ import {
   AgentStoreEventPageSchema,
   ReadAgentStoreEventsSchema,
 } from '../durability/events';
+import { replayBranchEvents } from './branch-replay';
 import { AgentSnapshotSchema } from './schemas';
 import {
-  AgentAdmissionReceiptSchema,
   AgentRuntimeHeadSchema,
   type AgentRuntimeStoreDriver,
   AgentStoredRunSchema,
 } from './store-driver-contract';
 import {
-  AgentStoreTransitionSchema,
   decodeAgentConversationArchive,
   encodeAgentConversationArchive,
 } from './store-events';
 import { snapshotIn } from './store-reads';
+import { persistRuntimeReplay } from './store-replay';
 
 /**
  * One read transaction for the whole archive.
@@ -92,6 +92,8 @@ export async function importConversation<TRANSACTION>(
           throw new TypeError('Conversation archive snapshot target is not empty');
         }
       }
+      const replay = replayBranchEvents(archive.conversationId, archive.events, snapshot);
+      await persistRuntimeReplay(driver, transaction, replay);
       for (const run of snapshot.runs) {
         const terminalAssistant = snapshot.messages.find(
           (message) => message.id === run.assistantMessageId,
@@ -105,30 +107,17 @@ export async function importConversation<TRANSACTION>(
           }),
         );
       }
+      const restoredIds = new Set(
+        (await driver.history.load(transaction, archive.conversationId)).map(
+          (message) => message.id,
+        ),
+      );
       for (const message of snapshot.messages) {
-        await driver.history.apply(transaction, { type: 'admit', input: message });
-      }
-      for (const event of archive.events) {
-        if (event.kind !== 'runtime/transition') continue;
-        const transition = AgentStoreTransitionSchema.parse(event.payload);
-        if (transition.type !== 'accept') continue;
-        const assigned = snapshot.runs.find((run) =>
-          run.inputMessageIds.includes(transition.input.input.id),
-        );
-        if (!assigned) {
-          throw new TypeError('Conversation archive admission has no assigned run');
-        }
-        await driver.admissions.create(
-          transaction,
-          AgentAdmissionReceiptSchema.parse({
-            schemaVersion: 1,
-            conversationId: archive.conversationId,
-            idempotencyKey: transition.input.idempotencyKey,
-            input: transition.input.input,
-            runId: assigned.id,
-            assistantMessageId: assigned.assistantMessageId,
-          }),
-        );
+        // Hash-only checkpoints keep their exact live draft in the snapshot.
+        if (message.role === 'assistant')
+          await driver.history.apply(transaction, { type: 'upsert-assistant', message });
+        else if (!restoredIds.has(message.id))
+          await driver.history.apply(transaction, { type: 'admit', input: message });
       }
     }
     await driver.archive?.import(transaction, archive);

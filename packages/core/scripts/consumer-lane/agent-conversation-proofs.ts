@@ -3,6 +3,20 @@ import type { InstalledConsumerProof } from './installed-proof-contract';
 /** Runtime capability and declarations are mandatory witnesses of this optional store extension. */
 export const agentConversationProofs: InstalledConsumerProof[] = [
   {
+    id: 'agent-conversation-streaming',
+    fixture: 'node',
+    entry: 'agent-conversation-streaming.mjs',
+    files: [
+      'agent-conversation-streaming-fixture.mjs',
+      'agent-conversation-streaming-v0.109.4.json',
+    ],
+    peers: ['zod', 'ai', '@modelcontextprotocol/server'],
+    platforms: ['linux', 'darwin'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed streaming conversation branch: ok',
+  },
+  {
     id: 'agent-conversation-branch',
     fixture: 'node',
     entry: 'agent-conversation-branch.mjs',

@@ -9,50 +9,13 @@ import {
 } from './branch-contract';
 import { rekeyBranchEvents } from './branch-events';
 import { BranchIdentities } from './branch-identities';
-import { type BranchReplay, replayBranchEvents } from './branch-replay';
+import { replayBranchEvents } from './branch-replay';
 import { branchHash, prepareBranchSource } from './branch-source';
 import { AgentConversationPurgedError } from './purge';
 import { exportConversationIn } from './store-archive';
 import type { AgentRuntimeStoreDriver } from './store-driver-contract';
 import { agentStoreEventDraft } from './store-events';
-
-async function persistReplay<T>(
-  driver: AgentRuntimeStoreDriver<T>,
-  tx: T,
-  replay: BranchReplay,
-) {
-  if (replay.baseline) {
-    const baseline = replay.baseline;
-    for (const record of baseline.runs) await driver.runs.save(tx, record);
-    if (driver.history.restore)
-      await driver.history.restore(tx, {
-        conversationId: baseline.head.conversationId,
-        messages: baseline.messages,
-        compactedMessageIds: baseline.compacted ?? [],
-      });
-    else
-      for (const message of baseline.messages)
-        await driver.history.apply(tx, { type: 'admit', input: message });
-    for (const receipt of baseline.admissions) await driver.admissions.create(tx, receipt);
-  }
-  for (const effect of replay.effects) {
-    for (const record of effect.runRecords ?? []) await driver.runs.save(tx, record);
-    if (effect.admissionReceipt) await driver.admissions.create(tx, effect.admissionReceipt);
-    if (effect.seedReceipt) await driver.seeds.create(tx, effect.seedReceipt);
-    for (const mutation of effect.historyMutations ?? [])
-      await driver.history.apply(tx, mutation);
-  }
-  // Historical leases remain observations only; the normalized records carry none.
-  for (const run of replay.snapshot.runs) {
-    const stored = await driver.runs.load(tx, {
-      conversationId: run.conversationId,
-      runId: run.id,
-    });
-    if (!stored) throw new TypeError('Branch lost a normalized terminal record');
-    const { ownerId: _owner, fencingToken: _fence, ...settled } = stored.run;
-    await driver.runs.save(tx, { ...stored, run: settled });
-  }
-}
+import { persistRuntimeReplay } from './store-replay';
 
 async function destinationEvents<T>(
   driver: AgentRuntimeStoreDriver<T>,
@@ -187,7 +150,18 @@ export async function branchConversation<T>(
       next,
     });
     if (cas.outcome !== 'applied') throw new TypeError('Branch destination changed');
-    await persistReplay(driver, tx, replay);
+    await persistRuntimeReplay(driver, tx, replay);
+    // Historical leases remain observations only; the normalized records carry none.
+    for (const run of replay.snapshot.runs) {
+      const stored = await driver.runs.load(tx, {
+        conversationId: run.conversationId,
+        runId: run.id,
+      });
+      if (!stored) throw new TypeError('Branch lost a normalized terminal record');
+      const { ownerId: _owner, fencingToken: _fence, ...settled } = stored.run;
+      await driver.runs.save(tx, { ...stored, run: settled });
+    }
+
     for (const event of events) {
       const appended = await driver.events.append(tx, event);
       if (appended.seq !== event.seq) throw new TypeError('Branch event sequence changed');

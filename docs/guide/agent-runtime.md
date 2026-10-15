@@ -4,7 +4,7 @@ description: Configure Stitchkit's optional durable history, stream loop, run co
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-10-15 07:57 +07:00
+updated: 2026-10-15 13:36 +07:00
 ---
 
 # Agent application runtime
@@ -611,11 +611,17 @@ removed. State, schedules, children, retries, sandbox, approval rejection and du
 retained as inert `runtime/branch-observation` records; they cannot repopulate operational state
 or pending effects. Spills discard source authorization and require the explicit fresh
 `artifactAuthorization`; normal destination read authorization still applies. No cached projection,
-schedule row or child relation is cloned.
+schedule row or child relation is cloned. Ordinary companion projections in the export have
+`{ name, version, uptoSeq, value, updatedAt }` envelopes. Branch validates their envelopes,
+unique names and checkpoints within the supplied journal, then discards their values. They are
+derived application caches, including ones containing source references; their values are never
+replayed as state or copied as authority. Rebuild destination projections with
+`createSqliteAgentProjectionStore().advance(...)` over the destination ledger. An exact earlier
+boundary never inherits a later cache value.
 
 The store validates the complete archive before writing: contiguous events, a matching runtime
 snapshot, known typed forms, reference closure, and spill bytes/digests. Unsupported provider
-envelopes, encrypted invocation payloads, unknown event versions, arbitrary cached projections,
+envelopes, encrypted invocation payloads, unknown event versions, malformed projection envelopes,
 missing artifacts and undocumented reference fields in opaque JSON refuse atomically. They need
 an owner-defined transfer codec; never recursively rewrite internal JSON in the application.
 Third-party drivers must provide atomic write transactions and archive support for spills;
@@ -631,6 +637,15 @@ requests and completed provider response identities enter the same append-only l
 upstream name comes from the model provider's own `resolveResponseProvider` — `openRouterProvider`
 supplies it — so the runtime carries the fact without learning any gateway's metadata key. The normalized
 head/run/message tables remain the fast operational projection.
+
+For `runtime/transition` payload inspection, use `AgentStoreTransitionRecordSchema` and its
+inferred `AgentStoreTransitionRecord` type. A checkpoint record may hold either the full assistant
+message or `{ id, status: 'streaming', sha256?, sourceSha256?, parts: number, bytes: number }`;
+exactly one digest is present. Numeric `parts` counts parts; it is not an array of message parts.
+`sourceSha256` preserves a branch's historical source digest. These hash-only records are
+observations, not executable checkpoint inputs. `AgentStoreTransitionSchema` describes full
+store mutations. Shape inspection does not replace branch's complete replay/reference validation.
+Schema v4 archives written by 0.109.4 use the same journal representation.
 
 Use `defineAgentProjection` with `createSqliteAgentProjectionStore` for a
 deterministic versioned fold. Every value reports `uptoSeq`, so a caller can

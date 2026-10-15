@@ -163,6 +163,12 @@
   },
   "overrides": [
     {
+      "includes": [
+        "packages/core/scripts/consumer-lane/fixtures/node/src/agent-conversation-streaming-v0.109.4.json"
+      ],
+      "formatter": { "enabled": false }
+    },
+    {
       "includes": ["packages/tui/src/**/*.tsx"],
       "linter": {
         "rules": {

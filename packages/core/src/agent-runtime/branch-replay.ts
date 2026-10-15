@@ -7,14 +7,17 @@ import {
   AgentMessageSchema,
   type AgentSnapshot,
   AgentSnapshotSchema,
-  AgentUsageSchema,
 } from './schemas';
 import {
   AgentAdmissionReceiptSchema,
   AgentRuntimeHeadSchema,
   AgentStoredRunSchema,
 } from './store-driver-contract';
-import { AgentStoreTransitionSchema, canonicalAgentJson } from './store-events';
+import {
+  AgentStoreCheckpointRecordSchema,
+  AgentStoreTransitionSchema,
+  canonicalAgentJson,
+} from './store-events';
 import type { ReducedApplied, StoreOperation } from './store-reduce-shared';
 import { reduceStore } from './store-reducer';
 import { snapshotOf } from './store-snapshot';
@@ -31,44 +34,8 @@ export const BranchBaselineSchema = z
   })
   .strict();
 
-const CheckpointRecordSchema = z
-  .object({
-    type: z.literal('checkpoint'),
-    input: z
-      .object({
-        conversationId: z.string().min(1),
-        runId: z.string().min(1),
-        expectedRevision: z.int().nonnegative(),
-        ownerId: z.string().min(1),
-        fencingToken: z.int().nonnegative().optional(),
-        assistant: z
-          .object({
-            id: z.string().min(1),
-            status: z.literal('streaming'),
-            sha256: z
-              .string()
-              .regex(/^[a-f0-9]{64}$/)
-              .optional(),
-            sourceSha256: z
-              .string()
-              .regex(/^[a-f0-9]{64}$/)
-              .optional(),
-            parts: z.int().nonnegative(),
-            bytes: z.int().nonnegative(),
-          })
-          .strict(),
-        usage: AgentUsageSchema.optional(),
-      })
-      .strict(),
-  })
-  .strict()
-  .refine(
-    (value) =>
-      Boolean(value.input.assistant.sha256) !== Boolean(value.input.assistant.sourceSha256),
-  );
-
 export function branchTransition(event: AgentStoreEventEnvelope): StoreOperation {
-  const checkpoint = CheckpointRecordSchema.safeParse(event.payload);
+  const checkpoint = AgentStoreCheckpointRecordSchema.safeParse(event.payload);
   if (!checkpoint.success) return AgentStoreTransitionSchema.parse(event.payload);
   const input = checkpoint.data.input;
   if (canonicalAgentJson(checkpoint.data) !== canonicalAgentJson(event.payload))
@@ -184,7 +151,7 @@ export function replayBranchEvents(
     if (event.kind !== 'runtime/transition') continue;
     let operation = branchTransition(event);
     if (operation.type === 'checkpoint' && retainedSnapshot) {
-      const record = CheckpointRecordSchema.safeParse(event.payload);
+      const record = AgentStoreCheckpointRecordSchema.safeParse(event.payload);
       const assistantId = operation.input.assistant.id;
       const retained = retainedSnapshot.messages.find((message) => message.id === assistantId);
       if (
@@ -254,7 +221,7 @@ export function replayBranchEvents(
     }
     if (
       operation.type === 'checkpoint' &&
-      CheckpointRecordSchema.safeParse(event.payload).success
+      AgentStoreCheckpointRecordSchema.safeParse(event.payload).success
     )
       result.unresolvedDrafts.add(operation.input.runId);
     if (operation.type === 'terminal') result.unresolvedDrafts.delete(operation.input.runId);

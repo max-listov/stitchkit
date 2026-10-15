@@ -5,6 +5,7 @@ import {
   AgentStoreEventPageSchema,
 } from '../durability/events';
 import type { SqliteValue } from '../internal/sqlite';
+import { ArchiveProjectionSchema } from './archive-projection';
 import {
   CountRowSchema,
   encodeJson,
@@ -161,16 +162,7 @@ export const sqliteArchive: NonNullable<SqliteStoreDriver['archive']> = {
       ) {
         continue;
       }
-      const projection = z
-        .object({
-          name: z.string(),
-          version: z.int().positive(),
-          uptoSeq: z.int().nonnegative(),
-          value: z.json(),
-          updatedAt: z.string(),
-        })
-        .strict()
-        .parse(raw);
+      const projection = ArchiveProjectionSchema.parse(raw);
       transaction
         .prepare(`
           INSERT INTO stitchkit_agent_runtime_projections

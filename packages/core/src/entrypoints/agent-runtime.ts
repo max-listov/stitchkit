@@ -345,6 +345,8 @@ export {
   type AgentStoreEventDecodeResult,
   type AgentStoreEventDraft,
   type AgentStoreTransition,
+  type AgentStoreTransitionRecord,
+  AgentStoreTransitionRecordSchema,
   AgentStoreTransitionSchema,
   canonicalAgentJson,
   decodeAgentConversationArchive,
