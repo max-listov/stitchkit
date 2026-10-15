@@ -1,4 +1,12 @@
 export type { AgentToolDefinition } from '../agent-runtime/agent-tool';
+export {
+  type AgentConversationBranchReceipt,
+  AgentConversationBranchReceiptSchema,
+  type AgentConversationBranchResult,
+  AgentConversationBranchResultSchema,
+  type BranchAgentConversationInput,
+  BranchAgentConversationInputSchema,
+} from '../agent-runtime/branch-contract';
 export { createAgentChildTools } from '../agent-runtime/child-tools';
 export {
   type AgentChildBlockingDecision,

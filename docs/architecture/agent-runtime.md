@@ -4,7 +4,7 @@ description: Current ownership, state transitions, linearization points and resi
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-10-02 16:28 +07:00
+updated: 2026-10-15 08:08 +07:00
 ---
 
 # Agent application runtime architecture
@@ -17,7 +17,7 @@ model. It is not a generic job framework. `mountAgent` remains an independent lo
 | Concern | Owner | Source of truth |
 |---|---|---|
 | Canonical message/run shapes | Stitchkit | Zod schemas in `packages/core/src/agent-runtime/schemas.ts` |
-| Transition validation, revisions, idempotency and compaction replacement | Stitchkit | reducer in `store-driver.ts` |
+| Transition validation, revisions, idempotency and compaction replacement | Stitchkit | reducer in `store-reducer.ts` |
 | Atomicity and durable rows | application adapter | one `AgentRuntimeStoreDriver.transaction` over head, runs, admissions and history; read access may borrow a coherent snapshot without reserving the writer slot |
 | Process-local queue, interrupt, supersede and settlement | Stitchkit | `coordinator.ts` |
 | Distributed ownership | application adapter | lease plus optional monotonic `fencingToken` persisted with the run |
@@ -168,6 +168,9 @@ current exported schema, and write only the current version. Unknown future vers
 - `runAgentStoreConformance` executes the same atomicity/race contract against memory and external
   transactional adapters, including duplicate terminal recovery after physical compaction and
   agreement between an abandoned canonical record and the recoverable index.
+- The installed `agent-conversation-branch` proof requires the branch capability before running
+  shared conformance against memory and SQLite on Bun and Node; old package bytes fail rather than
+  skipping the optional extension. Its declaration companion checks the public schemas and inferred types.
 - Public bounded barriers/traces from `stitchkit/testing` run from packed Bun and Node consumers.
 - The official PostgreSQL/Prisma fixture proves duplicate/coalesced admission, stale checkpoint,
   terminal race, compaction conflict, constant-size heads, normalized recovery and rollback on real transactions.
@@ -213,3 +216,35 @@ and authorizes plaintext artifact reads independently from metadata queries.
 Ordinary agent conversation history retains its existing access policy. See
 [ADR 0206](../decisions/0206-model-invocations-share-provider-evidence.md) and the
 [consumer example](../guide/agent-runtime.md#plain-completions-and-shared-invocation-receipts).
+
+## Independent conversation branches
+
+`branchConversation` is an optional aggregate capability supplied by the built-in memory/SQLite
+adapters and `createAgentRuntimeStore`. `store-branch.ts` reads source events and archive companions,
+validates the complete source, selects a settled boundary, rekeys typed references and writes the
+clone plus `runtime/branched` receipt inside one driver write transaction. The receipt is the
+lineage journal; there is no second branch database. The `(destinationConversationId, requestKey)`
+pair scopes idempotency. A changed fingerprint or an occupied destination refuses.
+
+`branch-replay.ts` reconstructs active history through the existing reducer. Full terminal
+messages settle hash-only checkpoints; their source hashes remain named `sourceSha256` rather than
+claiming to hash a rekeyed draft. Compaction mutations retain the full event evidence and restore
+SQLite inactive rows. Migrated baselines use optional `history.restore` for their inactive layout.
+Run update times reconstructed from transitions use the event's recorded `occurredAt`. Abandon
+transitions retain the exact terminal assistant in that same event; legacy missing content refuses.
+
+`branch-identities.ts` separates definitions from references. Runs, messages, operations, tool
+calls, approvals, spills and events use destination-derived identities; unresolved references
+refuse. Provider-message hashes and their request references are recomputed together.
+Application JSON is never recursively rewritten by guessing ID-like strings.
+
+State, schedule, child, approval-rejection, retry, sandbox and durability facts become
+`runtime/branch-observation` records. Operational readers cannot consume these as live commands.
+Normalized terminal runs carry no owner or fencing token, approval signatures are removed, and
+no schedule, child, projection or effect claim is instantiated. Spills require explicit fresh
+`artifactAuthorization`; source authorization is discarded. The destination owner still authorizes
+every artifact read. Unknown event/payload versions, opaque provider envelopes, encrypted invocation
+artifacts and arbitrary cached projections refuse until their owning transfer codec exists.
+
+See [ADR 0258](../decisions/0258-conversation-branches-have-new-identity-and-no-inherited-authority.md)
+and the [public branch contract](../guide/agent-runtime.md#branch-or-restore-with-a-new-identity).

@@ -9,7 +9,7 @@ import {
   reduceOperation,
   reduceRecover,
 } from './store-reduce-run';
-import type { ReducedMutation, StoreOperation } from './store-reduce-shared';
+import type { ReducedApplied, ReducedMutation, StoreOperation } from './store-reduce-shared';
 import { reduceTerminal } from './store-reduce-terminal';
 
 /**
@@ -22,7 +22,16 @@ import { reduceTerminal } from './store-reduce-terminal';
  * names the draft by hash and size; the terminal commit still carries the
  * final message in full, and the normalized tables hold the draft itself.
  */
-export function transitionRecord(operation: StoreOperation): unknown {
+export function transitionRecord(
+  operation: StoreOperation,
+  reduced?: ReducedApplied,
+): unknown {
+  if (operation.type === 'recover' && operation.input.action === 'abandon') {
+    const assistant = reduced?.runRecords?.find(
+      (record) => record.run.id === operation.input.runId,
+    )?.terminalAssistant;
+    if (assistant) return { ...operation, assistant };
+  }
   if (operation.type !== 'checkpoint') return operation;
   const { assistant, ...rest } = operation.input;
   const body = canonicalAgentJson(assistant);
@@ -68,7 +77,7 @@ export function reduceStore(
     case 'interrupt':
       return reduceInterrupt(current, run, operation.input);
     case 'recover':
-      return reduceRecover(current, run, operation.input);
+      return reduceRecover(current, run, operation.input, operation.assistant);
     case 'terminal':
       return reduceTerminal(current, run, operation.input);
   }

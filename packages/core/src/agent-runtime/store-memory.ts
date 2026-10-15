@@ -2,7 +2,6 @@ import { z } from 'zod';
 import {
   type AgentStoreEventEnvelope,
   AgentStoreEventEnvelopeSchema,
-  AgentStoreEventPageSchema,
 } from '../durability/events';
 import { type AgentMessage, AgentMessageSchema, AgentRecordIdSchema } from './schemas';
 import {
@@ -25,6 +24,8 @@ import {
   AgentStoredRunSchema,
   isActiveRunState,
 } from './store-driver-contract';
+import { memoryArchive } from './store-memory-archive';
+import { memoryEvents } from './store-memory-events';
 import { replaceMessage } from './store-snapshot';
 
 const RecoverableCursorSchema = z.tuple([AgentRecordIdSchema, AgentRecordIdSchema]);
@@ -45,6 +46,7 @@ interface MemoryTransaction {
   seeds: Map<string, Map<string, AgentSeedReceipt>>;
   histories: Map<string, AgentMessage[]>;
   events: Map<string, AgentStoreEventEnvelope[]>;
+  spills: Map<string, import('./archive-spill').ArchiveSpill[]>;
 }
 
 function cloneHeadMap(source: ReadonlyMap<string, AgentRuntimeHead>) {
@@ -80,6 +82,17 @@ function cloneHistoryMap(source: ReadonlyMap<string, readonly AgentMessage[]>) {
 type MemoryDriver = AgentRuntimeStoreDriver<MemoryTransaction>;
 
 const memoryConversations: NonNullable<MemoryDriver['conversations']> = {
+  async isEmpty(transaction, id) {
+    return (
+      !transaction.heads.has(id) &&
+      !transaction.runs.has(id) &&
+      !transaction.admissions.has(id) &&
+      !transaction.seeds.has(id) &&
+      !transaction.histories.has(id) &&
+      !transaction.events.has(id) &&
+      !transaction.spills.has(id)
+    );
+  },
   async isPurged(transaction, conversationId) {
     return transaction.purged.has(conversationId);
   },
@@ -91,6 +104,7 @@ const memoryConversations: NonNullable<MemoryDriver['conversations']> = {
     transaction.seeds.delete(conversationId);
     transaction.histories.delete(conversationId);
     transaction.events.delete(conversationId);
+    transaction.spills.delete(conversationId);
   },
 };
 
@@ -197,6 +211,15 @@ const memorySeeds: MemoryDriver['seeds'] = {
 };
 
 const memoryHistory: MemoryDriver['history'] = {
+  async restore(transaction, input) {
+    const compacted = new Set(input.compactedMessageIds);
+    transaction.histories.set(
+      input.conversationId,
+      input.messages
+        .filter((message) => !compacted.has(message.id))
+        .map((message) => AgentMessageSchema.parse(structuredClone(message))),
+    );
+  },
   async load(transaction, conversationId) {
     return (transaction.histories.get(conversationId) ?? []).map((message) =>
       AgentMessageSchema.parse(structuredClone(message)),
@@ -254,39 +277,6 @@ const memoryHistory: MemoryDriver['history'] = {
   },
 };
 
-const memoryEvents: MemoryDriver['events'] = {
-  async append(transaction, draft) {
-    const current = transaction.events.get(draft.conversationId) ?? [];
-    const event = AgentStoreEventEnvelopeSchema.parse({
-      ...draft,
-      seq: (current.at(-1)?.seq ?? 0) + 1,
-    });
-    if (current.some((candidate) => candidate.eventId === event.eventId)) {
-      throw new TypeError('Agent store event identity is already present');
-    }
-    transaction.events.set(draft.conversationId, [...current, event]);
-    return event;
-  },
-  async list(transaction, input) {
-    const selected = (transaction.events.get(input.conversationId) ?? []).filter(
-      (event) =>
-        (input.fromSeq === undefined || event.seq >= input.fromSeq) &&
-        (input.toSeq === undefined || event.seq <= input.toSeq),
-    );
-    const items = selected.slice(0, input.limit);
-    const last = items.at(-1);
-    return AgentStoreEventPageSchema.parse({
-      items,
-      ...(selected.length > items.length && last ? { nextSeq: last.seq + 1 } : {}),
-    });
-  },
-  async find(transaction, input) {
-    return (transaction.events.get(input.conversationId) ?? []).find(
-      (event) => event.eventId === input.eventId,
-    );
-  },
-};
-
 /** The keyset-paginated recovery scan over the committed (not transactional) runs. */
 function scanMemoryRecoverable(
   runs: ReadonlyMap<string, ReadonlyMap<string, AgentStoredRun>>,
@@ -332,7 +322,8 @@ function scanMemoryRecoverable(
 }
 
 /** In-memory reference adapter backed by the same reducer and driver contract as durable stores. */
-export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
+export function createMemoryAgentRuntimeStore(): AgentRuntimeStore &
+  Required<Pick<AgentRuntimeStore, 'branchConversation'>> {
   let purged = new Set<string>();
   let heads = new Map<string, AgentRuntimeHead>();
   let runs = new Map<string, Map<string, AgentStoredRun>>();
@@ -340,6 +331,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
   let seeds = new Map<string, Map<string, AgentSeedReceipt>>();
   let histories = new Map<string, AgentMessage[]>();
   let events = new Map<string, AgentStoreEventEnvelope[]>();
+  let spills = new Map<string, import('./archive-spill').ArchiveSpill[]>();
   let transactionTail = Promise.resolve();
 
   const driver: AgentRuntimeStoreDriver<MemoryTransaction> = {
@@ -350,6 +342,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
       await previous.catch(() => undefined);
       const transaction = {
         purged: new Set(purged),
+        spills: structuredClone(spills),
         heads: cloneHeadMap(heads),
         runs: cloneNestedMap(runs, (record) =>
           AgentStoredRunSchema.parse(structuredClone(record)),
@@ -371,6 +364,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
       try {
         const result = await work(transaction);
         purged = transaction.purged;
+        spills = transaction.spills;
         heads = transaction.heads;
         runs = transaction.runs;
         admissions = transaction.admissions;
@@ -389,6 +383,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore {
     seeds: memorySeeds,
     history: memoryHistory,
     events: memoryEvents,
+    archive: memoryArchive,
     async scanRecoverable(input) {
       return scanMemoryRecoverable(runs, input);
     },

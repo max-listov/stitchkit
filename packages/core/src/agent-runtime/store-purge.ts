@@ -10,6 +10,8 @@ import type { AgentRuntimeStoreDriver } from './store-driver-contract';
  * conversation, including first admission: optimistic head CAS alone is not sufficient.
  */
 export interface AgentConversationPurgeDriver<TRANSACTION> {
+  /** Includes companions that need not have a runtime head. */
+  isEmpty?(transaction: TRANSACTION, conversationId: string): Promise<boolean>;
   isPurged(transaction: TRANSACTION, conversationId: string): Promise<boolean>;
   /** Remove all owned records and retain only a permanent ID tombstone in this transaction. */
   remove(transaction: TRANSACTION, conversationId: string): Promise<void>;

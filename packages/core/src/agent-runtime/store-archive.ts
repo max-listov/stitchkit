@@ -33,38 +33,7 @@ export function exportConversation<TRANSACTION>(
 ): Promise<Uint8Array> {
   return driver.transaction(
     async (transaction) => {
-      const events: AgentStoreEventEnvelope[] = [];
-      let fromSeq: number | undefined;
-      do {
-        const page = AgentStoreEventPageSchema.parse(
-          await driver.events.list(
-            transaction,
-            ReadAgentStoreEventsSchema.parse({
-              conversationId,
-              ...(fromSeq && { fromSeq }),
-              limit: 10_000,
-            }),
-          ),
-        );
-        events.push(...page.items);
-        fromSeq = page.nextSeq;
-      } while (fromSeq !== undefined);
-      const durable = (await driver.archive?.export(transaction, conversationId)) ?? {
-        projections: [],
-        spills: [],
-      };
-      const snapshot = await snapshotIn(driver, transaction, conversationId);
-      return encodeAgentConversationArchive({
-        format: 'stitchkit.agent-conversation',
-        formatVersion: 1,
-        conversationId,
-        events,
-        projections: [
-          { archiveType: 'runtime-snapshot', snapshot: z.json().parse(snapshot) },
-          ...durable.projections,
-        ],
-        spills: durable.spills,
-      });
+      return exportConversationIn(driver, transaction, conversationId);
     },
     { access: 'read' },
   );
@@ -164,5 +133,44 @@ export async function importConversation<TRANSACTION>(
     }
     await driver.archive?.import(transaction, archive);
     return { conversationId: archive.conversationId, events: archive.events.length };
+  });
+}
+
+export async function exportConversationIn<TRANSACTION>(
+  driver: AgentRuntimeStoreDriver<TRANSACTION>,
+  transaction: TRANSACTION,
+  conversationId: string,
+): Promise<Uint8Array> {
+  const events: AgentStoreEventEnvelope[] = [];
+  let fromSeq: number | undefined;
+  do {
+    const page = AgentStoreEventPageSchema.parse(
+      await driver.events.list(
+        transaction,
+        ReadAgentStoreEventsSchema.parse({
+          conversationId,
+          ...(fromSeq && { fromSeq }),
+          limit: 10_000,
+        }),
+      ),
+    );
+    events.push(...page.items);
+    fromSeq = page.nextSeq;
+  } while (fromSeq !== undefined);
+  const durable = (await driver.archive?.export(transaction, conversationId)) ?? {
+    projections: [],
+    spills: [],
+  };
+  const snapshot = await snapshotIn(driver, transaction, conversationId);
+  return encodeAgentConversationArchive({
+    format: 'stitchkit.agent-conversation',
+    formatVersion: 1,
+    conversationId,
+    events,
+    projections: [
+      { archiveType: 'runtime-snapshot', snapshot: z.json().parse(snapshot) },
+      ...durable.projections,
+    ],
+    spills: durable.spills,
   });
 }

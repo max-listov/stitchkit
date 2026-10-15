@@ -30,7 +30,7 @@ export type StoreOperation =
   | { type: 'checkpoint'; input: CheckpointRunAssistant }
   | { type: 'operation'; input: RecordRunOperation }
   | { type: 'interrupt'; input: RequestRunInterrupt }
-  | { type: 'recover'; input: RecoverAgentRun }
+  | { type: 'recover'; input: RecoverAgentRun; assistant?: AgentMessage }
   | { type: 'terminal'; input: CommitRunTerminal }
   | { type: 'compact'; input: ReplaceCompactedRange }
   | { type: 'seed'; input: SeedConversationInput };

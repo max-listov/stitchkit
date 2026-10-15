@@ -16,6 +16,23 @@ import { AgentHistoryMutationSchema } from './store-driver-contract';
  * compacted rows it no longer does, which stay for a person reading back.
  */
 export const sqliteHistory: SqliteStoreDriver['history'] = {
+  async restore(transaction, input) {
+    const compacted = new Set(input.compactedMessageIds);
+    for (const [position, message] of input.messages.entries()) {
+      if (message.conversationId !== input.conversationId)
+        throw new TypeError('Restored history has a foreign conversation');
+      transaction
+        .prepare(`INSERT INTO stitchkit_agent_runtime_messages
+        (conversation_id, id, position, active, payload) VALUES (?, ?, ?, ?, ?)`)
+        .run(
+          input.conversationId,
+          message.id,
+          position,
+          compacted.has(message.id) ? 0 : 1,
+          encodeJson(message),
+        );
+    }
+  },
   async load(transaction, conversationId) {
     return transaction
       .prepare(`

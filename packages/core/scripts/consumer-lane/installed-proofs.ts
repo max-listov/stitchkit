@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { agentConversationProofs } from './agent-conversation-proofs';
 import {
   type DeclarationVariantSchema,
   type InstalledConsumerProof,
@@ -12,6 +13,7 @@ const native = {
   kind: 'runtime',
 };
 export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).parse([
+  ...agentConversationProofs,
   {
     id: 'native-client-types',
     fixture: 'native-client',

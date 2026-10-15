@@ -270,7 +270,7 @@ async function persistApplied<TRANSACTION>(
     agentStoreEventDraft({
       conversationId,
       kind: 'runtime/transition',
-      payload: z.json().parse(transitionRecord(operation)),
+      payload: z.json().parse(transitionRecord(operation, reduced)),
     }),
   );
   return { outcome: 'applied', snapshot: reduced.snapshot };

@@ -5,6 +5,10 @@ import type {
   AppendAgentStoreEvent,
   ReadAgentStoreEvents,
 } from '../durability/events';
+import type {
+  AgentConversationBranchResult,
+  BranchAgentConversationInput,
+} from './branch-contract';
 import type { AgentConversationPurgeInput, AgentConversationPurgeResult } from './purge';
 import {
   AgentMessageSchema,
@@ -203,6 +207,10 @@ export type AgentRecoverableDescriptor = z.infer<typeof AgentRecoverableDescript
 export type AgentRecoverablePage = z.infer<typeof AgentRecoverablePageSchema>;
 
 export interface AgentRuntimeStore {
+  /** Atomic independent identity from a settled prefix or validated archive. */
+  branchConversation?(
+    input: BranchAgentConversationInput,
+  ): Promise<AgentConversationBranchResult>;
   /** Optional atomic deletion. Active runs refuse deletion; purged IDs cannot be reused. */
   purgeConversation?(
     input: AgentConversationPurgeInput,

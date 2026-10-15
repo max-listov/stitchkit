@@ -13,6 +13,8 @@ import { z } from 'zod';
  */
 export const AgentStoreEventKindSchema = z.enum([
   'runtime/baseline',
+  'runtime/branched',
+  'runtime/branch-observation',
   'runtime/transition',
   'invocation/started',
   'invocation/finished',

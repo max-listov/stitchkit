@@ -144,6 +144,15 @@ export interface AgentRuntimeStoreDriver<TRANSACTION> {
     create(transaction: TRANSACTION, receipt: AgentSeedReceipt): Promise<void>;
   };
   history: {
+    /** Restore baseline rows, including inactive history, into an empty destination. */
+    restore?(
+      transaction: TRANSACTION,
+      input: {
+        conversationId: string;
+        messages: readonly AgentMessage[];
+        compactedMessageIds: readonly string[];
+      },
+    ): Promise<void>;
     load(transaction: TRANSACTION, conversationId: string): Promise<readonly AgentMessage[]>;
     /**
      * Whether any stored message — active or compacted — already carries this

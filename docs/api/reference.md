@@ -980,6 +980,9 @@ Server-only optional application runtime. See the
 | `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |
 | `AgentRunQueuePrioritySchema` | schema | durable opt-in priority for queued `interrupt-next` runs |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
+| `BranchAgentConversationInputSchema` / `BranchAgentConversationInput` | schema / _type_ | strict branch request: stable request key, empty destination, settled conversation boundary or archive bytes, fresh artifact authorization |
+| `AgentConversationBranchReceiptSchema` / `AgentConversationBranchReceipt` | schema / _type_ | durable lineage: request fingerprint, source/destination identities, source sequence/version/digest and creation time |
+| `AgentConversationBranchResultSchema` / `AgentConversationBranchResult` | schema / _type_ | `created` or `duplicate` with the same durable receipt; `AgentRuntimeStore.branchConversation` is optional for hand-written stores |
 | `createAgentRuntimeStore` | function | build the aggregate store from one coherent transaction driver; framework owns every state transition |
 | `AgentRuntimeStoreDriver` | _type_ | ORM-neutral transaction over a bounded head, normalized runs/admissions, product history, a **required** `events: { append, list }` ledger table, an optional `archive: { export, import }` for driver-owned durable payloads, and indexed run recovery; optional `{ access: 'read' }` selects a coherent read transaction while absent options remain write-safe |
 | `recordAgentRetryDecision` / `AgentRetryPolicy` | function / _type_ | `loop.retry` policy and the ledger record of a retry decision: explicit retryability and backoff at a durable provider-step boundary |

@@ -1,5 +1,6 @@
 import { AgentMessageSchema } from './schemas';
 import type { AgentRuntimeStore } from './store';
+import { branchConformance } from './store-conformance-branch';
 import {
   admissionPhase,
   boundedReadsPhase,
@@ -73,6 +74,9 @@ export async function runAgentStoreConformance(
       `${run}-ledger`,
       `${run}-archive`,
       `${run}-seed`,
+      `${run}-branch-source`,
+      `${run}-branch`,
+      `${run}-branch-restored`,
     ],
   };
   const store = await config.createStore(context);
@@ -144,7 +148,12 @@ async function conformanceScenario(
     ledgerConversationId,
     archiveConversationId,
     seedConversationId,
+    branchSourceId,
+    branchDestinationId,
+    branchRestoredId,
   ] = conversationIds;
+  if (branchSourceId && branchDestinationId && branchRestoredId)
+    await branchConformance(store, branchSourceId, branchDestinationId, branchRestoredId);
   if (seedConversationId) await seedScenario(store, seedConversationId);
   if (ledgerConversationId) await ledgerScenario(store, ledgerConversationId);
   if (archiveConversationId) await archiveScenario(store, archiveConversationId);

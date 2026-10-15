@@ -8,6 +8,7 @@ import {
   AppendAgentStoreEventSchema,
 } from '../durability/events';
 import { canonicalZodJson } from '../primitives/canonical-json';
+import { AgentMessageSchema } from './schemas';
 import {
   AcceptInputAndAssignRunSchema,
   AcquireAgentRunSchema,
@@ -26,7 +27,13 @@ export const AgentStoreTransitionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('checkpoint'), input: CheckpointRunAssistantSchema }).strict(),
   z.object({ type: z.literal('operation'), input: RecordRunOperationSchema }).strict(),
   z.object({ type: z.literal('interrupt'), input: RequestRunInterruptSchema }).strict(),
-  z.object({ type: z.literal('recover'), input: RecoverAgentRunSchema }).strict(),
+  z
+    .object({
+      type: z.literal('recover'),
+      input: RecoverAgentRunSchema,
+      assistant: AgentMessageSchema.optional(),
+    })
+    .strict(),
   z.object({ type: z.literal('terminal'), input: CommitRunTerminalSchema }).strict(),
   z.object({ type: z.literal('compact'), input: ReplaceCompactedRangeSchema }).strict(),
   z.object({ type: z.literal('seed'), input: SeedConversationInputSchema }).strict(),

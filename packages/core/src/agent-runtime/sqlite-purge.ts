@@ -47,6 +47,21 @@ export function sqliteConversationPurge(
     .get();
   if (table === null || table === undefined) return undefined;
   return {
+    async isEmpty(transaction, conversationId) {
+      for (const table of OWNED_TABLES) {
+        const row = transaction
+          .prepare(`SELECT 1 FROM ${table} WHERE conversation_id = ? LIMIT 1`)
+          .get(conversationId);
+        if (row !== null && row !== undefined) return false;
+      }
+      return (
+        transaction
+          .prepare(
+            'SELECT 1 FROM stitchkit_agent_runtime_children WHERE parent_conversation_id = ? OR child_conversation_id = ? LIMIT 1',
+          )
+          .get(conversationId, conversationId) == null
+      );
+    },
     async isPurged(transaction, conversationId) {
       const row = transaction
         .prepare(

@@ -4,7 +4,7 @@ description: Configure Stitchkit's optional durable history, stream loop, run co
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-10-02 16:28 +07:00
+updated: 2026-10-15 07:57 +07:00
 ---
 
 # Agent application runtime
@@ -560,6 +560,66 @@ input injected into the failed attempt is taken again by the retry; and the
 failed attempt's reported usage stays in the run's spend. Transient events —
 deltas, reasoning, `attempt-reset` — are numbered from 1 per run, counting only
 what was published, so a cursor sees no gap on an ordinary stream.
+
+### Branch or restore with a new identity
+
+Use `store.branchConversation()` to create an independent conversation. `importConversation()`
+restores the original identity and is not a fork. The built-in memory and SQLite stores and
+`createAgentRuntimeStore()` expose branching; a hand-written `AgentRuntimeStore` can advertise this
+optional capability. The host authorizes the caller's source/archive access and destination
+creation before calling this trusted store boundary.
+
+```ts
+const copy = await sqlite.store.branchConversation({
+  requestKey: 'branch-request-1',
+  destinationConversationId: 'new-conversation',
+  source: { kind: 'conversation', conversationId: 'original', throughRunId: 'finished-run' },
+  // Required when selected history has spills: an explicit policy for this destination.
+  artifactAuthorization: { operation: 'read', path: 'approved-destination-workspace' },
+})
+
+const restored = await sqlite.store.branchConversation({
+  requestKey: 'restore-request-1',
+  destinationConversationId: 'restored-as-new',
+  source: { kind: 'archive', bytes: archiveBytes },
+})
+```
+
+`throughRunId` selects its exact terminal/abandon event. Omit it to include the settled tip and
+compaction recorded after the last run. The selected prefix must contain no queued or acquired
+runs. A later active source run does not prevent branching an earlier settled prefix. A migrated
+baseline has no earlier per-run event boundary; it can be copied at its settled tip.
+
+The result is `{ outcome: 'created' | 'duplicate', receipt }`. Keep the receipt: it binds source
+and destination identity, source kind, exact `sourceSeq`/`sourceVersion`, `sourceDigest`, request
+fingerprint and creation time. A retry with the same destination/key and selector returns the
+original receipt even after the source advances or the destination continues. Changing the
+request conflicts; no existing destination is overwritten. Archive fingerprints bind the supplied
+bytes. The source digest binds the selected canonical events, artifacts and reconstructed snapshot.
+Run update timestamps reconstructed from events use their recorded `occurredAt`. Abandon transitions
+retain the full failed assistant in the same event; a legacy archive must retain that exact assistant
+in its runtime snapshot, otherwise copying refuses instead of inventing historical content or time.
+
+No provider or tool runs during copying. The next ordinary runtime `submit` continues the copied
+history. All engine identities and typed references are new, including repeated references to one
+spill. Compacted content stays in the event history and SQLite inactive rows; the model reads the
+same active summaries. A hash-only checkpoint is historical digest evidence, marked
+`sourceSha256`; a later full terminal record must settle its content.
+
+A branch grants no source authority. Terminal run owners/fences and approval signatures are
+removed. State, schedules, children, retries, sandbox, approval rejection and durability facts are
+retained as inert `runtime/branch-observation` records; they cannot repopulate operational state
+or pending effects. Spills discard source authorization and require the explicit fresh
+`artifactAuthorization`; normal destination read authorization still applies. No cached projection,
+schedule row or child relation is cloned.
+
+The store validates the complete archive before writing: contiguous events, a matching runtime
+snapshot, known typed forms, reference closure, and spill bytes/digests. Unsupported provider
+envelopes, encrypted invocation payloads, unknown event versions, arbitrary cached projections,
+missing artifacts and undocumented reference fields in opaque JSON refuse atomically. They need
+an owner-defined transfer codec; never recursively rewrite internal JSON in the application.
+Third-party drivers must provide atomic write transactions and archive support for spills;
+`history.restore` is required for migrated baselines with inactive rows.
 
 ### Event ledger, projections and durable capabilities
 

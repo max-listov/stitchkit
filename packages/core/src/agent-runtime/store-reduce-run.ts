@@ -1,4 +1,5 @@
 import {
+  type AgentMessage,
   AgentMessageSchema,
   type AgentRun,
   AgentRunSchema,
@@ -148,6 +149,7 @@ export function reduceRecover(
   current: AgentSnapshot,
   run: AgentRun,
   input: RecoverAgentRun,
+  retainedAssistant?: AgentMessage,
 ): ReducedMutation {
   if (run.revision !== input.expectedRevision || !isActiveRunState(run.state)) {
     return conflict(run.revision);
@@ -176,22 +178,33 @@ export function reduceRecover(
     updatedAt: new Date().toISOString(),
   });
   if (input.action === 'abandon') {
+    if (
+      retainedAssistant &&
+      (retainedAssistant.id !== run.assistantMessageId ||
+        retainedAssistant.conversationId !== run.conversationId ||
+        retainedAssistant.runId !== run.id ||
+        retainedAssistant.role !== 'assistant' ||
+        retainedAssistant.status !== 'failed')
+    )
+      throw new TypeError('Abandoned assistant does not match its run');
     const existingAssistant = current.messages.find(
       (message) => message.id === run.assistantMessageId,
     );
-    const assistant = AgentMessageSchema.parse({
-      ...(existingAssistant ?? {
-        schemaVersion: 1,
-        id: run.assistantMessageId,
-        conversationId: run.conversationId,
-        runId: run.id,
-        role: 'assistant',
-        parts: [],
-        createdAt: run.createdAt,
-      }),
-      status: 'failed',
-      updatedAt: new Date().toISOString(),
-    });
+    const assistant =
+      retainedAssistant ??
+      AgentMessageSchema.parse({
+        ...(existingAssistant ?? {
+          schemaVersion: 1,
+          id: run.assistantMessageId,
+          conversationId: run.conversationId,
+          runId: run.id,
+          role: 'assistant',
+          parts: [],
+          createdAt: run.createdAt,
+        }),
+        status: 'failed',
+        updatedAt: new Date().toISOString(),
+      });
     return applied(
       current,
       {

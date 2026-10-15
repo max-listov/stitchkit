@@ -13,6 +13,7 @@ import {
   SeedConversationInputSchema,
 } from './store';
 import { exportConversation, importConversation } from './store-archive';
+import { branchConversation } from './store-branch';
 import type { AgentRuntimeStoreDriver } from './store-driver-contract';
 import { appendEventOnce, findEventOnce } from './store-event-once';
 import { mutateStore } from './store-mutate';
@@ -34,9 +35,10 @@ const AgentRecoverableScanInputSchema = z.object({
  */
 export function createAgentRuntimeStore<TRANSACTION>(
   driver: AgentRuntimeStoreDriver<TRANSACTION>,
-): AgentRuntimeStore {
+): AgentRuntimeStore & Required<Pick<AgentRuntimeStore, 'branchConversation'>> {
   const mutate = (operation: StoreOperation) => mutateStore(driver, operation);
   return {
+    branchConversation: (input) => branchConversation(driver, input),
     loadSnapshot: (conversationId) => loadSnapshot(driver, conversationId),
     loadRun: (input) => loadRun(driver, input),
     listActiveRuns: (conversationId) => listActiveRuns(driver, conversationId),
