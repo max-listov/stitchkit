@@ -62,6 +62,7 @@ let originPort;
 let originStarted = false;
 let recoveryFetchCalls = 0;
 const recoveryDetails = [];
+const originReservation = createServer();
 const origin = createServer((request, response) => {
   if (request.url === '/ready') {
     response.writeHead(204).end();
@@ -122,12 +123,10 @@ try {
     `the supported Socket.IO loader must compile without an expression dependency warning\n${buildOutput}`,
   );
 
-  const originReservation = createServer();
   await listen(originReservation);
   const originAddress = originReservation.address();
   assert(originAddress && typeof originAddress === 'object');
   originPort = originAddress.port;
-  await close(originReservation);
 
   await listen(control);
   const controlAddress = control.address();
@@ -169,6 +168,9 @@ try {
   next.stderr.on('data', (chunk) => output.push(chunk.toString()));
 
   await waitForNext(`http://127.0.0.1:${nextPort}/api/ready`, next, output);
+  // Keep the recovery port reserved while the other servers bind. Releasing it
+  // earlier lets one of them turn the intended connection refusal into an HTTP 404.
+  await close(originReservation);
   const response = await fetch(`http://127.0.0.1:${nextPort}`);
   assert.equal(
     response.status,
@@ -186,6 +188,7 @@ try {
   console.log('Next.js 16.3.0 SSR retry + browser-safe agent schemas: OK');
 } finally {
   next?.kill('SIGTERM');
+  await close(originReservation).catch(() => undefined);
   await close(origin).catch(() => undefined);
   await close(memoOrigin).catch(() => undefined);
   await close(control).catch(() => undefined);
