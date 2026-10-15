@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { Instructions, ModelMessage } from 'ai';
 import type { AgentResolvedModel } from './models';
+import {
+  ProviderJournalMessageSchema,
+  ProviderJournalRequestSchema,
+  ProviderJournalResponseSchema,
+} from './provider-journal';
 import type { RunExecutionState } from './run-execution-state';
 import { providerResponseIdentity } from './runtime-internals';
 import type { AgentRuntimeStore } from './store';
@@ -121,7 +126,7 @@ export async function createRunProviderLedger(input: {
         await store.appendEvent({
           conversationId: state.run.conversationId,
           kind: 'provider/message',
-          payload: { sha256, message: JSON.parse(body) },
+          payload: ProviderJournalMessageSchema.parse({ sha256, message: JSON.parse(body) }),
         });
         knownMessageShas.add(sha256);
       }
@@ -141,7 +146,7 @@ export async function createRunProviderLedger(input: {
       await store.appendEvent({
         conversationId: state.run.conversationId,
         kind: 'provider/request',
-        payload: {
+        payload: ProviderJournalRequestSchema.parse({
           runId: state.run.id,
           attempt: request.attempt,
           stepNumber: request.stepNumber,
@@ -149,7 +154,7 @@ export async function createRunProviderLedger(input: {
           instructionsSha256,
           messageShas,
           bodySha256,
-        },
+        }),
       });
     },
     async recordResponse(response) {
@@ -162,12 +167,12 @@ export async function createRunProviderLedger(input: {
       await store.appendEvent({
         conversationId: state.run.conversationId,
         kind: 'provider/response',
-        payload: {
+        payload: ProviderJournalResponseSchema.parse({
           runId: state.run.id,
           attempt: response.attempt,
           stepNumber: response.stepNumber,
           response: identity,
-        },
+        }),
       });
       return identity;
     },

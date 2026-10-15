@@ -1,0 +1,897 @@
+{
+  "format": "stitchkit.agent-conversation",
+  "formatVersion": 1,
+  "conversationId": "stream-source",
+  "events": [
+    {
+      "schemaVersion": 1,
+      "eventId": "6703fe72-e3ca-4be8-a5c4-f2e46633291a",
+      "conversationId": "stream-source",
+      "seq": 1,
+      "kind": "spill/created",
+      "occurredAt": "2026-10-15T07:45:14.539Z",
+      "payload": {
+        "bytes": 26,
+        "reference": "5cf2f497-a56d-475d-8c1f-973308e04d23",
+        "sha256": "8a2f4a7aa0ba18c2493c55e0628bbda7d978986eaa6de1541410ff822ab737a7"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "6d0c72d8-1179-4117-80b3-c5fa317f1d00",
+      "conversationId": "stream-source",
+      "seq": 2,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.551Z",
+      "payload": {
+        "input": {
+          "idempotencyKey": "stream",
+          "input": {
+            "conversationId": "stream-source",
+            "createdAt": "2026-10-15T07:45:14.544Z",
+            "id": "b88ecef8-9679-4fd3-9f9a-5f85ee2ccad3",
+            "metadata": {},
+            "parts": [
+              {
+                "text": "retain the original streamed question",
+                "type": "text"
+              }
+            ],
+            "role": "user",
+            "schemaVersion": 1,
+            "status": "committed",
+            "updatedAt": "2026-10-15T07:45:14.544Z"
+          },
+          "run": {
+            "assistantMessageId": "f245f370-9607-43c9-b2c6-ad5b221e65e0",
+            "conversationId": "stream-source",
+            "createdAt": "2026-10-15T07:45:14.544Z",
+            "id": "6b6c85ea-af16-4206-b268-0551cc62d335",
+            "inputMessageIds": ["b88ecef8-9679-4fd3-9f9a-5f85ee2ccad3"],
+            "revision": 0,
+            "schemaVersion": 1,
+            "state": "queued",
+            "updatedAt": "2026-10-15T07:45:14.544Z"
+          }
+        },
+        "type": "accept"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "0a3176dd-07b1-40b8-8d86-7b2c4ea5979f",
+      "conversationId": "stream-source",
+      "seq": 3,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.555Z",
+      "payload": {
+        "input": {
+          "conversationId": "stream-source",
+          "expectedRevision": 0,
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335"
+        },
+        "type": "acquire"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "3add4b62-3ec9-415c-b89b-dcd1259b218e",
+      "conversationId": "stream-source",
+      "seq": 4,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.558Z",
+      "payload": {
+        "input": {
+          "assistant": {
+            "bytes": 272,
+            "id": "f245f370-9607-43c9-b2c6-ad5b221e65e0",
+            "parts": 0,
+            "sha256": "7770164b4bf5d79ebfe661bdb6f9d7d45222d7c2717df33ecf3b12fc1e412a16",
+            "status": "streaming"
+          },
+          "conversationId": "stream-source",
+          "expectedRevision": 1,
+          "fencingToken": 1,
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335"
+        },
+        "type": "checkpoint"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "0b05084e-ff4b-40ce-a6b0-be572f317d78",
+      "conversationId": "stream-source",
+      "seq": 5,
+      "kind": "provider/message",
+      "occurredAt": "2026-10-15T07:45:14.570Z",
+      "payload": {
+        "message": {
+          "content": [
+            {
+              "text": "retain the original streamed question",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        "sha256": "6ed104971ea602dc9ab5f8d0e83d68e2e89280c54902e46bf82a11592db99846"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "4f2f2553-5bdd-4bf1-852e-4ddb7d1b54d6",
+      "conversationId": "stream-source",
+      "seq": 6,
+      "kind": "provider/request",
+      "occurredAt": "2026-10-15T07:45:14.571Z",
+      "payload": {
+        "attempt": 1,
+        "bodySha256": "17a9288739f10bd3ffb0711d42ad54169cd093abc38d108a6753fef82625c1e4",
+        "instructionsSha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+        "messageShas": ["6ed104971ea602dc9ab5f8d0e83d68e2e89280c54902e46bf82a11592db99846"],
+        "modelId": "stream-fixture",
+        "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+        "stepNumber": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "c46c4808-aba2-4c03-a018-ddb198533f2e",
+      "conversationId": "stream-source",
+      "seq": 7,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.577Z",
+      "payload": {
+        "input": {
+          "conversationId": "stream-source",
+          "expectedRevision": 2,
+          "fencingToken": 1,
+          "operation": {
+            "kind": "model-request",
+            "operationId": "call-tfrclGSn6E5DPUU7w8NYc7bL:0",
+            "phase": "started",
+            "startedAt": "2026-10-15T07:45:14.575Z",
+            "step": 0
+          },
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335"
+        },
+        "type": "operation"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "f2f38cd0-21b3-4d23-8980-d324873d804d",
+      "conversationId": "stream-source",
+      "seq": 8,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.582Z",
+      "payload": {
+        "input": {
+          "conversationId": "stream-source",
+          "expectedRevision": 3,
+          "fencingToken": 1,
+          "operation": {
+            "firstOutputAt": "2026-10-15T07:45:14.581Z",
+            "kind": "model-request",
+            "operationId": "call-tfrclGSn6E5DPUU7w8NYc7bL:0",
+            "phase": "first-output",
+            "startedAt": "2026-10-15T07:45:14.575Z",
+            "step": 0
+          },
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335"
+        },
+        "type": "operation"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "1690858d-1ee0-40d8-b03e-83371c9f94f9",
+      "conversationId": "stream-source",
+      "seq": 9,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.591Z",
+      "payload": {
+        "input": {
+          "assistant": {
+            "bytes": 730,
+            "id": "f245f370-9607-43c9-b2c6-ad5b221e65e0",
+            "parts": 3,
+            "sha256": "edf54ccb36ef041ac21e67b887e04a150e58da3e1b94b6645ba9d519a0584ace",
+            "status": "streaming"
+          },
+          "conversationId": "stream-source",
+          "expectedRevision": 4,
+          "fencingToken": 1,
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+          "usage": {
+            "cacheReadTokens": {
+              "provenance": "unavailable"
+            },
+            "cacheWriteTokens": {
+              "provenance": "unavailable"
+            },
+            "cost": {
+              "provenance": "unavailable"
+            },
+            "inputTokens": {
+              "provenance": "unavailable"
+            },
+            "outputTokens": {
+              "provenance": "unavailable"
+            },
+            "reasoningTokens": {
+              "provenance": "unavailable"
+            }
+          }
+        },
+        "type": "checkpoint"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "c12f476c-fba2-40fd-8b9b-715f5d3d3179",
+      "conversationId": "stream-source",
+      "seq": 10,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.597Z",
+      "payload": {
+        "input": {
+          "assistant": {
+            "bytes": 1077,
+            "id": "f245f370-9607-43c9-b2c6-ad5b221e65e0",
+            "parts": 4,
+            "sha256": "552f2fe430b0522de7480135b596fb2ea88c28fa4911e0ae39f1c7eaae88b5c5",
+            "status": "streaming"
+          },
+          "conversationId": "stream-source",
+          "expectedRevision": 5,
+          "fencingToken": 1,
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+          "usage": {
+            "cacheReadTokens": {
+              "provenance": "unavailable"
+            },
+            "cacheWriteTokens": {
+              "provenance": "unavailable"
+            },
+            "cost": {
+              "provenance": "unavailable"
+            },
+            "inputTokens": {
+              "provenance": "unavailable"
+            },
+            "outputTokens": {
+              "provenance": "unavailable"
+            },
+            "reasoningTokens": {
+              "provenance": "unavailable"
+            }
+          }
+        },
+        "type": "checkpoint"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "35fb303b-6de1-495b-aa41-ddbc356fea8a",
+      "conversationId": "stream-source",
+      "seq": 11,
+      "kind": "provider/response",
+      "occurredAt": "2026-10-15T07:45:14.598Z",
+      "payload": {
+        "attempt": 1,
+        "response": {
+          "id": "aitxt-J6lIP2hgtnxIl7k2ChX2zAMR"
+        },
+        "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+        "stepNumber": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "e500f115-c90c-4c1d-859d-c75ea1b52b78",
+      "conversationId": "stream-source",
+      "seq": 12,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.601Z",
+      "payload": {
+        "input": {
+          "conversationId": "stream-source",
+          "expectedRevision": 6,
+          "fencingToken": 1,
+          "operation": {
+            "finishedAt": "2026-10-15T07:45:14.598Z",
+            "firstOutputAt": "2026-10-15T07:45:14.581Z",
+            "kind": "model-request",
+            "operationId": "call-tfrclGSn6E5DPUU7w8NYc7bL:0",
+            "phase": "completed",
+            "startedAt": "2026-10-15T07:45:14.575Z",
+            "step": 0
+          },
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335"
+        },
+        "type": "operation"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "fe7ff9a6-8f5a-4844-96b6-63d74bffc557",
+      "conversationId": "stream-source",
+      "seq": 13,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.611Z",
+      "payload": {
+        "input": {
+          "assistant": {
+            "bytes": 1077,
+            "id": "f245f370-9607-43c9-b2c6-ad5b221e65e0",
+            "parts": 4,
+            "sha256": "2db54e8b9ee3311c06a31d52162945f9a4c95e8a5b8ed95c3e8837cfafa64100",
+            "status": "streaming"
+          },
+          "conversationId": "stream-source",
+          "expectedRevision": 7,
+          "fencingToken": 1,
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+          "usage": {
+            "cacheReadTokens": {
+              "provenance": "unavailable"
+            },
+            "cacheWriteTokens": {
+              "provenance": "unavailable"
+            },
+            "cost": {
+              "provenance": "unavailable"
+            },
+            "inputTokens": {
+              "provenance": "provider-reported",
+              "value": 1
+            },
+            "outputTokens": {
+              "provenance": "provider-reported",
+              "value": 1
+            },
+            "reasoningTokens": {
+              "provenance": "unavailable"
+            }
+          }
+        },
+        "type": "checkpoint"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "9b63b558-f52b-4d87-b42c-eae97f1d3d40",
+      "conversationId": "stream-source",
+      "seq": 14,
+      "kind": "provider/message",
+      "occurredAt": "2026-10-15T07:45:14.612Z",
+      "payload": {
+        "message": {
+          "content": [
+            {
+              "providerOptions": {
+                "example": {
+                  "cache": {
+                    "type": "ephemeral"
+                  },
+                  "signature": "synthetic-provider-signature"
+                }
+              },
+              "text": "streamed intro",
+              "type": "text"
+            },
+            {
+              "providerOptions": {
+                "example": {
+                  "cache": {
+                    "type": "ephemeral"
+                  },
+                  "signature": "synthetic-provider-signature"
+                }
+              },
+              "text": "synthetic reasoning",
+              "type": "reasoning"
+            },
+            {
+              "input": {},
+              "providerOptions": {
+                "example": {
+                  "cache": {
+                    "type": "ephemeral"
+                  },
+                  "signature": "synthetic-provider-signature"
+                }
+              },
+              "toolCallId": "fixture-call",
+              "toolName": "run_command",
+              "type": "tool-call"
+            }
+          ],
+          "role": "assistant"
+        },
+        "sha256": "313ea609e001d572af39ee1d7789c7eaba3a51dc77157037cb82c154e096d937"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "e547df0e-6a64-4ac7-af8d-8c313509058b",
+      "conversationId": "stream-source",
+      "seq": 15,
+      "kind": "provider/message",
+      "occurredAt": "2026-10-15T07:45:14.612Z",
+      "payload": {
+        "message": {
+          "content": [
+            {
+              "output": {
+                "type": "json",
+                "value": {
+                  "artifact": {
+                    "bytes": 26,
+                    "headBytes": 0,
+                    "omittedBytes": 26,
+                    "reference": "5cf2f497-a56d-475d-8c1f-973308e04d23",
+                    "tailBytes": 0,
+                    "truncated": true
+                  },
+                  "executable": "fixture",
+                  "exitCode": 0,
+                  "outcome": "exited",
+                  "signal": null,
+                  "stderr": "",
+                  "stdout": "tool evidence"
+                }
+              },
+              "providerOptions": {
+                "example": {
+                  "cache": {
+                    "type": "ephemeral"
+                  },
+                  "signature": "synthetic-provider-signature"
+                }
+              },
+              "toolCallId": "fixture-call",
+              "toolName": "run_command",
+              "type": "tool-result"
+            }
+          ],
+          "role": "tool"
+        },
+        "sha256": "5c075617478acd3864082ea67ce5cb94d41ec207026691fa9e13335e9433a871"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "a7457794-c294-4f82-80b0-a2cf044edbbc",
+      "conversationId": "stream-source",
+      "seq": 16,
+      "kind": "provider/request",
+      "occurredAt": "2026-10-15T07:45:14.612Z",
+      "payload": {
+        "attempt": 1,
+        "bodySha256": "1fb5afc1134369a4f760292619ce822ab15be83a3abd744b6d531e8b6f6cc4c5",
+        "instructionsSha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+        "messageShas": [
+          "6ed104971ea602dc9ab5f8d0e83d68e2e89280c54902e46bf82a11592db99846",
+          "313ea609e001d572af39ee1d7789c7eaba3a51dc77157037cb82c154e096d937",
+          "5c075617478acd3864082ea67ce5cb94d41ec207026691fa9e13335e9433a871"
+        ],
+        "modelId": "stream-fixture",
+        "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+        "stepNumber": 1
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "8ca854a3-5af7-48fa-9f2f-e04fd0add0aa",
+      "conversationId": "stream-source",
+      "seq": 17,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.616Z",
+      "payload": {
+        "input": {
+          "conversationId": "stream-source",
+          "expectedRevision": 8,
+          "fencingToken": 1,
+          "operation": {
+            "kind": "model-request",
+            "operationId": "call-tfrclGSn6E5DPUU7w8NYc7bL:1",
+            "phase": "started",
+            "startedAt": "2026-10-15T07:45:14.615Z",
+            "step": 1
+          },
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335"
+        },
+        "type": "operation"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "971011fb-ead6-4908-abb8-7eb001909b6c",
+      "conversationId": "stream-source",
+      "seq": 18,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.620Z",
+      "payload": {
+        "input": {
+          "conversationId": "stream-source",
+          "expectedRevision": 9,
+          "fencingToken": 1,
+          "operation": {
+            "firstOutputAt": "2026-10-15T07:45:14.619Z",
+            "kind": "model-request",
+            "operationId": "call-tfrclGSn6E5DPUU7w8NYc7bL:1",
+            "phase": "first-output",
+            "startedAt": "2026-10-15T07:45:14.615Z",
+            "step": 1
+          },
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335"
+        },
+        "type": "operation"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "c105c04c-25b0-48ec-a323-c4ceed8a39da",
+      "conversationId": "stream-source",
+      "seq": 19,
+      "kind": "provider/response",
+      "occurredAt": "2026-10-15T07:45:14.622Z",
+      "payload": {
+        "attempt": 1,
+        "response": {
+          "id": "aitxt-9ebqPMfY9P2Yx7XrgSDgfF9V"
+        },
+        "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+        "stepNumber": 1
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "74544376-8050-404e-bf7b-c89bec043baa",
+      "conversationId": "stream-source",
+      "seq": 20,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.624Z",
+      "payload": {
+        "input": {
+          "conversationId": "stream-source",
+          "expectedRevision": 10,
+          "fencingToken": 1,
+          "operation": {
+            "finishedAt": "2026-10-15T07:45:14.622Z",
+            "firstOutputAt": "2026-10-15T07:45:14.619Z",
+            "kind": "model-request",
+            "operationId": "call-tfrclGSn6E5DPUU7w8NYc7bL:1",
+            "phase": "completed",
+            "startedAt": "2026-10-15T07:45:14.615Z",
+            "step": 1
+          },
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335"
+        },
+        "type": "operation"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "25ced8ad-477d-46b1-bb21-8aa8fd13a14a",
+      "conversationId": "stream-source",
+      "seq": 21,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.626Z",
+      "payload": {
+        "input": {
+          "assistant": {
+            "bytes": 1118,
+            "id": "f245f370-9607-43c9-b2c6-ad5b221e65e0",
+            "parts": 5,
+            "sha256": "0a71ffd4328d47b234b6eeb852affc0a8c8b666e66d0cabc46c3a5b965b6d265",
+            "status": "streaming"
+          },
+          "conversationId": "stream-source",
+          "expectedRevision": 11,
+          "fencingToken": 1,
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+          "usage": {
+            "cacheReadTokens": {
+              "provenance": "unavailable"
+            },
+            "cacheWriteTokens": {
+              "provenance": "unavailable"
+            },
+            "cost": {
+              "provenance": "unavailable"
+            },
+            "inputTokens": {
+              "provenance": "computed",
+              "value": 2
+            },
+            "outputTokens": {
+              "provenance": "computed",
+              "value": 2
+            },
+            "reasoningTokens": {
+              "provenance": "unavailable"
+            }
+          }
+        },
+        "type": "checkpoint"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "db1f9966-9277-4b1e-938b-9b3191c9cb74",
+      "conversationId": "stream-source",
+      "seq": 22,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.630Z",
+      "payload": {
+        "input": {
+          "assistant": {
+            "conversationId": "stream-source",
+            "createdAt": "2026-10-15T07:45:14.556Z",
+            "id": "f245f370-9607-43c9-b2c6-ad5b221e65e0",
+            "parts": [
+              {
+                "text": "streamed intro",
+                "type": "text"
+              },
+              {
+                "provider": {
+                  "data": {
+                    "example": {
+                      "cache": {
+                        "type": "ephemeral"
+                      },
+                      "signature": "synthetic-provider-signature"
+                    }
+                  },
+                  "provider": "ai-sdk",
+                  "schemaVersion": 1
+                },
+                "text": "synthetic reasoning",
+                "type": "reasoning"
+              },
+              {
+                "callId": "fixture-call",
+                "input": {},
+                "provider": {
+                  "data": {
+                    "example": {
+                      "cache": {
+                        "type": "ephemeral"
+                      },
+                      "signature": "synthetic-provider-signature"
+                    }
+                  },
+                  "provider": "ai-sdk",
+                  "schemaVersion": 1
+                },
+                "toolName": "run_command",
+                "type": "tool-call"
+              },
+              {
+                "callId": "fixture-call",
+                "outcome": "success",
+                "output": {
+                  "artifact": {
+                    "bytes": 26,
+                    "headBytes": 0,
+                    "omittedBytes": 26,
+                    "reference": "5cf2f497-a56d-475d-8c1f-973308e04d23",
+                    "tailBytes": 0,
+                    "truncated": true
+                  },
+                  "executable": "fixture",
+                  "exitCode": 0,
+                  "outcome": "exited",
+                  "signal": null,
+                  "stderr": "",
+                  "stdout": "tool evidence"
+                },
+                "toolName": "run_command",
+                "type": "tool-result"
+              },
+              {
+                "text": "streamed answer",
+                "type": "text"
+              }
+            ],
+            "role": "assistant",
+            "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+            "schemaVersion": 1,
+            "status": "completed",
+            "updatedAt": "2026-10-15T07:45:14.627Z"
+          },
+          "conversationId": "stream-source",
+          "expectedRevision": 12,
+          "fencingToken": 1,
+          "ownerId": "81f862c0-7966-453d-998a-ec4b97cd5f30",
+          "reason": "success",
+          "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+          "usage": {
+            "cacheReadTokens": {
+              "provenance": "unavailable"
+            },
+            "cacheWriteTokens": {
+              "provenance": "unavailable"
+            },
+            "cost": {
+              "provenance": "unavailable"
+            },
+            "inputTokens": {
+              "provenance": "computed",
+              "value": 2
+            },
+            "outputTokens": {
+              "provenance": "computed",
+              "value": 2
+            },
+            "reasoningTokens": {
+              "provenance": "unavailable"
+            }
+          }
+        },
+        "type": "terminal"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "88185c7d-8882-42c2-989a-b14085037bae",
+      "conversationId": "stream-source",
+      "seq": 23,
+      "kind": "runtime/transition",
+      "occurredAt": "2026-10-15T07:45:14.635Z",
+      "payload": {
+        "input": {
+          "conversationId": "stream-source",
+          "expectedVersion": 14,
+          "replacedMessageIds": [
+            "b88ecef8-9679-4fd3-9f9a-5f85ee2ccad3",
+            "f245f370-9607-43c9-b2c6-ad5b221e65e0"
+          ],
+          "summary": {
+            "conversationId": "stream-source",
+            "createdAt": "2026-10-15T00:00:00.000Z",
+            "id": "fixture-summary",
+            "parts": [
+              {
+                "text": "compacted streamed context",
+                "type": "text"
+              }
+            ],
+            "role": "summary",
+            "schemaVersion": 1,
+            "status": "committed",
+            "updatedAt": "2026-10-15T00:00:00.000Z"
+          }
+        },
+        "type": "compact"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "5717ff18-ef22-4017-9688-90a7e1d31864",
+      "conversationId": "stream-source",
+      "seq": 24,
+      "kind": "state/set",
+      "occurredAt": "2026-10-15T07:45:14.636Z",
+      "payload": {
+        "actor": "human",
+        "name": "permission",
+        "value": true,
+        "version": 1
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "5b3ad2b3-b11e-4041-a66b-3c0267a2fde7",
+      "conversationId": "stream-source",
+      "seq": 25,
+      "kind": "durability/effect",
+      "occurredAt": "2026-10-15T07:45:14.636Z",
+      "payload": {
+        "effectName": "pending",
+        "phase": "intent",
+        "runId": "6b6c85ea-af16-4206-b268-0551cc62d335"
+      }
+    }
+  ],
+  "projections": [
+    {
+      "archiveType": "runtime-snapshot",
+      "snapshot": {
+        "conversationId": "stream-source",
+        "messages": [
+          {
+            "conversationId": "stream-source",
+            "createdAt": "2026-10-15T00:00:00.000Z",
+            "id": "fixture-summary",
+            "parts": [
+              {
+                "text": "compacted streamed context",
+                "type": "text"
+              }
+            ],
+            "role": "summary",
+            "schemaVersion": 1,
+            "status": "committed",
+            "updatedAt": "2026-10-15T00:00:00.000Z"
+          }
+        ],
+        "runs": [],
+        "schemaVersion": 1,
+        "version": 15
+      }
+    },
+    {
+      "name": "outline",
+      "updatedAt": "2026-10-15T07:45:14.636Z",
+      "uptoSeq": 25,
+      "value": {
+        "requests": [
+          {
+            "occurredAt": "2026-10-15T07:45:14.571Z",
+            "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+            "seq": 6
+          },
+          {
+            "occurredAt": "2026-10-15T07:45:14.612Z",
+            "runId": "6b6c85ea-af16-4206-b268-0551cc62d335",
+            "seq": 16
+          }
+        ]
+      },
+      "version": 1
+    },
+    {
+      "name": "state-slots",
+      "updatedAt": "2026-10-15T07:45:14.636Z",
+      "uptoSeq": 25,
+      "value": {
+        "permission": true
+      },
+      "version": 1
+    },
+    {
+      "name": "summary",
+      "updatedAt": "2026-10-15T07:45:14.636Z",
+      "uptoSeq": 25,
+      "value": {
+        "eventCount": 25,
+        "lastKind": "durability/effect",
+        "lastModelId": "stream-fixture",
+        "lastOccurredAt": "2026-10-15T07:45:14.636Z",
+        "lastSeq": 25
+      },
+      "version": 2
+    }
+  ],
+  "spills": [
+    {
+      "authorization": {
+        "operation": "read",
+        "path": "source-only"
+      },
+      "base64": "c3RyZWFtZWQgYXJ0aWZhY3QgZXZpZGVuY2U=",
+      "bytes": 26,
+      "createdAt": "2026-10-15T07:45:14.539Z",
+      "mediaType": "text/plain",
+      "reference": "5cf2f497-a56d-475d-8c1f-973308e04d23",
+      "sha256": "8a2f4a7aa0ba18c2493c55e0628bbda7d978986eaa6de1541410ff822ab737a7"
+    }
+  ]
+}

@@ -96,8 +96,7 @@ function branchPart(ids: BranchIdentities, part: AgentMessagePart): AgentMessage
     case 'file':
       return { ...part, reference: ids.reference('spill', part.reference) };
     case 'tool-call': {
-      if (part.provider)
-        throw new TypeError('Branch cannot rekey opaque tool provider metadata');
+      if (part.provider) branchOpaqueJson(part.provider.data);
       return {
         ...part,
         callId: ids.reference('call', part.callId),
@@ -126,8 +125,7 @@ function branchPart(ids: BranchIdentities, part: AgentMessagePart): AgentMessage
     case 'provider':
       throw new TypeError('Branch cannot rekey an opaque provider part');
     case 'reasoning':
-      if (part.provider)
-        throw new TypeError('Branch cannot rekey opaque reasoning provider metadata');
+      if (part.provider) branchOpaqueJson(part.provider.data);
       return part;
     default:
       return part;

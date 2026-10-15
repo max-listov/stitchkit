@@ -15,7 +15,7 @@ import {
 import { z } from 'zod';
 
 /** Real public writes only; also runs unchanged against the published 0.109.4 SDK. */
-export async function streamingFixture(sqlite) {
+export async function streamingFixture(sqlite, providerMetadata) {
   const conversationId = 'stream-source';
   const spills = createSqliteAgentSpillStore({ sqlite, conversationId });
   const artifact = await spills.write({
@@ -47,7 +47,28 @@ export async function streamingFixture(sqlite) {
                 chunks:
                   calls === 1
                     ? [
+                        ...(providerMetadata
+                          ? [
+                              { type: 'text-start', id: 'intro', providerMetadata },
+                              {
+                                type: 'text-delta',
+                                id: 'intro',
+                                delta: 'streamed intro',
+                                providerMetadata,
+                              },
+                              { type: 'text-end', id: 'intro', providerMetadata },
+                              { type: 'reasoning-start', id: 'reasoning', providerMetadata },
+                              {
+                                type: 'reasoning-delta',
+                                id: 'reasoning',
+                                delta: 'synthetic reasoning',
+                                providerMetadata,
+                              },
+                              { type: 'reasoning-end', id: 'reasoning', providerMetadata },
+                            ]
+                          : []),
                         {
+                          ...(providerMetadata && { providerMetadata }),
                           type: 'tool-call',
                           toolCallId: 'fixture-call',
                           toolName: 'run_command',
@@ -60,9 +81,22 @@ export async function streamingFixture(sqlite) {
                         },
                       ]
                     : [
-                        { type: 'text-start', id: 'text' },
-                        { type: 'text-delta', id: 'text', delta: 'streamed answer' },
-                        { type: 'text-end', id: 'text' },
+                        {
+                          type: 'text-start',
+                          id: 'text',
+                          ...(providerMetadata && { providerMetadata }),
+                        },
+                        {
+                          type: 'text-delta',
+                          id: 'text',
+                          delta: 'streamed answer',
+                          ...(providerMetadata && { providerMetadata }),
+                        },
+                        {
+                          type: 'text-end',
+                          id: 'text',
+                          ...(providerMetadata && { providerMetadata }),
+                        },
                         {
                           type: 'finish',
                           finishReason: { unified: 'stop', raw: undefined },

@@ -4,7 +4,7 @@ description: Current ownership, state transitions, linearization points and resi
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-10-15 13:36 +07:00
+updated: 2026-10-15 14:56 +07:00
 ---
 
 # Agent application runtime architecture
@@ -237,6 +237,13 @@ transitions retain the exact terminal assistant in that same event; legacy missi
 calls, approvals, spills and events use destination-derived identities; unresolved references
 refuse. Provider-message hashes and their request references are recomputed together.
 Application JSON is never recursively rewritten by guessing ID-like strings.
+
+`provider-journal.ts` owns the strict persisted message/request/response schemas used by
+`run-provider-ledger.ts` and `branch-provider.ts`. Provider options on messages and supported
+content parts, and canonical reasoning/tool-call provider envelopes, remain provider data.
+Their JSON cannot contain undocumented runtime reference keys. Provider-assigned signatures
+remain data; runtime approval signatures are removed. Message hashes are checked before rekey,
+then request message hashes and body digests are recomputed together.
 
 State, schedule, child, approval-rejection, retry, sandbox and durability facts become
 `runtime/branch-observation` records. Operational readers cannot consume these as live commands.

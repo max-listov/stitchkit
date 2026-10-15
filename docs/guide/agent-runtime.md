@@ -4,7 +4,7 @@ description: Configure Stitchkit's optional durable history, stream loop, run co
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-10-15 13:36 +07:00
+updated: 2026-10-15 14:56 +07:00
 ---
 
 # Agent application runtime
@@ -605,6 +605,12 @@ history. All engine identities and typed references are new, including repeated 
 spill. Compacted content stays in the event history and SQLite inactive rows; the model reads the
 same active summaries. A hash-only checkpoint is historical digest evidence, marked
 `sourceSha256`; a later full terminal record must settle its content.
+
+Recorded provider options and canonical reasoning/tool-call provider metadata are retained.
+Provider message hashes and request references remain consistent after rekey. Metadata is
+data, subject to the opaque JSON reference guard: an undocumented runtime reference key
+refuses instead of carrying a source identity into the destination. Unknown message fields
+and malformed request/message digests also refuse before any destination writes.
 
 A branch grants no source authority. Terminal run owners/fences and approval signatures are
 removed. State, schedules, children, retries, sandbox, approval rejection and durability facts are

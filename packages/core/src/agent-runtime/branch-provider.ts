@@ -1,118 +1,22 @@
 import { createHash } from 'node:crypto';
-import { z } from 'zod';
+import type { z } from 'zod';
 import type { BranchIdentities } from './branch-identities';
 import { branchOpaqueJson, branchToolJson } from './branch-messages';
+import {
+  ProviderJournalMessageSchema,
+  ProviderJournalRequestSchema,
+  ProviderJournalResponseSchema,
+} from './provider-journal';
 import { canonicalAgentJson } from './store-events';
-
-const Hash = z.string().regex(/^[a-f0-9]{64}$/);
-const Text = z.object({ type: z.enum(['text', 'reasoning']), text: z.string() }).strict();
-const Call = z
-  .object({
-    type: z.literal('tool-call'),
-    toolCallId: z.string(),
-    toolName: z.string(),
-    input: z.json(),
-  })
-  .strict();
-const Result = z
-  .object({
-    type: z.literal('tool-result'),
-    toolCallId: z.string(),
-    toolName: z.string(),
-    output: z.discriminatedUnion('type', [
-      z.object({ type: z.enum(['text', 'error-text']), value: z.string() }).strict(),
-      z.object({ type: z.enum(['json', 'error-json']), value: z.json() }).strict(),
-    ]),
-  })
-  .strict();
-const Message = z
-  .object({
-    role: z.enum(['user', 'assistant', 'tool']),
-    content: z.union([
-      z.string(),
-      z.array(
-        z.union([
-          Text,
-          Call,
-          Result,
-          z
-            .object({
-              type: z.literal('tool-approval-request'),
-              approvalId: z.string(),
-              toolCallId: z.string(),
-              signature: z.string().optional(),
-              isAutomatic: z.boolean().optional(),
-            })
-            .strict(),
-          z
-            .object({
-              type: z.literal('tool-approval-response'),
-              approvalId: z.string(),
-              approved: z.boolean(),
-              reason: z.string().optional(),
-            })
-            .strict(),
-          z
-            .object({
-              type: z.literal('file'),
-              data: z.union([
-                z.string(),
-                z
-                  .object({
-                    binary: z.literal(true),
-                    sha256: Hash,
-                    bytes: z.int().nonnegative(),
-                  })
-                  .strict(),
-              ]),
-              mediaType: z.string(),
-              filename: z.string().optional(),
-            })
-            .strict(),
-          z
-            .object({
-              type: z.literal('image'),
-              image: z.union([
-                z.string(),
-                z
-                  .object({
-                    binary: z.literal(true),
-                    sha256: Hash,
-                    bytes: z.int().nonnegative(),
-                  })
-                  .strict(),
-              ]),
-              mediaType: z.string().optional(),
-            })
-            .strict(),
-        ]),
-      ),
-    ]),
-  })
-  .strict();
-const ProviderMessage = z.object({ sha256: Hash, message: Message }).strict();
-const ProviderRequest = z
-  .object({
-    runId: z.string(),
-    attempt: z.int().nonnegative(),
-    stepNumber: z.int().nonnegative(),
-    modelId: z.string(),
-    instructionsSha256: Hash,
-    messageShas: z.array(Hash),
-    bodySha256: Hash,
-  })
-  .strict();
-const ProviderResponse = z
-  .object({
-    runId: z.string(),
-    attempt: z.int().nonnegative(),
-    stepNumber: z.int().nonnegative(),
-    response: z.object({ id: z.string(), provider: z.string().optional() }).strict(),
-  })
-  .strict();
 
 function hash(value: unknown) {
   return createHash('sha256').update(canonicalAgentJson(value)).digest('hex');
+}
+
+function checkFileData(value: z.infer<ReturnType<typeof z.json>>) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return;
+  if (value.type === 'reference' && 'reference' in value) branchOpaqueJson(value.reference);
+  else if (!('type' in value) && value.binary !== true) branchOpaqueJson(value);
 }
 
 /** Provider IDs stay provider IDs; runtime call references and their content digests are rekeyed. */
@@ -121,15 +25,21 @@ export class BranchProvider {
   constructor(private readonly ids: BranchIdentities) {}
   rekey(kind: string, raw: z.infer<ReturnType<typeof z.json>>) {
     if (kind === 'provider/message') {
-      const value = ProviderMessage.parse(raw);
+      const value = ProviderJournalMessageSchema.parse(raw);
       if (hash(value.message) !== value.sha256)
         throw new TypeError('Branch provider message digest is inconsistent');
+      if (value.message.providerOptions) branchOpaqueJson(value.message.providerOptions);
       const message = {
         ...value.message,
         content:
           typeof value.message.content === 'string'
             ? value.message.content
             : value.message.content.map((part) => {
+                if ('providerOptions' in part && part.providerOptions)
+                  branchOpaqueJson(part.providerOptions);
+                if (part.type === 'file' || part.type === 'reasoning-file')
+                  checkFileData(part.data);
+                if (part.type === 'image') checkFileData(part.image);
                 if (part.type === 'tool-call')
                   return {
                     ...part,
@@ -137,7 +47,18 @@ export class BranchProvider {
                     input: branchToolJson(this.ids, part.toolName, part.input, false),
                   };
                 if (part.type === 'tool-result') {
+                  if ('providerOptions' in part.output && part.output.providerOptions)
+                    branchOpaqueJson(part.output.providerOptions);
                   if (part.output.type === 'error-json') branchOpaqueJson(part.output.value);
+                  if (part.output.type === 'content')
+                    for (const item of part.output.value) {
+                      if (item.providerOptions) branchOpaqueJson(item.providerOptions);
+                      if (item.type === 'file') checkFileData(item.data);
+                      if ('providerReference' in item)
+                        branchOpaqueJson(item.providerReference);
+                      if ('fileId' in item && typeof item.fileId !== 'string')
+                        branchOpaqueJson(item.fileId);
+                    }
                   return {
                     ...part,
                     toolCallId: this.ids.reference('call', part.toolCallId),
@@ -160,6 +81,7 @@ export class BranchProvider {
                     type: part.type,
                     approvalId: this.ids.reference('approval', part.approvalId),
                     toolCallId: this.ids.reference('call', part.toolCallId),
+                    ...(part.reason !== undefined && { reason: part.reason }),
                   };
                 if (part.type === 'tool-approval-response')
                   return {
@@ -174,7 +96,7 @@ export class BranchProvider {
       return { sha256, message };
     }
     if (kind === 'provider/request') {
-      const value = ProviderRequest.parse(raw);
+      const value = ProviderJournalRequestSchema.parse(raw);
       const sourceHash = createHash('sha256')
         .update(value.instructionsSha256)
         .update(value.messageShas.join(','))
@@ -197,7 +119,7 @@ export class BranchProvider {
           .digest('hex'),
       };
     }
-    const value = ProviderResponse.parse(raw);
+    const value = ProviderJournalResponseSchema.parse(raw);
     return { ...value, runId: this.ids.reference('run', value.runId) };
   }
 }
