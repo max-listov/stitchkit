@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.110.4] - 2026-10-15
+
 ### Fixed
 
 - `stitchkit/agent-runtime`: conversation branch and restore retain provider options on recorded message parts and canonical reasoning/tool calls. The writer and branch reader share strict journal schemas; unknown fields, invalid digests and foreign runtime references still refuse atomically. Installed Bun/Node proofs cover fresh streaming exports and a synthetic archive produced by 0.109.4.
