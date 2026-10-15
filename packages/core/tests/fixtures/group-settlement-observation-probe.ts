@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { inspect } from 'node:util';
 import { waitForProcessGroupExit } from '../../src/process/group-settlement';
 
 const root = await mkdtemp(join(tmpdir(), 'group-observation-'));
@@ -54,12 +55,27 @@ try {
       assert.ok('observations' in error.cause && Number(error.cause.observations) > 0);
       assert.ok('lastStates' in error.cause);
       assert.deepEqual(error.cause.lastStates, ['?E']);
+      const nested = new AggregateError([new Error('leader exited'), error], 'cleanup failed');
+      assert.match(inspect(nested), /"lastStates":\["\?E"\]/);
       return true;
     },
   );
   // A known zombie is dead even when the kernel still exposes its group.
   await writeFile(table, ' 123 Z\n 456 S\n');
   await waitForProcessGroupExit(123, performance.now() + 3000);
+  await writeFile(table, Array(32).fill(' 123 R').join('\n'));
+  await assert.rejects(
+    waitForProcessGroupExit(123, performance.now() + 3000),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.ok(error.cause && typeof error.cause === 'object' && 'lastStates' in error.cause);
+      assert.ok(Array.isArray(error.cause.lastStates));
+      assert.equal(error.cause.lastStates.length, 16);
+      assert.match(error.message, /"observations":2/);
+      assert.match(error.message, /"elapsedMs":/);
+      return true;
+    },
+  );
   // Failed observation remains a failure with the exact underlying cause.
   await writeFile(failed, 'refused');
   await assert.rejects(
@@ -68,6 +84,7 @@ try {
       assert.ok(error instanceof Error);
       assert.ok(error.cause instanceof Error);
       assert.ok('code' in error.cause && error.cause.code === 73);
+      assert.match(error.message, /"lastStates":\[\]/);
       return true;
     },
   );

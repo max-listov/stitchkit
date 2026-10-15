@@ -1004,6 +1004,7 @@
     "ProcessSignalsBinding",
     "ProcessSignalsErrorPhase",
     "ProcessSignalsOptions",
+    "ProxyOriginConfig",
     "RateLimitConfig",
     "RawRoute",
     "RawRouteContext",

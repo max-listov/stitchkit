@@ -165,6 +165,7 @@ export {
   type ShutdownTarget,
   type SignalSource,
 } from '../server/process-signals';
+export type { ProxyOriginConfig } from '../server/proxy-origin';
 export { createRateLimiter, type RateLimitConfig } from '../server/rate-limit';
 export { errorResponse, parseBody, respondJson } from '../server/raw';
 export {

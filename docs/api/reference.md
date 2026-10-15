@@ -420,6 +420,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `parseBody` | function | parse + Zod-validate a JSON body → `data` or `null` (no throw) |
 | `HandlerConfig` | _type_ | config for `createHandler`, including optional `maxJsonBodyBytes`; bound to `BunServer` on this entrypoint |
 | `BunServerConfig` | _type_ | config for `createServer` (Bun); `unix` listens on a unix domain socket (mutually exclusive with `port`/`hostname`) — [details](../guide/server.md#local-daemon-over-a-unix-socket) |
+| `ProxyOriginConfig` | _type_ | explicit real-peer trust for Bun `createServer({ proxyOrigin })`; strict external-scheme normalization before composition — [details](../guide/server.md#external-origin-behind-a-trusted-proxy) |
 | `UnixListenConfig` | _type_ | unix listener — a socket path, or `{ path, mode }` to tighten the file mode after listen |
 | `BunServerHandle` | _type_ | managed Bun handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
 | `ManagedServerHandle` | _type_ | shared lifecycle shape generic over the runtime escape hatch |

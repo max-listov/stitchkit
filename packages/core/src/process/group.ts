@@ -2,6 +2,7 @@ import { raceAbort } from '../internal/abort-race';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { MAX_TIMER_MS, sleep } from '../internal/timers';
 import { NativeCommandError, type ParsedNativeCommandStopPolicy } from './contract';
+import { groupSettlementDiagnostics } from './group-diagnostics';
 import { processGroupExists } from './group-presence';
 import { waitForProcessGroupExit } from './group-settlement';
 
@@ -208,7 +209,11 @@ export async function stopLeaderAlone(stop: {
 }
 
 export function commandCleanupError(cause: unknown): NativeCommandError {
-  return new NativeCommandError('COMMAND_CLEANUP', 'Command cleanup did not complete', {
+  const observations = groupSettlementDiagnostics(cause);
+  const message = observations.length
+    ? `Command cleanup did not complete: ${JSON.stringify(observations)}`
+    : 'Command cleanup did not complete';
+  return new NativeCommandError('COMMAND_CLEANUP', message, {
     cause,
   });
 }

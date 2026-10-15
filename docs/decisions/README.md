@@ -289,6 +289,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0257](0257-cli-dotted-values-follow-their-declared-schema.md) | CLI dotted values follow their declared schema | Active — declared primitive leaves coerce, free record leaves preserve argv text, whole-object JSON carries explicit types and wholly unknown passthrough keeps its previous behavior | I1, I2, I3, I8, I14 |
 | [0258](0258-conversation-branches-have-new-identity-and-no-inherited-authority.md) | Conversation branches have new identity and no inherited authority | Active — atomic settled-prefix/archive branching with typed rekeying, inert control observations, fresh artifact policy and durable lineage | I3, I8, I12, I15 |
 | [0259](0259-journal-records-and-derived-caches-have-separate-transfer-policies.md) | Journal records and derived caches have separate transfer policies | Active — shared checkpoint record vocabulary, discarded branch caches and replayed archive history | I3, I8, I12, I13, I15 |
+| [0260](0260-proxy-origin-trust-is-separate-from-client-ip.md) | Proxy origin trust is separate from client IP | Active — explicit native ingress trust before composition, strict proto/Host boundary and retained Bun socket identity | I6, I8, I9, I12, I13 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { sleep } from '../internal/timers';
+import { GroupSettlementError } from './group-diagnostics';
 import { processGroupExists } from './group-presence';
 
 /** `killpg(..., 0)` also sees Linux zombies; only live members can still perform work. */
@@ -20,10 +21,7 @@ function processGroups(timeoutMs: number): Promise<string> {
       ['-axo', 'pgid=,stat='],
       { encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 },
       (error, stdout) => {
-        if (error)
-          reject(
-            new Error('Could not observe command process group settlement', { cause: error }),
-          );
+        if (error) reject(error);
         else resolve(stdout);
       },
     );
@@ -38,26 +36,46 @@ export async function waitForProcessGroupExit(
   if (pid === undefined) return;
   let observations = 0;
   let lastStates: string[] = [];
-  for (;;) {
-    const remaining = Math.ceil(deadline - performance.now());
-    if (remaining <= 0)
-      throw new Error('Command process group settlement was not confirmed after SIGKILL', {
-        cause: { groupId: pid, observations, lastStates },
-      });
-    if (!processGroupExists(pid)) return;
-    const table = await processGroups(remaining);
-    observations++;
-    if (!hasLiveGroupMember(table, pid)) return;
-    lastStates = table
-      .split(/\r?\n/)
-      .flatMap((row) => {
-        const fields = /^\s*(\d+)\s+(\S+)\s*$/.exec(row);
-        return Number(fields?.[1]) === pid ? [fields?.[2] ?? 'unknown'] : [];
-      })
-      .slice(0, 16);
-    // ps is a snapshot: do not let a stale row override a newer kernel absence,
-    // including a snapshot that used the last of the observation budget.
-    if (!processGroupExists(pid)) return;
-    await sleep(Math.min(5, Math.max(0, deadline - performance.now())));
+  const startedAt = performance.now();
+  const observation = () => ({
+    groupId: pid,
+    observations,
+    lastStates,
+    elapsedMs: Math.max(0, Math.ceil(performance.now() - startedAt)),
+  });
+  try {
+    for (;;) {
+      const remaining = Math.ceil(deadline - performance.now());
+      if (remaining <= 0)
+        // Node's default nested Error inspection hides arrays. Keep the bounded
+        // observation in the message as well as the structured cause, so an actual
+        // CI failure carries its states through AggregateError and assertion layers.
+        throw new GroupSettlementError(
+          'Command process group settlement was not confirmed after SIGKILL',
+          { ...observation(), failure: 'deadline' },
+        );
+      if (!processGroupExists(pid)) return;
+      const table = await processGroups(remaining);
+      observations++;
+      if (!hasLiveGroupMember(table, pid)) return;
+      lastStates = table
+        .split(/\r?\n/)
+        .flatMap((row) => {
+          const fields = /^\s*(\d+)\s+(\S+)\s*$/.exec(row);
+          return Number(fields?.[1]) === pid ? [(fields?.[2] ?? 'unknown').slice(0, 32)] : [];
+        })
+        .slice(0, 16);
+      // ps is a snapshot: do not let a stale row override a newer kernel absence,
+      // including a snapshot that used the last of the observation budget.
+      if (!processGroupExists(pid)) return;
+      await sleep(Math.min(5, Math.max(0, deadline - performance.now())));
+    }
+  } catch (cause) {
+    if (cause instanceof GroupSettlementError) throw cause;
+    throw new GroupSettlementError(
+      'Could not observe command process group settlement',
+      { ...observation(), failure: 'observation' },
+      cause,
+    );
   }
 }

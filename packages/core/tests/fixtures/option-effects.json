@@ -288,6 +288,11 @@
       "test": "doubles to the ceiling and subtracts jitter without exceeding it"
     }
   },
+  "ProxyOriginConfig": {
+    "trustedPeer": {
+      "test": "proxy origin requires a trusted socket peer independently of trustProxy client IP"
+    }
+  },
   "TrustFenceConfig": {
     "trustedHosts": {
       "test": "an untrusted authority is refused and the handler never runs"

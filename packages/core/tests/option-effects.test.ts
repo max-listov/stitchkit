@@ -48,6 +48,7 @@ const COVERED: Record<string, string> = {
   RouteGroup: 'entrypoints/server.ts',
   LifecycleHooks: 'entrypoints/server.ts',
   TrustFenceConfig: 'entrypoints/server.ts',
+  ProxyOriginConfig: 'entrypoints/server.ts',
   EventBusOptions: 'entrypoints/server.ts',
   ManagedServerResourceConfig: 'entrypoints/application.ts',
   DiagnosticJournalConfig: 'entrypoints/application.ts',

@@ -15,6 +15,14 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/server`: `createServer({ proxyOrigin: { trustedPeer } })` restores the external HTTP/HTTPS scheme from a single trusted ingress before fetch composition and routing. It validates the real TCP peer and one `X-Forwarded-Proto`, rejects competing URL headers, preserves wire Host/ports and native cancellation, peer lookup and WebSocket upgrade. `trustProxy` remains client-IP-only. The server surface grows by one configuration type, `ProxyOriginConfig`, owned by this entrypoint so the trust decision is explicit and independently testable (I8, I9, I12).
+
+### Fixed
+
+- `stitchkit/process`: bounded process-group settlement observations remain readable through nested cleanup errors in Node CI, including up to 16 actual states, the group id, sample count and elapsed time. Observation failures retain their original cause. Cleanup deadlines and the definition of a live process are unchanged; these diagnostics do not claim to repair a historical native termination failure.
+
 ## [0.110.5] - 2026-10-15
 
 ### Added

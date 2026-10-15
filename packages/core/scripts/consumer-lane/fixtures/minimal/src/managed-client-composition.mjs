@@ -4,6 +4,9 @@ import {
   createApplication,
   defineManagedResource,
 } from 'stitchkit/application';
+import { verifyProxyOrigin } from './proxy-origin.mjs';
+
+if (process.versions.bun) await verifyProxyOrigin();
 
 function clientResource(create) {
   let generation;

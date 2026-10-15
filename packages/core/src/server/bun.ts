@@ -1,6 +1,7 @@
 /** Bun-owned server adapter and its concrete public types. */
 import { chmodSync, statSync, unlinkSync } from 'node:fs';
 import { createHandler } from './create';
+import { createProxyOrigin, type ProxyOriginConfig } from './proxy-origin';
 import {
   createServerLifecycle,
   type ManagedServerHandle,
@@ -42,6 +43,14 @@ export type UnixListenConfig = string | { path: string; mode?: number };
 
 /** Bun-specific server config layered over the Fetch-clean handler config. */
 export interface BunServerConfig extends BunHandlerConfig, BunFetchComposition {
+  /**
+   * Restore the external scheme behind one trusted TCP ingress, before composition.
+   * The ingress must overwrite Host and X-Forwarded-Proto and remove Forwarded,
+   * X-Forwarded-Host and X-Forwarded-Port. Trusted requests require exactly one
+   * `http` or `https` proto; malformed/conflicting headers receive 400.
+   * Host/tenant authorization remains application-owned. Independent of trustProxy.
+   */
+  proxyOrigin?: ProxyOriginConfig;
   port?: number;
   hostname?: string;
   /**
@@ -274,17 +283,21 @@ export function createServer(config: BunServerConfig): BunServerHandle {
   const handler = createHandler(config);
   const consumerFetch = config.wrapFetch ? config.wrapFetch(handler) : handler;
   const admittedFetch = lifecycle.wrapFetch(consumerFetch);
+  const proxyOrigin = config.proxyOrigin && createProxyOrigin(config.proxyOrigin);
   const fetch: BunFetchHandler = async (request, server) => {
+    const normalized =
+      proxyOrigin && server ? proxyOrigin.normalize(request, server) : request;
+    if (normalized instanceof Response) return normalized;
     if (socket && socketRoutePrefix) {
-      const pathname = new URL(request.url).pathname;
+      const pathname = new URL(normalized.url).pathname;
       if (pathname.startsWith(socketRoutePrefix)) {
-        return await socket.route.handler(request, {
+        return await socket.route.handler(normalized, {
           params: { socketPath: pathname.slice(socketRoutePrefix.length) },
           server,
         });
       }
     }
-    return admittedFetch(request, server);
+    return admittedFetch(normalized, server);
   };
 
   if (unixPath !== undefined) {
@@ -336,6 +349,7 @@ export function createServer(config: BunServerConfig): BunServerHandle {
   }
 
   const server = runtime;
+  proxyOrigin?.bind(server);
   return {
     // In unix mode this is `unix://<path>` — an identifier, not a fetchable
     // address (clients dial the path via `createHttpClient({ unix })`).

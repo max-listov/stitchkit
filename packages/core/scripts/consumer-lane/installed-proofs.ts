@@ -127,7 +127,7 @@ export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).par
     id: 'managed-client-composition',
     fixture: 'minimal',
     entry: 'managed-client-composition.mjs',
-    files: [],
+    files: ['proxy-origin.mjs'],
     peers: ['zod'],
     platforms: ['linux', 'darwin'],
     runtimes: ['bun', 'node'],
@@ -352,7 +352,7 @@ export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).par
     repetitions: 3,
     fixture: 'minimal',
     entry: 'native-primitives.mjs',
-    files: ['command-lifecycle.mjs'],
+    files: ['command-lifecycle.mjs', 'command-settlement-diagnostics.mjs'],
     marker: 'packed native primitives: ok',
   },
   {

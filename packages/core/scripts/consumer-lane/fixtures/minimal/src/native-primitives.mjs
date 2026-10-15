@@ -10,6 +10,7 @@ import {
 import { canonicalJson } from 'stitchkit/primitives';
 import { runNativeCommand } from 'stitchkit/process';
 import { verifyCommandLifecycle } from './command-lifecycle.mjs';
+import { verifySettlementDiagnostics } from './command-settlement-diagnostics.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'packed-native-primitives-'));
 try {
@@ -77,6 +78,7 @@ try {
     assert.equal(drained[channel].length, 0, 'streaming owner retains no capture');
   }
   await verifyCommandLifecycle(root);
+  await verifySettlementDiagnostics(root);
   console.log('packed native primitives: ok');
 } finally {
   await rm(root, { recursive: true, force: true });

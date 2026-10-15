@@ -248,6 +248,7 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 | `logging` | `true` for built-in request logs, or a `LoggingConfig` (see below) |
 | `traceId` | override per-request trace-id resolution — may return `undefined` to fall back |
 | `wrapFetch` | compose wrappers around the finished handler (request context, audit) |
+| `proxyOrigin` | Bun TCP ingress policy: `{ trustedPeer(socketIp) }` restores the external scheme before all composition; independent of client-IP `trustProxy` |
 | `socket` | full Stitchkit Socket.IO handle; route, default WebSocket handler and shutdown are mounted once |
 | `websocket` | custom Bun WebSocket handler; with `socket`, this is the explicit composed handler |
 | `development` / `bun` | passthrough to `Bun.serve` |
@@ -255,6 +256,60 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 Native Bun `routes` are intentionally not accepted: Bun matches them before
 `fetch`, so they could bypass shutdown admission. Use `rawRoutes`; they retain
 the Fetch `Request → Response` model and participate in lifecycle tracking.
+
+### External origin behind a trusted proxy
+
+An HTTPS ingress often forwards plain HTTP to Bun. `trustProxy` trusts client-IP
+headers only; it does not change `Request.url`. Opt into the separate URL policy:
+
+```ts
+import { createServer, isLoopbackAddress } from 'stitchkit/server'
+
+const server = createServer({
+  hostname: '127.0.0.1',
+  port: 3000,
+  proxyOrigin: { trustedPeer: isLoopbackAddress },
+  services,
+})
+```
+
+The predicate receives the **real TCP peer**, never `X-Forwarded-For` or
+`X-Real-IP`. Match only the ingress you control. Loopback is appropriate only
+when other local processes are trusted. Unmatched peers, missing peer metadata
+and the default configuration ignore URL forwarding headers. Unix listeners have
+no TCP peer and do not use this policy. This option belongs to Bun `createServer`,
+not the Fetch-clean `createHandler` or Node `serveNode`.
+
+The trusted ingress must overwrite `Host` with the external authority and
+`X-Forwarded-Proto` with exactly `http` or `https`. It must remove `Forwarded`,
+`X-Forwarded-Host` and `X-Forwarded-Port`; their presence, a missing/invalid
+proto, a list of values or a malformed Host returns HTTP 400 before application
+code. Header names are case-insensitive; proto values are lowercase. Multiple
+ingress chains require a single sanitizing ingress at this boundary.
+
+For an nginx HTTPS terminator, the relevant forwarding settings are:
+
+```nginx
+proxy_set_header Host $http_host;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header Forwarded "";
+proxy_set_header X-Forwarded-Host "";
+proxy_set_header X-Forwarded-Port "";
+```
+
+The normalized `Request.url` reaches `wrapFetch`, hooks, contracts, raw routes,
+and the managed Socket.IO route. It preserves the path/query, wire authority
+(including explicit ports), method, body, headers and linked cancellation signal.
+Request cloning uses the normalized URL. The same runtime handle resolves
+`requestIP`, `timeout` and `upgrade` against the original native request, retaining
+WebSocket and shutdown behavior.
+
+This is a scheme normalization policy, **not host authorization**. Applications
+must retain their hostname/tenant allowlist and exact same-origin checks for
+Origin and Referer. The TLS terminator must reject SNI/Host mismatches before
+forwarding; a plain-HTTP Bun listener cannot observe the TLS SNI. The normalizer
+does not accept `X-Forwarded-Host`, authorize a foreign Host, or treat HTTP and
+HTTPS as aliases.
 
 ### Local daemon over a unix socket
 
