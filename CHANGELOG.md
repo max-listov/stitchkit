@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.110.2] - 2026-10-15
+
 ### Added
 
 - `stitchkit/agent-runtime`: atomic `store.branchConversation()` creates an independent conversation from an exact settled prefix or a validated archive. Typed identities and spill references are rekeyed; stable retries return a durable lineage receipt, while control observations remain inert and artifact access requires fresh destination policy. Six input/result/receipt type and schema exports belong to this entrypoint (I3, I8, I12, I15). Unknown opaque payloads fail before any destination write. Abandon transitions retain their exact terminal assistant for reconstruction after compaction; incomplete legacy recovery archives refuse.
