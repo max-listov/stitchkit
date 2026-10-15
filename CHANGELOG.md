@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.110.3] - 2026-10-15
+
 ### Added
 
 - `stitchkit/agent-runtime`: `AgentStoreTransitionRecordSchema` and its inferred `AgentStoreTransitionRecord` type inspect the persisted journal, including full transitions and compact hash-only streaming checkpoints. `AgentStoreTransitionSchema` continues to describe executable mutations. These two names belong to the runtime entrypoint (I3, I8, I15).
