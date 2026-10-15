@@ -24,6 +24,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 ### Fixed
 
 - `stitchkit/process`: bounded process-group settlement observations remain readable through nested cleanup errors in Node CI, including up to 16 actual states, the group id, sample count and elapsed time. Observation failures retain their original cause. Cleanup deadlines and the definition of a live process are unchanged; these diagnostics do not claim to repair a historical native termination failure.
+- `stitchkit/process`: stopping a process group repeats `SIGKILL` for members still confirmed alive within the original cleanup deadline. Fresh kernel absence ends further signals; dead-only, invalid and failed process observations never trigger a blind re-signal.
 
 ## [0.110.5] - 2026-10-15
 

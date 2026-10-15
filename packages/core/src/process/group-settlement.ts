@@ -32,6 +32,7 @@ function processGroups(timeoutMs: number): Promise<string> {
 export async function waitForProcessGroupExit(
   pid: number | undefined,
   deadline: number,
+  killLiveMembers?: () => Promise<boolean>,
 ): Promise<void> {
   if (pid === undefined) return;
   let observations = 0;
@@ -68,6 +69,11 @@ export async function waitForProcessGroupExit(
       // ps is a snapshot: do not let a stale row override a newer kernel absence,
       // including a snapshot that used the last of the observation budget.
       if (!processGroupExists(pid)) return;
+      // A group can gain a member while its first KILL is being delivered. Keep
+      // stopping confirmed live members within the original bound; an ESRCH
+      // ends ownership immediately, before the numeric group id can be reused.
+      if (killLiveMembers && performance.now() < deadline && !(await killLiveMembers()))
+        return;
       await sleep(Math.min(5, Math.max(0, deadline - performance.now())));
     }
   } catch (cause) {

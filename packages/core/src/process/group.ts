@@ -83,7 +83,10 @@ async function killAndSettleGroup(
 ): Promise<boolean> {
   const cleanupDeadline = Math.min(deadline, performance.now() + cleanupTimeoutMs);
   const signalled = await signalUntilSettled(pid, 'SIGKILL', cleanupDeadline);
-  if (signalled) await waitForProcessGroupExit(pid, cleanupDeadline);
+  if (signalled)
+    await waitForProcessGroupExit(pid, cleanupDeadline, () =>
+      signalUntilSettled(pid, 'SIGKILL', cleanupDeadline),
+    );
   return signalled;
 }
 

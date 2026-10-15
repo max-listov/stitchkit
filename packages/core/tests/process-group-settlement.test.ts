@@ -47,3 +47,18 @@ test('fresh kernel absence overrides stale ps while permission and observation f
     'kernel and process-table settlement controls: ok',
   );
 });
+
+test('live members are re-signalled inside the original bound while absence and invalid observations stop signals', async () => {
+  const result = await runNativeCommand({
+    executable: process.execPath,
+    args: [`${import.meta.dir}/fixtures/group-settlement-resignal-probe.ts`],
+    timeoutMs: 10_000,
+    capture: true,
+    maxOutputBytes: 4096,
+    onLeaderStarted: trackGroupLeader,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(new TextDecoder().decode(result.stdout)).toContain(
+    'bounded live-group re-signal controls: ok',
+  );
+});

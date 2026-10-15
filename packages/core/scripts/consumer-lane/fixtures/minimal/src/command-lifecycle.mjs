@@ -122,22 +122,40 @@ export async function verifyCommandLifecycle(root) {
   // does not expose that pending-write measurement; its blocked sink is tested above.
   if (!process.versions.bun) await undrainedPipe();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error('leader exited')), 150);
+  const reason = new Error('leader exited');
+  let helperReady = false;
+  let leaderExited = false;
+  const cancel = () => {
+    if (helperReady && leaderExited) setImmediate(() => controller.abort(reason));
+  };
   try {
     await assert.rejects(
       runNativeCommand({
         ...command(
-          "require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore',1,2]});process.exit(0);",
+          "require('child_process').spawn(process.execPath,['-e',\"process.stdout.write('ready');setInterval(()=>{},1000)\"],{stdio:['ignore',1,2]});process.exit(0);",
         ),
+        timeoutMs: 3000,
         signal: controller.signal,
         stop: { target: 'group', graceMs: 0 },
         // The child outlives the leader and keeps the pipes; only the caller's abort ends it.
         descendants: 'leave',
+        onOutput() {
+          helperReady = true;
+          cancel();
+        },
+        onLeaderSettled(event) {
+          assert.equal(event.kind, 'exit');
+          assert.equal(event.exitCode, 0);
+          leaderExited = true;
+          cancel();
+        },
       }),
-      /leader exited/,
+      (error) => error === reason,
     );
+    assert.equal(helperReady, true, 'descendant holds the inherited pipe');
+    assert.equal(leaderExited, true, 'leader exited before caller cancellation');
   } finally {
-    clearTimeout(timer);
+    controller.abort(reason);
   }
   await assert.rejects(
     runNativeCommand({

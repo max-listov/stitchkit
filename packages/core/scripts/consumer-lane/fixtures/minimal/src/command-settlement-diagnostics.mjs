@@ -9,15 +9,20 @@ import { runNativeCommand } from 'stitchkit/process';
 export async function verifySettlementDiagnostics(root) {
   const ps = join(root, 'ps');
   let group;
+  let killed = false;
   const realKill = process.kill;
   const originalPath = process.env.PATH;
   const controller = new AbortController();
   process.env.PATH = `${root}:${originalPath}`;
   process.kill = (target, signal) => {
-    // Only the observation of our owned group is injected. Actual termination
-    // signals still reach the real child, which cannot survive this control.
+    // The first KILL really terminates our child. Further group probes and
+    // re-signals model the same synthetic live group until ps refuses it;
+    // they must not signal a now-reusable id of a child we already killed.
     if (target === -group && signal === 0) return true;
-    return realKill(target, signal);
+    if (target === -group && signal === 'SIGKILL' && killed) return true;
+    const sent = realKill(target, signal);
+    if (target === -group && signal === 'SIGKILL') killed = true;
+    return sent;
   };
   try {
     const pending = runNativeCommand({
@@ -26,7 +31,9 @@ export async function verifySettlementDiagnostics(root) {
       timeoutMs: 3000,
       cleanupTimeoutMs: 2000,
       signal: controller.signal,
-      stop: { target: 'group', graceMs: 0 },
+      // Skip SIGTERM: a cooperative exit before SIGKILL legitimately bypasses
+      // settlement observation. This control must reach the injected observer.
+      stop: { target: 'group', graceMs: 0, killOn: controller.signal },
       onLeaderStarted({ pid }) {
         group = pid;
         const rows = Array(32).fill(`${pid} R`).join('\n');
@@ -43,6 +50,7 @@ export async function verifySettlementDiagnostics(root) {
       },
     });
     await assert.rejects(pending, (error) => {
+      assert.equal(killed, true, 'the real owned child received SIGKILL');
       assert.equal(error.code, 'COMMAND_CLEANUP');
       const rendered = inspect(error);
       assert.match(rendered, /"failure":"observation"/);
