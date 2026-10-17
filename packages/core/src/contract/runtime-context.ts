@@ -106,7 +106,9 @@ export interface RuntimeContext {
    * validation failure). Absent on the non-HTTP transports (MCP / agent / CLI /
    * a bring-your-own lane), which carry no `Request`, so they are optional and a
    * reader narrows them. Web Fetch types only — the core stays Fetch-clean
-   * (→ ADR 0013).
+   * (→ ADR 0013). On every HTTP context it is the very `Request` the handler of
+   * the core received, never a copy: a `RequestIngress` key attached by the code
+   * that built that request reads its value through this identity.
    */
   req?: Request;
   url?: URL;

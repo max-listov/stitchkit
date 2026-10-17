@@ -1009,6 +1009,33 @@ that ends inside a line throws `StreamTruncatedLineError` (`lineBytes`) instead 
 fragment as a value — the right policy for a socket or a child process, where a missing newline
 means the writer died. Both errors extend the `RangeError` / `SyntaxError` they replace.
 
+## Reading a body up to a byte limit
+
+`readBoundedBody` (from `stitchkit` or `stitchkit/http`) reads a request or response body, a
+`ReadableStream<Uint8Array>` or any `AsyncIterable<Uint8Array>`, and never reads past
+`maxBytes` plus one chunk. Whoever owns the boundary picks the two errors, so a body that is too
+large and a read that was cancelled stay different outcomes:
+
+```ts
+import { readBoundedBody } from 'stitchkit'
+
+const bytes = await readBoundedBody(request.body, {
+  maxBytes: 64 * 1024,
+  signal: request.signal,
+  limitError: (observedBytes) => new PayloadTooLarge(observedBytes),
+  abortError: (reason) => new ClientGone({ cause: reason }),
+})
+```
+
+- The source is cancelled when the limit is crossed and when `signal` aborts. A read that never
+  settles does not hold the call after an abort, and an abort is honoured before the first read
+  (even for a `null` body).
+- A body of exactly `maxBytes` is read; one more byte calls `limitError` with the bytes seen so far
+  (the chunk that crossed the limit included).
+- A `null` body, such as a request without one, is an empty result.
+- Without `abortError` the signal's own reason is thrown.
+- `maxBytes` is a positive safe integer.
+
 ## Resumable streams
 
 A stream that survives a dropped connection needs four things beyond opening it:

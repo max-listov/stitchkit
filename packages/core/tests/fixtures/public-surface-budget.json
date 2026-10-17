@@ -1,7 +1,7 @@
 {
   "$comment": "Ceilings on the public surface. Raising a limit or adding a shared name is a reviewed change with its reason, not a regenerated snapshot; the reason for each raise lives in its commit and the CHANGELOG. → ADR 0198, docs/PRINCIPLES.md I8.",
   "limits": {
-    "stitchkit": 235,
+    "stitchkit": 237,
     "stitchkit/agent-runtime": 372,
     "stitchkit/agent-runtime/browser": 92,
     "stitchkit/agent-runtime/coding-tools": 10,
@@ -28,7 +28,7 @@
     "stitchkit/geo": 11,
     "stitchkit/google": 11,
     "stitchkit/live": 42,
-    "stitchkit/node": 75,
+    "stitchkit/node": 78,
     "stitchkit/oauth": 12,
     "stitchkit/voice": 6,
     "stitchkit/observability": 67,
@@ -37,7 +37,7 @@
     "stitchkit/react/keyboard": 17,
     "stitchkit/release": 17,
     "stitchkit/remote": 2,
-    "stitchkit/server": 216,
+    "stitchkit/server": 219,
     "stitchkit/telegram": 98,
     "stitchkit/telegram/html": 19,
     "stitchkit/telegram/screens": 76,
@@ -51,7 +51,7 @@
     "stitchkit/process": 12,
     "stitchkit/process/owner-loss": 1,
     "stitchkit/tools/mcp": 47,
-    "stitchkit/http": 34,
+    "stitchkit/http": 37,
     "stitchkit/realtime": 14
   },
   "overlaps": [
@@ -465,6 +465,8 @@
         "RealtimeServerConnection",
         "RealtimeServerHandle",
         "RegistryHandlers",
+        "RequestIngress",
+        "RequestIngressSource",
         "ScopeContexts",
         "ScopedHandlers",
         "ScopedImplementationRegistry",
@@ -505,6 +507,7 @@
         "createScopedImplementRegistry",
         "createSocketIOServer",
         "createUnixClientTransport",
+        "defineRequestIngress",
         "forbidden",
         "implement",
         "implementRegistry",
@@ -632,6 +635,7 @@
         "ApiError",
         "ApiEvent",
         "ApiEventListener",
+        "BoundedBodyOptions",
         "ChunkSource",
         "ChunkedUploadConfig",
         "ChunkedUploadPart",
@@ -652,6 +656,7 @@
         "ScopeClientConfigs",
         "ScopedClientRegistry",
         "ScopedUrlBuilderRegistry",
+        "StreamByteSource",
         "UnauthorizedMatcher",
         "UrlBuilderConfig",
         "contractEndpointMatchers",
@@ -662,6 +667,7 @@
         "createScopedUrlBuilders",
         "createUrlBuilder",
         "createUrlBuilders",
+        "readBoundedBody",
         "uploadInChunks"
       ]
     },

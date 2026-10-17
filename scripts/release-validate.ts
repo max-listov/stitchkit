@@ -1,11 +1,15 @@
 import {
   affectsLineOf,
   breakingItems,
+  fixedSectionItems,
   parseAffectsLine,
   UpgradeAffectsError,
   type UpgradeAffectsTarget,
 } from '../packages/core/src/internal/upgrade-affects';
-import { BREAKING_HEADING } from '../packages/core/src/internal/upgrade-plan';
+import {
+  BREAKING_HEADING,
+  leadingEntrypoints,
+} from '../packages/core/src/internal/upgrade-plan';
 import { git } from './local-git';
 import { assertTrainCarriesItsCompanions, readFromReleaseTags } from './release-companions';
 import {
@@ -134,28 +138,85 @@ export function assertBreakingAffects(
     throw new Error(
       `${version}: the "### ⚠️ Breaking changes" section has no items. Write each breaking change as a "- " item ending with its "**Affects:**" line.`,
     );
-  for (const { markdown } of items) {
+  for (const { markdown } of items) assertItemAffects(markdown, version, entrypoints);
+}
+
+/**
+ * One breaking item's `**Affects:**` line: present, readable, and naming published entrypoints
+ * (or `*` for one this release removes).
+ */
+function assertItemAffects(
+  markdown: string,
+  version: string,
+  entrypoints: ReadonlySet<string>,
+): void {
+  const first = JSON.stringify(markdown.split('\n')[0]?.slice(0, 120));
+  let targets: UpgradeAffectsTarget[];
+  try {
+    const line = affectsLineOf(markdown);
+    if (line === undefined)
+      throw new Error(
+        `${version}: breaking item ${first} has no "**Affects:**" line. Name what it touches so \`stitchkit upgrade\` can tell a project whether it is affected, e.g. "**Affects:** \`stitchkit/files/packaging\` createNativePackaging(delivery: 'embedded')", "**Affects:** \`stitchkit/process\` behaviour" or "**Affects:** \`stitchkit/old-leaf\` *".`,
+      );
+    targets = parseAffectsLine(line);
+  } catch (error) {
+    if (!(error instanceof UpgradeAffectsError)) throw error;
+    throw new Error(
+      `${version}: breaking item ${first} has a malformed "**Affects:**" line: ${error.message}`,
+    );
+  }
+  const unknown = targets.filter(
+    (target) => target.kind !== 'any-import' && !entrypoints.has(target.entrypoint),
+  );
+  if (unknown.length > 0)
+    throw new Error(
+      `${version}: breaking item ${first} names ${unknown.map((target) => `\`${target.entrypoint}\``).join(', ')} in its "**Affects:**" line, which packages/core/package.json does not export. Name a published entrypoint, or write "\`<entrypoint>\` *" for one this release removes.`,
+    );
+}
+
+/** The first core release whose `### Fixed` items that lead with an entrypoint must carry `**Affects:**`. */
+export const FIXED_AFFECTS_SINCE = '0.110.7';
+
+/**
+ * A fix to a public entrypoint says which exports it touches, in the machine line
+ * `stitchkit upgrade` matches against a project's imports. An item that does not lead with a
+ * backticked entrypoint (tooling, CI, documents) is not a fix to the public surface and needs
+ * none. A fix removes nothing, so `*` is refused; a line that is present must be readable and
+ * name published entrypoints, whether or not the item had to carry one. → ADR 0263.
+ */
+export function assertFixedAffects(
+  notes: string,
+  version: string,
+  entrypoints: ReadonlySet<string>,
+): void {
+  for (const { markdown } of fixedSectionItems(notes)) {
     const first = JSON.stringify(markdown.split('\n')[0]?.slice(0, 120));
-    let targets: UpgradeAffectsTarget[];
+    const leading = leadingEntrypoints(markdown);
+    let line: string | undefined;
+    let targets: UpgradeAffectsTarget[] = [];
     try {
-      const line = affectsLineOf(markdown);
-      if (line === undefined)
-        throw new Error(
-          `${version}: breaking item ${first} has no "**Affects:**" line. Name what it touches so \`stitchkit upgrade\` can tell a project whether it is affected, e.g. "**Affects:** \`stitchkit/files/packaging\` createNativePackaging(delivery: 'embedded')", "**Affects:** \`stitchkit/process\` behaviour" or "**Affects:** \`stitchkit/old-leaf\` *".`,
-        );
-      targets = parseAffectsLine(line);
+      line = affectsLineOf(markdown);
+      if (line !== undefined) targets = parseAffectsLine(line);
     } catch (error) {
       if (!(error instanceof UpgradeAffectsError)) throw error;
       throw new Error(
-        `${version}: breaking item ${first} has a malformed "**Affects:**" line: ${error.message}`,
+        `${version}: fixed item ${first} has a malformed "**Affects:**" line: ${error.message}`,
       );
     }
-    const unknown = targets.filter(
-      (target) => target.kind !== 'any-import' && !entrypoints.has(target.entrypoint),
-    );
+    if (line === undefined) {
+      if (leading.length === 0) continue;
+      throw new Error(
+        `${version}: fixed item ${first} leads with ${leading.map((name) => `\`${name}\``).join(', ')} and has no "**Affects:**" line. Name what the fix touches so \`stitchkit upgrade\` can tell a project whether it is affected, e.g. "**Affects:** \`stitchkit/process\` runNativeCommand" or "**Affects:** \`stitchkit/process\` behaviour".`,
+      );
+    }
+    if (targets.some((target) => target.kind === 'any-import'))
+      throw new Error(
+        `${version}: fixed item ${first} writes "*" in its "**Affects:**" line. A fix removes no entrypoint; name the exports it touches, or \`behaviour\`.`,
+      );
+    const unknown = targets.filter((target) => !entrypoints.has(target.entrypoint));
     if (unknown.length > 0)
       throw new Error(
-        `${version}: breaking item ${first} names ${unknown.map((target) => `\`${target.entrypoint}\``).join(', ')} in its "**Affects:**" line, which packages/core/package.json does not export. Name a published entrypoint, or write "\`<entrypoint>\` *" for one this release removes.`,
+        `${version}: fixed item ${first} names ${unknown.map((target) => `\`${target.entrypoint}\``).join(', ')} in its "**Affects:**" line, which packages/core/package.json does not export.`,
       );
   }
 }
@@ -194,12 +255,13 @@ export async function validateReleaseTag(
       version: plan.version,
     });
   }
-  if (plan.target === 'core' && comparePreOneVersions(plan.version, AFFECTS_LINE_SINCE) >= 0)
-    assertBreakingAffects(
-      notes,
-      plan.version,
-      publishedEntrypoints(await read(`${plan.packageDir}/package.json`)),
-    );
+  if (plan.target === 'core') {
+    const entrypoints = publishedEntrypoints(await read(`${plan.packageDir}/package.json`));
+    if (comparePreOneVersions(plan.version, AFFECTS_LINE_SINCE) >= 0)
+      assertBreakingAffects(notes, plan.version, entrypoints);
+    if (comparePreOneVersions(plan.version, FIXED_AFFECTS_SINCE) >= 0)
+      assertFixedAffects(notes, plan.version, entrypoints);
+  }
   // Each package has its own migration channel: the scaffolder's guide is for
   // the operator of a GENERATED project, a different reader from the framework's.
   const channel = RELEASE_TARGETS[plan.target].migration;

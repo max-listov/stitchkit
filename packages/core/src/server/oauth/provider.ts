@@ -1,3 +1,4 @@
+import { assertPositiveSafeInteger } from '../../internal/positive-integer';
 import { signJwt } from '../middleware/jwt';
 import type { RawRoute } from '../types';
 import {
@@ -115,6 +116,11 @@ export interface OAuthProviderConfig {
   scopesSupported?: string[];
   /** Path prefix for the OAuth endpoints. Default `/oauth`. */
   basePath?: string;
+  /**
+   * The most bytes `/token` and `/register` read of a request body, a positive safe integer; a
+   * larger body is answered `413` with `invalid_request`. Default 64 KiB.
+   */
+  maxRequestBodyBytes?: number;
 
   /** Client discovery policy. Default: CIMD enabled, DCR disabled. */
   clientRegistration?: OAuthClientRegistrationConfig;
@@ -151,6 +157,7 @@ export interface OAuthProviderConfig {
  * names this issuer.
  */
 export function mountOAuthProvider(config: OAuthProviderConfig): RawRoute[] {
+  assertPositiveSafeInteger('maxRequestBodyBytes', config.maxRequestBodyBytes);
   const base = config.basePath ?? '/oauth';
   const ttl = config.accessTokenTtlSec ?? 3600;
   const registerPath = `${base}/register`;

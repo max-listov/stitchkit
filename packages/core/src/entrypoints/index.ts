@@ -105,6 +105,7 @@ export {
   BackoffPolicySchema,
   createBackoff,
 } from '../internal/backoff';
+export { type BoundedBodyOptions, readBoundedBody } from '../internal/bounded-body';
 export type { StitchLogger } from '../internal/logger';
 // The projection a `VALIDATION_ERROR` already travels in — browser-safe (zod only),
 // and the same three names the server entry exports, not a second set. A caller

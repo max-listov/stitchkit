@@ -87,7 +87,8 @@ Work in this order; each step links a contract field to a transport.
 - **Upgrading stitchkit?** Ask the package, in the project you are upgrading:
   `bunx stitchkit@latest upgrade` (or `npx`) prints every `### ⚠️ Breaking
   changes` section between the installed version and the latest, oldest first,
-  each with its **Who must act** line. It reads the installed version from
+  each with its **Who must act** line, then the fixes of the range that name
+  what they touch (`affects this project`, `not used here`). It reads the installed version from
   `node_modules` and the changelog from inside the package, so there is nothing
   to clone and nobody to ask; `--from` / `--to` set a different range.
   `docs/guide/upgrading.md` expands the sections into migrations. A version with

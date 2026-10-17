@@ -15,6 +15,30 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** applications whose raw routes call `parseBody` on JSON larger than 1 MiB, and applications whose OAuth clients send `/register` or `/token` bodies larger than 64 KiB. Everyone else changes nothing.
+
+- `stitchkit/server` — **`parseBody` reads at most 1 MiB by default** and returns `null` for a larger body, where it used to read any size into memory. An unbounded read of a raw route's body is a hole in the bounded-everything rule (I10), and `maxJsonBodyBytes` never covered raw routes. Before: `await parseBody(req, Schema)` parsed a body of any size; after: pass the limit your route needs, `await parseBody(req, Schema, { maxBytes: 8 * 1024 * 1024 })`. → ADR 0262
+  **Affects:** `stitchkit/server` parseBody
+- `stitchkit/tools` — **`mountOAuthProvider` reads at most 64 KiB of a `/token` or `/register` body** and answers `413` with `invalid_request` for a larger one, where it used to read any size. Before: no limit; after: the default is 64 KiB and `mountOAuthProvider({ ..., maxRequestBodyBytes: 256 * 1024 })` raises it. → ADR 0262
+  **Affects:** `stitchkit/tools` mountOAuthProvider
+
+### Added
+
+- `stitchkit/observability`: `request.payloadMaxBytes` sets how much of a request body the audit row reads with `includePayload` (default: the handler's `maxJsonBodyBytes`, or 1 MiB), and an event whose body was larger carries `payloadTruncated: true` beside its `null` payload.
+- `stitchkit/tools`: `mountOAuthProvider({ maxRequestBodyBytes })` sets the most bytes `/token` and `/register` read of a request body (default 64 KiB).
+- `stitchkit`, `stitchkit/http`: `readBoundedBody(source, { maxBytes, signal?, limitError, abortError? })` reads a `ReadableStream<Uint8Array>`, an async byte iterable or a `null` body into bytes without reading past `maxBytes` plus one chunk. The source is cancelled when the limit is crossed and when the signal aborts, an abort is honoured before the first read and while a read never settles, and the caller picks both errors. A consuming project no longer needs its own copy; the request-text, unix-client, connection-response, capped-download and sandbox-gateway readers of the framework now run on the same chunk loop. → ADR 0262
+- `stitchkit/server`, `stitchkit/node`: `defineRequestIngress<T>(name)` returns a typed key whose `attach(request, value)` is called by the code that builds a `Request` (a local socket ingress, a relay) and whose `from(ctx)` an endpoint, `authorize`, `beforeHandle` or `onError` reads. A header, `clone()` and `new Request(request)` carry nothing; a request from another ingress has no value. `ctx.req` is documented, and tested on every HTTP context, as the very `Request` the handler received. → ADR 0261
+- `stitchkit upgrade` prints a second section, **Fixes that touch this project**, with the same verdicts as breaking items for every fix of the range that names what it touches (`fixes` and `fixesWithoutAffects` in `--json`); `release:check` requires the `**Affects:**` line on a Fixed item that leads with a public entrypoint, from the release after 0.110.6. → ADR 0263
+
+### Fixed
+
+- `stitchkit/server`, `stitchkit/node`: a `createUnixClientTransport` request that is aborted while its body is being read rejects with the abort reason at once instead of waiting for the next chunk of a stalled source, and cancels the body when it crosses the request size limit.
+  **Affects:** `stitchkit/server`, `stitchkit/node` createUnixClientTransport
+- `stitchkit/server`: with `observability.includePayload`, the audit row reads the cloned request body up to `payloadMaxBytes` (by default the handler's `maxJsonBodyBytes`, or 1 MiB; an endpoint's own `maxJsonBodyBytes` is not known when the body is cloned, so set `payloadMaxBytes` for endpoints that accept more) and cancels that branch there; before, the clone branch of the body stream drained the whole body into memory even when the handler's own branch was cut at `maxJsonBodyBytes`.
+  **Affects:** `stitchkit/server` createServer(observability.includePayload)
+
 ## [0.110.6] - 2026-10-15
 
 ### Added
@@ -24,7 +48,9 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 ### Fixed
 
 - `stitchkit/process`: bounded process-group settlement observations remain readable through nested cleanup errors in Node CI, including up to 16 actual states, the group id, sample count and elapsed time. Observation failures retain their original cause. Cleanup deadlines and the definition of a live process are unchanged; these diagnostics do not claim to repair a historical native termination failure.
+  **Affects:** `stitchkit/process` runNativeCommand
 - `stitchkit/process`: stopping a process group repeats `SIGKILL` for members still confirmed alive within the original cleanup deadline. Fresh kernel absence ends further signals; dead-only, invalid and failed process observations never trigger a blind re-signal.
+  **Affects:** `stitchkit/process` runNativeCommand
 
 ## [0.110.5] - 2026-10-15
 
@@ -63,6 +89,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 ### Fixed
 
 - Process-group cleanup accepts a fresh kernel absence after SIGKILL instead of relying only on a potentially stale process-table snapshot. Permission refusals and unknown/exiting states still require proof; the same cleanup deadline applies and failures retain their last observed states.
+  **Affects:** `stitchkit/process` runNativeCommand
 - A synchronously throwing injected Socket.IO peer loader now reaches `onConnectError`, clears connection intent and allows the next `connect()` to retry, just like an asynchronously rejected loader.
 
 ## [0.110.0] - 2026-10-14
@@ -77,6 +104,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 ### Fixed
 
 - A fast owner-loss guard exit no longer overtakes a buffered start handshake or discards captured output while the handshake is in flight. The control stream determines whether the handshake was missing, and output readers attach before waiting for it. Native lifetime qualification checks descendant death within its cleanup window before asserting stable output.
+  **Affects:** `stitchkit/process` runNativeCommand(ownerLoss: 'terminate')
 
 ### Added
 
@@ -90,6 +118,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   timer on a loaded host. The grace wait and the Darwin permission retry read the clock once for both
   the decision to wait and the length of the wait, so Node no longer prints `TimeoutNegativeWarning`
   to the application's stderr when the deadline passes between two reads.
+  **Affects:** `stitchkit/process` runNativeCommand
 
 ## [0.109.3] - 2026-10-13
 
@@ -217,6 +246,7 @@ scripts relied on spelling-based conversion of dotted values.
   `Command deadline exceeded`. Under Bun a command is now launched through `Bun.spawn`, presented to the
   command owner with the same events, streams, group ownership and failure reporting; Node still uses
   `node:child_process`. The deadline, stop policy and process-group cleanup are unchanged.
+  **Affects:** `stitchkit/process` runNativeCommand
 
 ## [0.108.0] - 2026-10-06
 

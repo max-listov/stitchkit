@@ -86,6 +86,31 @@ export function breakingItems(section: string): UpgradeBreakingItemText[] {
 }
 
 /**
+ * The items of every `### Fixed` section of a release body; a release may hold more than one.
+ * A section ends at the next `### ` heading outside a fence.
+ */
+export function fixedSectionItems(releaseBody: string): UpgradeBreakingItemText[] {
+  const items: UpgradeBreakingItemText[] = [];
+  let section: string[] | undefined;
+  let fenced = false;
+  const flush = () => {
+    if (section) items.push(...breakingItems(section.join('\n')));
+    section = undefined;
+  };
+  for (const line of releaseBody.split('\n')) {
+    if (FENCE.test(line)) fenced = !fenced;
+    if (!fenced && /^### /.test(line)) {
+      flush();
+      if (/^### Fixed\b/.test(line)) section = [];
+      continue;
+    }
+    section?.push(line);
+  }
+  flush();
+  return items;
+}
+
+/**
  * The text after `**Affects:**` in an item, or undefined when it declares none.
  * An item carries at most one such line; a second is refused, never dropped.
  */

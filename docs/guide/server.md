@@ -41,6 +41,48 @@ Every handler receives one `ctx` argument:
 The same handler runs for HTTP, MCP and agent calls — `ctx.source` tells you
 which. Anything an auth hook attaches (e.g. the resolved user) is also on `ctx`.
 
+### Request attributes from the ingress
+
+When your own code builds the `Request` — a local socket ingress, a relay, a test harness —
+and calls the fetch handler of the core, it often knows something an endpoint needs and the
+request cannot be allowed to say for itself: which authenticated peer sent it. A header can be
+forged by any client. `defineRequestIngress` is the channel the request cannot carry:
+
+```ts
+import { createHandler, defineRequestIngress, implement } from 'stitchkit/server'
+
+interface Peer {
+  node: string
+}
+export const peer = defineRequestIngress<Peer>('peer')
+
+// The ingress, after it has authenticated the peer and built the request:
+peer.attach(request, { node: 'node-7' })
+const response = await handler(request)
+
+// An endpoint, `authorize`, `beforeHandle` or `onError` — `ctx` is the source:
+implement(contract, {
+  place: (ctx) => ({ node: peer.from(ctx)?.node ?? null }),
+})
+```
+
+- The value belongs to the key. A header, a body, `request.clone()` and `new Request(request)`
+  carry nothing; a request from another ingress has no value, and `from` answers `undefined`.
+  Two keys never meet, even under one name, and a second `attach` of the same key to the same
+  request is an error.
+- `ctx.req` is the `Request` the fetch handler of the core received, on every HTTP context: an
+  endpoint, `authorize`, `beforeHandle`, and the `onError` context of a validation failure, an
+  unknown path, a refused method or an `onRequest` that threw. That is the guarantee the lookup
+  stands on, and the ingress tests hold it.
+- A raw route, `streamingRoute` and `onRequest` receive the request without a context: read with
+  `peer.from({ req })`. The MCP, agent and CLI lanes carry no `Request`, so there is nothing to
+  read.
+- With `proxyOrigin` configured, the request is replaced before `wrapFetch`: attach in
+  `wrapFetch` or later, to the request you are handed.
+- A Socket.IO handshake is routed before `wrapFetch` on Bun and rebuilt as a new `Request` on
+  Node: it never carries an attached value.
+- `stitchkit/node` exports the same names.
+
 ### `createImplement` — a fixed context type
 
 To type `ctx` with your app's extras (the user an auth hook injects), fix the
@@ -965,6 +1007,10 @@ handler: async (req) => {
   }
 }
 ```
+
+`parseBody` reads the body up to `{ maxBytes }` — 1 MiB when you pass none, as the third
+argument — and returns `null` for a larger one without reading further, so a raw route
+never holds an unbounded body in memory.
 
 The error helpers (`badRequest`, `notFound`, …) **throw** an `AppError`, so raise
 them inside the `try` and let `errorResponse(err)` render it — that runs any

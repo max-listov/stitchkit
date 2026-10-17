@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { agentConversationProofs } from './agent-conversation-proofs';
 import {
   type DeclarationVariantSchema,
   type InstalledConsumerProof,
   InstalledConsumerProofSchema,
 } from './installed-proof-contract';
+import { proofGroups } from './proof-groups';
 
 const native = {
   peers: ['zod'],
@@ -13,7 +13,7 @@ const native = {
   kind: 'runtime',
 };
 export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).parse([
-  ...agentConversationProofs,
+  ...proofGroups,
   {
     id: 'native-client-types',
     fixture: 'native-client',

@@ -3,15 +3,15 @@ import {
   createBoundedLineDecoder,
   DEFAULT_STREAM_LINE_BYTES,
   readBoundedUtf8Lines,
-  type StreamByteSource,
 } from '../internal/bounded-lines';
+import type { StreamByteSource } from '../internal/stream-chunks';
 
 export {
   DEFAULT_STREAM_LINE_BYTES,
-  type StreamByteSource,
   StreamLineLimitError,
   StreamTruncatedLineError,
 } from '../internal/bounded-lines';
+export type { StreamByteSource } from '../internal/stream-chunks';
 
 /** Options for `parseNDJSON` and `createNDJSONDecoder`. */
 export interface ParseNDJSONOptions {

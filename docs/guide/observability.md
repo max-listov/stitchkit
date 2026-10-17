@@ -252,7 +252,7 @@ queryable across all three:
 | `ok` / `statusCode` | legacy success bit plus real HTTP status, or `200`/`400` for a tool; an opted-in cancellation is `false` / `499`. `statusCode` is **absent** on a job — it had no transport to have a status on, and inventing one would be the same defect as the `method: 'AGENT'` this replaced. A job's outcome is `ok`, plus `errorCode` when it failed |
 | `durationMs` / `startedAt` | timing |
 | `errorCode` / `errorMessage` / `errorDetail` | failures only — `errorDetail` carries the structure the message flattens (e.g. Zod issues) |
-| `payload` | sanitised tool arguments; HTTP is `null` unless request `includePayload` is enabled |
+| `payload` | sanitised tool arguments; HTTP is `null` unless request `includePayload` is enabled, or when the body was larger than `payloadMaxBytes` (then `payloadTruncated: true`) |
 | `resultSize` / `responseBytes` | result item count + serialised size |
 | `userId` / `ipAddress` / `userAgent` | identity |
 
@@ -623,6 +623,23 @@ createObservability({
 
 `redact`, `truncatePreview` and `measureSize` are exported on their own if you
 need to sanitise something outside the audit path.
+
+### How much of a body the audit row reads
+
+With `includePayload: true` the row reads a clone of the request body, and it reads at most
+`payloadMaxBytes` of it. Unset, the limit is the handler's `maxJsonBodyBytes`, or 1 MiB when the
+handler has none, so one number bounds both. The clone is taken when the request opens, before
+a route is matched, so an endpoint's own `maxJsonBodyBytes` is not known to it: set
+`payloadMaxBytes` when endpoints accept more than the handler default. A body that is larger
+is cancelled at the limit, its `payload` is `null`, and the row carries `payloadTruncated: true` — a `null` payload with that flag
+means "too large to record", not "no body". Set `payloadMaxBytes` (a positive integer) to record
+more or less than the handler accepts:
+
+```ts
+createObservability({
+  request: { write, includePayload: true, payloadMaxBytes: 256 * 1024 },
+})
+```
 
 ## The raw hooks
 

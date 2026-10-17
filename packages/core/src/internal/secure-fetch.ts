@@ -15,6 +15,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { raceAbort } from './abort-race';
+import { readBoundedChunks } from './bounded-body';
 
 /** A host that is digits/dots-only or `0x…` is a numeric IP in disguise. */
 const NUMERIC_HOST = /^(0x[0-9a-f]+|[0-9.]+)$/i;
@@ -396,23 +397,6 @@ export async function fetchPinnedDocument(
  * from OOM-ing the process. A missing body yields an empty buffer.
  */
 export async function readCapped(res: Response, max: number): Promise<Buffer | null> {
-  const reader = res.body?.getReader();
-  if (!reader) return Buffer.alloc(0);
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.length;
-      if (total > max) {
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return Buffer.concat(chunks);
+  const result = await readBoundedChunks(res.body, { maxBytes: max });
+  return result.kind === 'over-limit' ? null : Buffer.concat(result.chunks);
 }

@@ -50,6 +50,11 @@ export {
   type RealtimeServerHandle,
 } from '../server/realtime';
 export {
+  defineRequestIngress,
+  type RequestIngress,
+  type RequestIngressSource,
+} from '../server/request-ingress';
+export {
   type ManagedServerHandle,
   type ShutdownOptions,
   ShutdownOptionsSchema,

@@ -10,6 +10,8 @@
  * → ADR 0103, ADR 0111.
  */
 
+import { leadingEntrypoints } from '../packages/core/src/internal/upgrade-plan';
+
 export interface SurfaceCadence {
   /** Version the surface first shipped in. */
   readonly since: string;
@@ -156,7 +158,10 @@ export function breakingEntries(
   let current: string | undefined;
   const flush = () => {
     if (current === undefined) return;
-    entries.push({ text: current, entrypoints: leadingEntrypoints(current, known) });
+    entries.push({
+      text: current,
+      entrypoints: leadingEntrypoints(current, (name) => known.has(name)),
+    });
     current = undefined;
   };
   for (const line of section.split('\n')) {
@@ -176,22 +181,6 @@ export function breakingEntries(
   }
   flush();
   return entries;
-}
-
-function leadingEntrypoints(entry: string, known: ReadonlyMap<string, Maturity>): string[] {
-  let rest = entry.slice(2).replace(/^\*\*/, '');
-  const names: string[] = [];
-  for (;;) {
-    const match = /^`([^`]+)`/.exec(rest);
-    const name = match?.[1];
-    if (!match || name === undefined || !known.has(name)) break;
-    names.push(name);
-    rest = rest.slice(match[0].length);
-    const separator = /^(?:, and |, | and | \+ )/.exec(rest);
-    if (!separator) break;
-    rest = rest.slice(separator[0].length);
-  }
-  return names;
 }
 
 /** A dated release heading: `## [x.y.z] — YYYY-MM-DD`. */

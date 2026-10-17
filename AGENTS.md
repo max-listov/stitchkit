@@ -72,6 +72,9 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
   changes (`name(qualifier)`), `behaviour` or `*`; targets separated by `; `. `release:check` refuses an
   item without it, and `stitchkit upgrade` matches it against a project's imports.
   → [upgrading](./docs/guide/upgrading.md#does-an-item-touch-your-project)
+- Give a `### Fixed` item that leads with a backticked entrypoint the same `**Affects:**` line
+  (exports or `behaviour`, never `*`); `release:check` refuses a release after 0.110.6 without it.
+  → [release-process](./docs/architecture/release-process.md#breaking-changes-and-migration), ADR 0263
 - Write the migration in `docs/guide/upgrading.md` with a `**Who must act:**` line; a scaffolder's
   operator steps go to `packages/create-stitchkit/UPGRADING.md`. `scripts/release-plan.ts` refuses a
   breaking section without its promoted `## Released migration: X.Y.Z`. → [release-process](./docs/architecture/release-process.md#breaking-changes-and-migration)

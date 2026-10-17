@@ -290,6 +290,9 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0258](0258-conversation-branches-have-new-identity-and-no-inherited-authority.md) | Conversation branches have new identity and no inherited authority | Active — atomic settled-prefix/archive branching with typed rekeying, inert control observations, fresh artifact policy and durable lineage | I3, I8, I12, I15 |
 | [0259](0259-journal-records-and-derived-caches-have-separate-transfer-policies.md) | Journal records and derived caches have separate transfer policies | Active — shared checkpoint record vocabulary, discarded branch caches and replayed archive history | I3, I8, I12, I13, I15 |
 | [0260](0260-proxy-origin-trust-is-separate-from-client-ip.md) | Proxy origin trust is separate from client IP | Active — explicit native ingress trust before composition, strict proto/Host boundary and retained Bun socket identity | I6, I8, I9, I12, I13 |
+| [0261](0261-an-ingress-attaches-request-facts-through-a-key-the-request-cannot-carry.md) | An ingress attaches request facts through a key the request cannot carry | Active — typed key over a per-request table, `ctx.req` is the handler's own request | I3, I6, I8, I12, I13 |
+| [0262](0262-one-reader-bounds-a-body-and-the-chunk-loop-is-shared.md) | One reader bounds a body, and the chunk loop is shared | Active — public `readBoundedBody`, one in-core chunk loop for every reader of the job | I8, I10, I12 |
+| [0263](0263-a-fix-to-an-entrypoint-names-the-entrypoint-it-touches.md) | A fix to an entrypoint names what it touches | Active — `Fixed` items that lead with an entrypoint carry `**Affects:**`, `upgrade` prints their verdicts | I13, I14 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

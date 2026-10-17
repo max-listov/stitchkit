@@ -8,6 +8,8 @@
  */
 import type { ZodType } from 'zod';
 import { normalizeError } from '../contract/normalize';
+import { concatChunks, readBoundedChunks } from '../internal/bounded-body';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { getTraceId } from '../observability/context';
 
 /** A JSON response for `data`; `204 No Content` when `data` is null/undefined. */
@@ -32,8 +34,9 @@ export function errorResponse(error: unknown): Response {
 
 /**
  * Parse and validate a JSON request body. Returns the typed value, or `null` for
- * a non-JSON or schema-invalid body (never throws — the caller decides the error
- * response). The error helpers (`badRequest`, …) **throw**, so raise one inside a
+ * a non-JSON, schema-invalid or too large body (never throws — the caller decides the
+ * error response). The body is read up to `options.maxBytes` (1 MiB by default, a positive
+ * safe integer — anything else throws, since a silent no-limit is worse) and not a byte further. The error helpers (`badRequest`, …) **throw**, so raise one inside a
  * `try` and render it in the `catch` with `errorResponse(err)`:
  *
  * ```ts
@@ -46,9 +49,27 @@ export function errorResponse(error: unknown): Response {
  * }
  * ```
  */
-export async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T | null> {
-  const raw = await req.json().catch(() => null);
+export async function parseBody<T>(
+  req: Request,
+  schema: ZodType<T>,
+  options: { maxBytes?: number } = {},
+): Promise<T | null> {
+  assertPositiveSafeInteger('maxBytes', options.maxBytes);
+  const raw = await readJson(req, options.maxBytes ?? DEFAULT_PARSE_BODY_BYTES);
   if (raw === null) return null;
   const parsed = schema.safeParse(raw);
   return parsed.success ? parsed.data : null;
+}
+
+const DEFAULT_PARSE_BODY_BYTES = 1024 * 1024;
+
+/** The JSON of a request up to `maxBytes`; `null` for anything else, an abort included. */
+async function readJson(req: Request, maxBytes: number): Promise<unknown> {
+  try {
+    const result = await readBoundedChunks(req.body, { maxBytes, signal: req.signal });
+    if (result.kind === 'over-limit') return null;
+    return JSON.parse(new TextDecoder().decode(concatChunks(result.chunks, result.total)));
+  } catch {
+    return null;
+  }
 }

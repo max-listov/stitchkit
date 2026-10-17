@@ -1,51 +1,25 @@
 import type { IncomingMessage } from 'node:http';
+import { readBoundedBody } from '../internal/bounded-body';
 import { UnixClientTransportError } from './unix-client-error';
 
 export async function readBoundedRequestBody(
   request: Request,
   maxBytes: number,
 ): Promise<Uint8Array | undefined> {
-  const body = request.body;
-  if (!body) return undefined;
-
-  const declared = request.headers.get('content-length');
-  if (declared !== null && Number(declared) > maxBytes) {
-    throw new UnixClientTransportError(
+  if (!request.body) return undefined;
+  const tooLarge = () =>
+    new UnixClientTransportError(
       'UNIX_REQUEST_TOO_LARGE',
       `Unix request body exceeds the ${maxBytes} byte limit`,
       'not-dispatched',
     );
-  }
-
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      if (request.signal.aborted) throw request.signal.reason;
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      total += chunk.value.byteLength;
-      if (total > maxBytes) {
-        throw new UnixClientTransportError(
-          'UNIX_REQUEST_TOO_LARGE',
-          `Unix request body exceeds the ${maxBytes} byte limit`,
-          'not-dispatched',
-        );
-      }
-      chunks.push(chunk.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
+  const declared = request.headers.get('content-length');
+  if (declared !== null && Number(declared) > maxBytes) throw tooLarge();
+  return readBoundedBody(request.body, {
+    maxBytes,
+    signal: request.signal,
+    limitError: tooLarge,
+  });
 }
 
 export function incomingResponseBody(

@@ -14,11 +14,13 @@
 import { type Dirent, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { planUpgrade, renderUpgradePlan } from '../../internal/upgrade-plan';
+import { planFixes, planUpgrade, renderUpgradePlan } from '../../internal/upgrade-plan';
 import {
   type ProjectSource,
+  renderUpgradeFixes,
   renderUpgradeVerdicts,
   scanStitchkitImports,
+  upgradeFixesJson,
   upgradeVerdicts,
   upgradeVerdictsJson,
 } from '../../internal/upgrade-usage';
@@ -33,11 +35,13 @@ Options
   --to <version>       target version (default: the version of this package)
   --cwd <dir>          project to read the installed version and imports from (default: .)
   --changelog <path>   changelog to plan from (default: the one in this package)
-  --json               print the breaking items and their verdicts as JSON
+  --json               print the breaking items, the fixes and their verdicts as JSON
 
 Each breaking item is matched against what the project imports from stitchkit:
 "affects this project" (with file:line), "not used here", "behavioural — check
 by hand" or, for an item written before machine lines, "not declared — check by hand".
+The fixes of the range that name what they touch get the same verdicts in a
+second section; a fix that carries no such line is only counted.
 `;
 
 /** Directories that hold dependencies or tooling state, never project source, at any depth. */
@@ -189,7 +193,7 @@ export function runUpgradeCli(argv: readonly string[]): UpgradeCliResult {
   if (from === to) {
     return json
       ? {
-          output: `${JSON.stringify({ from, to, items: [], unscanned: [] }, null, 2)}\n`,
+          output: `${JSON.stringify({ from, to, items: [], fixes: [], fixesWithoutAffects: 0, unscanned: [] }, null, 2)}\n`,
           code: 0,
         }
       : { output: `Already on ${to}. Nothing to upgrade.\n`, code: 0 };
@@ -204,16 +208,31 @@ export function runUpgradeCli(argv: readonly string[]): UpgradeCliResult {
   }
 
   const plan = planUpgrade(changelog, from, to);
+  const fixes = planFixes(changelog, from, to);
   const { sources, unscanned } = projectSources(cwd);
+  const imports = scanStitchkitImports(sources);
   const verdicts = upgradeVerdicts(
     plan.flatMap((change) => change.items),
-    scanStitchkitImports(sources),
+    imports,
   );
+  const fixVerdicts = upgradeVerdicts(fixes.declared, imports);
   if (json) {
-    const document = { from, to, items: upgradeVerdictsJson(verdicts), unscanned };
+    const document = {
+      from,
+      to,
+      items: upgradeVerdictsJson(verdicts),
+      fixes: upgradeFixesJson(fixVerdicts),
+      fixesWithoutAffects: fixes.withoutAffects,
+      unscanned,
+    };
     return { output: `${JSON.stringify(document, null, 2)}\n`, code: 0 };
   }
-  const usage = renderUpgradeVerdicts(verdicts);
+  const usage = [
+    renderUpgradeVerdicts(verdicts),
+    renderUpgradeFixes(fixVerdicts, fixes.withoutAffects),
+  ]
+    .filter(Boolean)
+    .join('\n');
   const skipped =
     unscanned.length === 0
       ? ''

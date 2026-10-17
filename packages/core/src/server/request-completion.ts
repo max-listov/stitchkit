@@ -3,6 +3,7 @@
  * one completion line plus observability row when it closes.
  */
 
+import { concatChunks, readBoundedChunks } from '../internal/bounded-body';
 import { getRequestContext } from '../observability/context';
 import type { CompleteRequest, HandlerState } from './handler-state';
 import {
@@ -19,6 +20,33 @@ import { collectExtraLogFields, shouldSkipLog } from './logging';
 import type { LoggingConfig } from './types';
 
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** Audit body limit when neither the sink nor the handler names one. */
+const DEFAULT_PAYLOAD_LOG_BYTES = 1024 * 1024;
+
+/** What an audit row learned of the request body. */
+interface PayloadRead {
+  value: unknown;
+  truncated: boolean;
+}
+
+/**
+ * The JSON of a request clone for the audit row. The clone is one branch of a tee: a branch read
+ * without a limit drains the whole body into memory even when the handler's own branch was cut at
+ * `maxJsonBodyBytes`. A body past `maxBytes` is cancelled and reported as truncated.
+ */
+async function readPayload(clone: Request, maxBytes: number): Promise<PayloadRead> {
+  try {
+    const result = await readBoundedChunks(clone.body, { maxBytes, signal: clone.signal });
+    if (result.kind === 'over-limit') return { value: undefined, truncated: true };
+    return {
+      value: JSON.parse(new TextDecoder().decode(concatChunks(result.chunks, result.total))),
+      truncated: false,
+    };
+  } catch {
+    return { value: undefined, truncated: false };
+  }
+}
 
 /** What the window needs to know about the request it times. */
 export interface RequestWindow {
@@ -40,12 +68,14 @@ export function openRequestCompletion<TServer>(
     logConfig !== null &&
     shouldLog(url.pathname, req.method) &&
     !shouldSkipLog(logConfig, req, url);
-  const payload =
+  const payloadRead =
     observability?.includePayload && BODY_METHODS.has(req.method)
-      ? req
-          .clone()
-          .json()
-          .catch(() => undefined)
+      ? readPayload(
+          req.clone(),
+          observability.payloadMaxBytes ??
+            state.config.maxJsonBodyBytes ??
+            DEFAULT_PAYLOAD_LOG_BYTES,
+        )
       : undefined;
 
   // Resolved once per request, not at import and not at this package's build:
@@ -104,7 +134,10 @@ export function openRequestCompletion<TServer>(
           context,
           statusCode: status,
           durationMs,
-          payload,
+          ...(payloadRead && {
+            payload: payloadRead.then((read) => read.value),
+            payloadTruncated: payloadRead.then((read) => read.truncated),
+          }),
           ...(outcome !== undefined && { outcome }),
         });
       } catch {

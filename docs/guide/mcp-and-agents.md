@@ -911,6 +911,10 @@ default; DCR is off unless `clientRegistration.dcr` supplies both `register` and
 exactly equals its URL, explicit redirect URIs and
 `token_endpoint_auth_method: 'none'`.
 
+The token endpoint and `/register` read at most 64 KiB of a request body, or
+`maxRequestBodyBytes` when you set it; a larger one is answered `413` with
+`invalid_request` and the rest is not read.
+
 The production fetcher rejects credentials, fragments, non-HTTPS URLs and
 private/reserved targets. Every redirect is DNS-resolved and IP-pinned again;
 timeouts, redirect count and body size are bounded. Its bounded cache respects

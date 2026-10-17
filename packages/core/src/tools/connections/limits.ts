@@ -1,4 +1,5 @@
 import { raceAbort } from '../../internal/abort-race';
+import { concatChunks, readBoundedChunks } from '../../internal/bounded-body';
 import { withSignalDeadline } from '../../internal/deadline';
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
 import { MAX_TIMER_MS } from '../../internal/timers';
@@ -64,35 +65,20 @@ export async function readBoundedText(
   connectionName: string,
   context?: ConnectionReadContext,
 ): Promise<string> {
-  context?.signal?.throwIfAborted();
-  if (!response.body) return '';
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let total = 0;
-  let text = '';
-  const cancel = () => void reader.cancel(context?.signal?.reason).catch(() => undefined);
-  context?.signal?.addEventListener('abort', cancel, { once: true });
-  try {
-    for (;;) {
-      const { done, value } = await awaitConnection(reader.read(), context?.signal);
-      if (done) break;
-      total += value.byteLength;
-      if (context) context.observedReadBytes += value.byteLength;
-      if (total > maxBytes) {
-        throw new ConnectionResponseTooLargeError(connectionName, maxBytes, {
-          ...context,
-          observedReadBytes: total,
-        });
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-    return text;
-  } finally {
-    context?.signal?.removeEventListener('abort', cancel);
-    cancel();
-    reader.releaseLock();
+  const result = await readBoundedChunks(response.body, {
+    maxBytes,
+    ...(context?.signal && { signal: context.signal }),
+    onChunk: (chunk) => {
+      if (context) context.observedReadBytes += chunk.byteLength;
+    },
+  });
+  if (result.kind === 'over-limit') {
+    throw new ConnectionResponseTooLargeError(connectionName, maxBytes, {
+      ...context,
+      observedReadBytes: result.total,
+    });
   }
+  return new TextDecoder().decode(concatChunks(result.chunks, result.total));
 }
 
 export async function readBoundedJson(

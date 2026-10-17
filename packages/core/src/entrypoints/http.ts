@@ -39,3 +39,5 @@ export {
   type RequestOptions,
   type UnauthorizedMatcher,
 } from '../browser/http';
+export { type BoundedBodyOptions, readBoundedBody } from '../internal/bounded-body';
+export type { StreamByteSource } from '../internal/stream-chunks';

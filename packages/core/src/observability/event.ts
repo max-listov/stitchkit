@@ -100,6 +100,11 @@ export interface RequestEvent {
   errorDetail?: JsonValue;
   /** Sanitised request payload — the HTTP body or the tool arguments. */
   payload: JsonValue | null;
+  /**
+   * Set when an HTTP body was larger than the request sink's `payloadMaxBytes`: `payload` is
+   * `null` for that reason, not because there was no body.
+   */
+  payloadTruncated?: true;
   /** Item count of the result, when it is a list. */
   resultSize: number | null;
   /** Serialised byte length of the result. */

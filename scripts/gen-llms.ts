@@ -217,7 +217,7 @@ export const GUIDE_SLICES: GuideMap = {
   'tracking.md': { primary: './tracking', also: ['./tracking/server'] },
   'contracts.md': { primary: './contract', also: ['.'] },
   'server.md': { primary: './server', also: ['./node'] },
-  'client.md': { primary: '.' },
+  'client.md': { primary: '.', also: ['./http'] },
   'mcp-and-agents.md': {
     primary: './tools',
     also: [

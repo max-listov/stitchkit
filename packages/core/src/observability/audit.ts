@@ -6,6 +6,7 @@
 
 import { recordedErrorMessage } from '../contract/normalize';
 import type { RuntimeContext } from '../contract/runtime-context';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { isRecord } from '../internal/typed';
 import type { MethodDef } from '../server/types';
 import type { ToolCallHooks } from '../tools/execute-hooks';
@@ -70,6 +71,12 @@ export interface SinkDrop {
 export interface RequestObservabilityConfig extends RequestEventSinkConfig {
   /** Clone and record JSON request bodies. Default false. */
   includePayload?: boolean;
+  /**
+   * The most bytes of a request body the audit row reads, a positive safe integer. A larger body
+   * is cancelled at the limit and the row carries `payloadTruncated: true`. Default: the
+   * handler's `maxJsonBodyBytes`, or 1 MiB when that is unset.
+   */
+  payloadMaxBytes?: number;
   /** Emit client-closed HTTP requests as `outcome: 'cancelled'`. Default false. */
   includeCancelled?: boolean;
 }
@@ -89,6 +96,8 @@ export interface HttpRequestCompletion {
   statusCode?: number;
   durationMs: number;
   payload?: Promise<unknown>;
+  /** Settles `true` when the body was larger than the audit limit and `payload` is empty for that reason. */
+  payloadTruncated?: Promise<boolean>;
   /** Framework-owned neutral cancellation; currently paired with HTTP 499. */
   outcome?: 'cancelled';
 }
@@ -96,6 +105,8 @@ export interface HttpRequestCompletion {
 /** Server-facing request projection returned by `createObservability`. */
 export interface HttpRequestObserver {
   includePayload: boolean;
+  /** The configured audit body limit; `undefined` follows the handler's `maxJsonBodyBytes`. */
+  payloadMaxBytes?: number | undefined;
   complete(completion: HttpRequestCompletion): void;
 }
 
@@ -257,7 +268,21 @@ function createSinkManager(config: RequestEventSinkConfig): BoundedSinkManager<R
   return createBoundedSinkManager(config);
 }
 
+/** The body a request row records and whether it was cut at the audit limit; a failed read records neither. */
+async function settlePayload(
+  payload: Promise<unknown> | undefined,
+  payloadTruncated: Promise<boolean> | undefined,
+): Promise<{ body: unknown; truncated: boolean }> {
+  if (!payload) return { body: undefined, truncated: false };
+  try {
+    return { body: await payload, truncated: (await payloadTruncated) ?? false };
+  } catch {
+    return { body: undefined, truncated: false };
+  }
+}
+
 export function createObservability(config: ObservabilityConfig): Observability {
+  assertPositiveSafeInteger('request.payloadMaxBytes', config.request?.payloadMaxBytes);
   const requestManager = config.request ? createSinkManager(config.request) : undefined;
   const toolManager = config.tools ? createSinkManager(config.tools) : undefined;
   let closed = false;
@@ -269,20 +294,23 @@ export function createObservability(config: ObservabilityConfig): Observability 
   const request: HttpRequestObserver | undefined = config.request
     ? {
         includePayload: config.request.includePayload ?? false,
-        complete: ({ context, statusCode, durationMs, payload, outcome }) => {
+        payloadMaxBytes: config.request.payloadMaxBytes,
+        complete: ({
+          context,
+          statusCode,
+          durationMs,
+          payload,
+          payloadTruncated,
+          outcome,
+        }) => {
           const requestConfig = config.request;
           if (!requestConfig) return;
           const cancelled = outcome === 'cancelled';
           if (cancelled && !requestConfig.includeCancelled) return;
           requestManager?.submit(async () => {
-            let body: unknown;
-            if (!cancelled && payload) {
-              try {
-                body = await payload;
-              } catch {
-                body = undefined;
-              }
-            }
+            const { body, truncated } = cancelled
+              ? { body: undefined, truncated: false }
+              : await settlePayload(payload, payloadTruncated);
             return {
               source: context.source,
               kind: context.kind ?? 'request',
@@ -316,6 +344,7 @@ export function createObservability(config: ObservabilityConfig): Observability 
                 }),
               }),
               payload: cancelled ? null : sanitizePayload(body, requestConfig.sanitize),
+              ...(truncated && { payloadTruncated: true }),
               resultSize: null,
               responseBytes: 0,
               userId: context.userId,

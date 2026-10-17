@@ -1,5 +1,6 @@
 import { chmod, unlink } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readBoundedBody } from '../internal/bounded-body';
 import { SandboxError, type SandboxNetworkPolicy } from './sandbox-contract';
 
 /** Explicit HTTP gateway over a Unix socket; CONNECT and arbitrary TCP are never exposed. */
@@ -35,15 +36,10 @@ export async function createSandboxBroker(
     req.on('aborted', abort);
     res.on('close', abort);
     try {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of req) {
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += bytes.byteLength;
-        if (size > maxBytes)
-          throw new SandboxError('SANDBOX_LIMIT', 'Sandbox request limit exceeded');
-        chunks.push(bytes);
-      }
+      const requestBody = await readBoundedBody(req, {
+        maxBytes,
+        limitError: () => new SandboxError('SANDBOX_LIMIT', 'Sandbox request limit exceeded'),
+      });
       const target = new URL(req.url, rule.origin);
       if (target.origin !== new URL(rule.origin).origin)
         throw new SandboxError('SANDBOX_NETWORK_DENIED', 'Sandbox network denied');
@@ -58,30 +54,19 @@ export async function createSandboxBroker(
         headers,
         redirect: 'manual',
         signal: controller.signal,
-        ...(size > 0 && { body: Buffer.concat(chunks) }),
+        ...(requestBody.byteLength > 0 && { body: requestBody }),
       });
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel();
         throw new SandboxError('SANDBOX_NETWORK_DENIED', 'Sandbox redirects are denied');
       }
-      const reader = response.body?.getReader();
-      const output: Uint8Array[] = [];
-      size = 0;
-      try {
-        while (reader) {
-          const next = await reader.read();
-          if (next.done) break;
-          size += next.value.byteLength;
-          if (size > maxBytes)
-            throw new SandboxError('SANDBOX_LIMIT', 'Sandbox response limit exceeded');
-          output.push(next.value);
-        }
-      } finally {
-        await reader?.cancel();
-      }
+      const output = await readBoundedBody(response.body, {
+        maxBytes,
+        limitError: () => new SandboxError('SANDBOX_LIMIT', 'Sandbox response limit exceeded'),
+      });
       const type = response.headers.get('content-type');
       res.writeHead(response.status, type ? { 'content-type': type } : {});
-      res.end(Buffer.concat(output));
+      res.end(output);
     } catch (cause) {
       try {
         onError(cause);

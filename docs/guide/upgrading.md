@@ -1377,7 +1377,7 @@ Run it inside the project that depends on stitchkit. It reads your installed
 version out of `node_modules`, reads the changelog **shipped inside the
 package**, and prints every breaking section your range crosses, oldest first,
 each with its **Who must act** line — the list this guide's migrations expand
-on. Nothing to clone, nothing to be told: `--from` / `--to` override either end
+on — and then the fixes of that range that name what they touch. Nothing to clone, nothing to be told: `--from` / `--to` override either end
 of the range if you want a different one.
 
 So upgrading is: read the `### ⚠️ Breaking changes` of every version *above* your
@@ -1407,6 +1407,12 @@ beside a `package.json`, which is build output) and gives each item one verdict:
 - **behavioural — check by hand** — with the files that import the entrypoint;
 - **not declared — check by hand** — an item from before the line existed, with the files that
   import the entrypoints it leads with.
+
+A fix that names what it touches gets the same verdicts. Since 0.110.7 every `### Fixed` item that
+leads with an entrypoint carries the `**Affects:**` line, and `upgrade` prints them in a second
+section, **Fixes that touch this project** (`fixes` in `--json`): a fix to `runNativeCommand` is
+listed with the `path:line` that imports it, or as *not used here*. Fixes of earlier releases that
+carry no line are not judged; one line counts them (`fixesWithoutAffects` in `--json`).
 
 `--json` prints the same verdicts per item for a CI step. The scan reads static `import` and
 `export … from` declarations, bare imports and `import()` / `require()` of a literal specifier; a
@@ -4625,3 +4631,27 @@ A release carrying `### ⚠️ Breaking changes` and no matching
 `pre-push` and again in the publishing workflow. The check starts at `0.44.0`;
 breaking versions older than that are covered by the summary sections near the
 end of this file.
+## Unreleased migration: bounded raw and OAuth bodies
+
+**Who must act:** applications whose raw routes call `parseBody` on JSON larger than 1 MiB, and applications whose OAuth clients send `/register` or `/token` bodies larger than 64 KiB.
+
+`parseBody` reads at most 1 MiB and returns `null` for a larger body, where it used to read any size. A route that takes larger JSON states its limit:
+
+```ts
+// before
+const body = await parseBody(req, Schema)
+// after
+const body = await parseBody(req, Schema, { maxBytes: 8 * 1024 * 1024 })
+```
+
+`mountOAuthProvider` reads at most 64 KiB of a `/token` or `/register` body and answers `413` with `invalid_request` for a larger one. A deployment whose clients register larger metadata raises the limit:
+
+```ts
+// before
+mountOAuthProvider({ issuer, signingSecret, resource, codes, authorizeUser })
+// after
+mountOAuthProvider({ issuer, signingSecret, resource, codes, authorizeUser, maxRequestBodyBytes: 256 * 1024 })
+```
+
+Both limits must be a positive safe integer; anything else is refused when the route is built or called.
+

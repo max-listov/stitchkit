@@ -1,5 +1,6 @@
 import type { MultipartDescriptor, MultipartFilePolicy } from '../contract/client-types';
 import { badRequest } from '../contract/errors';
+import { concatChunks, readBoundedChunks } from '../internal/bounded-body';
 import {
   decoder,
   type MultipartPart,
@@ -94,26 +95,10 @@ async function readText(
   stream: ReadableStream<Uint8Array>,
   maxBytes: number,
 ): Promise<string> {
-  const chunks: Uint8Array[] = [];
-  const reader = stream.getReader();
-  let total = 0;
-  while (true) {
-    const result = await reader.read();
-    if (result.done) break;
-    total += result.value.length;
-    if (total > maxBytes) {
-      await reader.cancel();
-      badRequest(`Multipart text field exceeds ${maxBytes} bytes`);
-    }
-    chunks.push(result.value);
-  }
-  const value = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    value.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return decoder.decode(value);
+  const result = await readBoundedChunks(stream, { maxBytes });
+  if (result.kind === 'over-limit')
+    badRequest(`Multipart text field exceeds ${maxBytes} bytes`);
+  return decoder.decode(concatChunks(result.chunks, result.total));
 }
 
 function required(policy: MultipartFilePolicy): boolean {

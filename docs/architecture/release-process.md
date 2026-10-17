@@ -70,6 +70,13 @@ changed default, stricter validation):
    after 0.107.0 on; `stitchkit upgrade` matches it against a consumer's imports
    ([upgrading](../guide/upgrading.md#does-an-item-touch-your-project)).
 
+   A `### Fixed` item that **leads with a backticked public entrypoint** is a fix to that
+   entrypoint and carries the same `**Affects:**` line (export names, or `behaviour`; `*` is
+   refused, since a fix removes nothing). An item that does not lead with an entrypoint (tooling,
+   CI, documents) may carry the line and does not have to. `release:check` enforces this for a core
+   release after 0.110.6; a fix without the line, such as one of an earlier release, is only counted by `stitchkit upgrade`. A behaviour change
+   filed under `### Changed` is outside the rule. → ADR 0263
+
    A version with **no** `### ⚠️ Breaking changes` section is purely additive — safe to adopt
    without code changes. (0.1.0–0.7.0 had none.)
 

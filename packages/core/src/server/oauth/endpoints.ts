@@ -4,6 +4,7 @@
  * client id is resolved, and how a response goes back to the client.
  */
 import { randomUUID } from 'node:crypto';
+import { concatChunks, readBoundedChunks } from '../../internal/bounded-body';
 import { isRecord } from '../../internal/typed';
 import { DEFAULT_CORS_ALLOW_HEADERS } from '../middleware/cors';
 import { verifyPkce } from '../middleware/pkce';
@@ -92,10 +93,42 @@ export function redirectWith(uri: string, params: Record<string, string>): Respo
   return new Response(null, { status: 302, headers: { Location: url.toString() } });
 }
 
-async function readForm(req: Request): Promise<URLSearchParams> {
+/** Default most bytes an authorization-server request body may hold; the forms and metadata are a few fields. */
+const DEFAULT_OAUTH_BODY_BYTES = 64 * 1024;
+
+const tooLarge = () => oauthError('invalid_request', 'Request body is too large', 413);
+
+/** The request text up to the body limit, or `undefined` when the body is larger. */
+async function readBodyText(
+  req: Request,
+  config: OAuthProviderConfig,
+): Promise<string | undefined> {
+  const result = await readBoundedChunks(req.body, {
+    maxBytes: config.maxRequestBodyBytes ?? DEFAULT_OAUTH_BODY_BYTES,
+    signal: req.signal,
+  });
+  return result.kind === 'over-limit'
+    ? undefined
+    : new TextDecoder().decode(concatChunks(result.chunks, result.total));
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function readForm(
+  req: Request,
+  config: OAuthProviderConfig,
+): Promise<URLSearchParams | undefined> {
+  const text = await readBodyText(req, config);
+  if (text === undefined) return undefined;
   const contentType = req.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
-    const body: unknown = await req.json().catch(() => null);
+    const body = parseJson(text);
     const params = new URLSearchParams();
     if (isRecord(body)) {
       // Only string values map cleanly to form params — a nested object would
@@ -106,7 +139,7 @@ async function readForm(req: Request): Promise<URLSearchParams> {
     }
     return params;
   }
-  return new URLSearchParams(await req.text());
+  return new URLSearchParams(text);
 }
 
 /** RFC 8414 discovery: what this server supports, and where. */
@@ -153,7 +186,9 @@ export function registerRoute(ctx: OAuthEndpointContext): RawRoute {
         return new Response(null, { status: 204, headers: PUBLIC_CORS });
       if (req.method !== 'POST') return oauthError('invalid_request', 'POST required', 405);
 
-      const meta: unknown = await req.json().catch(() => null);
+      const text = await readBodyText(req, config);
+      if (text === undefined) return tooLarge();
+      const meta = parseJson(text);
       if (!isRecord(meta)) {
         return oauthError('invalid_client_metadata', 'Body must be a JSON object');
       }
@@ -365,7 +400,8 @@ export function tokenRoute(ctx: OAuthEndpointContext): RawRoute {
         return new Response(null, { status: 204, headers: PUBLIC_CORS });
       if (req.method !== 'POST') return oauthError('invalid_request', 'POST required', 405);
 
-      const form = await readForm(req);
+      const form = await readForm(req, config);
+      if (!form) return tooLarge();
       const grantType = form.get('grant_type');
 
       if (grantType === 'authorization_code') {

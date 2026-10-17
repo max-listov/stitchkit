@@ -12,7 +12,7 @@
  * quote or a comment marker can hide what follows it.
  */
 import type { UpgradeAffectsTarget } from './upgrade-affects';
-import type { UpgradeBreakingItem } from './upgrade-plan';
+import type { UpgradeBreakingItem, UpgradeItem } from './upgrade-plan';
 
 /** One project file, by a path relative to the project root. */
 export interface ProjectSource {
@@ -34,8 +34,8 @@ export type UpgradeVerdict =
   | { readonly kind: 'behavioural'; readonly files: readonly string[] }
   | { readonly kind: 'not-declared'; readonly files: readonly string[] };
 
-export interface UpgradeItemVerdict {
-  readonly item: UpgradeBreakingItem;
+export interface UpgradeItemVerdict<TItem extends UpgradeItem = UpgradeBreakingItem> {
+  readonly item: TItem;
   readonly verdict: UpgradeVerdict;
 }
 
@@ -213,11 +213,11 @@ function usesOf(
 }
 
 /** One verdict per item, in plan order. */
-export function upgradeVerdicts(
-  items: readonly UpgradeBreakingItem[],
+export function upgradeVerdicts<TItem extends UpgradeItem>(
+  items: readonly TItem[],
   imports: readonly StitchkitImport[],
-): UpgradeItemVerdict[] {
-  return items.map((item): UpgradeItemVerdict => {
+): UpgradeItemVerdict<TItem>[] {
+  return items.map((item): UpgradeItemVerdict<TItem> => {
     if (item.affects === undefined)
       return {
         item,
@@ -242,10 +242,8 @@ const VERDICT_TEXT = {
   'not-declared': 'not declared — check by hand',
 } satisfies Record<UpgradeVerdict['kind'], string>;
 
-/** The verdicts as the Markdown section `stitchkit upgrade` prints after the plan. */
-export function renderUpgradeVerdicts(verdicts: readonly UpgradeItemVerdict[]): string {
-  if (verdicts.length === 0) return '';
-  const lines = ['## Does it touch this project?', ''];
+function renderVerdictLines(verdicts: readonly UpgradeItemVerdict<UpgradeItem>[]): string[] {
+  const lines: string[] = [];
   for (const { item, verdict } of verdicts) {
     const where =
       item.entrypoints.length > 0
@@ -262,21 +260,56 @@ export function renderUpgradeVerdicts(verdicts: readonly UpgradeItemVerdict[]): 
     if (verdict.kind === 'behavioural' || verdict.kind === 'not-declared')
       for (const file of verdict.files) lines.push(`  - ${file}`);
   }
+  return lines;
+}
+
+/** The verdicts as the Markdown section `stitchkit upgrade` prints after the plan. */
+export function renderUpgradeVerdicts(verdicts: readonly UpgradeItemVerdict[]): string {
+  if (verdicts.length === 0) return '';
+  return `${['## Does it touch this project?', '', ...renderVerdictLines(verdicts)].join('\n')}\n`;
+}
+
+/**
+ * The fixes of the range as the Markdown section `stitchkit upgrade` prints after the breaking
+ * verdicts. A fix of an earlier release carries no machine line and is only counted.
+ */
+export function renderUpgradeFixes(
+  verdicts: readonly UpgradeItemVerdict<UpgradeItem>[],
+  withoutAffects: number,
+): string {
+  if (verdicts.length === 0 && withoutAffects === 0) return '';
+  const lines = ['## Fixes that touch this project', ''];
+  lines.push(...renderVerdictLines(verdicts));
+  if (verdicts.length === 0) lines.push('No fix of this range names what it touches.');
+  if (withoutAffects > 0)
+    lines.push(
+      '',
+      `${withoutAffects} more fix${withoutAffects === 1 ? '' : 'es'} in this range carry no machine line and are not judged here.`,
+    );
   return `${lines.join('\n')}\n`;
 }
 
 /** The verdicts as the `--json` document's items. */
 export function upgradeVerdictsJson(verdicts: readonly UpgradeItemVerdict[]) {
-  return verdicts.map(({ item, verdict }) => ({
+  return verdicts.map((entry) => verdictJson(entry, entry.item.whoMustAct));
+}
+
+/** The fix verdicts as the `--json` document's `fixes`. */
+export function upgradeFixesJson(verdicts: readonly UpgradeItemVerdict<UpgradeItem>[]) {
+  return verdicts.map((entry) => verdictJson(entry));
+}
+
+function verdictJson({ item, verdict }: UpgradeItemVerdict<UpgradeItem>, whoMustAct?: string) {
+  return {
     version: item.version,
     entrypoints: item.entrypoints,
     title: item.title,
-    whoMustAct: item.whoMustAct,
+    ...(whoMustAct !== undefined && { whoMustAct }),
     affects: item.affects ?? null,
     verdict: verdict.kind,
     ...(verdict.kind === 'affects' && { uses: verdict.uses }),
     ...((verdict.kind === 'behavioural' || verdict.kind === 'not-declared') && {
       files: verdict.files,
     }),
-  }));
+  };
 }

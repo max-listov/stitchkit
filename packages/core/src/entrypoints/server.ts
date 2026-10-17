@@ -180,6 +180,11 @@ export {
   type ReleaseRefreshSignalOptions,
 } from '../server/release-signal';
 export {
+  defineRequestIngress,
+  type RequestIngress,
+  type RequestIngressSource,
+} from '../server/request-ingress';
+export {
   type ManagedServerHandle,
   type ShutdownOptions,
   ShutdownOptionsSchema,

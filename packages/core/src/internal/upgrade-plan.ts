@@ -10,12 +10,13 @@
 import {
   affectsLineOf,
   breakingItems,
+  fixedSectionItems,
   parseAffectsLine,
   type UpgradeAffectsTarget,
 } from './upgrade-affects';
 
-/** One breaking item of a release, with its machine line when it declares one. */
-export interface UpgradeBreakingItem {
+/** One `- ` item of a release section, with its machine line when it declares one. */
+export interface UpgradeItem {
   version: string;
   /** The backticked entrypoints the item leads with. */
   entrypoints: string[];
@@ -23,9 +24,13 @@ export interface UpgradeBreakingItem {
   title: string;
   /** What the item touches; `undefined` for an item written before the `**Affects:**` line. */
   affects: UpgradeAffectsTarget[] | undefined;
+  markdown: string;
+}
+
+/** One breaking item of a release. */
+export interface UpgradeBreakingItem extends UpgradeItem {
   /** The item's own `**Who must act:**`, or its section's. */
   whoMustAct: string;
-  markdown: string;
 }
 
 export interface UpgradeBreakingChange {
@@ -43,13 +48,17 @@ export const BREAKING_HEADING = /^### \s*⚠️?\s*Breaking changes[^\n]*$/m;
 
 const NOT_DECLARED = 'Not declared in this legacy changelog section.';
 
-function leadingEntrypoints(item: string): string[] {
+/** The backticked `stitchkit` (or `stitchkit-…` package) entrypoints an item leads with, in order. */
+export function leadingEntrypoints(
+  item: string,
+  accept: (entrypoint: string) => boolean = () => true,
+): string[] {
   let rest = item.replace(/^[-*+] /, '').replace(/^\*\*/, '');
   const names: string[] = [];
   for (;;) {
-    const match = /^`(stitchkit(?:\/[a-z0-9][a-z0-9-]*)*)`/.exec(rest);
+    const match = /^`(stitchkit(?:-[a-z0-9-]+)?(?:\/[a-z0-9][a-z0-9-]*)*)`/.exec(rest);
     const name = match?.[1];
-    if (!match || name === undefined) break;
+    if (!match || name === undefined || !accept(name)) break;
     names.push(name);
     rest = rest.slice(match[0].length);
     const separator = /^(?:, and |, | and | \+ )/.exec(rest);
@@ -76,22 +85,47 @@ function itemAudience(item: string): string | undefined {
   return who?.trim() || undefined;
 }
 
+function upgradeItem(
+  version: string,
+  item: string,
+  title: (text: string) => string = itemTitle,
+): UpgradeItem {
+  const line = affectsLineOf(item);
+  return {
+    version,
+    entrypoints: leadingEntrypoints(item),
+    title: title(item.replace(/^[ \t]*\*\*Affects:\*\*.*$/gm, '').trimEnd()),
+    affects: line === undefined ? undefined : parseAffectsLine(line),
+    markdown: item,
+  };
+}
+
+/** A fix reads as a sentence: its first one, without the entrypoint it already leads with. */
+function fixTitle(item: string): string {
+  const flat = item
+    .replace(/\s+/g, ' ')
+    .replace(/^[-*+] /, '')
+    .trim();
+  const prefix = /^(?:`stitchkit[^`]*`(?:, and |, | and | \+ )?)+\s*[:—-]?\s*/.exec(flat);
+  const text = flat.slice(prefix?.[0].length ?? 0).replace(/\*\*/g, '');
+  const sentence = /^(.*?[.!?])(?:\s|$)/.exec(text)?.[1] ?? text;
+  const trimmed = sentence.replace(/[.:]$/, '');
+  return trimmed.length > 100 ? `${trimmed.slice(0, 99)}…` : trimmed;
+}
+
+function fixedItem(version: string, item: string): UpgradeItem {
+  return upgradeItem(version, item, fixTitle);
+}
+
 function sectionItems(
   version: string,
   markdown: string,
   sectionAudience: string,
 ): UpgradeBreakingItem[] {
-  return breakingItems(markdown).map(({ markdown: item }) => {
-    const line = affectsLineOf(item);
-    return {
-      version,
-      entrypoints: leadingEntrypoints(item),
-      title: itemTitle(item),
-      affects: line === undefined ? undefined : parseAffectsLine(line),
-      whoMustAct: itemAudience(item) ?? sectionAudience,
-      markdown: item,
-    };
-  });
+  return breakingItems(markdown).map(({ markdown: item }) => ({
+    ...upgradeItem(version, item),
+    whoMustAct: itemAudience(item) ?? sectionAudience,
+  }));
 }
 
 function semverParts(version: string): readonly [number, number, number] {
@@ -114,27 +148,38 @@ function compareSemver(left: string, right: string): number {
   return 0;
 }
 
-/** Extract every breaking section crossed by an exact `from` (exclusive) → `to` (inclusive) upgrade. */
-export function planUpgrade(
+/** The changelog bodies of the releases in the exact range `from` (exclusive) → `to` (inclusive). */
+function releasesInRange(
   changelog: string,
   from: string,
   to: string,
-): UpgradeBreakingChange[] {
+): { version: string; body: string }[] {
   semverParts(from);
   semverParts(to);
   if (compareSemver(from, to) >= 0) {
     throw new Error(`Upgrade range must increase: ${from} → ${to}`);
   }
-
   const releases = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\].*$/gm)];
-  const changes: UpgradeBreakingChange[] = [];
+  const found: { version: string; body: string }[] = [];
   for (const [index, release] of releases.entries()) {
     const version = release[1];
     if (version === undefined) continue;
     if (compareSemver(version, from) <= 0 || compareSemver(version, to) > 0) continue;
     const bodyStart = (release.index ?? 0) + release[0].length;
     const bodyEnd = releases[index + 1]?.index ?? changelog.length;
-    const body = changelog.slice(bodyStart, bodyEnd);
+    found.push({ version, body: changelog.slice(bodyStart, bodyEnd) });
+  }
+  return found;
+}
+
+/** Extract every breaking section crossed by an exact `from` (exclusive) → `to` (inclusive) upgrade. */
+export function planUpgrade(
+  changelog: string,
+  from: string,
+  to: string,
+): UpgradeBreakingChange[] {
+  const changes: UpgradeBreakingChange[] = [];
+  for (const { version, body } of releasesInRange(changelog, from, to)) {
     const breakingHeader = BREAKING_HEADING.exec(body);
     if (!breakingHeader) continue;
     const breakingStart = (breakingHeader.index ?? 0) + breakingHeader[0].length;
@@ -151,6 +196,30 @@ export function planUpgrade(
     });
   }
   return changes.sort((left, right) => compareSemver(left.version, right.version));
+}
+
+/** The items of every `### Fixed` section of a release body. */
+export function fixedItems(version: string, body: string): UpgradeItem[] {
+  return fixedSectionItems(body).map(({ markdown }) => fixedItem(version, markdown));
+}
+
+/** The fixes of an exact `from` (exclusive) → `to` (inclusive) upgrade, oldest first. */
+export interface UpgradeFixes {
+  /** Fixes that name what they touch. */
+  declared: UpgradeItem[];
+  /** Fixes of the range that carry no machine line, before the rule that asks for one. */
+  withoutAffects: number;
+}
+
+export function planFixes(changelog: string, from: string, to: string): UpgradeFixes {
+  const releases = releasesInRange(changelog, from, to).sort((left, right) =>
+    compareSemver(left.version, right.version),
+  );
+  const all = releases.flatMap(({ version, body }) => fixedItems(version, body));
+  return {
+    declared: all.filter((item) => item.affects !== undefined),
+    withoutAffects: all.filter((item) => item.affects === undefined).length,
+  };
 }
 
 export function renderUpgradePlan(

@@ -78,6 +78,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `parseSSE` | function | parse SSE from a `Response`, a web stream or an async byte iterable into an async generator — [guide](../guide/client.md#sse) |
 | `parseNDJSON` | function | parse bounded fatal-UTF-8 NDJSON from a `Response`, a `ReadableStream<Uint8Array>` or an `AsyncIterable<Uint8Array>` (a child's stdout); blank keep-alives are skipped, `finalLine: 'require-newline'` makes the delimiter mandatory and `signal` cancels the source — [guide](../guide/client.md#any-byte-source) |
 | `createNDJSONDecoder` / `NDJSONDecoder` | function / _type_ | the same bounded NDJSON reading driven by `push(chunk)` / `end()`, for a socket `data` callback |
+| `readBoundedBody` / `BoundedBodyOptions` | function / _type_ | the whole body of a `ReadableStream<Uint8Array>` or async byte iterable as bytes, never reading past `maxBytes` plus one chunk; `limitError(observedBytes)` and `abortError(reason)` choose the two errors, the source is cancelled on both, a `null` body is empty — [guide](../guide/client.md#reading-a-body-up-to-a-byte-limit) |
 | `StreamByteSource` | _type_ | `Response \| ReadableStream<Uint8Array> \| AsyncIterable<Uint8Array>`, what the NDJSON and SSE readers accept |
 | `StreamLineLimitError` / `StreamTruncatedLineError` | class | a line past `maxLineBytes` (`limitBytes`, `lineBytes`; a `RangeError`) and a source ended inside a line under `require-newline` (`lineBytes`; a `SyntaxError`) |
 | `resumableIterator` | function | re-open a long-lived stream from the last delivered cursor, with jittered backoff, a caller-owned terminal item and prompt abort — [guide](../guide/client.md#resumable-streams) |
@@ -417,9 +418,10 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `formatZodError` | function | a `ZodError` → a readable, field-summarised string |
 | `zodIssues` | function | a `ZodError` → structured `{ path, code, message }[]` — the machine-readable sibling of `formatZodError` |
 | `ZodIssueSummary` | _type_ | one structured validation issue (`{ path, code, message }`) |
-| `parseBody` | function | parse + Zod-validate a JSON body → `data` or `null` (no throw) |
+| `parseBody` | function | parse + Zod-validate a JSON body → `data` or `null` (no throw); reads at most `options.maxBytes` (1 MiB by default) and is `null` for a larger body |
 | `HandlerConfig` | _type_ | config for `createHandler`, including optional `maxJsonBodyBytes`; bound to `BunServer` on this entrypoint |
 | `BunServerConfig` | _type_ | config for `createServer` (Bun); `unix` listens on a unix domain socket (mutually exclusive with `port`/`hostname`) — [details](../guide/server.md#local-daemon-over-a-unix-socket) |
+| `defineRequestIngress` / `RequestIngress` / `RequestIngressSource` | function / _type_ | a typed key the code that builds a `Request` attaches a value to (`attach(request, value)`) and an endpoint, `authorize`, `beforeHandle` or `onError` reads from its `ctx` (`from(ctx)`); a header, `clone()` and `new Request(request)` carry nothing, a second `attach` is refused, and `ctx.req` is the very request the handler received — [guide](../guide/server.md#request-attributes-from-the-ingress) |
 | `ProxyOriginConfig` | _type_ | explicit real-peer trust for Bun `createServer({ proxyOrigin })`; strict external-scheme normalization before composition — [details](../guide/server.md#external-origin-behind-a-trusted-proxy) |
 | `UnixListenConfig` | _type_ | unix listener — a socket path, or `{ path, mode }` to tighten the file mode after listen |
 | `BunServerHandle` | _type_ | managed Bun handle (`url`, `port`, `runtime`, `status`, `shutdown`) |
@@ -1509,7 +1511,7 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `ObservabilityDrainReport` | _type_ | final closed/drained snapshot, `durationMs` (the shared drain's age, not this call's wait), and `drained` — read from the counters, `false` only when `total.pending + total.preparing` is nonzero |
 | `ObservabilitySinkStatusSchema` / `ObservabilityStatusSchema` / `ObservabilityDrainReportSchema` | schema | runtime schemas for status/report integration boundaries |
 | `RequestEventSinkConfig` | _type_ | `write`, filter/sanitisation, `maxPending`, `onSinkError` and `onDrop` |
-| `RequestObservabilityConfig` | _type_ | request sink plus opt-in payload capture and default-off `includeCancelled` rows |
+| `RequestObservabilityConfig` | _type_ | request sink plus opt-in payload capture (`payloadMaxBytes` bounds the body read, `payloadTruncated` marks a cut one) and default-off `includeCancelled` rows |
 | `SinkDropReason` | _type_ | `'capacity' \| 'closed'` |
 | `SinkError` | _type_ | isolated sink/projection failure and optional event |
 | `SinkDrop` | _type_ | rejected event, reason and current pending count |
@@ -1754,7 +1756,7 @@ A native remote-connector auth surface for MCP — [guide](../guide/mcp-and-agen
 | `protectedResourceMetadataUrl` | function | build the metadata URL for a resource |
 | `wwwAuthenticateHeader` | function | build the `WWW-Authenticate` challenge header |
 | `PROTECTED_RESOURCE_PATH` | const | the well-known metadata path |
-| `OAuthProviderConfig` | _type_ | config for `mountOAuthProvider` |
+| `OAuthProviderConfig` | _type_ | config for `mountOAuthProvider`; `maxRequestBodyBytes` bounds the `/token` and `/register` bodies (64 KiB by default) |
 | `ProtectedResourceConfig` | _type_ | config for `oauthProtectedResourceRoute` |
 | `ApplicationType` | _type_ | DCR `application_type` — `'native'` (loopback allowed) \| `'web'` (https only) |
 | `AuthCodeData` | _type_ | a stored authorization-code record |
