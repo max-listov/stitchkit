@@ -46,7 +46,7 @@ function abortError(): DOMException {
  * for the stop that is coming instead of letting grammY retry every three
  * seconds against a gate that will not open.
  */
-function untilAborted(signal: AbortSignal): Promise<never> {
+function untilNoLongerAdmitted(signal: AbortSignal): Promise<never> {
   return new Promise((_, reject) => {
     if (signal.aborted) reject(abortError());
     else signal.addEventListener('abort', () => reject(abortError()), { once: true });
@@ -61,7 +61,7 @@ async function admitted(
     return await admission.acquireWhenAccepting(signal);
   } catch {
     if (signal.aborted) throw abortError();
-    return untilAborted(signal);
+    return untilNoLongerAdmitted(signal);
   }
 }
 
@@ -71,12 +71,23 @@ interface PollingSignal {
   addEventListener(type: 'abort', listener: () => void): void;
 }
 
+const followers = new WeakMap<object, AbortSignal>();
+
+/** One follower per polling signal: grammY hands the same signal to every `getUpdates` of a session. */
+function followed(signal: PollingSignal): AbortSignal {
+  const known = followers.get(signal);
+  if (known) return known;
+  const follower = follow(signal);
+  followers.set(signal, follower);
+  return follower;
+}
+
 /**
  * A platform signal that follows grammY's. Its Node declaration types the
  * signal as the `abort-controller` package's, which lacks `reason`; following
  * it through a listener keeps a cast out of the gate.
  */
-function followed(signal: PollingSignal): AbortSignal {
+function follow(signal: PollingSignal): AbortSignal {
   const controller = new AbortController();
   if (signal.aborted) controller.abort(abortError());
   else signal.addEventListener('abort', () => controller.abort(abortError()));

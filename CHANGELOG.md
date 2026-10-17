@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/server` — **an open contract stream keeps a constant number of objects however many frames it sends.** Each frame raced the source against a promise that lived as long as the stream, so every frame left a reaction and the frame itself retained until the stream ended; a subscription sending a frame a second grew by about 1.6 MB a minute. The stream now waits for each frame through a listener it removes itself. A source that never has to wait is also stopped at the stream's `lifetimeMs`, which it used to outlive. → ADR 0264
+  **Affects:** `stitchkit/server` createServer, createHandler, implement
+- `stitchkit/voice` — **`SpeechQueue` no longer keeps a reaction and the spoken clip for every sentence it has said.** → ADR 0264
+  **Affects:** `stitchkit/voice` SpeechQueue
+- `stitchkit/tools/mcp` — **`createMcpHandler` no longer keeps the authenticated principal of every request it has answered until it is closed.** → ADR 0264
+  **Affects:** `stitchkit/tools/mcp` createMcpHandler
+- `stitchkit/application/grammy` — **the update gate follows grammY's polling signal once instead of adding a listener on every `getUpdates`.** → ADR 0264
+  **Affects:** `stitchkit/application/grammy` behaviour
+
 ## [0.111.0] - 2026-10-17
 
 ### ⚠️ Breaking changes

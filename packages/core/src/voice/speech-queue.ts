@@ -10,6 +10,8 @@
  * synthesis in flight, and nothing after that is said.
  */
 
+import { untilAborted } from '../internal/until-aborted';
+
 export interface SpeechQueueOptions<Prepared> {
   /** Synthesise one sentence. Aborted when the queue is cancelled. */
   prepare: (text: string, signal: AbortSignal) => Promise<Prepared>;
@@ -52,10 +54,7 @@ export class SpeechQueue<Prepared> {
   private closed = false;
   private cancelled = false;
   private wake: (() => void) | null = null;
-  private stop!: (value: typeof CANCELLED) => void;
-  private readonly stopped = new Promise<typeof CANCELLED>((resolve) => {
-    this.stop = resolve;
-  });
+  private readonly stopped = new AbortController();
 
   constructor(private readonly options: SpeechQueueOptions<Prepared>) {
     const lookahead = options.lookahead ?? 1;
@@ -103,8 +102,21 @@ export class SpeechQueue<Prepared> {
         if (outcome.ok) this.release(outcome.value);
       });
     }
-    this.stop(CANCELLED);
+    this.stopped.abort();
     this.notify();
+  }
+
+  /**
+   * `pending`, or `CANCELLED` once the queue is cancelled. The wait owns its listener and
+   * releases it when `pending` settles: a promise shared by every sentence would keep one
+   * reaction per sentence for as long as the queue lives. `pending` never rejects.
+   */
+  private async unlessStopped<T>(pending: Promise<T>): Promise<T | typeof CANCELLED> {
+    try {
+      return await untilAborted(pending, this.stopped.signal);
+    } catch {
+      return CANCELLED;
+    }
   }
 
   private notify(): void {
@@ -139,18 +151,19 @@ export class SpeechQueue<Prepared> {
       }
       this.current = slot;
       try {
-        const prepared = await Promise.race([slot.result, this.stopped]);
+        const prepared = await this.unlessStopped(slot.result);
         if (prepared === CANCELLED) return;
         if (!prepared.ok) {
           this.report(prepared.error, slot.text);
           continue;
         }
+        // Cancelled while the wait above settled: `cancel` already released this clip.
+        if (this.cancelled) return;
         this.playing = true;
         this.fill();
-        const played = await Promise.race([
+        const played = await this.unlessStopped(
           settle(() => this.options.play(prepared.value, slot.controller.signal)),
-          this.stopped,
-        ]);
+        );
         if (played === CANCELLED) return;
         if (!played.ok) this.report(played.error, slot.text);
       } finally {

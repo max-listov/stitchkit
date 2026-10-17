@@ -2,6 +2,7 @@ import type { EndpointStreamDescriptor } from '../contract/define';
 import { AppError } from '../contract/errors';
 import { normalizeError } from '../contract/normalize';
 import { DEFAULT_CONTRACT_STREAM_FRAME_BYTES } from '../contract/stream';
+import { untilAborted } from '../internal/until-aborted';
 import {
   isStreamCancellation,
   ownHttpStream,
@@ -15,14 +16,6 @@ function encodedBytes(value: unknown, format: 'ndjson' | 'sse'): number {
   if (json === undefined) throw new TypeError('Streaming item is not JSON serializable');
   const framing = format === 'sse' ? `data: ${json}\n\n` : `${json}\n`;
   return new TextEncoder().encode(framing).byteLength;
-}
-
-function waitForAbort(signal: AbortSignal): Promise<never> {
-  return new Promise((_resolve, reject) => {
-    const rejectAborted = (): void => reject(signal.reason ?? new Error('Stream aborted'));
-    if (signal.aborted) rejectAborted();
-    else signal.addEventListener('abort', rejectAborted, { once: true });
-  });
 }
 
 /** Build the HTTP response for one contract-declared stream. */
@@ -70,12 +63,11 @@ export function contractStreamResponse(
 
   const frames = async function* () {
     if (closing) return;
-    const aborted = waitForAbort(operationAbort.signal);
     let terminalSeen = descriptor.terminal === undefined;
     try {
       for (;;) {
         pendingNext = Promise.resolve(iterator.next());
-        const next = await Promise.race([pendingNext, aborted]);
+        const next = await untilAborted(pendingNext, operationAbort.signal);
         if (next.done) break;
         const parsed = descriptor.item.safeParse(next.value);
         if (!parsed.success) {

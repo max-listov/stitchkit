@@ -293,6 +293,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0261](0261-an-ingress-attaches-request-facts-through-a-key-the-request-cannot-carry.md) | An ingress attaches request facts through a key the request cannot carry | Active — typed key over a per-request table, `ctx.req` is the handler's own request | I3, I6, I8, I12, I13 |
 | [0262](0262-one-reader-bounds-a-body-and-the-chunk-loop-is-shared.md) | One reader bounds a body, and the chunk loop is shared | Active — public `readBoundedBody`, one in-core chunk loop for every reader of the job | I8, I10, I12 |
 | [0263](0263-a-fix-to-an-entrypoint-names-the-entrypoint-it-touches.md) | A fix to an entrypoint names what it touches | Active — `Fixed` items that lead with an entrypoint carry `**Affects:**`, `upgrade` prints their verdicts | I13, I14 |
+| [0264](0264-a-wait-on-a-long-lived-promise-is-owned-by-the-step.md) | A wait on a long-lived promise is owned by the step | Active — a loop step waits through `untilAborted`, never races a promise that lives as long as the loop | I10 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

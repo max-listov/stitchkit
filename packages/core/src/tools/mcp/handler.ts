@@ -7,6 +7,7 @@ import {
   type McpServer,
   originValidationResponse,
 } from '@modelcontextprotocol/server';
+import { untilAborted } from '../../internal/until-aborted';
 import {
   type ProtectedResourceConfig,
   wwwAuthenticateHeader,
@@ -158,10 +159,7 @@ export function createMcpHandler<
   const buildPrepared = prepareStaticSurface(config);
   const authByCarrier = new WeakMap<AuthInfo, { value: TAuth }>();
   let closed = false;
-  let resolveClosed: (() => void) | undefined;
-  const closedSignal = new Promise<void>((resolve) => {
-    resolveClosed = resolve;
-  });
+  const closing = new AbortController();
 
   const sdkHandler = createSdkMcpHandler(
     ({ authInfo }) => {
@@ -206,10 +204,15 @@ export function createMcpHandler<
       const originRejection = originValidationResponse(request, [...allowedOrigins]);
       if (originRejection) return observeRejection(request, originRejection);
 
-      const auth = await Promise.race([
+      // Each request owns its wait on `closing`: a promise shared by every request would keep
+      // one reaction, and the auth result it carries, per request for the life of the handler.
+      const auth = await untilAborted(
         Promise.resolve(config.auth(request)),
-        closedSignal.then(() => null),
-      ]);
+        closing.signal,
+      ).catch((error: unknown) => {
+        if (closing.signal.aborted) return null;
+        throw error;
+      });
       if (closed) {
         return observeRejection(request, jsonRpcError(-32000, 'MCP handler is closed', 503));
       }
@@ -232,7 +235,7 @@ export function createMcpHandler<
     close: async () => {
       if (closed) return;
       closed = true;
-      resolveClosed?.();
+      closing.abort();
       await sdkHandler.close();
     },
   };

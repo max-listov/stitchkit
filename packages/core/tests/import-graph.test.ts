@@ -45,6 +45,7 @@ export const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   primitives: ['contract', 'internal'],
   files: ['contract', 'internal'],
   process: ['internal'],
+  voice: ['internal'],
   observability: ['contract', 'internal', 'server', 'tools'],
   realtime: ['contract', 'internal', 'server'],
   browser: ['contract', 'internal', 'observability', 'realtime'],
