@@ -16,3 +16,8 @@ export {
   type NativeCommandSettlement,
   type NativeCommandStopPolicy,
 } from '../process/contract';
+export {
+  type NativeCommandStream,
+  type NativeCommandStreamOptions,
+  streamNativeCommand,
+} from '../process/stream';

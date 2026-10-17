@@ -145,6 +145,27 @@ await runNativeCommand({
 })
 ```
 
+To read output as it appears, use `streamNativeCommand`: the same owner, group ownership, `stop`
+policy and bounds, with the output as `ReadableStream<Uint8Array>`.
+
+```ts
+import { streamNativeCommand } from 'stitchkit/process'
+
+const lifetime = new AbortController()
+const command = streamNativeCommand({
+  executable: '/usr/bin/tail', args: ['-f', '/var/log/app.log'], signal: lifetime.signal,
+})
+void command.stderr.cancel() // not interested: dropped, the command keeps running
+for await (const bytes of command.stdout) handle(bytes) // a slow reader slows the child
+await command.result // settles like `runNativeCommand`; `stop()` ends the group and waits for it
+```
+
+The streams own `capture`, `onOutput` and `stdio`; passing one is refused. Each stream queues up to 1 MiB, so
+a small output can be read in any order, even after `result`; past that an unread stream fills its pipe
+and holds the command, and its `result`, until the signal or `timeoutMs`, so read large outputs
+concurrently or cancel the stream you ignore. Cancelling a stream drops its later bytes and leaves the command running. When the
+command fails or is stopped, both streams error and the bytes still queued are dropped.
+
 A command needs a caller `signal` or a finite `timeoutMs` (1 to 2147483647 ms, the native timer
 range; a larger value is refused, never turned into 1 ms). Streaming runs for the caller's lifetime,
 with no hidden 60-second timeout or 1 MiB output limit. `capture` defaults to false; `true` requires

@@ -15,6 +15,10 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/process`: `streamNativeCommand` starts a command like `runNativeCommand` and returns its stdout and stderr as `ReadableStream<Uint8Array>` while it runs, with `result` and `stop()`. It uses the same owner, so a stream keeps the group ownership, the `stop` policy, the bounds and every group-stop fix of `runNativeCommand`; a slow reader slows the child through pipe backpressure. The `stitchkit/process` surface ceiling rises from 12 to 15 for `streamNativeCommand` and its two types.
+
 ## [0.111.1] - 2026-10-17
 
 ### Fixed

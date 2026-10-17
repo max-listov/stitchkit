@@ -2267,13 +2267,16 @@
     "NativeCommandResult",
     "NativeCommandSettlement",
     "NativeCommandStopPolicy",
+    "NativeCommandStream",
+    "NativeCommandStreamOptions",
     "ProcessInstance",
     "ProcessInstanceObservation",
     "ProcessInstanceSchema",
     "ProcessOwnerEvidence",
     "observeProcessInstance",
     "probeProcessOwner",
-    "runNativeCommand"
+    "runNativeCommand",
+    "streamNativeCommand"
   ],
   "stitchkit/process/owner-loss": ["bootstrapNativeCommandOwnerLoss"],
   "stitchkit/files": [
