@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.111.1] - 2026-10-17
+
 ### Fixed
 
 - `stitchkit/server` — **an open contract stream keeps a constant number of objects however many frames it sends.** Each frame raced the source against a promise that lived as long as the stream, so every frame left a reaction and the frame itself retained until the stream ended; a subscription sending a frame a second grew by about 1.6 MB a minute. The stream now waits for each frame through a listener it removes itself. A source that never has to wait is also stopped at the stream's `lifetimeMs`, which it used to outlive. → ADR 0264
