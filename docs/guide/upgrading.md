@@ -1,5 +1,31 @@
 # Upgrading stitchkit
 
+## Released migration: 0.111.0
+
+**Who must act:** applications whose raw routes call `parseBody` on JSON larger than 1 MiB, and applications whose OAuth clients send `/register` or `/token` bodies larger than 64 KiB.
+
+### Bounded raw and OAuth bodies
+
+`parseBody` reads at most 1 MiB and returns `null` for a larger body, where it used to read any size. A route that takes larger JSON states its limit:
+
+```ts
+// before
+const body = await parseBody(req, Schema)
+// after
+const body = await parseBody(req, Schema, { maxBytes: 8 * 1024 * 1024 })
+```
+
+`mountOAuthProvider` reads at most 64 KiB of a `/token` or `/register` body and answers `413` with `invalid_request` for a larger one. A deployment whose clients register larger metadata raises the limit:
+
+```ts
+// before
+mountOAuthProvider({ issuer, signingSecret, resource, codes, authorizeUser })
+// after
+mountOAuthProvider({ issuer, signingSecret, resource, codes, authorizeUser, maxRequestBodyBytes: 256 * 1024 })
+```
+
+Both limits must be a positive safe integer; anything else is refused when the route is built or called.
+
 ## Released migration: 0.110.0
 
 ### Interrupted process drains
@@ -4631,27 +4657,3 @@ A release carrying `### ⚠️ Breaking changes` and no matching
 `pre-push` and again in the publishing workflow. The check starts at `0.44.0`;
 breaking versions older than that are covered by the summary sections near the
 end of this file.
-## Unreleased migration: bounded raw and OAuth bodies
-
-**Who must act:** applications whose raw routes call `parseBody` on JSON larger than 1 MiB, and applications whose OAuth clients send `/register` or `/token` bodies larger than 64 KiB.
-
-`parseBody` reads at most 1 MiB and returns `null` for a larger body, where it used to read any size. A route that takes larger JSON states its limit:
-
-```ts
-// before
-const body = await parseBody(req, Schema)
-// after
-const body = await parseBody(req, Schema, { maxBytes: 8 * 1024 * 1024 })
-```
-
-`mountOAuthProvider` reads at most 64 KiB of a `/token` or `/register` body and answers `413` with `invalid_request` for a larger one. A deployment whose clients register larger metadata raises the limit:
-
-```ts
-// before
-mountOAuthProvider({ issuer, signingSecret, resource, codes, authorizeUser })
-// after
-mountOAuthProvider({ issuer, signingSecret, resource, codes, authorizeUser, maxRequestBodyBytes: 256 * 1024 })
-```
-
-Both limits must be a positive safe integer; anything else is refused when the route is built or called.
-

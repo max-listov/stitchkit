@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-10-17
+
+### Changed
+
+- Targets stitchkit `^0.111.0`, keeping consumers on one framework copy when they adopt the bounded request-body defaults. No terminal source change is needed.
+
 ## [0.2.5] - 2026-10-14
 
 ### Changed
