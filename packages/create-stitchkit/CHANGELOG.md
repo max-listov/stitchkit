@@ -12,6 +12,13 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects track Stitchkit `^0.111.3`; the template lockfile resolves 0.111.3. The
+  template uses none of the exports the 0.109.0, 0.110.0 and 0.111.0 breaking items change
+  (`runCli`, the lifecycle termination schemas, `parseBody`, `mountOAuthProvider`), so its code is
+  unchanged.
+
 ## [0.6.16] - 2026-10-06
 
 ### Changed
