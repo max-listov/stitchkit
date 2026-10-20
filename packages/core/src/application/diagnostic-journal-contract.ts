@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import type { ExclusiveLockDiagnosis, ExclusiveLockOwner } from '../internal/exclusive-lock';
+import type {
+  ExclusiveLockDiagnosis,
+  ExclusiveLockOwner,
+} from '../internal/exclusive-lock-owner';
 import { isRecord } from '../internal/typed';
 import { DiagnosticJournalRecoveryStatusSchema } from './diagnostic-journal-read-contract';
 

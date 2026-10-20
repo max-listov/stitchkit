@@ -72,7 +72,10 @@ describe('collided fields retain the common useful kind', () => {
     ]);
     expect(advertised(first).value).toEqual(advertised(second).value);
     expect(advertised(first).value).toEqual({
-      anyOf: [{ type: 'array', items: { type: 'string' } }, { type: 'string' }],
+      anyOf: [
+        { type: 'array', items: { type: 'string' }, description: 'When op = many.' },
+        { type: 'string', description: 'When op = one.' },
+      ],
     });
   });
 });

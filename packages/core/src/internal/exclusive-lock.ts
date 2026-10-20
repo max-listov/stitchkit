@@ -26,37 +26,18 @@ import { randomUUID } from 'node:crypto';
 import { lstat, open, readdir, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
-import { z } from 'zod';
 import { AtomicFilePublicationError, publishAtomicFile } from './atomic-publication';
+import {
+  diagnose,
+  type ExclusiveLockDiagnosis,
+  type ExclusiveLockOwner,
+  type RecordedLock,
+  readOwner,
+} from './exclusive-lock-owner';
 import { LockRecordError, readLockRecord } from './exclusive-lock-read';
 import { machineIdentity } from './process-identity';
-import {
-  ProcessInstanceSchema,
-  type ProcessOwnerEvidence,
-  probeProcessOwner,
-  readProcessInstance,
-} from './process-instance';
+import { readProcessInstance } from './process-instance';
 import { isRecord } from './typed';
-
-/** Who holds a lock, as its file records it. */
-const ExclusiveLockOwnerSchema = z.object({
-  pid: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  host: z.string().min(1),
-  acquiredAt: z.string(),
-  machine: z.string().min(1).optional().catch(undefined),
-  // Missing is a legacy record; explicit null is an unverified modern record.
-  process: ProcessInstanceSchema.nullable().optional().catch(null),
-});
-export type ExclusiveLockOwner = z.infer<typeof ExclusiveLockOwnerSchema>;
-
-/** Why a present lock was not taken. */
-export interface ExclusiveLockDiagnosis {
-  readonly attribution: 'this-machine' | 'another-machine' | 'unattributable';
-  readonly liveness: 'alive' | 'gone' | 'not-probed';
-  readonly identity?: ProcessOwnerEvidence['identity'];
-  readonly owner: ExclusiveLockOwner | null;
-  readonly cause?: unknown;
-}
 
 /** A lock this process holds. */
 export interface HeldExclusiveLock {
@@ -96,63 +77,8 @@ function isCode(error: unknown, code: string): boolean {
   return isRecord(error) && error.code === code;
 }
 
-function readOwner(text: string): {
-  owner: ExclusiveLockOwner | undefined;
-  ownerless: boolean;
-} {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { owner: undefined, ownerless: true };
-  }
-  const owner = ExclusiveLockOwnerSchema.safeParse(parsed);
-  if (owner.success) return { owner: owner.data, ownerless: false };
-  // A readable legacy owner (including a pid/token record without host) is
-  // unknown evidence, not an ownerless create interrupted before its write.
-  // Do not invent a machine identity or take it from a live older writer by age.
-  const ownerlike =
-    isRecord(parsed) &&
-    ['pid', 'token', 'host', 'machine', 'process', 'acquiredAt'].some((key) =>
-      Object.hasOwn(parsed, key),
-    );
-  return { owner: undefined, ownerless: !ownerlike };
-}
-
-/**
- * Whether the recorded owner's pid is ours to probe.
- *
- * Identity decides it when both sides have one, and it survives a rename. Where either side has
- * none — an older lock, or a platform with no identity — the host name is all that is left, and a
- * mismatch there is reported as `unattributable` rather than as a foreign machine: those are
- * different states, and the earlier code collapsed them into a permanent silent refusal.
- */
-function attribute(
-  owner: ExclusiveLockOwner,
-  identity: string | null,
-): ExclusiveLockDiagnosis['attribution'] {
-  if (identity !== null && owner.machine !== undefined) {
-    return owner.machine === identity ? 'this-machine' : 'another-machine';
-  }
-  return owner.host === hostname() ? 'this-machine' : 'unattributable';
-}
-
-async function diagnose(
-  owner: ExclusiveLockOwner | undefined,
-  declaredIdentity: string | undefined,
-): Promise<ExclusiveLockDiagnosis> {
-  if (!owner) return { attribution: 'unattributable', liveness: 'not-probed', owner: null };
-  const attribution = attribute(owner, await machineIdentity(declaredIdentity));
-  if (attribution !== 'this-machine') return { attribution, liveness: 'not-probed', owner };
-  return { attribution, ...(await probeProcessOwner(owner.pid, owner.process)), owner };
-}
-
-interface LockFileState {
-  readonly owner: ExclusiveLockOwner | undefined;
+interface LockFileState extends RecordedLock {
   readonly ownerless: boolean;
-  /** Identity of the file read, so a removal can check it is still the same file. */
-  readonly ino: number;
-  readonly dev: number;
   readonly mtimeMs: number;
   /** The staging name still hard-linked to the lock: its holder stopped between link and unlink. */
   readonly stagedName?: string;
@@ -211,6 +137,7 @@ async function readLockFile(
       record = await readLockRecord(path, { signal, singleLink: false });
     }
     return {
+      path,
       ...readOwner(record.text),
       ino: record.info.ino,
       dev: record.info.dev,
@@ -237,7 +164,7 @@ async function sweepStagedLocks(
     const candidate = join(directory, name);
     const state = await readLockFile(candidate, undefined, signal);
     if (!state?.owner) continue;
-    if ((await diagnose(state.owner, machine)).liveness !== 'gone') continue;
+    if ((await diagnose(state, machine)).liveness !== 'gone') continue;
     await unlinkIfSame(
       candidate,
       state.ino,
@@ -418,7 +345,7 @@ async function reclaimUnderGuard(
     );
     if (readFailure !== undefined) return { refused: true, cause: readFailure };
     if (state) {
-      const diagnosis = await diagnose(state.owner, options.machineIdentity);
+      const diagnosis = await diagnose(state, options.machineIdentity);
       if (options.signal?.aborted) return { refused: true };
       if (!reclaimable(state, diagnosis, options.ownerlessGraceMs))
         return { refused: true, cause: diagnosis.cause };
@@ -464,7 +391,7 @@ export async function attemptExclusiveLock(
       options.signal,
     );
     const diagnosis = {
-      ...(await diagnose(state?.owner, options.machineIdentity)),
+      ...(await diagnose(state, options.machineIdentity)),
       ...(readFailure !== undefined && { cause: readFailure }),
     };
     if (options.signal?.aborted) return { error, diagnosis };

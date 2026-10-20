@@ -8,6 +8,7 @@ import { formatZodError } from '../internal/zod-issues';
 import type { ToolExecutionOptions, ToolOperation } from './execute';
 import { applyToolViewDefaults } from './internal/tool-view';
 import { coerceJsonArgs } from './schema/coerce';
+import { localVerdict } from './schema/json-schema-origin';
 import { objectShapeKeys } from './schema/schema';
 
 /** What one tool call's arguments parse to — or why they did not. */
@@ -94,10 +95,13 @@ export function parseToolCallArguments(
     } catch (err) {
       return { ok: false, message: 'Invalid input', thrown: err };
     }
-    if (!result.success) {
-      return { ok: false, message: `Invalid input: ${formatZodError(result.error)}` };
+    if (result.success) input = result.data;
+    else {
+      // A restored foreign schema leaves its unions to the remote that owns it.
+      const refused = localVerdict(method.inputSchema, result.error);
+      if (refused) return { ok: false, message: `Invalid input: ${formatZodError(refused)}` };
+      input = inputArgs;
     }
-    input = result.data;
   }
   return { ok: true, params, input };
 }

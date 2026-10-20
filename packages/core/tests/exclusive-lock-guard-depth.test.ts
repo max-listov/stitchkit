@@ -95,13 +95,12 @@ test('generated guard path refusal keeps its native cause while caller path IO r
 });
 
 test('live and unknown guard owners are protected and cancellation never invokes work', async () => {
-  const { root, owner, stale } = await fixture();
+  const { root, stale } = await fixture();
   try {
     const path = join(root, 'lock');
     const guard = `${path}.reclaim`;
-    for (const bytes of [JSON.stringify(owner), 'unknown']) {
-      await writeFile(path, stale);
-      await writeFile(guard, bytes);
+    const refusedUnchanged = async () => {
+      const bytes = await readFile(guard, 'utf8');
       await utimes(guard, 1, 1);
       const ino = (await stat(guard)).ino;
       await expect(
@@ -118,7 +117,13 @@ test('live and unknown guard owners are protected and cancellation never invokes
       ).rejects.toMatchObject({ code: 'LOCK_TIMEOUT' });
       expect(await readFile(guard, 'utf8')).toBe(bytes);
       expect((await stat(guard)).ino).toBe(ino);
-    }
+    };
+    // A live guard owner is a held guard; an unknown one is a record nothing can attribute.
+    await writeFile(path, stale);
+    await withExclusiveLock(guard, refusedUnchanged);
+    await writeFile(path, stale);
+    await writeFile(guard, 'unknown');
+    await refusedUnchanged();
     const controller = new AbortController();
     const cause = new Error('cancelled');
     controller.abort(cause);

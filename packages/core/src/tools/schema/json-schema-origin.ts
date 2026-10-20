@@ -102,6 +102,39 @@ export function markJsonSchemaObjectGuards(schema: z.core.$ZodType): void {
   visit(schema);
 }
 
+const REMOTE_UNION_VERDICT = Symbol.for('stitchkit.tools.json-schema-remote-union-verdict.v1');
+
+/**
+ * Record that a schema restored from a foreign document leaves its unions to the remote.
+ *
+ * A foreign tool schema is the remote's presentation, and a presentation may join a
+ * discriminated union into one object whose shared field is an unlabelled `anyOf` (a stitchkit
+ * server with `flattenUnionInput` does, ADR 0205). Every value the remote accepts still passes
+ * such a union; which branch a value was meant for does not survive. Judged here, a wrong value
+ * can only be refused with every branch listed, while the remote, which holds the original
+ * schema, names the one field that is wrong.
+ */
+export function markRemoteUnionVerdict(schema: z.ZodObject): void {
+  Reflect.defineProperty(schema, REMOTE_UNION_VERDICT, {
+    configurable: false,
+    enumerable: false,
+    value: true,
+    writable: false,
+  });
+}
+
+/**
+ * What a local parse refuses of a value the remote judges: everything but its unions. `null` when
+ * every refusal was a union's — the value goes to the remote, whose refusal is the answer.
+ * A schema that is not a restored foreign one keeps its own verdict whole.
+ */
+export function localVerdict(schema: z.core.$ZodType, error: z.ZodError): z.ZodError | null {
+  if (Reflect.get(schema, REMOTE_UNION_VERDICT) !== true) return error;
+  const local = error.issues.filter((issue) => issue.code !== 'invalid_union');
+  if (local.length === 0) return null;
+  return local.length === error.issues.length ? error : new z.ZodError(local);
+}
+
 /**
  * Schemas that can guide coercion at a proven foreign object boundary.
  * Intersections need both branches: one carries the key guard, while another

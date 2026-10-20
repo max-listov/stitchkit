@@ -1078,6 +1078,16 @@ One unconvertible schema does not take the connection down. The tool
 is skipped and **named** (`onSkippedTool`, or a stderr line by default), so a
 surface of two hundred tools is not lost to one.
 
+**A discovered schema is checked locally, except for its unions.** The arguments are
+coerced and parsed against the schema the server advertised, so a missing field or a
+wrong scalar is refused before anything is sent. A union in that schema is not judged
+here: a server's presentation may join a discriminated union into one object whose
+shared field is an unlabelled `anyOf` (a stitchkit server with `flattenUnionInput`
+does), and judged against that, a wrong value could only be refused with every branch
+listed. The value goes to the server, which holds the original schema, and its refusal
+names the one wrong field — `blocks.0.data.artifactId: expected string` rather than
+`No union branch matched — branch 1 … and 6 more branches`.
+
 MCP connection limits follow the operation phase. `initialize`, the initialized
 notification, `tools/list` and legacy endpoint discovery use `limits.discovery`;
 `tools/call` uses `limits.call`. A mounted call's handshake still uses discovery

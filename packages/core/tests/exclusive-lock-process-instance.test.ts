@@ -51,7 +51,9 @@ async function currentOwner() {
   return withExclusiveLock(path, (lock) => lock.owner, { machineIdentity: 'fixture-machine' });
 }
 
-test('same-boot PID reuse is reclaimed but a matching live writer and foreign namespace are protected', async () => {
+// `same` is this very process with matching kernel identity and no descriptor open on the lock:
+// an earlier image of this PID left it. A live holder in this process is the test below.
+test('same-boot PID reuse and an earlier image of this process are reclaimed; foreign and unknown owners are protected', async () => {
   const owner = await currentOwner();
   if (!owner.process) throw new Error('Current kernel process identity unavailable');
   for (const variation of [
@@ -87,7 +89,7 @@ test('same-boot PID reuse is reclaimed but a matching live writer and foreign na
       timeoutMs: 0,
       ownerlessGraceMs: 0,
     });
-    if (variation === 'reused') expect(await attempt).toBe(true);
+    if (variation === 'reused' || variation === 'same') expect(await attempt).toBe(true);
     else {
       await expect(attempt).rejects.toThrow('gave up');
       expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(
@@ -130,14 +132,20 @@ test('an abandoned reclaim guard uses boot and process identity without removing
   };
   const path = await fixture();
   await writeFile(path, JSON.stringify(stale));
-  await writeFile(`${path}.reclaim`, JSON.stringify(owner));
-  await expect(
-    withExclusiveLock(path, () => undefined, {
-      machineIdentity: 'fixture-machine',
-      timeoutMs: 0,
-    }),
-  ).rejects.toThrow('gave up');
-  expect(JSON.parse(await readFile(`${path}.reclaim`, 'utf8'))).toEqual(owner);
+  // A live guard is a held one: this process keeps its descriptor open while the work runs.
+  await withExclusiveLock(
+    `${path}.reclaim`,
+    async (guard) => {
+      await expect(
+        withExclusiveLock(path, () => undefined, {
+          machineIdentity: 'fixture-machine',
+          timeoutMs: 0,
+        }),
+      ).rejects.toThrow('gave up');
+      expect(JSON.parse(await readFile(`${path}.reclaim`, 'utf8'))).toEqual(guard.owner);
+    },
+    { machineIdentity: 'fixture-machine' },
+  );
   await writeFile(
     `${path}.reclaim`,
     JSON.stringify({ ...stale, process: { ...stale.process, bootId: 'previous-boot' } }),

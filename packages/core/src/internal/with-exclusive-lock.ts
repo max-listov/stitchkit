@@ -8,14 +8,11 @@
  * moment its signal aborts — during the wait, not after it — and a refusal names
  * the resource and whoever holds it, so "timed out" is never the whole message.
  */
-import {
-  attemptExclusiveLock,
-  type ExclusiveLockDiagnosis,
-  type ExclusiveLockOwner,
-} from './exclusive-lock';
+import { attemptExclusiveLock } from './exclusive-lock';
+import type { ExclusiveLockDiagnosis, ExclusiveLockOwner } from './exclusive-lock-owner';
 import { sleep } from './timers';
 
-export type { ExclusiveLockOwner } from './exclusive-lock';
+export type { ExclusiveLockOwner } from './exclusive-lock-owner';
 
 /** Options of {@link withExclusiveLock}. */
 export interface ExclusiveLockOptions {

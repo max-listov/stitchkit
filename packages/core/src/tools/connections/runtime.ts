@@ -2,7 +2,10 @@ import { type ZodObject, z } from 'zod';
 import type { RuntimeContext } from '../../contract/runtime-context';
 import { declaresDraft07, withDefsDialect } from '../../json-schema/dialect';
 import type { RuntimeToolDefinition } from '../runtime-tool';
-import { markJsonSchemaObjectGuards } from '../schema/json-schema-origin';
+import {
+  markJsonSchemaObjectGuards,
+  markRemoteUnionVerdict,
+} from '../schema/json-schema-origin';
 import { ConnectionAuthorizationRequiredError } from './errors';
 
 /** A connection's optional principal-scoped credential resolver. */
@@ -43,7 +46,7 @@ export async function withConnectionToken<T>(
  * Turn a discovered JSON Schema into a `ZodObject`, falling back to a permissive
  * object when the external schema is absent or not an object. This is the typed
  * boundary: the schema crosses from an untrusted foreign document into Zod here
- * and nowhere else.
+ * and nowhere else. Its unions are left to the remote that owns the schema.
  */
 export function zodObjectFromJsonSchema(
   schema: Record<string, unknown> | undefined,
@@ -52,6 +55,7 @@ export function zodObjectFromJsonSchema(
   const parsed = z.fromJSONSchema(reconcileDefinitionKeyword(schema));
   if (parsed instanceof z.ZodObject) {
     markJsonSchemaObjectGuards(parsed);
+    markRemoteUnionVerdict(parsed);
     return parsed;
   }
   return z.looseObject({});

@@ -475,6 +475,16 @@ unlink. Recovery depth is capped at 16; a deeper stale chain refuses recovery wi
 the bounded `LOCK_TIMEOUT`. Live owners, unknown process-lifetime evidence and unsafe records are never
 reclaimed. Concurrent writers cannot bypass a guard while a prior unlink is paused.
 
+A record that names this very process is held only while a descriptor of this process is open
+on the lock: the holder keeps the one it created the lock with until it releases. A process image
+replaced in place — `execve`, which is how `bun --watch` restarts — keeps its PID and kernel start
+time, so its record still matches, but not that descriptor, and the new image takes the lock over
+at once instead of waiting for the PID to change. Worker threads and a second copy of the package
+in the same process share the descriptor table, so a hold any of them takes is never displaced.
+The check counts only when `/dev/fd` lists the descriptor it opens itself; a listing it cannot
+prove complete means "unknown", which never reclaims. A replaced image of another process is
+still judged alive.
+
 ## Libraries with a Zod-only runtime
 
 Public leaves keep optional peers out of their import closure. Installing `stitchkit` still

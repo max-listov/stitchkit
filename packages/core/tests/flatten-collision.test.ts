@@ -262,8 +262,12 @@ describe('conservative discriminated-union join', () => {
     );
     expect(field(schema, 'value')).toEqual({
       anyOf: [
-        { type: ['array', 'null'], items: { type: 'string' } },
-        { type: ['string', 'null'] },
+        {
+          type: ['array', 'null'],
+          items: { type: 'string' },
+          description: 'When kind = many.',
+        },
+        { type: ['string', 'null'], description: 'When kind = one.' },
       ],
     });
   });

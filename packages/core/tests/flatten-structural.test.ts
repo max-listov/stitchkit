@@ -78,9 +78,15 @@ describe('flattened tool surfaces retain structural alternatives', () => {
       expect(variants).toHaveLength(2);
       expect(variants).toEqual(
         expect.arrayContaining([
-          { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+          {
+            type: 'object',
+            properties: { id: { type: 'string' } },
+            required: ['id'],
+            description: 'When kind = message.',
+          },
           {
             type: 'array',
+            description: 'When kind = mediaGroup.',
             items: {
               type: 'object',
               properties: { id: { type: 'string' } },

@@ -182,7 +182,17 @@ function typeSchema(type: JsonSchemaType, nullable: boolean): ToolPresentationSc
   return { type: nullable ? [type, 'null'] : type };
 }
 
-function commonBaseType(schemas: ToolPresentationSchema[]): ToolPresentationSchema {
+/** One variant's projected field and the discriminator values that select it. */
+interface LabelledSchema {
+  schema: ToolPresentationSchema;
+  labels: string[];
+}
+
+function commonBaseType(
+  variants: LabelledSchema[],
+  discriminator: string,
+): ToolPresentationSchema {
+  const schemas = variants.map(({ schema }) => schema);
   const names = schemas.map(typeNames);
   if (names.some((value) => value === null)) return {};
   let nullable = false;
@@ -199,14 +209,24 @@ function commonBaseType(schemas: ToolPresentationSchema[]): ToolPresentationSche
   // type union loses it, and an array without items is rejected by providers.
   // anyOf preserves every allowed value without inventing cross-branch rules.
   if (bases.has('array') || bases.has('object')) {
-    const alternatives = new Map<string, ToolPresentationSchema>();
-    for (const schema of schemas) alternatives.set(serializeCanonicalJson(schema), schema);
+    const alternatives = new Map<string, LabelledSchema>();
+    for (const { schema, labels } of variants) {
+      const key = serializeCanonicalJson(schema);
+      const known = alternatives.get(key);
+      if (known) known.labels.push(...labels);
+      else alternatives.set(key, { schema, labels: [...labels] });
+    }
     // Alternatives are a set of kinds, not a list the author ordered: their order is the
     // canonical-JSON order, so the same union reads the same whatever order its variants came in.
+    // Each one says which discriminator values select it — the one link a model cannot recover
+    // from an unordered set, and text keeps it inside the portable profile (no `oneOf`).
     const ordered = [...alternatives]
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(([, schema]) => schema);
-    return { anyOf: structuredClone(ordered) };
+      .map(([, { schema, labels }]) => ({
+        ...structuredClone(schema),
+        description: `When ${discriminator} = ${[...new Set(labels)].join(' | ')}.`,
+      }));
+    return { anyOf: ordered };
   }
   if (bases.size === 1) {
     const [only] = bases;
@@ -267,7 +287,13 @@ export function mergePropertySchemas(
     const allStrings = values.every((value) => value !== null);
     merged = allStrings
       ? { type: 'string', enum: [...new Set(values.flatMap((value) => value ?? []))] }
-      : commonBaseType(structural);
+      : commonBaseType(
+          structural.map((schema, index) => ({
+            schema,
+            labels: properties[index]?.labels ?? [],
+          })),
+          discriminator,
+        );
   }
   const description = describeVariants(
     properties.map((property, index) => ({

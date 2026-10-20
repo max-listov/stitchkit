@@ -15,6 +15,15 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/files` — **a lock an earlier image of the same process left is taken over at once.** A process image replaced in place (`bun --watch` restarts with `execve`) keeps its PID and kernel start time, so the lock the previous image held matched the new one in every field and stayed held until the PID changed (`liveness alive, identity matched`). A record that names this very process is now held only while a descriptor of this process is open on the lock; without one the owner is gone (`identity descriptor-closed`) and the lock is reclaimed under the usual guard. A hold taken by a worker thread or another copy of the package in the same process is never displaced. → ADR 0265
+  **Affects:** `stitchkit/files` withExclusiveLock; `stitchkit/server` createFileStateStore; `stitchkit/application/diagnostic-journal` createDiagnosticJournal; `stitchkit/telegram` runTelegramBroadcast
+- `stitchkit/tools/connections` — **a value inside a union of a discovered tool's schema is judged by the server, not by the client.** A server with `flattenUnionInput` advertises a nested discriminated union as one object whose shared field is an unlabelled `anyOf`, so a CLI or agent call through `defineMcpClientConnection` refused a wrong block with `No union branch matched — branch 1 … and 6 more branches` while the server would have named the field. A refusal that is only a union's now sends the value and shows the server's answer (`blocks.0.data.artifactId: expected string`); every other local refusal still stops the call, without the union lines. → ADR 0266
+  **Affects:** `stitchkit/tools/connections` defineMcpClientConnection, defineOpenApiConnection, mountConnections
+- `stitchkit/tools` — **with `flattenUnionInput`, each `anyOf` alternative of a field the variants share says which discriminator values select it.** The flat object advertised the discriminator as an enum and the field as alternatives in canonical order, so a model saw `type: text | image | quiz` beside three `data` shapes with no way to pair them. Each alternative now carries `description: "When type = image."` (`When type = photo | video.` for a shape two values share); the schema stays without `oneOf`. → ADR 0267
+  **Affects:** `stitchkit/tools` behaviour
+
 ## [0.111.2] - 2026-10-17
 
 ### Added

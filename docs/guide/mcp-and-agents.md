@@ -755,12 +755,17 @@ A field that is a number in every variant is advertised as a number, not as a
 bare description. Scalar collisions keep every provable kind in a deterministic
 JSON Schema type array. If any alternative is an object or array, the property
 retains distinct structural alternatives in `anyOf`: object properties, typed
-array items, bounds and nullable values remain available to the model. The
+array items, bounds and nullable values remain available to the model. Each
+alternative is described by the discriminator values that select it
+(`When type = image.`, or `When type = photo | video.` for a shape two values share),
+so the model can pair a shape with its value; the order of the alternatives is
+canonical, not the order of the variants. The
 containing discriminated union still becomes one object; flat mode does not
 promise to remove every nested union keyword. Only a branch whose kind is
 actually unknowable, such as a free-form schema or unresolved reference, leaves
-the collision unconstrained. → ADRs [0044](../decisions/0044-a-collided-field-keeps-its-type.md)
-and [0205](../decisions/0205-flat-tool-collisions-retain-structural-alternatives.md).
+the collision unconstrained. → ADRs [0044](../decisions/0044-a-collided-field-keeps-its-type.md),
+[0205](../decisions/0205-flat-tool-collisions-retain-structural-alternatives.md)
+and [0267](../decisions/0267-a-flat-alternative-names-the-values-that-select-it.md).
 
 It is **deep** because the projection walks the generated JSON Schema document,
 including objects, arrays, tuples and schema-definition nodes. Structurally
