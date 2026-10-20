@@ -6,6 +6,12 @@ export interface StarterLaneOptions {
   mode: StarterLaneMode;
   variant: StarterLaneVariant;
   browser: StarterLaneBrowser;
+  /**
+   * Where a failed browser run leaves its Playwright results (traces included) before the
+   * workspace is removed. Absent, a failure keeps nothing — the run is diagnosable only while
+   * its workspace exists.
+   */
+  evidenceDir?: string;
 }
 
 function readNamedArgument(args: string[], name: string): string {
@@ -24,7 +30,8 @@ export function parseStarterLaneOptions(args: string[]): StarterLaneOptions {
     (argument) =>
       !argument.startsWith('--mode=') &&
       !argument.startsWith('--variant=') &&
-      !argument.startsWith('--browser='),
+      !argument.startsWith('--browser=') &&
+      !argument.startsWith('--evidence-dir='),
   );
   if (unknown.length > 0) {
     throw new Error(`Unknown starter lane arguments: ${unknown.join(', ')}`);
@@ -42,5 +49,10 @@ export function parseStarterLaneOptions(args: string[]): StarterLaneOptions {
   if (browser !== 'all' && browser !== 'chromium' && browser !== 'webkit') {
     throw new Error(`Unknown starter lane browser: ${browser}`);
   }
-  return { mode, variant, browser };
+  const evidence = args.filter((argument) => argument.startsWith('--evidence-dir='));
+  if (evidence.length === 0) return { mode, variant, browser };
+  const evidenceDir = readNamedArgument(args, 'evidence-dir');
+  if (!evidenceDir.startsWith('/'))
+    throw new Error(`--evidence-dir must be an absolute path: ${evidenceDir}`);
+  return { mode, variant, browser, evidenceDir };
 }

@@ -455,7 +455,15 @@ jobs:
           key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-
       - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER"
+      - run: bun scripts/starter-lane.ts "--mode=$STARTER_LANE_MODE" "--variant=$STARTER_LANE_VARIANT" "--browser=$STARTER_LANE_BROWSER" "--evidence-dir=$RUNNER_TEMP/starter-evidence"
+      # A failed browser run is diagnosable only from its traces; the lane keeps them on failure.
+      - if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: starter-evidence-${{ matrix.mode }}-${{ matrix.variant }}-${{ matrix.browser }}
+          path: ${{ runner.temp }}/starter-evidence
+          if-no-files-found: ignore
+          retention-days: 14
 
   artifacts:
     name: Exact release artifacts

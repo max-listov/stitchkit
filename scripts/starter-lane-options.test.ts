@@ -47,4 +47,37 @@ describe('starter lane options', () => {
       parseStarterLaneOptions(['--mode=head', '--variant=blank', '--browser=all', '--head']),
     ).toThrow('Unknown starter lane arguments: --head');
   });
+
+  test('keeps an absolute evidence directory and refuses a relative or repeated one', () => {
+    expect(
+      parseStarterLaneOptions([
+        '--mode=target',
+        '--variant=repository',
+        '--browser=webkit',
+        '--evidence-dir=/tmp/starter-evidence',
+      ]),
+    ).toEqual({
+      mode: 'target',
+      variant: 'repository',
+      browser: 'webkit',
+      evidenceDir: '/tmp/starter-evidence',
+    });
+    expect(() =>
+      parseStarterLaneOptions([
+        '--mode=head',
+        '--variant=blank',
+        '--browser=all',
+        '--evidence-dir=evidence',
+      ]),
+    ).toThrow('--evidence-dir must be an absolute path: evidence');
+    expect(() =>
+      parseStarterLaneOptions([
+        '--mode=head',
+        '--variant=blank',
+        '--browser=all',
+        '--evidence-dir=/a',
+        '--evidence-dir=/b',
+      ]),
+    ).toThrow('Expected exactly one --evidence-dir=<value> argument');
+  });
 });

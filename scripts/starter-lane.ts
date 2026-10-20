@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -34,7 +34,12 @@ function parseIdentityAllowlist(value: unknown): string[] {
 
 const repositoryRoot = resolve(import.meta.dir, '..');
 const templateRoot = join(repositoryRoot, 'packages/create-stitchkit/template');
-const { mode, variant: selectedVariant, browser } = parseStarterLaneOptions(Bun.argv.slice(2));
+const {
+  mode,
+  variant: selectedVariant,
+  browser,
+  evidenceDir,
+} = parseStarterLaneOptions(Bun.argv.slice(2));
 
 interface CommandOptions {
   env?: Record<string, string | undefined>;
@@ -567,7 +572,24 @@ try {
             : browser === 'webkit'
               ? ['--project=webkit']
               : [];
-        await run(['bun', 'run', 'e2e', ...browserProjects], generated, { env });
+        try {
+          await run(['bun', 'run', 'e2e', ...browserProjects], generated, { env });
+        } catch (error) {
+          // The workspace is removed when the lane ends; the traces of a failed run are the
+          // only account of it, so they leave first.
+          if (evidenceDir) {
+            const destination = join(evidenceDir, `${mode}-${variant}-${browser}`);
+            await cp(join(generated, 'test-results'), destination, { recursive: true }).catch(
+              (copyError: unknown) => {
+                console.error(
+                  `[starter-lane] could not keep e2e evidence: ${String(copyError)}`,
+                );
+              },
+            );
+            console.error(`[starter-lane] e2e evidence kept in ${destination}`);
+          }
+          throw error;
+        }
       } finally {
         roles = [];
         await Promise.allSettled([api && stopProcessGroup(api), web && stopProcessGroup(web)]);
