@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.111.3] - 2026-10-20
+
 ### Fixed
 
 - `stitchkit/files` — **a lock an earlier image of the same process left is taken over at once.** A process image replaced in place (`bun --watch` restarts with `execve`) keeps its PID and kernel start time, so the lock the previous image held matched the new one in every field and stayed held until the PID changed (`liveness alive, identity matched`). A record that names this very process is now held only while a descriptor of this process is open on the lock; without one the owner is gone (`identity descriptor-closed`) and the lock is reclaimed under the usual guard. A hold taken by a worker thread or another copy of the package in the same process is never displaced. → ADR 0265
