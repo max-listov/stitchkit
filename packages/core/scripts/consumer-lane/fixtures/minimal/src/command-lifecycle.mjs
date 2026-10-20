@@ -9,6 +9,18 @@ assert.ok(node, 'native Node executable');
 const command = (script) => ({ executable: node, args: ['-e', script] });
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Wait until a kernel-side state holds, within a bound. A pipe fills as fast as the producer and
+ * the runner allow, so a fixed pause proves nothing on a slow host; the state itself does.
+ */
+async function eventually(holds, timeoutMs, message) {
+  const deadline = performance.now() + timeoutMs;
+  while (!holds()) {
+    assert.ok(performance.now() < deadline, message);
+    await delay(10);
+  }
+}
+
 export async function verifyBlockedGroup(root, helperStartDelayMs = 0) {
   const counter = join(root, 'counter');
   // The helper emits readiness only after its first write, independent of startup latency.
@@ -96,8 +108,11 @@ async function undrainedPipe() {
   });
   try {
     await started;
-    await delay(80);
-    assert.ok(reader.stdin.writableLength > 0, 'physical pipe write remains blocked');
+    await eventually(
+      () => reader.stdin.writableLength > 0,
+      5000,
+      'physical pipe write remains blocked',
+    );
     const began = performance.now();
     controller.abort(reason);
     await assert.rejects(pending, (error) => error === reason);
