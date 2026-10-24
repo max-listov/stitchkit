@@ -517,7 +517,7 @@ Declared aliases render beside their canonical options, for example
 
 The argument table and `Application options:` show bounds from their JSON Schema,
 for example `<integer> [>=1, <=50]`, `<string> [length >=1, length <=12]`, and
-`<value…> [items >=2, items <=4]`. Numeric `>` and `<` are exclusive, while `>=`
+`<value> [items >=2, items <=4]`. Numeric `>` and `<` are exclusive, while `>=`
 and `<=` include the endpoint; a zero limit is displayed too. Only limits the
 schema declares are shown: the safe-integer range every `z.int()` carries is the
 type, not a bound, so a bare integer prints `<integer>`, `.min(1)` prints `>=1` and

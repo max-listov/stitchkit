@@ -77,7 +77,7 @@ for (const command of ['local', 'search', 'runtime']) {
   assert.ok(out.includes('<integer> [>=1, <=50] — Page size'));
   assert.ok(out.includes('<number> [>0, <10]'));
   assert.ok(out.includes('<string> [length >=1, length <=12]'));
-  assert.ok(out.includes('<value…> [items >=2, items <=4]'));
+  assert.ok(out.includes('<value> [items >=2, items <=4]'));
   assert.ok(out.includes('<number> [>=0, <=0]'));
   assert.ok(out.includes('[any of: string [length >=1] | null]'));
   assert.ok(out.includes('--budget <number> [>0, <=30]'));
