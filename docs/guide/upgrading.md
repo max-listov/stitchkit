@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: 0.112.0
+## Released migration: 0.112.0
 
 **Who must act:** scripts using an array option together with bare positional arguments without a declared `positionals` policy, including calls to `parseCliArgs`.
 

@@ -15,7 +15,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.112.0] - 2026-10-24
+
 ### ⚠️ Breaking changes
+
+**Who must act:** scripts that combine named array options with bare positional arguments without an explicit `positionals` policy must name the scalar fields or declare their destinations. Flag-only calls and explicitly declared positional policies need no migration.
 
 - `stitchkit/cli` — **array options require named arguments or an explicit positional policy.** Without a declared `positionals` policy, a named array option together with any bare positional is now a usage error before dispatch. Schema-order inference could mistake the array's remaining elements for unrelated optional fields and execute a different call. Before: `app resolve --references alpha.md beta.md gamma.md` could assign `beta.md` and `gamma.md` to other fields. After: `app resolve --references alpha.md --references beta.md --references gamma.md`, or `app resolve --references:='["alpha.md","beta.md","gamma.md"]'`. Name scalar fields with flags too, or declare their exact positional policy. Command help describes one element per option; only a declared trailing positional array is variadic. See [ADR 0268](docs/decisions/0268-named-cli-arrays-require-explicit-positional-destinations.md) and the [migration](docs/guide/upgrading.md).
   **Affects:** `stitchkit/cli` createCli, parseCliArgs
