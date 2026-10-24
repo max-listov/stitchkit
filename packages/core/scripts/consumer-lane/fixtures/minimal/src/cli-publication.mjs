@@ -13,7 +13,12 @@ import {
   verifyCliManifest,
 } from 'stitchkit/cli';
 import { publishCli } from 'stitchkit/cli/publish';
-import { assertBinary, distributionServer, execute } from './cli-publication-support.mjs';
+import {
+  assertBinary,
+  assertIndependentConnections,
+  distributionServer,
+  execute,
+} from './cli-publication-support.mjs';
 
 const require = createRequire(import.meta.url);
 for (const peer of ['ai', '@modelcontextprotocol/server']) {
@@ -40,6 +45,7 @@ const installDir = join(root, 'installed');
 const binary = join(installDir, 'publisher-proof');
 let builds = 0;
 let admittedIdentity;
+let phase = 'publish first version';
 const publish = (version, commit, overrides = {}) =>
   publishCli({
     name: 'publisher-proof',
@@ -83,9 +89,12 @@ try {
   assert.equal(first.outcome, 'published');
   assert.equal(builds, 1);
   assert.equal(verifyCliManifest(first.manifest, first.manifest.signature, trust), 'valid');
+  phase = 'verify fixture connection isolation';
+  await assertIndependentConnections(server.baseUrl);
   const prior = await readFile(join(storageRoot, 'manifest.json'));
   const installer = join(root, 'install.sh');
   await writeFile(installer, renderCliInstaller({ manifest: first.manifest }));
+  phase = 'install first version';
   await execute('sh', [installer], { env: { ...process.env, INSTALL_DIR: installDir } });
   const firstStamp = {
     version: first.manifest.version,
@@ -103,6 +112,7 @@ try {
   );
 
   // The shell installer proves decompressed digest and size. Authorship is checked by the updater below.
+  phase = 'reject corrupt installer download';
   server.corrupt(true);
   await assert.rejects(
     execute('sh', [installer], { env: { ...process.env, INSTALL_DIR: installDir } }),
@@ -114,6 +124,7 @@ try {
     ...first.manifest,
     assets: first.manifest.assets.map((asset) => ({ ...asset, size: asset.size + 1 })),
   };
+  phase = 'reject wrong installer size';
   await writeFile(installer, renderCliInstaller({ manifest: wrongSize }));
   await assert.rejects(
     execute('sh', [installer], { env: { ...process.env, INSTALL_DIR: installDir } }),
@@ -122,6 +133,7 @@ try {
   assert.deepEqual(await readFile(binary), installedFirst);
 
   const nextCommit = 'b'.repeat(40);
+  phase = 'publish second version through interruption';
   admittedIdentity = { name: 'publisher-proof', version: '1.1.0', commit: nextCommit };
   await assert.rejects(
     publish('1.1.0', nextCommit, {
@@ -137,6 +149,7 @@ try {
   const second = await publish('1.1.0', nextCommit);
   assert.equal(builds, 2);
   assert.deepEqual(await readFile(join(storageRoot, 'manifest.json')), completed);
+  phase = 'check published update';
   const current = await checkCliUpdate({
     manifestUrl: `${server.baseUrl}manifest.json`,
     currentVersion: '1.0.0',
@@ -145,6 +158,7 @@ try {
   });
   assert.equal(current.status, 'outdated');
   assert.equal(current.signature, 'valid');
+  phase = 'reject tampered manifest';
   server.manifest({ ...second.manifest, commit: 'tampered' });
   const altered = await checkCliUpdate({
     manifestUrl: `${server.baseUrl}manifest.json`,
@@ -158,6 +172,7 @@ try {
   const asset = second.manifest.assets[0];
   assert.ok(asset);
   const requests = server.assetRequests;
+  phase = 'reject unknown signing key';
   await assert.rejects(
     applyCliUpdate({
       asset,
@@ -170,6 +185,7 @@ try {
   );
   assert.equal(server.assetRequests, requests);
   assert.deepEqual(await readFile(binary), installedFirst);
+  phase = 'reject corrupt update';
   server.corrupt(true);
   await assert.rejects(
     applyCliUpdate({
@@ -183,6 +199,7 @@ try {
   );
   assert.deepEqual(await readFile(binary), installedFirst);
   server.corrupt(false);
+  phase = 'apply verified update';
   const secondStamp = {
     version: second.manifest.version,
     commit: second.manifest.commit,
@@ -200,6 +217,7 @@ try {
   });
   await assertBinary(binary, secondStamp);
   assert.ok(applied.backupSha256);
+  phase = 'verify rollback digest';
   await assert.rejects(
     Promise.resolve().then(() =>
       rollbackCliUpdate({ targetPath: binary, backupPath, expectedSha256: '0'.repeat(64) }),
@@ -207,9 +225,13 @@ try {
     /does not match/,
   );
   await assertBinary(binary, secondStamp);
+  phase = 'roll back verified binary';
   rollbackCliUpdate({ targetPath: binary, backupPath, expectedSha256: applied.backupSha256 });
   await assertBinary(binary, firstStamp);
   assert.deepEqual((await readdir(storageRoot)).sort(), ['1.0.0', '1.1.0', 'manifest.json']);
+} catch (error) {
+  console.error(JSON.stringify({ phase, distribution: server.trace }));
+  throw error;
 } finally {
   await server.close();
   await rm(root, { recursive: true, force: true });
