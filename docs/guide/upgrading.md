@@ -1,5 +1,36 @@
 # Upgrading stitchkit
 
+## Unreleased migration: 0.112.0
+
+**Who must act:** scripts using an array option together with bare positional arguments without a declared `positionals` policy, including calls to `parseCliArgs`.
+
+An array flag consumes one value. Automatic schema-order positionals cannot distinguish additional array elements from values intended for unrelated fields, so the combination is refused before any handler or stdin read. The rule is independent of token order, includes aliases, dotted array leaves and whole-array JSON, and `--` does not bypass it. See [ADR 0268](../decisions/0268-named-cli-arrays-require-explicit-positional-destinations.md).
+
+```sh
+# before: the last two words could populate unrelated fields
+app resolve --references alpha.md beta.md gamma.md
+# after: repeat the option or assign the whole array
+app resolve --references alpha.md --references beta.md --references gamma.md
+app resolve --references:='["alpha.md","beta.md","gamma.md"]'
+
+# before: even an intended scalar positional has an implicit destination
+app resolve project-one --references alpha.md
+# after: name it
+app resolve --projectId project-one --references alpha.md
+```
+
+Applications that intend positional syntax declare its destinations on the available command:
+
+```ts
+createCli({ ...config, positionals: { resolve: ['projectId'] } })
+// app resolve project-one --references alpha.md
+
+createCli({ ...config, positionals: { resolve: ['references'] } })
+// app resolve alpha.md beta.md gamma.md
+```
+
+A declared trailing array accepts all remaining positional elements. Giving that same field both a flag and positional elements remains an error. An empty policy accepts flags only. Policies still target exact available command names: a partial dynamic catalogue needs no policy for an unavailable command to enforce this admission rule.
+
 ## Released migration: 0.111.0
 
 **Who must act:** applications whose raw routes call `parseBody` on JSON larger than 1 MiB, and applications whose OAuth clients send `/register` or `/token` bodies larger than 64 KiB.

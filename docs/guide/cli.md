@@ -233,6 +233,15 @@ string, the schema says what it should be:
 | `z.record(z.string(), z.unknown())` | `--data '{"code":"007"}'` or `--data.code=007` → `"007"` |
 | `.optional()` / `.default()` | not required                           |
 
+An array option takes **one value per occurrence**, never a bare list after the flag.
+Repeat it (`--tag a --tag b`) or assign the whole array (`--tag:='["a","b"]'`).
+Without an explicit command `positionals` policy, combining any named array option
+with bare positionals is refused before dispatch: schema-order inference could otherwise
+assign the remaining array elements to unrelated fields. This includes short aliases,
+dotted array leaves, whole-array JSON and tokens after `--`, regardless of token order.
+Name the scalar fields too, or declare their exact positional destinations. An explicitly
+declared trailing positional array is the variadic form described below.
+
 Use the inline `:=` form to assign a whole JSON value without scalar coercion:
 
 ```bash

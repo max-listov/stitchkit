@@ -23,7 +23,7 @@ const GLOBAL_OPTIONS = [
 /** A human label for a flag's JSON-Schema type. */
 function typeLabel(schema: Record<string, unknown>): string {
   if (Array.isArray(schema.enum)) return schema.enum.join('|');
-  if (schema.type === 'array') return 'value…';
+  if (schema.type === 'array') return 'value';
   if (typeof schema.type === 'string') return schema.type;
   return 'value';
 }
@@ -262,6 +262,18 @@ export function renderCommandHelp(
       lines.push(
         '',
         `A boolean flag is on alone or takes true/false: --${flag}, --${flag} false, --no-${flag}`,
+      );
+    }
+    const arrays = [...kinds].filter(([, info]) => info.kind === 'array');
+    for (const [field] of arrays) {
+      lines.push(
+        '',
+        `Repeat --${field} <value> for each element, or assign the whole array with --${field}:=JSON.`,
+      );
+    }
+    if (arrays.length > 0 && descriptor.positionals === undefined) {
+      lines.push(
+        'Array options cannot be combined with automatic positional arguments; name other fields with flags.',
       );
     }
     lines.push('', ...jsonValueHelp(fields), '');

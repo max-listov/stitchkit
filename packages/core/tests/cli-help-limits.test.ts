@@ -152,7 +152,7 @@ describe('CLI help exposes the schema limits before execution', () => {
     expect(argument(out, 'key')).toContain(
       '<string> [length >=1, length <=12] (required) — Access key',
     );
-    expect(argument(out, 'names')).toContain('<value…> [items >=2, items <=4] (required)');
+    expect(argument(out, 'names')).toContain('<value> [items >=2, items <=4] (required)');
     expect(argument(out, 'names')).not.toContain('20');
   });
 
@@ -160,7 +160,7 @@ describe('CLI help exposes the schema limits before execution', () => {
     const { out } = await run(['local', '--help']);
     expect(argument(out, 'zero')).toContain('<number> [>=0, <=0]');
     expect(argument(out, 'empty')).toContain('<string> [length >=0, length <=0]');
-    expect(argument(out, 'none')).toContain('<value…> [items <=0]');
+    expect(argument(out, 'none')).toContain('<value> [items <=0]');
     expect(argument(out, 'query').trimEnd().endsWith('<string>')).toBe(true);
     expect(argument(out, 'query')).not.toContain('[' + 'length');
   });
@@ -212,7 +212,7 @@ describe('CLI help exposes the schema limits before execution', () => {
     );
     expect(argument(out, 'maybe')).toContain('[any of: string [length >=1] | null]');
     expect(argument(out, 'free')).not.toContain('any of:');
-    expect(argument(out, 'either')).toContain('[any of: value… [items <=3] | value]');
+    expect(argument(out, 'either')).toContain('[any of: value [items <=3] | value]');
     expect(argument(out, 'joined')).toContain('[all of: number [>=1] & number [<=5]]');
   });
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Targets stitchkit `^0.112.0`, keeping consumers on one framework copy when they adopt the explicit CLI array positional grammar. No terminal source change is needed.
+
 ## [0.2.6] - 2026-10-17
 
 ### Changed

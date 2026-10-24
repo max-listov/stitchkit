@@ -76,6 +76,17 @@ function buildToolArgs(
   allowUnknown: boolean,
 ): Record<string, unknown> {
   const { flags, jsonFields, literalBooleanFlags, positionals } = tokens;
+  // Without an explicit positional policy, a bare token beside an array flag
+  // could be its next element or an unrelated schema-order field. Refuse before
+  // assigning either meaning; aliases and dotted leaves use the same resolver.
+  if (declaredPositionals === undefined && positionals.length > 0) {
+    const arrayFlag = [...flags.keys()].find((key) => fieldFor(key)?.kind === 'array');
+    if (arrayFlag !== undefined) {
+      throw new CliArgumentError(
+        `--${arrayFlag} cannot be combined with automatic positional arguments. Repeat --${arrayFlag} for each element or use --${arrayFlag}:=JSON; name other fields with flags, or declare a positional policy.`,
+      );
+    }
+  }
   // ── Build the tool-argument object ──
   const toolArgs: Record<string, unknown> = {};
 
