@@ -84,6 +84,10 @@ reapplied. Failure leaves the original history canonical.
 Failed terminal evidence remains omitted by default. An explicit `AgentHistoryEvidencePolicy` may
 include a marked partial failed assistant; projection, token budgeting and compaction consume the
 same policy so no hidden record reserves budget or reappears unmarked through a summary.
+An opted-in empty failed assistant still projects a non-success marker. Compaction passes raw
+records to the summarizer: the host must preserve failed/uncertain outcomes, and a projection
+refusal must stop the replacement. Whole-turn chronology does not settle an external effect;
+canonical effect events and retained terminal receipts survive compaction (ADR 0269).
 
 ## Models and loop
 

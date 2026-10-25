@@ -3,6 +3,17 @@ import type { InstalledConsumerProof } from './installed-proof-contract';
 /** Runtime capability and declarations are mandatory witnesses of this optional store extension. */
 export const agentConversationProofs: InstalledConsumerProof[] = [
   {
+    id: 'agent-failed-compaction',
+    fixture: 'node',
+    entry: 'agent-failed-compaction.mjs',
+    files: [],
+    peers: ['zod', 'ai', '@modelcontextprotocol/server'],
+    platforms: ['linux', 'darwin'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed failed compaction evidence: ok',
+  },
+  {
     id: 'agent-conversation-provider',
     fixture: 'node',
     entry: 'agent-conversation-provider.mjs',

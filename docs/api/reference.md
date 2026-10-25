@@ -1196,6 +1196,16 @@ projection, budgeting and structured compaction; `isAssistantHistoryEvidence` ap
 compatibility default omits it. Approval message schemas are
 `AgentToolApprovalRequestPartSchema` and `AgentToolApprovalResponsePartSchema`.
 
+With `failedAssistant: 'assistant-marked'`, `selectCompactableHistory` and
+`structuredCompaction` admit a failed prefix only when the entire turn's tool chronology
+is complete. `eligibleMessages` stays raw: the summarizer must use the same policy in
+`projectAgentHistoryDetailed` and preserve non-success/uncertain outcomes in its summary.
+Even an empty opted-in failed assistant carries a non-success marker in that projection.
+Use `incompleteToolTurn: 'error'` to refuse a range the projector cannot represent.
+Compaction never deletes canonical effect events or the retained terminal receipt;
+chronological completeness does not settle an external effect. See the
+[failed-prefix recovery contract](../guide/agent-runtime.md#recovering-a-prefix-after-a-failed-turn).
+
 Model exports are `AgentLanguageModelProvider`, `AgentModelCapability`,
 `AgentModelCapabilitySchema`, `AgentModelDescriptor`,
 `AgentModelDescriptorSchema`, `AgentModelRegistry`, `AgentModelRegistryConfig`,

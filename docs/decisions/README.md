@@ -298,6 +298,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0266](0266-a-discovered-schemas-unions-are-judged-by-its-server.md) | A discovered schema's unions are judged by its server | Active — follows 0205: a local refusal that is only a union's of a restored foreign schema sends the value; the remote's refusal is the answer | I2, I13 |
 | [0267](0267-a-flat-alternative-names-the-values-that-select-it.md) | A flat alternative names the values that select it | Active — amends 0205: each `anyOf` alternative of a shared field is described by the discriminator values that select it | I1, I2 |
 | [0268](0268-named-cli-arrays-require-explicit-positional-destinations.md) | Named CLI arrays require explicit positional destinations | Active — refuse named arrays beside automatic positionals before dispatch; explicit policies own their destinations | I2, I3, I8, I9, I12, I14 |
+| [0269](0269-compaction-evidence-does-not-settle-effects.md) | Compaction evidence does not settle effects | Accepted — explicit failed evidence keeps its marker; history replacement leaves effect authority in the canonical journal | I8, I12, I13, I15 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

@@ -1365,6 +1365,62 @@ replace a leading summary on the next compaction.
 Set `maxAttempts` to allow bounded conflict recovery. Every retry reloads the snapshot, reselects the
 eligible range and recomputes the summary; the stale summary is never retried.
 
+### Recovering a prefix after a failed turn
+
+The default evidence policy omits failed assistants. A failed turn therefore stops the
+compactable prefix, including completed turns after it. A terminal failure is not an
+unanswered tool call, but opting its partial evidence into a summary is an explicit host
+decision. Use the existing `evidencePolicy: { failedAssistant: 'assistant-marked' }` on
+`structuredCompaction` (or `selectCompactableHistory`) when that evidence is wanted.
+The same policy belongs on the summarizer's history projection and on any corresponding
+token-budget selection. Stored statuses remain unchanged.
+
+The summarizer receives **raw** `eligibleMessages`, not provider messages and not an
+automatic failure marker. Project them with the same policy before sending them to a
+model, and preserve failed outcomes in the application's structured summary and prompt:
+
+```ts
+const evidencePolicy: AgentHistoryEvidencePolicy = {
+  failedAssistant: 'assistant-marked',
+}
+
+// Inside structuredCompaction({ evidencePolicy, ... }).summarize:
+const projected = await projectAgentHistoryDetailed(eligibleMessages, {
+  evidencePolicy,
+  incompleteToolTurn: 'error',
+})
+const failedMessageIds = eligibleMessages
+  .filter(message => message.role === 'assistant' && message.status === 'failed')
+  .map(message => message.id)
+// Pass projected.messages, projected.system and failedMessageIds to the host's
+// summarizer. Its schema/prompt must retain failures and uncertain effects as
+// such, merge previousSummary, and never describe partial output as success.
+```
+
+An opted-in failed assistant projects an explicit non-success marker even when it has
+no text or only control parts. A dangling call, unresolved approval, invalid result
+chronology or a user input with no assistant remains a barrier under either policy.
+Raw whole-turn completeness does not guarantee that every record can be projected:
+for example, a call and its result split across records may be rejected by the projector.
+`incompleteToolTurn: 'error'` makes that rejection stop summarization; the original history
+stays canonical. A host with such records must use a status-aware summarizer that explicitly
+represents every relevant record, or retain the range. Do not silently summarize an omitted
+exchange, filter the failed record out of the replacement range, rewrite its status or skip
+over an incomplete turn. The replacement remains one contiguous prefix under snapshot CAS.
+
+Provider chronology and external effect authority answer different questions (ADR 0269).
+A matching `tool-result` with `outcome: 'error'` and an application code such as `UNKNOWN`
+closes the provider exchange; it does **not** prove the external effect failed or succeeded.
+Compaction changes the model-history projection, not the canonical event journal or the
+retained terminal admission receipt. The `durability/effect` intent, accepted proof and
+uncertain outcome remain available after compaction and archive restore. A reconstructed
+`createLocalStepDurability` using the original `(conversationId, runId, effectName)` returns
+the accepted proof, reconciles a bare intent, or returns `uncertain` without calling `run`
+again. It does not deduplicate a new run or a newly named effect. Standalone effect callers
+still own the exclusive execution lease; sharing a ledger is not an atomic claim.
+An application-owned receipt outside that journal retains its own recovery rules and must
+not be discarded because a history turn became compactable.
+
 ### Compacting without the store
 
 The *selection* inside compaction needs no store, no version and no runtime, so

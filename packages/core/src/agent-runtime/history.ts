@@ -272,7 +272,9 @@ function assistantMessages(
       rendered.add('tool-approval-response');
     }
   }
-  if (marker && (messages.length > 0 || content.length > 0)) {
+  // An opted-in failure is evidence even when the provider produced no content.
+  // Its marker must survive projection before a summarizer replaces the raw turn.
+  if (marker === 'failed' || (marker && (messages.length > 0 || content.length > 0))) {
     append('assistant', {
       type: 'text',
       text: marker === 'interrupted' ? INTERRUPTION_NOTE : FAILURE_NOTE,

@@ -15,6 +15,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/agent-runtime` — an empty or control-only failed assistant now retains its non-success marker when explicitly included with `evidencePolicy.failedAssistant: 'assistant-marked'`. The default still omits failed evidence. The compaction guide explains the existing failed-prefix recovery policy, status-aware summarization, and why a closed tool exchange cannot settle an external effect. → ADR 0269
+  **Affects:** `stitchkit/agent-runtime` projectAgentHistory, projectAgentHistoryDetailed
+
 ## [0.112.0] - 2026-10-24
 
 ### ⚠️ Breaking changes
