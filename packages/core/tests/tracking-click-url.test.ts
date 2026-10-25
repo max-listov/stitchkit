@@ -22,7 +22,7 @@ test('hrefPolicy retains internal and outbound query and fragment only when full
       'https://outside.example/item?q=one#part',
     ],
     [
-      'https://u:secret@outside.example/item?q=one#part',
+      'https://example-user:example-password@outside.example/item?q=one#part',
       'https://outside.example/item',
       'https://outside.example/item?q=one#part',
     ],
