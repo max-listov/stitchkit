@@ -1363,5 +1363,19 @@
     "assetPath": {
       "test": "packaging target, delivery and output paths change the real Bun build graph"
     }
+  },
+  "ResolveTrackedClickOptions": {
+    "origin": {
+      "test": "click origin attributes and action predicate retain their meanings with full URLs"
+    },
+    "attributes": {
+      "test": "click origin attributes and action predicate retain their meanings with full URLs"
+    },
+    "isAction": {
+      "test": "click origin attributes and action predicate retain their meanings with full URLs"
+    },
+    "hrefPolicy": {
+      "test": "hrefPolicy retains internal and outbound query and fragment only when full"
+    }
   }
 }

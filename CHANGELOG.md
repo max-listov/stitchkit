@@ -15,6 +15,10 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/tracking` — `resolveTrackedClick` and `createTrackingClient` accept `hrefPolicy: 'full'` to retain internal and outbound click query parameters and fragments before consumer `decorate` redaction. The default `path-only` policy, navigation classification, labels and listener cleanup stay unchanged; URL credentials remain excluded.
+
 ## [0.112.1] - 2026-10-25
 
 ### Fixed

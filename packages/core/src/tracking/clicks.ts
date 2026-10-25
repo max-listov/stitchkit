@@ -27,6 +27,8 @@ export interface ResolveTrackedClickOptions {
   attributes?: TrackedClickAttributes;
   /** Whether an action name is one the application knows. Default: any. */
   isAction?: (action: string) => boolean;
+  /** Click URLs omit query/fragment by default. `full` retains both for consumer redaction. */
+  hrefPolicy?: 'path-only' | 'full';
 }
 
 export interface TrackedClick {
@@ -41,11 +43,16 @@ function label(target: ClickTarget | null): string | undefined {
   return (target?.textContent ?? '').trim().slice(0, 100) || undefined;
 }
 
-function sanitizedHref(value: string | null, origin: string): string | undefined {
+function trackedHref(
+  value: string | null,
+  origin: string,
+  policy: ResolveTrackedClickOptions['hrefPolicy'],
+): string | undefined {
   if (!value) return undefined;
   try {
     const url = new URL(value, origin);
-    return url.origin === origin ? url.pathname : `${url.origin}${url.pathname}`;
+    const path = `${url.pathname}${policy === 'full' ? url.search + url.hash : ''}`;
+    return url.origin === origin ? path : `${url.origin}${path}`;
   } catch {
     return undefined;
   }
@@ -53,7 +60,7 @@ function sanitizedHref(value: string | null, origin: string): string | undefined
 
 export function resolveTrackedClick(
   target: ClickTarget | null,
-  { origin, attributes = {}, isAction = () => true }: ResolveTrackedClickOptions,
+  { origin, attributes = {}, isAction = () => true, hrefPolicy }: ResolveTrackedClickOptions,
 ): TrackedClick | null {
   if (!target) return null;
   const trackAttribute = attributes.track ?? 'data-track';
@@ -88,12 +95,15 @@ export function resolveTrackedClick(
       result.click = {
         element,
         elementText: label(tracked),
-        href: sanitizedHref(href, origin),
+        href: trackedHref(href, origin, hrefPolicy),
       };
     }
   }
   if (outbound && href) {
-    result.outbound = { href: sanitizedHref(href, origin) ?? href, label: label(anchor) };
+    result.outbound = {
+      href: trackedHref(href, origin, hrefPolicy) ?? href,
+      label: label(anchor),
+    };
   }
   return result.interaction || result.click || result.outbound ? result : null;
 }

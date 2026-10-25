@@ -27,6 +27,7 @@ export interface TrackingListenerDeps<TType extends string> {
   releaseLease(): void;
   readonly clickAttributes: Parameters<typeof resolveTrackedClick>[1]['attributes'];
   readonly isAction: Parameters<typeof resolveTrackedClick>[1]['isAction'];
+  readonly hrefPolicy: Parameters<typeof resolveTrackedClick>[1]['hrefPolicy'];
 }
 
 export function wireTrackingListeners<TType extends string>(
@@ -88,6 +89,7 @@ export function wireTrackingListeners<TType extends string>(
         origin: host.page().origin,
         attributes: deps.clickAttributes,
         isAction: deps.isAction,
+        hrefPolicy: deps.hrefPolicy,
       });
       if (!click) return;
       const drafts: Draft<TType>[] = [];

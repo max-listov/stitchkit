@@ -89,6 +89,24 @@ createTrackingClient<BrowserEvents, TrackingEventEnvelope<keyof BrowserEvents> &
 })
 ```
 
+### Click URL retention
+
+`resolveTrackedClick(target, { origin, hrefPolicy: 'full' })` and
+`createTrackingClient({ …, hrefPolicy: 'full' })` retain the clicked URL's pathname,
+query and fragment. Internal URLs are relative (`/item?offer=one#details`);
+outbound URLs include their origin (`https://other.example/item?offer=one#details`).
+URL credentials are excluded. Omitting the option, or selecting `path-only`,
+keeps the default that omits query and fragment. Navigation classification,
+labels and subscriptions are independent of this policy.
+
+Full URLs may contain sensitive values. Supply your application's password and
+secret redactor through `decorate` before enabling `full`: it receives the retained
+`event.metadata.href` and must return the redacted metadata. The returned event is
+what the outbox, synchronous unload and normal delivery receive. The framework
+has no application-specific password policy. This option controls click and
+outbound-click metadata; it does not change attribution, page tracking or interaction
+metadata. Use the same redactor on your other ingestion paths.
+
 A `bootstrap` operation that needs extra fields of its own (a locale, a RUM
 flag) is not the factory's: build the `entry` schema with
 `createTrackingSchemas(…).entry.extend({ … })` and declare that endpoint yourself.

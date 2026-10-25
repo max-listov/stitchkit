@@ -13,7 +13,7 @@
  */
 import type { ReferrerRule, ResolvedAttribution } from './attribution';
 import { sendUnloadBeacon } from './beacon';
-import type { TrackedClickAttributes } from './clicks';
+import type { ResolveTrackedClickOptions, TrackedClickAttributes } from './clicks';
 import { wireTrackingListeners } from './client-listeners';
 import {
   bootstrapTrackingVisit,
@@ -119,6 +119,8 @@ export interface TrackingClientConfig<
   isAction?: (action: string) => boolean;
   referrerMap?: readonly ReferrerRule[];
   clickAttributes?: TrackedClickAttributes;
+  /** Click URL retention before `decorate`. Default `path-only`; `full` includes query/fragment. */
+  hrefPolicy?: ResolveTrackedClickOptions['hrefPolicy'];
   scrollMilestones?: readonly number[];
   /** Heartbeat and flush period. Default 30 s. */
   heartbeatMs?: number;
@@ -370,6 +372,7 @@ export function createTrackingClient<
           void outbox.releaseLease(flushOwner).catch(() => undefined);
       },
       clickAttributes: config.clickAttributes,
+      hrefPolicy: config.hrefPolicy,
       isAction: config.isAction,
     });
     return () => {

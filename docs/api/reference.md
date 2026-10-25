@@ -2132,7 +2132,7 @@ application's — it owns the router and the session. The server half is
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createTrackingClient` | function | the client: visit lease and renewal, pending queue, synchronous identity from reserved sequences, outbox and flush lease, delivery, the string-body page-leave beacon plus a queued copy, visible time, scroll milestones, declarative clicks, heartbeats |
-| `TrackingClient` / `TrackingClientConfig` | _type_ | `track` / `onNavigate` / `start` / `visitId` / `browserStreamId` / `attribution`, and the host, `buildId`, `builtin` names, `bootstrap`, `deliver`, optional `decorate` (your `eventExtras` on every minted event), `unload` / `unloadUrl`, `outbox`, `onUnauthorized`, `onVisit`, `onFailure`, `isAction`, `referrerMap`, `clickAttributes`, `scrollMilestones`, `batchSize`, periods and limits |
+| `TrackingClient` / `TrackingClientConfig` | _type_ | `track` / `onNavigate` / `start` / `visitId` / `browserStreamId` / `attribution`, and the host, `buildId`, `builtin` names, `bootstrap`, `deliver`, optional `decorate` (your `eventExtras` on every minted event), `unload` / `unloadUrl`, `outbox`, `onUnauthorized`, `onVisit`, `onFailure`, `isAction`, `referrerMap`, `clickAttributes`, `hrefPolicy` (`path-only` by default; `full` retains click query/fragment before `decorate`), `scrollMilestones`, `batchSize`, periods and limits |
 | `TrackFn` / `EventsWithMetadata` / `EventsWithoutMetadata` | _type_ | `track(type)` / `track(type, metadata)` typed by the application's metadata map, and the two halves of that map |
 | `BuiltinTrackingEventTypes` / `CONVENTIONAL_TRACKING_EVENT_TYPES` | _type_ / const | the application's names for the events the client emits itself; the conventional `PAGE_VIEW` … `INTERACTION` set |
 | `browserTrackingHost` / `TrackingHost` / `TrackingPageContext` | function / _type_ | everything the client takes from a browser tab behind one interface — page context, visibility, scroll depth, events, intervals, clocks, storage — so a test or a non-tab host can supply its own |
@@ -2156,7 +2156,7 @@ application's — it owns the router and the session. The server half is
 | `createOncePerPage` / `OncePerPage` | function / _type_ | one fact per key per page within a window — the guard a twice-mounted component cannot keep itself |
 | `resolveAttribution` / `ResolveAttributionInput` / `ResolvedAttribution` / `AttributionStorage` / `ReferrerRule` | function / _type_ | first-touch once, current-touch on every new UTM; the referrer → source/medium map is the application's, there is no built-in list |
 | `parseUtmFromSearch` / `parseReferrer` | function | the two parsers `resolveAttribution` is built from |
-| `resolveTrackedClick` / `ResolveTrackedClickOptions` / `TrackedClick` / `TrackedClickAttributes` / `ClickTarget` | function / _type_ | `data-track` → click, `data-track-action` → interaction, a link to another origin → outbound; attribute names configurable; `leavesPage` says which path to send on |
+| `resolveTrackedClick` / `ResolveTrackedClickOptions` / `TrackedClick` / `TrackedClickAttributes` / `ClickTarget` | function / _type_ | `data-track` → click, `data-track-action` → interaction, a link to another origin → outbound; attribute names configurable; `hrefPolicy: 'full'` retains query/fragment (default `path-only` omits them), URL credentials excluded; `leavesPage` says which path to send on |
 
 ---
 
