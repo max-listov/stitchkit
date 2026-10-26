@@ -63,7 +63,7 @@ export const sqliteHistory: SqliteStoreDriver['history'] = {
         ? mutation.input
         : mutation.type === 'upsert-assistant'
           ? mutation.message
-          : mutation.type === 'seed'
+          : mutation.type === 'seed' || mutation.type === 'insert'
             ? mutation.message
             : mutation.summary;
     if (mutation.type === 'seed') {
@@ -140,6 +140,30 @@ export const sqliteHistory: SqliteStoreDriver['history'] = {
         WHERE conversation_id = ? AND id = ?
       `)
       .get(message.conversationId, message.id);
+    if (mutation.type === 'insert' && missing(existing) && mutation.beforeMessageId) {
+      const anchor = transaction
+        .prepare(`
+          SELECT position FROM stitchkit_agent_runtime_messages
+          WHERE conversation_id = ? AND id = ? AND active = 1
+        `)
+        .get(message.conversationId, mutation.beforeMessageId);
+      if (missing(anchor)) throw new Error('Insert anchor is not in the active history');
+      const { position } = PositionedMessageRowSchema.parse(anchor);
+      transaction
+        .prepare(`
+          UPDATE stitchkit_agent_runtime_messages SET position = position + 1
+          WHERE conversation_id = ? AND position >= ?
+        `)
+        .run(message.conversationId, position);
+      transaction
+        .prepare(`
+          INSERT INTO stitchkit_agent_runtime_messages
+            (conversation_id, id, position, active, payload)
+          VALUES (?, ?, ?, 1, ?)
+        `)
+        .run(message.conversationId, message.id, position, encodeJson(message));
+      return;
+    }
     if (!missing(existing)) {
       transaction
         .prepare(`

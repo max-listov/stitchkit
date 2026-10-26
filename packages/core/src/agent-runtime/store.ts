@@ -181,6 +181,15 @@ export const SeedConversationInputSchema = z.object({
   conversationId: AgentRecordIdSchema,
   seedKey: z.string().min(1),
   inputs: z.array(AgentMessageSchema).min(1),
+  /**
+   * Where the messages land. Absent or `'lead'`: user instructions ahead of the
+   * whole conversation. `'after-settled'`: an exchange that already happened
+   * without a model — committed user messages and completed assistant messages,
+   * none owned by a run — after the settled history and ahead of the first
+   * message of any run still active, so an active run's input and answer stay
+   * adjacent. → ADR 0271
+   */
+  placement: z.enum(['lead', 'after-settled']).optional(),
 });
 
 export type AcceptInputAndAssignRun = z.infer<typeof AcceptInputAndAssignRunSchema>;
@@ -247,9 +256,11 @@ export interface AgentRuntimeStore {
   commitRunTerminal(input: CommitRunTerminal): Promise<AgentStoreMutationResult>;
   replaceCompactedRange(input: ReplaceCompactedRange): Promise<AgentStoreMutationResult>;
   /**
-   * Write user-role instructions into durable history exactly once per key.
+   * Write history no run owns exactly once per key: user instructions ahead of
+   * the conversation, or (`placement: 'after-settled'`) an exchange completed
+   * without a model after its settled history.
    *
-   * The messages become ordinary user history (no run owns them), so they
+   * The messages become ordinary history (no run owns them), so they
    * appear in `snapshot().messages`, compaction may summarize them, and a
    * history replacement removes them. A subsequent call with the same
    * `seedKey` is a no-op even after that removal, because "already seeded" is

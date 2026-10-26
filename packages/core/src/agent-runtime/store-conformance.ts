@@ -132,6 +132,54 @@ async function seedScenario(store: AgentRuntimeStore, conversationId: string): P
   const after = await store.loadSnapshot(conversationId);
   if (after.messages.some((message) => message.id === 'seed-a' || message.id === 'seed-b'))
     throw new Error('Seed conformance: compacted instructions resurrected');
+  await settledExchangeScenario(store, conversationId);
+}
+
+/**
+ * A keyed exchange completed without a model lands after the settled history:
+ * at the tail with no active run, and ahead of an active run's input otherwise.
+ */
+async function settledExchangeScenario(
+  store: AgentRuntimeStore,
+  conversationId: string,
+): Promise<void> {
+  const exchange = (key: string) => ({
+    conversationId,
+    seedKey: key,
+    placement: 'after-settled' as const,
+    inputs: [
+      userMessage(conversationId, `${key}-user`),
+      AgentMessageSchema.parse({
+        ...userMessage(conversationId, `${key}-assistant`),
+        role: 'assistant',
+        status: 'completed',
+      }),
+    ],
+  });
+  const order = async () =>
+    (await store.loadSnapshot(conversationId)).messages.map((message) => message.id).join(',');
+  requireOutcome(await store.seedConversationInput(exchange('tail')), 'applied');
+  if ((await order()) !== 'seed-summary,tail-user,tail-assistant')
+    throw new Error('Settled exchange conformance: an idle conversation did not append it');
+  requireOutcome(
+    await store.acceptInputAndAssignRun({
+      idempotencyKey: 'settled-exchange-run',
+      input: userMessage(conversationId, 'queued-input'),
+      run: queuedRun(conversationId, 'queued-input', 'queued-run'),
+    }),
+    'applied',
+  );
+  await Promise.all([
+    store.seedConversationInput(exchange('ahead')),
+    store.seedConversationInput(exchange('ahead')),
+  ]);
+  if (
+    (await order()) !==
+    'seed-summary,tail-user,tail-assistant,ahead-user,ahead-assistant,queued-input'
+  )
+    throw new Error(
+      'Settled exchange conformance: it must land once, ahead of the active run input',
+    );
 }
 
 async function conformanceScenario(

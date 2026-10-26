@@ -240,7 +240,7 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
      * application can prove the assembled step exceeds the model budget.
      */
     prepareStep?: AgentRuntimePrepareStep<CONTEXT, TOOLS>;
-    stopPolicies?: readonly AgentRuntimeStopPolicy<TOOLS>[];
+    stopPolicies?: readonly AgentRuntimeStopPolicy<TOOLS, CONTEXT>[];
     toolApproval?: ToolApprovalConfiguration<TOOLS, CONTEXT>;
     /** Enables the SDK's HMAC binding between approval request and exact tool call/input. */
     toolApprovalSecret?: string | Uint8Array;
@@ -281,9 +281,16 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
   now?: () => Date;
 }
 
-export interface AgentRuntimeStopPolicy<TOOLS extends ToolSet = ToolSet> {
+/**
+ * A rule that ends the run at a step boundary. `when` sees the steps so far and the
+ * same run context `prepareStep` sees, so a rule that depends on its run reads it
+ * here instead of keeping a map of its own keyed by run.
+ */
+export interface AgentRuntimeStopPolicy<TOOLS extends ToolSet = ToolSet, CONTEXT = unknown> {
   name: string;
-  when: StopCondition<TOOLS>;
+  when: (
+    input: Parameters<StopCondition<TOOLS>>[0] & AgentRuntimeRunContext<CONTEXT>,
+  ) => ReturnType<StopCondition<TOOLS>>;
 }
 
 export interface AgentRuntime<CONTEXT = unknown> {

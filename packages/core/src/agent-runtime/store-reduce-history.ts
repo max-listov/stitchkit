@@ -91,13 +91,78 @@ export function reduceAccept(
   );
 }
 
-/** Prepend a keyed user-instruction seed ahead of the conversation. */
+function seedReceipt(input: SeedConversationInput) {
+  return AgentSeedReceiptSchema.parse({
+    schemaVersion: 1,
+    conversationId: input.conversationId,
+    seedKey: input.seedKey,
+    messageIds: input.inputs.map((message) => message.id),
+  });
+}
+
+/**
+ * Place a keyed exchange that happened without a model after the settled history.
+ *
+ * "Settled" is everything no active run owns. The exchange lands ahead of the
+ * first message of an active run — its input, or its answer once checkpointed —
+ * so an active run's input and answer stay adjacent and the next run reads the
+ * exchange before the input it was queued behind. With no active run it is the
+ * tail.
+ */
+function reduceSettledSeed(
+  current: AgentSnapshot,
+  input: SeedConversationInput,
+): ReducedMutation {
+  for (const message of input.inputs) {
+    if (
+      message.conversationId !== input.conversationId ||
+      message.runId !== undefined ||
+      !(
+        (message.role === 'user' && message.status === 'committed') ||
+        (message.role === 'assistant' && message.status === 'completed')
+      )
+    ) {
+      throw new TypeError(
+        'A settled exchange must be committed user and completed assistant messages no run owns',
+      );
+    }
+  }
+  const activeMessageIds = new Set(
+    current.runs
+      .filter((run) => isActiveRunState(run.state))
+      .flatMap((run) => [...run.inputMessageIds, run.assistantMessageId]),
+  );
+  const anchor = current.messages.find((message) => activeMessageIds.has(message.id));
+  const at = anchor ? current.messages.indexOf(anchor) : current.messages.length;
+  return applied(
+    current,
+    {
+      messages: [
+        ...current.messages.slice(0, at),
+        ...input.inputs,
+        ...current.messages.slice(at),
+      ],
+    },
+    {
+      seedReceipt: seedReceipt(input),
+      // Each lands ahead of the same anchor, so applied in order they keep it.
+      historyMutations: input.inputs.map((message) => ({
+        type: 'insert' as const,
+        message,
+        ...(anchor && { beforeMessageId: anchor.id }),
+      })),
+    },
+  );
+}
+
+/** Write a keyed seed: user instructions ahead of the conversation, or a settled exchange. */
 export function reduceSeed(
   current: AgentSnapshot,
   input: SeedConversationInput,
 ): ReducedMutation {
   const conversationId = input.conversationId;
   if (current.conversationId !== conversationId) return { outcome: 'not_found' };
+  if (input.placement === 'after-settled') return reduceSettledSeed(current, input);
   for (const message of input.inputs) {
     if (
       message.conversationId !== conversationId ||
@@ -115,12 +180,7 @@ export function reduceSeed(
     current,
     { messages: [...input.inputs, ...current.messages] },
     {
-      seedReceipt: AgentSeedReceiptSchema.parse({
-        schemaVersion: 1,
-        conversationId,
-        seedKey: input.seedKey,
-        messageIds: input.inputs.map((message) => message.id),
-      }),
+      seedReceipt: seedReceipt(input),
       // Applied front-first, so the persisted order matches the snapshot:
       // each prepend lands ahead of the one before it.
       historyMutations: [...input.inputs].reverse().map((message) => ({

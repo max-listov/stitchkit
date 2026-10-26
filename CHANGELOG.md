@@ -15,6 +15,19 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** custom `AgentRuntimeStoreDriver` adapters must apply the new `insert` history mutation; custom `AgentRuntimeStore` implementations of `seedConversationInput` must honour `placement`. Applications on the built-in memory or SQLite stores need no change.
+
+- `stitchkit/agent-runtime` — **a store driver applies `insert` history mutations.** `seedConversationInput` with `placement: 'after-settled'` places an exchange completed without a model ahead of an active run's first message, which no existing mutation can express. A driver whose `history.apply` does not handle `{ type: 'insert', message, beforeMessageId? }` corrupts or refuses that write. Before: `apply` handled `admit`, `upsert-assistant`, `replace-compacted-range` and `seed`. After: it also places `message` ahead of the active row `beforeMessageId`, at the end when absent, and replaces a message already present where it stands. `runAgentStoreConformance` proves it; the Prisma example shows the implementation. See [ADR 0271](docs/decisions/0271-an-exchange-without-a-model-is-settled-history.md) and the [migration](docs/guide/upgrading.md).
+  **Affects:** `stitchkit/agent-runtime` AgentRuntimeStoreDriver, AgentHistoryMutationSchema, AgentRuntimeStore(seedConversationInput)
+
+### Added
+
+- `stitchkit/agent-runtime` — `seedConversationInput` takes `placement: 'after-settled'` to write a keyed exchange that happened without a model (committed user and completed assistant messages, no run) after the settled history and ahead of any active run. It is ordinary history: in the snapshot, in compaction and in the next provider request; no model call and no run. → ADR 0271
+
+- `stitchkit/agent-runtime` — a stop policy's `when` receives the run context next to `steps`: `context`, `run`, `signal`, `toolFenceLifecycle` and `contextUsage`, the same shape `prepareStep` gets, typed by the runtime's `CONTEXT`. A rule that depends on its own run no longer needs a module map keyed by `runId`. A policy that reads only `steps` is unchanged.
+
 ## [0.112.3] - 2026-10-26
 
 ### Fixed

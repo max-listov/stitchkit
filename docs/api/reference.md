@@ -1027,7 +1027,7 @@ Server-only optional application runtime. See the
 | `selectCompactableHistory` | function | which oldest whole complete turns may be summarised away — the half of compaction that needs no store (→ ADR 0142) |
 | `SelectCompactableHistoryOptions` / `CompactableHistory` | _type_ | message list, retained-turn count and evidence policy in; `leadingSummary`, `compactable` and `retained` out |
 | `createAgentSessionCoordinator` | function | strict process-local queue/interrupt/supersede lifecycle |
-| `AgentRuntimeStopPolicy` | _type_ | named custom AI SDK stop condition persisted and published on policy stop |
+| `AgentRuntimeStopPolicy` | _type_ | named stop rule persisted and published on policy stop; `when` receives the AI SDK `steps` plus the run context `prepareStep` gets (`context`, `run`, `signal`, `toolFenceLifecycle`, `contextUsage`) |
 | `AgentRuntimePrepareStep` | _type_ | per-run controlled step callback with typed domain context and managed run signal/fence |
 | `AgentContextOverflowError` | class | deliberate application budget refusal thrown from `loop.prepareStep`; terminalizes as `context_overflow` without classifying arbitrary error text |
 | `AgentRuntimeRecordIds` | _type_ | optional caller-provided input, run and assistant IDs for stable application records |

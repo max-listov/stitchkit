@@ -1,5 +1,24 @@
 # Upgrading stitchkit
 
+## Unreleased migration: 0.113.0
+
+**Who must act:** custom `AgentRuntimeStoreDriver` adapters and custom `AgentRuntimeStore` implementations of `seedConversationInput`. The built-in memory and SQLite stores already implement the contract.
+
+`seedConversationInput({ placement: 'after-settled' })` emits one `insert` history mutation per message. A driver's `history.apply` places the message ahead of the active row named `beforeMessageId`, or at the end when it is absent, and replaces a message already present in place:
+
+```ts
+// after: one more branch in history.apply
+if (mutation.type === 'insert') {
+  if (await exists(mutation.message.id)) return replaceInPlace(mutation.message)
+  if (mutation.beforeMessageId === undefined) return appendAtEnd(mutation.message)
+  const anchor = await activePosition(mutation.beforeMessageId) // refuse when missing
+  await shiftPositionsFrom(anchor) // every row at or after it moves one down
+  return insertAt(anchor, mutation.message)
+}
+```
+
+A custom `AgentRuntimeStore` that implements `seedConversationInput` itself places `'after-settled'` messages after the settled history and ahead of the first message of any active run, and keeps `'lead'` (or an absent `placement`) as before. Run `runAgentStoreConformance` against the adapter; `examples/agent-store-prisma/adapter.ts` shows the Prisma form.
+
 ## Released migration: 0.112.0
 
 **Who must act:** scripts using an array option together with bare positional arguments without a declared `positionals` policy, including calls to `parseCliArgs`.

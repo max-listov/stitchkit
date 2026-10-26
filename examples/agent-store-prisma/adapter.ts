@@ -319,7 +319,9 @@ export function createPrismaAgentStoreFixture(input: {
         const message =
           mutation.type === 'admit'
             ? mutation.input
-            : mutation.type === 'upsert-assistant' || mutation.type === 'seed'
+            : mutation.type === 'upsert-assistant' ||
+                mutation.type === 'seed' ||
+                mutation.type === 'insert'
               ? mutation.message
               : mutation.summary;
         const conversationStorageId = storageId(message.conversationId);
@@ -360,7 +362,34 @@ export function createPrismaAgentStoreFixture(input: {
               },
             },
           });
-          if (existing) {
+          const anchor =
+            !existing && mutation.type === 'insert' && mutation.beforeMessageId
+              ? await transaction.agentRuntimeMessage.findFirst({
+                  where: {
+                    conversationId: conversationStorageId,
+                    id: storageId(mutation.beforeMessageId),
+                    active: true,
+                  },
+                })
+              : undefined;
+          if (anchor === null) throw new Error('Insert anchor is not in the active history');
+          if (anchor) {
+            await transaction.agentRuntimeMessage.updateMany({
+              where: {
+                conversationId: conversationStorageId,
+                position: { gte: anchor.position },
+              },
+              data: { position: { increment: 1 } },
+            });
+            await transaction.agentRuntimeMessage.create({
+              data: {
+                conversationId: conversationStorageId,
+                id: storageId(message.id),
+                position: anchor.position,
+                payload: encodePayload(message),
+              },
+            });
+          } else if (existing) {
             await transaction.agentRuntimeMessage.update({
               where: {
                 conversationId_id: {

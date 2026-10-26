@@ -159,6 +159,12 @@ await ticket.accepted
 const terminal = await ticket.result
 ```
 
+A stop policy's `when` receives the steps so far together with the same run context
+`prepareStep` gets — `context`, `run`, `signal`, `toolFenceLifecycle` and `contextUsage` —
+typed by the runtime's `CONTEXT`. A rule that depends on its own run (a receipt bound to the
+run's request, a per-tenant limit) reads it there; it needs no map of its own keyed by `runId`.
+The first policy to return `true` ends the run as `policy_stop` with its `name` as `policyName`.
+
 ## Bounded deferred tool catalogs
 
 Use `createDeferredAgentToolSurface` when a measured large catalog makes
@@ -1005,6 +1011,31 @@ implement the smaller `AgentRuntimeStoreDriver` rather than these eleven members
 - `scanRecoverable` — one **bounded page** of recoverable runs; `recover()`
   calls this and nothing else, so an adapter that implements the interface has
   everything recovery needs
+
+### Writing history no run owns
+
+`seedConversationInput` writes messages no run owns, exactly once per `seedKey`; the key is
+recorded beside the history, so compaction or replacement of the messages never brings them
+back. It places them by `placement`:
+
+- absent or `'lead'` — committed user instructions ahead of the whole conversation;
+- `'after-settled'` — an exchange that already happened without a model (a confirmed voice
+  command and its receipt): committed `user` and completed `assistant` messages. They land after
+  the settled history and ahead of the first message of any run still active, so an active run's
+  input and answer stay adjacent and the next run reads the exchange before the input queued
+  behind it. With no active run they are the tail.
+
+```ts
+await store.seedConversationInput({
+  conversationId,
+  seedKey: `voice:${commandId}`,
+  placement: 'after-settled',
+  inputs: [ownerMessage, receiptMessage],
+})
+```
+
+The pair is ordinary history: it is in `loadSnapshot`, compaction may summarize it, and the next
+provider request carries it. No model is called and no run is created.
 
 ### Reading a conversation
 

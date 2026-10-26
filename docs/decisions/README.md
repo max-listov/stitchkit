@@ -300,6 +300,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0268](0268-named-cli-arrays-require-explicit-positional-destinations.md) | Named CLI arrays require explicit positional destinations | Active — refuse named arrays beside automatic positionals before dispatch; explicit policies own their destinations | I2, I3, I8, I9, I12, I14 |
 | [0269](0269-compaction-evidence-does-not-settle-effects.md) | Compaction evidence does not settle effects | Accepted — explicit failed evidence keeps its marker; history replacement leaves effect authority in the canonical journal | I8, I12, I13, I15 |
 | [0270](0270-a-served-tool-schema-is-written-in-2020-12-keywords.md) | A served tool schema is written in 2020-12 keywords | Accepted — the MCP document translates draft-07 tuples to `prefixItems` as well as `definitions` to `$defs`; the client reconciles older servers; amends 0185 | I13 |
+| [0271](0271-an-exchange-without-a-model-is-settled-history.md) | An exchange without a model is settled history | Accepted — a keyed seed with `placement: 'after-settled'` lands after settled history and ahead of any active run; drivers apply an anchored `insert` | I8, I14, I15 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

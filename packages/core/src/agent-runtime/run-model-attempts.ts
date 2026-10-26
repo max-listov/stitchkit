@@ -72,6 +72,7 @@ interface AttemptContext<CONTEXT, TOOLS extends ToolSet> {
 
 function createStopConditions<CONTEXT, TOOLS extends ToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
+  turn: PreparedTurn<CONTEXT, TOOLS>,
 ): StopCondition<TOOLS>[] {
   const { config, maxSteps } = execution.dependencies;
   const { state } = execution;
@@ -86,7 +87,7 @@ function createStopConditions<CONTEXT, TOOLS extends ToolSet>(
   ];
   for (const policy of config.loop?.stopPolicies ?? []) {
     stopConditions.push(async (options) => {
-      const stopped = await policy.when(options);
+      const stopped = await policy.when({ ...options, ...turn.runtimeContext });
       if (stopped && state.terminalPolicyName === undefined)
         state.terminalPolicyName = policy.name;
       return stopped;
@@ -398,7 +399,7 @@ export async function runModelAttempts<CONTEXT, TOOLS extends ToolSet>(
 ): Promise<void> {
   const { config, publish, now } = execution.dependencies;
   const { state } = execution;
-  const stopConditions = createStopConditions(execution);
+  const stopConditions = createStopConditions(execution, turn);
   const loop: AttemptLoopState = {
     retryAttempt: 1,
     takenThisAttempt: [],

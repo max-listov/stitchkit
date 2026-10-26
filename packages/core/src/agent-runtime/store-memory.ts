@@ -237,10 +237,28 @@ const memoryHistory: MemoryDriver['history'] = {
         ? mutation.input.conversationId
         : mutation.type === 'upsert-assistant'
           ? mutation.message.conversationId
-          : mutation.type === 'seed'
+          : mutation.type === 'seed' || mutation.type === 'insert'
             ? mutation.message.conversationId
             : mutation.summary.conversationId;
     const current = transaction.histories.get(conversationId) ?? [];
+    if (mutation.type === 'insert') {
+      const existingIndex = current.findIndex((message) => message.id === mutation.message.id);
+      if (existingIndex !== -1) {
+        transaction.histories.set(conversationId, replaceMessage(current, mutation.message));
+        return;
+      }
+      const anchorIndex =
+        mutation.beforeMessageId === undefined
+          ? current.length
+          : current.findIndex((message) => message.id === mutation.beforeMessageId);
+      if (anchorIndex === -1) throw new Error('Insert anchor is not in the active history');
+      transaction.histories.set(conversationId, [
+        ...current.slice(0, anchorIndex),
+        mutation.message,
+        ...current.slice(anchorIndex),
+      ]);
+      return;
+    }
     if (mutation.type === 'admit') {
       transaction.histories.set(conversationId, [...current, mutation.input]);
       return;

@@ -42,7 +42,7 @@ export type AgentStoredRun = z.infer<typeof AgentStoredRunSchema>;
 export type AgentAdmissionReceipt = z.infer<typeof AgentAdmissionReceiptSchema>;
 
 /**
- * The durable record that a keyed user-instruction seed already happened.
+ * The durable record that a keyed seed already happened.
  *
  * Kept beside the history rather than derived from it: compaction and `clear`
  * legitimately remove the seeded messages, and the seed must not return when
@@ -72,6 +72,16 @@ export const AgentHistoryMutationSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('seed'),
     message: AgentMessageSchema,
+  }),
+  /**
+   * Place one message no run owns ahead of `beforeMessageId` (an active row of the
+   * same conversation), or at the end when absent. A message already present is
+   * replaced where it stands, so a retried write stays idempotent.
+   */
+  z.object({
+    type: z.literal('insert'),
+    message: AgentMessageSchema,
+    beforeMessageId: AgentRecordIdSchema.optional(),
   }),
 ]);
 
