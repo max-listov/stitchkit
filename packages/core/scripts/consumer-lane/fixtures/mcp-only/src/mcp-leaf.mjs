@@ -24,10 +24,19 @@ const definition = {
     mcp: ({ doubled }) => ({ content: [{ type: 'text', text: `answer:${doubled}` }] }),
   },
 };
+const Channel = z.number().int().min(0).max(255);
+const paint = {
+  name: 'paint',
+  description: 'Paint a colour',
+  identity: { serviceName: 'colours', action: 'paint', method: 'POST' },
+  input: z.object({ rgb: z.tuple([Channel, Channel, Channel]) }),
+  output: z.object({ painted: z.boolean() }),
+  handler: () => ({ painted: true }),
+};
 const config = {
   serverInfo: { name: 'mcp-only', version: '1' },
   services: [],
-  runtimeTools: [definition],
+  runtimeTools: [definition, paint],
   auth: (request) =>
     request.headers.get('authorization') === 'Bearer fixture' ? { id: 'reader' } : null,
   hooks: { afterToolCall: ({ result }) => observed.push(result.ok) },
@@ -71,9 +80,14 @@ try {
   const listed = await rpc('tools/list');
   assert.deepEqual(
     listed.result.tools.map((tool) => tool.name),
-    ['double'],
+    ['double', 'paint'],
   );
   assert.equal(listed.result.tools[0].inputSchema.properties.value.type, 'number');
+  // A tuple is served in 2020-12 keywords, the dialect MCP clients validate tool schemas in.
+  const rgb = listed.result.tools[1].inputSchema.properties.rgb;
+  assert.equal(rgb.prefixItems.length, 3);
+  assert.equal(rgb.items, false);
+  assert.equal(rgb.additionalItems, undefined);
   const valid = await rpc('tools/call', { name: 'double', arguments: { value: 3 } });
   assert.deepEqual(valid.result.structuredContent, { doubled: 6 });
   assert.deepEqual(valid.result.content, [{ type: 'text', text: 'answer:6' }]);
@@ -84,6 +98,10 @@ try {
   assert.equal(forbidden.result.isError, true);
   assert.match(JSON.stringify(forbidden), /FORBIDDEN/);
   assert.deepEqual(observed, [true, false, false]);
+  const painted = await rpc('tools/call', { name: 'paint', arguments: { rgb: [1, 2, 3] } });
+  assert.deepEqual(painted.result.structuredContent, { painted: true });
+  const short = await rpc('tools/call', { name: 'paint', arguments: { rgb: [1, 2] } });
+  assert.equal(short.result.isError, true);
   const unauthenticated = await handler.fetch(
     request('tools/list', {}, { authorization: '' }),
   );

@@ -1,6 +1,6 @@
 import { type ZodObject, z } from 'zod';
 import type { RuntimeContext } from '../../contract/runtime-context';
-import { declaresDraft07, withDefsDialect } from '../../json-schema/dialect';
+import { declaresDraft07, withDraft2020Keywords } from '../../json-schema/dialect';
 import type { RuntimeToolDefinition } from '../runtime-tool';
 import {
   markJsonSchemaObjectGuards,
@@ -52,7 +52,7 @@ export function zodObjectFromJsonSchema(
   schema: Record<string, unknown> | undefined,
 ): ZodObject {
   if (!schema || Object.keys(schema).length === 0) return z.looseObject({});
-  const parsed = z.fromJSONSchema(reconcileDefinitionKeyword(schema));
+  const parsed = z.fromJSONSchema(reconcileDialect(schema));
   if (parsed instanceof z.ZodObject) {
     markJsonSchemaObjectGuards(parsed);
     markRemoteUnionVerdict(parsed);
@@ -62,15 +62,15 @@ export function zodObjectFromJsonSchema(
 }
 
 /**
- * A served document whose `$schema` is 2020-12 while its reusable subschemas sit
- * in draft-07's `definitions` cannot resolve its own pointers: the reader
- * registers `$defs` and then looks up `#/definitions/x`. Our own MCP mount
- * served exactly that for every version before this one, so believing the stamp
- * would lose the connection rather than the tool. Where the document says
- * draft-07 it is consistent and is left alone.
+ * A served document whose `$schema` is 2020-12 (or absent) while it is written in
+ * draft-07 keywords says one thing and does another: the reader registers `$defs`
+ * and then looks up `#/definitions/x`, and reads a tuple's `items` list as no
+ * schema at all. Stitchkit servers before 0.112.3 served exactly that, so
+ * believing the stamp would lose the connection rather than the tool. Where the
+ * document says draft-07 it is consistent and is left alone.
  */
-function reconcileDefinitionKeyword(schema: Record<string, unknown>): Record<string, unknown> {
-  return declaresDraft07(schema.$schema) ? schema : withDefsDialect(schema);
+function reconcileDialect(schema: Record<string, unknown>): Record<string, unknown> {
+  return declaresDraft07(schema.$schema) ? schema : withDraft2020Keywords(schema);
 }
 
 /** Normalise a tool name into the characters every provider accepts. */

@@ -1,7 +1,7 @@
 {
   "name": "stitchkit",
   "version": "0.112.2",
-  "description": "Contract-first backend framework \u2014 one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
+  "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
     "node",
@@ -378,6 +378,7 @@
     "@types/react-dom": "^19.3.0",
     "@typescript/typescript6": "^6.0.2",
     "ai": "^7.0.111",
+    "ajv": "^8.20.0",
     "fake-indexeddb": "^6.2.5",
     "google-auth-library": "^11.1.0",
     "grammy": "^1.46.0",

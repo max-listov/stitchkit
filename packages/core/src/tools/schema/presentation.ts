@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isRecord } from '../../internal/typed';
-import { withDefsDialect } from '../../json-schema/dialect';
+import { withDraft2020Keywords } from '../../json-schema/dialect';
 import { toJsonSchema } from '../../json-schema/json-schema';
 import {
   flattenToolJsonSchema,
@@ -288,10 +288,11 @@ export function isObjectPresentationSchema(schema: ToolPresentationSchema): bool
  * Metadata passed to the Zod identity carrier.
  *
  * The SDK supplies its own dialect and it is 2020-12, so the document has to
- * speak 2020-12: a draft-07 `definitions` block under a 2020-12 `$schema` is a
- * document that says one thing and does another, and a client that believes the
- * stamp cannot resolve a single `#/definitions/...` pointer in it.
+ * speak 2020-12: draft-07 `definitions` under a 2020-12 `$schema` leave every
+ * `#/definitions/...` pointer unresolvable, and a tuple's draft-07 `items` list
+ * is not a schema there, so a client that validates tool schemas drops the tool.
+ * → ADR 0185, ADR 0268.
  */
 export function presentationMetadata(schema: ToolPresentationSchema): ToolPresentationSchema {
-  return withDefsDialect(withoutDialect(schema));
+  return withDraft2020Keywords(withoutDialect(schema));
 }

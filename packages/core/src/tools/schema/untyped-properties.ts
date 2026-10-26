@@ -63,7 +63,7 @@ export function findUntypedProperties(schema: unknown, prefix = ''): UntypedProp
   for (const key of ['items', 'additionalProperties']) {
     const child = schema[key];
     if (isRecord(child)) found.push(...findUntypedProperties(child, prefix));
-    // draft-07 spells a tuple `items: [...]`; the MCP SDK emits draft-07.
+    // The presentation is built in draft-07, which spells a tuple `items: [...]`.
     if (Array.isArray(child)) {
       for (const entry of child) {
         if (isRecord(entry)) found.push(...findUntypedProperties(entry, prefix));
