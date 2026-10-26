@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.113.0] - 2026-10-26
+
 ### ⚠️ Breaking changes
 
 **Who must act:** custom `AgentRuntimeStoreDriver` adapters must apply the new `insert` history mutation; custom `AgentRuntimeStore` implementations of `seedConversationInput` must honour `placement`. Applications on the built-in memory or SQLite stores need no change.

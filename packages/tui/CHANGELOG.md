@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-10-26
+
 ### Changed
 
 - Targets stitchkit `^0.113.0`, keeping consumers on one framework copy when they adopt the agent-runtime store driver's `insert` history mutation. No terminal source change is needed.

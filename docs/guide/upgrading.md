@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: 0.113.0
+## Released migration: 0.113.0
 
 **Who must act:** custom `AgentRuntimeStoreDriver` adapters and custom `AgentRuntimeStore` implementations of `seedConversationInput`. The built-in memory and SQLite stores already implement the contract.
 
