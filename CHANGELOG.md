@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.112.3] - 2026-10-26
+
 ### Fixed
 
 - `stitchkit/tools/mcp`, `stitchkit/tools/connections` — a tool whose input holds a `z.tuple` is now served as a valid 2020-12 schema: the tuple is written as `prefixItems` (rest as `items`) instead of draft-07's `items` list, which Claude's MCP client refused (`must be object,boolean`) and dropped the tool without a server-side error. The stitchkit MCP client reads a tuple from an older server's document with the same meaning. → ADR 0270
