@@ -231,10 +231,10 @@ try {
   assert.equal(localCalls, 0);
 } finally {
   await handler.close();
-  server.closeAllConnections();
-  await new Promise((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
+  await new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+    server.closeAllConnections();
+  });
   clients.close();
 }
 console.log('packed remote schema verdict: ok');
