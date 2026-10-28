@@ -3,6 +3,17 @@ import type { InstalledConsumerProof } from './installed-proof-contract';
 /** Installed argv admission and schema-derived help through the public CLI. */
 export const cliArgumentProofs: InstalledConsumerProof[] = [
   {
+    id: 'cli-runtime-command-isolation',
+    fixture: 'minimal',
+    entry: 'cli-runtime-command-isolation.mjs',
+    files: [],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin', 'win32'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed CLI runtime command isolation: ok',
+  },
+  {
     id: 'connections-remote-verdict',
     fixture: 'node',
     entry: 'connections-remote-verdict.mjs',

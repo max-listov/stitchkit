@@ -1,9 +1,10 @@
 import type { ZodObject, z } from 'zod';
 import { type ToolResult, toolErrorFromResult, toolResultFromError } from '../execute-result';
 import type { MountableTool } from '../mount';
+import { commandShapeIssue } from './command-shape';
 import { buildCliSurface } from './invoke';
 import type { CliCommandPresentation } from './policy';
-import { assertCommandShape, type CliSession } from './session';
+import type { CliSession } from './session';
 
 /**
  * The managed surface, or the reason there isn't one.
@@ -13,7 +14,8 @@ import { assertCommandShape, type CliSession } from './session';
  * and it knows why the rest are missing. Letting the rejection escape printed
  * neither, and answering `Unknown command` would be a lie: the name is not
  * unknown, it is unresolvable. Only identity resolution is caught here; a
- * configuration fault in the surface itself is still a startup error.
+ * local configuration fault is still a startup error; runtime argv field
+ * conflicts remain discoverable as unavailable commands.
  */
 export type ManagedSurface<TAuth> =
   | {
@@ -73,7 +75,7 @@ export async function buildManagedSurface<
     auth,
     nativeHelp,
     applicationGlobalNames,
-    assertCommandShape,
+    commandShapeIssue,
   );
   return { resolved: true, auth, help, tools };
 }

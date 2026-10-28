@@ -331,13 +331,13 @@ export function buildCliSurface<
   auth: Awaited<TAuth> | undefined,
   nativeHelp: Map<string, CliCommandPresentation>,
   applicationGlobalNames: ReadonlySet<string>,
-  assertShape?: (
+  shapeIssue?: (
     name: string,
     descriptor: CliCommandPresentation,
     exists: boolean,
     passthroughField: string | undefined,
     globalNames: ReadonlySet<string>,
-  ) => void,
+  ) => string | undefined,
 ): { tools: Map<string, MountableTool>; help: Map<string, CliCommandPresentation> } {
   const services =
     typeof config.services === 'function' ? config.services(auth) : (config.services ?? []);
@@ -347,7 +347,7 @@ export function buildCliSurface<
       : (config.runtimeTools ?? []);
   const tools = new Map<string, MountableTool>();
   const help = new Map(nativeHelp);
-  for (const { mountable } of collectToolSurface({
+  for (const { kind, mountable } of collectToolSurface({
     surface: { services, runtimeTools },
     transport: 'CLI',
   })) {
@@ -356,15 +356,20 @@ export function buildCliSurface<
       managedCliDescriptor(mountable),
       config,
     );
-    assertShape?.(
+    const issue = shapeIssue?.(
       mountable.name,
       descriptor,
       help.has(mountable.name),
       config.passthrough?.[mountable.name],
       applicationGlobalNames,
     );
-    tools.set(mountable.name, mountable);
-    help.set(mountable.name, descriptor);
+    if (issue !== undefined) {
+      if (kind !== 'runtime') throw new Error(issue);
+      help.set(mountable.name, { ...descriptor, unavailableReason: issue });
+    } else {
+      tools.set(mountable.name, mountable);
+      help.set(mountable.name, descriptor);
+    }
   }
   assertCliPoliciesResolved(help, config);
   return { tools, help };

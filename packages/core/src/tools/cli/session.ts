@@ -4,12 +4,18 @@
  */
 import type { ZodObject, z } from 'zod';
 import { type JsonSchemaField, jsonSchemaFields } from '../../json-schema/json-schema';
-import { assertUniqueToolName } from '../names';
 import { buildToolPresentationSchema } from '../schema/presentation';
 import { extractCliGlobalOptions } from './args';
-import { type CliArgvRoute, RESERVED_CLI_OPTIONS, routeCliArgv } from './args-route';
+import { isReservedBoolWord, parseReservedBool } from './args-fields';
+import {
+  type CliArgvRoute,
+  classifyLongOptionToken,
+  RESERVED_CLI_OPTIONS,
+  routeCliArgv,
+} from './args-route';
 import { CliArgumentError } from './argument-error';
 import { type CliCommandDefinition, cliCommandPresentationSchema } from './command';
+import { commandShapeIssue } from './command-shape';
 import type { CliConfig } from './config';
 import { DEFAULT_EXIT_CODES, type EmitOptions } from './format';
 import type { CliIo } from './io';
@@ -23,42 +29,6 @@ function nativeDescriptor(
     argumentSchema: definition.input,
     presentationSchema: cliCommandPresentationSchema(definition),
   };
-}
-
-export function assertCommandShape(
-  name: string,
-  descriptor: CliCommandPresentation,
-  exists: boolean,
-  passthroughField?: string,
-  applicationGlobals: ReadonlySet<string> = new Set(),
-): void {
-  assertUniqueToolName(name, exists, 'CLI command');
-  if (name === 'help' || name === 'version') {
-    throw new Error(`[stitchkit] CLI command "${name}" is reserved`);
-  }
-  const fieldNames = jsonSchemaFields(descriptor.presentationSchema).map(
-    (field) => field.name,
-  );
-  const conflicting = fieldNames.filter((field) => RESERVED_CLI_OPTIONS.has(field));
-  if (conflicting.length > 0) {
-    throw new Error(
-      `[stitchkit] CLI command "${name}" declares reserved option field(s): ${conflicting.join(', ')}`,
-    );
-  }
-  // An application global is stripped from argv before any command parses it,
-  // so a command field of the same name could never receive a value. Say so at
-  // startup instead of losing the argument at every call.
-  const shadowed = fieldNames.filter((field) => applicationGlobals.has(field));
-  if (shadowed.length > 0) {
-    throw new Error(
-      `[stitchkit] CLI command "${name}" declares field(s) shadowed by application global options: ${shadowed.join(', ')}`,
-    );
-  }
-  if (passthroughField !== undefined && descriptor.aliases.has(passthroughField)) {
-    throw new Error(
-      `[stitchkit] CLI command "${name}" cannot alias passthrough field "${passthroughField}"`,
-    );
-  }
 }
 
 export interface CliSession<
@@ -112,13 +82,14 @@ export function createCliSession<
       nativeDescriptor(definition),
       config,
     );
-    assertCommandShape(
+    const issue = commandShapeIssue(
       definition.name,
       descriptor,
       nativeCommands.has(definition.name),
       config.passthrough?.[definition.name],
       applicationGlobalNames,
     );
+    if (issue !== undefined) throw new Error(issue);
     nativeCommands.set(definition.name, definition);
     nativeHelp.set(definition.name, descriptor);
   }
@@ -194,7 +165,16 @@ export function resolveCliRoute<
     commandArgv.indexOf('--') === -1
       ? commandArgv
       : commandArgv.slice(0, commandArgv.indexOf('--'));
-  const helpRequested = beforeSeparator.includes('--help') || beforeSeparator.includes('-h');
+  const helpRequested = beforeSeparator.some((token) => {
+    if (token === '--help' || token === '-h') return true;
+    const option = classifyLongOptionToken(token);
+    return (
+      option?.name === 'help' &&
+      option.value !== undefined &&
+      isReservedBoolWord(option.value) &&
+      parseReservedBool('help', option.value)
+    );
+  });
   return {
     globals,
     typedGlobals,

@@ -476,12 +476,41 @@ command name — validated against the declared schema, and kept out of every
 operation's arguments: `handoff_read` above receives `{ handoffId: 'u' }` and
 nothing else. The values reach `resolveAuth(globals)`, `context(auth, globals)`
 and a native command's `globals`. An invalid value is an argument error naming
-the flag; a name that collides with a framework option, or with a field of any
-command, is refused at startup rather than shadowing it silently. Past a bare
+the flag. An application global that collides with a framework option is refused
+at startup. Field collisions in authored commands are configuration errors;
+runtime catalogue entries are isolated as described below. Past a bare
 `--` every token is a literal, so a positional value that reads like a global
 survives intact.
 
 Both help levels list them under `Application options:`.
+
+## When one runtime command cannot be represented in argv
+
+A `runtimeTools` catalogue can change independently of the CLI application. An
+entry whose input declares a framework option such as `json`, or a field shadowed
+by an application global such as `caller`, cannot receive that field through argv.
+Only that entry becomes unavailable. Other commands still run, and top-level,
+filtered and command-specific help retain the entry and its full reason:
+
+```text
+  inspect  Inspect an operation [unavailable]
+    Unavailable: [stitchkit] CLI command "inspect" declares field(s) shadowed by application global options: caller
+```
+
+Calling it returns `CLI_COMMAND_UNAVAILABLE`, `retryable: false`, and the same
+reason in `details.message` on stderr; the default exit code is 1. `--json`
+compacts the error as usual; `exitCodes` and `errorHint` apply. The refusal precedes
+command argument parsing, stdin, context, hooks and the handler; `--dry-run` cannot
+turn it into success. A known unavailable `--wait` target returns the same refusal;
+an unknown target keeps `NOT_FOUND`.
+
+This isolates only reserved/global **field** conflicts in `runtimeTools`.
+Native commands and contract-defined `services` still fail at startup for those
+conflicts. Duplicate or reserved command names and invalid local aliases,
+positionals or passthrough policies remain configuration errors for every entry.
+`createCliInvoker` receives globals and command input separately and has no argv
+projection, so its own `caller` or `json` input stays callable without renaming.
+See [ADR 0273](../decisions/0273-a-runtime-cli-field-conflict-is-one-commands-unavailability.md).
 
 ## When the managed surface cannot resolve
 

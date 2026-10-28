@@ -179,8 +179,11 @@ export function renderTopHelp(input: {
   const width = Math.max(0, ...[...commands.keys()].map((key) => key.length));
   for (const [command, descriptor] of commands) {
     lines.push(
-      `  ${padRight(command, width)}  ${summarize(descriptor.description)}${command === defaultCommand ? ' (default)' : ''}`,
+      `  ${padRight(command, width)}  ${summarize(descriptor.description)}${command === defaultCommand ? ' (default)' : ''}${descriptor.unavailableReason !== undefined ? ' [unavailable]' : ''}`,
     );
+    if (descriptor.unavailableReason !== undefined) {
+      lines.push(`    Unavailable: ${descriptor.unavailableReason}`);
+    }
   }
   // Naming the reason is the whole point: a command list that silently lost
   // most of itself reads as a CLI that never had those commands.
@@ -240,6 +243,9 @@ export function renderCommandHelp(
     '[--flags]',
   ].join(' ');
   const lines = [descriptor.description, '', usage, ''];
+  if (descriptor.unavailableReason !== undefined) {
+    lines.push(`Unavailable: ${descriptor.unavailableReason}`, '');
+  }
   if (fields.length > 0) {
     lines.push('Arguments:');
     const labels = new Map(

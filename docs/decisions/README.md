@@ -302,6 +302,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0270](0270-a-served-tool-schema-is-written-in-2020-12-keywords.md) | A served tool schema is written in 2020-12 keywords | Accepted — the MCP document translates draft-07 tuples to `prefixItems` as well as `definitions` to `$defs`; the client reconciles older servers; amends 0185 | I13 |
 | [0271](0271-an-exchange-without-a-model-is-settled-history.md) | An exchange without a model is settled history | Accepted — a keyed seed with `placement: 'after-settled'` lands after settled history and ahead of any active run; drivers apply an anchored `insert` | I8, I14, I15 |
 | [0272](0272-a-restored-string-format-is-judged-by-its-server.md) | A restored string format is judged by its server | Accepted — restored format/pattern refusals belong to the remote; record-key wrappers retain their reported local reasons | I2, I3, I8, I13 |
+| [0273](0273-a-runtime-cli-field-conflict-is-one-commands-unavailability.md) | A runtime CLI field conflict is one command's unavailability | Accepted — preserve help and isolate runtime argv conflicts without hiding local configuration errors | I2, I3, I8, I13 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

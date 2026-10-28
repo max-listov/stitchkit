@@ -15,6 +15,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/cli` — a runtime catalogue entry whose field conflicts with a framework option or application global no longer prevents unrelated commands from running. Help retains it with its full cause; invocation returns non-retryable `CLI_COMMAND_UNAVAILABLE` before argument parsing or side effects. Native and contract-defined commands retain startup validation; parsed in-process input stays callable. → ADR 0273
+  **Affects:** `stitchkit/cli` behaviour
+
 ## [0.113.1] - 2026-10-28
 
 ### Fixed

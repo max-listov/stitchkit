@@ -10,6 +10,7 @@ import { filterCommands, renderCommandHelp, renderTopHelp } from './help';
 import { buildManagedSurface, type ManagedSurface } from './managed-surface';
 import { prepareInvocation } from './prepare';
 import { type CliRoute, type CliSession, emitOptionsFor } from './session';
+import { unavailableCommand, unavailableCommandJson } from './unavailable';
 import { renderCliView } from './view';
 import { pollUntilDone } from './wait';
 
@@ -78,7 +79,7 @@ function respondTopLevelHelp<
   // different statement from "none of these".
   if (filter !== undefined && filterCommands(managed.help, filter).size === 0) {
     stderr(
-      `no command matches "${filter}" (${managed.help.size} available)\n` +
+      `no command matches "${filter}" (${[...managed.help.values()].filter((entry) => entry.unavailableReason === undefined).length} available)\n` +
         (managed.resolved ? '' : `Managed commands are unavailable: ${managed.reason}\n`),
     );
     const codes = { ...DEFAULT_EXIT_CODES, ...config.exitCodes };
@@ -112,19 +113,28 @@ async function runManagedCommand<
 ): Promise<void> {
   const { config, applicationOptions } = session;
   const { stdout, stderr, exit, readStdin } = session.io;
-  const tool = managed.tools.get(command);
-  if (!tool) {
+  const descriptor = managed.help.get(command);
+  if (!descriptor) {
     stderr(
       `Unknown command "${command}". Run "${config.name} --help" for the command list.\n`,
     );
     return exit(1);
   }
-  const descriptor = managed.help.get(command);
-  if (!descriptor) throw new Error('[stitchkit] managed CLI descriptor invariant failed');
   if (route.helpRequested) {
     stdout(renderCommandHelp(config.name, command, descriptor, applicationOptions));
     return exit(0);
   }
+  if (descriptor.unavailableReason !== undefined) {
+    return exit(
+      emitResult(
+        unavailableCommand(descriptor.unavailableReason),
+        { stdout, stderr },
+        emitOptionsFor(config, unavailableCommandJson(route.commandArgv), command),
+      ),
+    );
+  }
+  const tool = managed.tools.get(command);
+  if (!tool) throw new Error('[stitchkit] managed CLI executable invariant failed');
   const prepared = await prepareInvocation(
     command,
     route.commandArgv,
@@ -204,6 +214,8 @@ async function executeManagedTool<
       initial: result,
       wait: waitConfig,
       call: async (toolName, args) => {
+        const unavailable = managed.help.get(toolName)?.unavailableReason;
+        if (unavailable !== undefined) return unavailableCommand(unavailable);
         const pollTool = managed.tools.get(toolName);
         if (!pollTool) {
           return {

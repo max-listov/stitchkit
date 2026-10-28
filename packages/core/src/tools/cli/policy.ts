@@ -13,6 +13,8 @@ export interface CliPresentationPolicyConfig {
 
 export interface CliCommandPresentation {
   description: string;
+  /** An argv field conflict in a runtime catalogue entry; never executable. */
+  unavailableReason?: string;
   argumentSchema: Parameters<typeof describeSchemaFields>[0];
   presentationSchema: Record<string, unknown>;
   /** Canonical field name → one short alias. */
