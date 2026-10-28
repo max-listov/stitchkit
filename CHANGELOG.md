@@ -15,6 +15,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/tools/connections` — restored MCP and OpenAPI tool schemas leave string-format and pattern refusals to the remote instead of substituting a generic datetime/email/regex error before sending. MCP relays the original validation message; OpenAPI retains its existing safe HTTP error projection. Record-key wrappers retain only reported local failures; structural errors, bounds and locally authored schemas keep their existing checks. → ADR 0272
+  **Affects:** `stitchkit/tools/connections` behaviour
+
 ## [0.113.0] - 2026-10-26
 
 ### ⚠️ Breaking changes

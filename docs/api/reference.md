@@ -1887,7 +1887,7 @@ and approval path.
 | `ConnectionPhase` / `ConnectionOperation` / `ConnectionFailureContext` | _type_ | closed operation/phase vocabulary and measured read context for existing typed connection errors |
 | `ConnectionTimeoutError` / `ConnectionResponseTooLargeError` | class | bounded operation refusal, with phase, operation and finite observed bytes; safe tool projection retains the raw cause locally |
 | `defineOpenApiConnection` | function | declare one OpenAPI document (object, JSON text or JSON URL) as a tool surface |
-| `mountConnections` | function | discover every connection and return readonly `RuntimeToolDefinition`s for `mountAgent`; a call's arguments are parsed against the discovered schema before sending, except its unions, which the server judges (ADR 0266) |
+| `mountConnections` | function | discover every connection and return readonly `RuntimeToolDefinition`s for `mountAgent`; reported structural failures and bounds stay local, while unions and string-format/pattern refusals (including inside record keys) are judged by the server that owns the original schema (ADR 0266, ADR 0272) |
 | `ConnectionAuthorizationRequiredError` | class | typed reauthorization signal raised on `401` with credentials resolved again on the next call |
 | `ConnectionBudgetExceededError` | class | the mount would expose more foreign tools than its declared budget |
 | `ConnectionRequestError` | class | any non-`2xx` connection response other than the reauthorization signal |

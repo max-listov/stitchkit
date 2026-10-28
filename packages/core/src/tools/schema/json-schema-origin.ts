@@ -102,20 +102,21 @@ export function markJsonSchemaObjectGuards(schema: z.core.$ZodType): void {
   visit(schema);
 }
 
-const REMOTE_UNION_VERDICT = Symbol.for('stitchkit.tools.json-schema-remote-union-verdict.v1');
+const REMOTE_SCHEMA_VERDICT = Symbol.for('stitchkit.tools.json-schema-remote-verdict.v1');
 
 /**
- * Record that a schema restored from a foreign document leaves its unions to the remote.
+ * Record that a foreign schema leaves unions and string formats to its remote owner.
  *
  * A foreign tool schema is the remote's presentation, and a presentation may join a
  * discriminated union into one object whose shared field is an unlabelled `anyOf` (a stitchkit
  * server with `flattenUnionInput` does, ADR 0205). Every value the remote accepts still passes
  * such a union; which branch a value was meant for does not survive. Judged here, a wrong value
  * can only be refused with every branch listed, while the remote, which holds the original
- * schema, names the one field that is wrong.
+ * schema, names the one field that is wrong. JSON Schema also carries string formats and
+ * patterns without the author's error messages; only the remote can report those faithfully.
  */
-export function markRemoteUnionVerdict(schema: z.ZodObject): void {
-  Reflect.defineProperty(schema, REMOTE_UNION_VERDICT, {
+export function markRemoteSchemaVerdict(schema: z.ZodObject): void {
+  Reflect.defineProperty(schema, REMOTE_SCHEMA_VERDICT, {
     configurable: false,
     enumerable: false,
     value: true,
@@ -124,15 +125,36 @@ export function markRemoteUnionVerdict(schema: z.ZodObject): void {
 }
 
 /**
- * What a local parse refuses of a value the remote judges: everything but its unions. `null` when
- * every refusal was a union's — the value goes to the remote, whose refusal is the answer.
+ * Retain every reported issue except foreign unions and string formats. `null` means that
+ * every refusal belongs to the remote, whose answer carries the original schema's wording.
  * A schema that is not a restored foreign one keeps its own verdict whole.
  */
 export function localVerdict(schema: z.core.$ZodType, error: z.ZodError): z.ZodError | null {
-  if (Reflect.get(schema, REMOTE_UNION_VERDICT) !== true) return error;
-  const local = error.issues.filter((issue) => issue.code !== 'invalid_union');
+  if (Reflect.get(schema, REMOTE_SCHEMA_VERDICT) !== true) return error;
+  const local = localIssues(error.issues);
   if (local.length === 0) return null;
-  return local.length === error.issues.length ? error : new z.ZodError(local);
+  return sameIssues(local, error.issues) ? error : new z.ZodError(local);
+}
+
+function sameIssues(
+  left: readonly z.core.$ZodIssue[],
+  right: readonly z.core.$ZodIssue[],
+): boolean {
+  return left.length === right.length && left.every((issue, index) => issue === right[index]);
+}
+
+function localIssues(issues: readonly z.core.$ZodIssue[]): z.core.$ZodIssue[] {
+  return issues.flatMap((issue) => {
+    if (issue.code === 'invalid_union' || issue.code === 'invalid_format') return [];
+    // Record keys wrap their own issues. Keep reported bounds/type/enum failures,
+    // and defer a key only when every reason inside its wrapper belongs to the remote.
+    if (issue.code === 'invalid_key') {
+      const children = localIssues(issue.issues);
+      if (children.length === 0) return [];
+      if (!sameIssues(children, issue.issues)) return [{ ...issue, issues: children }];
+    }
+    return [issue];
+  });
 }
 
 /**

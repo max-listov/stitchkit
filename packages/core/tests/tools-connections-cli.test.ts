@@ -212,6 +212,17 @@ describe('discovered tools on the CLI surface', () => {
     let calls = 0;
     const url = startMcp([upsert, guarded, readOnly, composed], (args) => {
       calls++;
+      if (!input.safeParse(args).success) {
+        return {
+          isError: true,
+          content: [],
+          structuredContent: {
+            error: 'VALIDATION_ERROR',
+            retryable: false,
+            details: { message: 'Remote key policy refuses invalid field names' },
+          },
+        };
+      }
       return {
         content: [{ type: 'text', text: JSON.stringify({ echoed: args }) }],
         structuredContent: { echoed: args },
@@ -271,10 +282,6 @@ describe('discovered tools on the CLI surface', () => {
         argv: ['upsert', '--data', '[]', '--json'],
         reason: 'data: Invalid input: expected object, received array',
       },
-      {
-        argv: ['upsert', '--data', '{"Bad-Key":"x"}', '--json'],
-        reason: 'data.Bad-Key: Invalid key in record',
-      },
     ]) {
       const result = await runCli(discovered, invalid.argv);
       expect(result.code).not.toBe(0);
@@ -284,11 +291,6 @@ describe('discovered tools on the CLI surface', () => {
     }
 
     for (const invalid of [
-      {
-        command: 'read-only',
-        value: '{"Bad":1}',
-        reason: 'data.Bad: Invalid key in record',
-      },
       {
         command: 'composed',
         value: '{"nested":{"code":7}}',
@@ -324,7 +326,6 @@ describe('discovered tools on the CLI surface', () => {
         value: '{"a":1,"b":2,"c":3}',
         reason: 'data: Too big: expected object to have <=2 properties',
       },
-      { value: '{"Bad":1}', reason: 'data.Bad: Invalid key in record' },
     ]) {
       const result = await runCli(discovered, [
         'guarded',
@@ -334,6 +335,14 @@ describe('discovered tools on the CLI surface', () => {
       expect(result.code).not.toBe(0);
       expect(result.err).toContain(invalid.reason);
       expect(calls).toBe(6);
+    }
+
+    for (const command of ['upsert', 'read-only', 'guarded']) {
+      const before = calls;
+      const result = await runCli(discovered, [command, '--data={"Bad-Key":"x"}', '--json']);
+      expect(result.code).not.toBe(0);
+      expect(result.err).toContain('Remote key policy refuses invalid field names');
+      expect(calls).toBe(before + 1);
     }
   });
 

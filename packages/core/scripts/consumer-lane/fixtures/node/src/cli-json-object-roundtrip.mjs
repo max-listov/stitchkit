@@ -4,9 +4,8 @@ import { createCli } from 'stitchkit/cli';
 import { defineMcpClientConnection, mountConnections } from 'stitchkit/tools/connections';
 import { z } from 'zod';
 
-const inputSchema = z.toJSONSchema(
-  z.object({ data: z.record(z.string().regex(/^[a-z][a-z0-9_]*$/), z.unknown()) }),
-);
+const input = z.object({ data: z.record(z.string().regex(/^[a-z][a-z0-9_]*$/), z.unknown()) });
+const inputSchema = z.toJSONSchema(input);
 const readOnlyInputSchema = structuredClone(inputSchema);
 readOnlyInputSchema.properties.data.readOnly = true;
 const composedInputSchema = structuredClone(inputSchema);
@@ -67,6 +66,17 @@ const server = createServer(async (request, response) => {
         : (() => {
             calls++;
             const args = body.params?.arguments;
+            if (!input.safeParse(args).success) {
+              return {
+                isError: true,
+                content: [],
+                structuredContent: {
+                  error: 'VALIDATION_ERROR',
+                  retryable: false,
+                  details: { message: 'Remote key policy refuses invalid field names' },
+                },
+              };
+            }
             return {
               content: [{ type: 'text', text: JSON.stringify({ echoed: args }) }],
               structuredContent: { echoed: args },
@@ -155,14 +165,19 @@ try {
   for (const [command, value] of [
     ['upsert', '{"email":'],
     ['upsert', '[]'],
-    ['upsert', '{"Bad-Key":"x"}'],
-    ['read-only', '{"Bad-Key":"x"}'],
     ['composed', '{"nested":{"code":7}}'],
   ]) {
     const result = await run(runtimeTools, [command, `--data=${value}`, '--json']);
     assert.notEqual(result.code, 0);
     assert.match(result.err, /VALIDATION_ERROR/);
     assert.equal(calls, 6);
+  }
+  for (const command of ['upsert', 'read-only']) {
+    const before = calls;
+    const result = await run(runtimeTools, [command, '--data={"Bad-Key":"x"}', '--json']);
+    assert.notEqual(result.code, 0);
+    assert.ok(result.err.includes('Remote key policy refuses invalid field names'));
+    assert.equal(calls, before + 1);
   }
 } finally {
   await new Promise((resolve, reject) =>

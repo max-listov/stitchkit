@@ -97,7 +97,7 @@ export function parseToolCallArguments(
     }
     if (result.success) input = result.data;
     else {
-      // A restored foreign schema leaves its unions to the remote that owns it.
+      // A restored foreign schema leaves unions and string formats to its remote owner.
       const refused = localVerdict(method.inputSchema, result.error);
       if (refused) return { ok: false, message: `Invalid input: ${formatZodError(refused)}` };
       input = inputArgs;

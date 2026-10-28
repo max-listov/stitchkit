@@ -3,6 +3,17 @@ import type { InstalledConsumerProof } from './installed-proof-contract';
 /** Installed argv admission and schema-derived help through the public CLI. */
 export const cliArgumentProofs: InstalledConsumerProof[] = [
   {
+    id: 'connections-remote-verdict',
+    fixture: 'node',
+    entry: 'connections-remote-verdict.mjs',
+    files: [],
+    peers: ['zod', 'ai', '@modelcontextprotocol/server', '@modelcontextprotocol/ext-apps'],
+    platforms: ['linux', 'darwin', 'win32'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed remote schema verdict: ok',
+  },
+  {
     id: 'cli-option-occurrences',
     fixture: 'minimal',
     entry: 'cli-option-occurrences.mjs',

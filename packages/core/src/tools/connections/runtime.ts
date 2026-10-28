@@ -4,7 +4,7 @@ import { declaresDraft07, withDraft2020Keywords } from '../../json-schema/dialec
 import type { RuntimeToolDefinition } from '../runtime-tool';
 import {
   markJsonSchemaObjectGuards,
-  markRemoteUnionVerdict,
+  markRemoteSchemaVerdict,
 } from '../schema/json-schema-origin';
 import { ConnectionAuthorizationRequiredError } from './errors';
 
@@ -46,7 +46,7 @@ export async function withConnectionToken<T>(
  * Turn a discovered JSON Schema into a `ZodObject`, falling back to a permissive
  * object when the external schema is absent or not an object. This is the typed
  * boundary: the schema crosses from an untrusted foreign document into Zod here
- * and nowhere else. Its unions are left to the remote that owns the schema.
+ * and nowhere else. Unions and string formats are left to the remote that owns the schema.
  */
 export function zodObjectFromJsonSchema(
   schema: Record<string, unknown> | undefined,
@@ -55,7 +55,7 @@ export function zodObjectFromJsonSchema(
   const parsed = z.fromJSONSchema(reconcileDialect(schema));
   if (parsed instanceof z.ZodObject) {
     markJsonSchemaObjectGuards(parsed);
-    markRemoteUnionVerdict(parsed);
+    markRemoteSchemaVerdict(parsed);
     return parsed;
   }
   return z.looseObject({});
