@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.113.3] - 2026-10-30
+
 ### Fixed
 
 - `stitchkit/cli` — a failed aggregate view or native `present` callback preserves the successful command's complete original result on stdout. A separate, non-retryable `CLI_PRESENTATION_FAILED` diagnostic reports `details.operationSucceeded: true` and exits with `8` (configurable), so recovering a creation receipt does not require repeating the mutation. Real operation failures and pre-execution argument errors retain their own outcome.
