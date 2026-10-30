@@ -475,9 +475,9 @@ describe('discovered tools on the CLI surface', () => {
     }
     // A view over no answer is refused as a view, not computed over the envelope.
     const counted = await runCli(discovered, ['echo', '--value', 'x', '--count-by', 'tools']);
-    expect(counted.code).toBe(2);
+    expect(counted.code).toBe(8);
     expect(counted.err).toContain('not one');
-    expect(counted.out).toBe('');
+    expect(counted.out).toBe('null\n');
   });
 
   test('unwrapping no parts gives null, with or without _meta beside them', () => {

@@ -1139,7 +1139,7 @@ describe('createCli — native result presentation and exit policy', () => {
     expect(calls).toBe(0);
   });
 
-  test('throwing or invalid result policy becomes a normalized internal failure', async () => {
+  test('invalid exit policy fails; invalid presentation preserves the successful answer', async () => {
     const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
     const ValidOutput = z.object({ ok: z.literal(true) });
     const invalidExit = defineCliCommand({
@@ -1167,9 +1167,9 @@ describe('createCli — native result presentation and exit policy', () => {
     const presenterResult = await run(['invalid_presenter', '--json'], {
       commands: [invalidPresenter],
     });
-    expect(presenterResult.out).toBe('');
-    expect(presenterResult.code).toBe(1);
-    expect(JSON.parse(presenterResult.err).error).toBe('INTERNAL_SERVER_ERROR');
+    expect(JSON.parse(presenterResult.out)).toEqual({ ok: true });
+    expect(presenterResult.code).toBe(8);
+    expect(JSON.parse(presenterResult.err).error).toBe('CLI_PRESENTATION_FAILED');
 
     const ThrowingOutput = z.object({ ok: z.boolean() });
     const throwing = defineCliCommand({
@@ -1184,11 +1184,11 @@ describe('createCli — native result presentation and exit policy', () => {
     });
     const thrownResult = await run(['throwing_presenter', '--json'], {
       commands: [throwing],
-      exitCodes: { INTERNAL_SERVER_ERROR: 9 },
+      exitCodes: { CLI_PRESENTATION_FAILED: 9 },
     });
-    expect(thrownResult.out).toBe('');
+    expect(JSON.parse(thrownResult.out)).toEqual({ ok: true });
     expect(thrownResult.code).toBe(9);
-    expect(JSON.parse(thrownResult.err).error).toBe('INTERNAL_SERVER_ERROR');
+    expect(JSON.parse(thrownResult.err).error).toBe('CLI_PRESENTATION_FAILED');
     errorSpy.mockRestore();
   });
 

@@ -13,7 +13,7 @@
  */
 
 import type { ErrorHintFn } from '../execute-hooks';
-import type { ToolResult } from '../execute-result';
+import type { ToolFailure, ToolResult } from '../execute-result';
 import { formatToolError } from '../mount';
 
 /** Map a `ToolResult.code` to a process exit code. */
@@ -40,6 +40,7 @@ export const DEFAULT_EXIT_CODES: ExitCodeMap = {
   UPSTREAM_TOOL_ERROR: 1,
   WAIT_FAILED: 1,
   CLI_COMMAND_UNAVAILABLE: 1,
+  CLI_PRESENTATION_FAILED: 8,
   INTERNAL_SERVER_ERROR: 1,
 };
 
@@ -103,4 +104,31 @@ export function emitResult(
   const text = opts.json ? JSON.stringify(error) : JSON.stringify(error, null, 2);
   writers.stderr(`${text}\n`);
   return cliExitCode(result, opts.exitCodes);
+}
+
+/** A presentation failure cannot erase a successfully completed operation. */
+export function emitPresentationFailure(
+  result: Extract<ToolResult, { ok: true }>,
+  failure: ToolFailure,
+  writers: CliWriters,
+  opts: EmitOptions,
+): number {
+  emitResult(result, writers, opts);
+  return emitResult(
+    {
+      ok: false,
+      code: 'CLI_PRESENTATION_FAILED',
+      retryable: false,
+      details: {
+        message: 'The command completed successfully, but its result presentation failed.',
+        command: opts.toolName,
+        operationSucceeded: true,
+        cause: formatToolError(failure),
+      },
+      hint: 'The complete, unformatted result is on stdout. Do not repeat the command to recover its result.',
+    },
+    writers,
+    // A domain error hint may suggest retrying the operation; no operation failed here.
+    { json: opts.json, toolName: opts.toolName, exitCodes: opts.exitCodes },
+  );
 }

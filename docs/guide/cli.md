@@ -199,9 +199,11 @@ const doctor = defineCliCommand({
 it the canonical JSON output is unchanged. `exitCode` classifies a successfully
 validated result and must return an integer in `0..255`; failed `ToolResult`
 envelopes and the application-wide `exitCodes` mapping remain authoritative for
-failures. A throwing callback, invalid status or non-string presenter becomes a
-normalized `INTERNAL_SERVER_ERROR`, never partial success output. Void native
-commands cannot declare either callback.
+failures. A throwing or invalid exit-status callback becomes a normalized
+`INTERNAL_SERVER_ERROR`. A throwing or non-string `present` preserves the validated
+result on stdout and reports `CLI_PRESENTATION_FAILED` separately, as described
+under [Aggregate views](#aggregate-views). Void native commands cannot declare
+either callback.
 
 `--version`, a selected native command and its command help run before
 `resolveAuth`, services, context or runtime-tool factories. Top-level help is
@@ -416,6 +418,7 @@ newline-terminated JSON record on its respective stream; progress and CLI usage
 diagnostics remain ordinary stderr text. This keeps stdout pipeable and
 `2>/dev/null` clean. The process exit code carries the error class (`0` ok,
 `VALIDATION_ERROR → 1`, `UNAUTHORIZED → 2`, `FORBIDDEN → 3`, `NOT_FOUND → 4`,
+`CLI_PRESENTATION_FAILED → 8`,
 …) — override per app with `exitCodes`.
 
 ### A narrower question than "all of them"
@@ -637,7 +640,7 @@ would answer a question nobody asked.
 
 Three rules worth knowing before you rely on them:
 
-- **A field the result does not carry is an argument error.** A group of zero
+- **A field the result does not carry is a presentation error.** A group of zero
   over a misspelled field is indistinguishable from a true empty answer, and the
   caller reads it as data. The message names the fields that *are* there.
 - **An aggregate needs a collection** — the result itself when it is an array,
@@ -650,6 +653,17 @@ Three rules worth knowing before you rely on them:
 
 A failed call still reports its own error and exit code. An aggregate over an
 error is not an answer to the question that was asked.
+
+If the command succeeds but its requested view cannot be built, the CLI writes
+the complete original result to stdout, using the normal JSON format (`--json`
+still selects compact output). It writes a separate structured
+`CLI_PRESENTATION_FAILED` diagnostic to stderr and exits with `8`, configurable
+through `exitCodes`. Its `details.operationSucceeded: true` and `retryable: false`
+distinguish a presentation refusal from a failed operation; `details.cause`
+preserves the safe reason. Recover the answer from stdout instead of repeating
+the mutation. Domain retry hints are not appended to this diagnostic. CLI
+argument errors detected before execution still exit with `2`
+and have no successful result to preserve.
 
 ## Named profiles
 

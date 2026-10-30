@@ -1,7 +1,7 @@
 import type { ZodObject, ZodType, z } from 'zod';
 import { validateDeclaredOutput } from '../../contract/normalize';
 import { formatZodError } from '../../internal/zod-issues';
-import { type ToolResult, toolResultFromError } from '../execute-result';
+import { type ToolFailure, type ToolResult, toolResultFromError } from '../execute-result';
 import { coerceJsonArgs } from '../schema/coerce';
 import { buildToolPresentationSchema } from '../schema/presentation';
 import type { CliRunOptions } from './args';
@@ -68,6 +68,7 @@ export function defineCliCommand(definition: CliCommandDefinition): CliCommandDe
 export interface PreparedCliCommandEmission {
   result: ToolResult;
   presentation?: string;
+  presentationFailure?: ToolFailure;
   successExitCode: number;
 }
 
@@ -113,17 +114,29 @@ export function prepareCliCommandEmission(
   if (!result.ok || definition.output === undefined) {
     return { result, successExitCode: 0 };
   }
+  let successExitCode: number;
   try {
-    const successExitCode = cliCommandSuccessExitCode(definition, result.data);
-    const presentation = definition.present?.({ result: result.data, options });
-    if (presentation !== undefined && typeof presentation !== 'string') {
+    successExitCode = cliCommandSuccessExitCode(definition, result.data);
+  } catch (error) {
+    return {
+      result: toolResultFromError(new Error('CLI result policy failed', { cause: error })),
+      successExitCode: 0,
+    };
+  }
+  try {
+    if (definition.present === undefined) return { result, successExitCode };
+    const presentation = definition.present({ result: result.data, options });
+    if (typeof presentation !== 'string') {
       throw new Error('CLI result presenter must return a string');
     }
     return { result, presentation, successExitCode };
   } catch (error) {
     return {
-      result: toolResultFromError(new Error('CLI result policy failed', { cause: error })),
-      successExitCode: 0,
+      result,
+      presentationFailure: toolResultFromError(
+        new Error('CLI result presentation failed', { cause: error }),
+      ),
+      successExitCode,
     };
   }
 }

@@ -1,11 +1,11 @@
 import type { ZodObject } from 'zod';
-import { type ToolResult, toolResultFromError } from '../execute-result';
+import { type ToolFailure, type ToolResult, toolResultFromError } from '../execute-result';
 import { createToolRunner, type MountableTool } from '../mount';
 import type { parseCliArgs } from './args';
 import { isReservedBoolWord } from './args-fields';
 import { CliArgumentError } from './argument-error';
 import { DEFAULT_DOWNLOAD_MAX_BYTES, downloadResults } from './download';
-import { DEFAULT_EXIT_CODES, emitResult } from './format';
+import { DEFAULT_EXIT_CODES, emitPresentationFailure, emitResult } from './format';
 import { filterCommands, renderCommandHelp, renderTopHelp } from './help';
 import { buildManagedSurface, type ManagedSurface } from './managed-surface';
 import { prepareInvocation } from './prepare';
@@ -269,9 +269,22 @@ async function emitManagedResult<
     try {
       viewed = renderCliView(result.data, options.view);
     } catch (error) {
-      if (!(error instanceof CliArgumentError)) throw error;
-      stderr(`${error.message}\n`);
-      return exit(2);
+      const failure: ToolFailure =
+        error instanceof CliArgumentError
+          ? {
+              ok: false,
+              code: 'BAD_REQUEST',
+              details: { message: error.message },
+            }
+          : toolResultFromError(error);
+      return exit(
+        emitPresentationFailure(
+          result,
+          failure,
+          { stdout, stderr },
+          emitOptionsFor(config, options.json, command),
+        ),
+      );
     }
     if (viewed.kind === 'text') {
       stdout(viewed.text);

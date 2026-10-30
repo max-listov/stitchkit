@@ -4,7 +4,7 @@ import {
   executeCliCommand,
   prepareCliCommandEmission,
 } from './command';
-import { emitResult } from './format';
+import { emitPresentationFailure, emitResult } from './format';
 import { renderCommandHelp } from './help';
 import { prepareInvocation } from './prepare';
 import { type CliRoute, type CliSession, emitOptionsFor } from './session';
@@ -73,6 +73,16 @@ export async function runNativeCommand<
     globals,
   );
   const emission = prepareCliCommandEmission(native, result, options);
+  if (emission.result.ok && emission.presentationFailure !== undefined) {
+    return exit(
+      emitPresentationFailure(
+        emission.result,
+        emission.presentationFailure,
+        { stdout, stderr },
+        emitOptionsFor(config, options.json, command),
+      ),
+    );
+  }
   let emittedExitCode: number;
   if (emission.result.ok && emission.presentation !== undefined) {
     stdout(emission.presentation);

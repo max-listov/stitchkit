@@ -127,18 +127,20 @@ describe('createCli — aggregate views', () => {
     expect(lines).toHaveLength(ITEMS.length + 2);
   });
 
-  test('a field the result does not carry is an argument error, never an empty group', async () => {
+  test('an absent view field preserves the result, never inventing an empty group', async () => {
     const { out, err, code } = await run(['item_list', '--count-by', 'stat']);
-    expect(code).toBe(2);
-    expect(out).toBe('');
-    expect(err).toContain('no record carries the field "stat"');
+    expect(code).toBe(8);
+    expect(JSON.parse(out)).toEqual({ items: ITEMS });
+    expect(JSON.parse(err).details.cause.details.message).toContain(
+      'no record carries the field "stat"',
+    );
     // The message names what the caller could have meant.
     expect(err).toContain('status');
   });
 
-  test('an aggregate over a scalar result is an argument error', async () => {
+  test('an aggregate over a scalar result is a presentation failure', async () => {
     const { err, code } = await run(['item_one', '--count-by', 'id']);
-    expect(code).toBe(2);
+    expect(code).toBe(8);
     expect(err).toContain('needs a collection');
   });
 
@@ -162,7 +164,7 @@ describe('createCli — aggregate views', () => {
 
   test('--sum refuses a field that is not a number', async () => {
     const { err, code } = await run(['item_list', '--sum', 'status']);
-    expect(code).toBe(2);
+    expect(code).toBe(8);
     expect(err).toContain('is not a number');
   });
 

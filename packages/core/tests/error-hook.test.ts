@@ -37,6 +37,7 @@ const onError = createErrorHook({
     WAIT_TIMEOUT: 'timeout',
     WAIT_FAILED: 'conflict',
     CLI_COMMAND_UNAVAILABLE: 'unavailable',
+    CLI_PRESENTATION_FAILED: 'internal',
     DOWNLOAD_NOT_FOUND: 'not_found',
     VIEW_HTTP_ERROR: 'upstream',
     CONNECTION_TIMEOUT: 'timeout',
