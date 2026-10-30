@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: a bot-to-bot refusal is permanent
+## Released migration: 0.114.0
 
 **Who must act:** code with an exhaustive `switch` or `Record` over
 `TelegramSendFailureReason` or `TELEGRAM_SEND_FAILURE_REASONS`. Code that only

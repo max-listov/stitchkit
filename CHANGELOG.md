@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.114.0] - 2026-10-30
+
 ### ⚠️ Breaking changes
 
 **Who must act:** code with an exhaustive `switch` or `Record` over `TelegramSendFailureReason` or `TELEGRAM_SEND_FAILURE_REASONS`, or a consumer table that must handle every reason. Code that only reads `retryable` and `recipientUnreachable` needs no change.

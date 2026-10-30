@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-10-30
+
+### Changed
+
+- Targets stitchkit `^0.114.0`, keeping consumers on one framework copy when they adopt the shared Telegram outbound budget and the new send-failure reason. No terminal source change is needed.
+
 ## [0.2.8] - 2026-10-26
 
 ### Changed
