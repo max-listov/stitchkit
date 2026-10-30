@@ -146,6 +146,17 @@ export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).par
     marker: 'packed injected broadcast classification: ok',
   },
   {
+    id: 'telegram-outbound-budget',
+    fixture: 'minimal',
+    entry: 'telegram-outbound-budget.mjs',
+    files: [],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed telegram outbound budget: ok',
+  },
+  {
     id: 'cli-publication',
     expectedMs: 23_000,
     fixture: 'minimal',

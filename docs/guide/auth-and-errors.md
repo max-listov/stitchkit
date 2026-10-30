@@ -371,6 +371,11 @@ and our payload is wrong, which is the case a list of substrings quietly counts
 against the user. An unrecognised refusal leaves the recipient reachable: losing
 a working subscriber forever costs more than one wasted send.
 
+`bot-to-bot-disabled` is permanent but deliberately not `recipientUnreachable`:
+Telegram returns it when either bot has not enabled Bot to Bot messaging, so the
+missing setting may be the sender's. Do not retry it, and do not close the
+recipient's row on it.
+
 `TELEGRAM_SEND_FAILURE_REASONS` lists every reason. A table keyed by
 `TelegramSendFailureReason` — error codes, the text a person reads — fails to
 compile when a release adds one, instead of falling through to a default:

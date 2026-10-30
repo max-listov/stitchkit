@@ -72,6 +72,7 @@ const COVERED: Record<string, string> = {
   WatchClientConfig: 'entrypoints/live.ts',
   VerifyTelegramInitDataOptions: 'entrypoints/telegram.ts',
   TelegramBroadcastConfig: 'entrypoints/telegram.ts',
+  TelegramOutboundBudgetConfig: 'entrypoints/telegram.ts',
   TelegramOperatorChannelConfig: 'entrypoints/telegram.ts',
   TelegramLocalFilesConfig: 'entrypoints/telegram.ts',
   TelegramOperatorDedupe: 'entrypoints/telegram.ts',

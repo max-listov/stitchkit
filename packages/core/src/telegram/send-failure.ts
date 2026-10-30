@@ -34,12 +34,18 @@ import { isTelegramNotDispatched } from './not-dispatched';
  * user who never pressed Start needs an invitation rather than a retry, and a
  * chat Telegram does not know is usually a bad identifier on our side — a
  * defect in our data, not a fact about a person.
+ *
+ * `bot-to-bot-disabled` is permanent for this send but does not accuse the
+ * recipient: Telegram disables bot-to-bot messaging when *either* bot has not
+ * enabled its Bot to Bot setting, so the missing setting may be the sender's.
+ * It is never retried, and it never marks the recipient unreachable.
  */
 export type TelegramSendFailureReason =
   | 'blocked-by-user'
   | 'user-deactivated'
   | 'chat-not-found'
   | 'not-started'
+  | 'bot-to-bot-disabled'
   | 'rate-limited'
   | 'message-invalid'
   | 'server-error'
@@ -88,6 +94,10 @@ const BY_DESCRIPTION: readonly (readonly [RegExp, TelegramSendFailureReason])[] 
   [/user is deactivated|account is deactivated/i, 'user-deactivated'],
   [/can'?t initiate conversation|need to start a conversation/i, 'not-started'],
   [/chat not found|peer_id_invalid|user not found/i, 'chat-not-found'],
+  [
+    /bot_to_bot_disabled|bot-to-bot messaging is disabled|bot to bot.*disabled/i,
+    'bot-to-bot-disabled',
+  ],
   [/too many requests|retry later|flood/i, 'rate-limited'],
   [
     /message is too long|can'?t parse entities|message text is empty|wrong file identifier|button_url_invalid/i,
@@ -112,6 +122,7 @@ const TRAITS: {
   'user-deactivated': { retryable: false, recipientUnreachable: true },
   'chat-not-found': { retryable: false, recipientUnreachable: true },
   'not-started': { retryable: false, recipientUnreachable: true },
+  'bot-to-bot-disabled': { retryable: false, recipientUnreachable: false },
   'rate-limited': { retryable: true, recipientUnreachable: false },
   'message-invalid': { retryable: false, recipientUnreachable: false },
   'server-error': { retryable: true, recipientUnreachable: false },
@@ -159,12 +170,15 @@ function retryAfterOf(value: unknown, depth = 0): number | undefined {
 }
 
 function descriptionOf(value: unknown, depth = 0): string {
+  if (depth > 4) return '';
   if (typeof value === 'string') return value;
   if (value instanceof Error) {
-    const nested = isRecord(value) ? descriptionOf(value.cause, depth + 1) : '';
-    return `${value.message} ${nested}`.trim();
+    const own =
+      isRecord(value) && typeof value.description === 'string' ? value.description : '';
+    const nested = descriptionOf(value.cause, depth + 1);
+    return [own, value.message, nested].filter(Boolean).join(' ');
   }
-  if (!isRecord(value) || depth > 4) return '';
+  if (!isRecord(value)) return '';
   const own = typeof value.description === 'string' ? value.description : '';
   const message = typeof value.message === 'string' ? value.message : '';
   const nested = descriptionOf(value.cause ?? value.response ?? value.error, depth + 1);

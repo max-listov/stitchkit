@@ -656,6 +656,23 @@
       "test": "a provider wait above maxRetryDelayMs halts without clamping or resending early"
     }
   },
+  "TelegramOutboundBudgetConfig": {
+    "token": {
+      "test": "one token has one budget; a pause on one client stops its aliases and not another token"
+    },
+    "messagesPerSecond": {
+      "test": "20 workers, two campaigns and ordinary replies share one 24/s budget without a burst"
+    },
+    "retryAfterFallbackMs": {
+      "test": "a 429 without retry_after uses the declared fallback, never a zero wait"
+    },
+    "now": {
+      "test": "429 pauses every path of the token and resumes one message at a time"
+    },
+    "sleep": {
+      "test": "429 pauses every path of the token and resumes one message at a time"
+    }
+  },
   "TelegramOperatorChannelConfig": {
     "chatId": {
       "test": "posts to the topic thread, in order, paced by minIntervalMs"

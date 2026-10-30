@@ -2016,7 +2016,7 @@ available from `stitchkit/contract`.
 Peer-free server-only Telegram platform primitives — the Bot API's own
 protocols and the jobs every bot rewrote around them. Importing this resolves no
 bot library; `stitchkit/application/grammy` remains the lifecycle adapter for an
-injected grammY bot. → ADR 0143, ADR 0201 — [guide](../guide/telegram.md)
+injected grammY bot. → ADR 0143, ADR 0201, ADR 0274 — [guide](../guide/telegram.md)
 
 | Export | Kind | Summary |
 |--------|------|---------|
@@ -2031,7 +2031,8 @@ injected grammY bot. → ADR 0143, ADR 0201 — [guide](../guide/telegram.md)
 | `createTelegramBotTransport` / `TelegramBotTransportOptions` | function / _type_ | a `fetch` for the Bot API senders that connects before it writes, so a failure before the first byte is `TelegramNotDispatchedError`; connection attempt and budget, answer timeout and size, injectable resolver and socket factory — [guide](../guide/telegram.md#a-transport-that-knows-whether-a-request-left) |
 | `TelegramFetch` / `TelegramBotTransportOpen` / `TelegramBotTransportResolve` / `TelegramBotTransportSocket` | _types_ | the `(url, init) => Promise<Response>` the senders take; the transport's socket factory, resolver and the structural socket it needs (a Node `net.Socket` or `tls.TLSSocket` fits) |
 | `TelegramNotDispatchedError` / `TelegramNotDispatchedStage` | class / _type_ | a request that provably never left (`lookup`, `connect` or `request`), so repeating it cannot duplicate a message |
-| `TelegramSendFailureReason` / `TELEGRAM_SEND_FAILURE_REASONS` | _type_ / constant | `blocked-by-user` / `user-deactivated` / `chat-not-found` / `not-started` / `rate-limited` / `message-invalid` / `server-error` / `not-dispatched` / `unknown`, and the same as a list; a `Record<TelegramSendFailureReason, …>` over them fails to compile when a reason is added |
+| `TelegramSendFailureReason` / `TELEGRAM_SEND_FAILURE_REASONS` | _type_ / constant | `blocked-by-user` / `user-deactivated` / `chat-not-found` / `not-started` / `bot-to-bot-disabled` / `rate-limited` / `message-invalid` / `server-error` / `not-dispatched` / `unknown`, and the same as a list; a `Record<TelegramSendFailureReason, …>` over them fails to compile when a reason is added |
+| `telegramOutboundBudget` / `TelegramOutboundBudget` / `TelegramOutboundBudgetConfig` / `TelegramOutboundBudgetStats` | function / _type_ | one token-wide outbound budget: one object per token in the process, strict 24 messages/s by default, weighted albums and multi-message copies, `run(method, payload, signal, send)` as the transformer adapter, `pause`/`pauseAfter` for 429, `waitUntilResumed` for non-send retries and `stats`; it paces and never retries, and no public value carries the token |
 | `runTelegramBroadcast` | function | a resumable broadcast by `name` under a state `directory`: audience and journal durably recorded, pacing at `ratePerSecond` (25), exact retry delays within the finite declared budget, injected classifier, uncertain send outcomes never replayed, `dryRun`, one fenced runner per name |
 | `TelegramBroadcastConfig` / `TelegramBroadcastSend` / `TelegramBroadcastReport` / `TelegramBroadcastRunOutcome` / `TelegramBroadcastOutcome` / `TelegramBroadcastRecipient` | _type_ | `name`, `directory`, `recipients()`, `send({ recipient, attempt })`, `maxAttempts`, `signal`, `onProgress`; counts `delivered` / `unreachable` / `failed` / `uncertain` / `pending` and `finished` / `stopped` / `halted` / `dry-run` |
 | `TelegramBroadcastFailureSchema` / `TelegramBroadcastFailure` | schema / _type_ | injected `classify` answers retry-after/transient/permanent/ambiguous; exact provider delay is bounded by `maxRetryDelayMs` without shortening, unknown outcome remains uncertain and is never replayed |

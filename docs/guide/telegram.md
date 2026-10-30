@@ -72,6 +72,67 @@ The error line contract, for whatever recognises a failure from the journal: a
 line whose `level` is `50` or more is an error. There is no separate `fatal`;
 an unrecoverable end is an `error` line followed by a non-zero exit.
 
+## One token, one outbound budget
+
+Telegram counts a bot's bulk messages per token, not per campaign, handler or
+module. `telegramOutboundBudget` is that budget once: every alias of one token
+in the process gets the same object, another token gets another, and every send
+through it spends its weight. → [ADR 0274](../decisions/0274-a-telegram-token-has-one-outbound-budget.md).
+
+```ts
+import { telegramOutboundBudget } from 'stitchkit/telegram'
+
+const budget = telegramOutboundBudget({
+  token: env.BOT_TOKEN,
+  messagesPerSecond: 24,
+})
+
+// The one transformer of the bot's client. No second limiter, no second
+// scheduler: campaigns, replies and every other send of this token share it.
+api.config.use((previous, method, payload, signal) =>
+  budget.run(method, payload, signal, () => previous(method, payload, signal)),
+)
+```
+
+- **The token is the identity, not the sender.** Two bot objects built from one
+  token share the budget; two different tokens do not. The registry keeps a
+  128-bit identity, never the credential, and `stats()` contains no token.
+- **A message is the unit.** `sendMediaGroup` and `sendPaidMedia` cost their
+  media length, `copyMessages` and `forwardMessages` cost their message ids, and
+  a follow-up call to action after an album costs one more. Reads and edits
+  (`getMe`, `getFile`, `editMessage*`, `deleteMessage`, `sendChatAction`) do not
+  spend the budget.
+- **The first send after idle is immediate; the rest are spaced.** This is a
+  strict budget, not a bucket that saves a burst: at 24/s the next send is due
+  one interval later. A 429 pauses the whole token; when it resumes, one send
+  is released at the deadline and the queue continues one interval at a time,
+  never as a stampede.
+- **It paces; it does not retry.** `run` calls the send once. A 429 pauses the
+  token for Telegram's `retry_after` (or `retryAfterFallbackMs` when Telegram
+  gave none) and rethrows; the caller's retry policy decides what happens next.
+  A 429 from an edit or a read is still a fact about the token and pauses later
+  sends too. A network failure is rethrown unchanged and stays `unknown`; a 5xx
+  is rethrown unchanged and stays `server-error`. Neither is retried by the
+  budget or pauses the token — repeating a send whose outcome is unknown is a
+  decision, not a primitive's silent guess.
+- **A wait can be cancelled.** `run`/`acquire` take an `AbortSignal`; a
+  cancelled waiter spends no slot and calls no provider. A granted send that is
+  then aborted is not evidence that Telegram did not accept it — keep the
+  outcome unknown rather than retrying it as a definite failure.
+- **Non-send retries wait without spending.** An edit or delete retry that got
+  a 429 first records the pause with `budget.pauseAfter(error)` (the `run` path
+  does this itself), then uses `await budget.waitUntilResumed(signal)`; it shares
+  the token's pause but does not take a message slot.
+
+`telegramBroadcastSender` and `telegramOperatorSender` still send through
+`callTelegramBotApi`; they are not a second budget. Their returned function does
+not expose the method and payload, so a product that uses one wraps the concrete
+`sendMessage`/`copyMessage` call in `budget.run` where it knows both, or passes
+its own sender. There is no generic wrapper around the opaque sender.
+`runTelegramBroadcast` keeps its per-run `ratePerSecond` and the operator
+channel keeps its per-chat `minIntervalMs`; those are caps of their own jobs,
+not another token quota. The token budget is the binding shared cap.
+
 ## The operator channel
 
 The chat where people read about new users, payments and failures is not the

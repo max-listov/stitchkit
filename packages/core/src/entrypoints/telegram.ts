@@ -56,6 +56,12 @@ export {
   type TelegramOperatorDedupeVerdict,
 } from '../telegram/operator-dedupe';
 export {
+  type TelegramOutboundBudget,
+  type TelegramOutboundBudgetConfig,
+  type TelegramOutboundBudgetStats,
+  telegramOutboundBudget,
+} from '../telegram/outbound-budget';
+export {
   classifyTelegramSendFailure,
   TELEGRAM_SEND_FAILURE_REASONS,
   type TelegramSendFailure,

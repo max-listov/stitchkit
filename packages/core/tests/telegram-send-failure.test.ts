@@ -46,6 +46,53 @@ describe('a refused Telegram send is classified', () => {
     }
   });
 
+  test('a bot-to-bot refusal is permanent but does not accuse the recipient', () => {
+    // Telegram disables bot-to-bot messaging when either bot has not enabled
+    // its Bot to Bot setting. The refusal is final for this send, but the
+    // missing setting may be ours, so the recipient stays addressable.
+    const failure = classifyTelegramSendFailure(
+      botApiError(400, 'Bad Request: USER_BOT_TO_BOT_DISABLED'),
+    );
+    expect(failure).toMatchObject({
+      reason: 'bot-to-bot-disabled',
+      retryable: false,
+      recipientUnreachable: false,
+      evidence: 'description',
+    });
+  });
+
+  test('a description field on an Error is read, and a cyclic Error does not throw', () => {
+    const error = Object.assign(new Error('Call failed'), {
+      error_code: 400,
+      description: 'Bad Request: USER_BOT_TO_BOT_DISABLED',
+    });
+    expect(classifyTelegramSendFailure(error).reason).toBe('bot-to-bot-disabled');
+    expect(
+      classifyTelegramSendFailure({ error_code: 400, description: 'BOT_TO_BOT_DISABLED' })
+        .reason,
+    ).toBe('bot-to-bot-disabled');
+
+    const cyclic = new Error('loop');
+    cyclic.cause = cyclic;
+    expect(classifyTelegramSendFailure(cyclic).reason).toBe('unknown');
+  });
+
+  test('an ordinary 400 and a network failure stay unknown; 5xx is not a recipient verdict', () => {
+    const ordinary = classifyTelegramSendFailure(
+      botApiError(400, 'Bad Request: something else'),
+    );
+    expect(ordinary.reason).toBe('unknown');
+    expect(ordinary.recipientUnreachable).toBe(false);
+
+    const network = classifyTelegramSendFailure(new TypeError('fetch failed'));
+    expect(network.reason).toBe('unknown');
+    expect(network.recipientUnreachable).toBe(false);
+
+    const server = classifyTelegramSendFailure(botApiError(502, 'Bad Gateway'));
+    expect(server.reason).toBe('server-error');
+    expect(server.recipientUnreachable).toBe(false);
+  });
+
   test('a rate limit stops this send and implicates nobody', () => {
     const failure = classifyTelegramSendFailure(
       botApiError(429, 'Too Many Requests: retry after 30', { retry_after: 30 }),
@@ -138,6 +185,7 @@ describe('the reasons as a list', () => {
       'user-deactivated': 'E_GONE',
       'chat-not-found': 'E_CHAT',
       'not-started': 'E_START',
+      'bot-to-bot-disabled': 'E_BOT_TO_BOT',
       'rate-limited': 'E_LIMIT',
       'message-invalid': 'E_MESSAGE',
       'server-error': 'E_TELEGRAM',

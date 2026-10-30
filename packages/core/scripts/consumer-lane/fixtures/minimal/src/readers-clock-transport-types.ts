@@ -86,6 +86,7 @@ const exhaustive: Record<TelegramSendFailureReason, true> = {
   'user-deactivated': true,
   'chat-not-found': true,
   'not-started': true,
+  'bot-to-bot-disabled': true,
   'rate-limited': true,
   'message-invalid': true,
   'server-error': true,

@@ -2364,6 +2364,9 @@
     "TelegramOperatorDrop",
     "TelegramOperatorMessage",
     "TelegramOperatorSenderConfig",
+    "TelegramOutboundBudget",
+    "TelegramOutboundBudgetConfig",
+    "TelegramOutboundBudgetStats",
     "TelegramPostgresQuery",
     "TelegramSendFailure",
     "TelegramSendFailureReason",
@@ -2416,6 +2419,7 @@
     "sqliteTelegramUpdateStore",
     "telegramBroadcastSender",
     "telegramOperatorSender",
+    "telegramOutboundBudget",
     "telegramWebhookUrl",
     "verifyTelegramInitData"
   ],

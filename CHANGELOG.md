@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** code with an exhaustive `switch` or `Record` over `TelegramSendFailureReason` or `TELEGRAM_SEND_FAILURE_REASONS`, or a consumer table that must handle every reason. Code that only reads `retryable` and `recipientUnreachable` needs no change.
+
+- `stitchkit/telegram` — **`TelegramSendFailureReason` gains `bot-to-bot-disabled`.** A `400 USER_BOT_TO_BOT_DISABLED` is now a permanent refusal instead of `unknown`; it is not retried and does not mark the recipient unreachable, because Telegram reports it when either bot has not enabled Bot to Bot messaging. Before: the reason was `unknown` and an exhaustive table compiled. After: add the reason and decide how to report it (`retryable: false`, `recipientUnreachable: false`). → ADR 0274
+  **Affects:** `stitchkit/telegram` TelegramSendFailureReason, TELEGRAM_SEND_FAILURE_REASONS, classifyTelegramSendFailure(reason)
+
+### Added
+
+- `stitchkit/telegram` — `telegramOutboundBudget` gives one bot token one process-wide outbound budget: aliases of the token share it, different tokens are independent, `sendMediaGroup`/`sendPaidMedia` cost their media length, `copyMessages`/`forwardMessages` cost their message ids, and a 429 pauses every sender of the token. `budget.run(method, payload, signal, send)` is the transformer adapter; it paces, never retries and leaves a network/5xx outcome to the caller. The `stitchkit/telegram` surface ceiling rises from 98 to 102 names for the function and its three public types.
+
 ## [0.113.3] - 2026-10-30
 
 ### Fixed

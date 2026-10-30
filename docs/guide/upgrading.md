@@ -1,5 +1,47 @@
 # Upgrading stitchkit
 
+## Unreleased migration: a bot-to-bot refusal is permanent
+
+**Who must act:** code with an exhaustive `switch` or `Record` over
+`TelegramSendFailureReason` or `TELEGRAM_SEND_FAILURE_REASONS`. Code that only
+reads `retryable` and `recipientUnreachable` needs no change.
+
+`classifyTelegramSendFailure` now returns `reason: 'bot-to-bot-disabled'` for a
+`400 USER_BOT_TO_BOT_DISABLED` ([ADR 0274](../decisions/0274-a-telegram-token-has-one-outbound-budget.md)).
+It is permanent for that send, so it is not retried; it is **not**
+`recipientUnreachable`, because Telegram disables bot-to-bot messaging when
+either bot has not enabled its Bot to Bot setting, and the missing setting may
+be the sender's.
+
+1. Add the reason to every exhaustive mapping:
+
+   ```ts
+   // before
+   const code: Record<TelegramSendFailureReason, string> = { /* … */ unknown: 'E_UNKNOWN' }
+   // after
+   const code: Record<TelegramSendFailureReason, string> = {
+     /* … */ 'bot-to-bot-disabled': 'E_BOT_TO_BOT', unknown: 'E_UNKNOWN',
+   }
+   ```
+
+   Search pattern: `TelegramSendFailureReason`, `TELEGRAM_SEND_FAILURE_REASONS`
+   and every `switch` over a send-failure reason.
+2. Type-check: the exhaustive table without the new member fails to compile.
+3. If the application wants one outbound budget per bot token, opt in at the
+   one transformer that already owns its Bot API calls:
+
+   ```ts
+   import { telegramOutboundBudget } from 'stitchkit/telegram'
+
+   const budget = telegramOutboundBudget({ token: env.BOT_TOKEN })
+   api.config.use((previous, method, payload, signal) =>
+     budget.run(method, payload, signal, () => previous(method, payload, signal)),
+   )
+   ```
+
+   Remove the old limiter rather than running it beside this one. See the
+   [Telegram guide](telegram.md#one-token-one-outbound-budget).
+
 ## Released migration: 0.113.0
 
 **Who must act:** custom `AgentRuntimeStoreDriver` adapters and custom `AgentRuntimeStore` implementations of `seedConversationInput`. The built-in memory and SQLite stores already implement the contract.
