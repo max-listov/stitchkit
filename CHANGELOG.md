@@ -15,6 +15,14 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.114.2] - 2026-10-31
+
+### Fixed
+
+- `stitchkit/tools`, `stitchkit/cli` — the guarded fetch behind `view_file`, `mountDownload` and the CLI `--output-dir` download pins every hop to the address that passed the public-address check. It resolved a hostname, validated the answer, then let `fetch` resolve the same name again, so a resolver that answers public and then private could open a private or loopback socket (SSRF rebinding). The connection is now opened to the validated address with the URL's `Host` header and, over TLS, its server name, on every redirect hop; a URL carrying credentials is refused rather than moved to whatever host a redirect names. Streaming, backpressure, the header/body deadlines, the body cap and output-dir containment are unchanged; `allowPrivateHosts` / `allowPrivateDownloadHosts` still widen the address check without a second lookup.
+  **Affects:** `stitchkit/tools` behaviour; `stitchkit/cli` behaviour
+
+
 ## [0.114.1] - 2026-10-31
 
 ### Added
