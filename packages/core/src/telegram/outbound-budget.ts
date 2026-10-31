@@ -138,8 +138,10 @@ export interface TelegramOutboundBudgetStats {
 export interface TelegramOutboundBudget {
   /**
    * Run one Bot API call under the budget. A non-send method passes through
-   * without spending a message. A 429 pauses every sender of the token; the
-   * original error is rethrown and the call is not repeated.
+   * without spending a message. A 429 pauses every sender of the token, whether
+   * `send` throws it or resolves with the Bot API's `{ ok: false, … }` body, as
+   * a client transformer's `send` does. The error is rethrown, or the response
+   * returned, unchanged and the call is not repeated.
    */
   run<T>(
     method: string,
@@ -324,14 +326,20 @@ function createBudget(
     const cost = sendCost(method, payload);
     if (cost > 0) await acquire(cost, signal);
     if (signal?.aborted) throw signal.reason;
+    let result: T;
     try {
-      return await send();
+      result = await send();
     } catch (error) {
       // A 429 is a fact about the token, not about this method: an edit or a
       // read that sees one pauses the sends as well.
       pauseAfter(error);
       throw error;
     }
+    // A client transformer sits below the place where grammY turns a refusal
+    // into an exception: the Bot API's `{ ok: false, error_code, parameters }`
+    // body comes back as the value. It is the same fact as a thrown 429.
+    if (isRecord(result) && result.ok === false) pauseAfter(result);
+    return result;
   };
 
   const budget: TelegramOutboundBudget = {

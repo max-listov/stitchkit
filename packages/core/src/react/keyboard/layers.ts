@@ -29,9 +29,18 @@
  * the key — a widget's own `onKeyDown`, a text field, a popover that closes on
  * Escape — hears it first and keeps it by `preventDefault` or
  * `stopPropagation`. A layer only gets what nobody nearer wanted.
+ *
+ * One kind of layer is the exception: a `local` layer may ask for the capture
+ * phase. A menu that hangs over a text field keeps focus in the field and wants
+ * the arrows and Enter *before* the field acts on them; the field cannot be
+ * made to wait, so the layer goes first and, when it takes a key, nothing nearer
+ * hears it at all.
  */
 
 export type KeyLayerKind = 'overlay' | 'local' | 'route' | 'zone' | 'global';
+
+/** Where in the event's path a layer listens: after everything nearer, or before it. */
+export type KeyLayerPhase = 'bubble' | 'capture';
 
 const RANK: Readonly<Record<KeyLayerKind, number>> = {
   overlay: 4,
@@ -49,6 +58,8 @@ export interface LayerKeyEvent {
   readonly defaultPrevented: boolean;
   readonly target: EventTarget | null;
   preventDefault(): void;
+  /** A DOM event has it; a layer that takes a key in the capture phase uses it. */
+  stopPropagation?(): void;
 }
 
 /** The part of an element the stack reads to decide whether a layer is live and where it sits. */
@@ -88,8 +99,8 @@ function hasClosest(target: unknown): target is ClosestTarget {
   );
 }
 
-/** The nearest element matching `selectors` from an event target, or `null`. */
-export function closestFromTarget(target: EventTarget | null, selectors: string): unknown {
+/** The nearest element matching `selectors` from an event target or an element, or `null`. */
+export function closestFromTarget(target: unknown, selectors: string): unknown {
   return hasClosest(target) ? target.closest(selectors) : null;
 }
 
@@ -116,6 +127,11 @@ export interface KeyLayerState<E extends LayerKeyEvent, S extends LayerScope<S>>
    * `preventDefault`. `'include'`: the layer hears them too.
    */
   readonly fields?: 'skip' | 'include';
+  /**
+   * Default `'bubble'`. `'capture'` is for a `local` layer only: it hears the key
+   * before the element that has focus does, and a key it takes goes no further.
+   */
+  readonly phase?: KeyLayerPhase;
   /** Return `true` when the key was taken: its default is prevented and no layer below hears it. */
   onKey(event: E): boolean;
 }
@@ -127,14 +143,17 @@ export interface KeyLayerHandle<E extends LayerKeyEvent, S extends LayerScope<S>
 
 /** Where the stack listens. A `Window` is one. */
 export interface KeyListenerTarget<E> {
-  addEventListener(type: 'keydown', listener: (event: E) => void): void;
-  removeEventListener(type: 'keydown', listener: (event: E) => void): void;
+  addEventListener(type: 'keydown', listener: (event: E) => void, capture?: boolean): void;
+  removeEventListener(type: 'keydown', listener: (event: E) => void, capture?: boolean): void;
 }
 
 export interface KeyLayerStack<E extends LayerKeyEvent, S extends LayerScope<S>> {
   add(state: KeyLayerState<E, S>): KeyLayerHandle<E, S>;
-  /** Offer one key to the layers; `true` when one took it. The installed listener calls this. */
-  dispatch(event: E): boolean;
+  /**
+   * Offer one key to the layers that listen in `phase` (default `'bubble'`);
+   * `true` when one took it. The installed listeners call this.
+   */
+  dispatch(event: E, phase?: KeyLayerPhase): boolean;
 }
 
 interface Entry<E extends LayerKeyEvent, S extends LayerScope<S>> {
@@ -192,19 +211,46 @@ function askingOrder<E extends LayerKeyEvent, S extends LayerScope<S>>(
 }
 
 /**
- * A stack listening on `target`. The listener is attached with the first
- * layer and detached with the last, so a page without layers carries none.
+ * A stack listening on `target`. A listener is attached with the first layer of
+ * its phase and detached with the last, so a page without layers carries none,
+ * and a page with no capture layer carries no capture listener.
  */
 export function createKeyLayerStack<E extends LayerKeyEvent, S extends LayerScope<S>>(
   target: KeyListenerTarget<E>,
 ): KeyLayerStack<E, S> {
   const entries = new Set<Entry<E, S>>();
   let activations = 0;
-  const listener = (event: E) => {
-    dispatch(event);
+  const bubbling = (event: E) => {
+    dispatch(event, 'bubble');
   };
+  const capturing = (event: E) => {
+    dispatch(event, 'capture');
+  };
+  const attached = { bubble: false, capture: false };
 
-  function dispatch(event: E): boolean {
+  const phaseOf = (state: KeyLayerState<E, S>): KeyLayerPhase => state.phase ?? 'bubble';
+
+  /** Attach the listener of every phase that has a layer, detach the others. */
+  function sync(): void {
+    for (const phase of ['bubble', 'capture'] as const) {
+      const wanted = [...entries].some((entry) => phaseOf(entry.state) === phase);
+      if (wanted === attached[phase]) continue;
+      attached[phase] = wanted;
+      const listener = phase === 'capture' ? capturing : bubbling;
+      if (wanted) target.addEventListener('keydown', listener, phase === 'capture');
+      else target.removeEventListener('keydown', listener, phase === 'capture');
+    }
+  }
+
+  function refuseUnlessLocal(state: KeyLayerState<E, S>): void {
+    if (phaseOf(state) === 'capture' && state.kind !== 'local') {
+      throw new Error(
+        `A ${state.kind} layer cannot listen in the capture phase; only a local layer can`,
+      );
+    }
+  }
+
+  function dispatch(event: E, phase: KeyLayerPhase = 'bubble'): boolean {
     if (event.defaultPrevented || event.isComposing) return false;
     const isEscape = event.key === 'Escape';
     // Holding Escape repeats it; one press closes one level.
@@ -213,11 +259,15 @@ export function createKeyLayerStack<E extends LayerKeyEvent, S extends LayerScop
     let behindOverlay = false;
     for (const { entry } of askingOrder(entries)) {
       const { kind } = entry.state;
+      // A live overlay is a barrier for every layer below it, whichever phase either is in.
       if (behindOverlay && kind !== 'overlay') break;
       if (kind === 'overlay') behindOverlay = true;
+      if (phaseOf(entry.state) !== phase) continue;
       if (inField && entry.state.fields !== 'include') continue;
       if (entry.state.onKey(event)) {
         event.preventDefault();
+        // Taken before the element that has focus: it must not act on the key as well.
+        if (phase === 'capture') event.stopPropagation?.();
         return true;
       }
     }
@@ -225,18 +275,22 @@ export function createKeyLayerStack<E extends LayerKeyEvent, S extends LayerScop
   }
 
   function add(state: KeyLayerState<E, S>): KeyLayerHandle<E, S> {
+    refuseUnlessLocal(state);
     const entry: Entry<E, S> = { state, order: ++activations };
-    if (entries.size === 0) target.addEventListener('keydown', listener);
     entries.add(entry);
+    sync();
     return {
       update(next) {
+        refuseUnlessLocal(next);
         const reactivated = entry.state.active === false && next.active !== false;
+        const moved = phaseOf(entry.state) !== phaseOf(next);
         entry.state = next;
         if (reactivated) entry.order = ++activations;
+        if (moved) sync();
       },
       remove() {
         if (!entries.delete(entry)) return;
-        if (entries.size === 0) target.removeEventListener('keydown', listener);
+        sync();
       },
     };
   }

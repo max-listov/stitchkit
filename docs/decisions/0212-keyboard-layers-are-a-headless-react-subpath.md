@@ -4,7 +4,7 @@ description: "Which part of a screen gets a key is decided by one window listene
 type: decision
 status: accepted
 created: 2026-09-29
-updated: 2026-09-29
+updated: 2026-10-31
 ---
 
 # ADR 0212 — Keyboard layers are a headless React subpath
@@ -80,3 +80,81 @@ rendered DOM.
 - Global shortcut registries, key-combination parsing and grid (two-axis)
   navigation are out of scope; a layer's `onKey` receives the event and decides.
 - The entrypoint starts evolving (ADR 0103, ADR 0198).
+
+## Amendment (0.114.1): what the first large adoption needed
+
+A large application moved its list navigation onto the zone and reported what it
+had to work around. Each point is additive; the decisions above stand.
+
+- **A third mode, `focus`, instead of a flag on `highlight`.** `mode` already
+  names what moving means. In `highlight` the zone owns Enter, so a list of links
+  or buttons lost its native click and the page wrote `document.activeElement.click()`
+  to get it back. A zone whose items choose for themselves reports nothing and
+  takes no Enter; it has no `onChange`, so it is a second options shape
+  (`FocusZoneOptions`) and `useNavZone` takes the union (`ZoneOptions`).
+- **`mergeRefs`, not a second `ref` argument.** A zone's `ref` meets a drag
+  handle's or a measuring hook's on the same element; one helper covers both
+  `zoneProps.ref` and `itemProps(id).ref`, where an argument would cover one and
+  duplicate the other. A prop with no value is now absent, so a spread no longer
+  erases a `role` or `aria-label` the element carried from elsewhere.
+- **`ignore`, decided by the application.** Keyboard dragging uses the arrows the
+  zone also reads. The zone could skip any key from an element with
+  `aria-pressed="true"`, but a toolbar of toggle buttons carries the same
+  attribute and must keep its arrows: only the application knows a pressed
+  element is a drag. `ignore(event)` leaves the key whole — no move, not taken, no
+  `preventDefault` — inside the zone and outside it.
+- **`openedByKeyboard()`, called at the moment of opening.** A script's `focus()`
+  shows a ring when the element that had focus before showed one, and when nothing
+  had. A menu opened by a right click would ring its first item. The answer is
+  `document.activeElement.matches(':focus-visible')` read before anything moves
+  focus; a tracked modality would be a global listener for one question. A zone
+  whose own element has focus lands the first arrow on the current item, so the
+  menu that took focus on the pointer is an ordinary menu from the first key.
+- **The zone is adopted at commit.** `update` ran during render and reset the
+  pointed item when `value` changed: a render React started and discarded — a
+  suspended transition — left the zone with the discarded render's options. The
+  options are adopted in a layout effect and the render works out its own tab stop
+  from its own options (`resolveZoneIndex`). The hook still subscribes to the tab
+  stop, not to the raw pointed item, so moving focus onto the item that is already
+  the tab stop renders nothing.
+- **No index map.** Asked for, and measured: building a `Map` of 20 000 ids takes
+  about 2 000 µs, one scan to the middle 9–52 µs. `items` usually arrives as a new
+  array each render, so the map would cost more than the scans it removes. The
+  count of scans per key is what was cut (one per move instead of three or more),
+  and the ref callbacks cached per id are dropped with their element.
+- **A test bed.** The stack and the zone were already plain objects driven by
+  fakes in this repository's own tests; those fakes are now
+  `stitchkit/react/keyboard/testing`, so a consumer without a DOM tests the order
+  of layers, `scope`/`inert` and the edges of a zone the same way.
+
+## Amendment (0.114.1, second wave): the first arrow, the panel, the field
+
+The same application moved every list, Escape and section shortcut onto the hooks
+and reported what was still worked around.
+
+- **`outside: 'focus' | 'move'`, default as before.** Putting focus on the current
+  item before anything changes is the safe first answer, and a list whose arrows
+  choose should not change the choice on a key that only announced it. A list that
+  has always answered the first arrow with a change opts in per zone. The word is
+  not `'enter'`: `onEnter` is the cross-axis key.
+- **A field is a field of the zone, not an area around it.** `data-local-keys`
+  keeps page shortcuts out of an area; a zone inside it is the part of the area
+  that handles arrows, and switching it off there left the panel without keys and
+  without a message. The zone now treats as a field only what is inside it. The
+  alternative, a development warning, would have kept a trap and named it.
+- **`phase: 'capture'`, for `local` layers only.** The window listener runs after
+  everything closer to the key, so a menu over a text field cannot get the arrows
+  and Enter before the field acts on them, and no ordering inside the bubble
+  phase changes that. A second listener in the capture phase exists only while a
+  layer asks for it; a key it takes is consumed whole, because a field that also
+  sent the message would make the menu pointless. Capture is refused for the
+  other kinds: a `route` Escape that ran before a dialog's own would close the
+  page behind the dialog. A live overlay still stops layers of either phase.
+  The refusal is a readable error when the layer mounts and not a union type:
+  an `Omit<KeyLayerOptions, …>` in a consumer's wrapper must keep compiling.
+- **`insertCompare` for the entity cache.** `compare` sorts the whole array after
+  every create and update, which presumes the row carries its own rank. Where the
+  server's order depends on facts outside the row, no `compare` exists and a wrong
+  one scrambles the list. `insertCompare` places only the row entering the list,
+  by the rule `compare` followed for ties, and leaves every other row and every
+  updated row where it is; a list takes one of the two.

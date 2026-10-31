@@ -848,6 +848,37 @@ deleted payload without guessing. The same resolved detail key drives the
 `isFresh` echo guard. Shape checks also leave neighbouring detail caches alone
 when a list key is intentionally used as a partial query-key prefix.
 
+### When only a new row needs an order
+
+`compare` is the order the row itself determines: the array is sorted again after
+every create and update, so a rename that moves a row moves it in the cache too.
+Some lists are ordered by facts the row does not carry — the projects a person
+owns first, then the ones they administer, then the rest by name, where the role
+is not in the row for a platform administrator who belongs to none of them. No
+`compare` can reproduce that, and sorting every row with a wrong one scrambles
+the list the server ordered.
+
+`insertCompare` answers a smaller question: where does a row that is *entering*
+the list go?
+
+```ts
+list: {
+  key: ['projects'],
+  shape: 'array',
+  createAt: 'end',
+  updateMissing: 'insert',
+  insertCompare: (incoming, existing) => incoming.name.localeCompare(existing.name),
+}
+```
+
+A new row goes before the first row it sorts ahead of; a tie goes by `createAt`
+(`'start'`: before equal rows, `'end'`: after them). On a list already in that
+order the result is the one `compare` would give. On a list that is not, no other
+row moves, and a row that is already in the list is replaced where it stands.
+A paged list places the row within the page `createAt` selects, and leaves the
+other pages as they were. `compare` and `insertCompare` are two answers to one
+question: a list takes one of them, and `createEntityCacheHandlers` refuses both.
+
 The helper deliberately does **not** flatten pages, infer filter semantics,
 derive a sort order or replace arbitrary `setQueryData` logic. Those remain
 declared application policies; Stitchkit applies their generic cache mechanics.

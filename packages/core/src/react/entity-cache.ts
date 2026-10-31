@@ -51,7 +51,16 @@ export interface EntityCacheTotalPolicy<TData> {
   unknown?: 'preserve' | 'invalidate';
 }
 
-/** List envelope, scoped key and explicit CRUD policies. */
+/**
+ * List envelope, scoped key and explicit CRUD policies. It stays an interface,
+ * not a union of shapes: a consumer's config is often a value of this type, and
+ * a union turns `compare` and `insertCompare` into a discriminated choice the
+ * compiler cannot narrow from the fields alone.
+ *
+ * At most one of `compare` and `insertCompare` is set — a list has one answer to
+ * "what order is this?". `createEntityCacheHandlers` refuses both at creation.
+ * With neither, a create goes to the `createAt` edge and every other row stays.
+ */
 export interface EntityCacheListConfig<TData, TListItem> {
   /** Static query-key prefix or an event-aware scoped key factory. */
   key: EntityCacheKey<TData>;
@@ -59,8 +68,21 @@ export interface EntityCacheListConfig<TData, TListItem> {
   createAt: 'start' | 'end';
   /** Explicit behavior when an update's id is absent from every cached page. */
   updateMissing: 'skip' | 'insert';
-  /** Backend-equivalent ordering for each affected logical item array. */
+  /**
+   * Backend-equivalent ordering of each affected logical item array: it is
+   * sorted again after every create and update. Only for an order the row
+   * itself determines; never together with `insertCompare`.
+   */
   compare?: (left: TListItem, right: TListItem) => number;
+  /**
+   * Where a row that is *entering* the list goes: before the first row it sorts
+   * ahead of, with ties broken by `createAt` (`'start'`: before equal rows,
+   * `'end'`: after them). On a list already in this order the result is the one
+   * `compare` gives; on a list that is not — an order the server decides with
+   * facts the row does not carry — no other row moves, and a row that is already
+   * there is replaced in place. Never together with `compare`.
+   */
+  insertCompare?: (incoming: TListItem, existing: TListItem) => number;
   /** Cached data envelope; no runtime shape inference is performed. */
   shape: EntityCacheListShape;
   /** Optional per-query filter membership. Omit for the envelope-preserving legacy path. */
@@ -100,7 +122,8 @@ type ListMutation<TListItem> =
 interface EntityCacheMutationPolicy<TListItem> {
   createAt: 'start' | 'end';
   updateMissing: 'skip' | 'insert';
-  compare?: (left: TListItem, right: TListItem) => number;
+  compare?: ((left: TListItem, right: TListItem) => number) | undefined;
+  insertCompare?: ((incoming: TListItem, existing: TListItem) => number) | undefined;
 }
 
 interface ItemArrayMutation<TListItem> {
@@ -125,10 +148,19 @@ function ordered<TListItem>(
 function insertAt<TListItem>(
   items: TListItem[],
   item: TListItem,
-  at: 'start' | 'end',
-  compare: ((left: TListItem, right: TListItem) => number) | undefined,
+  policy: EntityCacheMutationPolicy<TListItem>,
 ): TListItem[] {
-  return ordered(at === 'start' ? [item, ...items] : [...items, item], compare);
+  const { createAt, insertCompare } = policy;
+  if (insertCompare === undefined) {
+    return ordered(createAt === 'start' ? [item, ...items] : [...items, item], policy.compare);
+  }
+  // The first row the incoming one sorts ahead of; a tie goes by the declared edge.
+  const index = items.findIndex((existing) => {
+    const order = insertCompare(item, existing);
+    return createAt === 'start' ? order <= 0 : order < 0;
+  });
+  const at = index === -1 ? items.length : index;
+  return [...items.slice(0, at), item, ...items.slice(at)];
 }
 
 /** Mutate one or more logical item arrays while keeping their outer envelopes intact. */
@@ -149,9 +181,7 @@ function mutateItemArrays<TListItem>(
     const target = config.createAt === 'start' ? 0 : arrays.length - 1;
     return {
       arrays: arrays.map((items, index) =>
-        index === target
-          ? insertAt(items, mutation.item, config.createAt, config.compare)
-          : items,
+        index === target ? insertAt(items, mutation.item, config) : items,
       ),
       present,
     };
@@ -357,6 +387,9 @@ function patchList<TData, TListItem>(
 export function createEntityCacheHandlers<TData, TListItem = TData>(
   config: EntityCacheConfig<TData, TListItem>,
 ): EntityCacheHandlers<TData> {
+  if (config.list.compare && config.list.insertCompare) {
+    throw new Error('Entity cache list takes compare or insertCompare, not both');
+  }
   if (
     config.list.total &&
     config.list.shape !== 'paginated' &&

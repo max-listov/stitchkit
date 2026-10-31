@@ -447,7 +447,7 @@ peer — an install pulls in only what the project actually uses.
 | `stitchkit-tui` | separate optional package | Renderer-neutral `./core` state plus a Bun/OpenTUI terminal controller, commands, model/session pickers and authenticated local attachment over a caller-composed harness. |
 | `@openrouter/ai-sdk-provider` | peer, optional | Only `stitchkit/agent-runtime/openrouter`; neutral runtime imports do not resolve it. |
 | SQLite | runtime built-in, optional | `bun:sqlite` through `stitchkit/agent-runtime/sqlite/bun`, or `node:sqlite` on Node ≥ 22.5 through the Node leaf. |
-| `grammy` | peer, optional | Only `stitchkit/application/grammy` at run time, and the declarations of `stitchkit/telegram/screens`; the neutral application kernel does not resolve it. |
+| `grammy` | peer, optional | Only `stitchkit/application/grammy` at run time, and the declarations of `stitchkit/telegram/screens` and `stitchkit/telegram/grammy`; the neutral application kernel does not resolve it. |
 | `@opentelemetry/api` | peer, optional | Type-only boundary for `stitchkit/application/opentelemetry`; the adapter has no runtime import and owns no SDK/exporter. |
 | `@tanstack/react-query` + `react-query-kit` | peer, optional | Only `stitchkit/react` — `createCursorQuery`, `createCacheBridge`. |
 | `react` | peer, optional | Only the React subpaths: `stitchkit/react` with the two above, and `stitchkit/react/keyboard` — keyboard layers and list zones, hooks only. |

@@ -1,9 +1,11 @@
-import { Bot, type BotConfig, type Context, MemorySessionStorage } from 'grammy';
+import { Api, Bot, type BotConfig, type Context, MemorySessionStorage } from 'grammy';
 import { createApplication } from 'stitchkit/application';
 import {
   createGrammyWebhookResource,
   grammyPollingResource,
 } from 'stitchkit/application/grammy';
+import { telegramOutboundBudget } from 'stitchkit/telegram';
+import { telegramBudgetTransformer } from 'stitchkit/telegram/grammy';
 import {
   back,
   createScreenTestChat,
@@ -60,4 +62,21 @@ await chat.press('First');
 if (chat.messages.at(-1)?.text !== 'item 1')
   throw new Error('screens: the press did not navigate');
 screens.close();
+// Budget: the transformer is typed by grammY's own `Transformer`, installs without a
+// cast, and reads the 429 grammY returns as a response before it becomes an error.
+const budget = telegramOutboundBudget({
+  token: 'packed-budget-token',
+  retryAfterFallbackMs: 60_000,
+});
+const budgetApi = new Api('packed-budget-token', {
+  fetch: async () =>
+    Response.json(
+      { ok: false, error_code: 429, description: 'Too Many Requests' },
+      { status: 429 },
+    ),
+});
+budgetApi.config.use(telegramBudgetTransformer(budget));
+await budgetApi.sendMessage(1, 'limited').catch(() => undefined);
+if (budget.stats().pausedForMs < 50_000)
+  throw new Error('budget: a returned 429 did not pause the token');
 console.log('grammy consumer: typed adapters ok');

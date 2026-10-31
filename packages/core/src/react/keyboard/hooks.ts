@@ -3,21 +3,33 @@
  * no provider. The stack is one per window, created by the first layer that
  * mounts, so a layer inside a portal is on the same stack as the page.
  */
-import { type RefObject, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import {
   createKeyLayerStack,
   type KeyLayerHandle,
   type KeyLayerKind,
+  type KeyLayerPhase,
   type KeyLayerStack,
   type KeyLayerState,
 } from './layers';
 import {
   createNavZone,
-  type NavZoneOptions,
+  resolveZoneIndex,
   ZONE_ATTRIBUTE,
   type ZoneItemId,
+  type ZoneOptions,
   type ZoneOrientation,
 } from './zone';
+
+/** Layout effects run on the server only as a warning in older React; there it is a plain effect. */
+const useCommittedEffect = typeof document === 'undefined' ? useEffect : useLayoutEffect;
 
 type WindowStack = KeyLayerStack<KeyboardEvent, Element>;
 
@@ -31,6 +43,13 @@ function stackOf(view: Window): WindowStack {
   return created;
 }
 
+/**
+ * A layer on the window's key stack. `phase: 'capture'` is for a `local` layer
+ * only — any other kind refuses it when it mounts: the layer then hears a key
+ * before the element that has focus does, as a menu over a text field must, and
+ * a key it takes reaches nothing nearer. Such a layer sets `fields: 'include'`,
+ * since the key is pressed in the field.
+ */
 export interface KeyLayerOptions {
   readonly kind: KeyLayerKind;
   /** Return `true` when the key was taken: its default is prevented and no layer below hears it. */
@@ -45,6 +64,8 @@ export interface KeyLayerOptions {
   readonly scope?: RefObject<Element | null>;
   /** Default `'skip'`: keys pressed in fields and `data-local-keys` areas, except Escape, pass it by. */
   readonly fields?: 'skip' | 'include';
+  /** Default `'bubble'`: after everything nearer. `'capture'`: before it, `local` layers only. */
+  readonly phase?: KeyLayerPhase;
 }
 
 function layerState(options: KeyLayerOptions): KeyLayerState<KeyboardEvent, Element> {
@@ -53,6 +74,7 @@ function layerState(options: KeyLayerOptions): KeyLayerState<KeyboardEvent, Elem
     kind: options.kind,
     active: options.active,
     fields: options.fields,
+    phase: options.phase,
     scope: scope === undefined ? undefined : () => scope.current,
     onKey: (event) => options.onKey(event),
   };
@@ -93,23 +115,30 @@ export function useEscapeLayer(options: EscapeLayerOptions): void {
   });
 }
 
-/** Spread on the zone's element. */
+/**
+ * Spread on the zone's element. A key that has no value is absent, not
+ * `undefined`, so spreading the props after an attribute of your own keeps it.
+ */
 export interface NavZoneProps {
   readonly ref: (element: HTMLElement | null) => void;
-  readonly role: 'listbox' | 'tablist' | undefined;
+  readonly role?: 'listbox' | 'tablist';
   readonly 'aria-orientation': ZoneOrientation;
-  readonly 'aria-label': string | undefined;
+  readonly 'aria-label'?: string;
   readonly 'data-keyboard-zone': '';
   readonly onKeyDown: (event: { readonly nativeEvent: KeyboardEvent }) => void;
 }
 
-/** Spread on each item's element. */
+/**
+ * Spread on each item's element. A key that has no value is absent, not
+ * `undefined`: a `role` or `aria-selected` the element carries from another
+ * library survives the spread.
+ */
 export interface NavZoneItemProps {
   readonly ref: (element: HTMLElement | null) => void;
   readonly tabIndex: 0 | -1;
-  readonly role: 'option' | 'tab' | undefined;
-  readonly 'aria-selected': boolean | undefined;
-  readonly 'aria-current': 'true' | undefined;
+  readonly role?: 'option' | 'tab';
+  readonly 'aria-selected'?: boolean;
+  readonly 'aria-current'?: 'true';
   readonly onFocus: () => void;
 }
 
@@ -126,18 +155,63 @@ export interface NavZone<Id extends ZoneItemId> {
 }
 
 /**
+ * Ref callbacks for the items of a zone, one per id, created once and dropped
+ * when their element goes. A list whose ids change over time — a conversation
+ * list that loads more, a table that pages — would otherwise keep a callback for
+ * every id it ever showed.
+ */
+export function createItemRefs<Id extends ZoneItemId>(
+  set: (id: Id, node: HTMLElement | null) => void,
+): { get(id: Id): (node: HTMLElement | null) => void; readonly size: number } {
+  const cache = new Map<Id, (node: HTMLElement | null) => void>();
+  return {
+    get(id) {
+      const cached = cache.get(id);
+      if (cached !== undefined) return cached;
+      const created = (node: HTMLElement | null) => {
+        set(id, node);
+        // An element that is gone takes its callback with it; one that was
+        // already replaced by a newer callback leaves the newer one alone.
+        if (node === null && cache.get(id) === created) cache.delete(id);
+      };
+      cache.set(id, created);
+      return created;
+    },
+    get size() {
+      return cache.size;
+    },
+  };
+}
+
+/**
  * A list the arrows move through with real focus. See `zone.ts` for the
  * modes, the cross axis and what happens past an end.
+ *
+ * Rendering never changes the zone: the options of a render are adopted when it
+ * commits, and the tab stop of a render is worked out from that render's own
+ * options. A render React starts and throws away — a suspended transition, an
+ * interrupted update — leaves the zone as the last committed render left it.
  */
-export function useNavZone<Id extends ZoneItemId>(options: NavZoneOptions<Id>): NavZone<Id> {
+export function useNavZone<Id extends ZoneItemId>(options: ZoneOptions<Id>): NavZone<Id> {
   const [zone] = useState(() => createNavZone(options));
-  zone.update(options);
-  const current = useSyncExternalStore(zone.subscribe, zone.current, zone.current);
+  useCommittedEffect(() => {
+    zone.update(options);
+  });
+  // Subscribed to the tab stop, not to the pointed item: moving focus to the item
+  // that is already the tab stop renders nothing.
+  useSyncExternalStore(zone.subscribe, zone.current, zone.current);
+  // A value that is new in this render takes the pointed item back to the chosen
+  // one when the render commits; the render shows that already.
+  const value = options.value ?? null;
+  const pointed = value === (zone.options.value ?? null) ? zone.pointedItem() : null;
+  const current = options.items[resolveZoneIndex(options.items, value, pointed)] ?? null;
   const element = useRef<HTMLElement | null>(null);
   const [zoneRef] = useState(() => (node: HTMLElement | null) => {
     element.current = node;
   });
-  const itemRefs = useRef(new Map<Id, (node: HTMLElement | null) => void>());
+  const [itemRefs] = useState(() =>
+    createItemRefs<Id>((id, node) => zone.setItemElement(id, node)),
+  );
 
   useKeyLayer({
     kind: 'zone',
@@ -147,36 +221,29 @@ export function useNavZone<Id extends ZoneItemId>(options: NavZoneOptions<Id>): 
   });
 
   const role = options.role ?? 'listbox';
-  const itemRef = (id: Id) => {
-    const cached = itemRefs.current.get(id);
-    if (cached !== undefined) return cached;
-    const created = (node: HTMLElement | null) => {
-      zone.setItemElement(id, node);
-    };
-    itemRefs.current.set(id, created);
-    return created;
-  };
+  const label = options.label;
+  const itemRole = role === 'listbox' ? 'option' : role === 'tablist' ? 'tab' : undefined;
 
   return {
     zoneProps: {
       ref: zoneRef,
-      role: role === 'none' ? undefined : role,
       'aria-orientation': options.orientation ?? 'vertical',
-      'aria-label': options.label,
       [ZONE_ATTRIBUTE]: '',
       onKeyDown: (event) => {
         zone.keyDown(event.nativeEvent, element.current);
       },
+      ...(role !== 'none' && { role }),
+      ...(label !== undefined && { 'aria-label': label }),
     },
     itemProps: (id) => {
-      const chosen = id === options.value;
+      const chosen = id === value;
       return {
-        ref: itemRef(id),
+        ref: itemRefs.get(id),
         tabIndex: id === current ? 0 : -1,
-        role: role === 'listbox' ? 'option' : role === 'tablist' ? 'tab' : undefined,
-        'aria-selected': role === 'none' ? undefined : chosen,
-        'aria-current': role === 'none' && chosen ? 'true' : undefined,
         onFocus: () => zone.focused(id),
+        ...(itemRole !== undefined && { role: itemRole }),
+        ...(role !== 'none' && { 'aria-selected': chosen }),
+        ...(role === 'none' && chosen && { 'aria-current': 'true' as const }),
       };
     },
     element,

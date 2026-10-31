@@ -407,3 +407,148 @@ describe('entity cache membership and total policies', () => {
     });
   });
 });
+
+describe('insertCompare: an order that only a row entering the list needs', () => {
+  const byRank = (incoming: WidgetListItem, existing: WidgetListItem) =>
+    incoming.rank - existing.rank;
+  const placing = (
+    shape: EntityCacheListShape,
+    createAt: 'start' | 'end',
+    updateMissing: 'skip' | 'insert' = 'skip',
+  ) =>
+    createEntityCacheHandlers<Widget, WidgetListItem>({
+      getId: (entity) => entity.id,
+      getListItemId: (entry) => entry.id,
+      toListItem: item,
+      list: { key: ['widgets'], shape, createAt, updateMissing, insertCompare: byRank },
+    });
+  const widget = (id: string, rank: number): Widget => ({
+    ...one,
+    id,
+    name: `w${id}`,
+    rank,
+  });
+  const ids = (rows: readonly WidgetListItem[] | undefined) => rows?.map((row) => row.id);
+
+  test('a created row goes before the first row it sorts ahead of; no other row moves', () => {
+    const queryClient = new QueryClient();
+    // The server's order is not rank order: owner-first, then the rest by name.
+    const stored = [item(widget('a', 9)), item(widget('b', 1)), item(widget('c', 5))];
+    queryClient.setQueryData<WidgetListItem[]>(['widgets'], stored);
+    placing('array', 'start').created(widget('n', 3), context(queryClient));
+    // 3 sorts ahead of 9 first: it goes to the front, and a, b, c keep their order.
+    expect(ids(queryClient.getQueryData<WidgetListItem[]>(['widgets']))).toEqual([
+      'n',
+      'a',
+      'b',
+      'c',
+    ]);
+
+    queryClient.setQueryData<WidgetListItem[]>(['widgets'], stored);
+    placing('array', 'end').created(widget('m', 10), context(queryClient));
+    // 10 sorts ahead of none of 9, 1 and 5: it goes last.
+    expect(ids(queryClient.getQueryData<WidgetListItem[]>(['widgets']))).toEqual([
+      'a',
+      'b',
+      'c',
+      'm',
+    ]);
+  });
+
+  test('on a list already in the order the result is the one compare gives, ties by createAt', () => {
+    const rows = [
+      item(widget('a', 1)),
+      item(widget('b', 3)),
+      item(widget('c', 3)),
+      item(widget('d', 7)),
+    ];
+    for (const createAt of ['start', 'end'] as const) {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData<WidgetListItem[]>(['widgets'], rows);
+      placing('array', createAt).created(widget('n', 3), context(queryClient));
+      const sorted = createEntityCacheHandlers<Widget, WidgetListItem>({
+        getId: (entity) => entity.id,
+        getListItemId: (entry) => entry.id,
+        toListItem: item,
+        list: {
+          key: ['widgets'],
+          shape: 'array',
+          createAt,
+          updateMissing: 'skip',
+          compare: (left, right) => left.rank - right.rank,
+        },
+      });
+      const reference = new QueryClient();
+      reference.setQueryData<WidgetListItem[]>(['widgets'], rows);
+      sorted.created(widget('n', 3), context(reference));
+      expect(ids(queryClient.getQueryData<WidgetListItem[]>(['widgets']))).toEqual(
+        ids(reference.getQueryData<WidgetListItem[]>(['widgets'])),
+      );
+    }
+  });
+
+  test('an updated row that is already there keeps its place, whatever its new rank', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<WidgetListItem[]>(
+      ['widgets'],
+      [item(widget('a', 9)), item(widget('b', 1)), item(widget('c', 5))],
+    );
+    placing('array', 'start').updated(widget('a', 7), context(queryClient));
+    // Sorted by rank it would now be b, c, a; the row stays first.
+    expect(queryClient.getQueryData<WidgetListItem[]>(['widgets'])).toEqual([
+      item(widget('a', 7)),
+      item(widget('b', 1)),
+      item(widget('c', 5)),
+    ]);
+  });
+
+  test('an update that finds nothing is placed like a create when updateMissing says insert', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<WidgetListItem[]>(
+      ['widgets'],
+      [item(widget('a', 2)), item(widget('b', 8))],
+    );
+    placing('array', 'end', 'insert').updated(widget('z', 5), context(queryClient));
+    expect(ids(queryClient.getQueryData<WidgetListItem[]>(['widgets']))).toEqual([
+      'a',
+      'z',
+      'b',
+    ]);
+  });
+
+  test('in a paged list only the page a create goes to is touched', () => {
+    const queryClient = new QueryClient();
+    const pages: WidgetListItem[][] = [
+      [item(widget('a', 9)), item(widget('b', 1))],
+      [item(widget('c', 5)), item(widget('d', 2))],
+    ];
+    queryClient.setQueryData<InfiniteData<WidgetListItem[]>>(['widgets'], {
+      pages,
+      pageParams: [0, 1],
+    });
+    placing('infinite-array', 'end').created(widget('n', 4), context(queryClient));
+    const after = queryClient.getQueryData<InfiniteData<WidgetListItem[]>>(['widgets']);
+    expect(after?.pages[0]).toBe(pages[0]);
+    expect(ids(after?.pages[1])).toEqual(['n', 'c', 'd']);
+    expect(after?.pageParams).toEqual([0, 1]);
+  });
+
+  test('compare and insertCompare are two answers to one question and are refused together', () => {
+    expect(() =>
+      createEntityCacheHandlers<Widget, WidgetListItem>({
+        getId: (entity) => entity.id,
+        getListItemId: (entry) => entry.id,
+        toListItem: item,
+        // Both at once is a mistake the runtime refuses; the type keeps one shape.
+        list: {
+          key: ['widgets'],
+          shape: 'array',
+          createAt: 'start',
+          updateMissing: 'skip',
+          compare: (left: WidgetListItem, right: WidgetListItem) => left.rank - right.rank,
+          insertCompare: byRank,
+        },
+      }),
+    ).toThrow('compare or insertCompare');
+  });
+});

@@ -4,7 +4,7 @@ description: A bot token's sends share one strict process-local budget, weighted
 type: decision
 status: accepted
 created: 2026-10-30
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # ADR 0274 — A Telegram token has one outbound budget
@@ -128,3 +128,41 @@ declared option is load-bearing), **I10** (finite waits and a bounded queue at
 the provider boundary), **I13** (only observed facts: no invented wait, no
 unknown outcome retried as a definite failure) and **I14** (the new reason is a
 marked, migrated break).
+
+## Amendment (0.114.1): a refusal arrives as a response, and grammY's wiring is one transformer
+
+The first release read a 429 only from the exception `send()` threw. A grammY
+client transformer never sees one: `callApi` receives the Bot API's
+`{ ok: false, error_code: 429, parameters: { retry_after } }` as the **value**
+the transformer chain returns and builds the `GrammyError` after the chain has
+finished. The documented wiring therefore paced and never paused, and the
+tests, which threw an error from `send`, could not tell. A consuming project
+measured it: the first send got a 429 with `retry_after: 2` and the next send,
+to another chat, left 40 ms later.
+
+- **`run` reads both shapes.** A `send` that resolves with a record whose `ok` is
+  `false` is classified exactly as a thrown refusal is: a rate limit pauses the
+  token for the stated `retry_after` or the declared fallback, any other answer
+  does nothing, and the response is returned unchanged. The mechanism is fixed in
+  the one owner, so every client already wired through `run` is repaired without
+  a change of its own.
+- **The grammY wiring is one function, in its own entrypoint.**
+  `stitchkit/telegram/grammy` exports `telegramBudgetTransformer(budget)`. The
+  type that grammY gives a transformer (`Transformer`) names its response per
+  method, which a structural type cannot express without a cast at the call
+  site; naming it in `stitchkit/telegram` would make that peer-free entrypoint
+  depend on `grammy`. The new entrypoint follows `stitchkit/telegram/screens`:
+  grammY in the declarations, never imported at run time.
+- **A cancelled wait is a request that never left.** grammY types the signal it
+  passes a transformer as the `abort-controller` polyfill's, so a hand-written
+  closure passed `undefined` and a send cancelled in the queue waited for its
+  slot and failed as `unknown`. The transformer bridges the signal and throws
+  `TelegramNotDispatchedError` when the cancellation arrives before the request
+  was handed to the client — in the queue, or in the instant after the grant,
+  when the slot is spent and nothing was sent. A cancellation after the request
+  was handed on stays the client's own error and the outcome stays unknown.
+  `run` itself still rejects with `signal.reason`: that contract is unchanged.
+
+The test that pins this uses grammY's own `Api` over a `fetch` that answers 429
+the way Telegram does. A test that throws from `send` proved only the path
+nobody takes.

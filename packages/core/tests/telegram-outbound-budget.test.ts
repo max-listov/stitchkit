@@ -8,62 +8,9 @@
  * measured in intervals rather than in the speed of the test machine.
  */
 import { describe, expect, test } from 'bun:test';
-import {
-  type TelegramOutboundBudgetConfig,
-  telegramOutboundBudget,
-} from '../src/entrypoints/telegram';
-import { createManualClock, type ManualClock } from '../src/entrypoints/testing';
-
-/** A Bot API-shaped refusal the classifier reads without prose guessing. */
-function refusal(error_code: number, description: string, retry_after?: number): Error {
-  return Object.assign(new Error(description), {
-    error_code,
-    description,
-    ...(retry_after !== undefined && { parameters: { retry_after } }),
-  });
-}
-
-/** An abortable sleeper driven by the same manual clock the budget reads. */
-function sleepOn(clock: ManualClock) {
-  return (milliseconds: number, signal?: AbortSignal): Promise<void> =>
-    new Promise<void>((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(signal.reason);
-        return;
-      }
-      let settled = false;
-      const onAbort = (): void => {
-        if (settled) return;
-        settled = true;
-        timer.cancel();
-        reject(signal?.reason);
-      };
-      const timer = clock.schedule(() => {
-        if (settled) return;
-        settled = true;
-        signal?.removeEventListener('abort', onAbort);
-        resolve();
-      }, milliseconds);
-      signal?.addEventListener('abort', onAbort, { once: true });
-    });
-}
-
-function manualBudget(
-  clock: ManualClock,
-  overrides: Partial<TelegramOutboundBudgetConfig> = {},
-): {
-  config: TelegramOutboundBudgetConfig;
-  budget: ReturnType<typeof telegramOutboundBudget>;
-} {
-  const config: TelegramOutboundBudgetConfig = {
-    token: `fixture-${crypto.randomUUID()}`,
-    messagesPerSecond: 24,
-    now: () => clock.now(),
-    sleep: sleepOn(clock),
-    ...overrides,
-  };
-  return { config, budget: telegramOutboundBudget(config) };
-}
+import { telegramOutboundBudget } from '../src/entrypoints/telegram';
+import { createManualClock } from '../src/entrypoints/testing';
+import { manualBudget, refusal } from './support/telegram-budget-clock';
 
 describe('the token outbound budget', () => {
   test('one token has one budget; a pause on one client stops its aliases and not another token', async () => {
@@ -259,6 +206,60 @@ describe('the token outbound budget', () => {
     const intervals = times.slice(1).map((at, index) => at - (times[index] ?? 0));
     for (const interval of intervals) expect(interval).toBeCloseTo(1_000 / 24, 3);
     expect(clock.pending()).toBe(0);
+  });
+
+  test('a 429 that comes back as the response body pauses the token like a thrown one', async () => {
+    const clock = createManualClock();
+    const { budget } = manualBudget(clock);
+    const body = {
+      ok: false,
+      error_code: 429,
+      description: 'Too Many Requests: retry after 2',
+      parameters: { retry_after: 2 },
+    };
+
+    const returned = await budget.run('sendMessage', {}, undefined, async () => body);
+    // The response is the caller's, unchanged; the budget only read it.
+    expect(returned).toBe(body);
+    expect(budget.stats().pausedForMs).toBe(2_000);
+
+    const times: number[] = [];
+    const next = budget.run('sendMessage', {}, undefined, async () => {
+      times.push(clock.now());
+    });
+    await clock.advance(1_999);
+    expect(times).toHaveLength(0);
+    await clock.advance(1);
+    expect(times).toEqual([2_000]);
+    await next;
+  });
+
+  test('a returned 429 without retry_after uses the fallback; other answers do not pause', async () => {
+    const clock = createManualClock();
+    const { budget } = manualBudget(clock, { retryAfterFallbackMs: 700 });
+
+    await budget.run('sendMessage', {}, undefined, async () => ({
+      ok: false,
+      error_code: 429,
+      description: 'Too Many Requests',
+    }));
+    expect(budget.stats().pausedForMs).toBe(700);
+
+    const answers: unknown[] = [
+      { ok: true, result: { message_id: 1 } },
+      { ok: false, error_code: 400, description: 'Bad Request: chat not found' },
+      { ok: false, error_code: 502, description: 'Bad Gateway' },
+      undefined,
+      'ok',
+    ];
+    for (const answer of answers) {
+      // Its own token, so the first send is immediate and the stats are this answer's alone.
+      const calm = manualBudget(clock);
+      expect(await calm.budget.run('sendMessage', {}, undefined, async () => answer)).toBe(
+        answer,
+      );
+      expect(calm.budget.stats().pausedForMs).toBe(0);
+    }
   });
 
   test('a later 429 with a smaller retry_after cannot shorten the pause', () => {

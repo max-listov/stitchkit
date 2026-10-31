@@ -878,6 +878,9 @@
     },
     "fields": {
       "test": "keys typed in an input reach only a layer that includes fields"
+    },
+    "phase": {
+      "test": "in the capture phase the layer takes Enter and the field never submits"
     }
   },
   "EscapeLayerOptions": {
@@ -933,6 +936,56 @@
     },
     "onReveal": {
       "test": "an item without an element is revealed, and focused the moment its element mounts"
+    },
+    "ignore": {
+      "test": "ignore leaves an arrow to the application, inside the zone and outside it"
+    },
+    "outside": {
+      "test": "with outside: 'move' it moves from the current item, and in select mode chooses the neighbour"
+    }
+  },
+  "FocusZoneOptions": {
+    "items": {
+      "test": "the tab stop is the pointed item, else the chosen one, else the first — of the listed items"
+    },
+    "value": {
+      "test": "role none marks the chosen item aria-current, a listbox marks it aria-selected"
+    },
+    "mode": {
+      "test": "a focus zone moves focus on arrows and leaves Enter to the element"
+    },
+    "orientation": {
+      "test": "the cross axis calls onEnter with the current item and onExit, horizontal too"
+    },
+    "role": {
+      "test": "a tablist has tabs; role none keeps the items own and marks the chosen one current"
+    },
+    "loop": {
+      "test": "a looping zone wraps instead of reaching a boundary"
+    },
+    "onEnter": {
+      "test": "the cross axis calls onEnter with the current item and onExit, horizontal too"
+    },
+    "onExit": {
+      "test": "the cross axis calls onEnter with the current item and onExit, horizontal too"
+    },
+    "onBoundary": {
+      "test": "past the last item a zone hands the key to onBoundary, or leaves it"
+    },
+    "active": {
+      "test": "with focus in no zone, an arrow lands on the active zone, and an inactive zone takes none"
+    },
+    "label": {
+      "test": "a listbox of options: one tab stop, the chosen option selected, orientation and name"
+    },
+    "onReveal": {
+      "test": "an item without an element is revealed, and focused the moment its element mounts"
+    },
+    "ignore": {
+      "test": "ignore leaves an arrow to the application, inside the zone and outside it"
+    },
+    "outside": {
+      "test": "outside: 'move' in a focus zone moves focus and reports nothing; sideways keys stay the page's"
     }
   },
   "ScreenOptions": {

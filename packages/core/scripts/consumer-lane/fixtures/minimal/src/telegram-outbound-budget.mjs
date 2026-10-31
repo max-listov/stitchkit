@@ -64,6 +64,24 @@ await limited.budget.run('sendMessage', {}, undefined, async () => {
 });
 assert.equal(afterPause, 1_000);
 
+// grammY's client transformer receives the refusal as the response, not as an exception.
+const returned = manualBudget();
+const refusalBody = {
+  ok: false,
+  error_code: 429,
+  description: 'Too Many Requests: retry after 1',
+  parameters: { retry_after: 1 },
+};
+assert.equal(
+  await returned.budget.run('sendMessage', {}, undefined, async () => refusalBody),
+  refusalBody,
+);
+let afterReturned;
+await returned.budget.run('sendMessage', {}, undefined, async () => {
+  afterReturned = returned.now;
+});
+assert.equal(afterReturned, 1_000);
+
 const failure = classifyTelegramSendFailure({
   error_code: 400,
   description: 'Bad Request: USER_BOT_TO_BOT_DISABLED',

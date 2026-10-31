@@ -57,6 +57,7 @@ own, recorded as an ADR.
 | `stitchkit/files/packaging` | build time (Bun or Node) | evolving | installed native asset graph, integrity, Bun packaging plugin and the artifact loader check; no runtime install policy |
 | `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
 | `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, one outbound budget per bot token with weighted albums and shared 429 pauses, resumable broadcasts, the operator channel with dedupe, a Bot API transport that separates a request that never left from an unknown outcome, local Bot API files, webhook ownership and durable webhook update intake |
+| `stitchkit/telegram/grammy` | server (Bun or Node) | evolving | the token's outbound budget as one grammY client transformer — a 429 that comes back as a response pauses the token, and a cancelled wait is a request that never left |
 | `stitchkit/telegram/html` | browser and server | evolving | Telegram's HTML as a tree — clean any markup to what Telegram accepts, cut long text into valid parts by what the reader sees, check markup before it is sent |
 | `stitchkit/telegram/screens` | server (Bun or Node) | evolving | a bot's menus as declared screens over grammY — typed paths, actions and input, message reconciliation, state in any `StorageAdapter`, a test chat |
 | `stitchkit/tracking` | browser **and** server | evolving | visitor-tracking mechanics — `createTrackingClient`, the tab-shared outbox, the page-leave beacon, attribution, the contract factory; no event vocabulary, no React |
@@ -71,6 +72,7 @@ own, recorded as an ADR.
 | `stitchkit/declaration` | browser + build and deployment tooling (Bun or Node) | evolving | `ProjectDeclarationSchema` — the one machine-readable statement a repository makes about itself |
 | `stitchkit/react` | browser + server rendering | stable | `createCursorQuery`, `createCacheBridge`, QueryClient and `ApiError` retry policy |
 | `stitchkit/react/keyboard` | browser | evolving | which part of a screen gets a key — ordered layers, one Escape per level, list zones with real focus; see [keyboard guide](keyboard.md) |
+| `stitchkit/react/keyboard/testing` | server (Bun or Node) | evolving | the keyboard layers and zones without a DOM — fakes for the window, elements and key events beside the two engines, to test the order of layers, `scope`/`inert` and the edges of a zone in milliseconds |
 | `stitchkit/agent-runtime` | server | evolving<br>_redefined in 24 of the 59 minors since 0.56.2, most recently 0.113.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
 | `stitchkit/agent-runtime/sandbox` | server | evolving | optional Linux Bubblewrap sessions, durable workspaces and a host HTTP credential gateway; see [sandbox guide](sandbox.md) |
 | `stitchkit/agent-runtime/testing` | tests on Bun or Node | evolving | credential-free replay, scripted provider faults, deterministic race controls and the agent-store conformance kit |
@@ -196,6 +198,7 @@ map — feature → packages:
 | MCP Apps UI widgets | `@modelcontextprotocol/ext-apps` |
 | React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |
 | Keyboard layers and list zones (`stitchkit/react/keyboard`) | `react` |
+| Keyboard test bed (`stitchkit/react/keyboard/testing`) | — (peer-free) |
 | MaxMind GeoIP (`stitchkit/geo`) | `maxmind` |
 | Browser OAuth client (`stitchkit/oauth`) | — |
 | Google OIDC verifier (`stitchkit/google`) | `google-auth-library` |
@@ -205,6 +208,7 @@ map — feature → packages:
 | grammY lifecycle adapters (`stitchkit/application/grammy`) | `grammy` |
 | Telegram platform primitives (`stitchkit/telegram`) | — (peer-free) |
 | Telegram message markup (`stitchkit/telegram/html`) | — (peer-free) |
+| Telegram grammY client transformer (`stitchkit/telegram/grammy`) | `grammy` (types only; the bot brings it) |
 | Telegram screens (`stitchkit/telegram/screens`) | `grammy` (types only; the bot brings it) |
 | OpenTelemetry gauges (`stitchkit/application/opentelemetry`) | `@opentelemetry/api` |
 

@@ -9,6 +9,8 @@
     "paths": {
       "stitchkit/application": ["../../../../src/entrypoints/application.ts"],
       "stitchkit/application/grammy": ["../../../../src/entrypoints/application/grammy.ts"],
+      "stitchkit/telegram": ["../../../../src/entrypoints/telegram.ts"],
+      "stitchkit/telegram/grammy": ["../../../../src/entrypoints/telegram/grammy.ts"],
       "stitchkit/telegram/screens": ["../../../../src/entrypoints/telegram/screens.ts"]
     }
   },

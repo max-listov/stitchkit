@@ -22,6 +22,11 @@ export const ENTRYPOINTS = [
   { subpath: './live', source: 'src/entrypoints/live.ts', browser: true },
   { subpath: './react', source: 'src/entrypoints/react.ts', browser: true },
   { subpath: './react/keyboard', source: 'src/entrypoints/react/keyboard.ts', browser: true },
+  {
+    subpath: './react/keyboard/testing',
+    source: 'src/entrypoints/react/keyboard/testing.ts',
+    browser: false,
+  },
   { subpath: './tools', source: 'src/entrypoints/tools.ts', browser: false },
   { subpath: './tools/mcp', source: 'src/entrypoints/tools/mcp.ts', browser: false },
   { subpath: './tools/contract', source: 'src/entrypoints/tools/contract.ts', browser: true },
@@ -129,6 +134,11 @@ export const ENTRYPOINTS = [
   },
   { subpath: './files', source: 'src/entrypoints/files.ts', browser: false },
   { subpath: './telegram', source: 'src/entrypoints/telegram.ts', browser: false },
+  {
+    subpath: './telegram/grammy',
+    source: 'src/entrypoints/telegram/grammy.ts',
+    browser: false,
+  },
   { subpath: './telegram/html', source: 'src/entrypoints/telegram/html.ts', browser: true },
   {
     subpath: './telegram/screens',

@@ -82,6 +82,8 @@ function escapeRegex(value: string): string {
 }
 
 function decodePathSegment(value: string): string {
+  // Without a `%` there is no escape to decode, and most segments have none.
+  if (!value.includes('%')) return value;
   try {
     return decodeURIComponent(value);
   } catch {
@@ -113,25 +115,47 @@ export function createClientRouteMatcher<K extends string>(
   const wildcard = patternSegments.at(-1)?.startsWith('*') === true;
   const fixedCount = wildcard ? patternSegments.length - 1 : patternSegments.length;
   const markers = Object.values(markerByKey);
+  const segmentTests = patternSegments
+    .slice(0, fixedCount)
+    .map((pattern) => compileSegmentTest(pattern, markers));
 
   return (pathname: string): boolean => {
-    const actualSegments = pathname.split('/').filter(Boolean).map(decodePathSegment);
+    const actualSegments = pathname.split('/').filter(Boolean);
     if (wildcard ? actualSegments.length < fixedCount : actualSegments.length !== fixedCount) {
       return false;
     }
     for (let index = 0; index < fixedCount; index += 1) {
-      const pattern = patternSegments[index];
+      const test = segmentTests[index];
       const actual = actualSegments[index];
-      if (!pattern || actual === undefined) return false;
-      if (pattern.startsWith(':')) continue;
-      let source = escapeRegex(pattern);
-      for (const marker of markers) {
-        source = source.replaceAll(escapeRegex(marker), '[^/]+');
-      }
-      if (!new RegExp(`^${source}$`).test(actual)) return false;
+      if (test === undefined || actual === undefined) return false;
+      // A parameter accepts any segment; every other position is compared decoded.
+      if (test !== null && !test(decodePathSegment(actual))) return false;
     }
     return true;
   };
+}
+
+/**
+ * Compile one pattern segment, once, into the comparison it needs: `null` for a
+ * `:param` (nothing to compare), a string comparison for a literal, and a single
+ * regular expression only where a dynamic-prefix marker stands for "one or more
+ * characters that are not a slash".
+ */
+function compileSegmentTest(
+  pattern: string,
+  markers: readonly string[],
+): ((actual: string) => boolean) | null {
+  if (pattern.startsWith(':')) return null;
+  let source = escapeRegex(pattern);
+  let marked = false;
+  for (const marker of markers) {
+    const next = source.replaceAll(escapeRegex(marker), '[^/]+');
+    marked ||= next !== source;
+    source = next;
+  }
+  if (!marked) return (actual) => actual === pattern;
+  const expression = new RegExp(`^${source}$`);
+  return (actual) => expression.test(actual);
 }
 
 function extractParamNames(path: string): string[] {

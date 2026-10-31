@@ -115,6 +115,19 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: false,
   },
   {
+    // The fakes and the two engines read a few members of an element and a key
+    // and import no React: a consumer tests its layers with nothing installed.
+    id: 'react-keyboard-testing',
+    subpath: './react/keyboard/testing',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'bun',
+    source: featureSource('stitchkit/react/keyboard/testing', 'createKeyboardTestBed'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
     id: 'tools-contract',
     subpath: './tools/contract',
     fixture: 'minimal',
@@ -727,6 +740,30 @@ console.log('canonical JSON browser: ok');`,
     source: featureSource('stitchkit/telegram/html', 'splitTelegramHtml'),
     runtimePeers: [],
     declarationPeers: [],
+    execute: true,
+  },
+  {
+    // The budget transformer is typed by grammY's `Transformer` and never
+    // imports grammY at run time, so the bundle stays free of it.
+    id: 'telegram-grammy',
+    subpath: './telegram/grammy',
+    fixture: 'grammy',
+    installedPeers: FIXTURE_PEERS.grammy,
+    target: 'bun',
+    source: featureSource('stitchkit/telegram/grammy', 'telegramBudgetTransformer'),
+    runtimePeers: [],
+    declarationPeers: ['grammy'],
+    execute: true,
+  },
+  {
+    id: 'telegram-grammy-node',
+    subpath: './telegram/grammy',
+    fixture: 'node',
+    installedPeers: FIXTURE_PEERS.node,
+    target: 'node',
+    source: featureSource('stitchkit/telegram/grammy', 'telegramBudgetTransformer'),
+    runtimePeers: [],
+    declarationPeers: ['grammy'],
     execute: true,
   },
   {

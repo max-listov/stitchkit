@@ -674,6 +674,37 @@ packedFilteredClient.setQueryData<PackedFilteredPage>(packedFilteredKey, {
   nextCursor: null,
   total: 0,
 });
+// A server order the row does not carry: only a row entering the list is placed.
+const packedInsertCache = createEntityCacheHandlers<PackedEntity, PackedListItem>({
+  getId: (entity) => entity.id,
+  getListItemId: (item) => item.id,
+  toListItem: (entity) => ({ id: entity.id, label: entity.label }),
+  list: {
+    key: ['placed'],
+    shape: 'array',
+    createAt: 'end',
+    updateMissing: 'skip',
+    insertCompare: (incoming, existing) => incoming.label.localeCompare(existing.label),
+  },
+});
+packedQueryClient.setQueryData<PackedListItem[]>(
+  ['placed'],
+  [
+    { id: 'z', label: 'zeta' },
+    { id: 'a', label: 'alpha' },
+  ],
+);
+packedInsertCache.created(
+  { id: 'm', workspaceId: 'w1', label: 'mid', internal: 'private' },
+  { queryClient: packedQueryClient, isFresh: () => false },
+);
+check(
+  'the packed insertCompare places only the new row and moves no other',
+  packedQueryClient
+    .getQueryData<PackedListItem[]>(['placed'])
+    ?.map((row) => row.id)
+    .join() === 'm,z,a',
+);
 const packedFilteredCache = createEntityCacheHandlers<PackedEntity, PackedListItem>({
   getId: (entity) => entity.id,
   getListItemId: (item) => item.id,

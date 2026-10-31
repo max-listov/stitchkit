@@ -2032,7 +2032,7 @@ injected grammY bot. → ADR 0143, ADR 0201, ADR 0274 — [guide](../guide/teleg
 | `TelegramFetch` / `TelegramBotTransportOpen` / `TelegramBotTransportResolve` / `TelegramBotTransportSocket` | _types_ | the `(url, init) => Promise<Response>` the senders take; the transport's socket factory, resolver and the structural socket it needs (a Node `net.Socket` or `tls.TLSSocket` fits) |
 | `TelegramNotDispatchedError` / `TelegramNotDispatchedStage` | class / _type_ | a request that provably never left (`lookup`, `connect` or `request`), so repeating it cannot duplicate a message |
 | `TelegramSendFailureReason` / `TELEGRAM_SEND_FAILURE_REASONS` | _type_ / constant | `blocked-by-user` / `user-deactivated` / `chat-not-found` / `not-started` / `bot-to-bot-disabled` / `rate-limited` / `message-invalid` / `server-error` / `not-dispatched` / `unknown`, and the same as a list; a `Record<TelegramSendFailureReason, …>` over them fails to compile when a reason is added |
-| `telegramOutboundBudget` / `TelegramOutboundBudget` / `TelegramOutboundBudgetConfig` / `TelegramOutboundBudgetStats` | function / _type_ | one token-wide outbound budget: one object per token in the process, strict 24 messages/s by default, weighted albums and multi-message copies, `run(method, payload, signal, send)` as the transformer adapter, `pause`/`pauseAfter` for 429, `waitUntilResumed` for non-send retries and `stats`; it paces and never retries, and no public value carries the token |
+| `telegramOutboundBudget` / `TelegramOutboundBudget` / `TelegramOutboundBudgetConfig` / `TelegramOutboundBudgetStats` | function / _type_ | one token-wide outbound budget: one object per token in the process, strict 24 messages/s by default, weighted albums and multi-message copies, `run(method, payload, signal, send)` as the transformer adapter (a 429 pauses the token whether `send` throws it or resolves with the Bot API's `{ ok: false, … }` body), `pause`/`pauseAfter` for 429, `waitUntilResumed` for non-send retries and `stats`; it paces and never retries, and no public value carries the token |
 | `runTelegramBroadcast` | function | a resumable broadcast by `name` under a state `directory`: audience and journal durably recorded, pacing at `ratePerSecond` (25), exact retry delays within the finite declared budget, injected classifier, uncertain send outcomes never replayed, `dryRun`, one fenced runner per name |
 | `TelegramBroadcastConfig` / `TelegramBroadcastSend` / `TelegramBroadcastReport` / `TelegramBroadcastRunOutcome` / `TelegramBroadcastOutcome` / `TelegramBroadcastRecipient` | _type_ | `name`, `directory`, `recipients()`, `send({ recipient, attempt })`, `maxAttempts`, `signal`, `onProgress`; counts `delivered` / `unreachable` / `failed` / `uncertain` / `pending` and `finished` / `stopped` / `halted` / `dry-run` |
 | `TelegramBroadcastFailureSchema` / `TelegramBroadcastFailure` | schema / _type_ | injected `classify` answers retry-after/transient/permanent/ambiguous; exact provider delay is bounded by `maxRetryDelayMs` without shortening, unknown outcome remains uncertain and is never replayed |
@@ -2063,6 +2063,18 @@ injected grammY bot. → ADR 0143, ADR 0201, ADR 0274 — [guide](../guide/teleg
 | `postgresTelegramUpdateStore` / `PostgresTelegramUpdateStoreConfig` / `TelegramPostgresQuery` | function / _type_ | the store in Postgres over the client the application holds, as one `query(text, parameters)` returning rows — Bun `sql.unsafe`, Prisma `$queryRawUnsafe`, `pg` `pool.query`; each rule one conditional statement; `table`, `createTable` (default `true`) |
 | `postgresTelegramUpdateStoreSchema` | function | the table, idempotent `claim_id` upgrade and index as a statement for a migration, safe to run twice; required before fenced methods when `createTable: false`, while legacy base methods remain compatible with the prior table |
 | `checkTelegramUpdateStore` | function | put any store through every rule, each on a fresh store from `make`, concurrent claims included; resolves with the violations, empty when it keeps them |
+
+---
+
+## `stitchkit/telegram/grammy`
+
+The token's outbound budget as one grammY client transformer. Server-only, Bun
+or Node; `grammy` appears in the declarations and is never imported at run time —
+the bot brings it. → ADR 0274 — [guide](../guide/telegram.md#one-token-one-outbound-budget)
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `telegramBudgetTransformer` | function | `bot.api.config.use(telegramBudgetTransformer(budget))`: every Bot API call runs under the token's `telegramOutboundBudget`; a 429 that comes back as a response pauses the token, a cancellation before the request was handed on throws `TelegramNotDispatchedError`, a cancellation in flight stays the client's own error; it never retries |
 
 ---
 
@@ -2465,7 +2477,7 @@ Browser- and server-render-safe React data-layer helpers. Needs the
 | `EntityCacheHandlers` | _type_ | the `{ created, updated, deleted }` handlers it returns |
 | `EntityCacheEvent` | _type_ | discriminated created/updated/deleted input for dynamic cache keys |
 | `EntityCacheKey` | _type_ | static `QueryKey` or event-aware key factory |
-| `EntityCacheListConfig` | _type_ | list shape, scoped key, insertion/missing-update policy and comparator |
+| `EntityCacheListConfig` | _type_ | list shape, scoped key, insertion/missing-update policy and one ordering: `compare` (the whole array is sorted again after a create or update) or `insertCompare` (only a row entering the list is placed; every other row stays, and an updated row keeps its place) |
 | `EntityCacheListShape` | _type_ | `array \| paginated \| infinite-array \| infinite-paginated` |
 | `DeletedPayload` | _type_ | a `deleted` event payload — the entity or a bare `{ id }` |
 | `CursorQueryConfig` | _type_ | config for `createCursorQuery` |
@@ -2504,13 +2516,19 @@ no component, no styles, no router — see the [keyboard guide](../guide/keyboar
 |--------|------|---------|
 | `useKeyLayer` | hook | put a layer on the window's one key stack — asked `overlay` → `local` → `route` → `zone` → `global`, innermost first within a kind |
 | `useEscapeLayer` | hook | an `overlay`, `local` or `route` layer for Escape: one press closes one level |
-| `useNavZone` | hook | a list zone — roving tab stop, arrows move DOM focus, select or highlight mode, cross-axis enter/exit, boundaries |
+| `useNavZone` | hook | a list zone — roving tab stop, arrows move DOM focus, select, highlight or focus mode, cross-axis enter/exit, boundaries, `ignore` for a key the application is using; props carry no key without a value |
 | `nextZoneIndex` | function | where a move lands in a list of a given length: an index, `'before-start'` or `'after-end'` |
 | `isKeyFieldTarget` | function | whether a key was pressed in a field or a `data-local-keys` area, the test layers use |
-| `KeyLayerOptions` | _type_ | `kind`, `onKey`, `active`, `scope`, `fields` |
+| `KeyLayerOptions` | _type_ | `kind`, `onKey`, `active`, `scope`, `fields`, `phase` — `'capture'` is for a `local` layer only: it hears a key before the element that has focus does, as a menu over a text field must, and a key it takes goes no further |
+| `KeyLayerPhase` | _type_ | `'bubble' \| 'capture'` |
 | `KeyLayerKind` | _type_ | `'overlay' \| 'local' \| 'route' \| 'zone' \| 'global'` |
 | `EscapeLayerOptions` | _type_ | `kind`, `onEscape`, `active`, `scope` |
-| `NavZoneOptions` | _type_ | `items`, `value`, `onChange`, `mode`, `orientation`, `role`, `loop`, `onEnter`, `onExit`, `onBoundary`, `active`, `label`, `onReveal` |
+| `NavZoneOptions` | _type_ | `items`, `value`, `onChange`, `mode` (`select` or `highlight`), `orientation`, `role`, `loop`, `onEnter`, `onExit`, `onBoundary`, `active`, `outside` (`'focus'` or `'move'`: what the first arrow does when focus is in no zone), `label`, `onReveal`, `ignore` |
+| `FocusZoneOptions` | _type_ | the options of a zone whose items choose for themselves: `mode: 'focus'`, no `onChange`, an optional `value`; the arrows move focus and Enter stays with the focused element |
+| `ZoneOptions` | _type_ | `NavZoneOptions` or `FocusZoneOptions` — what `useNavZone` takes |
+| `ZoneKeyEvent` | _type_ | the key an `ignore` callback is asked about: `key`, modifiers, `target`, `repeat`, `isComposing`, `defaultPrevented` |
+| `mergeRefs` | function | one ref callback for several refs — the zone's `ref` beside a drag handle's or your own; spread the zone's props, then set `ref: mergeRefs(props.ref, other)` |
+| `openedByKeyboard` | function | whether the element with focus right now shows a focus ring — call it in the handler that opens a menu, before focus moves, to decide whether the first item takes focus |
 | `NavZone` | _type_ | what `useNavZone` returns — `zoneProps`, `itemProps(id)`, `element`, `current`, `focus(id?)` |
 | `NavZoneProps` / `NavZoneItemProps` | _type_ | the props spread on the zone's element and on each item |
 | `NextZoneIndexInput` | _type_ | `length`, `index`, `move`, `loop` |
@@ -2518,6 +2536,20 @@ no component, no styles, no router — see the [keyboard guide](../guide/keyboar
 | `ZoneChangeCause` | _type_ | `'arrow' \| 'confirm'` |
 | `ZoneMove` | _type_ | `'next' \| 'previous' \| 'first' \| 'last'` |
 | `ZoneOrientation` | _type_ | `'vertical' \| 'horizontal'` |
+
+## `stitchkit/react/keyboard/testing`
+
+Keyboard layers and zones without a DOM, a browser or React: fakes for the
+window, elements and key events, and the two engines the hooks are made of.
+Peer-free. A test builds the layers a screen declares, presses keys on elements
+and reads who heard what — see the [keyboard guide](../guide/keyboard.md#testing-without-a-dom).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createKeyboardTestBed` | function | a fresh stack, window, element factory and key factory: `stack.add(layer)`, `press(key, { target })`, `element({ parent, field, zone, inert, hidden })`, `key(name)` for a zone, and `listening` |
+| `KeyboardTestBed` / `TestElement` / `TestElementInit` / `TestKeyEvent` / `TestKeyInit` | _type_ | the test bed, an element (also a zone item: it counts `focus()` and scrolling), what builds one, and a key event with `defaultPrevented` |
+| `createKeyLayerStack` / `KeyLayerStack` / `KeyLayerHandle` / `KeyLayerState` / `KeyListenerTarget` / `LayerKeyEvent` / `LayerScope` | function / _type_ | the layer stack the hooks put on the window, over any listener target and elements that have `contains`, `closest`, `isConnected` |
+| `createNavZone` / `NavZoneController` / `ZoneItemElement` | function / _type_ | a zone controller without React: `keyDown`, `keyFromOutside`, `focused`, `focus`, `update`, `current`, `pointedItem`, `subscribe` |
 
 ## `stitchkit/agent-runtime/sandbox`
 

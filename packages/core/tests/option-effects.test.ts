@@ -97,6 +97,7 @@ const COVERED: Record<string, string> = {
   KeyLayerOptions: 'entrypoints/react/keyboard.ts',
   EscapeLayerOptions: 'entrypoints/react/keyboard.ts',
   NavZoneOptions: 'entrypoints/react/keyboard.ts',
+  FocusZoneOptions: 'entrypoints/react/keyboard.ts',
   EndpointToolView: 'entrypoints/contract.ts',
   ExclusiveLockOptions: 'entrypoints/files.ts',
   WriteFileAtomicOptions: 'entrypoints/files.ts',

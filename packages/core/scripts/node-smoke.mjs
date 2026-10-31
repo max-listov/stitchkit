@@ -40,6 +40,8 @@ const entrypoints = [
   'stitchkit/agent-runtime/sqlite/node',
   'stitchkit/testing',
   'stitchkit/files',
+  'stitchkit/telegram/grammy',
+  'stitchkit/react/keyboard/testing',
   'stitchkit/telegram/screens',
   'stitchkit/telegram/html',
 ];

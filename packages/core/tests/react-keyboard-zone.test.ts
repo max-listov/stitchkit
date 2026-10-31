@@ -6,8 +6,10 @@ import { describe, expect, test } from 'bun:test';
 import { KEY_FIELD_SELECTOR } from '../src/react/keyboard/layers';
 import {
   createNavZone,
+  type FocusZoneOptions,
   type NavZoneOptions,
   nextZoneIndex,
+  resolveZoneIndex,
   ZONE_ATTRIBUTE,
   type ZoneKeyEvent,
   zoneIntent,
@@ -284,5 +286,267 @@ describe('a zone', () => {
     stop();
     zone.focused('c');
     expect(heard).toBe(1);
+  });
+});
+
+/** A zone of links or buttons that choose for themselves: three items, no `onChange`. */
+function focusSetup(overrides: Partial<FocusZoneOptions<string>> = {}) {
+  const zoneElement = new FakeNode(null, new Set([ZONE_MARK]));
+  const items = ['a', 'b', 'c'];
+  const elements = new Map(items.map((id) => [id, new FakeNode(zoneElement)]));
+  const zone = createNavZone<string>({ items, mode: 'focus', ...overrides });
+  for (const [id, element] of elements) zone.setItemElement(id, element);
+  const press = (name: string, from: FakeNode | null = elements.get('a') ?? null) => {
+    const event = key(name, from);
+    const taken = zone.keyDown(event, zoneElement);
+    return { taken, event };
+  };
+  return { zone, elements, zoneElement, press };
+}
+
+describe('a zone in focus mode', () => {
+  test('arrows move focus and report nothing; Enter is left to the focused element', () => {
+    const { zone, elements, press } = focusSetup();
+    expect(press('ArrowDown').taken).toBe(true);
+    expect(elements.get('b')?.focusedTimes).toBe(1);
+    expect(zone.current()).toBe('b');
+
+    const enter = press('Enter', elements.get('b') ?? null);
+    expect(enter.taken).toBe(false);
+    // The key is the element's: nothing prevented, so a button clicks and a link follows.
+    expect(enter.event.defaultPrevented).toBe(false);
+  });
+
+  test('Enter stays with the element even when the zone has an onEnter for the cross axis', () => {
+    const entered: string[] = [];
+    const { press, elements } = focusSetup({ onEnter: (id) => entered.push(id) });
+    expect(press('Enter', elements.get('a') ?? null).taken).toBe(false);
+    expect(entered).toEqual([]);
+    // The cross-axis key still goes in.
+    expect(press('ArrowRight').taken).toBe(true);
+    expect(entered).toEqual(['a']);
+  });
+
+  test('select and highlight modes keep their Enter', () => {
+    const select = setup();
+    expect(select.press('Enter')).toBe(false);
+    const highlight = setup({ mode: 'highlight' });
+    expect(highlight.press('Enter')).toBe(true);
+    expect(highlight.changes).toEqual(['a:confirm']);
+  });
+});
+
+describe('a key the application is using itself', () => {
+  test('inside the zone, ignore leaves the key whole: no move, not taken, not prevented', () => {
+    const asked: string[] = [];
+    const dragging = new Set<FakeNode>();
+    const { zone, elements, press } = focusSetup({
+      ignore: (event) => {
+        asked.push(event.key);
+        return event.target instanceof FakeNode && dragging.has(event.target);
+      },
+    });
+    const row = elements.get('a');
+    if (row) dragging.add(row);
+
+    const ignored = press('ArrowDown', row ?? null);
+    expect(ignored.taken).toBe(false);
+    expect(ignored.event.defaultPrevented).toBe(false);
+    expect(elements.get('b')?.focusedTimes).toBe(0);
+    expect(zone.current()).toBe('a');
+    expect(asked).toEqual(['ArrowDown']);
+
+    // The same key from another item is the zone's.
+    expect(press('ArrowDown', elements.get('c') ?? null).taken).toBe(true);
+  });
+
+  test('outside every zone, an ignored arrow does not pull focus into the zone', () => {
+    const page = new FakeNode();
+    let ignoring = true;
+    const { zone, elements } = focusSetup({ ignore: () => ignoring });
+    expect(zone.keyFromOutside(key('ArrowDown', page))).toBe(false);
+    expect(elements.get('a')?.focusedTimes).toBe(0);
+    ignoring = false;
+    expect(zone.keyFromOutside(key('ArrowDown', page))).toBe(true);
+    expect(elements.get('a')?.focusedTimes).toBe(1);
+  });
+
+  test('a key the zone would not act on is never put to ignore', () => {
+    const asked: string[] = [];
+    const { press } = focusSetup({
+      ignore: (event) => {
+        asked.push(event.key);
+        return false;
+      },
+    });
+    press('x');
+    expect(asked).toEqual([]);
+  });
+});
+
+describe('a zone follows committed options only', () => {
+  test('a new value takes the pointed item back to the chosen one, and subscribers hear it', () => {
+    const { zone } = setup({ value: 'a' });
+    zone.focused('c');
+    let heard = 0;
+    zone.subscribe(() => {
+      heard += 1;
+    });
+    zone.update({ ...zone.options, value: 'b' });
+    expect(heard).toBe(1);
+    expect(zone.pointedItem()).toBeNull();
+    expect(zone.current()).toBe('b');
+    // The same value again is not news.
+    zone.update({ ...zone.options });
+    expect(heard).toBe(1);
+  });
+
+  test('pointedItem is the raw pointing, whatever the list holds', () => {
+    const { zone } = setup({ value: 'a' });
+    expect(zone.pointedItem()).toBeNull();
+    zone.focused('b');
+    expect(zone.pointedItem()).toBe('b');
+    // An id the zone does not list is not an item, and the pointing does not move to it.
+    zone.focused('stranger');
+    expect(zone.pointedItem()).toBe('b');
+  });
+});
+
+describe('resolveZoneIndex', () => {
+  test('the pointed item, else the chosen one, else the first — an index, one scan when pointed', () => {
+    const items = ['a', 'b', 'c'];
+    expect(resolveZoneIndex(items, 'b', 'c')).toBe(2);
+    expect(resolveZoneIndex(items, 'b', null)).toBe(1);
+    expect(resolveZoneIndex(items, null, null)).toBe(0);
+    expect(resolveZoneIndex(items, 'gone', 'stranger')).toBe(0);
+    expect(resolveZoneIndex([], null, null)).toBe(-1);
+    expect(resolveZoneIndex([], 'a', 'b')).toBe(-1);
+  });
+});
+
+describe('focus on the zone element itself', () => {
+  test('the first arrow in either direction lands on the current item, not one step from it', () => {
+    const { zone, elements, zoneElement } = focusSetup({ items: ['a', 'b', 'c'] });
+    const next = key('ArrowDown', zoneElement);
+    expect(zone.keyDown(next, zoneElement)).toBe(true);
+    expect(next.defaultPrevented).toBe(true);
+    expect(elements.get('a')?.focusedTimes).toBe(1);
+    expect(elements.get('b')?.focusedTimes).toBe(0);
+
+    // Now on an item, the same key moves.
+    expect(zone.keyDown(key('ArrowDown', elements.get('a') ?? null), zoneElement)).toBe(true);
+    expect(elements.get('b')?.focusedTimes).toBe(1);
+
+    const {
+      zone: other,
+      elements: others,
+      zoneElement: container,
+    } = focusSetup({ value: 'c' });
+    expect(other.keyDown(key('ArrowUp', container), container)).toBe(true);
+    expect(others.get('c')?.focusedTimes).toBe(1);
+    expect(others.get('b')?.focusedTimes).toBe(0);
+  });
+
+  test('Home, End and the cross axis keep their meaning there', () => {
+    const { zone, elements, zoneElement } = focusSetup();
+    expect(zone.keyDown(key('End', zoneElement), zoneElement)).toBe(true);
+    expect(elements.get('c')?.focusedTimes).toBe(1);
+  });
+
+  test('an empty zone has nowhere to land and leaves the key', () => {
+    const { zone, zoneElement } = focusSetup({ items: [] });
+    expect(zone.keyDown(key('ArrowDown', zoneElement), zoneElement)).toBe(false);
+  });
+});
+
+describe('the first arrow from outside every zone', () => {
+  const page = new FakeNode();
+
+  test('by default it puts focus on the current item and changes nothing', () => {
+    const { zone, elements, changes } = setup({ value: 'b' });
+    expect(zone.keyFromOutside(key('ArrowDown', page))).toBe(true);
+    expect(elements.get('b')?.focusedTimes).toBe(1);
+    expect(elements.get('c')?.focusedTimes).toBe(0);
+    expect(changes).toEqual([]);
+  });
+
+  test("with outside: 'move' it moves from the current item, and in select mode chooses the neighbour", () => {
+    const { zone, elements, changes } = setup({ value: 'a', outside: 'move' });
+    expect(zone.keyFromOutside(key('ArrowDown', page))).toBe(true);
+    expect(elements.get('b')?.focusedTimes).toBe(1);
+    expect(elements.get('a')?.focusedTimes).toBe(0);
+    expect(changes).toEqual(['b:arrow']);
+  });
+
+  test("outside: 'move' goes the other way on the up arrow, and meets the edge like a key inside", () => {
+    const edges: string[] = [];
+    const { zone, elements } = setup({
+      value: 'a',
+      outside: 'move',
+      onBoundary: (side) => {
+        edges.push(side);
+      },
+    });
+    expect(zone.keyFromOutside(key('ArrowUp', page))).toBe(true);
+    expect(edges).toEqual(['start']);
+    expect(elements.get('a')?.focusedTimes).toBe(0);
+
+    const none = setup({ value: 'a', outside: 'move' });
+    // No boundary handler: the key is not taken, so the page keeps it.
+    expect(none.zone.keyFromOutside(key('ArrowUp', page))).toBe(false);
+  });
+
+  test("outside: 'move' in a focus zone moves focus and reports nothing; sideways keys stay the page's", () => {
+    const { zone, elements } = focusSetup({ outside: 'move' });
+    expect(zone.keyFromOutside(key('ArrowDown', page))).toBe(true);
+    expect(elements.get('b')?.focusedTimes).toBe(1);
+    expect(zone.keyFromOutside(key('ArrowRight', page))).toBe(false);
+    expect(zone.keyFromOutside(key('Enter', page))).toBe(false);
+  });
+
+  test("outside: 'move' still asks ignore first", () => {
+    const { zone, elements } = focusSetup({ outside: 'move', ignore: () => true });
+    expect(zone.keyFromOutside(key('ArrowDown', page))).toBe(false);
+    expect(elements.get('b')?.focusedTimes).toBe(0);
+  });
+});
+
+describe('an area that contains the zone keeps its own keys without switching the zone off', () => {
+  const FIELD = new Set([KEY_FIELD_SELECTOR]);
+
+  function panelled(marks: { panel?: boolean; zone?: boolean } = {}) {
+    const panel = new FakeNode(null, marks.panel === false ? new Set() : FIELD);
+    const zoneElement = new FakeNode(
+      panel,
+      marks.zone === true ? new Set([ZONE_MARK, KEY_FIELD_SELECTOR]) : new Set([ZONE_MARK]),
+    );
+    const items = ['a', 'b', 'c'];
+    const rows = new Map(items.map((id) => [id, new FakeNode(zoneElement)]));
+    const zone = createNavZone<string>({ items, mode: 'focus' });
+    for (const [id, row] of rows) zone.setItemElement(id, row);
+    return { panel, zoneElement, rows, zone };
+  }
+
+  test('a panel marked data-local-keys around the zone leaves the zone its arrows', () => {
+    const { zone, zoneElement, rows } = panelled();
+    const event = key('ArrowDown', rows.get('a') ?? null);
+    expect(zone.keyDown(event, zoneElement)).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
+    expect(rows.get('b')?.focusedTimes).toBe(1);
+  });
+
+  test('the zone element carrying the mark itself does not switch it off either', () => {
+    const { zone, zoneElement, rows } = panelled({ panel: false, zone: true });
+    expect(zone.keyDown(key('ArrowDown', rows.get('a') ?? null), zoneElement)).toBe(true);
+    expect(rows.get('b')?.focusedTimes).toBe(1);
+  });
+
+  test('a field inside one of its rows still keeps its keys, in a marked panel too', () => {
+    const { zone, zoneElement, rows } = panelled();
+    const row = rows.get('a');
+    const input = new FakeNode(row ?? null, FIELD);
+    const event = key('ArrowDown', input);
+    expect(zone.keyDown(event, zoneElement)).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
   });
 });

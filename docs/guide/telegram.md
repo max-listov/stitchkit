@@ -81,6 +81,7 @@ through it spends its weight. → [ADR 0274](../decisions/0274-a-telegram-token-
 
 ```ts
 import { telegramOutboundBudget } from 'stitchkit/telegram'
+import { telegramBudgetTransformer } from 'stitchkit/telegram/grammy'
 
 const budget = telegramOutboundBudget({
   token: env.BOT_TOKEN,
@@ -89,10 +90,15 @@ const budget = telegramOutboundBudget({
 
 // The one transformer of the bot's client. No second limiter, no second
 // scheduler: campaigns, replies and every other send of this token share it.
-api.config.use((previous, method, payload, signal) =>
-  budget.run(method, payload, signal, () => previous(method, payload, signal)),
-)
+bot.api.config.use(telegramBudgetTransformer(budget))
 ```
+
+`telegramBudgetTransformer` is the whole wiring for grammY. Without it the
+adapter is `budget.run(method, payload, signal, () => previous(method, payload, signal))`
+inside your own `config.use` closure; that works too, but grammY types its signal
+as the `abort-controller` polyfill's, so the closure has to pass `undefined` or
+cast, and a send cancelled in the queue then waits for its slot and fails as
+`unknown`. The transformer takes grammY's signal as it is.
 
 - **The token is the identity, not the sender.** Two bot objects built from one
   token share the budget; two different tokens do not. The registry keeps a
@@ -110,15 +116,21 @@ api.config.use((previous, method, payload, signal) =>
 - **It paces; it does not retry.** `run` calls the send once. A 429 pauses the
   token for Telegram's `retry_after` (or `retryAfterFallbackMs` when Telegram
   gave none) and rethrows; the caller's retry policy decides what happens next.
+  The refusal may be thrown or returned: a client transformer sits below the
+  place where grammY turns Telegram's `{ ok: false, error_code: 429, … }` body into
+  a `GrammyError`, so `run` reads that body too and hands it back unchanged.
   A 429 from an edit or a read is still a fact about the token and pauses later
   sends too. A network failure is rethrown unchanged and stays `unknown`; a 5xx
   is rethrown unchanged and stays `server-error`. Neither is retried by the
   budget or pauses the token — repeating a send whose outcome is unknown is a
   decision, not a primitive's silent guess.
 - **A wait can be cancelled.** `run`/`acquire` take an `AbortSignal`; a
-  cancelled waiter spends no slot and calls no provider. A granted send that is
-  then aborted is not evidence that Telegram did not accept it — keep the
-  outcome unknown rather than retrying it as a definite failure.
+  cancelled waiter spends no slot and calls no provider. Through
+  `telegramBudgetTransformer` a send cancelled before it was handed to the client
+  throws `TelegramNotDispatchedError` (`classifyTelegramSendFailure` says
+  `not-dispatched`, safe to repeat); a send cancelled after it was handed on is
+  the client's own error — not evidence that Telegram did not accept it — so
+  keep the outcome unknown rather than retrying it as a definite failure.
 - **Non-send retries wait without spending.** An edit or delete retry that got
   a 429 first records the pause with `budget.pauseAfter(error)` (the `run` path
   does this itself), then uses `await budget.waitUntilResumed(signal)`; it shares
