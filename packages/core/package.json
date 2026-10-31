@@ -1,6 +1,6 @@
 {
   "name": "stitchkit",
-  "version": "0.114.0",
+  "version": "0.114.1",
   "description": "Contract-first backend framework — one defineContract() into an HTTP API, MCP tools, AI-agent tools and a typed client. Bun and Node.",
   "keywords": [
     "bun",
@@ -72,6 +72,10 @@
     "./react/keyboard": {
       "types": "./dist/entrypoints/react/keyboard.d.ts",
       "import": "./dist/entrypoints/react/keyboard.js"
+    },
+    "./react/keyboard/testing": {
+      "types": "./dist/entrypoints/react/keyboard/testing.d.ts",
+      "import": "./dist/entrypoints/react/keyboard/testing.js"
     },
     "./tools": {
       "types": "./dist/entrypoints/tools.d.ts",
@@ -192,6 +196,10 @@
     "./telegram": {
       "types": "./dist/entrypoints/telegram.d.ts",
       "import": "./dist/entrypoints/telegram.js"
+    },
+    "./telegram/grammy": {
+      "types": "./dist/entrypoints/telegram/grammy.d.ts",
+      "import": "./dist/entrypoints/telegram/grammy.js"
     },
     "./telegram/html": {
       "types": "./dist/entrypoints/telegram/html.d.ts",
