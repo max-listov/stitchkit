@@ -304,6 +304,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0272](0272-a-restored-string-format-is-judged-by-its-server.md) | A restored string format is judged by its server | Accepted — restored format/pattern refusals belong to the remote; record-key wrappers retain their reported local reasons | I2, I3, I8, I13 |
 | [0273](0273-a-runtime-cli-field-conflict-is-one-commands-unavailability.md) | A runtime CLI field conflict is one command's unavailability | Accepted — preserve help and isolate runtime argv conflicts without hiding local configuration errors | I2, I3, I8, I13 |
 | [0274](0274-a-telegram-token-has-one-outbound-budget.md) | A Telegram token has one outbound budget | Accepted — one strict process-local budget per token, weighted by produced messages; a 429 pauses the token; the primitive paces and never retries an unknown outcome; amends 0201's token-wide 429 clause | I8, I9, I10, I13, I14 |
+| [0275](0275-a-guarded-fetch-pins-the-validated-address.md) | A guarded fetch pins the address it validated | Accepted — one resolution per hop, the socket opens to that answer with the URL's `Host` and TLS name; URL credentials refused; the document and streaming paths share the hop | I10, I13, I14 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

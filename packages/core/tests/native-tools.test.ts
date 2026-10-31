@@ -15,6 +15,7 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { createManagedFileBoundary } from '../src/files/boundary';
+import * as pinnedHttp from '../src/internal/pinned-http';
 import { isRecord } from '../src/internal/typed';
 import { mountWait } from '../src/tools/operations/mount-wait';
 import { mountDownload } from '../src/tools/transfer/mount-download';
@@ -280,7 +281,7 @@ describe('mountDownload', () => {
 
   test('an HTTP failure keeps the raw mount error prefix exactly once', async () => {
     const files = await createManagedFileBoundary({ root: tmpdir() });
-    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
+    const spy = spyOn(pinnedHttp, 'requestPinned').mockResolvedValue(
       new Response('unavailable', { status: 503 }),
     );
     try {
@@ -307,7 +308,7 @@ describe('mountDownload', () => {
   test('writes a fetched URL to disk with a content-type extension', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'sk-dl-'));
     const files = await createManagedFileBoundary({ root: dir });
-    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
+    const spy = spyOn(pinnedHttp, 'requestPinned').mockResolvedValue(
       new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } }),
     );
     try {
@@ -344,7 +345,7 @@ describe('mountDownload', () => {
     const dir = await mkdtemp(join(tmpdir(), 'sk-dl-rel-'));
     const relativeDir = relative(process.cwd(), dir);
     const files = await createManagedFileBoundary({ root: relativeDir });
-    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
+    const spy = spyOn(pinnedHttp, 'requestPinned').mockResolvedValue(
       new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } }),
     );
     try {

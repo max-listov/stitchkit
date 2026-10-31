@@ -9,6 +9,7 @@ import {
   type ManagedFileBoundary,
   ManagedFileError,
 } from '../src/files/boundary';
+import * as pinnedHttp from '../src/internal/pinned-http';
 import { mountAgent } from '../src/tools/agent';
 import { buildMcpServer } from '../src/tools/mcp/mount';
 import { coerceJsonArgs } from '../src/tools/schema/coerce';
@@ -258,17 +259,16 @@ describe('managed view_file definition', () => {
 
   test('a batch shares one total inline byte budget', async () => {
     const bytes = new Uint8Array(12 * 1024 * 1024);
-    const fetchImplementation: typeof fetch = Object.assign(
-      async (): Promise<Response> =>
+    // The socket seam: every hop the guarded fetch opens is answered here.
+    const fetchMock = spyOn(pinnedHttp, 'requestPinned').mockImplementation(
+      async () =>
         new Response(bytes, {
           headers: {
             'content-type': 'image/png',
             'content-length': String(bytes.length),
           },
         }),
-      { preconnect: (): void => undefined },
     );
-    const fetchMock = spyOn(globalThis, 'fetch').mockImplementation(fetchImplementation);
     try {
       const result = await runViewFileOperation(
         ['http://127.0.0.1/one.png', 'http://127.0.0.1/two.png'],
@@ -287,23 +287,23 @@ describe('managed view_file definition', () => {
 
   test('managed cancellation reaches the guarded fetch instead of becoming an item error', async () => {
     let fetchSignal: AbortSignal | undefined;
-    const fetchImplementation: typeof fetch = Object.assign(
+    const fetchMock = spyOn(pinnedHttp, 'requestPinned').mockImplementation(
       async (
-        _input: string | URL | Request,
-        init?: BunFetchRequestInit,
-      ): Promise<Response> => {
-        fetchSignal = init?.signal ?? undefined;
+        _url: URL,
+        _resolved: { address: string; family: 4 | 6 },
+        signal: AbortSignal | undefined,
+      ) => {
+        fetchSignal = signal;
+        if (signal?.aborted) throw signal.reason ?? new Error('aborted');
         return await new Promise<Response>((_resolve, reject) => {
-          fetchSignal?.addEventListener(
+          signal?.addEventListener(
             'abort',
-            () => reject(fetchSignal?.reason ?? new Error('aborted')),
+            () => reject(signal?.reason ?? new Error('aborted')),
             { once: true },
           );
         });
       },
-      { preconnect: (): void => undefined },
     );
-    const fetchMock = spyOn(globalThis, 'fetch').mockImplementation(fetchImplementation);
     try {
       const definition = defineViewFileTool({
         description: 'Inspect remote media',
@@ -313,7 +313,9 @@ describe('managed view_file definition', () => {
       const controller = new AbortController();
       const pending = definition.handler({
         params: undefined,
-        input: { paths: 'https://example.com/image.png' },
+        // A literal host: allowPrivateHosts widens the address check but the hop still resolves
+        // nothing, so this test never depends on a real name resolver.
+        input: { paths: 'https://127.0.0.1/image.png' },
         source: 'mcp',
         signal: controller.signal,
       });

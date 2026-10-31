@@ -7,15 +7,21 @@
  * redirect hop; bodies are read with a hard byte cap so a hostile or accidental
  * multi-GB / unbounded stream cannot OOM the process.
  *
+ * The TCP connection is pinned to the address the guard validated: the name is
+ * resolved once per hop, every answer is checked, and the socket is opened to
+ * that exact address with the original `Host` header and TLS server name. A
+ * resolver that answers public for the check and private for the connection
+ * therefore has no second answer to give.
+ *
  * Node-side only (uses `node:dns` / `node:net`) — never import from a
  * browser-safe entrypoint.
  */
 import { lookup } from 'node:dns/promises';
-import { request as httpRequest } from 'node:http';
-import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { raceAbort } from './abort-race';
 import { readBoundedChunks } from './bounded-body';
+import type { PinnedTransport } from './pinned-http';
+import * as pinnedHttp from './pinned-http';
 
 /** A host that is digits/dots-only or `0x…` is a numeric IP in disguise. */
 const NUMERIC_HOST = /^(0x[0-9a-f]+|[0-9.]+)$/i;
@@ -147,13 +153,26 @@ export async function assertPublicUrl(url: URL, signal?: AbortSignal): Promise<v
 /**
  * Fetch a URL with the SSRF guard enforced on the initial URL and on every
  * redirect hop — a public host can otherwise `302` to an internal address or a
- * non-http(s) scheme.
- *
- * Note: the DNS resolution here and the resolution `fetch` performs are
- * separate, so a hostile resolver retains a narrow rebinding window. The
- * per-hop re-check is the larger and fully-closed hole; a static private DNS
- * record is rejected outright.
+ * non-http(s) scheme — and with the connection pinned to the address that
+ * passed the check, so a resolver cannot answer public and then connect
+ * somewhere private.
  */
+/**
+ * The resolver seam: one `lookup` call per hop. Production uses `node:dns`;
+ * a test supplies a controlled answer to prove which address the socket went
+ * to, and that a second answer cannot open another one.
+ */
+export type GuardedDnsLookup = (
+  host: string,
+  options: { all: true },
+) => Promise<Array<{ address: string; family: number }>>;
+
+/** `node:dns` behind the seam's one shape: always every answer, never the first overload. */
+const defaultLookup: GuardedDnsLookup = async (host) => {
+  const records = await lookup(host, { all: true });
+  return Array.isArray(records) ? records : [records];
+};
+
 export interface GuardedFetchOptions {
   /**
    * Deadline for producing the FINAL response headers — DNS, connects and every
@@ -169,6 +188,17 @@ export interface GuardedFetchOptions {
   bodyTimeoutMs?: number;
   /** Optional caller cancellation, combined with both deadlines. */
   signal?: AbortSignal;
+  /**
+   * Test seam: the resolver whose answer the connection is pinned to. Default
+   * `node:dns`. It replaces the name lookup, never the address check.
+   */
+  dns?: GuardedDnsLookup;
+  /**
+   * Test seam: how one resolved hop is opened. Default the pinned
+   * `http`/`https` request. Only the redirect tests replace it; production and
+   * the rebinding test use the default, which is where pinning happens.
+   */
+  transport?: PinnedTransport;
 }
 
 export async function fetchGuarded(
@@ -196,21 +226,27 @@ export async function fetchGuarded(
     );
   }, timeoutMs);
   headerTimer.unref?.();
+  const transport = options.transport ?? pinnedHttp.requestPinned;
   let settled = false;
   try {
     let url = start;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      if (allowPrivate) assertHttpUrl(url);
-      else await assertPublicUrl(url, signal);
-      // This API returns a streaming Fetch Response. Node's fetch does not
-      // expose a pinned-address hook, so the documented DNS check/use window
-      // remains; deadline and per-hop validation still apply uniformly.
-      const res = await fetch(url, { redirect: 'manual', signal });
+      // Credentials in a URL would travel to whatever host a redirect names, and
+      // a pinned socket addresses an IP while the `Host` header names the
+      // original host; neither is a place to move a secret into.
+      if (url.username || url.password) {
+        throw new Error('refusing to fetch a URL that carries credentials');
+      }
+      // The one resolution of this hop. `allowPrivate` widens the address check,
+      // not the number of lookups: the connection still uses this answer.
+      const resolved = await resolveAddress(url, allowPrivate, signal, options.dns);
+      const res = await transport(url, resolved, signal);
       const location =
         res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
       if (location === null) {
         settled = true;
         clearTimeout(headerTimer);
+        // A body read past this deadline aborts the socket through `signal`.
         const bodyTimer = setTimeout(() => {
           controller.abort(new Error(`fetch body was not consumed within ${bodyTimeoutMs}ms`));
         }, bodyTimeoutMs);
@@ -224,6 +260,25 @@ export async function fetchGuarded(
   } finally {
     if (!settled) clearTimeout(headerTimer);
   }
+}
+
+/** The address this hop connects to — the one answer that passed the check. */
+async function resolveAddress(
+  url: URL,
+  allowPrivate: boolean,
+  signal: AbortSignal | undefined,
+  dns: GuardedDnsLookup | undefined,
+): Promise<{ address: string; family: 4 | 6 }> {
+  if (!allowPrivate) return resolvePublicAddress(url, signal, dns);
+  assertHttpUrl(url);
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  if (!host) throw new Error('refusing to fetch a URL with no host');
+  const ipFamily = isIP(host);
+  if (ipFamily) return { address: host, family: ipFamily === 6 ? 6 : 4 };
+  const records = await (dns ?? defaultLookup)(host, { all: true });
+  const record = records[0];
+  if (!record) throw new Error('host resolved to no addresses');
+  return { address: record.address, family: record.family === 6 ? 6 : 4 };
 }
 
 export interface PinnedDocumentFetchOptions {
@@ -258,6 +313,7 @@ export class PrivateAddressRefusal extends Error {
 async function resolvePublicAddress(
   url: URL,
   signal?: AbortSignal,
+  dns?: GuardedDnsLookup,
 ): Promise<{ address: string; family: 4 | 6 }> {
   // Scheme allowlist first — a redirect `Location: file:///etc/passwd` adopts a
   // new protocol, and an empty-host `file:` URL would otherwise slip the
@@ -284,7 +340,7 @@ async function resolvePublicAddress(
   if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
     throw new PrivateAddressRefusal('refusing to fetch an internal host');
   }
-  const pending = lookup(host, { all: true });
+  const pending = (dns ?? defaultLookup)(host, { all: true });
   // DNS lookups have no native cancellation, so a deadline is enforced from the outside.
   const records = signal ? await raceAbort(pending, signal) : await pending;
   for (const record of records) {
@@ -330,62 +386,23 @@ export async function fetchPinnedDocument(
       throw new Error('document URL cannot contain credentials');
     }
     const resolved = await resolvePublicAddress(url, signal);
-    const transport = url.protocol === 'https:' ? httpsRequest : httpRequest;
-    const response = await new Promise<PinnedDocumentResponse>((resolve, reject) => {
-      const request = transport(
-        {
-          protocol: url.protocol,
-          hostname: resolved.address,
-          family: resolved.family,
-          port: url.port || undefined,
-          path: `${url.pathname}${url.search}`,
-          method: 'GET',
-          signal,
-          servername: url.hostname,
-          headers: {
-            host: url.host,
-            accept: 'application/json',
-            ...options.headers,
-          },
-        },
-        (incoming) => {
-          const headers = new Headers();
-          for (const [name, value] of Object.entries(incoming.headers)) {
-            if (Array.isArray(value)) {
-              for (const item of value) headers.append(name, item);
-            } else if (value !== undefined) {
-              headers.set(name, value);
-            }
-          }
-          const chunks: Uint8Array[] = [];
-          let total = 0;
-          incoming.on('data', (chunk: Uint8Array) => {
-            total += chunk.byteLength;
-            if (total > options.maxBytes) {
-              incoming.destroy(new Error('response body exceeds configured byte limit'));
-              return;
-            }
-            chunks.push(chunk);
-          });
-          incoming.once('error', reject);
-          incoming.once('end', () => {
-            const body = new Uint8Array(total);
-            let offset = 0;
-            for (const chunk of chunks) {
-              body.set(chunk, offset);
-              offset += chunk.byteLength;
-            }
-            resolve({ status: incoming.statusCode ?? 0, headers, body, url });
-          });
-        },
-      );
-      request.once('error', reject);
-      request.end();
+    // The same pinned hop the streaming path uses: one address, one socket.
+    const response = await pinnedHttp.requestPinned(url, resolved, signal, {
+      accept: 'application/json',
+      ...options.headers,
     });
+    const body = await readCapped(response, options.maxBytes);
+    if (body === null) throw new Error('response body exceeds configured byte limit');
+    const document: PinnedDocumentResponse = {
+      status: response.status,
+      headers: response.headers,
+      body: new Uint8Array(body),
+      url,
+    };
 
-    if (response.status < 300 || response.status >= 400) return response;
+    if (response.status < 300 || response.status >= 400) return document;
     const location = response.headers.get('location');
-    if (!location) return response;
+    if (!location) return document;
     url = new URL(location, url);
   }
   throw new Error('too many redirects');

@@ -5,7 +5,7 @@
  * re-validation (a public host must not be able to `302` to an internal address
  * or a `file:` scheme), plus the body size cap.
  */
-import { describe, expect, spyOn, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import {
   assertPublicUrl,
   fetchGuarded,
@@ -241,75 +241,202 @@ describe('fetchGuarded — per-redirect-hop re-validation', () => {
   });
 
   test('rejects a redirect to an internal address', async () => {
-    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/' } }),
-    );
-    try {
-      await expect(fetchGuarded(new URL('http://1.1.1.1/'), false)).rejects.toThrow(/private/);
-    } finally {
-      spy.mockRestore();
-    }
+    // The first hop is answered by the transport seam; the redirect target is
+    // validated before any socket for it is opened.
+    await expect(
+      fetchGuarded(new URL('http://1.1.1.1/'), false, {
+        transport: async () =>
+          new Response(null, {
+            status: 302,
+            headers: { location: 'http://169.254.169.254/' },
+          }),
+      }),
+    ).rejects.toThrow(/private/);
   });
 
   test('rejects a redirect to a file: scheme (no local-file read)', async () => {
-    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(null, { status: 302, headers: { location: 'file:///etc/passwd' } }),
-    );
-    try {
-      await expect(fetchGuarded(new URL('http://1.1.1.1/'), false)).rejects.toThrow(
-        /non-http/,
-      );
-    } finally {
-      spy.mockRestore();
-    }
+    await expect(
+      fetchGuarded(new URL('http://1.1.1.1/'), false, {
+        transport: async () =>
+          new Response(null, { status: 302, headers: { location: 'file:///etc/passwd' } }),
+      }),
+    ).rejects.toThrow(/non-http/);
   });
 
   test('rejects a non-http(s) URL even when private hosts are allowed', async () => {
-    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(new Response('should not fetch'));
-    try {
-      await expect(fetchGuarded(new URL('file:///etc/passwd'), true)).rejects.toThrow(
-        /non-http/,
-      );
-      expect(spy).not.toHaveBeenCalled();
-    } finally {
-      spy.mockRestore();
-    }
+    await expect(fetchGuarded(new URL('file:///etc/passwd'), true)).rejects.toThrow(
+      /non-http/,
+    );
   });
 
   test('rejects a redirect to file: even when private hosts are allowed', async () => {
-    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(null, { status: 302, headers: { location: 'file:///etc/passwd' } }),
-    );
-    try {
-      await expect(fetchGuarded(new URL('http://127.0.0.1/'), true)).rejects.toThrow(
-        /non-http/,
-      );
-    } finally {
-      spy.mockRestore();
-    }
+    await expect(
+      fetchGuarded(new URL('http://127.0.0.1/'), true, {
+        transport: async () =>
+          new Response(null, { status: 302, headers: { location: 'file:///etc/passwd' } }),
+      }),
+    ).rejects.toThrow(/non-http/);
   });
 
   test('returns a non-redirect response unchanged', async () => {
-    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('ok', { status: 200 }),
-    );
-    try {
-      const res = await fetchGuarded(new URL('http://1.1.1.1/'), false);
-      expect(res.status).toBe(200);
-    } finally {
-      spy.mockRestore();
-    }
+    const res = await fetchGuarded(new URL('http://1.1.1.1/'), false, {
+      transport: async () => new Response('ok', { status: 200 }),
+    });
+    expect(res.status).toBe(200);
+    await expect(res.text()).resolves.toBe('ok');
   });
 
   test('allowPrivate bypasses the host guard (trusted-network opt-in)', async () => {
-    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('ok', { status: 200 }),
-    );
+    const server = Bun.serve({ port: 0, fetch: () => new Response('ok') });
     try {
-      const res = await fetchGuarded(new URL('http://127.0.0.1/'), true);
+      const res = await fetchGuarded(new URL(`http://127.0.0.1:${server.port}/`), true);
       expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe('ok');
     } finally {
-      spy.mockRestore();
+      server.stop(true);
+    }
+  });
+
+  test('refuses a URL that carries credentials, on any hop', async () => {
+    await expect(fetchGuarded(new URL('http://user:secret@1.1.1.1/'), false)).rejects.toThrow(
+      /credentials/,
+    );
+    await expect(
+      fetchGuarded(new URL('http://1.1.1.1/'), false, {
+        transport: async () =>
+          new Response(null, {
+            status: 302,
+            headers: { location: 'http://user:secret@1.1.1.1/' },
+          }),
+      }),
+    ).rejects.toThrow(/credentials/);
+  });
+});
+
+describe('fetchGuarded — DNS pinning (SSRF rebinding)', () => {
+  /** A resolver that answers public for the check and private for a later connection. */
+  function rebindingResolver(publicAddress = '93.184.216.34') {
+    let calls = 0;
+    return {
+      get calls() {
+        return calls;
+      },
+      lookup: async (_host: string) => {
+        calls += 1;
+        return calls === 1
+          ? [{ address: publicAddress, family: 4 }]
+          : [{ address: '127.0.0.1', family: 4 }];
+      },
+    };
+  }
+
+  test('the connection uses the validated address, and the resolver is asked once', async () => {
+    const resolver = rebindingResolver();
+    const seen: string[] = [];
+    await expect(
+      fetchGuarded(new URL('http://rebind.test/asset.png'), false, {
+        dns: resolver.lookup,
+        transport: async (_url, resolved) => {
+          seen.push(`${resolved.address}/${resolved.family}`);
+          throw new Error('stop: the address is what this test asserts');
+        },
+      }),
+    ).rejects.toThrow(/stop/);
+    expect(seen).toEqual(['93.184.216.34/4']);
+    expect(resolver.calls).toBe(1);
+  });
+
+  test('a rebinding answer cannot open a private socket: no second lookup, nothing reaches the loopback server', async () => {
+    let connections = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        connections += 1;
+        return new Response('secret');
+      },
+    });
+    const resolver = rebindingResolver();
+    try {
+      await expect(
+        fetchGuarded(new URL(`http://rebind.test:${server.port}/asset.png`), false, {
+          dns: resolver.lookup,
+          timeoutMs: 250,
+        }),
+      ).rejects.toThrow();
+      expect(resolver.calls).toBe(1);
+      expect(connections).toBe(0);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('negative control: the second answer is a live private socket the counter sees', async () => {
+    // The old shape resolved twice. The same resolver's second answer really is
+    // reachable — so the zero connections above is a fact about the new path,
+    // not a server nothing could have touched.
+    let connections = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        connections += 1;
+        return new Response('secret');
+      },
+    });
+    const resolver = rebindingResolver();
+    try {
+      const [validated] = await resolver.lookup('rebind.test');
+      const [connected] = await resolver.lookup('rebind.test');
+      expect(isPrivateIp(validated?.address ?? '')).toBe(false);
+      expect(isPrivateIp(connected?.address ?? '')).toBe(true);
+      await expect(
+        fetch(`http://${connected?.address}:${server.port}/asset.png`).then((res) =>
+          res.text(),
+        ),
+      ).resolves.toBe('secret');
+      expect(connections).toBe(1);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('every redirect hop is validated and pinned on its own', async () => {
+    let connections = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        connections += 1;
+        return new Response('secret');
+      },
+    });
+    const resolver = rebindingResolver();
+    try {
+      await expect(
+        fetchGuarded(new URL('http://first.test/start'), false, {
+          dns: resolver.lookup,
+          transport: async () =>
+            new Response(null, {
+              status: 302,
+              headers: { location: `http://rebind.test:${server.port}/secret` },
+            }),
+        }),
+      ).rejects.toThrow(/private/);
+      // First hop resolved public; the second hop's answer was private and refused
+      // before a socket was opened for it.
+      expect(resolver.calls).toBe(2);
+      expect(connections).toBe(0);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('TLS is still verified: a pinned https URL does not accept a plain-HTTP peer', async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response('plain') });
+    try {
+      await expect(
+        fetchGuarded(new URL(`https://127.0.0.1:${server.port}/`), true, { timeoutMs: 1_000 }),
+      ).rejects.toThrow();
+    } finally {
+      server.stop(true);
     }
   });
 });

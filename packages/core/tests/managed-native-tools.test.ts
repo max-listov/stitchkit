@@ -11,6 +11,7 @@ import {
   type ManagedFileBoundary,
   ManagedFileError,
 } from '../src/files/boundary';
+import * as pinnedHttp from '../src/internal/pinned-http';
 import { mountAgent } from '../src/tools/agent';
 import { listToolNames } from '../src/tools/list-names';
 import { buildToolManifest } from '../src/tools/manifest';
@@ -211,20 +212,24 @@ describe('managed generic native tools', () => {
     const dir = await mkdtemp(join(tmpdir(), 'sk-managed-download-'));
     const files = await createManagedFileBoundary({ root: dir });
     let fetchSignal: AbortSignal | null | undefined;
-    const fetchMock: typeof fetch = Object.assign(
-      (_input: string | URL | Request, init?: BunFetchRequestInit): Promise<Response> => {
-        fetchSignal = init?.signal;
+    const spy = spyOn(pinnedHttp, 'requestPinned').mockImplementation(
+      async (
+        _url: URL,
+        _resolved: { address: string; family: 4 | 6 },
+        signal?: AbortSignal,
+      ) => {
+        fetchSignal = signal;
+        // The caller may already have cancelled before this hop opened.
+        if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('aborted'));
         return new Promise<Response>((_resolve, reject) => {
-          fetchSignal?.addEventListener(
+          signal?.addEventListener(
             'abort',
-            () => reject(fetchSignal?.reason ?? new Error('aborted')),
+            () => reject(signal?.reason ?? new Error('aborted')),
             { once: true },
           );
         });
       },
-      { preconnect: (): void => undefined },
     );
-    const spy = spyOn(globalThis, 'fetch').mockImplementation(fetchMock);
     try {
       const download = defineDownloadTool({
         description: 'Download a URL',
@@ -237,7 +242,7 @@ describe('managed generic native tools', () => {
       const controller = new AbortController();
       const pending = download.handler({
         params: undefined,
-        input: { url: 'https://example.com/file.png' },
+        input: { url: 'https://127.0.0.1/file.png' },
         source: 'mcp',
         signal: controller.signal,
       });
@@ -376,14 +381,12 @@ describe('managed generic native tools', () => {
 
   test('raw managed adapters expose safe codes and scrub unknown causes', async () => {
     const safeServer = new McpServer({ name: 'raw-managed-safe', version: '1' });
-    const fetchMock: typeof fetch = Object.assign(
-      async (): Promise<Response> =>
+    const fetchSpy = spyOn(pinnedHttp, 'requestPinned').mockImplementation(
+      async () =>
         new Response(new Uint8Array([1]), {
           headers: { 'content-type': 'application/octet-stream' },
         }),
-      { preconnect: (): void => undefined },
     );
-    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(fetchMock);
     mountDownload(safeServer, {
       name: 'raw_download',
       description: 'Raw managed download',
@@ -398,7 +401,7 @@ describe('managed generic native tools', () => {
     try {
       const result = await safeClient.callTool({
         name: 'raw_download',
-        arguments: { url: 'https://example.com/file.bin' },
+        arguments: { url: 'https://127.0.0.1/file.bin' },
       });
       expect(resultText(result)).toContain('Download failed [FILE_EXISTS]');
       expect(resultText(result)).not.toContain('/srv/private');

@@ -427,22 +427,61 @@ describe('createCli — --wait polling', () => {
 });
 
 describe('createCli — --output-dir download', () => {
-  test('downloads via the guarded fetcher and contains the filename', async () => {
+  test('downloads several media through the guarded fetcher and contains every filename', async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) => {
+        const name = new URL(req.url).pathname;
+        if (name === '/a.png') return new Response(new Uint8Array([1, 2, 3]));
+        if (name === '/b.bin') return new Response(new Uint8Array([4, 5]));
+        return new Response('missing', { status: 404 });
+      },
+    });
     const dir = await mkdtemp(join(tmpdir(), 'sk-cli-dl-'));
-    const spy = spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(new Uint8Array([1, 2, 3]), { status: 200 }),
-    );
     try {
       const { code } = await run(['list_widgets', '--output-dir', dir, '--quiet'], {
-        // A public IP literal skips DNS in the SSRF guard; the name carries a
-        // traversal attempt that basename-containment must neutralise.
-        download: () => [{ url: 'https://93.184.216.34/a.png', name: '../escaped.png' }],
+        allowPrivateDownloadHosts: true,
+        // Names carry traversal attempts that basename-containment must neutralise.
+        download: () => [
+          { url: `http://127.0.0.1:${server.port}/a.png`, name: '../escaped.png' },
+          { url: `http://127.0.0.1:${server.port}/b.bin`, name: '/abs/../../nested.bin' },
+        ],
       });
       expect(code).toBe(0);
-      const files = await readdir(dir);
-      expect(files).toEqual(['escaped.png']); // `../` stripped — stays inside dir
+      expect((await readdir(dir)).sort()).toEqual(['escaped.png', 'nested.bin']);
+      expect(new Uint8Array(await Bun.file(join(dir, 'escaped.png')).arrayBuffer())).toEqual(
+        new Uint8Array([1, 2, 3]),
+      );
+      expect(new Uint8Array(await Bun.file(join(dir, 'nested.bin')).arrayBuffer())).toEqual(
+        new Uint8Array([4, 5]),
+      );
     } finally {
-      spy.mockRestore();
+      server.stop(true);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed media is not a full success: the error names the URL and the exit is non-zero', async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) =>
+        new URL(req.url).pathname === '/gone.png'
+          ? new Response('missing', { status: 404 })
+          : new Response(new Uint8Array([9]), { status: 200 }),
+    });
+    const dir = await mkdtemp(join(tmpdir(), 'sk-cli-dl-fail-'));
+    try {
+      const { code, err } = await run(['list_widgets', '--output-dir', dir], {
+        allowPrivateDownloadHosts: true,
+        download: () => [
+          { url: `http://127.0.0.1:${server.port}/ok.png`, name: 'ok.png' },
+          { url: `http://127.0.0.1:${server.port}/gone.png`, name: 'gone.png' },
+        ],
+      });
+      expect(code).not.toBe(0);
+      expect(err).toContain('gone.png');
+    } finally {
+      server.stop(true);
       await rm(dir, { recursive: true, force: true });
     }
   });
