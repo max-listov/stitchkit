@@ -306,6 +306,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0274](0274-a-telegram-token-has-one-outbound-budget.md) | A Telegram token has one outbound budget | Accepted — one strict process-local budget per token, weighted by produced messages; a 429 pauses the token; the primitive paces and never retries an unknown outcome; amends 0201's token-wide 429 clause | I8, I9, I10, I13, I14 |
 | [0275](0275-a-guarded-fetch-pins-the-validated-address.md) | A guarded fetch pins the address it validated | Accepted — one resolution per hop, the socket opens to that answer with the URL's `Host` and TLS name; URL credentials refused; the document and streaming paths share the hop | I10, I13, I14 |
 | [0276](0276-a-download-writes-through-its-root-capability.md) | A download writes through its root capability | Accepted — select the configured root once, pin canonical components and atomically replace direct children without following links | I8, I12, I13, I15 |
+| [0277](0277-a-telegram-budget-serves-replies-first.md) | A Telegram budget serves replies first and pauses on sends | Accepted — an interactive lane is granted before bulk over one rate; only a 429 on a spending method pauses the token; amends 0274 | I9, I13 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

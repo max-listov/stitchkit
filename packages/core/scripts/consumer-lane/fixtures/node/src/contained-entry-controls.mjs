@@ -185,6 +185,33 @@ export async function entryBoundaryControls({ createAgentCodingTools, mountAgent
       (error) => refuses(error, 'CONFLICT', /changed while it was being authorized/),
     );
 
+    // A rule on the stored name cannot be passed by another spelling, where the volume folds case.
+    await mkdir(path.join(root, 'Guarded'));
+    await writeFile(path.join(root, 'Guarded/token'), 'stored');
+    const folds = existsSync(path.join(root, 'gUARDED'));
+    const spelled = mountAgent([], {
+      runtimeTools: createAgentCodingTools({
+        root,
+        authorize: () => true,
+        authorizePath: ({ path: candidate }) => candidate !== 'Guarded',
+      }),
+    });
+    await assert.rejects(
+      execute(spelled, 'read_file')({ path: 'gUARDED/token' }, options),
+      (error) =>
+        folds
+          ? refuses(error, 'BAD_REQUEST', /stored on disk/)
+          : refuses(error, 'NOT_FOUND', /does not exist/),
+    );
+    if (!folds) {
+      await mkdir(path.join(root, 'guarded'));
+      await writeFile(path.join(root, 'guarded/token'), 'distinct');
+      assert.equal(
+        (await execute(spelled, 'read_file')({ path: 'guarded/token' }, options)).text,
+        'distinct',
+      );
+    }
+
     // New content inherits permission bits, never setuid or setgid.
     await writeFile(path.join(root, 'privileged'), 'old');
     await chmod(path.join(root, 'privileged'), 0o6755);

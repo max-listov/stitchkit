@@ -1,6 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { forbidden } from '../contract/errors';
+import { misspelledContainedSegment } from '../internal/contained-files';
 import { errnoOf } from '../internal/errno';
 import {
   type AgentCodingToolAuthorization,
@@ -8,7 +9,7 @@ import {
   type AgentCodingToolConfig,
   AgentCodingToolPathAuthorizationSchema,
 } from './coding-tool-contract';
-import { codingRefusal } from './coding-tool-refusals';
+import { codingPathRefusal, codingRefusal } from './coding-tool-refusals';
 
 function within(root: string, target: string): boolean {
   const relative = path.relative(root, target);
@@ -203,6 +204,20 @@ export async function authorizeCodingPathChain(
   config: AgentCodingToolConfig,
   relative: string,
 ): Promise<void> {
+  // Before any policy reads the string: a rule cannot match a spelling the disk does not hold.
+  if (relative !== '.') {
+    const misspelled = await misspelledContainedSegment(await realpath(config.root), relative);
+    if (misspelled !== undefined) {
+      codingPathRefusal(
+        'BAD_REQUEST',
+        'This path differs from the name stored on disk',
+        relative,
+        {
+          hint: 'Use list_directory to see the stored spelling.',
+        },
+      );
+    }
+  }
   if (!config.authorizePath) return;
   const segments = relative === '.' ? ['.'] : relative.split('/');
   for (let depth = 1; depth <= segments.length; depth += 1) {

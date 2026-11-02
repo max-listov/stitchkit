@@ -656,7 +656,9 @@ myapp item_list --sort messages --top 5 --json                # the same five, a
 myapp item_list --sort name --ascending                       # ordered the other way
 ```
 
-Groups come back largest first for the same reason. A record that carries no
+Groups come back largest first for the same reason, in the printed bytes even when a key looks
+like a number; a reader that parses them into a JavaScript object reorders such keys itself.
+A string equal to `null` or `(absent)` is quoted, so it stays apart from the missing value. A record that carries no
 value for the sort field sorts **last in both directions**: it is not the
 smallest, it is not on the scale at all, and letting it lead an ascending list
 would answer a question nobody asked.

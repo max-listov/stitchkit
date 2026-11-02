@@ -271,14 +271,59 @@ describe('the token outbound budget', () => {
     expect(budget.stats().pausedForMs).toBe(10_000);
   });
 
-  test('a 429 from a non-send call still pauses the token for later sends', async () => {
+  test('a 429 on an edit or a read concerns that call and pauses no sender', async () => {
+    const clock = createManualClock();
+    const { budget } = manualBudget(clock);
+    for (const send of [
+      async () => {
+        throw refusal(429, 'Too Many Requests: retry after 1', 1);
+      },
+      async () => ({ ok: false, error_code: 429, parameters: { retry_after: 1 } }),
+    ]) {
+      await budget.run('editMessageText', {}, undefined, send).catch(() => undefined);
+    }
+    expect(budget.stats().pausedForMs).toBe(0);
+  });
+
+  test('a reply passes a queued campaign, and both lanes keep the one rate', async () => {
+    const clock = createManualClock();
+    const { budget } = manualBudget(clock);
+    const order: string[] = [];
+    const bulk = { lane: 'bulk' } as const;
+    const send = (name: string, options?: typeof bulk) =>
+      budget.run(
+        'sendMessage',
+        {},
+        undefined,
+        async () => {
+          order.push(`${name}@${clock.now()}`);
+        },
+        options,
+      );
+    const campaign = [send('bulk-1', bulk), send('bulk-2', bulk), send('bulk-3', bulk)];
+    await Bun.sleep(0);
+    expect(budget.stats().queuedBulk).toBe(2);
+    const reply = send('reply');
+    await clock.advance(1_000);
+    await Promise.all([...campaign, reply]);
+    const interval = 1_000 / budget.stats().messagesPerSecond;
+    expect(order).toEqual([
+      'bulk-1@0',
+      `reply@${interval}`,
+      `bulk-2@${2 * interval}`,
+      `bulk-3@${3 * interval}`,
+    ]);
+    expect(budget.stats().queuedBulk).toBe(0);
+  });
+
+  test('an explicit pauseAfter still lets a caller stop the token on an edit', async () => {
     const clock = createManualClock();
     const { budget } = manualBudget(clock);
     await budget
       .run('editMessageText', {}, undefined, async () => {
         throw refusal(429, 'Too Many Requests: retry after 1', 1);
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => budget.pauseAfter(error));
     expect(budget.stats().pausedForMs).toBe(1_000);
 
     const times: number[] = [];

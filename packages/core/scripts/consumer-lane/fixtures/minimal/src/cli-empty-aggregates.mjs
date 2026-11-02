@@ -224,6 +224,25 @@ assert.ok(
     true,
   ).includes('no record carries the field "missing"'),
 );
+// Largest first holds for keys a JSON object would otherwise sort, and markers stay distinct.
+const years = [{ y: 2024 }, { y: 2025 }, { y: 2025 }, { y: 2023 }, { y: 2025 }, { y: 2024 }];
+assert.equal(
+  (await run(years, ['--count-by', 'y', '--top', '2', '--json'])).out,
+  '{"2025":3,"2024":2}\n',
+);
+assert.equal(
+  (await run(years, ['--count-by', 'y', '--top', '2'])).out,
+  '{\n  "2025": 3,\n  "2024": 2\n}\n',
+);
+const markers = [{ v: null }, { v: 'null' }, { v: '(absent)' }, {}, { v: 1 }];
+assert.deepEqual(JSON.parse((await run(markers, ['--count-by', 'v', '--json'])).out), {
+  null: 1,
+  '"null"': 1,
+  '"(absent)"': 1,
+  '(absent)': 1,
+  1: 1,
+});
+
 // An empty collection answers for its records, not for fields of the object around it.
 for (const [data, argv] of [
   [{ id: 1, amount: 100, warnings: [] }, ['--sum', 'amount']],

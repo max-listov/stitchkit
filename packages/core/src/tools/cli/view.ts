@@ -16,8 +16,13 @@ import { isRecord } from '../../internal/typed';
 import type { CliResultView } from './args-view';
 import { CliArgumentError } from './argument-error';
 
-/** What a view produces: a JSON value, or the one human-facing shape. */
-export type CliViewOutput = { kind: 'json'; data: unknown } | { kind: 'text'; text: string };
+/**
+ * What a view produces: a JSON value, or the one human-facing shape. `order` is the order of
+ * a grouped object's keys, which an object cannot hold once a key looks like an integer.
+ */
+export type CliViewOutput =
+  | { kind: 'json'; data: unknown; order?: readonly string[] }
+  | { kind: 'text'; text: string };
 
 /** A record that carries no value for the field at all. */
 const ABSENT = '(absent)';
@@ -95,23 +100,42 @@ function assertFieldPresent(records: readonly unknown[], field: string): string[
   return path;
 }
 
+/**
+ * The key of a group. A string that reads as one of the two markers is quoted,
+ * so `null` and `"null"` stay two groups.
+ */
 function groupKey(value: unknown): string {
   if (value === undefined) return ABSENT;
   if (value === null) return 'null';
+  if (value === 'null' || value === ABSENT) return JSON.stringify(value);
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
 
 /** Descending by amount, then by key, so `--top` takes a defined slice. */
-function ordered(
-  totals: Map<string, number>,
-  top: number | undefined,
-): Record<string, number> {
+function ordered(totals: Map<string, number>, top: number | undefined): CliViewOutput {
   const entries = [...totals].sort(([leftKey, left], [rightKey, right]) =>
     right === left ? leftKey.localeCompare(rightKey) : right - left,
   );
   const sliced = top === undefined ? entries : entries.slice(0, top);
-  return Object.fromEntries(sliced);
+  return {
+    kind: 'json',
+    data: Object.fromEntries(sliced),
+    order: sliced.map(([key]) => key),
+  };
+}
+
+/** One grouped view in its own order, spaced as the CLI spaces any JSON it prints. */
+export function stringifyGroups(
+  data: unknown,
+  order: readonly string[],
+  compact: boolean,
+): string {
+  if (!isRecord(data) || order.length === 0) return JSON.stringify(data);
+  const lines = order.map(
+    (key) => `${JSON.stringify(key)}:${compact ? '' : ' '}${JSON.stringify(data[key])}`,
+  );
+  return compact ? `{${lines.join(',')}}` : `{\n  ${lines.join(',\n  ')}\n}`;
 }
 
 function numericValue(value: unknown, field: string): number | undefined {
@@ -234,7 +258,7 @@ export function renderCliView(data: unknown, view: CliResultView): CliViewOutput
       const key = groupKey(readField(record, path));
       totals.set(key, (totals.get(key) ?? 0) + 1);
     }
-    return { kind: 'json', data: ordered(totals, view.top) };
+    return ordered(totals, view.top);
   }
 
   const path = assertFieldPresent(records, view.field);
@@ -253,5 +277,5 @@ export function renderCliView(data: unknown, view: CliResultView): CliViewOutput
       (totals.get(key) ?? 0) + (numericValue(readField(record, path), view.field) ?? 0),
     );
   }
-  return { kind: 'json', data: ordered(totals, view.top) };
+  return ordered(totals, view.top);
 }

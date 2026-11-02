@@ -59,6 +59,8 @@ export {
   type TelegramOutboundBudget,
   type TelegramOutboundBudgetConfig,
   type TelegramOutboundBudgetStats,
+  type TelegramOutboundCallOptions,
+  type TelegramOutboundLane,
   telegramOutboundBudget,
 } from '../telegram/outbound-budget';
 export {

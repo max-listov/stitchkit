@@ -2391,6 +2391,8 @@
     "TelegramOutboundBudget",
     "TelegramOutboundBudgetConfig",
     "TelegramOutboundBudgetStats",
+    "TelegramOutboundCallOptions",
+    "TelegramOutboundLane",
     "TelegramPostgresQuery",
     "TelegramSendFailure",
     "TelegramSendFailureReason",

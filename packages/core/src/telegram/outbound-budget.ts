@@ -13,9 +13,15 @@
  * `forwardMessages` cost their message ids, and the follow-up call to action
  * after an album is one more message.
  *
- * **It paces; it does not retry.** A 429 pauses every sender of the token for
- * the wait Telegram stated (or a declared fallback when it stated none). A
- * network failure or a 5xx is returned to the caller unchanged: repeating a
+ * Two lanes share that one rate. An `interactive` call is granted before any
+ * `bulk` call that is waiting, so a person's reply never queues behind a
+ * campaign; a campaign runs at whatever rate replies leave it.
+ *
+ * **It paces; it does not retry.** A 429 on a method that spends the budget
+ * pauses every sender of the token for the wait Telegram stated (or a declared
+ * fallback when it stated none). A 429 on an edit or a read concerns that call
+ * and pauses nothing. A network failure or a 5xx is returned to the caller
+ * unchanged: repeating a
  * send whose external outcome is unknown is the caller's decision, and a
  * primitive that retried it would turn one unknown message into two.
  *
@@ -96,6 +102,9 @@ function sendCost(method: string, payload: unknown): number {
   return Array.isArray(value) ? Math.max(1, value.length) : 1;
 }
 
+/** Whose turn comes first. `interactive` answers a person; `bulk` is a campaign. */
+export type TelegramOutboundLane = 'interactive' | 'bulk';
+
 export interface TelegramOutboundBudgetConfig {
   /** The bot token whose sends share this budget. It is never returned or logged. */
   readonly token: string;
@@ -124,11 +133,18 @@ export interface TelegramOutboundBudgetStats {
   readonly granted: number;
   /** Weighted messages admitted: an album of three counts as three. */
   readonly messages: number;
-  /** Calls waiting for their turn. */
+  /** Calls waiting for their turn, in both lanes. */
   readonly queued: number;
+  /** How many of them are in the `bulk` lane. */
+  readonly queuedBulk: number;
   readonly messagesPerSecond: number;
   /** How much of the current 429 pause is still ahead, in milliseconds. */
   readonly pausedForMs: number;
+}
+
+export interface TelegramOutboundCallOptions {
+  /** Default `interactive`. */
+  readonly lane?: TelegramOutboundLane;
 }
 
 /**
@@ -137,24 +153,30 @@ export interface TelegramOutboundBudgetStats {
  */
 export interface TelegramOutboundBudget {
   /**
-   * Run one Bot API call under the budget. A non-send method passes through
-   * without spending a message. A 429 pauses every sender of the token, whether
-   * `send` throws it or resolves with the Bot API's `{ ok: false, … }` body, as
-   * a client transformer's `send` does. The error is rethrown, or the response
-   * returned, unchanged and the call is not repeated.
+   * Run one Bot API call under the budget, in the `interactive` lane by default.
+   * A non-send method passes through without spending a message. A 429 on a send
+   * pauses every sender of the token, whether `send` throws it or resolves with
+   * the Bot API's `{ ok: false, … }` body, as a client transformer's `send` does;
+   * a 429 on a non-send method pauses nothing. The error is rethrown, or the
+   * response returned, unchanged and the call is not repeated.
    */
   run<T>(
     method: string,
     payload: unknown,
     signal: AbortSignal | undefined,
     send: () => Promise<T>,
+    options?: TelegramOutboundCallOptions,
   ): Promise<T>;
   /**
    * Wait until `cost` messages fit. The wait rejects with `signal.reason`
    * without spending a token; a granted call owns its slots even if its later
    * send is aborted, which the caller must not repeat as a definite failure.
    */
-  acquire(cost: number, signal?: AbortSignal): Promise<void>;
+  acquire(
+    cost: number,
+    signal?: AbortSignal,
+    options?: TelegramOutboundCallOptions,
+  ): Promise<void>;
   /** Pause every sender of this token for at least `milliseconds`. Never shortens an existing pause. */
   pause(milliseconds: number): void;
   /** Pause the token after a rate-limited refusal; another failure does nothing. */
@@ -170,6 +192,7 @@ export interface TelegramOutboundBudget {
 
 interface Waiter {
   readonly cost: number;
+  readonly lane: TelegramOutboundLane;
   readonly resolve: () => void;
   readonly reject: (reason: unknown) => void;
   readonly signal?: AbortSignal;
@@ -215,11 +238,16 @@ function createBudget(
     current?.abort();
   };
 
+  /** The oldest interactive call, else the oldest bulk one. */
+  const nextWaiter = (): Waiter | undefined =>
+    queue.find((waiter) => waiter.lane === 'interactive') ?? queue[0];
+
   const remove = (waiter: Waiter): void => {
     const index = queue.indexOf(waiter);
     if (index === -1) return;
+    const next = nextWaiter() === waiter;
     queue.splice(index, 1);
-    if (index === 0) wakeWaiting();
+    if (next) wakeWaiting();
   };
 
   const drain = async (): Promise<void> => {
@@ -227,7 +255,7 @@ function createBudget(
     draining = true;
     try {
       while (queue.length > 0) {
-        const head = queue[0];
+        const head = nextWaiter();
         if (head === undefined) break;
         if (head.signal?.aborted) {
           remove(head);
@@ -254,7 +282,7 @@ function createBudget(
           }
           continue;
         }
-        queue.shift();
+        queue.splice(queue.indexOf(head), 1);
         if (head.onAbort) head.signal?.removeEventListener('abort', head.onAbort);
         nextGrantAt = at + head.cost * interval;
         granted += 1;
@@ -269,13 +297,23 @@ function createBudget(
     }
   };
 
-  const acquire = (cost: number, signal?: AbortSignal): Promise<void> => {
+  const acquire = (
+    cost: number,
+    signal?: AbortSignal,
+    options?: TelegramOutboundCallOptions,
+  ): Promise<void> => {
     if (!Number.isSafeInteger(cost) || cost < 1) {
       return Promise.reject(new RangeError('cost must be an integer of at least one message'));
     }
     if (signal?.aborted) return Promise.reject(signal.reason);
     return new Promise<void>((resolve, reject) => {
-      const waiter: Waiter = { cost, resolve, reject, ...(signal && { signal }) };
+      const waiter: Waiter = {
+        cost,
+        lane: options?.lane ?? 'interactive',
+        resolve,
+        reject,
+        ...(signal && { signal }),
+      };
       if (signal) {
         const onAbort = (): void => {
           remove(waiter);
@@ -321,24 +359,27 @@ function createBudget(
     payload: unknown,
     signal: AbortSignal | undefined,
     send: () => Promise<T>,
+    options?: TelegramOutboundCallOptions,
   ): Promise<T> => {
     if (signal?.aborted) throw signal.reason;
     const cost = sendCost(method, payload);
-    if (cost > 0) await acquire(cost, signal);
+    if (cost > 0) await acquire(cost, signal, options);
     if (signal?.aborted) throw signal.reason;
+    // Telegram's limit on editing one message says nothing about sending the next one.
+    const pauseOnRefusal = (refusal: unknown): void => {
+      if (cost > 0) pauseAfter(refusal);
+    };
     let result: T;
     try {
       result = await send();
     } catch (error) {
-      // A 429 is a fact about the token, not about this method: an edit or a
-      // read that sees one pauses the sends as well.
-      pauseAfter(error);
+      pauseOnRefusal(error);
       throw error;
     }
     // A client transformer sits below the place where grammY turns a refusal
     // into an exception: the Bot API's `{ ok: false, error_code, parameters }`
     // body comes back as the value. It is the same fact as a thrown 429.
-    if (isRecord(result) && result.ok === false) pauseAfter(result);
+    if (isRecord(result) && result.ok === false) pauseOnRefusal(result);
     return result;
   };
 
@@ -352,6 +393,7 @@ function createBudget(
       granted,
       messages,
       queued: queue.length,
+      queuedBulk: queue.filter((waiter) => waiter.lane === 'bulk').length,
       messagesPerSecond: rate,
       pausedForMs: Math.max(0, pausedUntil - now()),
     }),

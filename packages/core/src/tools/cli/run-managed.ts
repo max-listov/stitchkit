@@ -11,7 +11,7 @@ import { buildManagedSurface, type ManagedSurface } from './managed-surface';
 import { prepareInvocation } from './prepare';
 import { type CliRoute, type CliSession, emitOptionsFor } from './session';
 import { unavailableCommand, unavailableCommandJson } from './unavailable';
-import { renderCliView } from './view';
+import { renderCliView, stringifyGroups } from './view';
 import { pollUntilDone } from './wait';
 
 type CliRunOptions = ReturnType<typeof parseCliArgs>['options'];
@@ -288,6 +288,10 @@ async function emitManagedResult<
     }
     if (viewed.kind === 'text') {
       stdout(viewed.text);
+      return exit(downloadsOk ? 0 : 1);
+    }
+    if (viewed.order) {
+      stdout(`${stringifyGroups(viewed.data, viewed.order, options.json === true)}\n`);
       return exit(downloadsOk ? 0 : 1);
     }
     result = { ...result, data: viewed.data };

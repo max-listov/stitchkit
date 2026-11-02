@@ -108,6 +108,13 @@ cast, and a send cancelled in the queue then waits for its slot and fails as
   a follow-up call to action after an album costs one more. Reads and edits
   (`getMe`, `getFile`, `editMessage*`, `deleteMessage`, `sendChatAction`) do not
   spend the budget.
+- **Two lanes share one rate.** A call is `interactive` by default; a campaign passes
+  `{ lane: 'bulk' }` to `run` or `acquire`, or installs
+  `telegramBudgetTransformer(budget, { lane: 'bulk' })` on its own `Api`. A waiting
+  interactive call is granted first, so a reply never queues behind recipients;
+  the wait it can still see is the interval of the grant before it, up to one
+  album. Bulk runs at whatever rate replies leave, and the sum never exceeds
+  `messagesPerSecond`.
 - **The first send after idle is immediate; the rest are spaced.** This is a
   strict budget, not a bucket that saves a burst: at 24/s the next send is due
   one interval later. A 429 pauses the whole token; when it resumes, one send
@@ -119,8 +126,8 @@ cast, and a send cancelled in the queue then waits for its slot and fails as
   The refusal may be thrown or returned: a client transformer sits below the
   place where grammY turns Telegram's `{ ok: false, error_code: 429, … }` body into
   a `GrammyError`, so `run` reads that body too and hands it back unchanged.
-  A 429 from an edit or a read is still a fact about the token and pauses later
-  sends too. A network failure is rethrown unchanged and stays `unknown`; a 5xx
+  A 429 from an edit or a read concerns that call and pauses nothing; `budget.pauseAfter`
+  remains for a caller who decides otherwise. A network failure is rethrown unchanged and stays `unknown`; a 5xx
   is rethrown unchanged and stays `server-error`. Neither is retried by the
   budget or pauses the token — repeating a send whose outcome is unknown is a
   decision, not a primitive's silent guess.

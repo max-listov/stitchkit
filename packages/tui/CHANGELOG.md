@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Targets stitchkit `^0.116.0`, keeping consumers on one framework copy when they adopt the send-only Telegram pause. No terminal source change is needed.
+
 ## [0.2.10] - 2026-11-02
 
 ### Changed

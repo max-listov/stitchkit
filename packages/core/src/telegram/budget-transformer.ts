@@ -18,7 +18,7 @@
 
 import type { Transformer } from 'grammy';
 import { TelegramNotDispatchedError } from './not-dispatched';
-import type { TelegramOutboundBudget } from './outbound-budget';
+import type { TelegramOutboundBudget, TelegramOutboundCallOptions } from './outbound-budget';
 
 interface PlatformSignal {
   readonly signal: AbortSignal | undefined;
@@ -59,16 +59,28 @@ function platformSignal(signal: Parameters<Transformer>[3]): PlatformSignal {
  * `TelegramNotDispatchedError`: nothing was sent. A cancellation after the
  * request was handed on is the client's ordinary error and the outcome is
  * unknown, not a definite failure.
+ *
+ * `options.lane` applies to every call through this client: a campaign installs
+ * `{ lane: 'bulk' }` on its own `Api`, and replies stay ahead of it.
  */
-export function telegramBudgetTransformer(budget: TelegramOutboundBudget): Transformer {
+export function telegramBudgetTransformer(
+  budget: TelegramOutboundBudget,
+  options?: TelegramOutboundCallOptions,
+): Transformer {
   return async (previous, method, payload, signal) => {
     const gate = platformSignal(signal);
     let handedOn = false;
     try {
-      return await budget.run(method, payload, gate.signal, () => {
-        handedOn = true;
-        return previous(method, payload, signal);
-      });
+      return await budget.run(
+        method,
+        payload,
+        gate.signal,
+        () => {
+          handedOn = true;
+          return previous(method, payload, signal);
+        },
+        options,
+      );
     } catch (error) {
       if (!handedOn && gate.signal?.aborted && error === gate.signal.reason) {
         throw new TelegramNotDispatchedError(

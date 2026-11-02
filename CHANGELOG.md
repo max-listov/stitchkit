@@ -15,6 +15,29 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** code that relied on a 429 from an edit or a read to stop a token's sends. See the [migration](docs/guide/upgrading.md).
+
+- `stitchkit/telegram` — **a 429 pauses the token only on a method that spends the budget.** A limit on editing one message said nothing about sending the next one, and one progress card stopped a whole campaign. An edit or a read that sees a 429 returns it unchanged and pauses nothing. `// before: budget.run('editMessageText', …) paused the token` → `// after: call budget.pauseAfter(error) where you want that` → [ADR 0277](docs/decisions/0277-a-telegram-budget-serves-replies-first.md)
+  **Affects:** `stitchkit/telegram` TelegramOutboundBudget(run)
+
+### Added
+
+- `stitchkit/telegram` — the outbound budget has `interactive` and `bulk` lanes over one rate: `run(…, { lane })`, `acquire(cost, signal, { lane })`, and `stats().queuedBulk`. A waiting interactive call is granted first, so a reply does not queue behind a campaign.
+  **Affects:** `stitchkit/telegram` TelegramOutboundBudget, TelegramOutboundLane
+
+- `stitchkit/telegram/grammy` — `telegramBudgetTransformer(budget, { lane })` runs a client's calls in one lane.
+  **Affects:** `stitchkit/telegram/grammy` telegramBudgetTransformer
+
+### Fixed
+
+- `stitchkit/agent-runtime/coding-tools` — a path spelled differently from the name stored on disk refuses before any policy reads it, so a rule on `credentials` cannot be passed by asking for `CREDENTIALS` on a case-insensitive volume.
+  **Affects:** `stitchkit/agent-runtime/coding-tools` createAgentCodingTools
+
+- `stitchkit/cli` — grouped views print largest first even when a key looks like a number, and a string equal to `null` or `(absent)` is quoted instead of merging with the missing value. `renderCliView` returns the order as `order`.
+  **Affects:** `stitchkit/cli` createCli, renderCliView
+
 ## [0.115.0] - 2026-11-02
 
 ### ⚠️ Breaking changes

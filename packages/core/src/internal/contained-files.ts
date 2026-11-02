@@ -254,6 +254,59 @@ export async function missingContainedDirectories(
   }
 }
 
+/** The spellings a case- or normalization-insensitive volume opens as the same entry. */
+function alternateSpellings(name: string): string[] {
+  const swapped = [...name]
+    .map((letter) =>
+      letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase(),
+    )
+    .join('');
+  return [...new Set([swapped, name.normalize('NFC'), name.normalize('NFD')])].filter(
+    (spelling) => spelling !== name,
+  );
+}
+
+/**
+ * The first segment of `relative` that opens an entry stored under another spelling.
+ *
+ * A policy compares strings, and a volume that folds case or normalization opens
+ * `CREDENTIALS` for a rule written against `credentials`. An entry that answers to
+ * another spelling is the only cost here: a listing runs only then, and it decides,
+ * because two distinct entries may exist on a volume that does not fold. A missing
+ * segment is not misspelled; the caller reports it.
+ */
+export async function misspelledContainedSegment(
+  root: string,
+  relative: string,
+): Promise<string | undefined> {
+  const segments = safeSegments(relative);
+  let current = await openPinnedDirectory(root);
+  try {
+    for (const [index, segment] of segments.entries()) {
+      const exists = async (name: string): Promise<boolean> =>
+        (await statAt(current, name).catch(() => null)) !== null;
+      let folded = false;
+      for (const spelling of alternateSpellings(segment)) {
+        folded ||= await exists(spelling);
+      }
+      if (folded && (await exists(segment))) {
+        const stored = (await listAt(current)).some(({ name }) => name === segment);
+        if (!stored) return segment;
+      }
+      if (index === segments.length - 1) return undefined;
+      const next = await openDirectoryAt(current, segment).catch((error: unknown) => {
+        if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(errnoOf(error) ?? '')) return null;
+        throw error;
+      });
+      if (!next) return undefined;
+      current = await descend(current, next);
+    }
+    return undefined;
+  } finally {
+    await current.close();
+  }
+}
+
 /** A directory vanished after the host approved a different creation plan. */
 export class UnapprovedContainedDirectoryError extends Error {
   constructor(readonly relative: string) {

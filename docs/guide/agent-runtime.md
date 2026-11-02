@@ -308,8 +308,8 @@ stay pinned through authorization; `write_file` plans before it and opens the pa
 the parent it creates does not exist yet. Reads revalidate the pinned file identity;
 writes and patches revalidate the pinned parent identity; search and resource discovery descend
 only through opened directories. A path that changed during authorization refuses with `CONFLICT`.
-Policies compare path strings, so on a case-insensitive filesystem such as default macOS volumes a
-rule on `credentials` does not match `CREDENTIALS`; such a host must normalize in its own policy.
+A path spelled differently from the name stored on disk refuses before any policy reads it, so on a
+case-insensitive volume a rule on `credentials` cannot be passed by asking for `CREDENTIALS`.
 NUL bytes are refused before either host policy sees a path.
 Reads and edits open file candidates without blocking on special files, then require a regular
 file. A writerless FIFO therefore refuses instead of occupying a filesystem worker. `write_file`

@@ -1,5 +1,26 @@
 # Upgrading stitchkit
 
+## Unreleased migration: send-only-telegram-pause
+
+**Who must act:** code that relied on a 429 from `editMessage*`, `deleteMessage` or a read to stop a
+token's sends. Code that only sends needs no change.
+
+`run` pauses the token only on a method that spends the budget
+([ADR 0277](../decisions/0277-a-telegram-budget-serves-replies-first.md)). Where an edit must still stop
+the sends, say so:
+
+```ts
+// before
+await budget.run('editMessageText', payload, signal, send)
+// after
+await budget.run('editMessageText', payload, signal, send).catch((error) => {
+  budget.pauseAfter(error)
+  throw error
+})
+```
+
+Search pattern: `budget.run` next to edit and read methods.
+
 ## Released migration: 0.115.0
 
 ### contained-cli-downloads
