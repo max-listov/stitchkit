@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-11-02
+
 ### Changed
 
 - Targets stitchkit `^0.115.0`, keeping consumers on one framework copy when they adopt contained CLI downloads. No terminal source change is needed.

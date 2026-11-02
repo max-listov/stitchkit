@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: contained-cli-downloads
+## Released migration: 0.115.0
+
+### contained-cli-downloads
 
 **Who must act:** a CLI that uses `--output-dir` on Windows, from a macOS bundle or compiled binary
 built without `createNativePackaging`, into a directory it cannot write or over bind-mounted files;

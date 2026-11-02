@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.115.0] - 2026-11-02
+
 ### ⚠️ Breaking changes
 
 **Who must act:** a CLI that uses `--output-dir` on Windows, from a macOS bundle built without `createNativePackaging`, into a directory it cannot write or over bind-mounted files; a coding-tools host that allows `edit` but refuses `read` for a path; code that reads `zoneProps['aria-orientation']` or selects `[aria-orientation]` in a `role: 'none'` zone. See the [migration](docs/guide/upgrading.md).
