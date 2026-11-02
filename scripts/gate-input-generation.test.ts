@@ -45,7 +45,7 @@ test('asynchronous watcher error refuses reusable evidence; stable negative cont
   const root = await fixture();
   try {
     const stable = await watchWorktreeInputs(root);
-    expect(await stable.finish()).toBe(false);
+    expect(await stable.finish()).toBeUndefined();
     const acquired: FSWatcher[] = [];
     const guard = await watchWorktreeInputs(root, (path, listener) => {
       const watcher = watch(path, listener);
@@ -53,8 +53,26 @@ test('asynchronous watcher error refuses reusable evidence; stable negative cont
       return watcher;
     });
     acquired[0]?.emit('error', new Error('controlled watcher refusal'));
-    expect(await guard.finish()).toBe(true);
-    expect(await guard.finish()).toBe(true);
+    expect(await guard.finish()).toBe('./*');
+    expect(await guard.finish()).toBe('./*');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a change during the watch is named, so a refused memo says what to look at', async () => {
+  const root = await fixture();
+  try {
+    const seen = Promise.withResolvers<void>();
+    const guard = await watchWorktreeInputs(root, (path, listener) =>
+      watch(path, (event, filename) => {
+        listener(event, filename);
+        seen.resolve();
+      }),
+    );
+    await writeFile(join(root, 'tracked.txt'), 'changed');
+    await seen.promise;
+    expect(await guard.finish()).toBe('tracked.txt');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

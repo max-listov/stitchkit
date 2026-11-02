@@ -242,7 +242,12 @@ export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).par
     exclusive: true,
     fixture: 'node',
     entry: 'darwin-artifacts.mjs',
-    files: ['darwin-artifact-controls.mjs', 'contained-files.mjs'],
+    files: [
+      'darwin-artifact-controls.mjs',
+      'contained-files.mjs',
+      'contained-entry-controls.mjs',
+      'cli-download-controls.mjs',
+    ],
     peers: ['zod', 'ai', '@modelcontextprotocol/server', '@modelcontextprotocol/ext-apps'],
     platforms: ['darwin'],
     runtimes: ['bun'],

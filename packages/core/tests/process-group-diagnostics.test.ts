@@ -5,6 +5,7 @@ import {
   GroupSettlementError,
   groupSettlementDiagnostics,
 } from '../src/process/group-diagnostics';
+import { observationFailureReason } from '../src/process/group-settlement';
 
 const observation: ConstructorParameters<typeof GroupSettlementError>[1] = {
   failure: 'deadline',
@@ -78,4 +79,27 @@ test('cleanup diagnostics never invoke caller error accessors or replace an unre
   const settlement = new GroupSettlementError('failed', altered);
   Object.defineProperty(altered, 'lastStates', { get: getter });
   expect(commandCleanupError(settlement).message).toContain(JSON.stringify(observation));
+});
+
+test('a refused observation names what refused it, never a caller message', () => {
+  expect(observationFailureReason(Object.assign(new Error('x'), { code: 'EAGAIN' }))).toBe(
+    'EAGAIN',
+  );
+  expect(observationFailureReason(Object.assign(new Error('x'), { signal: 'SIGKILL' }))).toBe(
+    'SIGKILL',
+  );
+  expect(observationFailureReason(new TypeError('secret text'))).toBe('TypeError');
+  expect(observationFailureReason('text')).toBe('unknown');
+
+  const refused = new GroupSettlementError(
+    'Could not observe command process group settlement',
+    {
+      ...observation,
+      failure: 'observation',
+      reason: observationFailureReason(new TypeError('x')),
+    },
+    new TypeError('secret text'),
+  );
+  expect(commandCleanupError(refused).message).toContain('"reason":"TypeError"');
+  expect(commandCleanupError(refused).message).not.toContain('secret text');
 });

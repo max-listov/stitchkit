@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { withExclusiveLock } from 'stitchkit/files';
 import { observeProcessInstance, probeProcessOwner } from 'stitchkit/process';
+import { cliDownloadControls } from './cli-download-controls.mjs';
 
 const standalone = typeof Bun !== 'undefined' && Bun.isStandaloneExecutable;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -216,6 +217,7 @@ if (process.argv.includes('--expect-linux')) {
     );
   } else if (process.argv.includes('--expect-unavailable')) {
     await refusedBackend();
+    await cliDownloadControls(true);
   } else {
     if (standalone) {
       const expected = process.argv[process.argv.indexOf('--expected-native') + 1];
@@ -244,6 +246,7 @@ if (process.argv.includes('--expect-linux')) {
     await processControls();
     await lockControls();
     await import('./contained-files.mjs');
+    await cliDownloadControls();
     console.log(marker);
   }
 }

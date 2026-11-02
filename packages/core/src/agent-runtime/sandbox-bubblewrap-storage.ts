@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { cp, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
+import { errnoOf } from '../internal/errno';
 import {
   SandboxError,
   type SandboxPrewarmInput,
@@ -82,7 +83,7 @@ export function sandboxStorage(root: string, name: string) {
         await lease.close();
       }
     } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'EEXIST')
+      if (errnoOf(error) === 'EEXIST')
         throw new SandboxError('SANDBOX_BUSY', 'Sandbox session already has an owner');
       throw error;
     }
@@ -140,5 +141,5 @@ export function sandboxStorage(root: string, name: string) {
   return { prewarm, create, acquire };
 }
 function missing(error: unknown) {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+  return errnoOf(error) === 'ENOENT';
 }

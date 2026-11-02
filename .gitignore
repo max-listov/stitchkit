@@ -64,3 +64,6 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Bun writes this beside the working directory while compiling an executable.
+*.bun-build

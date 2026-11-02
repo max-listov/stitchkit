@@ -10,7 +10,7 @@ export interface DarwinEntry {
 
 export interface DarwinBinding {
   processIdentity(pid: number): unknown;
-  openDirectoryAt(directory: number, name: string): number;
+  openDirectoryAt(directory: number, name: string, searchOnly: boolean): number;
   openFileAt(directory: number, name: string): number;
   createFileAt(directory: number, name: string, mode: number): number;
   createDirectoryAt(directory: number, name: string, mode: number): boolean;

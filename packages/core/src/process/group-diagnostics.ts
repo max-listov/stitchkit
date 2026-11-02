@@ -6,6 +6,8 @@ const ObservationSchema = z.object({
   observations: z.number().int().nonnegative(),
   lastStates: z.array(z.string().max(32)).max(16),
   elapsedMs: z.number().int().nonnegative(),
+  /** What refused the observation: a system code, a signal or an error name, never a message. */
+  reason: z.string().max(32).optional(),
 });
 type Observation = z.infer<typeof ObservationSchema>;
 const observations = new WeakMap<Error, Observation>();

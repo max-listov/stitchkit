@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { createManagedFileBoundary } from '../../files/boundary';
 import { writeFileAtomic } from '../../internal/atomic-file';
 import { AtomicFilePublicationError, syncDirectory } from '../../internal/atomic-publication';
+import { errnoOf } from '../../internal/errno';
 import { type ExclusiveLock, withExclusiveLock } from '../../internal/with-exclusive-lock';
 import {
   assertCliPublishable,
@@ -237,7 +238,7 @@ async function buildVersion(
       await lstat(join(storage.root, data.version));
       throw new Error('CLI version directory already exists');
     } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      if (errnoOf(error) !== 'ENOENT') throw error;
     }
     signal.throwIfAborted();
     await rename(staged, join(storage.root, data.version));

@@ -18,6 +18,7 @@
 import { randomBytes } from 'node:crypto';
 import { lstat, readdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { errnoOf } from './errno';
 import { assertPositiveSafeInteger } from './positive-integer';
 
 const PREFIX = '.stitchkit-';
@@ -59,9 +60,7 @@ export interface SweepAtomicStagingOptions {
 }
 
 function isMissing(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
-  );
+  return errnoOf(error) === 'ENOENT';
 }
 
 /**

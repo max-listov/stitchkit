@@ -139,6 +139,8 @@ export interface KeyLayerState<E extends LayerKeyEvent, S extends LayerScope<S>>
 export interface KeyLayerHandle<E extends LayerKeyEvent, S extends LayerScope<S>> {
   update(state: KeyLayerState<E, S>): void;
   remove(): void;
+  /** Put a removed layer back in the place it held, without counting as an activation. */
+  restore(): void;
 }
 
 /** Where the stack listens. A `Window` is one. */
@@ -290,6 +292,11 @@ export function createKeyLayerStack<E extends LayerKeyEvent, S extends LayerScop
       },
       remove() {
         if (!entries.delete(entry)) return;
+        sync();
+      },
+      restore() {
+        if (entries.has(entry)) return;
+        entries.add(entry);
         sync();
       },
     };

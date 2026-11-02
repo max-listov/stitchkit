@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { errnoOf } from '../internal/errno';
 import { hostIsBun, spawnBunGuardTarget } from './bun-child';
 import { OWNER_LOSS_GUARD_FLAG } from './owner-loss-protocol';
 import { connectOwnerLossSocket } from './owner-loss-socket';
@@ -133,8 +134,7 @@ function runOwnerLossGuard(
         try {
           process.kill(targetPid, signal);
         } catch (error) {
-          if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH'))
-            throw error;
+          if (errnoOf(error) !== 'ESRCH') throw error;
         }
       };
       forwarders.set(signal, forward);

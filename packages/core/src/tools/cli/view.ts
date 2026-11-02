@@ -45,11 +45,16 @@ function selectRecords(data: unknown): unknown[] {
   throw new CliArgumentError('an aggregate needs a collection; this result is not one');
 }
 
+/** A record with no value for a field: not a small value, not on any scale. */
+function isAbsent(value: unknown): boolean {
+  return value === undefined || value === null;
+}
+
 /** Read a plain or dotted field path out of one record. */
 function readField(record: unknown, path: readonly string[]): unknown {
   let current: unknown = record;
   for (const segment of path) {
-    if (!isRecord(current)) return undefined;
+    if (!isRecord(current) || !Object.hasOwn(current, segment)) return undefined;
     current = current[segment];
   }
   return current;
@@ -73,13 +78,13 @@ function availableFields(records: readonly unknown[]): string[] {
 }
 
 /**
- * Refuse a field no record carries. A group of zero over a misspelled field is
- * indistinguishable from a true empty answer, and the caller reads it as data.
+ * Validate every path, and refuse a field absent from a nonempty collection.
+ * An empty collection has no values with which to establish field presence.
  */
 function assertFieldPresent(records: readonly unknown[], field: string): string[] {
   const path = fieldPath(field);
   const present = records.some((record) => readField(record, path) !== undefined);
-  if (!present) {
+  if (records.length > 0 && !present) {
     const available = availableFields(records);
     throw new CliArgumentError(
       `no record carries the field "${field}"${
@@ -110,21 +115,26 @@ function ordered(
 }
 
 function numericValue(value: unknown, field: string): number | undefined {
-  if (value === undefined || value === null) return undefined;
+  if (isAbsent(value)) return undefined;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'bigint') return Number(value);
   throw new CliArgumentError(`--sum ${field}: "${groupKey(value)}" is not a number`);
 }
 
-function renderTable(records: readonly unknown[], fields: readonly string[]): string {
-  const paths = fields.map((field) => assertFieldPresent(records, field));
+function renderTable(
+  records: readonly unknown[],
+  columns: readonly { field: string; path: readonly string[] }[],
+): string {
+  const fields = columns.map(({ field }) => field);
   const cell = (value: unknown): string => {
     if (value === undefined) return '';
     if (value === null) return 'null';
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
   };
-  const rows = records.map((record) => paths.map((path) => cell(readField(record, path))));
+  const rows = records.map((record) =>
+    columns.map(({ path }) => cell(readField(record, path))),
+  );
   const widths = fields.map((field, column) =>
     Math.max(field.length, ...rows.map((row) => row[column]?.length ?? 0)),
   );
@@ -144,9 +154,8 @@ function renderTable(records: readonly unknown[], fields: readonly string[]): st
  * letting it lead an ascending list would answer a question nobody asked.
  */
 function compareFieldValues(left: unknown, right: unknown): number {
-  if (left === undefined || left === null)
-    return right === undefined || right === null ? 0 : 1;
-  if (right === undefined || right === null) return -1;
+  if (isAbsent(left)) return isAbsent(right) ? 0 : 1;
+  if (isAbsent(right)) return -1;
   if (typeof left === 'number' && typeof right === 'number') return left - right;
   if (typeof left === 'bigint' || typeof right === 'bigint') {
     return Number(left) - Number(right);
@@ -171,23 +180,51 @@ function renderRecords(
     const path = assertFieldPresent(records, view.sort);
     const direction = view.ascending ? 1 : -1;
     selected.sort((left, right) => {
-      const order = compareFieldValues(readField(left, path), readField(right, path));
+      const leftValue = readField(left, path);
+      const rightValue = readField(right, path);
+      const order = compareFieldValues(leftValue, rightValue);
       // An absent value stays last whichever way the scale runs, so it is
       // excluded from the direction flip rather than dragged to the front.
-      const absent =
-        readField(left, path) === undefined || readField(right, path) === undefined;
-      return absent ? order : order * direction;
+      return isAbsent(leftValue) || isAbsent(rightValue) ? order : order * direction;
     });
   }
+  // Columns are asked of the collection, not the cut: the leading records may
+  // simply carry no value in a field that others have.
+  const columns = view.table?.map((field) => ({
+    field,
+    path: assertFieldPresent(records, field),
+  }));
   if (view.top !== undefined) selected = selected.slice(0, view.top);
-  return view.table
-    ? { kind: 'text', text: renderTable(selected, view.table) }
+  return columns
+    ? { kind: 'text', text: renderTable(selected, columns) }
     : { kind: 'json', data: selected };
+}
+
+/**
+ * An empty collection answers for its records and nothing else. A field the result object
+ * itself carries was never about those records, so `0` or `{}` for it would be a wrong
+ * answer read as data: `--sum amount` on `{ amount: 100, warnings: [] }` is not zero.
+ */
+function refuseEnvelopeFields(data: unknown, view: CliResultView): void {
+  if (!isRecord(data)) return;
+  const fields =
+    view.kind === 'records'
+      ? [...(view.sort === undefined ? [] : [view.sort]), ...(view.table ?? [])]
+      : [view.field, ...(view.kind === 'sum' && view.by !== undefined ? [view.by] : [])];
+  for (const field of fields) {
+    const first = field.split('.')[0] ?? '';
+    if (Object.hasOwn(data, first) && !Array.isArray(data[first])) {
+      throw new CliArgumentError(
+        `"${field}" belongs to the result object, not to its empty collection`,
+      );
+    }
+  }
 }
 
 /** Compute the requested view, or refuse it with a message naming the field. */
 export function renderCliView(data: unknown, view: CliResultView): CliViewOutput {
   const records = selectRecords(data);
+  if (records.length === 0) refuseEnvelopeFields(data, view);
   if (view.kind === 'records') return renderRecords(records, view);
 
   if (view.kind === 'count') {

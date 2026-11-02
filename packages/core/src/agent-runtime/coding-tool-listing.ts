@@ -1,6 +1,8 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { listContainedDirectory } from '../internal/contained-files';
+import { errnoOf } from '../internal/errno';
 import { defineRuntimeTool } from '../tools/runtime-tool';
 import type {
   AgentCodingToolConfig,
@@ -19,7 +21,6 @@ import {
   codingRefusal,
   refuseMissingCodingPath,
 } from './coding-tool-refusals';
-import { listContainedDirectory } from './contained-files';
 import { scanContainedFiles } from './contained-scan';
 
 /** The same set `search_files` skips, so one workspace has one idea of noise. */
@@ -141,12 +142,7 @@ export function createListingCodingTools(
         limits.maxListEntries,
         (candidate) => isCodingPathAuthorized(config, candidate),
       ).catch((error: unknown) => {
-        if (error instanceof Error && error.message.includes('ancestor is not a directory')) {
-          codingPathRefusal('BAD_REQUEST', 'This path is not a directory', relative, {
-            hint: 'Pass a directory; use read_file for a file.',
-          });
-        }
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (errnoOf(error) === 'ENOENT') {
           codingPathRefusal('NOT_FOUND', 'This directory does not exist', relative, {
             hint: 'List a parent directory to see what is there.',
           });

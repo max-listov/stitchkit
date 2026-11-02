@@ -1,5 +1,62 @@
 # Upgrading stitchkit
 
+## Unreleased migration: contained-cli-downloads
+
+**Who must act:** a CLI that uses `--output-dir` on Windows, from a macOS bundle or compiled binary
+built without `createNativePackaging`, into a directory it cannot write or over bind-mounted files;
+a coding-tools host that allows `edit` but refuses `read` for a path; and code or CSS that reads
+`aria-orientation` of a `role: 'none'` zone. A CLI writing into its own directory on Linux or
+unbundled macOS, and every CLI command without a download, need no change.
+
+`--output-dir` now writes through a pinned directory descriptor
+([ADR 0276](../decisions/0276-a-download-writes-through-its-root-capability.md)). There is no
+path-based fallback, so a platform without that backend refuses the download: the operation still
+succeeds, its result stays on stdout, stderr names the refusal and the exit is non-zero.
+
+1. On macOS, build a bundled or compiled CLI with the native packaging plugin:
+
+   ```ts
+   // before
+   await Bun.build({
+     entrypoints: ['src/cli.ts'],
+     compile: { target: 'bun-darwin-arm64', outfile: 'dist/cli' },
+   })
+   // after
+   import { createNativePackaging } from 'stitchkit/files/packaging'
+
+   const native = createNativePackaging({
+     platform: 'darwin', architecture: 'arm64', delivery: 'embedded',
+   })
+   if (native.state !== 'ready') throw new Error(native.code)
+   await Bun.build({
+     entrypoints: ['src/cli.ts'],
+     compile: { target: 'bun-darwin-arm64', outfile: 'dist/cli' },
+     plugins: [native.plugin],
+   })
+   ```
+
+   A JS bundle uses `delivery: 'companion'`; every shape is in the [native I/O guide](./native-io.md). Search pattern:
+   `createCli` with a `download` option in a project that runs `bun build` for macOS.
+2. On Windows, run the download through Linux or macOS, or read the URLs from the operation's
+   JSON result and fetch them yourself. Stitchkit offers no weaker path on that platform.
+3. A download now replaces a file rather than rewriting it. Give the process write permission on
+   the output directory, and do not point it at a bind-mounted file: that refuses with `EBUSY`. A
+   replaced file belongs to the process user, and a read-only file is replaced like any other.
+4. Read the orientation you configured. A zone with `role: 'none'` has no attribute, and a default
+   would silently turn a horizontal zone vertical:
+
+   ```ts
+   // before
+   const axis: ZoneOrientation = zone.zoneProps['aria-orientation']
+   // after
+   const axis: ZoneOrientation = options.orientation ?? 'vertical'
+   ```
+
+   Search pattern: `aria-orientation` next to `useNavZone`, and `[aria-orientation]` in CSS and
+   test selectors. Type-check: a read typed as `ZoneOrientation` fails to compile.
+5. In a coding-tools `authorize`, answer `read` for every path you answer `edit` for. `edit_file`
+   asks both, `read` first.
+
 ## Released migration: 0.114.0
 
 **Who must act:** code with an exhaustive `switch` or `Record` over

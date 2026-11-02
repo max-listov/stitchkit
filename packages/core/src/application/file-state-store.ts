@@ -4,6 +4,7 @@ import type { z } from 'zod';
 import { writeAtomicFileData } from '../internal/atomic-file';
 import { publishAtomicFile } from '../internal/atomic-publication';
 import { readBoundedFile } from '../internal/bounded-file-read';
+import { errnoOf } from '../internal/errno';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { withExclusiveLock } from '../internal/with-exclusive-lock';
 import type { StateStore, StateStoreUpdateContext } from './state-store';
@@ -40,8 +41,7 @@ const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 
 const encode = (state: unknown): string => `${JSON.stringify(state)}\n`;
 
-const missing = (error: unknown): boolean =>
-  error instanceof Error && 'code' in error && error.code === 'ENOENT';
+const missing = (error: unknown): boolean => errnoOf(error) === 'ENOENT';
 
 /**
  * One durable atomic state transition under the canonical process-instance lock.

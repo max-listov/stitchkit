@@ -3,6 +3,13 @@ import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { conflict } from '../contract/errors';
+import {
+  assertContainedParentCurrent,
+  openContainedParent,
+  openContainedParentFile,
+  readContainedUtf8Handle,
+} from '../internal/contained-files';
+import { writeContainedFile } from '../internal/contained-write';
 import { defineRuntimeTool } from '../tools/runtime-tool';
 import type {
   AgentCodingToolConfig,
@@ -24,15 +31,9 @@ import {
   codingPathRefusal,
   codingRefusal,
   refuseMissingCodingPath,
+  refuseWriteConflict,
 } from './coding-tool-refusals';
-import {
-  assertContainedParentCurrent,
-  openContainedParent,
-  openContainedParentFile,
-  readContainedUtf8Handle,
-} from './contained-files';
 import { scanContainedFiles } from './contained-scan';
-import { writeContainedFile } from './contained-write';
 
 const SearchInputSchema = z
   .object({
@@ -276,12 +277,18 @@ async function editFile(
     // The lock is process-local — the nine-agents-in-one-process case is
     // covered, two processes over one workspace are not.
     return await withCodingPathLock(`${root}:${relative}`, async () => {
-      const handle = await openContainedParentFile(parent).catch((error: unknown) =>
-        refuseMissingCodingPath(error, relative),
-      );
-      const read = await readContainedUtf8Handle(handle, limits.maxWriteBytes).finally(() =>
-        handle.close(),
-      );
+      const readCurrent = async () => {
+        const handle = await openContainedParentFile(parent).catch((error: unknown) =>
+          refuseMissingCodingPath(error, relative),
+        );
+        return readContainedUtf8Handle(handle, limits.maxWriteBytes).finally(() =>
+          handle.close(),
+        );
+      };
+      // A miss, a count or a digest is an oracle over the file, one guess at a time: a host that
+      // refuses to read it answers here, before anything about its content leaves this call.
+      await authorizeCodingTool(config, { operation: 'read', path: relative });
+      const read = await readCurrent();
       const source = read.text;
       const baseSha256 = sha256(source);
       if (input.expectedSha256 !== undefined && baseSha256 !== input.expectedSha256) {
@@ -337,14 +344,23 @@ async function editFile(
         replacements,
         dryRun: input.dryRun,
       });
-      await assertContainedParentCurrent(root, relative, parent.handle);
+      await assertContainedParentCurrent(root, relative, parent.handle).catch(
+        (error: unknown) => refuseWriteConflict(error, relative),
+      );
       if (!input.dryRun) {
+        // The host may have taken minutes; `run_command` and other processes do not hold this lock.
+        if (sha256((await readCurrent()).text) !== baseSha256) {
+          conflict('The file changed since it was read', {
+            message: 'The file changed since it was read',
+            path: relative,
+          });
+        }
         await writeContainedFile({
           parent,
           content: changed,
           replace: true,
           mode: read.mode,
-        });
+        }).catch((error: unknown) => refuseWriteConflict(error, relative));
       }
       return {
         path: relative,

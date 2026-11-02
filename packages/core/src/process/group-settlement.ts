@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { errnoOf } from '../internal/errno';
 import { sleep } from '../internal/timers';
 import { GroupSettlementError } from './group-diagnostics';
 import { processGroupExists } from './group-presence';
@@ -26,6 +27,14 @@ function processGroups(timeoutMs: number): Promise<string> {
       },
     );
   });
+}
+
+/** A bounded name for what stopped the observation; caller messages stay out of diagnostics. */
+export function observationFailureReason(cause: unknown): string {
+  if (!(cause instanceof Error)) return 'unknown';
+  const signal =
+    'signal' in cause && typeof cause.signal === 'string' ? cause.signal : undefined;
+  return (errnoOf(cause) ?? signal ?? cause.name).slice(0, 32);
 }
 
 /** A delivered SIGKILL is asynchronous; do not report cleanup until every group member is dead. */
@@ -80,7 +89,7 @@ export async function waitForProcessGroupExit(
     if (cause instanceof GroupSettlementError) throw cause;
     throw new GroupSettlementError(
       'Could not observe command process group settlement',
-      { ...observation(), failure: 'observation' },
+      { ...observation(), failure: 'observation', reason: observationFailureReason(cause) },
       cause,
     );
   }

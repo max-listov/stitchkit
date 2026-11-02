@@ -1,15 +1,23 @@
 import { constants, type Stats } from 'node:fs';
-import { lstat, mkdir, open, readdir, realpath } from 'node:fs/promises';
+import { lstat, open, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { loadDarwinBinding } from '../internal/darwin-binding';
-
 import {
+  createDirectoryAt,
+  descend,
+  openDirectoryAt,
+  openPinnedDirectory,
+} from './contained-directory';
+import {
+  type ContainedFileHandle,
+  descriptorPath,
   FILE_TYPE_DIRECTORY,
   FILE_TYPE_REGULAR,
   FILE_TYPE_SYMLINK,
   modeIs,
   NumericFileHandle,
-} from './contained-darwin';
+} from './contained-handle';
+import { loadDarwinBinding } from './darwin-binding';
+import { errnoOf } from './errno';
 
 export interface ContainedFile {
   absolute: string;
@@ -49,71 +57,22 @@ function containedEntryKind(entry: {
         : 'other';
 }
 
-export interface ContainedFileHandle {
-  readonly fd: number;
-  close(): Promise<void>;
-  read(
-    buffer: Buffer,
-    offset: number,
-    length: number,
-    position: number,
-  ): Promise<{ bytesRead: number }>;
-  stat(): Promise<Stats>;
-}
-
-export function descriptorPath(handle: ContainedFileHandle): string {
-  if (process.platform === 'linux') return `/proc/self/fd/${handle.fd}`;
-  throw new Error('Descriptor paths are available only in the Linux contained-files backend');
-}
-
 function sameIdentity(left: Stats, right: Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-export async function openPinnedDirectory(absolute: string): Promise<ContainedFileHandle> {
-  if (process.platform !== 'linux' && process.platform !== 'darwin') {
-    throw new Error('Contained filesystem operations support Linux and macOS only');
-  }
-  const expected = await realpath(absolute);
-  const handle = await open(
-    expected,
-    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-  );
-  try {
-    const [pathMetadata, handleMetadata] = await Promise.all([lstat(expected), handle.stat()]);
-    if (!pathMetadata.isDirectory() || !sameIdentity(pathMetadata, handleMetadata)) {
-      throw new Error('Contained directory identity changed while opening');
-    }
-    return handle;
-  } catch (error) {
-    await handle.close();
-    throw error;
-  }
+/** One entry name a directory-relative call may receive: never a walk and never truncated by NUL. */
+export function isSafeEntryName(name: string): boolean {
+  return name !== '' && name !== '.' && name !== '..' && !name.includes('\0');
 }
 
 function safeSegments(relative: string): string[] {
   if (path.isAbsolute(relative)) throw new Error('Contained paths must be relative');
   const segments = relative.split(/[\\/]/u);
-  if (
-    segments.length === 0 ||
-    segments.some((segment) => segment === '' || segment === '.' || segment === '..')
-  ) {
+  if (!segments.every(isSafeEntryName)) {
     throw new Error('Contained path has invalid segments');
   }
   return segments;
-}
-
-export async function openDirectoryAt(
-  directory: ContainedFileHandle,
-  name: string,
-): Promise<ContainedFileHandle> {
-  if (process.platform === 'darwin') {
-    return new NumericFileHandle(loadDarwinBinding().openDirectoryAt(directory.fd, name));
-  }
-  return open(
-    path.join(descriptorPath(directory), name),
-    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-  );
 }
 
 export async function openFileAt(
@@ -125,7 +84,7 @@ export async function openFileAt(
   }
   return open(
     path.join(descriptorPath(directory), name),
-    constants.O_RDONLY | constants.O_NOFOLLOW,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
   );
 }
 
@@ -163,12 +122,10 @@ async function statAt(
     const metadata = loadDarwinBinding().statAt(directory.fd, name);
     return metadata ? entryMetadata(metadata.mode, metadata.size) : null;
   }
-  return lstat(path.join(descriptorPath(directory), name)).catch(
-    (error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return null;
-      throw error;
-    },
-  );
+  return lstat(path.join(descriptorPath(directory), name)).catch((error: unknown) => {
+    if (errnoOf(error) === 'ENOENT') return null;
+    throw error;
+  });
 }
 
 export async function listAt(
@@ -203,14 +160,7 @@ export async function listContainedDirectory(
   try {
     if (relative !== '.') {
       for (const segment of safeSegments(relative)) {
-        const next = await openDirectoryAt(current, segment);
-        const metadata = await next.stat();
-        if (!metadata.isDirectory()) {
-          await next.close();
-          throw new Error('Contained ancestor is not a directory');
-        }
-        await current.close();
-        current = next;
+        current = await descend(current, await openDirectoryAt(current, segment));
       }
     }
     const raw = [...(await listAt(current))];
@@ -264,24 +214,6 @@ export interface ContainedParent {
   basename: string;
 }
 
-/** Pin every ancestor as a directory descriptor before returning the final parent capability. */
-/** Create one directory through the pinned parent; `false` when it already exists. */
-async function createDirectoryAt(
-  directory: ContainedFileHandle,
-  name: string,
-): Promise<boolean> {
-  if (process.platform === 'darwin') {
-    return loadDarwinBinding().createDirectoryAt(directory.fd, name, 0o777);
-  }
-  try {
-    await mkdir(path.join(descriptorPath(directory), name));
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
-    throw error;
-  }
-}
-
 /**
  * Which ancestors of `relative` do not exist yet, outermost first.
  *
@@ -306,18 +238,15 @@ export async function missingContainedDirectories(
         missing.push(walked.join(path.sep));
         continue;
       }
-      const next = await openDirectoryAt(current, segment).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code === 'ENOENT') return null;
-          throw error;
-        },
-      );
+      const next = await openDirectoryAt(current, segment).catch((error: unknown) => {
+        if (errnoOf(error) === 'ENOENT') return null;
+        throw error;
+      });
       if (!next) {
         missing.push(walked.join(path.sep));
         continue;
       }
-      await current.close();
-      current = next;
+      current = await descend(current, next);
     }
     return missing;
   } finally {
@@ -325,30 +254,38 @@ export async function missingContainedDirectories(
   }
 }
 
+/** A directory vanished after the host approved a different creation plan. */
+export class UnapprovedContainedDirectoryError extends Error {
+  constructor(readonly relative: string) {
+    super(`Contained directory creation was not authorized: ${relative}`);
+    this.name = 'UnapprovedContainedDirectoryError';
+  }
+}
+
 export async function openContainedParent(
   root: string,
   relative: string,
-  options: { create?: boolean } = {},
+  options: { createDirectories?: readonly string[] } = {},
 ): Promise<ContainedParent> {
   const segments = safeSegments(relative);
   const basename = segments.pop();
   if (!basename) throw new Error('Contained path is missing a basename');
   let current = await openPinnedDirectory(root);
   try {
+    const approved = new Set(options.createDirectories);
+    const walked: string[] = [];
     for (const segment of segments) {
-      if (options.create) await createDirectoryAt(current, segment);
-      // Containment is established by this open, not by the create above:
-      // `mkdirat` has no `O_NOFOLLOW`, and `openDirectoryAt` refuses a symlink.
-      // A racing writer that wins the create is therefore harmless — whatever is
-      // there is opened and checked like any other ancestor.
-      const next = await openDirectoryAt(current, segment);
-      const metadata = await next.stat();
-      if (!metadata.isDirectory()) {
-        await next.close();
-        throw new Error('Contained ancestor is not a directory');
-      }
-      await current.close();
-      current = next;
+      walked.push(segment);
+      const next = await openDirectoryAt(current, segment).catch(async (error: unknown) => {
+        if (options.createDirectories === undefined || errnoOf(error) !== 'ENOENT')
+          throw error;
+        const directory = walked.join(path.sep);
+        if (!approved.has(directory)) throw new UnapprovedContainedDirectoryError(directory);
+        await createDirectoryAt(current, segment);
+        // The nofollow open establishes containment even when another writer wins mkdir.
+        return openDirectoryAt(current, segment);
+      });
+      current = await descend(current, next);
     }
     return { handle: current, basename };
   } catch (error) {
@@ -376,15 +313,33 @@ export async function openContainedFile(
   }
 }
 
+/** What was checked is no longer what the path names; the caller can look again. */
+export class ContainedPathChangedError extends Error {
+  constructor(readonly relative: string) {
+    super(`Contained path changed during authorization: ${relative}`);
+    this.name = 'ContainedPathChangedError';
+  }
+}
+
+/** Reopening a path that vanished or stopped being a directory is the same stale answer. */
+async function reopen<T>(relative: string, open: () => Promise<T>): Promise<T> {
+  return open().catch((error: unknown) => {
+    if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(errnoOf(error) ?? '')) {
+      throw new ContainedPathChangedError(relative);
+    }
+    throw error;
+  });
+}
+
 export async function assertContainedFileCurrent(
   root: string,
   relative: string,
   expected: ContainedFileHandle,
 ): Promise<void> {
-  const current = await openContainedFile(root, relative);
+  const current = await reopen(relative, () => openContainedFile(root, relative));
   try {
     if (!sameIdentity(await expected.stat(), await current.stat())) {
-      throw new Error('Contained file identity changed during authorization');
+      throw new ContainedPathChangedError(relative);
     }
   } finally {
     await current.close();
@@ -396,10 +351,10 @@ export async function assertContainedParentCurrent(
   relative: string,
   expected: ContainedFileHandle,
 ): Promise<void> {
-  const current = await openContainedParent(root, relative);
+  const current = await reopen(relative, () => openContainedParent(root, relative));
   try {
     if (!sameIdentity(await expected.stat(), await current.handle.stat())) {
-      throw new Error('Contained parent identity changed during authorization');
+      throw new ContainedPathChangedError(relative);
     }
   } finally {
     await current.handle.close();

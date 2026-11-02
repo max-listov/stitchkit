@@ -17,7 +17,7 @@ const core = resolve(import.meta.dir, '..');
 
 describe('portable entrypoints carry no native addon in a bundle', () => {
   // Reaching the default loader from a public entrypoint must not break a bundle build.
-  for (const entrypoint of ['server', 'files', 'process']) {
+  for (const entrypoint of ['server', 'files', 'process', 'cli']) {
     for (const target of ['bun', 'node'] as const) {
       test(`stitchkit/${entrypoint} bundles to one file for target ${target}`, async () => {
         const out = mkdtempSync(join(tmpdir(), 'stitchkit-portable-bundle-'));

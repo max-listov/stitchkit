@@ -17,14 +17,21 @@ async function gate(script: string, env?: Record<string, string>) {
   return { stderr, exitCode };
 }
 
-/** Running means present and not a zombie: a killed process lingers as one until its reaper runs. */
-function alive(pid: number): boolean {
+/** What a process still is, for a failure that must name its cause; undefined once it is gone. */
+function survivor(pid: number): { state: string; ppid: number; wchan: string } | undefined {
   try {
-    return parseProcessStat(readFileSync(`/proc/${pid}/stat`, 'utf8')).state !== 'Z';
+    const { state, ppid } = parseProcessStat(readFileSync(`/proc/${pid}/stat`, 'utf8'));
+    if (state === 'Z') return undefined;
+    return { state, ppid, wchan: readFileSync(`/proc/${pid}/wchan`, 'utf8') };
   } catch (error) {
-    if (isMissingProcess(error)) return false;
+    if (isMissingProcess(error)) return undefined;
     throw error;
   }
+}
+
+/** Running means present and not a zombie: a killed process lingers as one until its reaper runs. */
+function alive(pid: number): boolean {
+  return survivor(pid) !== undefined;
 }
 
 test('a process name with spaces and parentheses does not shift the stat fields', () => {
@@ -92,7 +99,18 @@ test.skipIf(!hasProcfs)(
     expect(Number.isInteger(pid)).toBe(true);
     const deadline = performance.now() + 2000;
     while (alive(pid) && performance.now() < deadline) await Bun.sleep(10);
-    expect(alive(pid)).toBe(false);
+    expect(survivor(pid)).toBeUndefined();
+  },
+);
+
+test.skipIf(!hasProcfs)(
+  'a process that is still there is described, not just reported',
+  () => {
+    expect(survivor(process.pid)).toEqual({
+      state: expect.stringMatching(/^[A-Za-z]$/),
+      ppid: process.ppid,
+      wchan: expect.any(String),
+    });
   },
 );
 

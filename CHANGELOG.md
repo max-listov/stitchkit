@@ -15,6 +15,33 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** a CLI that uses `--output-dir` on Windows, from a macOS bundle built without `createNativePackaging`, into a directory it cannot write or over bind-mounted files; a coding-tools host that allows `edit` but refuses `read` for a path; code that reads `zoneProps['aria-orientation']` or selects `[aria-orientation]` in a `role: 'none'` zone. See the [migration](docs/guide/upgrading.md).
+
+- `stitchkit/cli` — **`--output-dir` downloads write through a pinned directory, so they need a contained filesystem backend.** A lexical check could not stop `writeFile` following an existing symbolic link out of the output directory. The configured directory is pinned once per batch and direct children are atomically replaced through its descriptor: a pre-existing symbolic link or hard link cannot redirect bytes into an external file, and replacing the output path while a response is in flight does not redirect later files. Initial root aliases select the configured directory once; missing roots are created through pinned parents. Ordinary overwrites retain permission bits, and new files honour the process umask. Replacing is a new file, not a rewrite: it needs write permission on the directory, gives the file to the process user, replaces a read-only file, and refuses a bind-mounted one. There is no path-based fallback: Windows and other unsupported platforms refuse the download, and a macOS bundle or compiled binary must carry the native backend. A partial failure keeps the operation result on stdout and returns a non-zero exit. `// before: bun build --compile cli.ts` → `// after: createNativePackaging from stitchkit/files/packaging`. → [ADR 0276](docs/decisions/0276-a-download-writes-through-its-root-capability.md)
+  **Affects:** `stitchkit/cli` createCli(download)
+
+- `stitchkit/react/keyboard` — **`NavZoneProps['aria-orientation']` is optional.** `useNavZone({ role: 'none' })` omits `aria-orientation` along with the container and item roles, preserving native links and buttons without an unsupported ARIA attribute. Listbox and tablist zones keep their orientation; arrow navigation and roving focus still follow the configured axis. `// before: const axis: ZoneOrientation = zone.zoneProps['aria-orientation']` → `// after: read the `orientation` option you passed`
+  **Affects:** `stitchkit/react/keyboard` useNavZone, NavZoneProps
+
+- `stitchkit/agent-runtime/coding-tools` — **`edit_file` asks `read` before it reads.** A miss, an occurrence count or a digest told a caller about a file the host refused, one guess at a time. `authorize({ operation: 'read', path })` now runs before the content is read, and a refused or doomed edit never reaches `operation: 'edit'`. `// before: a host allowing only edit` → `// after: allow read for that path too`
+  **Affects:** `stitchkit/agent-runtime/coding-tools` createAgentCodingTools(edit_file)
+
+### Fixed
+
+- `stitchkit/agent-runtime/coding-tools` — NUL paths refuse before host authorization and native entry lookup. Reads and edits reject special files without blocking on a writerless FIFO. Writes create only the missing directories the host approved; a changed directory plan refuses with `CONFLICT`. A write over a directory, one that loses a race for a new name, and a path that changed while the host decided are named `CONFLICT` refusals rather than internal errors; a socket refuses like other special files. `edit_file` rereads the file after authorization, so a change made while the host decided is a `CONFLICT` rather than lost, and `write_file` takes the same path lock. Overwrites keep exact permission bits under any umask and drop setuid and setgid. The macOS filesystem backend preserves the errno codes used by these guards, including `ENOENT` for approved nested creation, and a listing survives an entry removed while it runs.
+  **Affects:** `stitchkit/agent-runtime/coding-tools` createAgentCodingTools
+
+- `stitchkit/cli` — record views read only own properties at every dotted path segment; inherited properties are unknown fields, including a getter of a class instance a handler returned in process. Legitimate own `constructor`, `prototype` and `toString` keys remain readable. Descending sort keeps `null` and absent values last, matching ascending sort. `--table` columns are checked against the whole collection, so `--top` no longer reports a field that only later records carry as unknown.
+  **Affects:** `stitchkit/cli` createCli, renderCliView
+
+- `stitchkit/cli` — aggregate views accept empty collections: count and grouped sum return `{}`, ungrouped sum returns `0`, sorted records return `[]`, and tables retain their header without data rows. Field paths remain validated; a field of the result object around an empty collection, or an unknown field in a nonempty one, still preserves the canonical result with a presentation failure.
+  **Affects:** `stitchkit/cli` createCli, renderCliView
+
+- `stitchkit/react/keyboard` — key layers register, update and clean up in the browser layout-effect phase. An active layer receives a key dispatched by the caller's later layout effect on the initial mount or an activation commit, with the current handler; inactive, inert and removed layers do not. Abandoned renders leave the last committed state intact, a layer hidden behind a Suspense fallback goes quiet and returns to its place on reveal, and SSR installs no listener. `useEscapeLayer` and the outside-key layer of `useNavZone` share this lifecycle.
+  **Affects:** `stitchkit/react/keyboard` useKeyLayer, useEscapeLayer, useNavZone
+
 ## [0.114.2] - 2026-10-31
 
 ### Fixed

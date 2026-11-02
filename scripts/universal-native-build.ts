@@ -61,6 +61,8 @@ try {
   for (const file of [
     'darwin-artifact-controls.mjs',
     'contained-files.mjs',
+    'contained-entry-controls.mjs',
+    'cli-download-controls.mjs',
     'universal-native-recipe.mjs',
   ])
     copyFileSync(

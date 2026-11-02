@@ -37,7 +37,7 @@ export const landed: number | 'before-start' | 'after-end' = nextZoneIndex({
   loop: false,
 });
 
-export function useChatsOrientation(): 'vertical' | 'horizontal' {
+export function useChatsOrientation(): 'vertical' | 'horizontal' | undefined {
   return useNavZone(chats).zoneProps['aria-orientation'];
 }
 

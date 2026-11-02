@@ -402,7 +402,7 @@ describe('useNavZone: the rest of the contract', () => {
       'onFocus,ref,tabIndex',
     );
     expect(keys.container.firstElementChild?.getAttribute('data-zone')).toBe(
-      'aria-orientation,data-keyboard-zone,onKeyDown,ref',
+      'data-keyboard-zone,onKeyDown,ref',
     );
     keys.unmount();
   });

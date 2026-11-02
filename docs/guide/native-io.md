@@ -517,8 +517,8 @@ a static loader enters a bundle.
 
 Only these calls load the addon, and only on macOS: process identity (`observeProcessInstance`
 and `probeProcessOwner`), every exclusive lock (`withExclusiveLock` and what is built on it, such
-as the file state store and the diagnostic journal) and the contained file operations of the Agent
-coding tools. Without the addon a lock still works, but it cannot record or check its owner's
+as the file state store and the diagnostic journal), the contained file operations of the Agent
+coding tools and `--output-dir` downloads of `stitchkit/cli`. Without the addon a download refuses, and a lock still works, but it cannot record or check its owner's
 identity, so a lock held by a crashed owner is not reclaimed. The managed file boundary
 (`createManagedFileBoundary` and the transfer tools built on it), atomic writes and the chunk
 spool never load it, on any operating system. The package is free of import side effects

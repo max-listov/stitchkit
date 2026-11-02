@@ -18,6 +18,7 @@ import { mkdir, open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { writeFileAtomic } from '../internal/atomic-file';
+import { errnoOf } from '../internal/errno';
 import { attemptExclusiveLock, type HeldExclusiveLock } from '../internal/exclusive-lock';
 
 export const TelegramBroadcastOutcomeSchema = z.enum([
@@ -58,8 +59,7 @@ export function assertBroadcastName(name: string): void {
   }
 }
 
-const absent = (error: unknown): boolean =>
-  error instanceof Error && 'code' in error && error.code === 'ENOENT';
+const absent = (error: unknown): boolean => errnoOf(error) === 'ENOENT';
 
 export interface BroadcastFiles {
   readonly recipients: string;
@@ -107,7 +107,7 @@ export async function prepareJournal(
   try {
     await writeFileAtomic(files.journal, '', { replace: false, durability: 'directory' });
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+    if (errnoOf(error) !== 'EEXIST') throw error;
   }
 }
 

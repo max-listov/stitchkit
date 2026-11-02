@@ -2514,9 +2514,9 @@ no component, no styles, no router — see the [keyboard guide](../guide/keyboar
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `useKeyLayer` | hook | put a layer on the window's one key stack — asked `overlay` → `local` → `route` → `zone` → `global`, innermost first within a kind |
+| `useKeyLayer` | hook | put a layer on the window's one key stack; registration, options and cleanup follow the browser layout-effect phase, before later layout effects in the caller; asked `overlay` → `local` → `route` → `zone` → `global`, innermost first within a kind |
 | `useEscapeLayer` | hook | an `overlay`, `local` or `route` layer for Escape: one press closes one level |
-| `useNavZone` | hook | a list zone — roving tab stop, arrows move DOM focus, select, highlight or focus mode, cross-axis enter/exit, boundaries, `ignore` for a key the application is using; props carry no key without a value |
+| `useNavZone` | hook | a list zone — roving tab stop, arrows move DOM focus, select, highlight or focus mode, cross-axis enter/exit, boundaries, `ignore` for a key the application is using; props carry no key without a value; `role: 'none'` omits roles, `aria-orientation` and `aria-selected`, preserving native link/button semantics |
 | `nextZoneIndex` | function | where a move lands in a list of a given length: an index, `'before-start'` or `'after-end'` |
 | `isKeyFieldTarget` | function | whether a key was pressed in a field or a `data-local-keys` area, the test layers use |
 | `KeyLayerOptions` | _type_ | `kind`, `onKey`, `active`, `scope`, `fields`, `phase` — `'capture'` is for a `local` layer only: it hears a key before the element that has focus does, as a menu over a text field must, and a key it takes goes no further |

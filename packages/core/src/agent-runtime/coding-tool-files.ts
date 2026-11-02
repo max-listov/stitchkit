@@ -1,5 +1,16 @@
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
+import {
+  assertContainedFileCurrent,
+  assertContainedParentCurrent,
+  containedEntryMetadata,
+  missingContainedDirectories,
+  openContainedFile,
+  openContainedParent,
+  UnapprovedContainedDirectoryError,
+} from '../internal/contained-files';
+import type { ContainedFileHandle } from '../internal/contained-handle';
+import { writeContainedFile } from '../internal/contained-write';
 import { defineRuntimeTool } from '../tools/runtime-tool';
 import {
   type AgentCodingToolConfig,
@@ -14,19 +25,14 @@ import {
   authorizeCodingPathChain,
   authorizeCodingTool,
   boundedCodingRelativePath,
+  withCodingPathLock,
 } from './coding-tool-paths';
-import { codingPathRefusal, refuseMissingCodingPath } from './coding-tool-refusals';
-import { utf8AlignedEnd, utf8AlignedStart } from './coding-tool-utf8';
 import {
-  assertContainedFileCurrent,
-  assertContainedParentCurrent,
-  type ContainedFileHandle,
-  containedEntryMetadata,
-  missingContainedDirectories,
-  openContainedFile,
-  openContainedParent,
-} from './contained-files';
-import { writeContainedFile } from './contained-write';
+  codingPathRefusal,
+  refuseMissingCodingPath,
+  refuseWriteConflict,
+} from './coding-tool-refusals';
+import { utf8AlignedEnd, utf8AlignedStart } from './coding-tool-utf8';
 
 async function digestFile(handle: ContainedFileHandle, size: number): Promise<string> {
   const hash = createHash('sha256');
@@ -39,6 +45,30 @@ async function digestFile(handle: ContainedFileHandle, size: number): Promise<st
     position += bytesRead;
   }
   return hash.digest('hex');
+}
+
+/** Open the authorized creation plan and translate only the write conflicts a caller can act on. */
+async function openAuthorizedWriteParent(
+  root: string,
+  relative: string,
+  createsDirectories: readonly string[],
+) {
+  return openContainedParent(root, relative, { createDirectories: createsDirectories }).catch(
+    (error: unknown) => {
+      if (error instanceof UnapprovedContainedDirectoryError) {
+        codingPathRefusal(
+          'CONFLICT',
+          'The directory creation plan changed during authorization',
+          relative,
+          {
+            details: { createsDirectories },
+            hint: 'Retry the write so the host can authorize the current directories.',
+          },
+        );
+      }
+      refuseWriteConflict(error, relative, { createsDirectories });
+    },
+  );
 }
 
 export function createFileCodingTools(
@@ -69,7 +99,9 @@ export function createFileCodingTools(
       let sha256: string;
       try {
         await authorizeCodingTool(config, { operation: 'read', path: relative });
-        await assertContainedFileCurrent(root, relative, handle);
+        await assertContainedFileCurrent(root, relative, handle).catch((error: unknown) =>
+          refuseMissingCodingPath(error, relative),
+        );
         const metadata = await handle.stat();
         if (!metadata.isFile()) {
           codingPathRefusal('BAD_REQUEST', 'This path is not a regular file', relative, {
@@ -161,19 +193,7 @@ export function createFileCodingTools(
       // authorize a mutation it has not been told about, and `openContainedParent`
       // used to run ahead of `authorize` entirely.
       const createsDirectories = await missingContainedDirectories(root, relative).catch(
-        (error: unknown) => {
-          if ((error as NodeJS.ErrnoException).code === 'ENOTDIR') {
-            codingPathRefusal(
-              'CONFLICT',
-              'A segment of this path is not a directory',
-              relative,
-              {
-                hint: 'Write under a different path, or remove the file blocking it.',
-              },
-            );
-          }
-          throw error;
-        },
+        (error: unknown) => refuseWriteConflict(error, relative),
       );
       await authorizeCodingTool(config, {
         operation: 'write',
@@ -182,54 +202,42 @@ export function createFileCodingTools(
         overwrite: input.overwrite,
         createsDirectories,
       });
-      const parent = await openContainedParent(root, relative, { create: true }).catch(
-        (error: unknown) => {
-          // The one shape a caller can act on: a segment of the requested path is
-          // occupied by something that is not a directory.
-          const code = (error as NodeJS.ErrnoException).code;
-          if (
-            code === 'ENOTDIR' ||
-            (error instanceof Error && error.message.includes('ancestor is not a directory'))
-          ) {
-            codingPathRefusal(
-              'CONFLICT',
-              'A segment of this path is not a directory',
-              relative,
-              {
-                details: { createsDirectories },
-                hint: 'Write under a different path, or remove the file blocking it.',
-              },
-            );
+      // The lock `edit_file` holds: a write must not land between its read and its replace.
+      await withCodingPathLock(`${root}:${relative}`, async () => {
+        const parent = await openAuthorizedWriteParent(root, relative, createsDirectories);
+        try {
+          await assertContainedParentCurrent(root, relative, parent.handle).catch(
+            (error: unknown) => refuseWriteConflict(error, relative),
+          );
+          const current = await containedEntryMetadata(parent);
+          if (input.overwrite) {
+            if (current?.isSymbolicLink()) {
+              codingPathRefusal('FORBIDDEN', 'This path is a symlink', relative, {
+                hint: 'Coding tools never write through symlinks; write to the target directly.',
+              });
+            }
+            await writeContainedFile({
+              parent,
+              content: input.content,
+              replace: true,
+              ...(current && { mode: current.mode }),
+            }).catch((error: unknown) => refuseWriteConflict(error, relative));
+          } else {
+            if (current) {
+              codingPathRefusal('CONFLICT', 'This file already exists', relative, {
+                hint: 'Pass overwrite: true to replace it, or edit_file to change part of it.',
+              });
+            }
+            await writeContainedFile({
+              parent,
+              content: input.content,
+              replace: false,
+            }).catch((error: unknown) => refuseWriteConflict(error, relative));
           }
-          throw error;
-        },
-      );
-      try {
-        await assertContainedParentCurrent(root, relative, parent.handle);
-        const current = await containedEntryMetadata(parent);
-        if (input.overwrite) {
-          if (current?.isSymbolicLink()) {
-            codingPathRefusal('FORBIDDEN', 'This path is a symlink', relative, {
-              hint: 'Coding tools never write through symlinks; write to the target directly.',
-            });
-          }
-          await writeContainedFile({
-            parent,
-            content: input.content,
-            replace: true,
-            ...(current && { mode: current.mode }),
-          });
-        } else {
-          if (current) {
-            codingPathRefusal('CONFLICT', 'This file already exists', relative, {
-              hint: 'Pass overwrite: true to replace it, or edit_file to change part of it.',
-            });
-          }
-          await writeContainedFile({ parent, content: input.content, replace: false });
+        } finally {
+          await parent.handle.close();
         }
-      } finally {
-        await parent.handle.close();
-      }
+      });
       return { path: relative, bytes, createdDirectories: createsDirectories };
     },
   });

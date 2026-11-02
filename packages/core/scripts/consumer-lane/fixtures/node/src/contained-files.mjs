@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createAgentCodingTools } from 'stitchkit/agent-runtime/coding-tools';
 import { createAgentHarnessFileResources } from 'stitchkit/agent-runtime/harness';
 import { mountAgent } from 'stitchkit/tools';
+import { entryBoundaryControls } from './contained-entry-controls.mjs';
 
 const roots = [];
 const options = { toolCallId: 'contained-files', messages: [], context: undefined };
@@ -158,7 +159,7 @@ async function parentSwap(kind) {
   release.resolve();
   const result = await settled;
   assert.equal(result.status, 'rejected');
-  assert.equal(result.reason.output.error, 'INTERNAL_SERVER_ERROR');
+  assert.equal(result.reason.output.error, 'CONFLICT');
   assert.equal(await readFile(path.join(outside, 'source.txt'), 'utf8'), 'same content');
   assert.equal(await readFile(path.join(original, 'source.txt'), 'utf8'), 'same content');
   assert.equal(existsSync(path.join(outside, 'new.txt')), false);
@@ -166,6 +167,7 @@ async function parentSwap(kind) {
 
 try {
   await ordinaryOperations();
+  await entryBoundaryControls({ createAgentCodingTools, mountAgent });
   await parentSwap('read');
   await parentSwap('edit');
   console.log(`packed contained files (${process.platform}/${process.arch}): ok`);

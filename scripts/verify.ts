@@ -299,7 +299,7 @@ async function main(): Promise<void> {
     }
     if (ifChanged && withinFastSubset && reusableInputs) {
       const green = findGreenGate(await readGreenGates(FAST_GATE, memo), key);
-      if (green && !(await guard.finish())) {
+      if (green && (await guard.finish()) === undefined) {
         // Named, never silent. A gate that skips without saying so is
         // indistinguishable from a gate that is not there, and the whole value of
         // the memo is that a reader can check the claim.
@@ -335,12 +335,16 @@ async function main(): Promise<void> {
 
     const after = await worktreeTreeHash(root);
     const changed =
-      after !== before ||
-      generation !== (await worktreeInputGeneration(root)) ||
-      (await guard.finish());
-    if (changed) {
+      (await guard.finish()) ??
+      (after !== before
+        ? `tree ${before.slice(0, 12)} to ${after.slice(0, 12)}`
+        : undefined) ??
+      (generation !== (await worktreeInputGeneration(root))
+        ? 'an input file was rewritten'
+        : undefined);
+    if (changed !== undefined) {
       process.stderr.write(
-        `[gate] ${profile.gate} completed, but its inputs changed during the run (${before.slice(0, 12)} to ${after.slice(0, 12)}); no reusable green memo was saved.\n`,
+        `[gate] ${profile.gate} completed, but its inputs changed during the run (${changed}); no reusable green memo was saved.\n`,
       );
       return;
     }

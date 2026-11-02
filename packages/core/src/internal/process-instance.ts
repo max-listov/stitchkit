@@ -5,6 +5,7 @@ import { readFile, readlink } from 'node:fs/promises';
 import { platform } from 'node:os';
 import { z } from 'zod';
 import { loadDarwinBinding } from './darwin-binding';
+import { errnoOf } from './errno';
 import { probeLiveness } from './process-identity';
 
 /**
@@ -98,7 +99,7 @@ export async function observeProcessInstanceAt(
       // Time namespaces arrived in Linux 5.6; an older kernel has one clock
       // for everyone, so its absence is part of the identity, not a gap in it.
       readlink(`${procRoot}/self/ns/time`).catch((error: unknown) => {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return '';
+        if (errnoOf(error) === 'ENOENT') return '';
         throw error;
       }),
       readFile(`${procRoot}/self/stat`, 'utf8'),

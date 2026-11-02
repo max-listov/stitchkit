@@ -1,5 +1,6 @@
 import type { Duplex } from 'node:stream';
 import { z } from 'zod';
+import { errnoOf } from '../internal/errno';
 import { NativeCommandError } from './contract';
 
 const MAX_GUARD_MESSAGE_BYTES = 4096;
@@ -31,7 +32,7 @@ export function abortOwnerLossLaunch(pid: number | undefined): void {
   try {
     process.kill(-pid, 'SIGKILL');
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+    if (errnoOf(error) !== 'ESRCH') throw error;
   }
 }
 

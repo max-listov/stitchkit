@@ -295,17 +295,27 @@ approval input fails the run with a private diagnostic rather than starting a fr
 `read_output`. Every call passes a required host authorization callback. An optional async/sync
 `authorizePath({ path })` is the one operation-independent policy for direct file access and
 discovery: direct read/write/edit refuses a denied path, while listing, glob and search omit it.
-Denial is recursive on every surface — direct access and discovery base paths ask about `.` and each
-ancestor, outermost first, stopping at the first refusal, so denying `credentials` denies everything
+Denial is recursive on every surface — direct access asks about each named ancestor and the file,
+outermost first, stopping at the first refusal; discovery rooted at `.` also asks about `.`.
+Thus denying `credentials` denies everything
 under it. The comparison is segment-wise, so it does not deny `credentials-backup`, and a path of
-depth N costs N+1 questions. Directory decisions happen before descent; file decisions and
+depth N costs N questions for direct access. Directory decisions happen before descent; file decisions and
 `search_files.include` happen before opening content. Requested paths use `/`: a backslash is
 refused rather than normalised, because the workspace walk reads it as a separator and every
 authorization callback would otherwise be asked about a different decomposition than the one opened. File paths are relative, bounded and contained after
-descriptor-relative resolution: each ancestor is opened without following symlinks and remains
-pinned through authorization and the filesystem effect. Reads revalidate the pinned file identity;
+descriptor-relative resolution: each ancestor is opened without following symlinks. Reads and edits
+stay pinned through authorization; `write_file` plans before it and opens the parent after, because
+the parent it creates does not exist yet. Reads revalidate the pinned file identity;
 writes and patches revalidate the pinned parent identity; search and resource discovery descend
-only through opened directories. Linux traverses `/proc/self/fd`; macOS uses the package's
+only through opened directories. A path that changed during authorization refuses with `CONFLICT`.
+Policies compare path strings, so on a case-insensitive filesystem such as default macOS volumes a
+rule on `credentials` does not match `CREDENTIALS`; such a host must normalize in its own policy.
+NUL bytes are refused before either host policy sees a path.
+Reads and edits open file candidates without blocking on special files, then require a regular
+file. A writerless FIFO therefore refuses instead of occupying a filesystem worker. `write_file`
+supplies the exact missing-directory plan as `createsDirectories` to host authorization; the
+descriptor walk may create only those entries. An ancestor that disappears after approval refuses
+with `CONFLICT`, without expanding that plan. Linux traverses `/proc/self/fd`; macOS uses the package's
 architecture-specific Node-API `openat` backend. Unsupported platforms, including FreeBSD until a
 real backend is qualified, fail closed. The package needs no install-time compiler or script.
 Other platforms fail these filesystem operations closed because Node exposes no equivalent

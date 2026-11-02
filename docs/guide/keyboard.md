@@ -4,7 +4,7 @@ description: One listener decides which part of a screen gets a key; lists move 
 type: guide
 status: active
 created: 2026-09-29
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # Keyboard layers and list zones
@@ -87,6 +87,17 @@ together, only `scope` tells the stack which one is inside.
 **`active`** (default `true`) switches a layer off without unmounting it;
 becoming active again puts it on top of its kind.
 
+Layers register, adopt options and clean up in the browser's layout-effect phase.
+Call the hook before a layout effect that dispatches a key: that effect sees the
+committed `active`, handler and scope immediately, without waiting for passive
+effects. Rendering alone never changes the stack; an abandoned render leaves the
+last committed layer intact. A Suspense boundary that hides committed content
+disconnects its layout effects, so a layer behind the fallback goes quiet and
+returns to its place on reveal. The same lifecycle backs `useEscapeLayer` and a
+zone's outside-key layer. Server rendering installs no listener and does not
+access `window`. The browser phase is chosen when the module loads, so a test
+that installs a DOM does so before it imports these hooks.
+
 **Fields keep their keys.** Keys pressed in an input, a text area, a select, an
 editable region, a combobox, a slider or any area marked `data-local-keys` do not
 reach layers — except Escape, which a field that wants it keeps with
@@ -137,6 +148,11 @@ function ChatList({ chats, openId, open }) {
 | `outside` | `'focus'` | what the first arrow does when focus is in no zone: `'focus'` puts focus on the current item and nothing else; `'move'` moves from it and, in select mode, chooses the neighbour — see [below](#the-first-arrow-from-outside-a-zone) |
 | `ignore(event)` | — | a key that is the application's own right now — return `true` and the zone leaves it whole; see [dragging](#a-zone-inside-a-drag-and-drop-list) |
 | `onReveal(id)` | — | focus went to an item with no element yet — a row of a virtualized list outside the rendered range; scroll it in, and focus lands on it when it mounts |
+
+`role: 'none'` adds neither a container/item role nor `aria-orientation` or
+`aria-selected`; native links and buttons keep their semantics. The orientation
+still controls which arrows move focus. Only listbox and tablist zones emit
+`aria-orientation` (vertical by default).
 
 The callbacks return `false` to leave the key to the page, anything else takes
 it. A key the zone does not take bubbles on to the layers — in a vertical list

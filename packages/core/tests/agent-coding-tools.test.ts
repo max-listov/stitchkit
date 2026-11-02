@@ -226,7 +226,8 @@ describe('host-authorized Agent coding tools', () => {
     } finally {
       console.error = originalError;
     }
-    expect(authorizations).toHaveLength(0);
+    // Reading is asked first, so a miss never tells a host's refused file apart; the edit is never asked.
+    expect(authorizations.map(({ operation }) => operation)).toEqual(['read', 'read', 'read']);
     const unchanged = await readFile(path.join(root, 'source.txt'));
     expect(unchanged.equals(Buffer.from('x x'))).toBe(true);
     expect(createHash('sha256').update(unchanged).digest('hex')).toBe(
@@ -985,6 +986,7 @@ describe('host-authorized Agent coding tools', () => {
     expect(authorizations.map(({ operation }) => operation)).toEqual([
       'read',
       'write',
+      'read',
       'edit',
       'shell',
     ]);

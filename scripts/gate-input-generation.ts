@@ -62,13 +62,13 @@ export async function watchWorktreeInputs(
   const known = new Set(names);
   const ignored = new Map<string, Promise<boolean>>();
   const pending = new Set<Promise<void>>();
-  let changed = false;
+  let changed: string | undefined;
   let closed = false;
   const watchers: ReturnType<typeof watch>[] = [];
   const observe = (path: string) => {
     if (path === '.git' || path.startsWith('.git/')) return;
     if (known.has(path)) {
-      changed = true;
+      changed ??= path;
       return;
     }
     let check = ignored.get(path);
@@ -85,7 +85,7 @@ export async function watchWorktreeInputs(
       ignored.set(path, check);
     }
     const observation = check.then((isIgnored) => {
-      if (!isIgnored) changed = true;
+      if (!isIgnored) changed ??= path;
     });
     pending.add(observation);
     void observation.finally(() => pending.delete(observation));
@@ -100,13 +100,13 @@ export async function watchWorktreeInputs(
       }
       const watcher = createWatcher(join(root, directory), (_event, filename) => {
         if (filename === null) {
-          changed = true;
+          changed ??= `${directory}/*`;
           return;
         }
         observe(directory === '.' ? String(filename) : join(directory, String(filename)));
       });
       watcher.on('error', () => {
-        changed = true;
+        changed ??= `${directory}/*`;
       });
       watchers.push(watcher);
     }
@@ -115,7 +115,8 @@ export async function watchWorktreeInputs(
     throw error;
   }
   return {
-    async finish(): Promise<boolean> {
+    /** The first input seen changing during the watch, or undefined when none did. */
+    async finish(): Promise<string | undefined> {
       if (!closed) {
         closed = true;
         for (const watcher of watchers) watcher.close();

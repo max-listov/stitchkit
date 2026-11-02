@@ -1,6 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { forbidden } from '../contract/errors';
+import { errnoOf } from '../internal/errno';
 import {
   type AgentCodingToolAuthorization,
   AgentCodingToolAuthorizationSchema,
@@ -51,6 +52,12 @@ export function boundedCodingRelativePath(
   requested: string,
   maxPathBytes: number,
 ): string {
+  if (requested.includes('\0')) {
+    codingRefusal('BAD_REQUEST', 'Path segments cannot contain a NUL byte', {
+      details: { path: requested },
+      hint: 'Pass the exact workspace-relative entry name without NUL bytes.',
+    });
+  }
   // Absolute spellings need the configured root to produce a truthful recovery
   // path. Relative spellings keep reaching the segment guard below first, so a
   // traversal is still explained as a traversal rather than a generic escape.
@@ -110,8 +117,8 @@ export async function writableCodingPath(
   const parent = await realpath(path.dirname(candidate));
   if (!within(root, parent)) throw new Error('Coding tool parent resolves outside its root');
   const target = path.join(parent, path.basename(candidate));
-  const metadata = await lstat(target).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return null;
+  const metadata = await lstat(target).catch((error: unknown) => {
+    if (errnoOf(error) === 'ENOENT') return null;
     throw error;
   });
   if (metadata?.isSymbolicLink())

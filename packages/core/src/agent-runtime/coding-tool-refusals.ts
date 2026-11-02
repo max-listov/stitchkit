@@ -18,6 +18,8 @@
  */
 
 import { AppError, STITCH_ERROR_STATUS, type StitchErrorCode } from '../contract/errors';
+import { ContainedPathChangedError } from '../internal/contained-files';
+import { errnoOf } from '../internal/errno';
 
 /**
  * The codes a coding tool may hand a model — an allowlist of names, not a
@@ -93,7 +95,8 @@ export function codingPathRefusal(
  * model can do about it, and keeps being scrubbed. Default-deny by omission.
  */
 export function refuseMissingCodingPath(error: unknown, relative: string): never {
-  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  refuseChangedPath(error, relative);
+  const code = errnoOf(error);
   // The containment layer states this one in words rather than an errno, and it
   // is the commonest way a model asks for a directory as if it were a file.
   if (error instanceof Error && error.message.includes('is not a regular file')) {
@@ -119,9 +122,69 @@ export function refuseMissingCodingPath(error: unknown, relative: string): never
       hint: 'Read or write the target directly, by its own workspace-relative path.',
     });
   }
-  if (code === 'EISDIR') {
+  // A socket cannot be opened at all: ENXIO on Linux, EOPNOTSUPP on Darwin.
+  if (code === 'EISDIR' || code === 'ENXIO' || code === 'EOPNOTSUPP') {
     codingPathRefusal('BAD_REQUEST', 'This path is not a regular file', relative, {
       hint: 'Use list_directory to see what is here.',
+    });
+  }
+  throw error;
+}
+
+/** The workspace moved while the host decided: the caller's answer is to look again. */
+function refuseChangedPath(error: unknown, relative: string): void {
+  if (error instanceof ContainedPathChangedError) {
+    codingPathRefusal(
+      'CONFLICT',
+      'This path changed while it was being authorized',
+      relative,
+      {
+        hint: 'Read it again and retry.',
+      },
+    );
+  }
+}
+
+/**
+ * The write failures a caller can act on: something else occupies the path. A
+ * lost race and a stale check end here too, so each has one answer however it
+ * was reached. Everything else stays internal, as above.
+ */
+export function refuseWriteConflict(
+  error: unknown,
+  relative: string,
+  details: Record<string, unknown> = {},
+): never {
+  refuseChangedPath(error, relative);
+  const code = errnoOf(error);
+  if (code === 'ENOENT') {
+    codingPathRefusal('CONFLICT', 'This path changed while it was being written', relative, {
+      details,
+      hint: 'Read it again and retry.',
+    });
+  }
+  if (code === 'ENOTDIR') {
+    codingPathRefusal('CONFLICT', 'A segment of this path is not a directory', relative, {
+      details,
+      hint: 'Write under a different path, or remove the file blocking it.',
+    });
+  }
+  if (code === 'ELOOP') {
+    codingPathRefusal('FORBIDDEN', 'This path is a symlink, which is not followed', relative, {
+      details,
+      hint: 'Write to the target directly, by its own workspace-relative path.',
+    });
+  }
+  if (code === 'EISDIR') {
+    codingPathRefusal('CONFLICT', 'This path is a directory', relative, {
+      details,
+      hint: 'Write to a file path inside it, or choose another name.',
+    });
+  }
+  if (code === 'EEXIST') {
+    codingPathRefusal('CONFLICT', 'This file already exists', relative, {
+      details,
+      hint: 'Pass overwrite: true to replace it, or edit_file to change part of it.',
     });
   }
   throw error;

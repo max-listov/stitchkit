@@ -17,10 +17,23 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+static const char *filesystem_error_code(int code) {
+  switch (code) {
+    case ENOENT: return "ENOENT";
+    case ENOTDIR: return "ENOTDIR";
+    case ELOOP: return "ELOOP";
+    case EISDIR: return "EISDIR";
+    case EEXIST: return "EEXIST";
+    case EOPNOTSUPP: return "EOPNOTSUPP";
+    default: return NULL;
+  }
+}
+
 static napi_value fail(napi_env env, const char *operation) {
+  const int code = errno;
   char message[512];
-  snprintf(message, sizeof(message), "%s: %s", operation, strerror(errno));
-  napi_throw_error(env, NULL, message);
+  snprintf(message, sizeof(message), "%s: %s", operation, strerror(code));
+  napi_throw_error(env, filesystem_error_code(code), message);
   return NULL;
 }
 
@@ -50,7 +63,8 @@ static bool entry_argument(napi_env env, napi_value value, char **result) {
     napi_throw_type_error(env, NULL, "Expected a relative entry name");
     return false;
   }
-  if (length == 0 || strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
+  if (length == 0 || memchr(name, '\0', length) != NULL ||
+      strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
       strchr(name, '/') != NULL) {
     free(name);
     napi_throw_range_error(env, NULL, "Descriptor-relative entry names must be one safe segment");
@@ -69,12 +83,11 @@ static bool two_arguments(napi_env env, napi_callback_info info, napi_value valu
   return true;
 }
 
-static napi_value open_at(napi_env env, napi_callback_info info, int flags) {
-  napi_value values[2];
-  if (!two_arguments(env, info, values)) return NULL;
+static napi_value open_named_at(napi_env env, napi_value directory_value, napi_value name_value,
+                                int flags) {
   int directory;
   char *name = NULL;
-  if (!integer_argument(env, values[0], &directory) || !entry_argument(env, values[1], &name)) {
+  if (!integer_argument(env, directory_value, &directory) || !entry_argument(env, name_value, &name)) {
     return NULL;
   }
   int descriptor = openat(directory, name, flags | O_NOFOLLOW | O_CLOEXEC);
@@ -89,12 +102,26 @@ static napi_value open_at(napi_env env, napi_callback_info info, int flags) {
   return result;
 }
 
+static napi_value open_at(napi_env env, napi_callback_info info, int flags) {
+  napi_value values[2];
+  if (!two_arguments(env, info, values)) return NULL;
+  return open_named_at(env, values[0], values[1], flags);
+}
+
 static napi_value open_directory_at(napi_env env, napi_callback_info info) {
-  return open_at(env, info, O_RDONLY | O_DIRECTORY);
+  napi_value values[3];
+  size_t count = 3;
+  bool search_only;
+  if (napi_get_cb_info(env, info, &count, values, NULL, NULL) != napi_ok || count != 3 ||
+      napi_get_value_bool(env, values[2], &search_only) != napi_ok) {
+    napi_throw_type_error(env, NULL, "Expected directory, entry name and search-only boolean");
+    return NULL;
+  }
+  return open_named_at(env, values[0], values[1], (search_only ? O_SEARCH : O_RDONLY) | O_DIRECTORY);
 }
 
 static napi_value open_file_at(napi_env env, napi_callback_info info) {
-  return open_at(env, info, O_RDONLY);
+  return open_at(env, info, O_RDONLY | O_NONBLOCK);
 }
 
 static napi_value create_file_at(napi_env env, napi_callback_info info) {
@@ -182,12 +209,14 @@ static napi_value list_at(napi_env env, napi_callback_info info) {
   napi_value result;
   napi_create_array(env, &result);
   uint32_t index = 0;
-  errno = 0;
   struct dirent *entry;
-  while ((entry = readdir(stream)) != NULL) {
+  /* readdir reports failure only through errno, and every call below may leave one behind. */
+  for (errno = 0; (entry = readdir(stream)) != NULL; errno = 0) {
     if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
     struct stat metadata;
     if (fstatat(directory, entry->d_name, &metadata, AT_SYMLINK_NOFOLLOW) < 0) {
+      /* An entry removed after readdir returned it was simply not there. */
+      if (errno == ENOENT) continue;
       int saved = errno;
       closedir(stream);
       errno = saved;

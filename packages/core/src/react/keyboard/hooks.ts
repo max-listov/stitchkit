@@ -80,19 +80,19 @@ function layerState(options: KeyLayerOptions): KeyLayerState<KeyboardEvent, Elem
   };
 }
 
-/** Put a layer on the window's key stack for as long as the component is mounted. */
+/** A layer adopts committed options before the caller's layout effects and leaves at unmount. */
 export function useKeyLayer(options: KeyLayerOptions): void {
   const handle = useRef<KeyLayerHandle<KeyboardEvent, Element> | null>(null);
   const initial = useRef(options);
-  useEffect(() => {
-    const added = stackOf(window).add(layerState(initial.current));
-    handle.current = added;
-    return () => {
-      added.remove();
-      handle.current = null;
-    };
+  useCommittedEffect(() => {
+    // A Suspense boundary disconnects and reconnects these effects without unmounting: the
+    // hidden layer goes quiet, and on reveal it returns to its place rather than to the top.
+    const layer = handle.current ?? stackOf(window).add(layerState(initial.current));
+    handle.current = layer;
+    layer.restore();
+    return () => layer.remove();
   }, []);
-  useEffect(() => {
+  useCommittedEffect(() => {
     handle.current?.update(layerState(options));
   });
 }
@@ -122,7 +122,7 @@ export function useEscapeLayer(options: EscapeLayerOptions): void {
 export interface NavZoneProps {
   readonly ref: (element: HTMLElement | null) => void;
   readonly role?: 'listbox' | 'tablist';
-  readonly 'aria-orientation': ZoneOrientation;
+  readonly 'aria-orientation'?: ZoneOrientation;
   readonly 'aria-label'?: string;
   readonly 'data-keyboard-zone': '';
   readonly onKeyDown: (event: { readonly nativeEvent: KeyboardEvent }) => void;
@@ -227,12 +227,14 @@ export function useNavZone<Id extends ZoneItemId>(options: ZoneOptions<Id>): Nav
   return {
     zoneProps: {
       ref: zoneRef,
-      'aria-orientation': options.orientation ?? 'vertical',
       [ZONE_ATTRIBUTE]: '',
       onKeyDown: (event) => {
         zone.keyDown(event.nativeEvent, element.current);
       },
-      ...(role !== 'none' && { role }),
+      ...(role !== 'none' && {
+        role,
+        'aria-orientation': options.orientation ?? 'vertical',
+      }),
       ...(label !== undefined && { 'aria-label': label }),
     },
     itemProps: (id) => {

@@ -598,6 +598,29 @@ myapp generate "a fox" --wait --output-dir ./out
 myapp generate "a fox" --wait --json > result.json &
 ```
 
+### Download filesystem boundary
+
+`--output-dir` resolves the explicitly configured root once before fetching and pins that
+one directory for the whole batch. An initial root alias (including a symbolic link) selects
+its canonical directory; missing components are created through pinned parents. The root
+capability continues to name the same directory if another actor renames it or replaces its
+pathname. The original spelling printed in `saved` is a display path, not a re-open of the root.
+
+Each media name becomes a direct child. Downloads atomically replace an existing file,
+symbolic link (including a dangling link), or hard link without changing the inode a link
+points to. An existing directory refuses replacement. Ordinary files retain their permission
+bits; new files use `0666 & ~umask`. Replacing writes a new file beside the old one, so it needs
+write permission on the directory, gives the file to the process user, replaces a read-only
+file, and refuses a bind-mounted one. Symlinks inside a contained parent path are never followed.
+The successful operation's JSON remains on stdout when a download fails; per-file diagnostics
+go to stderr and any failed file makes the exit non-zero. Already saved files remain saved.
+
+This filesystem protection supports Linux and macOS. On Linux it uses directory descriptors;
+on macOS it uses the packaged native backend. A bundled or compiled macOS CLI must use
+[`createNativePackaging`](./native-io.md) from `stitchkit/files/packaging` at build
+time. Missing native support and unsupported platforms, including Windows, refuse the download;
+CLI commands without downloads continue to work. There is no weaker path-based fallback.
+
 ## Aggregate views
 
 The CLI's audience is agents, scripts and `jq`, so output is JSON. That settles
@@ -638,11 +661,20 @@ value for the sort field sorts **last in both directions**: it is not the
 smallest, it is not on the scale at all, and letting it lead an ascending list
 would answer a question nobody asked.
 
-Three rules worth knowing before you rely on them:
+Rules worth knowing before you rely on them:
 
-- **A field the result does not carry is a presentation error.** A group of zero
+- **A field no record carries in a nonempty collection is a presentation error.** A group of zero
   over a misspelled field is indistinguishable from a true empty answer, and the
   caller reads it as data. The message names the fields that *are* there.
+  Plain and dotted field paths read own properties only at every segment; inherited
+  properties are not record data. Own keys named `constructor`, `prototype` or `toString`
+  are ordinary fields.
+- **An empty collection is a successful answer.** Count and grouped sums return `{}`,
+  an ungrouped sum returns `0`, and sorted records return `[]`. Tables keep their header
+  and separator without data rows. This applies both to a direct `[]` and to the single
+  array field of an envelope such as `{ items: [], total: 0 }`. With no records, field
+  presence cannot be checked, so a misspelled field answers empty too; malformed paths, unsafe
+  `__proto__` segments and a field of the envelope itself (`--sum total` here) still refuse.
 - **An aggregate needs a collection** — the result itself when it is an array,
   or the single array field of a result object. An aggregate over a scalar, or
   over an object with two array fields, is refused rather than guessed.

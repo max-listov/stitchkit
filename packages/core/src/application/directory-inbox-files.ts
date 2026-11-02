@@ -10,6 +10,7 @@ import {
   readBoundedFile,
 } from '../internal/bounded-file-read';
 import { closeAfter } from '../internal/close-after';
+import { errnoOf } from '../internal/errno';
 import type { FileObservation } from '../internal/file-observation';
 import { isJsonData } from '../internal/json-data';
 import {
@@ -38,8 +39,7 @@ export type InboxRead<TEntry> =
     }
   | null;
 
-export const missingInboxFile = (error: unknown): boolean =>
-  error instanceof Error && 'code' in error && error.code === 'ENOENT';
+export const missingInboxFile = (error: unknown): boolean => errnoOf(error) === 'ENOENT';
 
 /**
  * A failure of one entry's own file. The pass reports it and moves on to the
@@ -64,8 +64,7 @@ const entryFile = async <T>(key: string, run: () => Promise<T>): Promise<T> => {
   }
 };
 
-const existsAlready = (error: unknown): boolean =>
-  error instanceof Error && 'code' in error && error.code === 'EEXIST';
+const existsAlready = (error: unknown): boolean => errnoOf(error) === 'EEXIST';
 
 const ignoreMissing = (error: unknown): undefined => {
   if (!missingInboxFile(error)) throw error;

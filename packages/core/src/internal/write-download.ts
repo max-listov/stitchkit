@@ -1,30 +1,27 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { isWithinDir } from './within-dir';
+import path from 'node:path';
+import { containedEntryMetadata, isSafeEntryName } from './contained-files';
+import type { ContainedFileHandle } from './contained-handle';
+import { writeContainedFile } from './contained-write';
 
 /**
- * Write a downloaded body to disk, with the containment check both download
- * paths need.
- *
- * Shared by the CLI's `--output-dir` and the `mountDownload` native tool. It
- * deliberately takes an **already-resolved** target rather than building one:
- * the two callers derive the filename differently (an untrusted `file.name` vs a
- * name derived from the URL) and, more importantly, report the path back to the
- * user — so composing it here would silently change one of those outputs from
- * relative to absolute.
- *
- * The containment re-check is cheap and belongs on this side: both callers reduce
- * the name to a basename first, but that is an invariant of *their* code, and
- * this is where the write actually happens.
+ * Publish a CLI download as one direct child of the batch's pinned output root.
+ * Atomic replacement replaces links themselves, never the inode they point to.
+ * The caller owns the root descriptor and closes it after every file has settled.
  */
 export async function writeDownload(
-  root: string,
-  target: string,
+  root: ContainedFileHandle,
+  name: string,
   data: Uint8Array,
 ): Promise<void> {
-  if (!isWithinDir(root, target)) {
+  if (!isSafeEntryName(name) || path.basename(name) !== name) {
     throw new Error('download name escapes the output dir');
   }
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, data);
+  const parent = { handle: root, basename: name };
+  const metadata = await containedEntryMetadata(parent);
+  await writeContainedFile({
+    parent,
+    content: data,
+    replace: true,
+    ...(metadata?.isFile() && { mode: metadata.mode }),
+  });
 }

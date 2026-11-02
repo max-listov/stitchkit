@@ -30,6 +30,7 @@ import {
 } from './atomic-publication';
 import { stagingPath } from './atomic-staging';
 import { closeAfter, closeAfterSync } from './close-after';
+import { errnoOf } from './errno';
 
 /** Options of {@link writeFileAtomic} and {@link writeFileAtomicSync}. */
 export interface WriteFileAtomicOptions {
@@ -107,9 +108,7 @@ export interface AtomicFileStage<T> {
 }
 
 function isMissing(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
-  );
+  return errnoOf(error) === 'ENOENT';
 }
 
 /**

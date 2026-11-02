@@ -38,6 +38,7 @@ import type { ZodType } from 'zod';
 import { z } from 'zod';
 import { AppError } from '../contract/errors';
 import { stagingPath } from '../internal/atomic-staging';
+import { errnoOf } from '../internal/errno';
 
 export type ChunkSpoolErrorCode =
   | 'UPLOAD_INVALID'
@@ -140,7 +141,7 @@ const Declaration = z.object({
 const READ_BYTES = 64 * 1024;
 
 function isErrorCode(error: unknown, code: string): boolean {
-  return error instanceof Error && 'code' in error && error.code === code;
+  return errnoOf(error) === code;
 }
 
 /** Publish `bytes` at `path` unless something is already there; `false` if it was. */

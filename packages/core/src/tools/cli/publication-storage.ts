@@ -7,6 +7,7 @@ import {
   ManagedFileError,
 } from '../../files/boundary';
 import { assertDirectoryDurability, syncDirectory } from '../../internal/atomic-publication';
+import { errnoOf } from '../../internal/errno';
 import { type CliBuildManifest, CliBuildManifestSchema } from './manifest';
 import { decodeCliAsset } from './publication-assets';
 import {
@@ -58,7 +59,7 @@ export async function bindPublicationStorage(
   try {
     await mkdir(requested, { mode: 0o700 });
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+    if (errnoOf(error) !== 'EEXIST') throw error;
   }
   await directoryGeneration(requested);
   const root = await realpath(requested);

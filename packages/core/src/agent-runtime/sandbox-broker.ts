@@ -1,6 +1,7 @@
 import { chmod, unlink } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readBoundedBody } from '../internal/bounded-body';
+import { errnoOf } from '../internal/errno';
 import { SandboxError, type SandboxNetworkPolicy } from './sandbox-contract';
 
 /** Explicit HTTP gateway over a Unix socket; CONNECT and arbitrary TCP are never exposed. */
@@ -110,8 +111,7 @@ export async function createSandboxBroker(
         server.closeAllConnections();
       });
       await unlink(socketPath).catch((error: unknown) => {
-        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
-          throw error;
+        if (errnoOf(error) !== 'ENOENT') throw error;
       });
     },
   };

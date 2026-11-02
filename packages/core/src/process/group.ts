@@ -1,4 +1,5 @@
 import { raceAbort } from '../internal/abort-race';
+import { errnoOf } from '../internal/errno';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { MAX_TIMER_MS, sleep } from '../internal/timers';
 import { NativeCommandError, type ParsedNativeCommandStopPolicy } from './contract';
@@ -36,7 +37,7 @@ function deniedOnDarwin(error: unknown): boolean {
 }
 
 function isErrno(error: unknown, code: string): boolean {
-  return error instanceof Error && 'code' in error && error.code === code;
+  return errnoOf(error) === code;
 }
 
 /** Send `signal` to the group. `false` is `ESRCH`: the kernel found no member to receive it. */

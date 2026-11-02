@@ -1,15 +1,14 @@
 import path from 'node:path';
+import { openDirectoryAt, openPinnedDirectory } from '../internal/contained-directory';
 import {
   type ContainedEntryKind,
   type ContainedFile,
-  type ContainedFileHandle,
   type ContainedFileScan,
   listAt,
-  openDirectoryAt,
   openFileAt,
-  openPinnedDirectory,
   readContainedUtf8Handle,
-} from './contained-files';
+} from '../internal/contained-files';
+import type { ContainedFileHandle } from '../internal/contained-handle';
 
 /** One deterministic descriptor-anchored walker for harness resources and workspace search. */
 export async function walkContainedFiles(input: {
