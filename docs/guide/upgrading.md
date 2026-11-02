@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: telegram-chat-pause
+## Released migration: 0.117.0
+
+### telegram-chat-pause
 
 **Who must act:** code that relied on a 429 to one chat to stop the token's other chats. A bot that
 only sends needs no change: its other chats stop waiting.
@@ -26,7 +28,7 @@ The catch belongs at the `Api` call, where grammY has turned a returned refusal 
 
 Search pattern: `budget.run`, and budgets created under a key derived from the token.
 
-## Unreleased migration: tracking-contract-entry
+### tracking-contract-entry
 
 **Who must act:** code that imports `createTrackingContract` or a tracking schema or wire type from
 `stitchkit/tracking`. Code that only uses the browser client needs no change.

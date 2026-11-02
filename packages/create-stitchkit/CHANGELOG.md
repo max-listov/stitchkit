@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.18] - 2026-11-02
+
 ### Added
 
 - `/en/admin`: an admin panel on fixture for development, with sections, roles, a table and a dialog, and no

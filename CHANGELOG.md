@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.117.0] - 2026-11-02
+
 ### ⚠️ Breaking changes
 
 **Who must act:** code that relied on a 429 to one chat to stop the token's other chats, and code importing a tracking schema or `createTrackingContract` from `stitchkit/tracking`. See the [migration](docs/guide/upgrading.md).

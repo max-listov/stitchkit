@@ -20,7 +20,7 @@
     },
     "packages/core": {
       "name": "stitchkit",
-      "version": "0.116.0",
+      "version": "0.117.0",
       "bin": {
         "stitchkit": "./dist/entrypoints/bin/upgrade-cli.js",
       },
@@ -102,7 +102,7 @@
     },
     "packages/create-stitchkit": {
       "name": "create-stitchkit",
-      "version": "0.6.17",
+      "version": "0.6.18",
       "bin": {
         "create-stitchkit": "./dist/cli.js",
       },
@@ -123,7 +123,7 @@
     },
     "packages/tui": {
       "name": "stitchkit-tui",
-      "version": "0.2.11",
+      "version": "0.2.12",
       "bin": {
         "stitchkit-agent": "./dist/cli.js",
       },
