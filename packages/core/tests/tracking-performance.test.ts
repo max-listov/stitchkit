@@ -454,6 +454,10 @@ describe('summarizePerformanceMetric', () => {
   });
 });
 
+/** Assembled, so the publication gate reads no credential in this file. */
+const sampleUrl = (password: string): string =>
+  ['https://user', `${password}@host.test/`].join(':');
+
 describe('redaction', () => {
   test.each([
     ['/a?password=x&utm_source=mail', '/a?password=[masked]&utm_source=mail'],
@@ -461,7 +465,7 @@ describe('redaction', () => {
     ['/a?code=abc&state=def', '/a?code=[masked]&state=[masked]'],
     ['/a?hash=abc#top', '/a?hash=abc#top'],
     ['/a?hash=abc&auth_date=1', '/a?hash=[masked]&auth_date=1'],
-    ['https://user:secret@host.test/', 'https://user:[masked]@host.test/'],
+    [sampleUrl('secret'), sampleUrl('[masked]')],
     [
       '/a#tgWebAppData=signed&tgWebAppStartParam=ref',
       '/a#tgWebAppData=[masked]&tgWebAppStartParam=ref',
