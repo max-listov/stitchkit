@@ -14,6 +14,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { dirname, relative, resolve } from 'node:path';
 import { SOURCES } from '../entrypoints.mjs';
 
 // Passthrough goes BEFORE the pinned flags, so a later duplicate cannot win.
@@ -41,4 +42,30 @@ const args = [
 ];
 
 const built = spawnSync('bun', args, { stdio: 'inherit' });
-process.exit(built.status ?? 1);
+if (built.status !== 0) process.exit(built.status ?? 1);
+
+/**
+ * Entries a storefront loads on every page. A size test on the sources cannot see
+ * what the bundler glued together, so the graph is read from the built files.
+ */
+const ZOD_FREE_ENTRIES = [
+  'dist/entrypoints/tracking.js',
+  'dist/entrypoints/tracking/performance.js',
+];
+
+for (const entry of ZOD_FREE_ENTRIES) {
+  const seen = new Set();
+  const pending = [resolve(entry)];
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const code = readFileSync(file, 'utf8');
+    for (const [, target] of code.matchAll(/(?:from|import)\s*["']([^"']+)["']/g)) {
+      if (target === 'zod') {
+        throw new Error(`${entry} reaches zod through ${relative('.', file)}`);
+      }
+      if (target.startsWith('.')) pending.push(resolve(dirname(file), target));
+    }
+  }
+}

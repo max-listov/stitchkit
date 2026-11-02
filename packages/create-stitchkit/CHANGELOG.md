@@ -12,6 +12,19 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Added
+
+- `/en/admin`: an admin panel on fixture for development, with sections, roles, a table and a dialog, and no
+  database. A production build drops it and its rows, which `bun run acceptance:local` proves on the built
+  files. [`docs/ADMIN_MOCK.md`](template/docs/ADMIN_MOCK.md) holds its addresses and the way off fixture.
+
+### Fixed
+
+- The web role's `/api` forwarding keeps a session and a download: `cookie`, `origin`, each `set-cookie`,
+  `content-disposition`, `content-length` and `location` now pass.
+- The component catalogue and `/openapi.json` answer 404 in production unless the deployment sets
+  `SERVICE_SURFACES=open`. `bun run acceptance:local` proves both answers on one artifact.
+
 ## [0.6.17] - 2026-10-20
 
 ### Changed

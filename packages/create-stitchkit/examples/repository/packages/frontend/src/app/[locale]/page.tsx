@@ -2,6 +2,7 @@ import { appDeclaration } from '@app/config/declaration';
 import { dehydrate, HydrationBoundary } from '@tanstack/react-query';
 import type { Metadata } from 'next';
 import { getTranslations } from 'next-intl/server';
+import { catalogueIsOpen } from '@/env';
 import { LocaleSchema } from '@/i18n/locales';
 import { publicRealtimeOrigin } from '@/lib/api/place';
 import { useRepository } from '@/lib/api/queries';
@@ -39,6 +40,7 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
         applicationDescription={appDeclaration.identity.description[appLocale]}
         heroTitle={t('heroTitle')}
         catalogueLabel={t('ui')}
+        catalogueOpen={catalogueIsOpen()}
         locale={appLocale}
         realtimeOrigin={publicRealtimeOrigin()}
       />

@@ -15,6 +15,7 @@ interface StarterPageProps {
   applicationDescription: string;
   heroTitle: string;
   catalogueLabel: string;
+  catalogueOpen: boolean;
   realtimeOrigin?: string;
   locale: AppLocale;
 }
@@ -63,6 +64,7 @@ export async function StarterPage({
   applicationDescription,
   heroTitle,
   catalogueLabel,
+  catalogueOpen,
   realtimeOrigin,
   locale,
 }: StarterPageProps) {
@@ -89,14 +91,16 @@ export async function StarterPage({
           <div className='flex items-center gap-2'>
             <LanguageSwitcher />
             <ThemeToggle />
-            <Link
-              aria-label={catalogueLabel}
-              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
-              href='/ui'
-            >
-              <span className='hidden sm:inline'>{catalogueLabel}</span>
-              <IconArrowUpRight />
-            </Link>
+            {catalogueOpen ? (
+              <Link
+                aria-label={catalogueLabel}
+                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                href='/ui'
+              >
+                <span className='hidden sm:inline'>{catalogueLabel}</span>
+                <IconArrowUpRight />
+              </Link>
+            ) : null}
           </div>
         </header>
 

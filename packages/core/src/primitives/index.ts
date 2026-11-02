@@ -20,6 +20,7 @@ export {
   DeadlineResultSchema,
   defineDeadlinePolicy,
 } from './deadline';
+export { DecimalInputSchema, DecimalStringSchema } from './decimal';
 export {
   type DomainEventDeliveryClaim,
   DomainEventDeliveryClaimSchema,
@@ -72,7 +73,11 @@ export {
   type Money,
   type MoneyShare,
   type MoneySplit,
+  moneyFromDecimal,
+  moneyToDecimal,
   multiplyMoney,
+  multiplyMoneyByDecimal,
+  roundMoney,
   shareMoney,
   splitMoney,
   subtractMoney,
@@ -97,3 +102,11 @@ export {
   QuantityProjectionSchema,
   type UnitConversion,
 } from './quantity';
+export {
+  defineRoundingPolicy,
+  type RoundingMode,
+  RoundingModeSchema,
+  type RoundingPolicy,
+  RoundingPolicySchema,
+  roundDecimal,
+} from './rounding';

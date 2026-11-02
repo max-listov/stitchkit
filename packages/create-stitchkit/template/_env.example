@@ -23,6 +23,11 @@ SMOKE_WEB_ORIGIN=http://127.0.0.1:3210
 PUBLIC_WEB_HOSTS=127.0.0.1:3210
 LOG_FORMAT=pretty
 
+# `/en/ui` and `/openapi.json` answer 404 in production and stay open otherwise.
+# `open` keeps them on a production deployment that wants them; leave it unset
+# anywhere else.
+# SERVICE_SURFACES=open
+
 # The web role reaches the API role internally, and forwards the browser's
 # same-origin `/api/…` calls to it (packages/frontend/src/app/api/[...path]).
 INTERNAL_API_URL=http://127.0.0.1:3211

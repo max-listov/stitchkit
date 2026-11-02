@@ -39,6 +39,39 @@ export async function assertPublicWebSurface(webOrigin: string): Promise<void> {
   }
 }
 
+/** The paths a production deployment hides, with what still has to answer beside them. */
+export async function assertServiceSurfacesClosed(
+  webOrigin: string,
+  apiOrigin: string,
+): Promise<void> {
+  const home = await dial(publicUrl(webOrigin, '/en'));
+  if (home.status !== 200) throw new Error(`GET /en returned ${home.status}`);
+  const health = await dial(publicUrl(apiOrigin, '/health'));
+  if (health.status !== 200)
+    throw new Error(`GET ${apiOrigin}/health returned ${health.status}`);
+  const closed = [
+    ...[
+      '/ui',
+      '/starter',
+      '/en/ui',
+      '/en/ui/components',
+      '/ru/ui/themes',
+      '/en/admin',
+      '/en/admin/people',
+      '/openapi.json',
+    ].map((path) => publicUrl(webOrigin, path)),
+    publicUrl(apiOrigin, '/openapi.json'),
+  ];
+  for (const url of closed) {
+    const response = await dial(url);
+    if (response.status !== 404) throw new Error(`GET ${url} returned ${response.status}`);
+  }
+  const sitemap = await dial(publicUrl(webOrigin, SITEMAP_PATH));
+  if ((await sitemap.text()).includes('/ui/')) {
+    throw new Error(`GET ${SITEMAP_PATH} still lists the closed catalogue`);
+  }
+}
+
 /** What the deployment has been told about the addresses it serves. */
 export interface PublicHostPolicy {
   /** `PUBLIC_WEB_ORIGIN` — a single public address, stated outright. */

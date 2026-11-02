@@ -1,3 +1,4 @@
+import { storeRetryDelay } from './run-store-retry';
 import {
   type AgentMessage,
   AgentMessagePartSchema,
@@ -14,6 +15,29 @@ export class AgentRuntimeConflictError extends Error {
   constructor(operation: string) {
     super(`Agent runtime store conflict during ${operation}`);
     this.name = 'AgentRuntimeConflictError';
+  }
+}
+
+/**
+ * A run is still active and nothing in this process is executing it.
+ *
+ * Either the store kept failing, or acquisition lost to a run ahead of it and
+ * this one stayed queued. `run` is the record as this executor last read it, and
+ * the store may be ahead of it: a lost reply can leave the record owned by
+ * `ownerId`, this runtime. It does not change by itself: `recover()` skips a
+ * `running` run with a live owner, and later turns of the conversation wait behind
+ * it. Once the store answers, read the record: with no owner or with `ownerId` it is
+ * this runtime's to pass to `abandon()`, and any other owner is executing it.
+ */
+export class AgentRunUnsettledError extends Error {
+  readonly run: AgentRun;
+  readonly ownerId: string;
+  constructor(run: AgentRun, ownerId: string, cause: unknown) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    super(`Agent run ${run.id} is still ${run.state} with no executor: ${reason}`, { cause });
+    this.name = 'AgentRunUnsettledError';
+    this.run = run;
+    this.ownerId = ownerId;
   }
 }
 
@@ -85,6 +109,22 @@ function viewOfSnapshot(
     ...(run && { run }),
     ...(assistant && { assistant }),
   };
+}
+
+/** The terminal a snapshot records for one run, when it records one. */
+export function terminalOfSnapshot(
+  snapshot: AgentSnapshot,
+  runId: string,
+): AgentTerminalCommitResolution | undefined {
+  return canonicalTerminal(viewOfSnapshot(snapshot, runId));
+}
+
+/** The terminal a one-run read records, when it records one. */
+export function terminalOfRunView(
+  view: AgentRunView,
+  conversationId: string,
+): AgentTerminalCommitResolution | undefined {
+  return canonicalTerminal(viewOfRun(view, conversationId));
 }
 
 function viewOfRun(view: AgentRunView, conversationId: string): TerminalView {
@@ -195,68 +235,137 @@ function canRetryTerminal(
  */
 const TERMINAL_COMMIT_ATTEMPTS = 32;
 
-export async function commitAgentRunTerminal(input: {
+interface TerminalCommitInput {
   store: AgentRuntimeStore;
   runtimeEpoch: string;
   candidate: TerminalCommitCandidate;
   now: () => Date;
-}): Promise<AgentTerminalCommitResolution> {
-  let candidate = input.candidate;
-  for (let attempt = 0; attempt < TERMINAL_COMMIT_ATTEMPTS; attempt += 1) {
-    const committed = await input.store.commitRunTerminal({
-      conversationId: candidate.run.conversationId,
-      runId: candidate.run.id,
-      expectedRevision: candidate.run.revision,
-      ownerId: input.runtimeEpoch,
-      ...(candidate.run.fencingToken !== undefined && {
-        fencingToken: candidate.run.fencingToken,
-      }),
-      assistant: candidate.assistant,
-      reason: candidate.reason,
-      ...(candidate.policyName && { policyName: candidate.policyName }),
-      ...(candidate.usage && { usage: candidate.usage }),
-      ...(candidate.absorb?.length && { absorb: candidate.absorb }),
-    });
-    if (committed.outcome === 'applied') {
-      const terminal = canonicalTerminal(viewOfSnapshot(committed.snapshot, candidate.run.id));
-      if (!terminal) throw new AgentRuntimeConflictError('terminal result projection');
-      const absorbed = committed.snapshot.runs.filter(
-        (run) => run.absorbedIntoRunId === candidate.run.id,
-      );
-      return {
+}
+
+/** One round: the settled terminal, or the candidate to offer next. */
+async function attemptTerminalCommit(
+  input: TerminalCommitInput,
+  candidate: TerminalCommitCandidate,
+): Promise<
+  | { settled: AgentTerminalCommitResolution }
+  | { settled?: undefined; candidate: TerminalCommitCandidate }
+> {
+  const committed = await input.store.commitRunTerminal({
+    conversationId: candidate.run.conversationId,
+    runId: candidate.run.id,
+    expectedRevision: candidate.run.revision,
+    ownerId: input.runtimeEpoch,
+    ...(candidate.run.fencingToken !== undefined && {
+      fencingToken: candidate.run.fencingToken,
+    }),
+    assistant: candidate.assistant,
+    reason: candidate.reason,
+    ...(candidate.policyName && { policyName: candidate.policyName }),
+    ...(candidate.usage && { usage: candidate.usage }),
+    ...(candidate.absorb?.length && { absorb: candidate.absorb }),
+  });
+  if (committed.outcome === 'applied') {
+    const terminal = canonicalTerminal(viewOfSnapshot(committed.snapshot, candidate.run.id));
+    if (!terminal) throw new AgentRuntimeConflictError('terminal result projection');
+    const absorbed = committed.snapshot.runs.filter(
+      (run) => run.absorbedIntoRunId === candidate.run.id,
+    );
+    return {
+      settled: {
         ...terminal,
         committedByCaller: true,
         ...(absorbed.length > 0 && { absorbed }),
-      };
-    }
-    if (committed.outcome === 'duplicate') {
-      const terminal = canonicalTerminal(
-        viewOfSnapshot(committed.snapshot, candidate.run.id, committed.assistant),
-      );
-      if (!terminal) throw new AgentRuntimeConflictError('terminal result projection');
-      return terminal;
-    }
-    if (committed.outcome !== 'conflict') {
-      throw new AgentRuntimeConflictError('terminal commit');
-    }
-    // One run, not the conversation: this path runs on every lost CAS, and the
-    // only things it reads are the run's state and the version to report.
-    const latest = await input.store.loadRun({
-      conversationId: candidate.run.conversationId,
-      runId: candidate.run.id,
-    });
-    const terminal = latest
-      ? canonicalTerminal(viewOfRun(latest, candidate.run.conversationId))
-      : undefined;
-    if (terminal) return terminal;
-    const current = latest?.run;
-    if (!current || !canRetryTerminal(current, candidate.run, input.runtimeEpoch)) {
-      throw new AgentRuntimeConflictError('terminal commit');
-    }
-    candidate =
+      },
+    };
+  }
+  if (committed.outcome === 'duplicate') {
+    const terminal = canonicalTerminal(
+      viewOfSnapshot(committed.snapshot, candidate.run.id, committed.assistant),
+    );
+    if (!terminal) throw new AgentRuntimeConflictError('terminal result projection');
+    return { settled: terminal };
+  }
+  if (committed.outcome !== 'conflict') {
+    throw new AgentRuntimeConflictError('terminal commit');
+  }
+  // One run, not the conversation: this path runs on every lost CAS, and the
+  // only things it reads are the run's state and the version to report.
+  const latest = await input.store.loadRun({
+    conversationId: candidate.run.conversationId,
+    runId: candidate.run.id,
+  });
+  const terminal = latest
+    ? canonicalTerminal(viewOfRun(latest, candidate.run.conversationId))
+    : undefined;
+  if (terminal) return { settled: terminal };
+  const current = latest?.run;
+  if (!current || !canRetryTerminal(current, candidate.run, input.runtimeEpoch)) {
+    throw new AgentRuntimeConflictError('terminal commit');
+  }
+  return {
+    candidate:
       current.state === 'interrupt_requested'
         ? interruptedCandidate(candidate, current, input.now)
-        : { ...candidate, run: current };
+        : { ...candidate, run: current },
+  };
+}
+
+/** What a commit absorbed, for the caller that lost its reply. A read that fails names none. */
+async function absorbedBy(
+  store: AgentRuntimeStore,
+  candidate: TerminalCommitCandidate,
+): Promise<readonly AgentRun[]> {
+  const views = await Promise.all(
+    (candidate.absorb ?? []).map(({ runId }) =>
+      store
+        .loadRun({ conversationId: candidate.run.conversationId, runId })
+        .catch(() => undefined),
+    ),
+  );
+  return views.flatMap((view) =>
+    view?.run.absorbedIntoRunId === candidate.run.id ? [view.run] : [],
+  );
+}
+
+/**
+ * Commit the terminal, through lost CAS rounds and through a store that fails.
+ *
+ * A thrown attempt is not known to have failed: a transaction whose COMMIT
+ * reply was lost has applied, and the next round then finds the run already
+ * terminal. That terminal has this executor's owner and fencing token, so it is
+ * reported as committed by the caller, otherwise nobody delivers the answer,
+ * and the successors it absorbed are read back so they are announced too.
+ */
+export async function commitAgentRunTerminal(
+  input: TerminalCommitInput,
+): Promise<AgentTerminalCommitResolution> {
+  let candidate = input.candidate;
+  let storeFailures = 0;
+  for (let attempt = 0; attempt < TERMINAL_COMMIT_ATTEMPTS; attempt += 1) {
+    try {
+      const round = await attemptTerminalCommit(input, candidate);
+      if (!round.settled) {
+        candidate = round.candidate;
+        continue;
+      }
+      const owned =
+        storeFailures > 0 &&
+        round.settled.run.ownerId === input.runtimeEpoch &&
+        round.settled.run.fencingToken === candidate.run.fencingToken;
+      if (!owned) return round.settled;
+      const absorbed = await absorbedBy(input.store, candidate);
+      return {
+        ...round.settled,
+        committedByCaller: true,
+        ...(absorbed.length > 0 && { absorbed }),
+      };
+    } catch (error) {
+      if (error instanceof AgentRuntimeConflictError) throw error;
+      const delay = storeRetryDelay(storeFailures);
+      if (delay === undefined) throw error;
+      storeFailures += 1;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
   throw new AgentRuntimeConflictError('terminal commit');
 }

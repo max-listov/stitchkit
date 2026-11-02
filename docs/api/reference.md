@@ -339,6 +339,10 @@ schedules, transports and file generation remain application-owned.
 | `PermissionGrantMatrix` / `PermissionCheckResult` | _types_ | compile-time complete matrix and unknown/allowed/denied runtime result |
 | `defineMoney` / `createMoneySchema` | functions | fixed-currency JSON-safe minor-unit value and Zod schema |
 | `addMoney` / `subtractMoney` / `multiplyMoney` / `shareMoney` / `splitMoney` | functions | exact same-currency arithmetic with explicit indivisible remainder |
+| `moneyFromDecimal` / `moneyToDecimal` | functions | major units to minor ones and back, with the currency's scale as a parameter |
+| `multiplyMoneyByDecimal` / `roundMoney` | functions | an exact product rounded once, and an amount brought to a policy's steps |
+| `defineRoundingPolicy` / `roundDecimal` / `RoundingPolicySchema` / `RoundingPolicy` / `RoundingModeSchema` / `RoundingMode` | functions, schemas, _types_ | a rounding table as data, by magnitude, and its modes |
+| `DecimalStringSchema` / `DecimalInputSchema` | schemas | one canonical decimal spelling, and the input form that reaches it; a number is refused |
 | `Money` / `MoneyShare` / `MoneySplit` | _types_ | currency-literal value and remainder-bearing operation results |
 | `defineUnitSystem` / `createQuantitySchema` / `addQuantity` | functions | exact decimal quantities and caller-declared finite conversions |
 | `Quantity` / `UnitConversion` / `QuantityProjection` | _types_ | unit-literal value, rational conversion and recorded/derived provenance |
@@ -1037,6 +1041,7 @@ Server-only optional application runtime. See the
 | `AgentRuntimeRecoverOptions` | _type_ | bounded paged startup recovery with causal per-conversation scheduling, context resolver and explicit evidence policy |
 | `AgentRuntimeAbandonInput` | _type_ | one known orphan identity, expected revision and mandatory stale-owner evidence for `runtime.abandon()` |
 | `AgentRuntimeConflictError` | class | thrown when a store mutation loses to a concurrent writer — catchable by type from `stitchkit/agent-runtime` |
+| `AgentRunUnsettledError` | class | rejects `result` when the store never answered: `.run` is still active with no executor, close it with `runtime.abandon()` |
 | `AgentSessionCloseOptions` | _type_ | `gracePeriodMs` for natural settlement, then abort, then `forceTimeoutMs` for bounded settlement after it |
 | `AgentSessionCloseResult` | _type_ | what `close()` achieved: `settled`, or `timedOut` with `remaining` runs still in flight. Only omitting `forceTimeoutMs` guarantees nothing is in flight on return |
 | `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver, explicit unresolved-file behavior, and how an interrupted turn reaches the model (`interruptedAssistant`) |
@@ -2032,7 +2037,7 @@ injected grammY bot. → ADR 0143, ADR 0201, ADR 0274 — [guide](../guide/teleg
 | `TelegramFetch` / `TelegramBotTransportOpen` / `TelegramBotTransportResolve` / `TelegramBotTransportSocket` | _types_ | the `(url, init) => Promise<Response>` the senders take; the transport's socket factory, resolver and the structural socket it needs (a Node `net.Socket` or `tls.TLSSocket` fits) |
 | `TelegramNotDispatchedError` / `TelegramNotDispatchedStage` | class / _type_ | a request that provably never left (`lookup`, `connect` or `request`), so repeating it cannot duplicate a message |
 | `TelegramSendFailureReason` / `TELEGRAM_SEND_FAILURE_REASONS` | _type_ / constant | `blocked-by-user` / `user-deactivated` / `chat-not-found` / `not-started` / `bot-to-bot-disabled` / `rate-limited` / `message-invalid` / `server-error` / `not-dispatched` / `unknown`, and the same as a list; a `Record<TelegramSendFailureReason, …>` over them fails to compile when a reason is added |
-| `telegramOutboundBudget` / `TelegramOutboundBudget` / `TelegramOutboundBudgetConfig` / `TelegramOutboundBudgetStats` / `TelegramOutboundCallOptions` / `TelegramOutboundLane` | function / _type_ | one token-wide outbound budget: one object per token in the process, strict 24 messages/s by default, weighted albums and multi-message copies, an `interactive` lane granted before `bulk`, `run(method, payload, signal, send, { lane })` as the transformer adapter (a 429 on a send pauses the token whether `send` throws it or resolves with the Bot API's `{ ok: false, … }` body), `pause`/`pauseAfter` for 429, `waitUntilResumed` for non-send retries and `stats`; it paces and never retries, and no public value carries the token |
+| `telegramOutboundBudget` / `TelegramOutboundBudget` / `TelegramOutboundBudgetConfig` / `TelegramOutboundBudgetStats` / `TelegramOutboundCallOptions` / `TelegramOutboundChatOptions` / `TelegramOutboundLane` | function / _type_ | one token-wide outbound budget: one object per token in the process, strict 24 messages/s by default, weighted albums and multi-message copies, an `interactive` lane granted before `bulk`, `run(method, payload, signal, send, { lane, maxWaitMs })` as the transformer adapter (a 429 on a send pauses its `chat_id` whether `send` throws it or resolves with the Bot API's `{ ok: false, … }` body, and refusals from `tokenPauseChats` chats pause the token), `pause`/`pauseAfter` for 429, `waitUntilResumed` for non-send retries and `stats`; it paces and never retries, and no public value carries the token |
 | `runTelegramBroadcast` | function | a resumable broadcast by `name` under a state `directory`: audience and journal durably recorded, pacing at `ratePerSecond` (25), exact retry delays within the finite declared budget, injected classifier, uncertain send outcomes never replayed, `dryRun`, one fenced runner per name |
 | `TelegramBroadcastConfig` / `TelegramBroadcastSend` / `TelegramBroadcastReport` / `TelegramBroadcastRunOutcome` / `TelegramBroadcastOutcome` / `TelegramBroadcastRecipient` | _type_ | `name`, `directory`, `recipients()`, `send({ recipient, attempt })`, `maxAttempts`, `signal`, `onProgress`; counts `delivered` / `unreachable` / `failed` / `uncertain` / `pending` and `finished` / `stopped` / `halted` / `dry-run` |
 | `TelegramBroadcastFailureSchema` / `TelegramBroadcastFailure` | schema / _type_ | injected `classify` answers retry-after/transient/permanent/ambiguous; exact provider delay is bounded by `maxRetryDelayMs` without shortening, unknown outcome remains uncertain and is never replayed |
@@ -2139,8 +2144,9 @@ the whole dependency. → ADR 0211 — [guide](../guide/telegram-screens.md)
 
 Browser-safe visitor-tracking mechanics, with no event vocabulary of their own
 and no React. The React wrapper (a provider and a hook, ~40 lines) is the
-application's — it owns the router and the session. The server half is
-`stitchkit/tracking/server`. → ADR 0166 — [guide](../guide/tracking.md)
+application's — it owns the router and the session. It imports no `zod`: the wire
+shapes are `stitchkit/tracking/contract`, the server half is
+`stitchkit/tracking/server`. → ADR 0166, ADR 0280 — [guide](../guide/tracking.md)
 
 | Export | Kind | Summary |
 |--------|------|---------|
@@ -2149,15 +2155,6 @@ application's — it owns the router and the session. The server half is
 | `TrackFn` / `EventsWithMetadata` / `EventsWithoutMetadata` | _type_ | `track(type)` / `track(type, metadata)` typed by the application's metadata map, and the two halves of that map |
 | `BuiltinTrackingEventTypes` / `CONVENTIONAL_TRACKING_EVENT_TYPES` | _type_ / const | the application's names for the events the client emits itself; the conventional `PAGE_VIEW` … `INTERACTION` set |
 | `browserTrackingHost` / `TrackingHost` / `TrackingPageContext` | function / _type_ | everything the client takes from a browser tab behind one interface — page context, visibility, scroll depth, events, intervals, clocks, storage — so a test or a non-tab host can supply its own |
-| `createTrackingContract` / `TrackingContractConfig` / `TrackingContractEndpoints` | function / _type_ | `bootstrap` (`POST /visit`) and `track` (`POST /events`, `safelistedBody`) from the application's event types, scope and optional extras |
-| `createTrackingSchemas` / `TrackingSchemas` / `TrackingSchemasConfig` | function / _type_ | every schema of one surface — `event`, `request`, `response`, `disposition`, `entry`, `bootstrap` — from `eventTypes`, optional `eventExtras`, `buildIdPattern`, `maxEventsPerBatch` |
-| `TrackingEventEnvelope` / `TrackingEventShape` | _type_ | `eventId`, `visitId`, `browserStreamId`, `browserSequence`, `type`, `page`, `metadata`, `clientTimestamp` |
-| `TrackEventsRequest` / `TrackEventsResponse` / `TrackEventsResponseSchema` | _type_ / schema | a batch (`buildId`, `events`, `utm`) and its answer (`accepted`, `dispositions`) |
-| `TrackingDisposition` / `TrackingDispositionSchema` / `TrackingDispositionStatus` / `TrackingDispositionStatusSchema` | _type_ / schema | `accepted` / `duplicate` / `identity-invalid` / `excluded-bot` — every one terminal |
-| `VisitEntryContext` / `VisitEntryContextShape` / `VisitBootstrapResponse` / `VisitBootstrapResponseSchema` | _type_ / schema | what a browser reports to open a visit (lineage, landing, referrer, UTM, display, screen, `buildId`, outbox health) and the lease it gets back |
-| `TrackingOutboxState` / `TrackingOutboxStateSchema` | _type_ / schema | `available` / `unavailable` |
-| `UtmData` / `UtmDataSchema` / `AttributionData` / `AttributionDataSchema` | _type_ / schema | campaign tags and a touch (UTM, referrer, landing page) |
-| `DEFAULT_BUILD_ID_PATTERN` | const | `dev` or a git SHA |
 | `createTrackingOutbox` / `TrackingOutbox` / `TrackingOutboxOptions` / `TrackingOutboxHealth` | function / _type_ | the tab-shared outbox: `streamId`, `reserveSequences`, `enqueue`, `acquireLease` / `releaseLease` (short, released on leave), `readBatch`, `acknowledge`, `health`; bounded by count and age |
 | `TrackingOutboxStorage` / `TrackingOutboxMeta` / `TrackingOutboxEvents` / `TrackingOutboxRecord` / `TrackingQueuedEvent` | _type_ | one atomic, all-or-nothing `transact` over a key/value store and an event store (`readonly` for pure reads) — the contract an adapter implements |
 | `indexedDbOutboxStorage` / `memoryOutboxStorage` | function | the IndexedDB adapter (one `readwrite` transaction per `transact`) and the in-memory one for tests and degraded mode |
@@ -2169,9 +2166,37 @@ application's — it owns the router and the session. The server half is
 | `createOncePerPage` / `OncePerPage` | function / _type_ | one fact per key per page within a window — the guard a twice-mounted component cannot keep itself |
 | `resolveAttribution` / `ResolveAttributionInput` / `ResolvedAttribution` / `AttributionStorage` / `ReferrerRule` | function / _type_ | first-touch once, current-touch on every new UTM; the referrer → source/medium map is the application's, there is no built-in list |
 | `parseUtmFromSearch` / `parseReferrer` | function | the two parsers `resolveAttribution` is built from |
+| `redactTrackingText` / `redactTrackingValue` | functions | mask passwords, sign-in credentials and signed launch data in text or a value of any shape; the key stays, and navigation and campaign parameters are untouched |
 | `resolveTrackedClick` / `ResolveTrackedClickOptions` / `TrackedClick` / `TrackedClickAttributes` / `ClickTarget` | function / _type_ | `data-track` → click, `data-track-action` → interaction, a link to another origin → outbound; attribute names configurable; `hrefPolicy: 'full'` retains query/fragment (default `path-only` omits them), URL credentials excluded; `leavesPage` says which path to send on |
 
 ---
+
+## `stitchkit/tracking/contract`
+
+The wire shapes of tracking, for a server and a shared contract. It brings `zod`, so
+browser code that only sends events does not import it. → ADR 0280
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createTrackingContract` / `TrackingContractConfig` / `TrackingContractEndpoints` | function / _type_ | `bootstrap` (`POST /visit`) and `track` (`POST /events`, `safelistedBody`) from the application's event types, scope and optional extras |
+| `createTrackingSchemas` / `TrackingSchemas` / `TrackingSchemasConfig` | function / _type_ | every schema of one surface — `event`, `request`, `response`, `disposition`, `entry`, `bootstrap` — from `eventTypes`, optional `eventExtras`, `buildIdPattern`, `maxEventsPerBatch` |
+| `TrackingEventEnvelope` / `TrackingEventShape` | _type_ | `eventId`, `visitId`, `browserStreamId`, `browserSequence`, `type`, `page`, `metadata`, `clientTimestamp` |
+| `TrackEventsRequest` / `TrackEventsResponse` / `TrackEventsResponseSchema` | _type_ / schema | a batch (`buildId`, `events`, `utm`) and its answer (`accepted`, `dispositions`) |
+| `TrackingDisposition` / `TrackingDispositionSchema` / `TrackingDispositionStatus` / `TrackingDispositionStatusSchema` | _type_ / schema | `accepted` / `duplicate` / `identity-invalid` / `excluded-bot` — every one terminal |
+| `VisitEntryContext` / `VisitEntryContextShape` / `VisitBootstrapResponse` / `VisitBootstrapResponseSchema` | _type_ / schema | what a browser reports to open a visit (lineage, landing, referrer, UTM, display, screen, `buildId`, outbox health) and the lease it gets back |
+| `TrackingOutboxState` / `TrackingOutboxStateSchema` | _type_ / schema | `available` / `unavailable` |
+| `UtmData` / `UtmDataSchema` / `AttributionData` / `AttributionDataSchema` | _type_ / schema | campaign tags and a touch (UTM, referrer, landing page) |
+| `DEFAULT_BUILD_ID_PATTERN` | const | `dev` or a git SHA |
+| `PerformanceSampleSchema` / `PerformanceSample` / `PerformanceVitalsSchema` / `PerformanceVitals` | schemas / _types_ | one page load's wire shape; a metric that did not arrive is `null` |
+| `summarizePerformanceMetric` / `PerformanceMetricSummary` | function / _type_ | sample count, p75, and a p95 only from 100 samples |
+
+## `stitchkit/tracking/performance`
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createPerformanceCollector` / `PerformanceCollector` / `PerformanceCollectorConfig` | function / _types_ | Web Vitals of this page after load: an `early` sample and a `final` beacon to `url`, undelivered ones kept for the next page; inert for a lab agent |
+| `PerformanceHost` / `VitalsLibrary` / `VitalsMetric` / `VitalsObserver` | _types_ | the seams of the collector: the page, and the part of `web-vitals` it uses |
+| `isLabUserAgent` | function | whether an agent admits to being a lab run or a crawler |
 
 ## `stitchkit/tracking/server`
 
@@ -2188,6 +2213,7 @@ algorithm over a store the application implements. → ADR 0166
 | `activeIntervalOf` / `ActiveTimeInterval` / `ActiveIntervalOptions` | function / _type_ | the visible-time interval an event carries, dated by the server clock; `null` for an unshaped or implausible one |
 | `hashTrackingEvent` | function | `sha256(JSON.stringify(parsedEvent))` — the stored payload hash, unsorted on purpose so it matches what applications already hold |
 | `isBotUserAgent` / `DEFAULT_BOT_USER_AGENT_PATTERN` | function / const | crawlers, monitors and `headlesschrome` are not visitors |
+| `trackingTelemetryHealth` / `TrackingOutboxReport` / `TrackingTelemetryHealth` | function / _types_ | `ok`, `degraded` or `unknown` from outbox reports; a lifetime `dropped` counts only by what it grew over `baselines` |
 | `createPresenceRegistry` / `PresenceRegistry` / `PresenceEntry` | function / _type_ | who is here now, in this process: `touch` / `snapshot(filter)` / `presentVisitOf` with a 45 s TTL |
 
 ---
@@ -2225,6 +2251,15 @@ providers, the microphone and the player remain application-owned. See the
 | `LIVE_VOICE_PHASES` / `LiveVoicePhase` | constant / _type_ | `opening`, `idle`, `hearing`, `thinking`, `speaking` |
 
 ---
+
+## `stitchkit/xlsx`
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `renderXlsx` | function | a workbook from rows and typed columns as XLSX bytes; deterministic, no formula in the file |
+| `XLSX_MEDIA_TYPE` | constant | the media type for `defineExportOperation` and a download response |
+| `XlsxCellError` | class | a value of the wrong type, or one Excel cannot hold exactly, with the cell's address |
+| `XlsxWorkbookSchema` / `XlsxWorkbook` / `XlsxSheetSchema` / `XlsxColumnSchema` / `XlsxColumn` | schemas / _types_ | the workbook, its sheets and the six column types |
 
 ## `stitchkit/geo`
 

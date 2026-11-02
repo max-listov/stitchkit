@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { NextConfig } from 'next';
+import { PHASE_DEVELOPMENT_SERVER } from 'next/constants';
 import createNextIntlPlugin from 'next-intl/plugin';
 
 const config: NextConfig = {
@@ -16,4 +17,12 @@ const config: NextConfig = {
   images: { remotePatterns: [] },
 };
 
-export default createNextIntlPlugin()(config);
+/**
+ * A `page.dev.tsx` exists for the development server alone, so what it imports
+ * is absent from a production build rather than guarded inside it.
+ */
+export default function nextConfig(phase: string): NextConfig {
+  const pageExtensions =
+    phase === PHASE_DEVELOPMENT_SERVER ? ['dev.tsx', 'tsx', 'ts'] : ['tsx', 'ts'];
+  return createNextIntlPlugin()({ ...config, pageExtensions });
+}

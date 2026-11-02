@@ -23,6 +23,7 @@ import {
   materializeAll,
   pageAttribution,
   pageViewDraft,
+  redactedUtm,
   type VisitState,
 } from './client-visit';
 import type { TrackingHost } from './host';
@@ -170,7 +171,9 @@ function unloadBeacon<TEvent extends TrackingEventEnvelope<string>>(
 
 /** The campaign a visit is attributed to now, when the current touch carries one. */
 function currentUtmOf(attribution: ResolvedAttribution | null): UtmData | undefined {
-  return attribution?.currentTouch.utm?.source ? attribution.currentTouch.utm : undefined;
+  return attribution?.currentTouch.utm?.source
+    ? redactedUtm(attribution.currentTouch.utm)
+    : undefined;
 }
 
 /** The client's periods and limits, defaulted, once its build id is known to be there. */

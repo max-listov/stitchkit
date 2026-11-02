@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Targets stitchkit `^0.117.0`, keeping consumers on one framework copy when they adopt the per-chat Telegram pause and the tracking contract entry. No terminal source change is needed.
+
 ## [0.2.11] - 2026-11-02
 
 ### Changed

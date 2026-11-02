@@ -60,6 +60,7 @@ export {
   type TelegramOutboundBudgetConfig,
   type TelegramOutboundBudgetStats,
   type TelegramOutboundCallOptions,
+  type TelegramOutboundChatOptions,
   type TelegramOutboundLane,
   telegramOutboundBudget,
 } from '../telegram/outbound-budget';

@@ -656,6 +656,26 @@
       "test": "a provider wait above maxRetryDelayMs halts without clamping or resending early"
     }
   },
+  "PerformanceCollectorConfig": {
+    "buildId": {
+      "test": "nothing loads before the page has, and a sample carries all five metrics"
+    },
+    "url": {
+      "test": "nothing loads before the page has, and a sample carries all five metrics"
+    },
+    "visitId": {
+      "test": "earlyDelayMs is when the early sample leaves, and visitId goes with it"
+    },
+    "earlyDelayMs": {
+      "test": "earlyDelayMs is when the early sample leaves, and visitId goes with it"
+    },
+    "host": {
+      "test": "a browser under automation sends nothing, whatever it says it is"
+    },
+    "loadVitals": {
+      "test": "a chunk that fails to load costs the measurement, not the page"
+    }
+  },
   "TelegramOutboundBudgetConfig": {
     "token": {
       "test": "one token has one budget; a pause on one client stops its aliases and not another token"
@@ -665,6 +685,12 @@
     },
     "retryAfterFallbackMs": {
       "test": "a 429 without retry_after uses the declared fallback, never a zero wait"
+    },
+    "tokenPauseChats": {
+      "test": "refusals from several chats at once hold every sender of the token"
+    },
+    "tokenPauseWindowMs": {
+      "test": "refusals spread wider than the window stay each chat's own"
     },
     "now": {
       "test": "429 pauses every path of the token and resumes one message at a time"

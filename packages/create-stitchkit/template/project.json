@@ -165,6 +165,15 @@
         "required": false
       },
       {
+        "name": "SERVICE_SURFACES",
+        "shape": "enum",
+        "required": false,
+        "members": [
+          "open",
+          "closed"
+        ]
+      },
+      {
         "name": "TRUSTED_HOSTS",
         "shape": "string",
         "required": false

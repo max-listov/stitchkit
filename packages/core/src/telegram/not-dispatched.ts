@@ -1,8 +1,8 @@
 /**
  * Where a Bot API request stopped before any byte of it was written: the address lookup, the
- * connection, or the request itself (a body that could not be read).
+ * connection, the request itself (a body that could not be read), or the outbound budget's queue.
  */
-export type TelegramNotDispatchedStage = 'lookup' | 'connect' | 'request';
+export type TelegramNotDispatchedStage = 'lookup' | 'connect' | 'request' | 'queue';
 
 /**
  * The request provably never reached Telegram, so sending it again cannot duplicate a message.

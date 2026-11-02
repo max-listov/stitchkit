@@ -9,7 +9,11 @@ import {
   type AgentTerminalReason,
   runStateForTerminalReason,
 } from './schemas';
-import { commitAgentRunTerminal } from './terminal-commit';
+import {
+  AgentRuntimeConflictError,
+  AgentRunUnsettledError,
+  commitAgentRunTerminal,
+} from './terminal-commit';
 import { assistantStatus } from './terminal-status';
 
 /**
@@ -184,7 +188,10 @@ export async function commitRunTerminal<CONTEXT, TOOLS extends ToolSet>(
       reason: state.terminalReason,
       usage: spent,
     });
-    throw error;
+    // A conflict means another writer holds the record. Anything else is a
+    // store that kept failing, and the record stays with nobody behind it.
+    if (error instanceof AgentRuntimeConflictError) throw error;
+    throw new AgentRunUnsettledError(state.run, runtimeEpoch, error);
   }
   state.observedVersion = terminal.snapshotVersion;
   state.run = terminal.run;

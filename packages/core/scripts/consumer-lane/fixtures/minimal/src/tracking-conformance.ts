@@ -4,11 +4,8 @@
  * runs over the memory adapter (there is no IndexedDB here); the server half
  * decides a batch. Both entries are peer-free by design and this is the proof.
  */
-import {
-  createTrackingOutbox,
-  createTrackingSchemas,
-  memoryOutboxStorage,
-} from 'stitchkit/tracking';
+import { createTrackingOutbox, memoryOutboxStorage } from 'stitchkit/tracking';
+import { createTrackingSchemas } from 'stitchkit/tracking/contract';
 import { dispositionTrackingBatch, hashTrackingEvent } from 'stitchkit/tracking/server';
 
 const outbox = createTrackingOutbox(

@@ -95,9 +95,10 @@ describe('the conformance kit can be given a fixture', () => {
     // Nothing left behind, and nothing preselected: the kit chose the ids and
     // said so, rather than the adapter having to guess a global fixture name.
     expect(parents.size).toBe(0);
-    // Six normalized scenarios, ledger, archive, once-seeding and three branch identities.
-    expect(announced.length).toBe(12);
-    expect(new Set(announced).size).toBe(12);
+    // Six normalized scenarios, ledger, archive, once-seeding, three branch
+    // identities and the commit conflict.
+    expect(announced.length).toBe(13);
+    expect(new Set(announced).size).toBe(13);
     for (const id of announced) expect(id).toStartWith('conformance-');
   });
 
@@ -173,5 +174,25 @@ describe('the conformance kit can be given a fixture', () => {
     // a lifecycle that forces every adapter to care about fixtures would be a
     // migration for people who have no fixtures.
     await runAgentStoreConformance({ createStore: () => createMemoryAgentRuntimeStore() });
+  });
+
+  test('an adapter that does not retry a conflict at COMMIT fails the kit', async () => {
+    const durable = createMemoryAgentRuntimeStore();
+    let armed = false;
+    const store: AgentRuntimeStore = {
+      ...durable,
+      acceptInputAndAssignRun: async (input) => {
+        if (armed) throw new Error('could not serialize access');
+        return durable.acceptInputAndAssignRun(input);
+      },
+    };
+    await expect(
+      runAgentStoreConformance({
+        createStore: () => store,
+        armCommitConflict: () => {
+          armed = true;
+        },
+      }),
+    ).rejects.toThrow('could not serialize access');
   });
 });

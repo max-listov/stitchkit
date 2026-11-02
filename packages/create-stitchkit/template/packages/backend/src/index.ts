@@ -1,5 +1,6 @@
 import { env } from '@app/config';
 import { apiRole, appDeclaration } from '@app/config/declaration';
+import { serviceSurfacesAreOpen } from '@app/config/variables';
 import { wrapInRequestContext } from 'stitchkit/observability';
 import {
   bindProcessSignals,
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
     logging: { format: env.LOG_FORMAT },
     socket,
     rawRoutes: [
-      openApiRoute('/openapi.json', openApi),
+      ...(serviceSurfacesAreOpen(env) ? [openApiRoute('/openapi.json', openApi)] : []),
       createMcpHttpRoute({ path: '/mcp', handler: mcp }),
       {
         method: 'GET',

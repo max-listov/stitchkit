@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 const DECIMAL_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
 export interface DecimalParts {
@@ -58,3 +60,23 @@ export function multiplyDecimalRatio(
   }
   throw new RangeError('conversion does not have a finite decimal representation');
 }
+
+/**
+ * A decimal as a string in its one canonical spelling: `10.5`, never `10.50`,
+ * `+10.5`, `.5`, or a number. Two equal values serialize alike, so a digest or a
+ * unique index over them agrees. A JSON number is refused: it is a float by the
+ * time anyone reads it.
+ */
+export const DecimalStringSchema = z.string().refine((value) => {
+  try {
+    return formatDecimal(parseDecimal(value)) === value;
+  } catch {
+    return false;
+  }
+}, 'expected a canonical decimal string');
+
+/** A decimal string as a database or a form spells it, brought to the canonical one. */
+export const DecimalInputSchema = z
+  .string()
+  .regex(DECIMAL_PATTERN, 'expected a decimal string')
+  .transform((value) => formatDecimal(parseDecimal(value)));

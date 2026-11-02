@@ -56,6 +56,14 @@ export interface AgentStoreConformanceConfig {
    * not overwritten by the answer to "did the teardown work".
    */
   cleanup?(context: AgentStoreConformanceContext): void | Promise<void>;
+  /**
+   * Make the next write transaction fail at COMMIT with the database's own
+   * serialization conflict. The kit then requires that one write to apply
+   * anyway, exactly once: the retry is the adapter's duty (see
+   * `AgentRuntimeStoreDriver.transaction`). Leave it out for a store whose
+   * database cannot lose a commit, such as a single-writer SQLite.
+   */
+  armCommitConflict?(): void | Promise<void>;
 }
 
 /** Black-box contract shared by memory and third-party durable agent stores. */
@@ -77,12 +85,14 @@ export async function runAgentStoreConformance(
       `${run}-branch-source`,
       `${run}-branch`,
       `${run}-branch-restored`,
+      `${run}-commit-conflict`,
     ],
   };
   const store = await config.createStore(context);
   let failure: unknown;
   try {
     await conformanceScenario(store, context.conversationIds);
+    await commitConflictScenario(store, context.conversationIds, config.armCommitConflict);
   } catch (error) {
     failure = error;
   }
@@ -101,6 +111,26 @@ export async function runAgentStoreConformance(
     );
   }
   if (failure !== undefined) throw failure;
+}
+
+async function commitConflictScenario(
+  store: AgentRuntimeStore,
+  conversationIds: readonly string[],
+  armCommitConflict: AgentStoreConformanceConfig['armCommitConflict'],
+): Promise<void> {
+  const conversationId = conversationIds.at(-1);
+  if (!armCommitConflict || !conversationId) return;
+  await armCommitConflict();
+  const accepted = await store.acceptInputAndAssignRun({
+    idempotencyKey: 'commit-conflict',
+    input: userMessage(conversationId, 'commit-conflict-input'),
+    run: queuedRun(conversationId, 'commit-conflict-input', 'commit-conflict-run'),
+  });
+  requireOutcome(accepted, 'applied');
+  const snapshot = await store.loadSnapshot(conversationId);
+  if (snapshot.runs.length !== 1) {
+    throw new Error('A commit conflict must leave its write applied exactly once');
+  }
 }
 
 async function seedScenario(store: AgentRuntimeStore, conversationId: string): Promise<void> {

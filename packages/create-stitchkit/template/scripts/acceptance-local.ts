@@ -78,6 +78,9 @@ for (const [name, value] of Object.entries(base)) {
 delete environment.ACCEPTANCE_DATABASE_URL;
 Object.assign(environment, {
   NODE_ENV: 'production',
+  // The gates read the catalogue and the OpenAPI document; the closed default is
+  // proved after them, on the same artifact.
+  SERVICE_SURFACES: 'open',
   // The one address every role, every migration and every gate here will see.
   DATABASE_URL: acceptanceDatabaseUrl,
   PM2_HOME: home,
@@ -106,8 +109,12 @@ try {
   await awaitRolesAnswering(declaredRoleReadiness(appDeclaration, environment));
   await run(['bun', 'run', 'runtime:smoke'], environment);
   await run(['bun', 'run', 'e2e'], environment);
+  const closed = { ...environment, SERVICE_SURFACES: 'closed' };
+  await run(['pm2', 'restart', 'ecosystem.config.cjs', '--update-env'], closed);
+  await awaitRolesAnswering(declaredRoleReadiness(appDeclaration, closed));
+  await run(['bun', 'run', 'surfaces:closed'], closed);
   console.log(
-    `Local acceptance passed: ${appDeclaration.roles.map((role) => role.name).join(' and ')} answered on ephemeral ports, and both runtime gates are green`,
+    `Local acceptance passed: ${appDeclaration.roles.map((role) => role.name).join(' and ')} answered on ephemeral ports, both runtime gates are green, and the service surfaces close`,
   );
 } catch (error) {
   failure = { error };

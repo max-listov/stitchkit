@@ -29,6 +29,7 @@ The guide, in reading order:
 16. [Frontend integrations](./guide/frontend-integrations.md) — React Router resource routes and a separate Vite development proxy.
 17. [React Query policy](./guide/react.md) — request-local SSR clients, a browser singleton and `ApiError` retry rules.
 18. [GeoIP](./guide/geo.md) — a server-only managed reader, three observable states and last-known-good hot reload.
+19. [XLSX](./guide/xlsx.md) — a workbook from rows and typed columns, with no dependency and no formula in the file.
 19. [Project declaration](./guide/declaration.md) — the optional statement a repository makes about itself, and the boundary that keeps a place out of it.
 20. [Visitor tracking](./guide/tracking.md) — the browser tracking client and outbox, the page-leave beacon that arrives, and the server-side decisions over your own tables.
 21. [Release](./guide/release.md) — the page reloads onto the release it was built for: a build marker on the server, a watcher in the browser, and the header and socket event between them.

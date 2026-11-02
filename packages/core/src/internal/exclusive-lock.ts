@@ -235,9 +235,10 @@ async function createOwned(
       throw error;
     }
   } catch (error) {
-    await handle.close().catch(() => undefined);
+    // Before the close, like a release: an open descriptor pins the inode this compares.
     if (published && ino !== undefined && dev !== undefined)
       await unlinkIfSame(path, ino, dev, 2).catch(() => undefined);
+    await handle.close().catch(() => undefined);
     await unlink(staged).catch(() => undefined);
     throw error;
   }
@@ -269,11 +270,14 @@ async function createOwned(
       if (released) return;
       released = true;
       try {
-        await handle.close();
-      } finally {
         // A lock reclaimed from under this holder belongs to someone else now;
         // removing it by name would hand the resource to a third process.
         await unlinkIfSame(path, ownedInode, ownedDevice);
+      } finally {
+        // Last, and for two reasons. To a waiter in this process a closed descriptor
+        // reads as an abandoned lock, and an open one pins the inode, so the
+        // comparison above cannot match a new lock that reused its number.
+        await handle.close();
       }
     },
   };

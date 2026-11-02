@@ -117,17 +117,37 @@ cast, and a send cancelled in the queue then waits for its slot and fails as
   `messagesPerSecond`.
 - **The first send after idle is immediate; the rest are spaced.** This is a
   strict budget, not a bucket that saves a burst: at 24/s the next send is due
-  one interval later. A 429 pauses the whole token; when it resumes, one send
-  is released at the deadline and the queue continues one interval at a time,
-  never as a stampede.
-- **It paces; it does not retry.** `run` calls the send once. A 429 pauses the
-  token for Telegram's `retry_after` (or `retryAfterFallbackMs` when Telegram
-  gave none) and rethrows; the caller's retry policy decides what happens next.
+  one interval later. When a pause ends, one send is released at the deadline and
+  the queue continues one interval at a time, never as a stampede.
+- **A 429 holds the chat that got it.** Telegram words a group's limit, a chat's
+  pace and the bot's own limit alike, and only the addressee differs, so `run`
+  pauses the `chat_id` of the refused send and every other chat of the token goes
+  on at the shared rate. A person's reply does not wait behind a notification
+  group on its limit, and neither does a campaign. Refusals from
+  `tokenPauseChats` different chats (default 3) inside `tokenPauseWindowMs`
+  (default 5000) are read as the bot's own limit and pause the whole token, and so
+  does a 429 with no chat in the payload. `stats().pausedChats` counts the chats
+  on a pause; `stats().pausedForMs` is the token's.
+- **A chat known to hit its limit can keep a 429 to itself.** A notification group
+  runs into its per-minute limit as a matter of course. `{ refusal: 'call' }` on `run`,
+  or `telegramBudgetTransformer(budget, { refusal: 'call' })` on that group's own `Api`,
+  makes the refusal concern that send alone: nothing pauses and nothing counts towards
+  `tokenPauseChats`. The call still spends the budget and waits out other pauses, and
+  what to do with the refused message stays the caller's decision.
+- **A wait can be bounded.** A burst to one chat on pause otherwise queues without
+  limit. `{ maxWaitMs }` on `run` or `acquire`, or on
+  `telegramBudgetTransformer(budget, { maxWaitMs })`, ends a call that waited that
+  long with `TelegramNotDispatchedError`, stage `queue`: nothing was sent and no
+  message was spent, so repeating it is safe.
+- **It paces; it does not retry.** `run` calls the send once. A 429 pauses for
+  Telegram's `retry_after` (or `retryAfterFallbackMs` when Telegram gave none) and
+  rethrows; the caller's retry policy decides what happens next.
   The refusal may be thrown or returned: a client transformer sits below the
   place where grammY turns Telegram's `{ ok: false, error_code: 429, … }` body into
   a `GrammyError`, so `run` reads that body too and hands it back unchanged.
-  A 429 from an edit or a read concerns that call and pauses nothing; `budget.pauseAfter`
-  remains for a caller who decides otherwise. A network failure is rethrown unchanged and stays `unknown`; a 5xx
+  A 429 from an edit or a read concerns that call and pauses nothing;
+  `budget.pauseAfter(error, { chatId })` remains for a caller who decides otherwise, and pauses
+  the token when it names no chat. A network failure is rethrown unchanged and stays `unknown`; a 5xx
   is rethrown unchanged and stays `server-error`. Neither is retried by the
   budget or pauses the token — repeating a send whose outcome is unknown is a
   decision, not a primitive's silent guess.
@@ -139,9 +159,9 @@ cast, and a send cancelled in the queue then waits for its slot and fails as
   the client's own error — not evidence that Telegram did not accept it — so
   keep the outcome unknown rather than retrying it as a definite failure.
 - **Non-send retries wait without spending.** An edit or delete retry that got
-  a 429 first records the pause with `budget.pauseAfter(error)` (the `run` path
-  does this itself), then uses `await budget.waitUntilResumed(signal)`; it shares
-  the token's pause but does not take a message slot.
+  a 429 records the pause with `budget.pauseAfter(error, { chatId })`, then uses
+  `await budget.waitUntilResumed(signal, { chatId })`; it shares that chat's pause
+  and the token's, and takes no message slot. Without `chatId` it pauses the token.
 
 `telegramBroadcastSender` and `telegramOperatorSender` still send through
 `callTelegramBotApi`; they are not a second budget. Their returned function does

@@ -24,9 +24,28 @@ export function failureThisRuntimeOwns(error: unknown): AgentTerminalReason | un
 }
 
 /**
+ * Both failures, with the primary one still leading. An object literal here
+ * would stop being an `Error`: a sink that prints `internalCause` renders
+ * `[object Object]` and loses the stack, and the message a reader needs is the
+ * first failure, not what followed it. The conformance kit composes a primary
+ * with a teardown failure the same way.
+ */
+function withLaterFailure(primary: unknown, later: unknown, what: string): unknown {
+  return new AggregateError(
+    [primary, later],
+    `${primary instanceof Error ? primary.message : String(primary)} (${what} also failed: ${
+      later instanceof Error ? later.message : String(later)
+    })`,
+  );
+}
+
+/**
  * A throw out of preparation or the stream, turned into the terminal the run
  * will commit. It never rethrows: every failure that reaches here ends as a
- * durable terminal with its cause attached.
+ * durable terminal with its cause attached, or as `AgentRunUnsettledError` when
+ * the store refuses that terminal too. The two reads below are therefore
+ * guarded: a store that fails them is the likely reason to be here, and what
+ * they would have added is not worth the run's terminal.
  */
 export async function classifyRunFailure<CONTEXT, TOOLS extends ToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
@@ -35,26 +54,20 @@ export async function classifyRunFailure<CONTEXT, TOOLS extends ToolSet>(
   const { config, runtimeEpoch } = execution.dependencies;
   const { state, operationLifecycle, executionSignal } = execution;
   operationLifecycle.failStepCheckpoints(error);
-  // Both failures, with the primary one still leading. An object literal
-  // here would stop being an `Error`: a sink that prints `internalCause`
-  // renders `[object Object]` and loses the stack, and the message a reader
-  // needs is the storage failure, not the cleanup that followed it. The
-  // conformance kit already composes a primary with a teardown failure this
-  // way, and one shape for one idea is the whole rule.
   const cleanupFailure = state.providerStreamCleanupFailure;
   state.internalCause =
     cleanupFailure === undefined
       ? error
-      : new AggregateError(
-          [error, cleanupFailure],
-          `${error instanceof Error ? error.message : String(error)} (provider stream cleanup also failed: ${
-            cleanupFailure instanceof Error ? cleanupFailure.message : String(cleanupFailure)
-          })`,
-        );
-  const latest = await config.store.loadRun({
-    conversationId: state.run.conversationId,
-    runId: state.run.id,
-  });
+      : withLaterFailure(error, cleanupFailure, 'provider stream cleanup');
+  let latest: Awaited<ReturnType<typeof config.store.loadRun>>;
+  try {
+    latest = await config.store.loadRun({
+      conversationId: state.run.conversationId,
+      runId: state.run.id,
+    });
+  } catch (readFailure) {
+    state.internalCause = withLaterFailure(state.internalCause, readFailure, 'the run read');
+  }
   const latestRun = latest?.run;
   const durableInterrupt =
     latestRun?.ownerId === runtimeEpoch && latestRun.state === 'interrupt_requested';
@@ -66,9 +79,17 @@ export async function classifyRunFailure<CONTEXT, TOOLS extends ToolSet>(
   }
   const staleOwner = isToolExecutionControlError(error) && error.reason === 'stale_run';
   if (!staleOwner) {
-    await operationLifecycle.finish(
-      executionSignal.aborted || durableInterrupt ? 'cancelled' : 'failed',
-    );
+    try {
+      await operationLifecycle.finish(
+        executionSignal.aborted || durableInterrupt ? 'cancelled' : 'failed',
+      );
+    } catch (finishFailure) {
+      state.internalCause = withLaterFailure(
+        state.internalCause,
+        finishFailure,
+        'closing the operations',
+      );
+    }
   }
   if (isToolExecutionControlError(error) || executionSignal.aborted || durableInterrupt) {
     state.terminalReason = executionSignal.aborted

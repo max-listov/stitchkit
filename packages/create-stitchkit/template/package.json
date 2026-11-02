@@ -33,6 +33,7 @@
     "cli": "bun packages/backend/src/cli.ts",
     "tools": "bun packages/backend/src/tools.ts",
     "runtime:smoke": "bun scripts/runtime-smoke.ts",
+    "surfaces:closed": "bun scripts/service-surfaces-closed.ts",
     "surface:snapshot": "bun scripts/surface-snapshot.ts",
     "e2e": "playwright test",
     "acceptance:local": "bun scripts/acceptance-local.ts",

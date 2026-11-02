@@ -184,7 +184,10 @@ describe('agent runtime provider stream ownership', () => {
       parts: [{ type: 'text', text: 'fail after the effect' }],
       metadata: {},
     });
-    await expect(failed.result).rejects.toBe(terminalFailure);
+    await expect(failed.result).rejects.toMatchObject({
+      name: 'AgentRunUnsettledError',
+      cause: terminalFailure,
+    });
     expect(providerAborts).toBe(1);
 
     const next = runtime.submit({

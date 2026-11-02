@@ -80,7 +80,7 @@ function botClient(
 }
 
 describe('the budget as a grammY client transformer', () => {
-  test('a 429 grammY returns as a response pauses the token for the stated wait', async () => {
+  test('a 429 grammY returns as a response pauses its chat for the stated wait', async () => {
     const clock = createManualClock();
     const { budget } = manualBudget(clock);
     const { api, calls } = botClient(clock, budget, (call) =>
@@ -93,17 +93,17 @@ describe('the budget as a grammY client transformer', () => {
       reason: 'rate-limited',
       retryAfterSeconds: 2,
     });
-    expect(budget.stats().pausedForMs).toBe(2_000);
+    expect(budget.stats()).toMatchObject({ pausedChats: 1, pausedForMs: 0 });
 
-    // Another chat, forty milliseconds later in real life: it waits for the pause.
-    const second = api.sendMessage(2, 'second');
+    // The same chat, forty milliseconds later in real life: it waits for the pause.
+    const second = api.sendMessage(1, 'second');
     await clock.advance(1_999);
     expect(calls.map((call) => call.chat)).toEqual([1]);
     await clock.advance(1);
     await second;
     expect(calls.map((call) => [call.chat, call.at])).toEqual([
       [1, 0],
-      [2, 2_000],
+      [1, 2_000],
     ]);
     expect(clock.pending()).toBe(0);
   });
@@ -116,7 +116,7 @@ describe('the budget as a grammY client transformer', () => {
     );
 
     const sends = Array.from({ length: 5 }, (_, index) =>
-      api.sendMessage(index + 1, 'campaign').catch((error: unknown) => error),
+      api.sendMessage(1, `campaign ${index}`).catch((error: unknown) => error),
     );
     await clock.advance(0);
     expect(calls).toHaveLength(1);
@@ -144,13 +144,33 @@ describe('the budget as a grammY client transformer', () => {
     );
 
     await api.sendMessage(1, 'first').catch(() => undefined);
-    expect(budget.stats().pausedForMs).toBe(500);
-    const second = api.sendMessage(2, 'second');
+    expect(budget.stats().pausedChats).toBe(1);
+    const second = api.sendMessage(1, 'second');
     await clock.advance(499);
     expect(calls).toHaveLength(1);
     await clock.advance(1);
     await second;
     expect(calls[1]?.at).toBe(500);
+  });
+
+  test('a transformer installed with refusal: call pauses nothing on a returned 429', async () => {
+    const clock = createManualClock();
+    const { budget } = manualBudget(clock);
+    const api = new Api('1:test', {
+      fetch: async () =>
+        Response.json(
+          {
+            ok: false,
+            error_code: 429,
+            description: 'Too Many Requests',
+            parameters: { retry_after: 2 },
+          },
+          { status: 429 },
+        ),
+    });
+    api.config.use(telegramBudgetTransformer(budget, { refusal: 'call' }));
+    await api.sendMessage(1, 'over the limit').catch(() => undefined);
+    expect(budget.stats()).toMatchObject({ pausedChats: 0, pausedForMs: 0 });
   });
 
   test('another refusal and a success leave the token running', async () => {

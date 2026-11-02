@@ -1,13 +1,11 @@
 import { z } from 'zod';
-import { addDecimal, formatDecimal, multiplyDecimalRatio, parseDecimal } from './decimal';
-
-const DecimalStringSchema = z.string().refine((value) => {
-  try {
-    return formatDecimal(parseDecimal(value)) === value;
-  } catch {
-    return false;
-  }
-}, 'expected a canonical decimal string');
+import {
+  addDecimal,
+  DecimalStringSchema,
+  formatDecimal,
+  multiplyDecimalRatio,
+  parseDecimal,
+} from './decimal';
 
 export interface Quantity<TUnit extends string = string> {
   readonly value: string;

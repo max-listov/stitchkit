@@ -97,6 +97,11 @@ export interface AgentRuntimeStoreDriver<TRANSACTION> {
    * Run one coherent store operation. `read` lets an adapter take a stable
    * snapshot without reserving its writer slot; absent options retain the
    * write-safe transaction used by existing adapters.
+   *
+   * Retrying a serialization conflict is this method's duty, wherever the
+   * database reports it: on a statement, and on `COMMIT`, which some clients
+   * surface in a different shape. `work` is safe to run again, because it
+   * repeats its reads, and a conflict that escapes here fails an entire turn.
    */
   transaction<RESULT>(
     work: (transaction: TRANSACTION) => Promise<RESULT>,

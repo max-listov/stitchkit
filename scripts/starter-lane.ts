@@ -385,6 +385,9 @@ try {
       const apiOrigin = `http://127.0.0.1:${apiPort}`;
       const environmentLines = [
         'NODE_ENV=production',
+        // The smoke and the browser gates read the catalogue and the OpenAPI
+        // document; the closed default is proved after them, on this artifact.
+        'SERVICE_SURFACES=open',
         `DATABASE_URL=${database.url}`,
         `API_PORT=${apiPort}`,
         `WEB_PORT=${webPort}`,
@@ -419,6 +422,7 @@ try {
       const env = {
         ...Bun.env,
         NODE_ENV: 'production',
+        SERVICE_SURFACES: 'open',
         DATABASE_URL: database.url,
         API_PORT: String(apiPort),
         WEB_PORT: String(webPort),
@@ -524,28 +528,31 @@ try {
         // reaches the role and the `bun run` launcher in front of it. Killing
         // the child alone leaves the role running with a deleted working
         // directory — 101 of those accumulated on a shared host in one evening.
-        api = Bun.spawn(['bun', 'run', 'start:api'], {
-          cwd: generated,
-          env,
-          detached: true,
-          stdout: 'inherit',
-          stderr: 'inherit',
-        });
-        roles = [api];
-        web = Bun.spawn(['bun', 'run', 'start:web'], {
-          cwd: generated,
-          env,
-          detached: true,
-          stdout: 'inherit',
-          stderr: 'inherit',
-        });
-        roles = [api, web];
-        // Registered one at a time, before the next spawn: a signal arriving in
-        // between must still find the role that already exists.
-        await Promise.all([
-          waitFor(`${apiOrigin}/health`, 'starter API', api),
-          waitFor(`${webOrigin}/en`, 'starter web', web),
-        ]);
+        const startRoles = async (environment: Record<string, string | undefined>) => {
+          api = Bun.spawn(['bun', 'run', 'start:api'], {
+            cwd: generated,
+            env: environment,
+            detached: true,
+            stdout: 'inherit',
+            stderr: 'inherit',
+          });
+          roles = [api];
+          web = Bun.spawn(['bun', 'run', 'start:web'], {
+            cwd: generated,
+            env: environment,
+            detached: true,
+            stdout: 'inherit',
+            stderr: 'inherit',
+          });
+          roles = [api, web];
+          // Registered one at a time, before the next spawn: a signal arriving in
+          // between must still find the role that already exists.
+          await Promise.all([
+            waitFor(`${apiOrigin}/health`, 'starter API', api),
+            waitFor(`${webOrigin}/en`, 'starter web', web),
+          ]);
+        };
+        await startRoles(env);
         await run(['bun', 'run', 'runtime:smoke'], generated, { env });
 
         const tools = JSON.parse(await capture(['bun', 'run', 'tools'], generated, env));
@@ -590,6 +597,12 @@ try {
           }
           throw error;
         }
+
+        // The same artifact with the default a real deployment gets.
+        await Promise.allSettled([api && stopProcessGroup(api), web && stopProcessGroup(web)]);
+        const closed = { ...env, SERVICE_SURFACES: 'closed' };
+        await startRoles(closed);
+        await run(['bun', 'run', 'surfaces:closed'], generated, { env: closed });
       } finally {
         roles = [];
         await Promise.allSettled([api && stopProcessGroup(api), web && stopProcessGroup(web)]);

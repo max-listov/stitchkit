@@ -355,7 +355,10 @@ export {
 } from '../agent-runtime/store-events';
 export { createMemoryAgentRuntimeStore } from '../agent-runtime/store-memory';
 export type { AgentConversationPurgeDriver } from '../agent-runtime/store-purge';
-export { AgentRuntimeConflictError } from '../agent-runtime/terminal-commit';
+export {
+  AgentRuntimeConflictError,
+  AgentRunUnsettledError,
+} from '../agent-runtime/terminal-commit';
 export {
   type AgentHistoryEvidencePolicy,
   isAssistantHistoryEvidence,

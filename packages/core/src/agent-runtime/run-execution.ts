@@ -1,11 +1,12 @@
 import type { ToolSet } from 'ai';
 import { beginAgentInvocation } from './invocations';
-import { acquireRun } from './run-acquisition';
+import { acquireRun, beginRunExecution, type RunAcquisition } from './run-acquisition';
 import type { RunExecutionInput, RunExecutorDependencies } from './run-execution-state';
 import { classifyRunFailure } from './run-failure';
 import { runModelAttempts } from './run-model-attempts';
 import { commitRunTerminal, settleStreamOutcome } from './run-terminal';
 import { prepareTurn } from './run-turn-preparation';
+import { closeUnacquiredRun } from './run-unacquired';
 import type { AgentRuntimeResult } from './runtime-result';
 
 /**
@@ -21,17 +22,34 @@ import type { AgentRuntimeResult } from './runtime-result';
  * run's state as an explicit object rather than the locals of one closure — so
  * the order below is the whole lifecycle: acquire, prepare the turn, run the
  * provider attempts, settle the outcome (or classify the failure), commit.
+ * No failure of the store leaves that record active in silence: before
+ * ownership the run is closed from outside, after it the terminal is committed,
+ * and a store that never answers either rejects with `AgentRunUnsettledError`.
  */
 export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
   dependencies: RunExecutorDependencies<CONTEXT, TOOLS>,
 ) {
+  /**
+   * The runs this process is executing. The record cannot say it: a run with this
+   * process's owner may have an executor on another lane, or none at all because
+   * the reply to its acquisition was lost.
+   */
+  const executing = new Set<string>();
   return async function executeRun(
     input: RunExecutionInput<CONTEXT>,
   ): Promise<AgentRuntimeResult> {
-    const acquisition = await acquireRun(dependencies, input);
+    let acquisition: RunAcquisition<CONTEXT, TOOLS>;
+    try {
+      acquisition = await acquireRun(dependencies, input);
+    } catch (error) {
+      return closeUnacquiredRun(dependencies, input, error, executing);
+    }
     if (acquisition.kind === 'absorbed') return acquisition.result;
     const { execution } = acquisition;
+    const runId = execution.state.run.id;
+    executing.add(runId);
     try {
+      await beginRunExecution(execution);
       const invocations = dependencies.config.invocations;
       if (invocations) {
         const trace = await invocations.trace({
@@ -57,7 +75,7 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
       // timer armed for the rest of the process's life.
       execution.idleDeadline.dispose();
     }
-    const result = await commitRunTerminal(execution);
+    const result = await commitRunTerminal(execution).finally(() => executing.delete(runId));
     await execution.invocation?.finish(
       result.reason === 'success'
         ? 'succeeded'

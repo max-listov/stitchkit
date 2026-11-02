@@ -15,6 +15,46 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** code that relied on a 429 to one chat to stop the token's other chats, and code importing a tracking schema or `createTrackingContract` from `stitchkit/tracking`. See the [migration](docs/guide/upgrading.md).
+
+- `stitchkit/tracking` — **the wire shapes moved to `stitchkit/tracking/contract`.** A published entry holds its schemas whether or not they are used, so every page that sent an event carried `zod`: 30 KB gzip for a 6 KB client. `// before: import { createTrackingContract } from 'stitchkit/tracking'` → `// after: import { createTrackingContract } from 'stitchkit/tracking/contract'` → [ADR 0280](docs/decisions/0280-real-visitor-speed-is-collected-after-the-page.md)
+  **Affects:** `stitchkit/tracking` createTrackingContract, createTrackingSchemas, AttributionData, AttributionDataSchema, DEFAULT_BUILD_ID_PATTERN, TrackEventsRequest, TrackEventsResponse, TrackEventsResponseSchema, TrackingContractConfig, TrackingContractEndpoints, TrackingDisposition, TrackingDispositionSchema, TrackingDispositionStatus, TrackingDispositionStatusSchema, TrackingEventEnvelope, TrackingEventShape, TrackingOutboxState, TrackingOutboxStateSchema, TrackingSchemas, TrackingSchemasConfig, UtmData, UtmDataSchema, VisitBootstrapResponse, VisitBootstrapResponseSchema, VisitEntryContext, VisitEntryContextShape
+
+- `stitchkit/telegram` — **a 429 on a send pauses that chat, not the token.** A notification group on its limit held every reply and campaign of the bot for its whole `retry_after`. `run` now pauses the payload's `chat_id`; refusals from `tokenPauseChats` chats inside `tokenPauseWindowMs` pause the token, as does a 429 with no chat. `pauseAfter(error)` without a chat stays a token pause. `// before: run('sendMessage', { chat_id }, …) held every chat` → `// after: only that chat, until refusals spread` → [ADR 0278](docs/decisions/0278-a-telegram-429-holds-the-chat-that-got-it.md)
+  **Affects:** `stitchkit/telegram` TelegramOutboundBudget(run)
+
+### Added
+
+- `stitchkit/telegram` — `refusal: 'call'` on `run` and `telegramBudgetTransformer` keeps a call's own 429 from pausing anything, for a chat known to run into its limit. `maxWaitMs` on `run`, `acquire` and `telegramBudgetTransformer` bounds a queue wait: the call ends with `TelegramNotDispatchedError`, stage `queue`. `chatId` on `acquire`, `pauseAfter` and `waitUntilResumed`, `tokenPauseChats`, `tokenPauseWindowMs` and `stats().pausedChats` complete the chat scope.
+  **Affects:** `stitchkit/telegram` TelegramOutboundBudget, TelegramOutboundBudgetConfig, TelegramOutboundBudgetStats, TelegramOutboundCallOptions, TelegramOutboundChatOptions, TelegramNotDispatchedStage
+- `stitchkit/tracking/performance` — a new evolving entrypoint: `createPerformanceCollector` collects LCP, INP, CLS, TTFB and FCP from real visitors through the optional peer `web-vitals`, loaded as its own chunk once the page is idle, with an `early` sample, a `final` beacon and a bounded pending queue. A lab agent or a browser under automation sends nothing. [ADR 0280](docs/decisions/0280-real-visitor-speed-is-collected-after-the-page.md)
+  **Affects:** `stitchkit/tracking/performance` createPerformanceCollector, isLabUserAgent, PerformanceCollector, PerformanceCollectorConfig, PerformanceHost, VitalsLibrary, VitalsMetric, VitalsObserver
+- `stitchkit/tracking/contract` — the performance sample: a metric that did not arrive is `null`, and `summarizePerformanceMetric` withholds a p95 below 100 samples.
+  **Affects:** `stitchkit/tracking/contract` PerformanceMetricSummary, PerformanceSample, PerformanceSampleSchema, PerformanceVitals, PerformanceVitalsSchema, summarizePerformanceMetric
+- `stitchkit/tracking` — `redactTrackingText` and `redactTrackingValue` mask passwords, sign-in credentials and signed launch data, and leave navigation and campaign parameters byte for byte.
+  **Affects:** `stitchkit/tracking` redactTrackingText, redactTrackingValue
+- `stitchkit/tracking/server` — `trackingTelemetryHealth` turns outbox reports into a verdict, counting a lifetime `dropped` only by what it grew inside the window.
+  **Affects:** `stitchkit/tracking/server` trackingTelemetryHealth, TrackingOutboxReport, TrackingTelemetryHealth
+- `stitchkit/xlsx` — a new evolving entrypoint: `renderXlsx` writes a workbook from rows and typed columns (text, number, date, datetime, money, boolean) with no dependency. Text is stored as text, so the file holds no formula, and a value Excel could not hold exactly refuses with its cell's address. [ADR 0279](docs/decisions/0279-a-workbook-is-written-without-a-dependency.md)
+  **Affects:** `stitchkit/xlsx` renderXlsx, XLSX_MEDIA_TYPE, XlsxCellError, XlsxColumn, XlsxColumnSchema, XlsxSheetSchema, XlsxWorkbook, XlsxWorkbookSchema
+- `stitchkit/primitives` — exact money across decimals: `moneyFromDecimal`, `moneyToDecimal` with the currency's scale as a parameter, `multiplyMoneyByDecimal`, `roundMoney`; a rounding table as data in `defineRoundingPolicy` and `roundDecimal`; and the public `DecimalStringSchema` and `DecimalInputSchema`, which refuse a number.
+  **Affects:** `stitchkit/primitives` moneyFromDecimal, moneyToDecimal, multiplyMoneyByDecimal, roundMoney, defineRoundingPolicy, roundDecimal, RoundingPolicy, RoundingPolicySchema, RoundingMode, RoundingModeSchema, DecimalStringSchema, DecimalInputSchema
+- `stitchkit/agent-runtime` — `AgentRunUnsettledError` rejects `result` when the store never answered: `.run` names the record that is still active with nobody executing it, for `runtime.abandon()`.
+  **Affects:** `stitchkit/agent-runtime` AgentRunUnsettledError
+- `stitchkit/agent-runtime/testing` — `runAgentStoreConformance({ armCommitConflict })` proves an adapter retries a serialization conflict reported at `COMMIT`.
+  **Affects:** `stitchkit/agent-runtime/testing` AgentStoreConformanceConfig(armCommitConflict)
+
+### Fixed
+
+- `stitchkit/tracking` — `createTrackingClient` no longer pulls `zod` into the browser, which was four fifths of its weight, and a size test holds it under 8 KB gzip with the IndexedDB outbox. The client also masks secrets in the landing path, the referrer and campaign tags before sending or storing them.
+  **Affects:** `stitchkit/tracking` createTrackingClient(behaviour)
+- `stitchkit/files` — `withExclusiveLock` no longer admits two holders inside one process. A release closed its descriptor before removing the name, so a waiter in the same process read the lock as abandoned and took it, and the releasing holder then removed that new lock if it reused the inode. The name now goes first.
+  **Affects:** `stitchkit/files` withExclusiveLock(behaviour)
+- `stitchkit/agent-runtime` — a store failure around a run no longer leaves it active with no executor. Acquisition and the terminal commit retry a thrown failure; a run that cannot be acquired closes as `abandoned`; a failed first draft ends as `runtime_failure`; `classifyRunFailure` survives a failing read. The next turn of the conversation proceeds instead of refusing on the stranded record. The reference Prisma adapter retries `TransactionWriteConflict` on `COMMIT`, and `AgentRuntimeStoreDriver.transaction` names that duty.
+  **Affects:** `stitchkit/agent-runtime` behaviour
+
 ## [0.116.0] - 2026-11-02
 
 ### ⚠️ Breaking changes

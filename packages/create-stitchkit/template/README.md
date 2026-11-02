@@ -45,6 +45,8 @@ database migrations you add and launches:
 
 - Web: <http://localhost:3210>
 - UI catalogue: <http://localhost:3210/en/ui>
+- Admin panel on fixture, development only: <http://localhost:3210/en/admin>
+  ([how to take it off fixture](docs/ADMIN_MOCK.md))
 - API: <http://localhost:3211>
 - OpenAPI: <http://localhost:3211/openapi.json>
 - MCP: <http://localhost:3211/mcp>
@@ -83,6 +85,9 @@ role itself — and setting it changes nothing on its own: with
 server-delivered address, a client built on first use (hence the parentheses),
 an ordering requirement relative to `<Providers>`, and `CORS_ORIGIN` on the API
 role.
+
+In production the catalogue and `/openapi.json` answer 404 unless the deployment
+sets `SERVICE_SURFACES=open`; `bun run acceptance:local` proves both answers.
 
 The `/en/ui` catalogue is isolated under
 `packages/frontend/src/app/[locale]/ui` and can be removed as one directory;
@@ -131,6 +136,8 @@ runtime:smoke` / `bun run e2e` directly. `runtime:smoke` asks the web role to
 answer as two of the addresses `PUBLIC_WEB_HOSTS` claims, to prove one artifact
 serves many; a deployment claiming fewer than two addresses besides the one
 being dialled is told exactly what to add rather than failing on a refused host.
+Both read the catalogue or `/openapi.json`, so that deployment needs
+`SERVICE_SURFACES=open` while they run.
 
 ## Requirements
 

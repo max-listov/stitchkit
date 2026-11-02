@@ -77,6 +77,6 @@ const budgetApi = new Api('packed-budget-token', {
 });
 budgetApi.config.use(telegramBudgetTransformer(budget));
 await budgetApi.sendMessage(1, 'limited').catch(() => undefined);
-if (budget.stats().pausedForMs < 50_000)
-  throw new Error('budget: a returned 429 did not pause the token');
+if (budget.stats().pausedChats !== 1)
+  throw new Error('budget: a returned 429 did not pause its chat');
 console.log('grammy consumer: typed adapters ok');

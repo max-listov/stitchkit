@@ -1,0 +1,8 @@
+{
+  "name": "stitchkit-consumer-vitals",
+  "dependencies": {
+    "stitchkit": "TARBALL",
+    "zod": "^4.4.3",
+    "web-vitals": "^6.2.3"
+  }
+}

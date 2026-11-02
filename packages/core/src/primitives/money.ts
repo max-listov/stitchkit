@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import { DecimalInputSchema, formatDecimal, parseDecimal } from './decimal';
+import { hasWholeSteps, multiplyAndRound, type RoundingPolicy, roundParts } from './rounding';
 
 const IntegerStringSchema = z.string().regex(/^-?(?:0|[1-9]\d*)$/);
 
@@ -57,6 +59,76 @@ export function multiplyMoney<TCurrency extends string>(
   }
   const multiplier = typeof quantity === 'bigint' ? quantity : BigInt(quantity);
   return money(parseMinor(value) * multiplier, value.currency);
+}
+
+/** How many decimal places one major unit has: 2 for rubles, 0 for yen, 3 for dinars. */
+const ScaleSchema = z.number().int().min(0).max(18);
+
+/**
+ * `5041.82` at scale 2 is 504182 minor units. Refuses a value finer than the
+ * currency, because dropping those digits here would be a rounding nobody chose:
+ * round first, with a policy, if that is what is meant.
+ */
+export function moneyFromDecimal<const TCurrency extends string>(
+  currency: TCurrency,
+  value: string,
+  scale: number,
+): Money<TCurrency> {
+  const places = ScaleSchema.parse(scale);
+  const parts = parseDecimal(DecimalInputSchema.parse(value));
+  if (parts.scale > places) {
+    throw new RangeError(`"${value}" is finer than ${places} decimal places`);
+  }
+  return money(parts.coefficient * 10n ** BigInt(places - parts.scale), currency);
+}
+
+/** The amount in major units with every place of the currency: `5041.80`, not `5041.8`. */
+export function moneyToDecimal(value: Money, scale: number): string {
+  const places = ScaleSchema.parse(scale);
+  const minor = parseMinor(value);
+  const whole = formatDecimal({ coefficient: minor, scale: places });
+  if (places === 0) return whole;
+  const [integer = '0', fraction = ''] = whole.split('.');
+  return `${integer}.${fraction.padEnd(places, '0')}`;
+}
+
+/** Refused by the table rather than by the amount that happens to reach a fractional step. */
+function assertMinorSteps(policy: RoundingPolicy): void {
+  if (!hasWholeSteps(policy)) {
+    throw new RangeError('a money rounding step must be a whole number of minor units');
+  }
+}
+
+/**
+ * Bring an amount to the steps of a policy, whose table is in minor units.
+ * `below` and `step` of `{ below: '100000', step: '100' }` mean a price under
+ * 1000.00 rounds to whole units of a two-place currency.
+ */
+export function roundMoney<TCurrency extends string>(
+  value: Money<TCurrency>,
+  policy: RoundingPolicy,
+): Money<TCurrency> {
+  assertMinorSteps(policy);
+  const rounded = roundParts({ coefficient: parseMinor(value), scale: 0 }, policy);
+  return money(rounded.coefficient, value.currency);
+}
+
+/**
+ * Multiply by a decimal such as a quantity of `2.5` or a rate of `0.2`. The exact
+ * product is computed first and rounded once, by the policy the caller names.
+ */
+export function multiplyMoneyByDecimal<TCurrency extends string>(
+  value: Money<TCurrency>,
+  factor: string,
+  policy: RoundingPolicy,
+): Money<TCurrency> {
+  assertMinorSteps(policy);
+  const rounded = multiplyAndRound(
+    { coefficient: parseMinor(value), scale: 0 },
+    parseDecimal(DecimalInputSchema.parse(factor)),
+    policy,
+  );
+  return money(rounded.coefficient, value.currency);
 }
 
 export interface MoneyShare<TCurrency extends string> {

@@ -17,6 +17,7 @@ const FIXTURE_PEERS = {
   ],
   grammy: ['grammy'],
   geo: ['maxmind'],
+  vitals: ['web-vitals'],
   google: ['google-auth-library'],
   node: [
     '@modelcontextprotocol/client',
@@ -667,6 +668,42 @@ if (canonicalJson(value) !== '{"10":10,"2":2,"nested":[true,null],"𐀀":"pair",
 let refused=false;try {canonicalJson([undefined]);}catch(error){refused=error instanceof TypeError;}
 if(!refused) throw new Error('canonical JSON refusal');
 console.log('canonical JSON browser: ok');`,
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'tracking-contract',
+    subpath: './tracking/contract',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit/tracking/contract', 'createTrackingContract'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
+    id: 'tracking-performance',
+    subpath: './tracking/performance',
+    fixture: 'vitals',
+    installedPeers: FIXTURE_PEERS.vitals,
+    target: 'browser',
+    source: featureSource('stitchkit/tracking/performance', 'createPerformanceCollector'),
+    runtimePeers: ['web-vitals'],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
+    id: 'xlsx',
+    subpath: './xlsx',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: `import { renderXlsx } from 'stitchkit/xlsx';
+const bytes = await renderXlsx({ sheets: [{ name: 'S', columns: [{ key: 't', header: 'T', type: 'text' }], rows: [{ t: '=1' }] }] });
+if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) throw new Error('xlsx container');
+console.log('xlsx browser: ok');`,
     runtimePeers: [],
     declarationPeers: [],
     execute: true,

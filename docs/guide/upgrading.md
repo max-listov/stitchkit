@@ -1,5 +1,50 @@
 # Upgrading stitchkit
 
+## Unreleased migration: telegram-chat-pause
+
+**Who must act:** code that relied on a 429 to one chat to stop the token's other chats. A bot that
+only sends needs no change: its other chats stop waiting.
+
+`run` pauses the `chat_id` of a refused send; the token pauses when `tokenPauseChats` chats are refused
+inside `tokenPauseWindowMs`, or when the call has no chat
+([ADR 0278](../decisions/0278-a-telegram-429-holds-the-chat-that-got-it.md)). A second budget kept under a
+derived key to isolate one group is no longer needed: remove it. Where one refusal must still stop everything,
+say so:
+
+```ts
+// before
+await api.sendMessage(chatId, text)
+// after
+await api.sendMessage(chatId, text).catch((error) => {
+  budget.pauseAfter(error)
+  throw error
+})
+```
+
+The catch belongs at the `Api` call, where grammY has turned a returned refusal into a thrown one. A raw
+`budget.run` around a client transformer's `send` gets that refusal as a value.
+
+Search pattern: `budget.run`, and budgets created under a key derived from the token.
+
+## Unreleased migration: tracking-contract-entry
+
+**Who must act:** code that imports `createTrackingContract` or a tracking schema or wire type from
+`stitchkit/tracking`. Code that only uses the browser client needs no change.
+
+The wire shapes moved to `stitchkit/tracking/contract`, so a page that sends events no longer carries `zod`
+([ADR 0280](../decisions/0280-real-visitor-speed-is-collected-after-the-page.md)):
+
+```ts
+// before
+import { createTrackingContract, createTrackingSchemas } from 'stitchkit/tracking'
+// after
+import { createTrackingContract, createTrackingSchemas } from 'stitchkit/tracking/contract'
+```
+
+Search pattern: imports from `stitchkit/tracking` naming `createTrackingContract`, `createTrackingSchemas`,
+`UtmData`, `AttributionData`, `TrackingEventEnvelope`, `TrackingDisposition`, `TrackEvents*`, `VisitEntryContext`,
+`VisitBootstrapResponse`, `TrackingOutboxState` or `DEFAULT_BUILD_ID_PATTERN`.
+
 ## Released migration: 0.116.0
 
 ### send-only-telegram-pause

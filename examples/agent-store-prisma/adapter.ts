@@ -20,7 +20,31 @@ import { Prisma, PrismaClient } from './generated/client';
 export interface PrismaAgentStoreFixture {
   prisma: PrismaClient;
   store: ReturnType<typeof createAgentRuntimeStore<Prisma.TransactionClient>>;
+  /**
+   * Make the next write transaction lose a real serialization race at COMMIT.
+   * A test seam for `runAgentStoreConformance`: leave it out of a copied adapter.
+   */
+  armCommitConflict(): Promise<void>;
 }
+
+/**
+ * PostgreSQL reports a serialization failure on `COMMIT` past the transaction
+ * manager's error translation, so Prisma hands it over untranslated, as a
+ * `DriverAdapterError` carrying the mapped kind. It is the same 40001 as the
+ * coded forms above, and it reaches only an adapter that looks for this shape.
+ */
+function isCommitWriteConflict(error: unknown): boolean {
+  if (!(error instanceof Error) || error.name !== 'DriverAdapterError') return false;
+  const { cause } = error;
+  return (
+    typeof cause === 'object' &&
+    cause !== null &&
+    'kind' in cause &&
+    cause.kind === 'TransactionWriteConflict'
+  );
+}
+
+const CONFLICT_PROBES = ['commit-conflict-a', 'commit-conflict-b'].map(storageId);
 
 function recoveryCursor(conversationId: string, runId: string): string {
   return JSON.stringify([conversationId, runId]);
@@ -51,14 +75,47 @@ export function createPrismaAgentStoreFixture(input: {
   // Twenty concurrent appends to one conversation collide repeatedly; each
   // retry admits one more writer, so the budget must cover the crowd.
   const RETRY_ATTEMPTS = 32;
+  let commitConflictArmed = false;
+  /**
+   * A write skew with a concurrent transaction that commits first: each reads
+   * the row the other writes, so PostgreSQL has to abort this one, and with
+   * nothing left to run it does so at this transaction's COMMIT.
+   */
+  const skewAgainstConcurrentWriter = async (
+    transaction: Prisma.TransactionClient,
+  ): Promise<void> => {
+    const [own, other] = CONFLICT_PROBES;
+    if (!own || !other) throw new TypeError('Two conflict probes are required');
+    const bump = { version: { increment: 1 } };
+    await transaction.agentRuntimeState.findMany({ where: { conversationId: other } });
+    await transaction.agentRuntimeState.update({ where: { conversationId: own }, data: bump });
+    await prisma.$transaction(
+      async (concurrent) => {
+        await concurrent.agentRuntimeState.findMany({ where: { conversationId: own } });
+        await concurrent.agentRuntimeState.update({
+          where: { conversationId: other },
+          data: bump,
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  };
   const runTransaction = async <RESULT>(
     work: (transaction: Prisma.TransactionClient) => Promise<RESULT>,
   ): Promise<RESULT> => {
     for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
       try {
-        return await prisma.$transaction((transaction) => work(transaction), {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        });
+        return await prisma.$transaction(
+          async (transaction) => {
+            const result = await work(transaction);
+            if (commitConflictArmed) {
+              commitConflictArmed = false;
+              await skewAgainstConcurrentWriter(transaction);
+            }
+            return result;
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
       } catch (error) {
         // A primary-key collision on the event ledger is a serialization
         // conflict in disguise: two serializable transactions both read
@@ -78,6 +135,7 @@ export function createPrismaAgentStoreFixture(input: {
           error.message.includes('AgentRuntimeEvent_pkey');
         const retryable =
           ledgerCollision ||
+          isCommitWriteConflict(error) ||
           (error instanceof Prisma.PrismaClientKnownRequestError &&
             (error.code === 'P2034' ||
               (error.code === 'P2010' && error.message.includes('40001'))));
@@ -521,5 +579,15 @@ export function createPrismaAgentStoreFixture(input: {
       });
     },
   };
-  return { prisma, store: createAgentRuntimeStore(driver) };
+  return {
+    prisma,
+    store: createAgentRuntimeStore(driver),
+    async armCommitConflict() {
+      await prisma.agentRuntimeState.createMany({
+        data: CONFLICT_PROBES.map((conversationId) => ({ conversationId, version: 0 })),
+        skipDuplicates: true,
+      });
+      commitConflictArmed = true;
+    },
+  };
 }

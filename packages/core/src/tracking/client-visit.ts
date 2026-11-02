@@ -11,10 +11,12 @@ import type { Draft } from './client';
 import { deliverTrackingBatch } from './delivery';
 import type { TrackingHost } from './host';
 import type { TrackingOutbox, TrackingQueuedEvent } from './outbox';
+import { redactTrackingText } from './privacy';
 import type {
   TrackEventsRequest,
   TrackEventsResponse,
   TrackingEventEnvelope,
+  UtmData,
   VisitBootstrapResponse,
   VisitEntryContext,
 } from './schemas';
@@ -76,9 +78,9 @@ export function bootstrapTrackingVisit(
         browserStreamId: visit.browserStreamId,
         previousVisitId: visit.visitId ?? undefined,
         origin: page.origin,
-        landingPath: page.pathname,
-        referrer: page.referrer || undefined,
-        utm: touch?.currentTouch.utm?.source ? touch.currentTouch.utm : undefined,
+        landingPath: redactTrackingText(page.pathname),
+        referrer: page.referrer ? redactTrackingText(page.referrer) : undefined,
+        utm: touch?.currentTouch.utm?.source ? redactedUtm(touch.currentTouch.utm) : undefined,
         displayMode: page.displayMode,
         screenWidth: page.screenWidth,
         screenHeight: page.screenHeight,
@@ -172,6 +174,13 @@ export function createVisitSequences(
   );
 }
 
+/** Campaign tags arrive in a URL anyone can write, secrets included. */
+export function redactedUtm(utm: UtmData): UtmData {
+  return Object.fromEntries(
+    Object.entries(utm).map(([field, value]) => [field, redactTrackingText(value)]),
+  );
+}
+
 export function pageAttribution(
   host: TrackingHost,
   storage: NonNullable<TrackingHost['storage']>,
@@ -183,7 +192,7 @@ export function pageAttribution(
   return resolveAttribution({
     search,
     pathname,
-    referrer: page.referrer,
+    referrer: redactTrackingText(page.referrer),
     hostname: page.hostname,
     storage,
     referrerMap,
@@ -206,7 +215,7 @@ export function pageViewDraft<TType extends string>(
       title: page.title,
       screenWidth: page.viewportWidth,
       screenHeight: page.viewportHeight,
-      referrer: previous ? undefined : page.referrer || undefined,
+      referrer: previous || !page.referrer ? undefined : redactTrackingText(page.referrer),
     },
     clientTimestamp: host.wallClock(),
   };

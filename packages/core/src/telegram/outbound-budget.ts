@@ -18,12 +18,16 @@
  * campaign; a campaign runs at whatever rate replies leave it.
  *
  * **It paces; it does not retry.** A 429 on a method that spends the budget
- * pauses every sender of the token for the wait Telegram stated (or a declared
- * fallback when it stated none). A 429 on an edit or a read concerns that call
- * and pauses nothing. A network failure or a 5xx is returned to the caller
- * unchanged: repeating a
- * send whose external outcome is unknown is the caller's decision, and a
- * primitive that retried it would turn one unknown message into two.
+ * pauses the chat it was sent to for the wait Telegram stated (or a declared
+ * fallback when it stated none); every other chat of the token goes on. Telegram
+ * words a group's limit, a chat's pace and the bot's own limit alike, and only
+ * the addressee differs, so one chat's refusal is read as that chat's. Refusals
+ * from several chats inside a short window are read as the bot's own limit and
+ * pause the token, as does a 429 with no chat to blame. A 429 on an edit or a
+ * read concerns that call and pauses nothing. A network failure or a 5xx is
+ * returned to the caller unchanged: repeating a send whose external outcome is
+ * unknown is the caller's decision, and a primitive that retried it would turn
+ * one unknown message into two.
  *
  * The schedule is a strict token budget, not a bucket with a full burst: the
  * first call after an idle period is immediate, and every later call occupies
@@ -33,10 +37,12 @@
  */
 
 import { z } from 'zod';
-import { raceAbort } from '../internal/abort-race';
 import { argumentsDigest } from '../internal/stable-digest';
 import { MAX_TIMER_MS, sleep } from '../internal/timers';
 import { isRecord } from '../internal/typed';
+import { chatOf, sendCost } from './outbound-cost';
+import { createOutboundPauses, type OutboundPausePolicy } from './outbound-pauses';
+import { createOutboundQueue } from './outbound-queue';
 import { classifyTelegramSendFailure } from './send-failure';
 
 /** Telegram's reference rate for one bot: 24 messages per second in this SDK. */
@@ -48,59 +54,15 @@ const DEFAULT_MESSAGES_PER_SECOND = 24;
  */
 const DEFAULT_RETRY_AFTER_FALLBACK_MS = 1_000;
 
+/** Refusals from this many chats inside the window are the bot's limit, not theirs. */
+const DEFAULT_TOKEN_PAUSE_CHATS = 3;
+const DEFAULT_TOKEN_PAUSE_WINDOW_MS = 5_000;
+
 const TOKEN = z.string().min(1, 'token must not be empty');
 const MESSAGES_PER_SECOND = z.number().positive().max(1_000);
 const RETRY_AFTER_FALLBACK_MS = z.number().int().nonnegative().max(MAX_TIMER_MS);
-
-/** The methods that produce a Telegram message and therefore spend the budget. */
-const SEND_METHODS: ReadonlySet<string> = new Set([
-  'sendMessage',
-  'sendPhoto',
-  'sendAudio',
-  'sendDocument',
-  'sendVideo',
-  'sendAnimation',
-  'sendVoice',
-  'sendVideoNote',
-  'sendPaidMedia',
-  'sendMediaGroup',
-  'sendLocation',
-  'sendVenue',
-  'sendContact',
-  'sendPoll',
-  'sendChecklist',
-  'sendDice',
-  'sendMessageDraft',
-  'sendSticker',
-  'sendInvoice',
-  'sendGame',
-  'sendGift',
-  'sendGiveaway',
-  'sendLivePhoto',
-  'sendRichMessage',
-  'copyMessage',
-  'copyMessages',
-  'forwardMessage',
-  'forwardMessages',
-  'answerWebAppQuery',
-]);
-
-/** The methods whose cost is the length of one array in the payload. */
-const WEIGHTED_METHODS: ReadonlyMap<string, string> = new Map([
-  ['sendMediaGroup', 'media'],
-  ['sendPaidMedia', 'media'],
-  ['copyMessages', 'message_ids'],
-  ['forwardMessages', 'message_ids'],
-]);
-
-/** One message-producing call costs one; an empty or malformed array still costs one. */
-function sendCost(method: string, payload: unknown): number {
-  if (!SEND_METHODS.has(method)) return 0;
-  const field = WEIGHTED_METHODS.get(method);
-  if (field === undefined || !isRecord(payload)) return 1;
-  const value = payload[field];
-  return Array.isArray(value) ? Math.max(1, value.length) : 1;
-}
+const TOKEN_PAUSE_CHATS = z.number().int().min(2).max(1_000);
+const TOKEN_PAUSE_WINDOW_MS = z.number().int().positive().max(MAX_TIMER_MS);
 
 /** Whose turn comes first. `interactive` answers a person; `bulk` is a campaign. */
 export type TelegramOutboundLane = 'interactive' | 'bulk';
@@ -111,10 +73,17 @@ export interface TelegramOutboundBudgetConfig {
   /** Telegram messages per second. Default 24. */
   readonly messagesPerSecond?: number;
   /**
-   * How long a 429 without `retry_after` pauses the token. Default 1000 ms.
+   * How long a 429 without `retry_after` pauses. Default 1000 ms.
    * Telegram's own `retry_after` is always used instead when present.
    */
   readonly retryAfterFallbackMs?: number;
+  /**
+   * How many different chats have to get a 429 inside `tokenPauseWindowMs`
+   * before the token pauses instead of those chats. Default 3.
+   */
+  readonly tokenPauseChats?: number;
+  /** The window `tokenPauseChats` is counted in. Default 5000 ms. */
+  readonly tokenPauseWindowMs?: number;
   /**
    * Test seam: the monotonic clock. Default `performance.now`. A wall clock can
    * jump backwards and turn a pause into a burst, so the default is monotonic.
@@ -138,13 +107,34 @@ export interface TelegramOutboundBudgetStats {
   /** How many of them are in the `bulk` lane. */
   readonly queuedBulk: number;
   readonly messagesPerSecond: number;
-  /** How much of the current 429 pause is still ahead, in milliseconds. */
+  /** How much of the current token pause is still ahead, in milliseconds. */
   readonly pausedForMs: number;
+  /** Chats on their own 429 pause right now. */
+  readonly pausedChats: number;
 }
 
 export interface TelegramOutboundCallOptions {
   /** Default `interactive`. */
   readonly lane?: TelegramOutboundLane;
+  /** The addressed chat: a pause of that chat holds this call. `run` reads `chat_id` itself. */
+  readonly chatId?: number | string;
+  /**
+   * What this call's own 429 does. `pause` (the default) pauses its chat. `call`
+   * pauses nothing, for a chat known to run into its limit: the refusal concerns
+   * this send alone. The call still spends the budget and waits out other pauses.
+   */
+  readonly refusal?: 'pause' | 'call';
+  /**
+   * Give up after this long in the queue with `TelegramNotDispatchedError`,
+   * stage `queue`: nothing was sent, so repeating it is safe. A burst to one
+   * chat on pause otherwise queues without limit. Default: wait.
+   */
+  readonly maxWaitMs?: number;
+}
+
+/** Which chat a pause or a wait concerns. */
+export interface TelegramOutboundChatOptions {
+  readonly chatId?: number | string;
 }
 
 /**
@@ -155,9 +145,10 @@ export interface TelegramOutboundBudget {
   /**
    * Run one Bot API call under the budget, in the `interactive` lane by default.
    * A non-send method passes through without spending a message. A 429 on a send
-   * pauses every sender of the token, whether `send` throws it or resolves with
-   * the Bot API's `{ ok: false, … }` body, as a client transformer's `send` does;
-   * a 429 on a non-send method pauses nothing. The error is rethrown, or the
+   * pauses the chat in the payload's `chat_id`, whether `send` throws it or resolves
+   * with the Bot API's `{ ok: false, … }` body, as a client transformer's `send`
+   * does; several chats refused at once, or a call with no chat, pause the token.
+   * A 429 on a non-send method pauses nothing. The error is rethrown, or the
    * response returned, unchanged and the call is not repeated.
    */
   run<T>(
@@ -179,30 +170,28 @@ export interface TelegramOutboundBudget {
   ): Promise<void>;
   /** Pause every sender of this token for at least `milliseconds`. Never shortens an existing pause. */
   pause(milliseconds: number): void;
-  /** Pause the token after a rate-limited refusal; another failure does nothing. */
-  pauseAfter(error: unknown): void;
   /**
-   * Wait out the current pause without spending a token. For a retry path that
-   * is not a send (edit, delete) and does not go through `acquire`.
+   * Pause after a rate-limited refusal; another failure does nothing. With
+   * `chatId` this is that chat's pause, counted like a refusal `run` saw; without
+   * it, the token's.
    */
-  waitUntilResumed(signal?: AbortSignal): Promise<void>;
+  pauseAfter(error: unknown, options?: TelegramOutboundChatOptions): void;
+  /**
+   * Wait out the current pause without spending a token, and that chat's own
+   * with `chatId`. For a retry path that is not a send (edit, delete) and does
+   * not go through `acquire`.
+   */
+  waitUntilResumed(signal?: AbortSignal, options?: TelegramOutboundChatOptions): Promise<void>;
   /** Measured counters. It never contains the token. */
   stats(): TelegramOutboundBudgetStats;
-}
-
-interface Waiter {
-  readonly cost: number;
-  readonly lane: TelegramOutboundLane;
-  readonly resolve: () => void;
-  readonly reject: (reason: unknown) => void;
-  readonly signal?: AbortSignal;
-  onAbort?: () => void;
 }
 
 interface ManagedBudget {
   readonly budget: TelegramOutboundBudget;
   readonly rate: number;
   readonly fallback: number;
+  readonly tokenPauseChats: number;
+  readonly tokenPauseWindowMs: number;
   readonly nowOption: (() => number) | undefined;
   readonly sleepOption:
     | ((milliseconds: number, signal?: AbortSignal) => Promise<void>)
@@ -210,147 +199,33 @@ interface ManagedBudget {
 }
 
 function createBudget(
-  rate: number,
-  fallback: number,
+  policy: OutboundPausePolicy & { readonly rate: number; readonly fallback: number },
   now: () => number,
   sleepFor: (milliseconds: number, signal?: AbortSignal) => Promise<void>,
 ): TelegramOutboundBudget {
-  const interval = 1_000 / rate;
-  const queue: Waiter[] = [];
-  let nextGrantAt = now();
-  let pausedUntil = Number.NEGATIVE_INFINITY;
-  let granted = 0;
-  let messages = 0;
-  let draining = false;
-  let wake: AbortController | undefined;
+  const { rate, fallback } = policy;
+  const pauses = createOutboundPauses(policy, now, () => queue.wake());
+  const queue = createOutboundQueue(1_000 / rate, now, sleepFor, pauses);
 
-  const wait = async (milliseconds: number, signal?: AbortSignal): Promise<void> => {
-    const delay = Math.min(MAX_TIMER_MS, Math.max(0, milliseconds));
-    if (delay <= 0) return;
-    const pending = sleepFor(delay, signal);
-    if (signal) await raceAbort(pending, signal);
-    else await pending;
-  };
-
-  const wakeWaiting = (): void => {
-    const current = wake;
-    wake = undefined;
-    current?.abort();
-  };
-
-  /** The oldest interactive call, else the oldest bulk one. */
-  const nextWaiter = (): Waiter | undefined =>
-    queue.find((waiter) => waiter.lane === 'interactive') ?? queue[0];
-
-  const remove = (waiter: Waiter): void => {
-    const index = queue.indexOf(waiter);
-    if (index === -1) return;
-    const next = nextWaiter() === waiter;
-    queue.splice(index, 1);
-    if (next) wakeWaiting();
-  };
-
-  const drain = async (): Promise<void> => {
-    if (draining) return;
-    draining = true;
-    try {
-      while (queue.length > 0) {
-        const head = nextWaiter();
-        if (head === undefined) break;
-        if (head.signal?.aborted) {
-          remove(head);
-          continue;
-        }
-        const current = now();
-        const at = Math.max(current, nextGrantAt, pausedUntil);
-        if (at > current) {
-          const controller = new AbortController();
-          wake = controller;
-          try {
-            await wait(at - current, controller.signal);
-          } catch (error) {
-            if (!controller.signal.aborted) {
-              for (const waiter of queue.splice(0)) {
-                if (waiter.onAbort)
-                  waiter.signal?.removeEventListener('abort', waiter.onAbort);
-                waiter.reject(error);
-              }
-              return;
-            }
-          } finally {
-            if (wake === controller) wake = undefined;
-          }
-          continue;
-        }
-        queue.splice(queue.indexOf(head), 1);
-        if (head.onAbort) head.signal?.removeEventListener('abort', head.onAbort);
-        nextGrantAt = at + head.cost * interval;
-        granted += 1;
-        messages += head.cost;
-        head.resolve();
-      }
-    } finally {
-      draining = false;
-      // A waiter added after the loop checked the empty queue but before the
-      // flag was cleared must not be left behind.
-      if (queue.length > 0) void drain();
-    }
-  };
-
-  const acquire = (
-    cost: number,
-    signal?: AbortSignal,
-    options?: TelegramOutboundCallOptions,
-  ): Promise<void> => {
-    if (!Number.isSafeInteger(cost) || cost < 1) {
-      return Promise.reject(new RangeError('cost must be an integer of at least one message'));
-    }
-    if (signal?.aborted) return Promise.reject(signal.reason);
-    return new Promise<void>((resolve, reject) => {
-      const waiter: Waiter = {
-        cost,
-        lane: options?.lane ?? 'interactive',
-        resolve,
-        reject,
-        ...(signal && { signal }),
-      };
-      if (signal) {
-        const onAbort = (): void => {
-          remove(waiter);
-          reject(signal.reason);
-        };
-        waiter.onAbort = onAbort;
-        signal.addEventListener('abort', onAbort, { once: true });
-      }
-      queue.push(waiter);
-      void drain();
-    });
-  };
-
-  const pauseFor = (milliseconds: number): void => {
-    if (Number.isNaN(milliseconds) || milliseconds < 0) {
-      throw new RangeError('pause must be a non-negative number of milliseconds');
-    }
-    // An infinite wait is the strongest pause there is; it is never a no-op.
-    const duration = Number.isFinite(milliseconds) ? milliseconds : Number.MAX_SAFE_INTEGER;
-    pausedUntil = Math.max(pausedUntil, now() + duration);
-    wakeWaiting();
-  };
-
-  const pauseAfter = (error: unknown): void => {
+  const pauseAfter = (error: unknown, options?: TelegramOutboundChatOptions): void => {
     const failure = classifyTelegramSendFailure(error);
     if (failure.reason !== 'rate-limited') return;
-    pauseFor(
-      failure.retryAfterSeconds === undefined ? fallback : failure.retryAfterSeconds * 1_000,
-    );
+    const milliseconds =
+      failure.retryAfterSeconds === undefined ? fallback : failure.retryAfterSeconds * 1_000;
+    if (options?.chatId === undefined) pauses.pauseToken(milliseconds);
+    else pauses.pauseChat(String(options.chatId), milliseconds);
   };
 
-  const waitUntilResumed = async (signal?: AbortSignal): Promise<void> => {
+  const waitUntilResumed = async (
+    signal?: AbortSignal,
+    options?: TelegramOutboundChatOptions,
+  ): Promise<void> => {
+    const chat = options?.chatId === undefined ? undefined : String(options.chatId);
     while (true) {
       if (signal?.aborted) throw signal.reason;
-      const remaining = pausedUntil - now();
+      const remaining = pauses.resumesAt(chat) - now();
       if (remaining <= 0) return;
-      await wait(Math.min(remaining, MAX_TIMER_MS), signal);
+      await queue.wait(Math.min(remaining, MAX_TIMER_MS), signal);
     }
   };
 
@@ -363,11 +238,13 @@ function createBudget(
   ): Promise<T> => {
     if (signal?.aborted) throw signal.reason;
     const cost = sendCost(method, payload);
-    if (cost > 0) await acquire(cost, signal, options);
+    const chatId = options?.chatId ?? chatOf(payload);
+    const call = chatId === undefined ? {} : { chatId };
+    if (cost > 0) await queue.acquire(cost, signal, { ...options, ...call });
     if (signal?.aborted) throw signal.reason;
     // Telegram's limit on editing one message says nothing about sending the next one.
     const pauseOnRefusal = (refusal: unknown): void => {
-      if (cost > 0) pauseAfter(refusal);
+      if (cost > 0 && options?.refusal !== 'call') pauseAfter(refusal, call);
     };
     let result: T;
     try {
@@ -383,23 +260,19 @@ function createBudget(
     return result;
   };
 
-  const budget: TelegramOutboundBudget = {
+  return {
     run,
-    acquire,
-    pause: pauseFor,
+    acquire: queue.acquire,
+    pause: pauses.pauseToken,
     pauseAfter,
     waitUntilResumed,
     stats: () => ({
-      granted,
-      messages,
-      queued: queue.length,
-      queuedBulk: queue.filter((waiter) => waiter.lane === 'bulk').length,
+      ...queue.counts(),
       messagesPerSecond: rate,
-      pausedForMs: Math.max(0, pausedUntil - now()),
+      pausedForMs: pauses.pausedForMs(),
+      pausedChats: pauses.pausedChats(),
     }),
   };
-
-  return budget;
 }
 
 const budgets = new Map<string, ManagedBudget>();
@@ -427,12 +300,20 @@ export function telegramOutboundBudget(
   const fallback = RETRY_AFTER_FALLBACK_MS.parse(
     config.retryAfterFallbackMs ?? DEFAULT_RETRY_AFTER_FALLBACK_MS,
   );
+  const tokenPauseChats = TOKEN_PAUSE_CHATS.parse(
+    config.tokenPauseChats ?? DEFAULT_TOKEN_PAUSE_CHATS,
+  );
+  const tokenPauseWindowMs = TOKEN_PAUSE_WINDOW_MS.parse(
+    config.tokenPauseWindowMs ?? DEFAULT_TOKEN_PAUSE_WINDOW_MS,
+  );
   const key = keyOf(token);
   const existing = budgets.get(key);
   if (existing) {
     const same =
       existing.rate === rate &&
       existing.fallback === fallback &&
+      existing.tokenPauseChats === tokenPauseChats &&
+      existing.tokenPauseWindowMs === tokenPauseWindowMs &&
       existing.nowOption === config.now &&
       existing.sleepOption === config.sleep;
     if (!same) {
@@ -444,8 +325,7 @@ export function telegramOutboundBudget(
   }
 
   const budget = createBudget(
-    rate,
-    fallback,
+    { rate, fallback, tokenPauseChats, tokenPauseWindowMs },
     config.now ?? (() => performance.now()),
     config.sleep ?? sleep,
   );
@@ -453,6 +333,8 @@ export function telegramOutboundBudget(
     budget,
     rate,
     fallback,
+    tokenPauseChats,
+    tokenPauseWindowMs,
     nowOption: config.now,
     sleepOption: config.sleep,
   });

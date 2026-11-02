@@ -39,6 +39,11 @@ export {
   type PresenceRegistry,
 } from '../../tracking/server/presence';
 export {
+  type TrackingOutboxReport,
+  type TrackingTelemetryHealth,
+  trackingTelemetryHealth,
+} from '../../tracking/server/telemetry-health';
+export {
   type ActiveVisit,
   type FindActiveVisitQuery,
   type IssuedVisitLease,

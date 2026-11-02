@@ -73,6 +73,7 @@ const COVERED: Record<string, string> = {
   VerifyTelegramInitDataOptions: 'entrypoints/telegram.ts',
   TelegramBroadcastConfig: 'entrypoints/telegram.ts',
   TelegramOutboundBudgetConfig: 'entrypoints/telegram.ts',
+  PerformanceCollectorConfig: 'entrypoints/tracking/performance.ts',
   TelegramOperatorChannelConfig: 'entrypoints/telegram.ts',
   TelegramLocalFilesConfig: 'entrypoints/telegram.ts',
   TelegramOperatorDedupe: 'entrypoints/telegram.ts',

@@ -41,7 +41,7 @@ own, recorded as an ADR.
 | `stitchkit/realtime` | browser, React Native/Hermes **and** server | evolving | typed realtime clients and retained topics with a required explicit Socket.IO peer loader |
 | `stitchkit/contract` | browser **and** server | stable | the contract layer alone — `defineContract`, errors, pagination |
 | `stitchkit/live` | browser **and** server | evolving | `defineEvents` — topic declarations beside the operation contract — and watched reads: `createWatchClient`, the value/difference frame and its reassembly |
-| `stitchkit/primitives` | browser **and** server | evolving | generic values and declarations for lifecycle, access, audit, delivery and exports |
+| `stitchkit/primitives` | browser **and** server | evolving | generic values and declarations for lifecycle, access, audit, delivery and exports, exact money and rounding tables |
 | `stitchkit/server` | server (Bun) | stable | `createServer`, `implement`, hooks, auth, Socket.IO server, server primitives |
 | `stitchkit/node` | server (Node ≥ 22) | stable | `serveNode` + the runtime-agnostic core — the Node mirror of `/server` |
 | `stitchkit/tools` | server | stable | `createMcpHandler`, `mountMcp`, `mountAgent`, the OAuth provider, native tools |
@@ -56,15 +56,18 @@ own, recorded as an ADR.
 | `stitchkit/process/owner-loss` | bundled server entry (Bun, POSIX) | evolving | narrow bootstrap that keeps the process runner lazy while carrying its owner-loss guard in a single-file bundle |
 | `stitchkit/files/packaging` | build time (Bun or Node) | evolving | installed native asset graph, integrity, Bun packaging plugin and the artifact loader check; no runtime install policy |
 | `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
-| `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, one outbound budget per bot token with weighted albums and shared 429 pauses, resumable broadcasts, the operator channel with dedupe, a Bot API transport that separates a request that never left from an unknown outcome, local Bot API files, webhook ownership and durable webhook update intake |
-| `stitchkit/telegram/grammy` | server (Bun or Node) | evolving | the token's outbound budget as one grammY client transformer — a 429 that comes back as a response pauses the token, and a cancelled wait is a request that never left |
+| `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, one outbound budget per bot token with weighted albums and per-chat 429 pauses, resumable broadcasts, the operator channel with dedupe, a Bot API transport that separates a request that never left from an unknown outcome, local Bot API files, webhook ownership and durable webhook update intake |
+| `stitchkit/telegram/grammy` | server (Bun or Node) | evolving | the token's outbound budget as one grammY client transformer — a 429 that comes back as a response pauses its chat, and a cancelled wait is a request that never left |
 | `stitchkit/telegram/html` | browser and server | evolving | Telegram's HTML as a tree — clean any markup to what Telegram accepts, cut long text into valid parts by what the reader sees, check markup before it is sent |
 | `stitchkit/telegram/screens` | server (Bun or Node) | evolving | a bot's menus as declared screens over grammY — typed paths, actions and input, message reconciliation, state in any `StorageAdapter`, a test chat |
 | `stitchkit/tracking` | browser **and** server | evolving | visitor-tracking mechanics — `createTrackingClient`, the tab-shared outbox, the page-leave beacon, attribution, the contract factory; no event vocabulary, no React |
+| `stitchkit/tracking/contract` | browser **and** server | evolving | the wire shapes — the contract factory, event and visit schemas, the performance sample and its trust threshold; brings `zod` |
+| `stitchkit/tracking/performance` | browser **and** server | evolving | Web Vitals from real visitors, collected after load through the optional peer `web-vitals`; no `zod` |
 | `stitchkit/tracking/server` | server (Bun or Node) | evolving | the decisions a tracking backend makes — dispositions, visit lease over an application-owned store, active intervals, presence; no database |
 | `stitchkit/release` | browser **and** server | evolving | a page follows the release it was built for — `createReleaseMarker` on the server, `createReleaseWatcher` in the browser, the `X-Build-Id` header and a socket event between them |
 | `stitchkit/voice` | browser **and** server | evolving | the mechanics of a live voice reply — `SentenceCutter`, `speakableText`, a `SpeechQueue` that synthesises ahead and stops on interruption, the conversation phases |
 | `stitchkit/geo` | server (Bun or Node) | evolving | managed GeoIP reader generations, last-known-good reload and the optional MaxMind adapter |
+| `stitchkit/xlsx` | browser **and** server | evolving | a workbook from rows and typed columns, with no dependency; text never runs as a formula |
 | `stitchkit/oauth` | browser **and** server | evolving | provider-neutral Authorization Code + PKCE request and one-shot callback transaction mechanics |
 | `stitchkit/google` | server (Bun or Node) | evolving | optional Google code exchange and verified OIDC identity adapter |
 | `stitchkit/observability` | server | stable<br>_redefined in 2 of the 61 minors since 0.56.2, most recently 0.92.0_ | request/tool event projections — `createObservability`, trace context, sanitisation |

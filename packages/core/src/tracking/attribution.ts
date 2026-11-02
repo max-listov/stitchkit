@@ -1,5 +1,5 @@
-import { z } from 'zod';
-import { type AttributionData, AttributionDataSchema, type UtmData } from './schemas';
+import { isRecord } from '../internal/typed';
+import type { AttributionData, UtmData } from './schemas';
 
 /** A referrer hostname pattern and the source/medium it stands for. */
 export interface ReferrerRule {
@@ -43,12 +43,57 @@ export interface ResolvedAttribution {
   currentTouch: AttributionData;
 }
 
-const StoredTouchSchema = z.object({ data: AttributionDataSchema, capturedAt: z.number() });
-const StoredAttributionSchema = z.object({
-  firstTouch: StoredTouchSchema,
-  currentTouch: StoredTouchSchema,
-});
-type StoredAttribution = z.infer<typeof StoredAttributionSchema>;
+interface StoredTouch {
+  data: AttributionData;
+  capturedAt: number;
+}
+
+interface StoredAttribution {
+  firstTouch: StoredTouch;
+  currentTouch: StoredTouch;
+}
+
+function isOptionalText(value: unknown): boolean {
+  return value === undefined || typeof value === 'string';
+}
+
+/** The wire limit of a campaign tag: a longer stored one would be refused at bootstrap. */
+const MAX_UTM_LENGTH = 200;
+
+function isUtmField(value: unknown): boolean {
+  return value === undefined || (typeof value === 'string' && value.length <= MAX_UTM_LENGTH);
+}
+
+function isUtm(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isRecord(value) &&
+    ['source', 'medium', 'campaign', 'content', 'term'].every((field) =>
+      isUtmField(value[field]),
+    )
+  );
+}
+
+function isStoredTouch(value: unknown): value is StoredTouch {
+  if (!isRecord(value) || !Number.isFinite(value.capturedAt)) return false;
+  const { data } = value;
+  return (
+    isRecord(data) &&
+    isUtm(data.utm) &&
+    isOptionalText(data.referrer) &&
+    isOptionalText(data.landingPage)
+  );
+}
+
+/**
+ * A guard rather than a schema: this module runs on every page of a storefront,
+ * and `zod` would be nine tenths of the client's weight for one read.
+ */
+function isStoredAttribution(value: unknown): value is StoredAttribution {
+  return (
+    isRecord(value) && isStoredTouch(value.firstTouch) && isStoredTouch(value.currentTouch)
+  );
+}
 
 function normalize(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
@@ -95,12 +140,12 @@ function readStored(
   try {
     const raw = storage.getItem(key);
     if (!raw) return null;
-    const parsed = StoredAttributionSchema.safeParse(JSON.parse(raw));
-    if (!parsed.success || now - parsed.data.firstTouch.capturedAt > ttlMs) {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isStoredAttribution(parsed) || now - parsed.firstTouch.capturedAt > ttlMs) {
       storage.removeItem(key);
       return null;
     }
-    return parsed.data;
+    return parsed;
   } catch {
     return null;
   }

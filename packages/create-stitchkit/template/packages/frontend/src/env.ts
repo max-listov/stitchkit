@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { applicationVariables } from '@app/config/variables';
+import { applicationVariables, serviceSurfacesAreOpen } from '@app/config/variables';
 import { createEnv } from '@t3-oss/env-nextjs';
 import { config } from 'dotenv';
 
@@ -26,6 +26,7 @@ export const env = createEnv({
     INTERNAL_API_URL: applicationVariables.INTERNAL_API_URL,
     PUBLIC_API_ORIGIN: applicationVariables.PUBLIC_API_ORIGIN,
     PUBLIC_REALTIME_ORIGIN: applicationVariables.PUBLIC_REALTIME_ORIGIN,
+    SERVICE_SURFACES: applicationVariables.SERVICE_SURFACES,
   },
   runtimeEnv: {
     BIND_HOST: process.env.BIND_HOST,
@@ -35,6 +36,15 @@ export const env = createEnv({
     INTERNAL_API_URL: process.env.INTERNAL_API_URL,
     PUBLIC_API_ORIGIN: process.env.PUBLIC_API_ORIGIN,
     PUBLIC_REALTIME_ORIGIN: process.env.PUBLIC_REALTIME_ORIGIN,
+    SERVICE_SURFACES: process.env.SERVICE_SURFACES,
   },
   emptyStringAsUndefined: true,
 });
+
+/** Read per request: a build runs without the deployment's environment. */
+export function catalogueIsOpen(): boolean {
+  return serviceSurfacesAreOpen({
+    NODE_ENV: process.env.NODE_ENV,
+    SERVICE_SURFACES: env.SERVICE_SURFACES,
+  });
+}

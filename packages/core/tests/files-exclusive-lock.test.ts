@@ -11,6 +11,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ExclusiveLockError, withExclusiveLock } from '../src/entrypoints/files';
@@ -202,6 +203,35 @@ describe('withExclusiveLock', () => {
       expect(most).toBe(1);
     }
   }, 20_000);
+
+  test('a release removes the name before it closes the descriptor', async () => {
+    // Closed first, a waiter in this process reads the lock as abandoned and takes
+    // it, the freed inode goes to the new lock, and the name check then removes a
+    // live lock: the next waiter makes two holders.
+    const handle = await open(lockPath, 'w');
+    const prototype: { close(): Promise<void> } = Object.getPrototypeOf(handle);
+    await handle.close();
+    unlinkSync(lockPath);
+    const close = prototype.close;
+    let lockPresentAtClose: boolean | undefined;
+    let released = false;
+    prototype.close = function (this: { close(): Promise<void> }) {
+      if (released) lockPresentAtClose = existsSync(lockPath);
+      return close.call(this);
+    };
+    try {
+      await withExclusiveLock(
+        lockPath,
+        () => {
+          released = true;
+        },
+        options,
+      );
+    } finally {
+      prototype.close = close;
+    }
+    expect(lockPresentAtClose).toBe(false);
+  });
 
   test('releasing never removes a lock that is no longer this one', async () => {
     await withExclusiveLock(

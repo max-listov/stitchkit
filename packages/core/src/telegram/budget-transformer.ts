@@ -51,7 +51,7 @@ function platformSignal(signal: Parameters<Transformer>[3]): PlatformSignal {
  *
  * Install it as the bot's one transformer; it replaces any limiter written
  * beside it. A refusal Telegram returns as a response, not only a thrown one,
- * pauses the token (see `TelegramOutboundBudget.run`), and the call is never
+ * pauses its chat (see `TelegramOutboundBudget.run`), and the call is never
  * repeated here.
  *
  * A cancellation that arrives while the call still waits for its turn, or in
@@ -60,7 +60,7 @@ function platformSignal(signal: Parameters<Transformer>[3]): PlatformSignal {
  * request was handed on is the client's ordinary error and the outcome is
  * unknown, not a definite failure.
  *
- * `options.lane` applies to every call through this client: a campaign installs
+ * `options` apply to every call through this client: a campaign installs
  * `{ lane: 'bulk' }` on its own `Api`, and replies stay ahead of it.
  */
 export function telegramBudgetTransformer(

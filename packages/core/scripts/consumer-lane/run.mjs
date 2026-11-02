@@ -84,6 +84,7 @@ const FIXTURES = containedFilesOnly
         'node',
         'grammy',
         'geo',
+        'vitals',
         'google',
       ];
 const PEER_FREE_FIXTURES = ['minimal', 'nodenext'];

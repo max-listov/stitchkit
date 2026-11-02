@@ -22,7 +22,7 @@ Both entrypoints are **evolving**.
 ## Contract
 
 ```ts
-import { createTrackingContract } from 'stitchkit/tracking'
+import { createTrackingContract } from 'stitchkit/tracking/contract'
 
 export const tracking = createTrackingContract({
   scope: 'public',
@@ -220,6 +220,76 @@ has an identity. A bot gets a lease that no store holds, so its events are
 
 `createPresenceRegistry` is who is here now, in this process: touch it from
 `track`, read it for a live feed. It is honestly empty after a restart.
+
+## Real-visitor speed
+
+`stitchkit/tracking/performance` collects Web Vitals from the people who use the site. Install the
+optional peer `web-vitals` and call it once on the page:
+
+```ts
+import { createPerformanceCollector } from 'stitchkit/tracking/performance'
+
+createPerformanceCollector({
+  buildId: BUILD_ID,
+  url: '/api/tracking/performance',
+  visitId: () => client.visitId(),
+})
+```
+
+The library is fetched as its own chunk after `load`, when the browser is idle, so the measurement costs
+the page nothing it is measuring. Each load posts an `early` sample five seconds later and a `final` one
+as the page goes, both with `sendBeacon` and the same `id`: keep the later one. The body is a string, so
+the endpoint declares `safelistedBody: true`. A sample that could not leave waits in session storage for the
+next page, up to 20 of them, and of one load only the newest.
+
+A browser under automation sends nothing, and neither does an agent that admits to being Lighthouse,
+headless Chrome, GTmetrix or a crawler. Lighthouse with its default settings imitates an ordinary browser, so a
+local run with `webdriver` off cannot be told from a visitor.
+
+One load is one document: a client-side navigation stays under the route the page opened on, and whatever
+`web-vitals` reports after a back-forward restore is left out, because it would replace the load's numbers
+with a restore's. A second call on a page returns the running collector.
+
+A sample carries the route, the build, `mobile` or `desktop`, and the five metrics. **A metric that did not
+arrive is `null`, never zero**: most visits have no INP at all, and a zero would pull every average down.
+
+Parse a sample on your own endpoint and store it in your own table:
+
+```ts
+import { redactTrackingText } from 'stitchkit/tracking'
+import { PerformanceSampleSchema, summarizePerformanceMetric } from 'stitchkit/tracking/contract'
+
+const sample = PerformanceSampleSchema.parse(await request.json())
+await samples.upsert({ ...sample, route: redactTrackingText(sample.route) })
+
+const lcp = summarizePerformanceMetric(rows.map((row) => row.vitals.lcpMs))
+// { samples: 42, p75: 1840, p95: null } — a p95 needs 100 samples
+```
+
+The report is yours: which routes matter and what is slow are the application's words.
+
+## Privacy
+
+`redactTrackingText` masks passwords, sign-in credentials, API keys, bearer tokens and signed Telegram launch
+data in a URL or free text, and leaves paths and campaign parameters byte for byte. Text past 16 KiB is cut
+first, because the endpoint is open to anyone. `code` and `hash` count only beside the
+`state` or `auth_date` that makes them credentials, so a promo code stays. `redactTrackingValue` applies the
+same rule through a value of any shape. The client applies it to the landing path, the referrer and the
+campaign tags before sending or storing them. Apply it again on your ingest: anyone can post to that endpoint without running the client.
+
+## Is tracking losing events?
+
+`trackingTelemetryHealth(reports, baselines)` reads the outbox figures of a visit's bootstrap
+(`browserStreamId` as `stream`, `outboxState`, `outboxQueued`, `outboxDropped`) and answers `ok`, `degraded` or
+`unknown`. An application running without an outbox reports `unavailable` and reads as `degraded`. A browser repeats its lifetime `dropped` with
+every visit, so pass what each stream reported before the window as `baselines`, and only the growth counts.
+
+## Bundle weight
+
+`stitchkit/tracking` has no `zod` in its graph: `createTrackingClient` with `indexedDbOutboxStorage` is under
+8 KB gzip, a test holds that, and the build refuses a published file that reaches `zod`. The schemas live in
+`stitchkit/tracking/contract` for the server and a shared contract. Importing that in code a browser loads
+brings `zod` back, so keep a shared contract out of the storefront's client bundle.
 
 ## Not here
 

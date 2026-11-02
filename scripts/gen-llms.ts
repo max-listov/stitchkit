@@ -178,6 +178,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'stitchkit/geo — a server-only managed reader, three observable states and last-known-good generation reloads',
   ],
   [
+    'xlsx.md',
+    'XLSX',
+    'stitchkit/xlsx — a workbook from rows and typed columns, with no dependency and no formula in the file',
+  ],
+  [
     'upgrading.md',
     'Upgrading',
     'moving a project across stitchkit versions; how breaking changes are marked',
@@ -214,7 +219,10 @@ export type GuideMap = Record<string, GuideHome | typeof UPGRADING>;
 export const GUIDE_SLICES: GuideMap = {
   'getting-started.md': { primary: '.' },
   'release.md': { primary: './release' },
-  'tracking.md': { primary: './tracking', also: ['./tracking/server'] },
+  'tracking.md': {
+    primary: './tracking',
+    also: ['./tracking/contract', './tracking/server', './tracking/performance'],
+  },
   'contracts.md': { primary: './contract', also: ['.'] },
   'server.md': { primary: './server', also: ['./node'] },
   'client.md': { primary: '.', also: ['./http'] },
@@ -278,6 +286,7 @@ export const GUIDE_SLICES: GuideMap = {
   'react.md': { primary: './react' },
   'keyboard.md': { primary: './react/keyboard' },
   'geo.md': { primary: './geo' },
+  'xlsx.md': { primary: './xlsx' },
   'voice.md': { primary: './voice' },
   'telegram.md': {
     primary: './telegram',

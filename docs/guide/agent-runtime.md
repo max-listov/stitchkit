@@ -414,7 +414,10 @@ remains the signal-only compatibility surface and additionally waits for admissi
 
 The in-memory store is a reference adapter and has process-local durability
 only. Production applications normally call `createAgentRuntimeStore()` and
-provide one database transaction driver:
+provide one database transaction driver. Its `transaction` owns the retry of a
+serialization conflict, wherever the database reports it: on a statement or on
+`COMMIT`, which some clients surface in a different shape. Pass
+`armCommitConflict` to `runAgentStoreConformance` to prove it:
 
 ```ts
 const store = createAgentRuntimeStore({
@@ -1002,6 +1005,46 @@ The revision protects against stale operator evidence. The mutation updates the
 canonical run and failed assistant atomically, removes the run from recovery
 indexes, and publishes the resulting `run-state`. A run that moved since it was
 read returns a conflict; `staleOwner: true` is mandatory evidence, not a default.
+
+The same evidence holds inside one process when a store failure outlives the
+run's own handling. A store call around execution that throws is retried for
+about half a second, then decided by where the run stood. Retries bound a call
+that fails, not one that hangs, so give the store its own timeouts:
+
+| Failure | Outcome of `result` |
+|---|---|
+| reading or acquiring the run, retries spent, or a lost reply to the acquisition | resolves with reason `abandoned`, the cause on the operator's `run-terminal` |
+| the first assistant draft | resolves with reason `runtime_failure`, like a checkpoint later in the turn |
+| a conflict on a run another executor holds | rejects with the conflict; the record stays that executor's |
+| a conflict on a run still queued, behind another run | rejects with `AgentRunUnsettledError`; `recover()` or `resume` picks it up |
+| the terminal commit, or closing the run, retries spent | rejects with `AgentRunUnsettledError` |
+
+`AgentRunUnsettledError.run` is the record as last read, and the store may be ahead
+of it. Nothing in this process executes that run, and later turns of its
+conversation wait behind it. `recover()` skips a `running` run with a live owner, so
+a long-running process closes it itself once the store answers. Read the record
+first: with no owner or with `error.ownerId` it is this runtime's, and any other
+owner is executing it.
+
+```ts
+const settled = await ticket.result.catch(async (error) => {
+  if (!(error instanceof AgentRunUnsettledError)) throw error
+  const { conversationId, id: runId } = error.run
+  const current = await store.loadRun({ conversationId, runId })
+  if (current && [undefined, error.ownerId].includes(current.run.ownerId)) {
+    await runtime.abandon({
+      conversationId,
+      runId,
+      expectedRevision: current.run.revision,
+      staleOwner: true,
+    })
+  }
+  throw error
+})
+```
+
+A `queued` run lost to a run ahead of it, and `runtime.resume()` can run it instead
+once that one ends.
 
 ## Store operations
 

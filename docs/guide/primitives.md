@@ -58,6 +58,23 @@ migration.
 literal in the type; division and rational shares return an explicit remainder. It does not own
 exchange rates.
 
+`moneyFromDecimal('RUB', '5041.82', 2)` and `moneyToDecimal(value, 2)` cross between major units and
+minor ones with the currency's scale as a parameter, and a value finer than that scale is refused
+rather than cut. `multiplyMoneyByDecimal(price, '2.5', policy)` computes the exact product and rounds it
+once. `roundMoney(value, policy)` brings an amount to a table's steps:
+
+```ts
+const shelfPrice = defineRoundingPolicy({
+  mode: 'half-up', // or 'half-even', 'up', 'down'
+  tiers: [{ below: '100000', step: '100' }, { step: '1000' }], // minor units
+})
+roundMoney(moneyFromDecimal('RUB', '5041.82', 2), shelfPrice) // { minor: '504000', currency: 'RUB' }
+```
+
+A policy is data, so it can be stored with the prices it produced. `roundDecimal(value, policy)` is
+the same table over a plain decimal. `DecimalStringSchema` accepts one canonical spelling and refuses a
+JSON number; `DecimalInputSchema` takes a spelling such as a database's `10.50` to the canonical one.
+
 `defineUnitSystem` stores exact canonical decimal strings. Every conversion is an application
 rational with an id. A converted `QuantityProjection` is `derived` and carries both its source and
 conversion id; a form/database value can be marked `recorded`. Whether a derived projection is

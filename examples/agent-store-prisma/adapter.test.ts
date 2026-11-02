@@ -26,7 +26,10 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
 
   test('passes the reusable store conformance contract', async () => {
     if (!fixture) return;
-    await runAgentStoreConformance({ createStore: () => fixture.store });
+    await runAgentStoreConformance({
+      createStore: () => fixture.store,
+      armCommitConflict: fixture.armCommitConflict,
+    });
   });
 
   test('rolls state CAS back when history persistence fails', async () => {

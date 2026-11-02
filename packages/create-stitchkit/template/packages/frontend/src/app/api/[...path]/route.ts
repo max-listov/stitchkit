@@ -1,4 +1,5 @@
 import { env } from '@/env';
+import { forwardToApi } from '@/lib/api-proxy';
 
 /**
  * The default shape: the browser talks to its OWN origin, and the web role
@@ -19,14 +20,6 @@ import { env } from '@/env';
  */
 export const dynamic = 'force-dynamic';
 
-const FORWARDED_REQUEST_HEADERS = [
-  'accept',
-  'accept-language',
-  'content-type',
-  'authorization',
-];
-const FORWARDED_RESPONSE_HEADERS = ['content-type', 'cache-control', 'etag'];
-
 async function forward(request: Request): Promise<Response> {
   const apiUrl = env.INTERNAL_API_URL;
   if (!apiUrl) {
@@ -36,35 +29,7 @@ async function forward(request: Request): Promise<Response> {
       { status: 503 },
     );
   }
-  const incoming = new URL(request.url);
-  // Rebuilt from the incoming pathname rather than from the matched segments,
-  // so an encoded segment reaches the API role exactly as it arrived.
-  const target = new URL(`${incoming.pathname}${incoming.search}`, apiUrl);
-
-  const headers = new Headers();
-  for (const name of FORWARDED_REQUEST_HEADERS) {
-    const value = request.headers.get(name);
-    if (value !== null) headers.set(name, value);
-  }
-
-  // Buffered rather than streamed: forwarding a stream needs the non-standard
-  // `duplex` init that this project's types do not carry, and every payload
-  // this contract accepts is a small JSON document.
-  const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
-  const response = await fetch(target, {
-    method: request.method,
-    headers,
-    body: hasBody ? await request.arrayBuffer() : undefined,
-    // A redirect is the API role's answer, not something to resolve here.
-    redirect: 'manual',
-  });
-
-  const responseHeaders = new Headers();
-  for (const name of FORWARDED_RESPONSE_HEADERS) {
-    const value = response.headers.get(name);
-    if (value !== null) responseHeaders.set(name, value);
-  }
-  return new Response(response.body, { status: response.status, headers: responseHeaders });
+  return await forwardToApi(request, apiUrl);
 }
 
 export const GET = forward;

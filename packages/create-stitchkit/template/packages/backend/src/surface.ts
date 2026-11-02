@@ -4,6 +4,7 @@ import { type BoardRuntime, openBoard } from './lib/board';
 import { bindLive } from './lib/live';
 import { createBoardService } from './transport/board-service';
 import { createSystemService } from './transport/system-service';
+import { trustedBrowserAuthorities } from './trusted-origins';
 
 /**
  * The fence this deployment answers behind, or nothing.
@@ -13,15 +14,15 @@ import { createSystemService } from './transport/system-service';
  * Unset means no fence, which is honest for a checkout on a laptop and wrong for
  * anything a network can reach.
  *
- * The browser origin is the one already declared for CORS. They answer different
- * questions — CORS says what a page may *read*, the fence says which authority
- * this server agreed to *answer on* — but a deployment that names a cross-origin
- * browser has named it once, and asking twice is asking for two answers that
- * disagree.
+ * The browser origins are the ones already declared, for CORS and for the web
+ * role. They answer different questions — CORS says what a page may *read*, the
+ * fence says which authority this server agreed to *answer on* — but a deployment
+ * that names its browser has named it once, and asking twice is asking for two
+ * answers that disagree.
  */
 function createFence(): TrustFence | undefined {
   if (!env.TRUSTED_HOSTS) return undefined;
-  const browserOrigin = env.CORS_ORIGIN ? [new URL(env.CORS_ORIGIN).host] : [];
+  const browserOrigin = trustedBrowserAuthorities(env);
   return createTrustFence({
     trustedHosts: env.TRUSTED_HOSTS.split(',').map((entry) => entry.trim()),
     ...(browserOrigin.length > 0 && { trustedOrigins: browserOrigin }),

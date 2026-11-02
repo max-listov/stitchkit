@@ -4,7 +4,9 @@
  * with one bounded retry, the page-leave beacon that actually arrives, visible
  * time, scroll milestones, declarative clicks, attribution, and the client
  * that composes them. No React, no DOM at import time, no event vocabulary of
- * its own. The server half is `stitchkit/tracking/server`. → ADR 0166.
+ * its own, and no `zod`: this runs on every page. The wire shapes are
+ * `stitchkit/tracking/contract`, the server half `stitchkit/tracking/server`.
+ * → ADR 0166, ADR 0280.
  */
 export {
   type AttributionStorage,
@@ -34,11 +36,6 @@ export {
   type TrackingClientConfig,
 } from '../tracking/client';
 export {
-  createTrackingContract,
-  type TrackingContractConfig,
-  type TrackingContractEndpoints,
-} from '../tracking/contract';
-export {
   deliverTrackingBatch,
   type TrackingDeliveryOptions,
   type TrackingDeliveryOutcome,
@@ -62,31 +59,7 @@ export {
 } from '../tracking/outbox';
 export { indexedDbOutboxStorage } from '../tracking/outbox-storage-indexeddb';
 export { memoryOutboxStorage } from '../tracking/outbox-storage-memory';
-export {
-  type AttributionData,
-  AttributionDataSchema,
-  createTrackingSchemas,
-  DEFAULT_BUILD_ID_PATTERN,
-  type TrackEventsRequest,
-  type TrackEventsResponse,
-  TrackEventsResponseSchema,
-  type TrackingDisposition,
-  TrackingDispositionSchema,
-  type TrackingDispositionStatus,
-  TrackingDispositionStatusSchema,
-  type TrackingEventEnvelope,
-  type TrackingEventShape,
-  type TrackingOutboxState,
-  TrackingOutboxStateSchema,
-  type TrackingSchemas,
-  type TrackingSchemasConfig,
-  type UtmData,
-  UtmDataSchema,
-  type VisitBootstrapResponse,
-  VisitBootstrapResponseSchema,
-  type VisitEntryContext,
-  type VisitEntryContextShape,
-} from '../tracking/schemas';
+export { redactTrackingText, redactTrackingValue } from '../tracking/privacy';
 export {
   createScrollMilestones,
   type ScrollMilestones,

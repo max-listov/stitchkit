@@ -17,8 +17,22 @@ import { featureServerSchema } from './features';
  * Defaults, coercion and error messages live here and only here. The
  * declaration carries names and shapes; it deliberately carries no values.
  */
+/** The one reading of `SERVICE_SURFACES`, for both roles. */
+export function serviceSurfacesAreOpen(env: {
+  NODE_ENV?: string | undefined;
+  SERVICE_SURFACES?: 'open' | 'closed' | undefined;
+}): boolean {
+  return env.SERVICE_SURFACES ? env.SERVICE_SURFACES === 'open' : env.NODE_ENV !== 'production';
+}
+
 const baseVariables = {
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  /**
+   * The component catalogue and `/openapi.json`: they describe how this
+   * application is built, so production answers 404 for them unless it says
+   * `open`, which is what a deployment under acceptance does.
+   */
+  SERVICE_SURFACES: z.enum(['open', 'closed']).optional(),
   DATABASE_URL: z.url(),
   // Loopback by default — exposing the app to the network is an explicit
   // opt-in (`BIND_HOST=0.0.0.0`), never something a forgotten edit causes.
@@ -86,7 +100,8 @@ const baseVariables = {
    * and the realtime handshake, which never reaches a lifecycle hook on either
    * runtime. Unset and there is no fence, which is honest for a local checkout
    * and wrong for anything reachable from a network — a fence cannot invent the
-   * list of names it should answer to.
+   * list of names it should answer to. A browser reaching this role through the
+   * web role is admitted by its address in `PUBLIC_WEB_HOSTS` or `PUBLIC_WEB_ORIGIN`.
    */
   TRUSTED_HOSTS: z.string().min(1).optional(),
 };

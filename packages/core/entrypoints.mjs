@@ -146,6 +146,16 @@ export const ENTRYPOINTS = [
     browser: false,
   },
   { subpath: './tracking', source: 'src/entrypoints/tracking.ts', browser: true },
+  {
+    subpath: './tracking/contract',
+    source: 'src/entrypoints/tracking/contract.ts',
+    browser: true,
+  },
+  {
+    subpath: './tracking/performance',
+    source: 'src/entrypoints/tracking/performance.ts',
+    browser: true,
+  },
   { subpath: './release', source: 'src/entrypoints/release.ts', browser: true },
   {
     subpath: './tracking/server',
@@ -153,6 +163,7 @@ export const ENTRYPOINTS = [
     browser: false,
   },
   { subpath: './geo', source: 'src/entrypoints/geo.ts', browser: false },
+  { subpath: './xlsx', source: 'src/entrypoints/xlsx.ts', browser: true },
   { subpath: './oauth', source: 'src/entrypoints/oauth.ts', browser: true },
   { subpath: './voice', source: 'src/entrypoints/voice.ts', browser: true },
   { subpath: './google', source: 'src/entrypoints/google.ts', browser: false },

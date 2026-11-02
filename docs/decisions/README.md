@@ -307,6 +307,9 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0275](0275-a-guarded-fetch-pins-the-validated-address.md) | A guarded fetch pins the address it validated | Accepted — one resolution per hop, the socket opens to that answer with the URL's `Host` and TLS name; URL credentials refused; the document and streaming paths share the hop | I10, I13, I14 |
 | [0276](0276-a-download-writes-through-its-root-capability.md) | A download writes through its root capability | Accepted — select the configured root once, pin canonical components and atomically replace direct children without following links | I8, I12, I13, I15 |
 | [0277](0277-a-telegram-budget-serves-replies-first.md) | A Telegram budget serves replies first and pauses on sends | Accepted — an interactive lane is granted before bulk over one rate; only a 429 on a spending method pauses the token; amends 0274 | I9, I13 |
+| [0278](0278-a-telegram-429-holds-the-chat-that-got-it.md) | A Telegram 429 holds the chat that got it | Accepted — one chat's refusal pauses that chat, several at once pause the token, `maxWaitMs` bounds a queued call; amends 0274 and 0277 | I9, I13 |
+| [0279](0279-a-workbook-is-written-without-a-dependency.md) | A workbook is written without a dependency | Accepted — `stitchkit/xlsx` writes OOXML itself over `CompressionStream`, stores text as text, and refuses what Excel cannot hold exactly | I8, I9, I13 |
+| [0280](0280-real-visitor-speed-is-collected-after-the-page.md) | Real-visitor speed is collected after the page | Accepted — `stitchkit/tracking/performance` loads `web-vitals` as an idle chunk, a missing metric is `null`, and the browser client carries no `zod`; tables and reports stay the application's; amends 0166 | I4, I9, I13 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a
