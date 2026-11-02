@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: send-only-telegram-pause
+## Released migration: 0.116.0
+
+### send-only-telegram-pause
 
 **Who must act:** code that relied on a 429 from `editMessage*`, `deleteMessage` or a read to stop a
 token's sends. Code that only sends needs no change.

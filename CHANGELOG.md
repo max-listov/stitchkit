@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.116.0] - 2026-11-02
+
 ### ⚠️ Breaking changes
 
 **Who must act:** code that relied on a 429 from an edit or a read to stop a token's sends. See the [migration](docs/guide/upgrading.md).
