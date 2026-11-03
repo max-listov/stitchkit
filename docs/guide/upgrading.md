@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: telegram-due-cursor
+## Released migration: 0.118.0
+
+### telegram-due-cursor
 
 **Who must act:** an application with its own `TelegramUpdateStore`. A bot on `memoryTelegramUpdateStore`,
 `sqliteTelegramUpdateStore` or `postgresTelegramUpdateStore` needs no change.

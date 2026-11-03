@@ -3,15 +3,11 @@
   "releases": [
     {
       "target": "core",
-      "version": "0.117.0"
+      "version": "0.118.0"
     },
     {
       "target": "tui",
-      "version": "0.2.12"
-    },
-    {
-      "target": "create-stitchkit",
-      "version": "0.6.18"
+      "version": "0.2.13"
     }
   ]
 }

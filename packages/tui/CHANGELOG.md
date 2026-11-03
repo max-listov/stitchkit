@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-11-03
+
 ### Changed
 
 - Targets stitchkit `^0.118.0`, keeping consumers on one framework copy when they adopt the Telegram update queue fixes. No terminal source change is needed.

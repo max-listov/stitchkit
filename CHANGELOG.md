@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.118.0] - 2026-11-03
+
 ### ⚠️ Breaking changes
 
 **Who must act:** an application with its own `TelegramUpdateStore`. A bot on a store shipped here needs no change. See the [migration](docs/guide/upgrading.md).
