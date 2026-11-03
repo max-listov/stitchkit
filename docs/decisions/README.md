@@ -42,7 +42,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0010](0010-fullstack-rejected.md) | Grow stitchkit into a fullstack framework | Rejected | I5 |
 | [0011](0011-bun-only-one-package.md) | Bun-only, published as one small package | Accepted | I7 |
 | [0012](0012-observability-module.md) | A built-in observability module | Accepted | I13 |
-| [0013](0013-runtime-agnostic-core.md) | Runtime-agnostic core, Bun as first-class adapter | Accepted — supersedes Bun-only clause of 0011 | I6 |
+| [0013](0013-runtime-agnostic-core.md) | Runtime-agnostic core, Bun as first-class adapter | Accepted — supersedes Bun-only clause of 0011; its Bun-only `staticRoute` clause amended by 0281 | I6 |
 | [0014](0014-tool-http-parity.md) | The tool surface carries the same contract guarantees as HTTP | Accepted — refines 0007 | I2 |
 | [0015](0015-oauth-resource-server.md) | OAuth 2.1 resource-server toolkit for MCP | Superseded by 0068 | superseded → 0068 |
 | [0016](0016-cli-transport.md) | CLI as the fourth transport | Accepted — extends 0007 | I1 |
@@ -52,7 +52,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0020](0020-raw-websocket-lane.md) | A raw WebSocket lane composed beside Socket.IO | Accepted — upholds 0008 | I5 |
 | [0021](0021-endpoint-meta-passthrough.md) | Endpoint meta passthrough (opaque per-endpoint metadata) | Accepted — extends 0002 | I4 |
 | [0022](0022-endpoint-identity.md) | Stable (service, action) identity on MethodDef | Accepted — extends 0002, 0021 | I1 |
-| [0023](0023-range-file-serving.md) | Range-capable file serving (`serveFile`) | Accepted — extends 0013 | I6 |
+| [0023](0023-range-file-serving.md) | Range-capable file serving (`serveFile`) | Accepted — extends 0013; its two-path split amended by 0281 (`staticRoute` answers through `serveFile`, which runs on Bun and Node) | I6 |
 | [0024](0024-scope-driven-mounting.md) | Scope-driven mounting (`scopePrefixes`) | Accepted — extends 0002; the deferred scope→context clause superseded by 0075 | I4 |
 | [0025](0025-typed-scoped-client.md) | Typed scoped client (consumed keys as args) | Accepted — extends 0005 | I1, I3 |
 | [0026](0026-stitch-error-code-registry.md) | Published stitch error-code registry | Accepted — extends 0002 | I3 |
@@ -310,6 +310,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0278](0278-a-telegram-429-holds-the-chat-that-got-it.md) | A Telegram 429 holds the chat that got it | Accepted — one chat's refusal pauses that chat, several at once pause the token, `maxWaitMs` bounds a queued call; amends 0274 and 0277 | I9, I13 |
 | [0279](0279-a-workbook-is-written-without-a-dependency.md) | A workbook is written without a dependency | Accepted — `stitchkit/xlsx` writes OOXML itself over `CompressionStream`, stores text as text, and refuses what Excel cannot hold exactly | I8, I9, I13 |
 | [0280](0280-real-visitor-speed-is-collected-after-the-page.md) | Real-visitor speed is collected after the page | Accepted — `stitchkit/tracking/performance` loads `web-vitals` as an idle chunk, a missing metric is `null`, and the browser client carries no `zod`; tables and reports stay the application's; amends 0166 | I4, I9, I13 |
+| [0281](0281-static-files-are-served-by-one-responder.md) | Static files are served by one responder | Accepted — `staticRoute` answers a contained file through `serveFile`, which runs on Bun and Node with one Range and validator implementation; amends 0023 and 0013 | I6, I8 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

@@ -56,6 +56,11 @@
       "test": "a 300 KB multipart body is counted to the length the server received"
     }
   },
+  "StaticRouteOptions": {
+    "cacheControl": {
+      "test": "cacheControl sets Cache-Control on the full body, a range and a 304"
+    }
+  },
   "ShutdownOptions": {
     "gracePeriodMs": {
       "test": "forwards the declared budgets and owns the abort signal"

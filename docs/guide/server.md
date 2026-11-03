@@ -1020,11 +1020,24 @@ contract route does.
 
 ### Serving files & Range requests
 
-`staticRoute` is basic on purpose — it reads the whole file into memory and has
-no `Range` or conditional support; put a CDN in front, or use it for small web
-assets. To serve **media** (video / audio / large downloads) that a browser must
-seek and cache, use **`serveFile`** (Bun) — it streams the requested byte range
-and speaks the conditional-request half of RFC 7233 / 9110:
+`staticRoute(prefix, dir, { cacheControl })` serves a directory: it checks
+containment, then answers the file through `serveFile`, so a static image or
+video carries `ETag`, `Last-Modified` and `Accept-Ranges`, revalidates to `304`
+and seeks with `206`. `cacheControl` sets `Cache-Control` on every answer; by
+default none is sent.
+
+```ts
+import { createServer, staticRoute } from 'stitchkit/server'
+
+createServer({
+  rawRoutes: [staticRoute('/static', './public', { cacheControl: 'public, max-age=3600' })],
+})
+```
+
+The route answers `GET`. To serve a file chosen by your own logic — through a
+contract, with `HEAD`, a download name or a custom type — call **`serveFile`**
+directly. It runs on Bun and Node, streams the requested byte range and speaks
+the conditional-request half of RFC 7233 / 9110:
 
 ```ts
 import { defineContract } from 'stitchkit/contract'
@@ -1074,7 +1087,7 @@ emit none.
 `serveFile` takes an explicit `path` and trusts it — **the caller owns
 containment**. For a URL-derived path use `staticRoute` (which enforces it) or
 `isWithinDir` first. The byte-range parser is exported on its own as
-`parseByteRange(header, size)` for direct use and testing. → ADR 0023.
+`parseByteRange(header, size)` for direct use and testing. → ADR 0023, ADR 0281.
 
 ## Server primitives
 

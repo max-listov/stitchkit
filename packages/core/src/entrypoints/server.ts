@@ -63,6 +63,7 @@ export {
   type ByteRange,
   parseByteRange,
   type ServeFileOptions,
+  type StaticRouteOptions,
   serveFile,
   staticRoute,
   weakETag,

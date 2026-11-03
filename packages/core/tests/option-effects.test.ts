@@ -43,6 +43,7 @@ const COVERED: Record<string, string> = {
   NotificationDeliveryConfig: 'entrypoints/application.ts',
   CacheBridgeConfig: 'entrypoints/react.ts',
   ModelInvocationConfig: 'entrypoints/agent-runtime.ts',
+  StaticRouteOptions: 'entrypoints/server.ts',
   ShutdownOptions: 'entrypoints/server.ts',
   ProcessSignalsOptions: 'entrypoints/server.ts',
   SocketIOServerConfig: 'entrypoints/server.ts',

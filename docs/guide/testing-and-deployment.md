@@ -597,9 +597,9 @@ Notes for a Node host:
 - **Socket.IO** attaches to the Node HTTP server via `serveNode({ socket })`, and
   on Node the default transport is `['websocket']` — set the client to match
   (`transports: ['websocket']`). See [realtime](./realtime.md).
-- **Bun-only helpers** do not run on Node: `serveFile` (uses `Bun.file`) and the
-  raw WebSocket lane. `staticRoute` is runtime-neutral (`node:fs`) and works on
-  both, but in production prefer a CDN / the static front-end below.
+- **Bun-only helpers** do not run on Node: the raw WebSocket lane. `serveFile`
+  and `staticRoute` work on both — on Node the body is a `node:fs` read stream —
+  but in production prefer a CDN / the static front-end below.
 
 ### Production checklist
 

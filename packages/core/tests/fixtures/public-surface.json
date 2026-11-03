@@ -1091,6 +1091,7 @@
     "SocketRegistryServer",
     "SocketRegistrySnapshot",
     "SocketReplayFrame",
+    "StaticRouteOptions",
     "StitchErrorCode",
     "StitchLogger",
     "StreamScope",

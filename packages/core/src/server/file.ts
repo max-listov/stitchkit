@@ -3,23 +3,34 @@
  * the conditional-request handling that Range correctness depends on (`ETag` /
  * `Last-Modified` / `If-Range` / `If-None-Match` / `If-Modified-Since` → `304`).
  *
- * `parseByteRange` and the validator helpers are pure and runtime-neutral — they
- * never touch `Bun` and are unit-testable on their own. `serveFile` is the
- * Bun-first responder built on top, using `Bun.file().slice()` so a range body
- * streams without reading the whole file into memory (unlike `staticRoute`). A
- * Node variant (`node:fs.createReadStream`) is a separate follow-up. → ADR 0023.
+ * `parseByteRange` and the validator helpers are pure. `serveFile` is the one
+ * responder built on top, and `staticRoute` answers through it. Both run on Bun
+ * and Node: the metadata comes from `node:fs`, and the body streams the
+ * requested bytes without reading the whole file into memory. → ADR 0023, ADR 0281.
  */
-import { readFile, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { isWithinDir, realPathWithinDir } from '../internal/within-dir';
 import { mimeForPath } from './mime';
 import type { RawRoute } from './types';
 
+/** What a `staticRoute` adds to every file it serves. */
+export interface StaticRouteOptions {
+  /** Value for the `Cache-Control` header, verbatim. */
+  cacheControl?: string;
+}
+
 /**
- * Build a basic static-file route. URL-derived paths pass both lexical and
- * realpath containment checks, so an in-root symlink cannot escape `dir`.
+ * Build a static-file route. URL-derived paths pass both lexical and realpath
+ * containment checks, so an in-root symlink cannot escape `dir`; the file
+ * itself is answered by `serveFile` (Range, validators, `304`, streaming).
  */
-export function staticRoute(prefix: string, dir: string): RawRoute {
+export function staticRoute(
+  prefix: string,
+  dir: string,
+  options: StaticRouteOptions = {},
+): RawRoute {
   const cleanPrefix = prefix.replace(/\/+$/, '');
   const root = resolve(dir.replace(/\/+$/, ''));
   return {
@@ -37,14 +48,7 @@ export function staticRoute(prefix: string, dir: string): RawRoute {
       if (!isWithinDir(root, target)) return new Response('Forbidden', { status: 403 });
       const realTarget = await realPathWithinDir(root, target);
       if (realTarget === null) return new Response('Not found', { status: 404 });
-      const info = await stat(realTarget).catch(() => null);
-      if (!info?.isFile()) return new Response('Not found', { status: 404 });
-      return new Response(await readFile(realTarget), {
-        headers: {
-          'Content-Type': mimeForPath(realTarget),
-          'X-Content-Type-Options': 'nosniff',
-        },
-      });
+      return serveFile(req, { path: realTarget, cacheControl: options.cacheControl });
     },
   };
 }
@@ -212,10 +216,10 @@ export interface ServeFileOptions {
  * `405` (non GET/HEAD), `404` (missing), `304` (fresh per `If-None-Match` /
  * `If-Modified-Since`), `200` (full — no/ignored Range), `206` (range), or `416`
  * (unsatisfiable range). Always sets `Accept-Ranges: bytes` and `nosniff`; a
- * `HEAD` returns every header with an empty body.
+ * `HEAD` returns every header with an empty body. A directory is `404`.
  *
- * Bun-first (`Bun.file`). The caller is responsible for path containment — for
- * URL-derived paths use `staticRoute` or `isWithinDir`. → ADR 0023.
+ * Runs on Bun and Node. The caller is responsible for path containment — for
+ * URL-derived paths use `staticRoute` or `isWithinDir`. → ADR 0023, ADR 0281.
  */
 export async function serveFile(req: Request, opts: ServeFileOptions): Promise<Response> {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -225,13 +229,13 @@ export async function serveFile(req: Request, opts: ServeFileOptions): Promise<R
     });
   }
 
-  const file = Bun.file(opts.path);
-  if (!(await file.exists())) {
+  const info = await stat(opts.path).catch(() => null);
+  if (!info?.isFile()) {
     return new Response('Not found', { status: 404 });
   }
 
-  const size = file.size;
-  const mtimeMs = file.lastModified;
+  const size = info.size;
+  const mtimeMs = info.mtimeMs;
   const contentType = opts.contentType ?? mimeForPath(opts.path);
   const useEtag = opts.etag !== false;
   const useLastModified = opts.lastModified !== false;
@@ -281,12 +285,35 @@ export async function serveFile(req: Request, opts: ServeFileOptions): Promise<R
     base.set('Content-Type', contentType);
     base.set('Content-Range', `bytes ${range.start}-${range.end}/${size}`);
     base.set('Content-Length', String(length));
-    // `slice(start, end + 1)` — Bun's slice is end-exclusive; streams the range.
-    const body = isHead ? null : file.slice(range.start, range.end + 1);
+    const body = isHead ? null : fileBody(opts.path, range.start, range.end);
     return new Response(body, { status: 206, headers: base });
   }
 
   base.set('Content-Type', contentType);
   base.set('Content-Length', String(size));
-  return new Response(isHead ? null : file, { status: 200, headers: base });
+  return new Response(isHead || size === 0 ? null : fileBody(opts.path, 0, size - 1), {
+    status: 200,
+    headers: base,
+  });
+}
+
+/**
+ * The inclusive byte span `[start, end]` as a streamed body. Bun gets its lazy
+ * file slice, which the server sends without copying through JavaScript; Node
+ * gets a read stream of the same span.
+ */
+function fileBody(path: string, start: number, end: number): Blob | ReadableStream {
+  if ('Bun' in globalThis) return Bun.file(path).slice(start, end + 1);
+  const source = createReadStream(path, { start, end });
+  const chunks = source[Symbol.asyncIterator]();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await chunks.next();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    cancel() {
+      source.destroy();
+    },
+  });
 }

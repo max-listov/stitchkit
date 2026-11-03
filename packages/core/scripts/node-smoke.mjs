@@ -142,6 +142,32 @@ try {
   await rm(fileRoot, { recursive: true, force: true });
 }
 
+// `staticRoute` answers through `serveFile`; under Node the body is a read stream.
+const { staticRoute } = await import('stitchkit/server');
+const staticRoot = await mkdtemp(join(tmpdir(), 'stitchkit-node-static-'));
+try {
+  const media = new Uint8Array(200_000).map((_, i) => i % 251);
+  await writeFile(join(staticRoot, 'clip.webm'), media);
+  const route = staticRoute('/static', staticRoot, { cacheControl: 'public, max-age=60' });
+  const ask = (headers) =>
+    route.handler(new Request('http://node/static/clip.webm', { headers }), {
+      params: { filePath: 'clip.webm' },
+    });
+  const full = await ask({});
+  assert.equal(full.status, 200);
+  assert.equal(full.headers.get('cache-control'), 'public, max-age=60');
+  assert.deepEqual(new Uint8Array(await full.arrayBuffer()), media);
+  const range = await ask({ range: 'bytes=100-199' });
+  assert.equal(range.status, 206);
+  assert.equal(range.headers.get('content-range'), `bytes 100-199/${media.byteLength}`);
+  assert.deepEqual(new Uint8Array(await range.arrayBuffer()), media.subarray(100, 200));
+  const fresh = await ask({ 'if-none-match': full.headers.get('etag') });
+  assert.equal(fresh.status, 304);
+  console.log('staticRoute range and validators on Node: OK');
+} finally {
+  await rm(staticRoot, { recursive: true, force: true });
+}
+
 // 2 — serveNode HTTP round-trip.
 const contract = defineContract(
   { prefix: 'smoke' },

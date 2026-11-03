@@ -15,6 +15,16 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/server` — `staticRoute(prefix, dir, { cacheControl })` sets `Cache-Control` on every file the route serves, its `304`s and ranges included. [ADR 0281](docs/decisions/0281-static-files-are-served-by-one-responder.md)
+  **Affects:** `stitchkit/server` staticRoute, StaticRouteOptions
+
+### Fixed
+
+- `stitchkit/server` — `staticRoute` serves a file the way `serveFile` does. It read the whole file into memory and answered without `ETag`, `Last-Modified` or `Accept-Ranges`, so a browser re-downloaded every image and video on every visit, and a `<video>` that needs `206` (Safari, a Telegram Mini App on iOS) got the whole file. It now streams the body, revalidates to `304` and answers a single range with `206` or `416`; containment refusals are unchanged. `serveFile` runs on Node as well as Bun, and on both a directory is `404`. [ADR 0281](docs/decisions/0281-static-files-are-served-by-one-responder.md)
+  **Affects:** `stitchkit/server` staticRoute(behaviour), serveFile(behaviour)
+
 ## [0.118.0] - 2026-11-03
 
 ### ⚠️ Breaking changes

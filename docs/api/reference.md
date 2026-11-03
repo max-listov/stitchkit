@@ -407,7 +407,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `KeyedServices` | _type_ | registry result: the mount-ordered `ServiceDef[]` carrying the same services under `.byKey` |
 | `RegistryHandlers` | _type_ | exact backend handler registry inferred from a contract registry |
 | `ExactRegistryHandlers` | _type_ | fail-first handler shape that rejects extra registry and endpoint keys |
-| `staticRoute` | function | a raw route that serves a directory |
+| `staticRoute` | function | a raw route that serves a contained directory through `serveFile` (`Range` / `304` / validators) |
+| `StaticRouteOptions` | _type_ | `{ cacheControl }` — what `staticRoute` adds to every file it serves |
 | `serveFile` | function | serve a file with `Range` / `304` / `HEAD` — [guide](../guide/server.md#serving-files--range-requests) |
 | `parseByteRange` | function | parse a single `Range` header → range / `unsatisfiable` / `null` |
 | `isWithinDir` | function | path containment — `(root, resolvedTarget) => boolean`; call it before `serveFile` on any URL-derived path |
