@@ -262,10 +262,16 @@ export function postgresTelegramUpdateStore(
     async due(options) {
       const rows = await run(
         `SELECT update_id, body FROM ${table}
-         WHERE (state = 'pending' AND received_at <= $2::bigint)
-           OR (state <> 'pending' AND ${CLAIMABLE})
+         WHERE ((state = 'pending' AND received_at <= $2::bigint)
+           OR (state <> 'pending' AND ${CLAIMABLE}))
+           AND update_id > $4::bigint
          ORDER BY update_id LIMIT $3::integer`,
-        [options.now, options.pendingBefore, options.limit],
+        [
+          options.now,
+          options.pendingBefore,
+          options.limit,
+          options.afterUpdateId ?? Number.MIN_SAFE_INTEGER,
+        ],
       );
       return rows.flatMap((row) => {
         const updateId = integer(field(row, 'update_id'));

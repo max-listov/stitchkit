@@ -50,6 +50,35 @@ describe('telegram update stores keep the rules', () => {
 });
 
 describe('the check refuses a store that breaks them', () => {
+  test('a cursor kept only on pending rows is named', async () => {
+    const careless = (): TelegramUpdateStore => {
+      const store = memoryTelegramUpdateStore();
+      const rows = new Set<number>();
+      return {
+        ...store,
+        async add(update) {
+          rows.add(update.updateId);
+          return store.add(update);
+        },
+        async settle(updateId, attempt, settlement) {
+          rows.delete(updateId);
+          await store.settle(updateId, attempt, settlement);
+        },
+        async due(query) {
+          const { afterUpdateId, ...uncursored } = query;
+          const all = await store.due(uncursored);
+          return all.filter(
+            ({ updateId }) =>
+              afterUpdateId === undefined || !rows.has(updateId) || updateId > afterUpdateId,
+          );
+        },
+      };
+    };
+    expect(await checkTelegramUpdateStore(careless)).toContain(
+      'due continues strictly after its cursor: due did not continue after its cursor',
+    );
+  });
+
   test('a claim that ignores the lease, and a settle that ignores the attempt, are named', async () => {
     const careless = (): TelegramUpdateStore => {
       const store = memoryTelegramUpdateStore();

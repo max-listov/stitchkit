@@ -15,6 +15,8 @@ import { randomUUID } from 'node:crypto';
  * - `renew` and `settle` act only while the record is still `processing` under
  *   the same attempt, so a process that lost its lease cannot overwrite the
  *   one that took it over;
+ * - `due` lists a record until it is claimed, so a queue is read page by page,
+ *   strictly after `afterUpdateId`;
  * - a durable abandonment keeps `settledAt` empty until the consumer has
  *   handled its final obligation. It stays in this record and is never pruned
  *   while it is pending.
@@ -50,6 +52,8 @@ export interface TelegramUpdateDueQuery {
   /** A `pending` record is due once received at or before this — its own process had its chance. */
   readonly pendingBefore: number;
   readonly limit: number;
+  /** Continue strictly after this `update_id`; omit to begin at the first row. */
+  readonly afterUpdateId?: number;
 }
 
 export interface StoredTelegramUpdate {
@@ -98,7 +102,7 @@ export interface TelegramUpdateStore {
     attempt: number,
     settlement: TelegramUpdateSettlement,
   ): Promise<void>;
-  /** Claimable updates in `update_id` order. */
+  /** One page of claimable updates in `update_id` order; a row stays due until it is claimed. */
   due(query: TelegramUpdateDueQuery): Promise<readonly StoredTelegramUpdate[]>;
   /** Forget `completed` and `abandoned` updates settled before `before`; how many were forgotten. */
   prune(before: number): Promise<number>;
@@ -253,6 +257,10 @@ export function memoryTelegramUpdateStore(): TelegramUpdateDurableStore {
           record.state === 'pending'
             ? record.receivedAt <= query.pendingBefore
             : isClaimable(record, query.now),
+        )
+        .filter(
+          (record) =>
+            query.afterUpdateId === undefined || record.updateId > query.afterUpdateId,
         )
         .sort((left, right) => left.updateId - right.updateId)
         .slice(0, query.limit)

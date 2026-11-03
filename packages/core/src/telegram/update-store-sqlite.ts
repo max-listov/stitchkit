@@ -116,7 +116,8 @@ function prepareTelegramSqliteUpdateStatements(
     ),
     due: database.prepare(
       `SELECT update_id, body FROM ${table}
-       WHERE (state = 'pending' AND received_at <= ?2) OR (state <> 'pending' AND ${CLAIMABLE})
+       WHERE ((state = 'pending' AND received_at <= ?2) OR (state <> 'pending' AND ${CLAIMABLE}))
+         AND update_id > ?4
        ORDER BY update_id LIMIT ?3`,
     ),
     prune: database.prepare(
@@ -260,7 +261,12 @@ export function sqliteTelegramUpdateStore(
     },
     async due(query) {
       return due
-        .all(query.now, query.pendingBefore, query.limit)
+        .all(
+          query.now,
+          query.pendingBefore,
+          query.limit,
+          query.afterUpdateId ?? Number.MIN_SAFE_INTEGER,
+        )
         .flatMap((row) => rowOf(row) ?? []);
     },
     async owns(identity: TelegramUpdateAttemptIdentity, at) {

@@ -1,5 +1,26 @@
 # Upgrading stitchkit
 
+## Unreleased migration: telegram-due-cursor
+
+**Who must act:** an application with its own `TelegramUpdateStore`. A bot on `memoryTelegramUpdateStore`,
+`sqliteTelegramUpdateStore` or `postgresTelegramUpdateStore` needs no change.
+
+`due` returns one page of a queue whose rows stay due until claimed, and the intake reads the next page from
+`afterUpdateId`, until a page comes back empty. A store that ignores the cursor fails `start` and every sweep
+with a `TypeError`, reported to `onStoreError`, as soon as a row is due. Continue strictly after it, in
+`update_id` order:
+
+```ts
+// before
+where: { OR: dueRows }
+// after
+where: { OR: dueRows, ...(query.afterUpdateId !== undefined && { updateId: { gt: query.afterUpdateId } }) }
+```
+
+`checkTelegramUpdateStore` reports the rule as `due continues strictly after its cursor`.
+
+Search pattern: an object with a `due(` method passed as `store` to `createTelegramUpdateIntake`.
+
 ## Released migration: 0.117.0
 
 ### telegram-chat-pause

@@ -2,7 +2,7 @@
  * The rules of `TelegramUpdateStore`, as a check any store can be put
  * through — the ones shipped here and an application's own over its ORM.
  *
- * A store is five conditional statements, and each is easy to write almost
+ * A store is six conditional statements, and each is easy to write almost
  * right: a claim that does not check the lease, a settle that does not check
  * the attempt, a claim read and then written in two statements so that two
  * processes both take one update. Nothing fails in a test with one process;
@@ -126,6 +126,26 @@ const RULES: Readonly<Record<string, Rule>> = {
       violated('an update past maxAttempts was claimed');
     if (!same(await store.due({ now: 100, pendingBefore: 0, limit: 10 }), []))
       violated('an update past maxAttempts was not abandoned');
+  },
+  'due continues strictly after its cursor': async (store, violated) => {
+    for (const updateId of [1, 2, 3]) {
+      await store.add({ updateId, body: 'b', receivedAt: 0 });
+    }
+    await store.claim(2, { ...claim, now: 0, leaseUntil: 10 });
+    await store.settle(2, 1, { state: 'failed', at: 1, retryAt: 5, error: 'x' });
+    const page = async (afterUpdateId?: number): Promise<number[]> =>
+      (
+        await store.due({
+          now: 5,
+          pendingBefore: 0,
+          limit: 2,
+          ...(afterUpdateId !== undefined && { afterUpdateId }),
+        })
+      ).map(({ updateId }) => updateId);
+    if (!same(await page(), [1, 2])) violated('due did not begin at the first row');
+    if (!same(await page(1), [2, 3])) violated('due lost a retry after its cursor');
+    if (!same(await page(2), [3])) violated('due did not continue after its cursor');
+    if (!same(await page(3), [])) violated('due listed a row at or before its cursor');
   },
   'settled updates are forgotten after they are pruned': async (store, violated) => {
     await store.add({ updateId: 3, body: 'b', receivedAt: 0 });

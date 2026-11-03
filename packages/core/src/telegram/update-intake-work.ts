@@ -1,4 +1,4 @@
-import { transportResult } from '../internal/typed';
+import { isRecord, transportResult } from '../internal/typed';
 import type {
   TelegramUpdateAttemptContext,
   TelegramUpdateAttemptIntakeConfig,
@@ -10,6 +10,7 @@ import type {
 import type {
   StoredTelegramUpdateExhaustion,
   TelegramUpdateAttemptIdentity,
+  TelegramUpdateDueQuery,
   TelegramUpdateDurableStore,
   TelegramUpdateFencedStore,
   TelegramUpdateStore,
@@ -47,6 +48,100 @@ export function createTelegramUpdateWorkSlots(maxConcurrent: number): TelegramUp
       else running -= 1;
     },
   };
+}
+
+/** Updates of one chat keep their order; an update without a chat is its own line. */
+function lineOf(update: Record<string, unknown>): string {
+  for (const [key, payload] of Object.entries(update)) {
+    if (key === 'update_id' || !isRecord(payload)) continue;
+    const message = isRecord(payload.message) ? payload.message : undefined;
+    for (const holder of [
+      payload.chat,
+      message?.chat,
+      payload.from,
+      payload.user,
+      payload.voter_chat,
+    ]) {
+      if (
+        isRecord(holder) &&
+        (typeof holder.id === 'number' || typeof holder.id === 'string')
+      ) {
+        return `chat:${holder.id}`;
+      }
+    }
+  }
+  return `update:${String(update.update_id)}`;
+}
+
+/** The updates this process holds, each behind the earlier ones of its chat. */
+export interface TelegramUpdateLines {
+  has(updateId: number): boolean;
+  /** Join the update's line; `false` when it is already in one. */
+  schedule(update: Record<string, unknown>): boolean;
+  pending(): readonly Promise<void>[];
+}
+
+export function createTelegramUpdateLines(
+  run: (update: Record<string, unknown>, updateId: number) => Promise<void>,
+): TelegramUpdateLines {
+  const lines = new Map<string, Promise<void>>();
+  const scheduled = new Set<number>();
+  return {
+    has: (updateId) => scheduled.has(updateId),
+    schedule(update) {
+      const updateId = Number(update.update_id);
+      if (scheduled.has(updateId)) return false;
+      scheduled.add(updateId);
+      const line = lineOf(update);
+      const next = (lines.get(line) ?? Promise.resolve())
+        .then(() => run(update, updateId))
+        .finally(() => {
+          scheduled.delete(updateId);
+          if (lines.get(line) === next) lines.delete(line);
+        });
+      lines.set(line, next);
+      return true;
+    },
+    pending: () => [...lines.values()],
+  };
+}
+
+/**
+ * Every row due, read to the empty page. A scheduled row stays due until
+ * claimed, so only a cursor reaches past the first page. A store on a
+ * synchronous driver never leaves the microtask queue, so each page yields:
+ * webhooks and lease renewals run during a read.
+ */
+export async function readTelegramUpdatesDue(
+  store: TelegramUpdateStore,
+  read: Omit<TelegramUpdateDueQuery, 'afterUpdateId'> & {
+    readonly skip: (updateId: number) => boolean;
+    readonly parse: (body: string) => Record<string, unknown> | undefined;
+    readonly reading: () => boolean;
+  },
+): Promise<Record<string, unknown>[]> {
+  const { skip, parse, reading, ...query } = read;
+  const rows: Record<string, unknown>[] = [];
+  let afterUpdateId: number | undefined;
+  for (;;) {
+    const due = await store.due({
+      ...query,
+      ...(afterUpdateId !== undefined && { afterUpdateId }),
+    });
+    for (const row of due) {
+      if (afterUpdateId !== undefined && row.updateId <= afterUpdateId) {
+        throw new TypeError(
+          '[stitchkit] telegram update store: due returned a row at or before afterUpdateId',
+        );
+      }
+      if (skip(row.updateId)) continue;
+      const update = parse(row.body);
+      if (update) rows.push(update);
+    }
+    afterUpdateId = due.at(-1)?.updateId;
+    if (due.length === 0 || !reading()) return rows;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 export interface TelegramUpdateExhaustionScheduler {

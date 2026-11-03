@@ -464,7 +464,17 @@ intake recorded the body; the handler runs after, outside the request. Updates
 of one chat run in order, other chats alongside (`maxConcurrent`, 32). An
 attempt holds a lease it renews while the handler lives; a sweep takes over what
 was left — `pending` whose process never got to it (`pendingGraceMs`), `failed`
-whose retry is due, `processing` whose process died. A failure is retried with
+whose retry is due, `processing` whose process died. `start` schedules the whole
+queue the last process left, page by page and without waiting for
+`pendingGraceMs`, and an update accepted meanwhile takes its place behind it, so
+a crash keeps each chat in order however long the queue was. The queue sits in
+memory while it drains, as it did in the process that accepted it. `close`
+waits for the handlers running and leaves the rest of the queue recorded. Order
+holds inside one process for updates handled in their turn: the attempt a crash
+interrupted comes when its lease lapses, a failed update at its retry and one
+the store refused to claim at a later sweep, each after later updates of its
+chat. An old release draining beside a new one shares its queue, so the two can
+run updates of one chat side by side. A failure is retried with
 backoff or after Telegram's `retry_after`; one Telegram said repeating cannot
 fix (a refused message, a blocked user) is abandoned; `maxAttempts` (5) ends
 the rest. Delivery is at least once: a handler that finished but could not be
@@ -514,7 +524,8 @@ in a `BotError`; the intake unwraps it, so `retry`, `onFailure` and the error
 stored with the update are what the middleware threw — a `retry` that returns
 `false` for the bot's own terminal error sees that error.
 
-The base store remains the six atomic steps of `TelegramUpdateStore`. A
+The base store remains the six atomic steps of `TelegramUpdateStore`; `due` is
+paged, continuing strictly after `afterUpdateId`. A
 `TelegramUpdateFencedStore` adds `claimOwned`, `renewOwned`, `owns` and
 `settleOwned`; `TelegramUpdateDurableStore` adds the final-obligation methods.
 Reference stores implement both, so the bot's own database holds the fence and

@@ -281,6 +281,221 @@ describe('telegram update intake', () => {
     await intake.close();
   });
 
+  test('a queue longer than one page is drained at the start, ahead of what arrives after', async () => {
+    const database = new Database(':memory:');
+    const store = sqliteTelegramUpdateStore({ database });
+    const dead = createTelegramUpdateIntake<Message>({ store, handle: () => undefined });
+    for (let updateId = 1; updateId <= 250; updateId += 1) {
+      await dead.accept(body(updateId, String(updateId)));
+    }
+    const handled: number[] = [];
+    const intake = createTelegramUpdateIntake<Message>({
+      store,
+      handle: (update) => {
+        handled.push(update.update_id);
+      },
+    });
+    await intake.start();
+    await intake.accept(body(1_000, 'new'));
+    await intake.idle();
+    expect(handled).toEqual([...Array.from({ length: 250 }, (_, at) => at + 1), 1_000]);
+    await intake.close();
+  });
+
+  test('an update arriving while the start reads the queue waits behind it', async () => {
+    const inner = memoryTelegramUpdateStore();
+    await inner.add({ updateId: 1, body: body(1, 'old'), receivedAt: 0 });
+    await inner.add({ updateId: 2, body: body(2, 'old'), receivedAt: 0 });
+    const entered = gate();
+    const release = gate();
+    const store: TelegramUpdateStore = {
+      ...inner,
+      async due(query) {
+        const rows = await inner.due(query);
+        entered.open();
+        await release.opened;
+        return rows;
+      },
+    };
+    const handled: number[] = [];
+    const intake = createTelegramUpdateIntake<Message>({
+      store,
+      now: () => 10,
+      handle: (update) => {
+        handled.push(update.update_id);
+      },
+    });
+    const starting = intake.start();
+    await entered.opened;
+    expect(await intake.accept(body(3, 'new'))).toBe('accepted');
+    await Bun.sleep(5);
+    expect(handled).toEqual([]);
+    release.open();
+    await starting;
+    await intake.idle();
+    expect(handled).toEqual([1, 2, 3]);
+    await intake.close();
+  });
+
+  test('a long queue yields between pages and stops being read at close', async () => {
+    const inner = memoryTelegramUpdateStore();
+    for (let updateId = 1; updateId <= 350; updateId += 1) {
+      await inner.add({ updateId, body: body(updateId, 'old', updateId), receivedAt: 0 });
+    }
+    let pages = 0;
+    let pagesWhenATimerRan = 0;
+    const store: TelegramUpdateStore = {
+      ...inner,
+      due(query) {
+        pages += 1;
+        return inner.due(query);
+      },
+    };
+    const intake = createTelegramUpdateIntake<Message>({ store, handle: () => undefined });
+    const starting = intake.start();
+    setTimeout(() => {
+      pagesWhenATimerRan = pages;
+    }, 0);
+    await starting;
+    expect(pages).toBe(5);
+    expect(pagesWhenATimerRan).toBeGreaterThan(0);
+    expect(pagesWhenATimerRan).toBeLessThan(5);
+    await intake.close();
+
+    pages = 0;
+    const closed = createTelegramUpdateIntake<Message>({ store, handle: () => undefined });
+    const closedStart = closed.start();
+    await closed.close();
+    await closedStart;
+    expect(pages).toBe(1);
+  });
+
+  test('a retry policy that throws is reported and keeps the rows behind it in their line', async () => {
+    const store = memoryTelegramUpdateStore();
+    const handled: number[] = [];
+    const reported: unknown[] = [];
+    const intake = createTelegramUpdateIntake<Message>({
+      store,
+      retry: () => {
+        throw new Error('policy broke');
+      },
+      onStoreError: (error) => reported.push(error),
+      handle: (update) => {
+        handled.push(update.update_id);
+        if (update.update_id === 1) throw new Error('handler');
+      },
+    });
+    await intake.start();
+    for (const updateId of [1, 2, 3]) await intake.accept(body(updateId, 'x'));
+    await intake.idle();
+    expect(handled).toEqual([1, 2, 3]);
+    expect(reported).toHaveLength(1);
+    await intake.close();
+  });
+
+  test('close waits for the handler running and leaves the queue recorded for the next start', async () => {
+    const store = memoryTelegramUpdateStore();
+    const running = gate();
+    const held = gate();
+    const handled: number[] = [];
+    const first = createTelegramUpdateIntake<Message>({
+      store,
+      handle: async (update) => {
+        handled.push(update.update_id);
+        running.open();
+        await held.opened;
+      },
+    });
+    await first.start();
+    for (const updateId of [1, 2, 3]) await first.accept(body(updateId, 'x'));
+    await running.opened;
+    const closing = first.close();
+    held.open();
+    await closing;
+    expect(handled).toEqual([1]);
+    const second = createTelegramUpdateIntake<Message>({
+      store,
+      handle: (update) => {
+        handled.push(update.update_id);
+      },
+    });
+    await second.start();
+    await second.idle();
+    expect(handled).toEqual([1, 2, 3]);
+    await second.close();
+  });
+
+  test('a page that fails leaves nothing of the queue running', async () => {
+    const inner = memoryTelegramUpdateStore();
+    for (let updateId = 1; updateId <= 150; updateId += 1) {
+      await inner.add({ updateId, body: body(updateId, 'old'), receivedAt: 0 });
+    }
+    let pages = 0;
+    const store: TelegramUpdateStore = {
+      ...inner,
+      due(query) {
+        pages += 1;
+        return pages === 2 ? Promise.reject(new Error('store down')) : inner.due(query);
+      },
+    };
+    const handled: number[] = [];
+    const intake = createTelegramUpdateIntake<Message>({
+      store,
+      handle: (update) => {
+        handled.push(update.update_id);
+      },
+    });
+    await expect(intake.start()).rejects.toThrow('store down');
+    expect(handled).toEqual([]);
+    await intake.start();
+    await intake.idle();
+    expect(handled).toEqual(Array.from({ length: 150 }, (_, at) => at + 1));
+    await intake.close();
+  });
+
+  test('a store that ignores the due cursor fails the sweep by name instead of reading the same page for ever', async () => {
+    const inner = memoryTelegramUpdateStore();
+    await inner.add({ updateId: 1, body: body(1, 'old'), receivedAt: 0 });
+    const store: TelegramUpdateStore = {
+      ...inner,
+      due: ({ now, pendingBefore, limit }) => inner.due({ now, pendingBefore, limit }),
+    };
+    const intake = createTelegramUpdateIntake<Message>({
+      store,
+      handle: () => new Promise<void>(() => undefined),
+    });
+    await expect(intake.start()).rejects.toThrow('afterUpdateId');
+  });
+
+  test('a sweep is not hidden behind a full page of updates already scheduled', async () => {
+    let clock = 0;
+    const store = memoryTelegramUpdateStore();
+    const stuck = gate();
+    const handled: number[] = [];
+    const intake = createTelegramUpdateIntake<Message>({
+      store,
+      now: () => clock,
+      pendingGraceMs: 10,
+      maxConcurrent: 2,
+      handle: async (update) => {
+        if (update.message.chat.id === 1) await stuck.opened;
+        handled.push(update.update_id);
+      },
+    });
+    await intake.start();
+    for (let updateId = 1; updateId <= 150; updateId += 1) {
+      await intake.accept(body(updateId, 'queued'));
+    }
+    // Another process recorded it and died; a full page of this one's rows comes first.
+    await store.add({ updateId: 200, body: body(200, 'orphan', 2), receivedAt: 0 });
+    clock = 10;
+    expect(await intake.sweep()).toBe(1);
+    await Bun.sleep(5);
+    expect(handled).toEqual([200]);
+    stuck.open();
+    await intake.close();
+  });
+
   test("a live handler's lease keeps a second process off it; a dead one's lapses to the second", async () => {
     const database = new Database(':memory:');
     const store = sqliteTelegramUpdateStore({ database });

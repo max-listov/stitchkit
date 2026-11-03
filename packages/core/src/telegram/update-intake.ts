@@ -17,6 +17,12 @@
  * `pending` whose process never got to it, `failed` whose retry is due,
  * `processing` whose lease nobody renewed. Delivery is at least once: a
  * handler that finished but could not be recorded as finished runs again.
+ *
+ * The start reads the whole queue into the lines of its chats, page by page,
+ * and whatever arrives meanwhile waits for it: a line is ordered by when it was
+ * joined, so the only way to keep a chat in `update_id` order after a crash is
+ * for the rows the dead process left to join first. The attempt the crash
+ * interrupted stays under its lease and comes when that lapses.
  */
 
 import { isRecord } from '../internal/typed';
@@ -24,7 +30,9 @@ import { classifyTelegramSendFailure } from './send-failure';
 import {
   createTelegramUpdateAttemptRunner,
   createTelegramUpdateExhaustionScheduler,
+  createTelegramUpdateLines,
   createTelegramUpdateWorkSlots,
+  readTelegramUpdatesDue,
 } from './update-intake-work';
 import type {
   TelegramUpdateAttemptIdentity,
@@ -112,7 +120,7 @@ export interface TelegramUpdateIntakeOptions<TUpdate extends TelegramUpdateEnvel
   readonly handleExhaustion?: (exhaustion: TelegramUpdateExhaustion<TUpdate>) => unknown;
   /** An observational report that `handleExhaustion` threw; it never acknowledges the row. */
   readonly onExhaustionFailure?: (failure: TelegramUpdateExhaustionFailure<TUpdate>) => void;
-  /** The store refused a step; the update is retried when its lease lapses. */
+  /** A step failed; the update stays recorded and a later sweep takes it. */
   readonly onStoreError?: (error: unknown, step: TelegramUpdateStoreStep) => void;
   /** Default `Date.now`. */
   readonly now?: () => number;
@@ -141,9 +149,12 @@ type TelegramUpdateAnyIntakeConfig<TUpdate extends TelegramUpdateEnvelope> =
 export interface TelegramUpdateIntake {
   /** Record one webhook body; handling starts after, once the intake is started. */
   accept(body: string): Promise<TelegramUpdateAcceptance>;
-  /** Start handling, beginning with everything recorded before. */
+  /**
+   * Start handling, beginning with everything recorded before. Resolves once
+   * that queue is scheduled, not handled; `accept` works throughout.
+   */
   start(): Promise<void>;
-  /** Take over what is due now; how many updates were scheduled. */
+  /** Take over everything due now; how many updates were scheduled. */
   sweep(): Promise<number>;
   /** Resolves once nothing is scheduled. */
   idle(): Promise<void>;
@@ -158,29 +169,6 @@ function defaultRetry(error: unknown, attempt: number): number | false {
   if (failure.evidence !== 'none' && !failure.retryable) return false;
   const backoff = Math.min(5_000 * 4 ** (attempt - 1), 15 * 60_000);
   return Math.max(backoff, (failure.retryAfterSeconds ?? 0) * 1_000);
-}
-
-/** Updates of one chat keep their order; an update without a chat is its own line. */
-function lineOf(update: Record<string, unknown>): string {
-  for (const [key, payload] of Object.entries(update)) {
-    if (key === 'update_id' || !isRecord(payload)) continue;
-    const message = isRecord(payload.message) ? payload.message : undefined;
-    for (const holder of [
-      payload.chat,
-      message?.chat,
-      payload.from,
-      payload.user,
-      payload.voter_chat,
-    ]) {
-      if (
-        isRecord(holder) &&
-        (typeof holder.id === 'number' || typeof holder.id === 'string')
-      ) {
-        return `chat:${holder.id}`;
-      }
-    }
-  }
-  return `update:${String(update.update_id)}`;
 }
 
 function parsed(body: string): Record<string, unknown> | undefined {
@@ -232,15 +220,13 @@ function isTelegramUpdateDurableStore(
   );
 }
 
-export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelope>(
-  config: TelegramUpdateIntakeConfig<TUpdate>,
-): TelegramUpdateIntake;
-export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelope>(
-  config: TelegramUpdateAttemptIntakeConfig<TUpdate>,
-): TelegramUpdateIntake;
-export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelope>(
+/** What the chosen handlers need of the store; a store short of it refuses at construction. */
+function storeCapabilities<TUpdate extends TelegramUpdateEnvelope>(
   config: TelegramUpdateAnyIntakeConfig<TUpdate>,
-): TelegramUpdateIntake {
+): {
+  readonly fenced: TelegramUpdateFencedStore | undefined;
+  readonly durable: TelegramUpdateDurableStore | undefined;
+} {
   const { store } = config;
   const exhaustionHandler = config.handleExhaustion;
   const attemptAware = 'handleAttempt' in config;
@@ -265,6 +251,20 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
       '[stitchkit] telegram update intake: handleExhaustion requires a TelegramUpdateDurableStore',
     );
   }
+  return { fenced, durable };
+}
+
+export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelope>(
+  config: TelegramUpdateIntakeConfig<TUpdate>,
+): TelegramUpdateIntake;
+export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelope>(
+  config: TelegramUpdateAttemptIntakeConfig<TUpdate>,
+): TelegramUpdateIntake;
+export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelope>(
+  config: TelegramUpdateAnyIntakeConfig<TUpdate>,
+): TelegramUpdateIntake {
+  const { store } = config;
+  const { fenced, durable } = storeCapabilities(config);
   const now = config.now ?? Date.now;
   const retry = config.retry ?? defaultRetry;
   const maxAttempts = positive('maxAttempts', config.maxAttempts ?? 5);
@@ -273,13 +273,12 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
   const sweepEveryMs = positive('sweepEveryMs', config.sweepEveryMs ?? 30_000);
   const retainMs = config.retainMs ?? 86_400_000;
   const maxConcurrent = positive('maxConcurrent', config.maxConcurrent ?? 32);
-  const lines = new Map<string, Promise<void>>();
-  const scheduled = new Set<number>();
   let started = false;
   let starting: Promise<void> | undefined;
   let lifecycleGeneration = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
   let exhaustionCursor: number | undefined;
+  let arrivals: Record<string, unknown>[] | undefined;
 
   const storeError = (error: unknown, step: TelegramUpdateStoreStep): void => {
     try {
@@ -314,35 +313,45 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
     ownershipLostReason: (identity) => new TelegramUpdateOwnershipLostError(identity),
   });
 
-  const schedule = (update: Record<string, unknown>): boolean => {
-    const updateId = Number(update.update_id);
-    if (!started || scheduled.has(updateId)) return false;
-    scheduled.add(updateId);
-    const line = lineOf(update);
-    const next = (lines.get(line) ?? Promise.resolve())
-      .then(async () => {
-        await slots.take();
-        try {
-          await attempt(update, updateId);
-        } finally {
-          slots.release();
-        }
-      })
-      .finally(() => {
-        scheduled.delete(updateId);
-        if (lines.get(line) === next) lines.delete(line);
-      });
-    lines.set(line, next);
-    return true;
-  };
+  const lines = createTelegramUpdateLines(async (update, updateId) => {
+    await slots.take();
+    try {
+      // What `close` left in its line stays recorded for the next start.
+      if (started) await attempt(update, updateId);
+    } catch (error) {
+      // A line outlives one attempt: the rows behind it stay behind it, this one under its lease.
+      storeError(error, 'settle');
+    } finally {
+      slots.release();
+    }
+  });
+  const schedule = (update: Record<string, unknown>): boolean =>
+    started && lines.schedule(update);
 
-  const sweep = async (pendingBefore: number): Promise<number> => {
+  /** Rows join their lines in one pass, merged with `waiting`, so nothing runs ahead of the read. */
+  const sweep = async (
+    pendingBefore: number,
+    waiting: readonly Record<string, unknown>[] = [],
+  ): Promise<number> => {
     const at = now();
-    const due = await store.due({ now: at, pendingBefore, limit: SWEEP_BATCH });
+    const generation = lifecycleGeneration;
+    const rows = await readTelegramUpdatesDue(store, {
+      now: at,
+      pendingBefore,
+      limit: SWEEP_BATCH,
+      skip: lines.has,
+      parse: parsed,
+      reading: () => started,
+    });
+    if (generation !== lifecycleGeneration) return 0;
+    if (arrivals === waiting) arrivals = undefined;
+    const waited = new Set(waiting);
+    const queue = [...rows, ...waiting].sort(
+      (left, right) => Number(left.update_id) - Number(right.update_id),
+    );
     let count = 0;
-    for (const row of due) {
-      const update = parsed(row.body);
-      if (update && schedule(update)) count += 1;
+    for (const update of queue) {
+      if (schedule(update) && !waited.has(update)) count += 1;
     }
     if (durable) {
       let exhaustions = await durable.dueExhaustions({
@@ -362,6 +371,12 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
     return count;
   };
 
+  const drained = async (): Promise<void> => {
+    while (lines.pending().length > 0 || exhaustionScheduler.pending().length > 0) {
+      await Promise.all([...lines.pending(), ...exhaustionScheduler.pending()]);
+    }
+  };
+
   return {
     async accept(body) {
       const update = parsed(body);
@@ -369,7 +384,8 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
       const updateId = Number(update.update_id);
       const added = await store.add({ updateId, body, receivedAt: now() });
       if (!added) return 'duplicate';
-      schedule(update);
+      if (arrivals) arrivals.push(update);
+      else schedule(update);
       return 'accepted';
     },
     start() {
@@ -377,12 +393,16 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
       if (started) return Promise.resolve();
       started = true;
       const generation = ++lifecycleGeneration;
+      const waiting: Record<string, unknown>[] = [];
+      arrivals = waiting;
       const operation = (async () => {
         try {
-          await sweep(now());
+          await sweep(now(), waiting);
         } catch (error) {
           if (started && lifecycleGeneration === generation) started = false;
           throw error;
+        } finally {
+          if (arrivals === waiting) arrivals = undefined;
         }
         if (!started || lifecycleGeneration !== generation) return;
         timer = setInterval(() => {
@@ -400,9 +420,8 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
     },
     sweep: () => sweep(now() - pendingGraceMs),
     async idle() {
-      while (lines.size > 0 || exhaustionScheduler.pending().length > 0) {
-        await Promise.all([...lines.values(), ...exhaustionScheduler.pending()]);
-      }
+      await starting?.catch(() => undefined);
+      await drained();
     },
     async close() {
       started = false;
@@ -416,9 +435,7 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
           () => undefined,
         );
       }
-      while (lines.size > 0 || exhaustionScheduler.pending().length > 0) {
-        await Promise.all([...lines.values(), ...exhaustionScheduler.pending()]);
-      }
+      await drained();
     },
   };
 }

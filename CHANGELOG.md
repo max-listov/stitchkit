@@ -15,6 +15,18 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** an application with its own `TelegramUpdateStore`. A bot on a store shipped here needs no change. See the [migration](docs/guide/upgrading.md).
+
+- `stitchkit/telegram` — **`TelegramUpdateStore.due` is paged by `afterUpdateId`.** A row stays due until it is claimed, so the first page of a long queue hid the rest. A store has to continue strictly after the cursor; one that ignores it fails the sweep by name rather than reading the same page for ever, and `checkTelegramUpdateStore` holds the rule. `// before: due({ now, pendingBefore, limit })` → `// after: due({ now, pendingBefore, limit, afterUpdateId })`
+  **Affects:** `stitchkit/telegram` TelegramUpdateStore(due), TelegramUpdateDueQuery, checkTelegramUpdateStore, createTelegramUpdateIntake(store)
+
+### Fixed
+
+- `stitchkit/telegram` — after a crash the update intake keeps every chat in order however long the queue was. `start` took 100 rows and left the rest to `pendingGraceMs`, while a new update of the same chat ran at once; an update arriving during the start overtook even a short queue. `start` now schedules the whole queue, what arrives meanwhile waits behind it, and a sweep reaches past a full page of rows already scheduled. A `retry` that throws no longer breaks its chat's line; `onStoreError` reports it. `close` no longer works through the queue: it waits for the handlers running, as it says, and the rest stays recorded.
+  **Affects:** `stitchkit/telegram` createTelegramUpdateIntake(behaviour)
+
 ## [0.117.0] - 2026-11-02
 
 ### ⚠️ Breaking changes
