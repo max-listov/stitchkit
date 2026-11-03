@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.118.1] - 2026-11-03
+
 ### Added
 
 - `stitchkit/server` — `staticRoute(prefix, dir, { cacheControl })` sets `Cache-Control` on every file the route serves, its `304`s and ranges included. [ADR 0281](docs/decisions/0281-static-files-are-served-by-one-responder.md)
