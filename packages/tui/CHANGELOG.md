@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-11-04
+
 ### Changed
 
 - Targets stitchkit `^0.119.0`, keeping consumers on one framework copy when they adopt the configured factory exposure, the raw tracking attribution and the complete GeoIP snapshot. Renders through `@opentui/core` and `@opentui/react` 0.8 and resolves `ai` 7.0.162 and Zod 4.6.7. No terminal source change is needed.

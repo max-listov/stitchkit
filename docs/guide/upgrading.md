@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Pending migration: factory-default-exposure
+## Released migration: 0.119.0
+
+### factory-default-exposure
 
 **Who must act:** code passing arguments to `createContractFactory`, depending on its fixed-string
 policy types or the renamed exposure types, calling HTTP clients of endpoints typed as the broad
@@ -58,7 +60,7 @@ Search patterns: `createContractFactory`, `toolExposure`, `ExplicitToolExposureE
 `ExplicitScopedDefineContract`, `: EndpointDef`, `: FactoryScopedEndpoint`, and multipart endpoints
 with `expose` or `tool`.
 
-## Pending migration: geo-full-snapshot
+### geo-full-snapshot
 
 **Who must act:** code comparing `stitchkit/geo` results by equality, parsing them with a strict
 schema of its own, mutating a returned `GeoAttribution`, or relying on empty labels.
@@ -81,7 +83,7 @@ one; write `countryCode ?? registeredCountryCode` where a country for every addr
 
 Search pattern: `stitchkit/geo`, `mapGeoIpRecord`, `GeoAttribution`, `resolve(`.
 
-## Pending migration: raw-tracking-attribution
+### raw-tracking-attribution
 
 **Who must act:** code passing `referrerMap` or `hostname` to `resolveAttribution`, importing
 `ReferrerRule` or `parseReferrer`, relying on inferred, lowercased or retained UTM, or reading `utm`

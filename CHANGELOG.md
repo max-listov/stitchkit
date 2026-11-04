@@ -15,7 +15,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.119.0] - 2026-11-04
+
 ### ⚠️ Breaking changes
+
+**Who must act:** code configuring `createContractFactory`, importing its `Explicit*` exposure types or calling HTTP clients of endpoints typed as `EndpointDef` / `FactoryScopedEndpoint`; tracking clients passing `referrerMap` and servers reading `utm` from an event batch; code comparing, strictly parsing or mutating a `stitchkit/geo` snapshot. An application on the no-config factory with literal endpoints and the default GeoIP mapper only re-reads its snapshots. See the [migrations](docs/guide/upgrading.md).
 
 - `stitchkit`, `stitchkit/contract`, `stitchkit/http` — **factory exposure is a transport default, configured after scope.**
   `createContractFactory<Scope>({ toolExposure: 'explicit' })` →
@@ -29,7 +33,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   are renamed `ConfiguredToolExposureEndpoints` and `ConfiguredScopedDefineContract`. Configuration
   keys outside the policy fail to compile.
   [ADR 0283](docs/decisions/0283-factory-default-exposure-is-materialized-by-capability.md);
-  [migration](docs/guide/upgrading.md#pending-migration-factory-default-exposure).
+  [migration](docs/guide/upgrading.md#factory-default-exposure).
   HTTP client methods and URLs now require guaranteed HTTP, not a possible member of a widened array:
   an endpoint typed as the broad `EndpointDef` or `FactoryScopedEndpoint` has none, with or without a
   factory; keep helper endpoints literal with a const generic.
@@ -56,7 +60,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   registered country is its own fact and never fills the located country. Custom `map` results are
   untouched. `// before: expect(await geo.resolve(ip)).toEqual({ city: 'Bangkok' })` →
   `// after: { city: 'Bangkok', localizedNames: { city: { en: 'Bangkok' } } }`.
-  [migration](docs/guide/upgrading.md#pending-migration-geo-full-snapshot).
+  [migration](docs/guide/upgrading.md#geo-full-snapshot).
   **Affects:** `stitchkit/geo` GeoAttribution, mapGeoIpRecord(behaviour), createGeoIpResolver(behaviour)
 
 ### Added
