@@ -4,7 +4,11 @@ import { type CiPlan, CiPlanSchema } from './ci-plan';
 const NeedsSchema = z.record(
   z.string(),
   z.object({
-    result: z.enum(['success', 'failure', 'cancelled', 'skipped']),
+    // Any string GitHub reports: `success` and an unselected `skipped` are the
+    // only proofs, and every other result — including `abandoned`, when no
+    // runner ever took the job — is refused by name below rather than by a
+    // schema error that hides which job and why.
+    result: z.string().min(1),
     outputs: z.record(z.string(), z.string()).optional(),
   }),
 );

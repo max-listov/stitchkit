@@ -27,11 +27,17 @@ describe('named CI evidence', () => {
         expect(() => assertCiEvidence(context(plan, phase), phase)).not.toThrow();
         for (const [job, required] of Object.entries(expectedCiEvidence(plan, phase))) {
           if (!required) continue;
-          for (const result of ['skipped', 'failure', 'cancelled', 'missing']) {
+          // `abandoned`: GitHub found no runner for the job (a macOS queue at capacity).
+          for (const result of ['skipped', 'failure', 'cancelled', 'abandoned', 'missing']) {
             const needs = context(plan, phase);
             if (result === 'missing') delete needs[job];
             else needs[job] = { ...needs[job], result };
-            expect(() => assertCiEvidence(needs, phase)).toThrow();
+            // Refused by name: the job and what it reported, never a bare schema error.
+            expect(() => assertCiEvidence(needs, phase)).toThrow(
+              job === 'plan'
+                ? 'CI evidence plan did not succeed'
+                : `CI evidence ${job}: required success, received ${result}`,
+            );
           }
         }
       }
