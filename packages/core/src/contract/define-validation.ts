@@ -6,6 +6,7 @@ import type { EndpointToolOptions } from './tool-options';
 /** Multipart is one declarative HTTP-only request boundary. */
 export function assertMultipartEndpoint(prefix: string, key: string, ep: EndpointDef): void {
   const where = `Contract "${prefix}": multipart endpoint "${key}"`;
+  assertNoToolOptions(where, ep);
   if (ep.method !== 'POST' && ep.method !== 'PUT' && ep.method !== 'PATCH') {
     throw new Error(`${where} must use POST, PUT or PATCH`);
   }
@@ -51,10 +52,6 @@ export function assertRawEndpoint(prefix: string, key: string, ep: EndpointDef):
   const where = `Contract "${prefix}": raw endpoint "${key}"`;
   if (ep.output) throw new Error(`${where} cannot declare an output schema`);
   assertNoToolOptions(where, ep);
-  const nonHttp = (ep.expose ?? []).filter((t) => t !== 'HTTP');
-  if (nonHttp.length > 0) {
-    throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
-  }
 }
 
 export function assertStreamingResponseEndpoint(
@@ -96,10 +93,6 @@ export function assertStreamingResponseEndpoint(
   if (ep.rawResponse) throw new Error(`${where} cannot also be rawResponse`);
   if (ep.multipart) throw new Error(`${where} cannot be multipart`);
   assertNoToolOptions(where, ep);
-  const nonHttp = (ep.expose ?? []).filter((transport) => transport !== 'HTTP');
-  if (nonHttp.length > 0) {
-    throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
-  }
 }
 
 /**
@@ -179,10 +172,6 @@ export function assertRawBodyEndpoint(prefix: string, key: string, ep: EndpointD
     throw new Error(`${where} must use POST, PUT or PATCH`);
   }
   assertNoToolOptions(where, ep);
-  const nonHttp = (ep.expose ?? []).filter((transport) => transport !== 'HTTP');
-  if (nonHttp.length > 0) {
-    throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
-  }
 }
 
 /**
@@ -225,8 +214,4 @@ export function assertResponseMetaEndpoint(
   }
   if (ep.rawResponse) throw new Error(`${where} cannot also be a rawResponse endpoint`);
   assertNoToolOptions(where, ep);
-  const nonHttp = (ep.expose ?? []).filter((transport) => transport !== 'HTTP');
-  if (nonHttp.length > 0) {
-    throw new Error(`${where} is HTTP-only — remove ${nonHttp.join(', ')} from expose`);
-  }
 }

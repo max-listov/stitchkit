@@ -2,21 +2,15 @@
  * The visit and the outbox of one tab: opening (or renewing) the visit lease,
  * and flushing the outbox one batch at a time under its flush lease.
  */
-import {
-  type ReferrerRule,
-  type ResolvedAttribution,
-  resolveAttribution,
-} from './attribution';
+import { type ResolvedAttribution, resolveAttribution, trackedReferrer } from './attribution';
 import type { Draft } from './client';
 import { deliverTrackingBatch } from './delivery';
 import type { TrackingHost } from './host';
 import type { TrackingOutbox, TrackingQueuedEvent } from './outbox';
-import { redactTrackingText } from './privacy';
 import type {
   TrackEventsRequest,
   TrackEventsResponse,
   TrackingEventEnvelope,
-  UtmData,
   VisitBootstrapResponse,
   VisitEntryContext,
 } from './schemas';
@@ -42,7 +36,7 @@ export interface VisitBootstrapDeps {
   readonly host: TrackingHost;
   readonly outbox: TrackingOutbox<TrackingEventEnvelope<string>> | undefined;
   readonly sequences: ReturnType<typeof createSequenceReserve>;
-  captureAttribution(search: string, pathname: string): ResolvedAttribution | null;
+  captureAttribution(search: string, pathname: string): ResolvedAttribution;
   readonly fail: Fail;
 }
 
@@ -78,9 +72,10 @@ export function bootstrapTrackingVisit(
         browserStreamId: visit.browserStreamId,
         previousVisitId: visit.visitId ?? undefined,
         origin: page.origin,
-        landingPath: redactTrackingText(page.pathname),
-        referrer: page.referrer ? redactTrackingText(page.referrer) : undefined,
-        utm: touch?.currentTouch.utm?.source ? redactedUtm(touch.currentTouch.utm) : undefined,
+        landingPath: touch.currentTouch.landingPage,
+        referrer: touch.currentTouch.referrer,
+        utm: touch.currentTouch.utm,
+        clickId: touch.currentTouch.clickId,
         displayMode: page.displayMode,
         screenWidth: page.screenWidth,
         screenHeight: page.screenHeight,
@@ -174,17 +169,9 @@ export function createVisitSequences(
   );
 }
 
-/** Campaign tags arrive in a URL anyone can write, secrets included. */
-export function redactedUtm(utm: UtmData): UtmData {
-  return Object.fromEntries(
-    Object.entries(utm).map(([field, value]) => [field, redactTrackingText(value)]),
-  );
-}
-
 export function pageAttribution(
   host: TrackingHost,
-  storage: NonNullable<TrackingHost['storage']>,
-  referrerMap: readonly ReferrerRule[] | undefined,
+  clickIdParams: readonly string[] | undefined,
   search: string,
   pathname: string,
 ): ResolvedAttribution {
@@ -192,10 +179,9 @@ export function pageAttribution(
   return resolveAttribution({
     search,
     pathname,
-    referrer: redactTrackingText(page.referrer),
-    hostname: page.hostname,
-    storage,
-    referrerMap,
+    referrer: page.referrer,
+    storage: host.storage,
+    clickIdParams,
     now: host.wallClock(),
   });
 }
@@ -206,6 +192,7 @@ export function pageViewDraft<TType extends string>(
   type: TType,
   pathname: string,
   previous: string | null,
+  clickIdParams: readonly string[] | undefined,
 ): Draft<TType> {
   const page = host.page();
   return {
@@ -215,7 +202,10 @@ export function pageViewDraft<TType extends string>(
       title: page.title,
       screenWidth: page.viewportWidth,
       screenHeight: page.viewportHeight,
-      referrer: previous || !page.referrer ? undefined : redactTrackingText(page.referrer),
+      referrer:
+        previous || !page.referrer
+          ? undefined
+          : trackedReferrer(page.referrer, clickIdParams ?? []),
     },
     clientTimestamp: host.wallClock(),
   };

@@ -4,10 +4,13 @@ description: Security-sensitive applications can materialize omitted endpoint ex
 type: decision
 status: accepted
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-11-04 19:00 +07:00
 ---
 
 # ADR 0062 — Explicit tool exposure is an opt-in factory policy
+
+Configuration API amended by [ADR 0283](0283-factory-default-exposure-is-materialized-by-capability.md);
+the decision below records the original fixed-string policy.
 
 - **Status:** Accepted — refines the strict-factory alternative deferred by
   [ADR 0036](0036-contract-level-meta.md); the rejection of contract-level

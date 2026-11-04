@@ -245,9 +245,10 @@ class TransportEvidence extends Error {
   readonly traceId = 'private-trace';
 }
 
-function rejectOnAbort(failure: Error): ClientFetch {
+function rejectOnAbort(failure: Error, onDispatch: () => void = () => undefined): ClientFetch {
   return (input, init) =>
     new Promise<Response>((_resolve, reject) => {
+      onDispatch();
       const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
       if (!signal) throw new Error('Expected a transport signal');
       if (signal.aborted) {
@@ -287,12 +288,15 @@ describe.each([
     '%s cancellation keeps the transport cause without exposing it publicly',
     async (kind, code) => {
       const evidence = new TransportEvidence('credential=must-not-be-public');
-      const api = makeClientWith(rejectOnAbort(evidence));
+      const dispatched = Promise.withResolvers<void>();
+      const api = makeClientWith(rejectOnAbort(evidence, dispatched.resolve));
       const controller = new AbortController();
       const pending =
         kind === 'caller'
           ? api.ping.withOptions({ signal: controller.signal })
           : api.timeout();
+      // The request is in flight: the transport holds it when the caller cancels.
+      await dispatched.promise;
       if (kind === 'caller') controller.abort();
       const failure = await pending.catch((error: unknown) => error);
       expect(ApiError.is(failure)).toBe(true);
@@ -303,6 +307,19 @@ describe.each([
       expect(failure.message).not.toContain('must-not-be-public');
     },
   );
+
+  test('a request cancelled before dispatch fails as aborted', async () => {
+    const evidence = new TransportEvidence('never-dispatched');
+    const api = makeClientWith(rejectOnAbort(evidence));
+    const controller = new AbortController();
+    controller.abort();
+    const failure = await api.ping
+      .withOptions({ signal: controller.signal })
+      .catch((error: unknown) => error);
+    expect(ApiError.is(failure)).toBe(true);
+    if (!ApiError.is(failure)) throw failure;
+    expect(failure.code).toBe('REQUEST_ABORTED');
+  });
 
   test('a successful custom transport is unchanged', async () => {
     const api = makeClientWith(async () => Response.json({ ok: true }));

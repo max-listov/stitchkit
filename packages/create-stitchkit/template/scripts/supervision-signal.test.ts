@@ -42,7 +42,7 @@ async function roleReceivesSignal(from: 'role directory' | 'workspace root'): Pr
     // negative-pid signal below reach the role behind the launcher. The
     // NEGATIVE case is the point: there the role never sees the signal, so
     // killing the launcher alone would leave it running for the life of the
-    // machine — this test used to leak one role per run.
+    // machine. Cleanup must reach the role even when the launcher cannot.
     const child =
       from === 'role directory'
         ? Bun.spawn(['bun', 'run', 'start'], {

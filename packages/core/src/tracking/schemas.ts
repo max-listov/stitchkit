@@ -18,6 +18,7 @@ export type UtmData = z.infer<typeof UtmDataSchema>;
 
 export const AttributionDataSchema = z.object({
   utm: UtmDataSchema.optional(),
+  clickId: z.string().min(1).max(200).optional(),
   referrer: z.string().optional(),
   landingPage: z.string().optional(),
 });
@@ -113,7 +114,6 @@ export interface TrackEventsRequest<
 > {
   buildId: string;
   events: TEvent[];
-  utm?: UtmData;
 }
 
 function visitEntryContextShape(buildIdPattern: RegExp) {
@@ -128,6 +128,7 @@ function visitEntryContextShape(buildIdPattern: RegExp) {
       .regex(/^[^?#]*$/),
     referrer: z.url().max(2_000).optional(),
     utm: UtmDataSchema.optional(),
+    clickId: AttributionDataSchema.shape.clickId,
     displayMode: z.enum(['browser', 'standalone']),
     screenWidth: z.number().int().positive().max(20_000),
     screenHeight: z.number().int().positive().max(20_000),
@@ -161,7 +162,6 @@ export interface TrackingSchemas<TEvent extends z.ZodObject> {
   request: z.ZodObject<{
     buildId: z.ZodString;
     events: z.ZodArray<TEvent>;
-    utm: z.ZodOptional<typeof UtmDataSchema>;
   }>;
   response: typeof TrackEventsResponseSchema;
   disposition: typeof TrackingDispositionSchema;
@@ -194,8 +194,6 @@ export function createTrackingSchemas(
       /** The build that produced the events: tells an old tab from a new one. */
       buildId: z.string().regex(buildIdPattern),
       events: z.array(event).min(1).max(maxEvents),
-      /** The browser's current-touch UTM at the moment of sending. */
-      utm: UtmDataSchema.optional(),
     }),
     response: TrackEventsResponseSchema,
     disposition: TrackingDispositionSchema,

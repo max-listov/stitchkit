@@ -103,7 +103,9 @@ async function main(): Promise<void> {
     }
     await bun(['install']);
   } else {
-    await bun(latest ? ['update', '--latest', ...packages] : ['update', ...packages]);
+    // `--recursive`: most template dependencies belong to its workspace packages,
+    // which a root-only update refuses to name.
+    await bun(['update', '--recursive', ...(latest ? ['--latest'] : []), ...packages]);
   }
 
   const restored = await restoreCatalogReferences(template);

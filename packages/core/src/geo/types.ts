@@ -1,18 +1,7 @@
 import type { ManagedResource, ManagedResourceContext } from '../application/resource';
+import type { GeoAttribution } from './schema';
 
-export interface GeoAttribution {
-  readonly countryCode?: string;
-  readonly countryName?: string;
-  readonly regionCode?: string;
-  readonly regionName?: string;
-  readonly city?: string;
-  readonly postalCode?: string;
-  readonly latitude?: number;
-  readonly longitude?: number;
-  readonly timezone?: string;
-  readonly autonomousSystemNumber?: number;
-  readonly autonomousSystemOrganization?: string;
-}
+export type { GeoAttribution } from './schema';
 
 export interface MaxMindGeoIpPaths {
   readonly city: string;

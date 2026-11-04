@@ -538,7 +538,6 @@ describe('stored attribution', () => {
       search: '?utm_source=new',
       referrer: '',
       pathname: '/',
-      hostname: 'shop.example',
       storage: held,
       storageKey: key,
       now: 1_000,

@@ -1,7 +1,7 @@
 /**
  * What the artifact was built FROM, so a release can tell whether it still is.
  *
- * `assertBuildArtifacts()` checked that the declared paths exist. Existence is
+ * `assertBuildArtifacts()` checks that the declared paths exist. Existence is
  * not freshness: `pm2:prod` run without a build applies the migrations this
  * source declares and then starts the `dist` and `.next` of an earlier one. The
  * schema moves ahead of the code, which is the worst direction — rolling the
@@ -14,15 +14,12 @@
  * none.
  *
  * **Everything is source until something says otherwise, and the something is
- * named.** The first version of this listed what to skip by *kind* — every
- * `.md`, every test file, every directory called `generated` — which reads as
- * "these cannot affect a build" and is only true of the project as it stands
- * today. A project that imports MDX, or keeps checked-in source in a directory
- * it happened to call `generated`, would change its content, keep its digest,
- * and be told its old artifact was current. A digest that answers "fresh" about
- * a stale build is worse than no digest.
+ * named.** A Markdown file, a test and a directory named `generated` can affect
+ * a build: a project can import MDX or keep authored code in any directory.
+ * Excluding source by kind could leave its digest unchanged after an edit and
+ * incorrectly mark a stale artifact as current.
  *
- * So the exclusions are now exactly three kinds, each named rather than guessed:
+ * The exclusions are exactly three kinds, each named rather than guessed:
  *
  * - **The build's own OUTPUTS**, read from `build.artifacts` in the project
  *   declaration. One source of truth: a project that adds an artifact is
@@ -38,7 +35,7 @@
  *   edited its own environment: the same gate, crying wolf in the other
  *   direction.
  *
- * The cost is that editing a README or a test now asks for a rebuild before a
+ * The cost is that editing a README or a test requires a rebuild before a
  * release. That is the safe direction: the gate can be wrong about "stale", and
  * must never be wrong about "fresh".
  */
@@ -141,7 +138,7 @@ export function writeBuildStamp(
 /**
  * Refuse an artifact that is not this source's.
  *
- * A missing stamp is refused too, and deliberately: it means the artifact was
+ * A missing stamp is rejected: it means the artifact was
  * produced by something other than this build, and "we cannot tell" is not a
  * reason to start it.
  */

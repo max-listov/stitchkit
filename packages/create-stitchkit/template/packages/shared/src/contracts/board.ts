@@ -2,9 +2,7 @@ import { createContractFactory } from 'stitchkit';
 import { defineEvents } from 'stitchkit/live';
 import { BoardChangedSchema, BoardSchema, PostNoteSchema } from '../schemas/board';
 
-const { defineContract } = createContractFactory<'public'>({
-  toolExposure: 'explicit',
-});
+const { defineContract } = createContractFactory<'public'>();
 
 /**
  * The board: read it, add to it.

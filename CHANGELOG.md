@@ -15,6 +15,68 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+- `stitchkit`, `stitchkit/contract`, `stitchkit/http` — **factory exposure is a transport default, configured after scope.**
+  `createContractFactory<Scope>({ toolExposure: 'explicit' })` →
+  `createContractFactory<Scope>().configure({ toolExposure: { default: ['HTTP'] } })`.
+  Choose `['HTTP', 'CLI']` to expose ordinary endpoints through HTTP and CLI; explicit endpoint arrays
+  replace the default. Intrinsic HTTP-only endpoints intersect implicit defaults with HTTP, preserving
+  an empty intersection. Explicit non-HTTP multipart exposure is now refused rather than silently
+  disappearing from tools, and multipart endpoints refuse tool options. The constructor rejects
+  arguments, including the removed string policy, instead of silently opening MCP/AGENT. No-config
+  authoring keeps its runtime defaults. `ExplicitToolExposureEndpoints` and `ExplicitScopedDefineContract`
+  are renamed `ConfiguredToolExposureEndpoints` and `ConfiguredScopedDefineContract`. Configuration
+  keys outside the policy fail to compile.
+  [ADR 0283](docs/decisions/0283-factory-default-exposure-is-materialized-by-capability.md);
+  [migration](docs/guide/upgrading.md#pending-migration-factory-default-exposure).
+  HTTP client methods and URLs now require guaranteed HTTP, not a possible member of a widened array:
+  an endpoint typed as the broad `EndpointDef` or `FactoryScopedEndpoint` has none, with or without a
+  factory; keep helper endpoints literal with a const generic.
+  **Affects:** `stitchkit` createContractFactory, ContractFactoryConfig, ContractFactoryToolExposure, ExplicitScopedDefineContract, ExplicitToolExposureEndpoints, EndpointDef, FactoryScopedEndpoint, defineContract(behaviour), createClient, createClients, createScopedClients, createUrlBuilder, createUrlBuilders, createScopedUrlBuilders, ScopedHttpClient, TypedHttpClient, ScopedUrlBuilder, TypedUrlBuilder; `stitchkit/contract` createContractFactory, ContractFactoryConfig, ContractFactoryToolExposure, ExplicitScopedDefineContract, ExplicitToolExposureEndpoints, EndpointDef, FactoryScopedEndpoint, defineContract(behaviour), ScopedHttpClient, TypedHttpClient, ScopedUrlBuilder, TypedUrlBuilder; `stitchkit/http` createClient, createClients, createScopedClients, createUrlBuilder, createUrlBuilders, createScopedUrlBuilders
+
+- `stitchkit/tracking` — **attribution carries raw facts; channel classification belongs to the server.**
+  Remove `referrerMap`, `ReferrerRule`, `parseReferrer` and `hostname` from resolver inputs and host page contexts. A referrer never
+  becomes UTM; real `utm_*` tags retain case and whitespace, including tags without a source. Current-touch
+  contains the current capture rather than retaining an earlier campaign, and unversioned stored attribution
+  resets once because inferred tags cannot be distinguished from real ones. An event batch no longer
+  carries `utm`: attribution is the visit's entry fact, sent with the bootstrap. The value of every
+  configured click marker is masked in a referrer, and `createTrackingClient` refuses an invalid
+  `clickIdParams` list at creation. `// before: { referrerMap: rules }`
+  → `// after: { clickIdParams: ['gclid', 'msclkid'] }; classify entry.referrer on the server`.
+  [ADR 0282](docs/decisions/0282-tracking-carries-facts-not-channel-classification.md); [migration](docs/guide/upgrading.md).
+  **Affects:** `stitchkit/tracking` resolveAttribution, ResolveAttributionInput, ResolvedAttribution, ReferrerRule, parseReferrer, parseUtmFromSearch, TrackingClientConfig, TrackingPageContext, browserTrackingHost, createTrackingClient(behaviour); `stitchkit/tracking/contract` TrackEventsRequest, createTrackingSchemas(behaviour), createTrackingContract(behaviour)
+
+- `stitchkit/geo` — **the default snapshot is the complete City + ASN record, readonly and owned by a schema.**
+  The default mapper and resolver add continent, registered country, all GeoNames IDs,
+  `accuracyRadiusKm` and every source language in `localizedNames` for five place groups, so an
+  unchanged record yields new keys: a snapshot compared by equality or parsed by an application's
+  strict schema changes. `GeoAttribution` is inferred from `GeoAttributionSchema` and readonly down
+  to its dictionaries; an empty label or an out-of-range coordinate is omitted as a field. The
+  registered country is its own fact and never fills the located country. Custom `map` results are
+  untouched. `// before: expect(await geo.resolve(ip)).toEqual({ city: 'Bangkok' })` →
+  `// after: { city: 'Bangkok', localizedNames: { city: { en: 'Bangkok' } } }`.
+  [migration](docs/guide/upgrading.md#pending-migration-geo-full-snapshot).
+  **Affects:** `stitchkit/geo` GeoAttribution, mapGeoIpRecord(behaviour), createGeoIpResolver(behaviour)
+
+### Added
+
+- `stitchkit/geo/contract` — a browser-safe entrypoint with `GeoAttributionSchema` and
+  `GeoAttribution`, so a shared contract validates a stored or transported place snapshot without
+  the server-only resolver.
+
+- `stitchkit/tracking/contract` — attribution and visit bootstrap include optional `clickId`, the name of
+  the first nonempty parameter in the application's ordered `clickIdParams` list. The client retains no
+  click-ID values and recognises no markers by default.
+  **Affects:** `stitchkit/tracking/contract` AttributionData, AttributionDataSchema, VisitEntryContext, VisitEntryContextShape, createTrackingSchemas
+
+### Fixed
+
+- `stitchkit/tracking` — a bootstrap preserves partial campaign tags without passing absent values to the
+  redactor, and collects raw landing facts even when browser storage is unavailable. Campaign credentials
+  are masked before persistence as well as before transport.
+  **Affects:** `stitchkit/tracking` createTrackingClient(behaviour)
+
 ## [0.118.1] - 2026-11-03
 
 ### Added

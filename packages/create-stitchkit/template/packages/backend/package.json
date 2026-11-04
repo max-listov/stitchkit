@@ -16,16 +16,16 @@
     "@app/config": "workspace:*",
     "@app/db": "workspace:*",
     "@app/shared": "workspace:*",
-    "@modelcontextprotocol/server": "^2.0.0",
-    "@prisma/adapter-pg": "^7.10.0",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "@prisma/adapter-pg": "^7.10.1",
     "@socket.io/bun-engine": "^0.1.2",
-    "ai": "^7.0.111",
-    "socket.io": "^4.8.3",
+    "ai": "^7.0.162",
+    "socket.io": "^4.8.4",
     "stitchkit": "catalog:",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.2",
+    "@types/bun": "^1.4.4",
     "typescript": "^7.0.2"
   }
 }

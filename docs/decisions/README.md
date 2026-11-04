@@ -311,6 +311,8 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0279](0279-a-workbook-is-written-without-a-dependency.md) | A workbook is written without a dependency | Accepted — `stitchkit/xlsx` writes OOXML itself over `CompressionStream`, stores text as text, and refuses what Excel cannot hold exactly | I8, I9, I13 |
 | [0280](0280-real-visitor-speed-is-collected-after-the-page.md) | Real-visitor speed is collected after the page | Accepted — `stitchkit/tracking/performance` loads `web-vitals` as an idle chunk, a missing metric is `null`, and the browser client carries no `zod`; tables and reports stay the application's; amends 0166 | I4, I9, I13 |
 | [0281](0281-static-files-are-served-by-one-responder.md) | Static files are served by one responder | Accepted — `staticRoute` answers a contained file through `serveFile`, which runs on Bun and Node with one Range and validator implementation; amends 0023 and 0013 | I6, I8 |
+| [0282](0282-tracking-carries-facts-not-channel-classification.md) | Tracking carries facts, not channel classification | Accepted — raw UTM, referrer and configured click-marker names cross bootstrap; the server owns channel classification; amends the attribution clause of 0166 | I3, I4, I13 |
+| [0283](0283-factory-default-exposure-is-materialized-by-capability.md) | Factory defaults materialize endpoint exposure by capability | Accepted — independent scope/policy inference, immutable defaults and explicit overrides drive every surface; amends 0062 | I1, I3, I8, I9, I12, I14 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

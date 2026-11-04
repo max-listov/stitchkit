@@ -74,16 +74,17 @@
     "prepublishOnly": "bun run check && bun run test && bun run build"
   },
   "dependencies": {
-    "zod": "^4.6.5"
+    "@biomejs/biome": "2.6.5",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@opentui/core": "^0.5.12",
-    "@opentui/react": "^0.5.12",
+    "@opentui/core": "^0.8.2",
+    "@opentui/react": "^0.8.2",
     "@openrouter/ai-sdk-provider": "^3.1.0",
-    "@types/bun": "^1.4.2",
+    "@types/bun": "^1.4.4",
     "@types/react": "^19.3.0",
-    "ai": "^7.0.111",
-    "react": "^19.3.0",
+    "ai": "^7.0.162",
+    "react": "^19.3.1",
     "stitchkit": "workspace:*",
     "typescript": "^7.0.2"
   },

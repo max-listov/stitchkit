@@ -233,6 +233,10 @@
       "types": "./dist/entrypoints/geo.d.ts",
       "import": "./dist/entrypoints/geo.js"
     },
+    "./geo/contract": {
+      "types": "./dist/entrypoints/geo/contract.d.ts",
+      "import": "./dist/entrypoints/geo/contract.js"
+    },
     "./xlsx": {
       "types": "./dist/entrypoints/xlsx.d.ts",
       "import": "./dist/entrypoints/xlsx.js"
@@ -384,37 +388,37 @@
     }
   },
   "dependencies": {
-    "ky": "^2.1.0"
+    "ky": "^2.2.0"
   },
   "devDependencies": {
-    "@happy-dom/global-registrator": "^20.14.5",
-    "@modelcontextprotocol/client": "^2.0.0",
-    "@modelcontextprotocol/ext-apps": "^2.0.0",
-    "@modelcontextprotocol/server": "^2.0.0",
+    "@happy-dom/global-registrator": "^21.0.4",
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.4",
+    "@modelcontextprotocol/server": "^2.4.0",
     "@openrouter/ai-sdk-provider": "^3.1.0",
-    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/api": "^1.10.0",
     "@socket.io/bun-engine": "^0.1.2",
     "@socket.io/component-emitter": "^3.1.2",
-    "@tanstack/react-query": "5.103.2",
-    "@types/bun": "^1.4.2",
+    "@tanstack/react-query": "5.105.3",
+    "@types/bun": "^1.4.4",
     "@types/json-schema": "^7.0.15",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@typescript/typescript6": "^6.0.2",
-    "ai": "^7.0.111",
+    "ai": "^7.0.162",
     "ajv": "^8.20.0",
     "exceljs": "^4.4.0",
-    "fake-indexeddb": "^6.2.5",
-    "google-auth-library": "^11.1.0",
+    "fake-indexeddb": "^6.2.7",
+    "google-auth-library": "^11.3.3",
     "grammy": "^1.46.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "react-query-kit": "^3.3.4",
-    "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3",
-    "srvx": "^1.0.5",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-query-kit": "^3.4.0",
+    "socket.io": "^4.8.4",
+    "socket.io-client": "^4.8.4",
+    "srvx": "^1.0.8",
     "typescript": "^7.0.2",
     "web-vitals": "^6.2.3",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   }
 }

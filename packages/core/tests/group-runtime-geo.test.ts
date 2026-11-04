@@ -65,7 +65,10 @@ describe('GeoIP resolver generations', () => {
       state: 'ready',
       reloadError: 'corrupt generation',
     });
-    expect(await resolver.resolve('1.1.1.1')).toEqual({ city: 'Bangkok' });
+    expect(await resolver.resolve('1.1.1.1')).toStrictEqual({
+      city: 'Bangkok',
+      localizedNames: { city: { en: 'Bangkok' } },
+    });
   });
 
   test('does not close a retired generation before its in-flight lookup settles', async () => {
@@ -111,6 +114,7 @@ describe('GeoIP resolver generations', () => {
     ).toEqual({
       countryCode: 'TH',
       countryName: 'Thailand',
+      localizedNames: { country: { en: 'Thailand' } },
       latitude: 13.7,
       longitude: 100.5,
       timezone: 'Asia/Bangkok',

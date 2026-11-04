@@ -26,6 +26,7 @@
     "stitchkit/files": 38,
     "stitchkit/files/packaging": 10,
     "stitchkit/geo": 11,
+    "stitchkit/geo/contract": 2,
     "stitchkit/xlsx": 8,
     "stitchkit/google": 11,
     "stitchkit/live": 42,
@@ -49,7 +50,7 @@
     "stitchkit/tools/connections": 26,
     "stitchkit/tools/contract": 15,
     "stitchkit/tools/invoker": 4,
-    "stitchkit/tracking": 53,
+    "stitchkit/tracking": 51,
     "stitchkit/tracking/server": 29,
     "stitchkit/tracking/contract": 32,
     "stitchkit/tracking/performance": 8,
@@ -68,6 +69,8 @@
         "AppError",
         "BodyHttpSuccessStatus",
         "ClientRequestOptions",
+        "ConfiguredScopedDefineContract",
+        "ConfiguredToolExposureEndpoints",
         "ContractDef",
         "ContractFactoryConfig",
         "ContractFactoryToolExposure",
@@ -101,8 +104,6 @@
         "ErrorFactoryArguments",
         "ErrorVocabularyCode",
         "ErrorVocabularyMapping",
-        "ExplicitScopedDefineContract",
-        "ExplicitToolExposureEndpoints",
         "FactoryScopedEndpoint",
         "FileDescriptor",
         "FrozenErrorDefinitions",
@@ -695,9 +696,19 @@
         "createSocketIOClient",
         "defineRealtimeContract"
       ]
+    },
+    {
+      "entrypoints": ["stitchkit/geo", "stitchkit/geo/contract"],
+      "reason": "The resolver returns the snapshot type the browser-safe contract validates; one Zod schema owns it.",
+      "names": ["GeoAttribution"]
     }
   ],
   "reviewed": [
+    {
+      "entrypoint": "stitchkit/geo/contract",
+      "names": ["GeoAttributionSchema"],
+      "reason": "One schema owns the complete sparse place snapshot and its inferred readonly GeoAttribution type. It lives in a browser-safe entrypoint so a shared contract validates a stored or transported snapshot without the server-only resolver; no optional peer is required."
+    },
     {
       "entrypoint": "stitchkit/cli",
       "names": [

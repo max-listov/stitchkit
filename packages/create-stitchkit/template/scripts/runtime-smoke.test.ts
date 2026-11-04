@@ -21,9 +21,8 @@ describe('the portability check dials addresses the deployment claims', () => {
   });
 
   test('a deployment with nothing but its own address is told what to add', () => {
-    // The reported failure, from the other side: the check used to carry two
-    // fixture hosts of its own, so a deployment that had never been told about
-    // them refused the request and the gate showed a bare 500.
+    // Portability probes require explicitly allowed hosts; inventing fixture
+    // hosts would make a deployment reject the request before the probe runs.
     const plan = planPortabilityCheck(dialled, { hosts: '127.0.0.1:3210' });
     expect(plan.kind).toBe('refuse');
     if (plan.kind !== 'refuse') return;
@@ -67,8 +66,8 @@ describe('the portability check dials addresses the deployment claims', () => {
 
   test('one host written twice is one address, not two', () => {
     // The count decides whether the property can be proved at all. Without
-    // deduplication a duplicate entry passed as a second address and the check
-    // compared the deployment with itself — a proof that cannot fail.
+    // deduplication a duplicate could count as a second address, making the
+    // check compare the deployment with itself — a proof that cannot fail.
     const plan = planPortabilityCheck(dialled, {
       hosts: '127.0.0.1:3210,alpha.example,alpha.example',
     });
@@ -90,7 +89,7 @@ describe('the portability check dials addresses the deployment claims', () => {
 
 describe('a gate list is not a deploy instruction', () => {
   // `runtime:smoke` and `e2e` check a running deployment, so the list has to
-  // bring one up — and the wrong way to do that shipped once already:
+  // bring one up. It must not do that through `pm2:prod`:
   // `pm2:prod` applies the declared migrations and reloads the deployment the
   // developer is running. A gate creates and destroys its OWN deployment, and
   // that is `acceptance:local`.
@@ -158,7 +157,7 @@ describe('a role is ready when it answers, not when it is spawned', () => {
 
   test('an IPv6 bind address is bracketed, or it is not a URL at all', () => {
     // `http://::1:3211/health` cannot be parsed as an address with a port, so
-    // the wait failed on the spelling instead of on the role.
+    // the wait would fail on URL syntax before it can reach the role.
     const addresses = declaredRoleReadiness(appDeclaration, {
       ...environment,
       BIND_HOST: '::1',

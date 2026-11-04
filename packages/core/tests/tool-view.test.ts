@@ -999,7 +999,7 @@ describe('a view is refused where it cannot mean anything', () => {
         output,
         tool: { view: declared({ output }) },
       },
-      /HTTP-only by kind/,
+      /multipart endpoint "bad" cannot set tool options/,
     ],
     [
       'a streaming endpoint',

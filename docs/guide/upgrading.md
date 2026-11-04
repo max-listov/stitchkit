@@ -1,5 +1,121 @@
 # Upgrading stitchkit
 
+## Pending migration: factory-default-exposure
+
+**Who must act:** code passing arguments to `createContractFactory`, depending on its fixed-string
+policy types or the renamed exposure types, calling HTTP clients of endpoints typed as the broad
+`EndpointDef` / `FactoryScopedEndpoint`, or declaring multipart endpoints with non-HTTP exposure or
+tool options.
+
+Scope and default transports are inferred separately. Replace the constructor configuration:
+
+```ts
+// before
+const { defineContract } = createContractFactory<AppScope>({ toolExposure: 'explicit' })
+// after: preserve the same curated HTTP-only default
+const { defineContract } = createContractFactory<AppScope>().configure({
+  toolExposure: { default: ['HTTP'] },
+})
+```
+
+To deliberately expose ordinary operations through HTTP and CLI, choose `default: ['HTTP', 'CLI']`
+and remove redundant matching endpoint arrays. Explicit arrays replace, rather than extend, the
+default. Raw responses, multipart, raw bodies, response metadata, response streams and HEAD get only
+HTTP from implicit defaults; a CLI-only or empty default leaves them hidden on every transport.
+Explicit contradictions fail at definition; remove non-HTTP transports and tool options from multipart
+endpoints rather than relying on their silent omission from tool catalogs.
+
+`ExplicitToolExposureEndpoints` and `ExplicitScopedDefineContract` are renamed
+`ConfiguredToolExposureEndpoints<Endpoints, Defaults>` and `ConfiguredScopedDefineContract<Scope, Defaults>`:
+they describe materialization from any default tuple, their second generic, and HTTP-only when it is
+omitted.
+An optional or conditional endpoint override remains an alternative in the returned type. It does not
+guarantee an HTTP client method unless every alternative includes HTTP.
+
+HTTP clients and URL builders no longer assume a widened `Transport[]` contains
+HTTP. Pass the literal array directly to `configure` when the HTTP surface is static;
+its const generic infers the tuple. An annotation or `satisfies ContractFactoryConfig`
+on a separately stored configuration does not preserve the tuple by itself.
+Optional capabilities likewise retain the filtered alternative in endpoint types.
+
+The rule reads the endpoint's type, with or without a factory. An endpoint returned by a helper
+annotated `(): EndpointDef` or `(): FactoryScopedEndpoint<Scope>`, or holding a stored
+`readonly Transport[]`, has no HTTP client method or URL, because that type allows an exposure
+without HTTP. Keep the literal type with a const generic helper:
+
+```ts
+// before
+const read = (): FactoryScopedEndpoint<AppScope> => ({ method: 'GET', path: '/', desc: 'Read', output })
+// after
+const endpoint = <const Endpoint extends FactoryScopedEndpoint<AppScope>>(value: Endpoint) => value
+const read = () => endpoint({ method: 'GET', path: '/', desc: 'Read', output })
+```
+
+If every endpoint already has an explicit array, removing the constructor configuration alone also
+preserves exposure. [ADR 0283](../decisions/0283-factory-default-exposure-is-materialized-by-capability.md).
+
+Search patterns: `createContractFactory`, `toolExposure`, `ExplicitToolExposureEndpoints`,
+`ExplicitScopedDefineContract`, `: EndpointDef`, `: FactoryScopedEndpoint`, and multipart endpoints
+with `expose` or `tool`.
+
+## Pending migration: geo-full-snapshot
+
+**Who must act:** code comparing `stitchkit/geo` results by equality, parsing them with a strict
+schema of its own, mutating a returned `GeoAttribution`, or relying on empty labels.
+
+The default mapper returns everything the City + ASN record states: continent, the registered
+country as its own fields, GeoNames identifiers, `accuracyRadiusKm` and `localizedNames` with every
+language. A record that used to give `{ city: 'Bangkok' }` now also gives
+`localizedNames: { city: { en: 'Bangkok' } }`.
+
+```ts
+// before: an application's copy of the shape
+const StoredGeo = z.strictObject({ city: z.string().optional(), countryCode: z.string().optional() })
+// after: the framework's schema, importable from shared code
+import { GeoAttributionSchema } from 'stitchkit/geo/contract'
+```
+
+`GeoAttribution` is readonly to its nested dictionaries; copy before changing a field. Empty labels
+and coordinates outside ±90° / ±180° are omitted. The located country never borrows the registered
+one; write `countryCode ?? registeredCountryCode` where a country for every address is wanted.
+
+Search pattern: `stitchkit/geo`, `mapGeoIpRecord`, `GeoAttribution`, `resolve(`.
+
+## Pending migration: raw-tracking-attribution
+
+**Who must act:** code passing `referrerMap` or `hostname` to `resolveAttribution`, importing
+`ReferrerRule` or `parseReferrer`, relying on inferred, lowercased or retained UTM, or reading `utm`
+from an event batch on the server.
+
+Tracking sends raw attribution facts. Remove `referrerMap`, `ReferrerRule`, `parseReferrer` and the
+resolver's `hostname`; `TrackingPageContext` and `browserTrackingHost()` no longer require or return
+`hostname` either. Classify `referrer` and campaign tags on your server instead. Configure the
+click-marker names your application recognises:
+
+```ts
+// before
+createTrackingClient({ ...config, referrerMap: [{ pattern: /search\.example/, source: 'search', medium: 'organic' }] })
+// after
+createTrackingClient({ ...config, clickIdParams: ['gclid', 'msclkid'] })
+```
+
+Bootstrap and both touches carry `clickId`, the configured parameter's name without its value. Extend
+your bootstrap DTO or stored attribution shape if you previously copied the framework's fields. No
+marker is recognised unless configured. Real UTM retains its case and whitespace, and a tag without
+`utm_source` is no longer discarded. Keep any channel normalisation in the server classifier.
+
+`currentTouch` is the current capture's context; an untagged entry has no campaign even when a prior
+one did. Implement last-non-direct retention on the server if required. First-touch storage uses a
+versioned format and resets unversioned records once, because inferred and real tags in those records
+cannot be distinguished. Without browser storage, current landing facts still reach bootstrap.
+
+An event batch (`TrackEventsRequest`, the `request` schema of `createTrackingSchemas`) carries
+`buildId` and `events` only. A server that read `request.utm` attributes events through their visit:
+store the bootstrap entry's `utm`, `referrer` and `clickId` with the visit and join on `visitId`.
+
+Search pattern: `referrerMap`, `ReferrerRule`, `parseReferrer`, `resolveAttribution`, `currentTouch`,
+`request.utm`, `input.utm`.
+
 ## Released migration: 0.118.0
 
 ### telegram-due-cursor

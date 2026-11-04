@@ -1,11 +1,9 @@
 /**
  * A role whose cleanup will not complete, as a real process.
  *
- * The regression this serves cannot be written against a promise. The defect
- * was never "the helper resolved late" — it was that the role set
- * `process.exitCode` and then waited for an event loop something was still
- * holding, so the process lived until the supervisor's SIGKILL: exactly the
- * ending the cleanup budget exists to prevent. Only a process can show that.
+ * A promise cannot prove process termination: setting `process.exitCode` still
+ * waits for an event loop with held handles. The role must exit before the
+ * supervisor's SIGKILL, and only a real process can demonstrate that bound.
  *
  * The interval below is the held handle. Nothing ever clears it, so this
  * process ends only if something ends it — which is the assertion.

@@ -17,8 +17,8 @@ import { env } from '../src/env';
 /**
  * The run mode, fail-closed.
  *
- * `argv[2] === 'development' ? 'dev' : 'start'` meant a typo, an empty string
- * and a missing argument all silently became production. A wrong mode is not a
+ * `argv[2] === 'development' ? 'dev' : 'start'` would turn a typo, an empty string
+ * and a missing argument into production. A wrong mode is not a
  * detail — it decides whether the role serves a build or compiles on demand —
  * and the supervision files pass it explicitly, so anything else is a mistake
  * worth seeing.
@@ -60,8 +60,8 @@ const code = await child.exited;
  * A stop that was ASKED for is a success — but only for the codes a stop
  * actually produces.
  *
- * `stopping ? 0 : code` reported success for ANY exit during shutdown, so a
- * role that crashed while draining looked identical to one that drained. Next
+ * `stopping ? 0 : code` would report success for any exit during shutdown and
+ * hide a crash during drain. Next
  * exits 130 on SIGINT and 143 on SIGTERM, and reporting those upward would make
  * every ordinary supervised stop look like a failure; anything else during a
  * shutdown is a real failure and keeps its code.

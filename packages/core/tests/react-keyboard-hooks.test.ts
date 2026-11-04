@@ -349,6 +349,55 @@ describe('useNavZone', () => {
   });
 });
 
+/** Links whose own attributes come before the zone's spread props. */
+function Links(): ReactNode {
+  const zone = useNavZone<string>({ items: ['a', 'b'], mode: 'focus', role: 'none' });
+  return createElement(
+    'div',
+    { 'aria-label': 'mine', ...zone.zoneProps },
+    createElement('a', { 'data-id': 'a', role: 'menuitem', ...zone.itemProps('a') }, 'a'),
+    createElement('a', { 'data-id': 'b', ...zone.itemProps('b') }, 'b'),
+  );
+}
+
+/** Renders the names of the props the zone hands out, so absent keys are visible. */
+function PropKeys(): ReactNode {
+  const zone = useNavZone<string>({ items: ['a'], mode: 'focus', role: 'none' });
+  const props: object = zone.itemProps('a');
+  return createElement('i', {
+    'data-keys': Object.keys(props).sort().join(','),
+    'data-zone': Object.keys(zone.zoneProps).sort().join(','),
+  });
+}
+
+/** One item whose element goes to the zone and to every extra ref. */
+function MergedRow(props: {
+  readonly seen: (HTMLElement | null)[];
+  readonly object: { current: HTMLElement | null };
+}): ReactNode {
+  const zone = useNavZone<string>({ items: ['a'], mode: 'focus' });
+  const merged = mergeRefs<HTMLElement>(
+    zone.itemProps('a').ref,
+    (node) => {
+      props.seen.push(node);
+    },
+    props.object,
+    undefined,
+    null,
+  );
+  return createElement(
+    'ul',
+    zone.zoneProps,
+    createElement('li', { 'data-id': 'a', ref: merged }, 'a'),
+  );
+}
+
+/** Suspends its render until `pending` settles while `wait` is set. */
+function Gate(props: { readonly wait: boolean; readonly pending: Promise<void> }): ReactNode {
+  if (props.wait) use(props.pending);
+  return null;
+}
+
 describe('useNavZone: the rest of the contract', () => {
   const base = (overrides: Partial<NavZoneOptions<string>> = {}): NavZoneOptions<string> => ({
     items: ['a', 'b', 'c'],
@@ -372,15 +421,6 @@ describe('useNavZone: the rest of the contract', () => {
   });
 
   test('a key that has no value is absent, so a spread after your own attribute keeps it', () => {
-    const Links = (): ReactNode => {
-      const zone = useNavZone<string>({ items: ['a', 'b'], mode: 'focus', role: 'none' });
-      return createElement(
-        'div',
-        { 'aria-label': 'mine', ...zone.zoneProps },
-        createElement('a', { 'data-id': 'a', role: 'menuitem', ...zone.itemProps('a') }, 'a'),
-        createElement('a', { 'data-id': 'b', ...zone.itemProps('b') }, 'b'),
-      );
-    };
     const view = render(createElement(Links));
     const group = view.container.firstElementChild;
     expect(group?.getAttribute('aria-label')).toBe('mine');
@@ -389,15 +429,7 @@ describe('useNavZone: the rest of the contract', () => {
     expect(item(view.container, 'a').hasAttribute('aria-selected')).toBe(false);
     view.unmount();
 
-    const Probe = (): ReactNode => {
-      const zone = useNavZone<string>({ items: ['a'], mode: 'focus', role: 'none' });
-      const props: object = zone.itemProps('a');
-      return createElement('i', {
-        'data-keys': Object.keys(props).sort().join(','),
-        'data-zone': Object.keys(zone.zoneProps).sort().join(','),
-      });
-    };
-    const keys = render(createElement(Probe));
+    const keys = render(createElement(PropKeys));
     expect(keys.container.firstElementChild?.getAttribute('data-keys')).toBe(
       'onFocus,ref,tabIndex',
     );
@@ -417,24 +449,7 @@ describe('useNavZone: the rest of the contract', () => {
   test('mergeRefs hands the element to every ref and takes it back from every one', () => {
     const seen: (HTMLElement | null)[] = [];
     const object: { current: HTMLElement | null } = { current: null };
-    const Row = (): ReactNode => {
-      const zone = useNavZone<string>({ items: ['a'], mode: 'focus' });
-      const merged = mergeRefs<HTMLElement>(
-        zone.itemProps('a').ref,
-        (node) => {
-          seen.push(node);
-        },
-        object,
-        undefined,
-        null,
-      );
-      return createElement(
-        'ul',
-        zone.zoneProps,
-        createElement('li', { 'data-id': 'a', ref: merged }, 'a'),
-      );
-    };
-    const view = render(createElement(Row));
+    const view = render(createElement(MergedRow, { seen, object }));
     expect(seen[0]).toBe(item(view.container, 'a'));
     expect(object.current).toBe(item(view.container, 'a'));
     view.unmount();
@@ -488,16 +503,12 @@ describe('useNavZone: the rest of the contract', () => {
     });
     // One Suspense boundary in both trees: a boundary React has already revealed
     // keeps its content while a transition inside it waits.
-    const Gate = (props: { readonly wait: boolean }): ReactNode => {
-      if (props.wait) use(pending);
-      return null;
-    };
     const page = (options: NavZoneOptions<string>, wait: boolean): ReactNode =>
       createElement(
         Suspense,
         { fallback: null },
         createElement(List, { options }),
-        createElement(Gate, { wait }),
+        createElement(Gate, { wait, pending }),
       );
     const committed = base({ value: 'a', onChange: (id) => chosen.push(`committed:${id}`) });
     const discarded = base({ value: 'c', onChange: (id) => chosen.push(`discarded:${id}`) });
@@ -568,41 +579,41 @@ describe('openedByKeyboard', () => {
   });
 });
 
-describe('a menu over a text field', () => {
-  /** A composer that submits on Enter, and a menu layer over it. */
-  function Composer(props: {
-    readonly submitted: string[];
-    readonly picked: string[];
-    readonly phase: 'bubble' | 'capture';
-    readonly open?: boolean;
-  }): ReactNode {
-    const menu = useRef<HTMLDivElement | null>(null);
-    useKeyLayer({
-      kind: 'local',
-      phase: props.phase,
-      fields: 'include',
-      scope: menu,
-      onKey: (event) => {
-        if (event.key !== 'ArrowDown' && event.key !== 'Enter') return false;
-        props.picked.push(event.key);
-        return true;
+/** A composer that submits on Enter, and a menu layer over it. */
+function Composer(props: {
+  readonly submitted: string[];
+  readonly picked: string[];
+  readonly phase: 'bubble' | 'capture';
+  readonly open?: boolean;
+}): ReactNode {
+  const menu = useRef<HTMLDivElement | null>(null);
+  useKeyLayer({
+    kind: 'local',
+    phase: props.phase,
+    fields: 'include',
+    scope: menu,
+    onKey: (event) => {
+      if (event.key !== 'ArrowDown' && event.key !== 'Enter') return false;
+      props.picked.push(event.key);
+      return true;
+    },
+  });
+  return createElement(
+    'div',
+    null,
+    createElement('textarea', {
+      id: 'composer',
+      onKeyDown: (event: { key: string }) => {
+        if (event.key === 'Enter') props.submitted.push('sent');
       },
-    });
-    return createElement(
-      'div',
-      null,
-      createElement('textarea', {
-        id: 'composer',
-        onKeyDown: (event: { key: string }) => {
-          if (event.key === 'Enter') props.submitted.push('sent');
-        },
-      }),
-      props.open === false
-        ? null
-        : createElement('div', { ref: menu, role: 'menu' }, 'commands'),
-    );
-  }
+    }),
+    props.open === false
+      ? null
+      : createElement('div', { ref: menu, role: 'menu' }, 'commands'),
+  );
+}
 
+describe('a menu over a text field', () => {
   const textarea = (container: HTMLElement): HTMLElement => {
     const found = container.querySelector('#composer');
     if (!(found instanceof HTMLElement)) throw new Error('no composer');

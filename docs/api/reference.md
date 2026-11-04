@@ -183,11 +183,11 @@ from the root `stitchkit`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `defineContract` | function | declare a contract — [guide](../guide/contracts.md#definecontract) |
+| `ConfiguredScopedDefineContract` | _type_ | scoped authoring parameterized by the exact default transport tuple; explicit endpoint exposure replaces it |
+| `ConfiguredToolExposureEndpoints` | _type_ | endpoint map with materialized exposure; a second generic selects defaults (HTTP when omitted), preserving explicit, optional and conditional overrides |
 | `createContractFactory` | function | a `defineContract` whose scope — on the contract **and** on any endpoint override — is required and held to your union, retaining each concrete literal — [guide](../guide/contracts.md#scope) |
-| `ContractFactoryConfig` | _type_ | optional scoped-factory policy, including explicit tool exposure |
-| `ContractFactoryToolExposure` | _type_ | `'explicit'` — omitted endpoint exposure materializes as HTTP-only |
-| `ExplicitScopedDefineContract` | _type_ | scoped factory authoring with explicit tool opt-in |
-| `ExplicitToolExposureEndpoints` | _type_ | endpoint map after missing exposure is materialized as `['HTTP']` |
+| `ContractFactoryConfig` | _type_ | configuration passed to `createContractFactory<Scope>().configure({ toolExposure: { default: [...] } })`; the constructor itself takes no arguments |
+| `ContractFactoryToolExposure` | _type_ | `default: readonly Transport[]`; omitted endpoint exposure uses the immutable policy snapshot, intersected with intrinsic HTTP-only capabilities |
 | `FactoryScopedEndpoint` | _type_ | an endpoint authored through the factory — its own `scope` override is held to the same union |
 | `ScopedContractDef` | _type_ | a factory-defined contract whose `meta.scope` is the required concrete literal |
 | `ScopedDefineContract` | _type_ | the `defineContract` `createContractFactory` returns — endpoint `scope` overrides join the union |
@@ -1739,7 +1739,7 @@ runtime-tool runner, plus deliberate raw MCP adapters over the same mechanics.
 | `AsyncOperationOutputCapability` | _type_ | optional result/artifact schema plus handler |
 | `RuntimeAsyncOperationConfig` | _type_ | runtime-only descriptor configuration |
 | `RuntimeAsyncOperation` | _type_ | inferred generated definitions and schemas |
-| `AsyncOperationContractConfig` | _type_ | canonical contract config where start returns the operation id; optional `expose` names the transports per capability, because this contract is built inside the framework and never passes through a consumer's `toolExposure: 'explicit'` factory |
+| `AsyncOperationContractConfig` | _type_ | canonical contract config where start returns the operation id; optional `expose` names the transports per capability, because this contract is built inside the framework and never passes through a consumer's configured factory |
 | `AsyncOperationContractWithStartOutputConfig` | _type_ | canonical contract config with an application start envelope and typed id extractor |
 | `DefinedAsyncOperationContract` | _type_ | generated contract, capability keys, schemas and parsed adapters |
 | `ContractAsyncOperationConfig` | _type_ | literal contract method binding and handlers |
@@ -2152,7 +2152,7 @@ shapes are `stitchkit/tracking/contract`, the server half is
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createTrackingClient` | function | the client: visit lease and renewal, pending queue, synchronous identity from reserved sequences, outbox and flush lease, delivery, the string-body page-leave beacon plus a queued copy, visible time, scroll milestones, declarative clicks, heartbeats |
-| `TrackingClient` / `TrackingClientConfig` | _type_ | `track` / `onNavigate` / `start` / `visitId` / `browserStreamId` / `attribution`, and the host, `buildId`, `builtin` names, `bootstrap`, `deliver`, optional `decorate` (your `eventExtras` on every minted event), `unload` / `unloadUrl`, `outbox`, `onUnauthorized`, `onVisit`, `onFailure`, `isAction`, `referrerMap`, `clickAttributes`, `hrefPolicy` (`path-only` by default; `full` retains click query/fragment before `decorate`), `scrollMilestones`, `batchSize`, periods and limits |
+| `TrackingClient` / `TrackingClientConfig` | _type_ | `track` / `onNavigate` / `start` / `visitId` / `browserStreamId` / `attribution`, and the host, `buildId`, `builtin` names, `bootstrap`, `deliver`, optional `decorate` (your `eventExtras` on every minted event), `unload` / `unloadUrl`, `outbox`, `onUnauthorized`, `onVisit`, `onFailure`, `isAction`, `clickIdParams` (ordered application-defined marker names; no values retained), `clickAttributes`, `hrefPolicy` (`path-only` by default; `full` retains click query/fragment before `decorate`), `scrollMilestones`, `batchSize`, periods and limits |
 | `TrackFn` / `EventsWithMetadata` / `EventsWithoutMetadata` | _type_ | `track(type)` / `track(type, metadata)` typed by the application's metadata map, and the two halves of that map |
 | `BuiltinTrackingEventTypes` / `CONVENTIONAL_TRACKING_EVENT_TYPES` | _type_ / const | the application's names for the events the client emits itself; the conventional `PAGE_VIEW` … `INTERACTION` set |
 | `browserTrackingHost` / `TrackingHost` / `TrackingPageContext` | function / _type_ | everything the client takes from a browser tab behind one interface — page context, visibility, scroll depth, events, intervals, clocks, storage — so a test or a non-tab host can supply its own |
@@ -2165,8 +2165,8 @@ shapes are `stitchkit/tracking/contract`, the server half is
 | `createVisibleTimeMeter` / `VisibleTimeMeter` / `VisibleInterval` / `VisibleHeartbeat` / `VisibleTimeMeterOptions` | function / _type_ | additive visible time — `checkpoint` / `cut` / `heartbeat`, each interval with its own id; a hidden heartbeat carries no interval |
 | `scrollDepthPercent` / `createScrollMilestones` / `ScrollMilestones` | function / _type_ | depth as a percentage of the scrollable range; milestones fired once each per page |
 | `createOncePerPage` / `OncePerPage` | function / _type_ | one fact per key per page within a window — the guard a twice-mounted component cannot keep itself |
-| `resolveAttribution` / `ResolveAttributionInput` / `ResolvedAttribution` / `AttributionStorage` / `ReferrerRule` | function / _type_ | first-touch once, current-touch on every new UTM; the referrer → source/medium map is the application's, there is no built-in list |
-| `parseUtmFromSearch` / `parseReferrer` | function | the two parsers `resolveAttribution` is built from |
+| `resolveAttribution` / `ResolveAttributionInput` / `ResolvedAttribution` / `AttributionStorage` | function / _type_ | persisted first-touch with TTL, raw current-touch on each capture; actual UTM, referrer and optional `clickId` name from `clickIdParams`; `storage: null` collects without persistence; no channel inference |
+| `parseUtmFromSearch` | function | reads only `utm_*`, preserving case and whitespace up to 200 characters per field; any tag is sufficient, no source required |
 | `redactTrackingText` / `redactTrackingValue` | functions | mask passwords, sign-in credentials and signed launch data in text or a value of any shape; the key stays, and navigation and campaign parameters are untouched |
 | `resolveTrackedClick` / `ResolveTrackedClickOptions` / `TrackedClick` / `TrackedClickAttributes` / `ClickTarget` | function / _type_ | `data-track` → click, `data-track-action` → interaction, a link to another origin → outbound; attribute names configurable; `hrefPolicy: 'full'` retains query/fragment (default `path-only` omits them), URL credentials excluded; `leavesPage` says which path to send on |
 
@@ -2182,7 +2182,7 @@ browser code that only sends events does not import it. → ADR 0280
 | `createTrackingContract` / `TrackingContractConfig` / `TrackingContractEndpoints` | function / _type_ | `bootstrap` (`POST /visit`) and `track` (`POST /events`, `safelistedBody`) from the application's event types, scope and optional extras |
 | `createTrackingSchemas` / `TrackingSchemas` / `TrackingSchemasConfig` | function / _type_ | every schema of one surface — `event`, `request`, `response`, `disposition`, `entry`, `bootstrap` — from `eventTypes`, optional `eventExtras`, `buildIdPattern`, `maxEventsPerBatch` |
 | `TrackingEventEnvelope` / `TrackingEventShape` | _type_ | `eventId`, `visitId`, `browserStreamId`, `browserSequence`, `type`, `page`, `metadata`, `clientTimestamp` |
-| `TrackEventsRequest` / `TrackEventsResponse` / `TrackEventsResponseSchema` | _type_ / schema | a batch (`buildId`, `events`, `utm`) and its answer (`accepted`, `dispositions`) |
+| `TrackEventsRequest` / `TrackEventsResponse` / `TrackEventsResponseSchema` | _type_ / schema | a batch (`buildId`, `events`; attribution travels with the visit bootstrap) and its answer (`accepted`, `dispositions`) |
 | `TrackingDisposition` / `TrackingDispositionSchema` / `TrackingDispositionStatus` / `TrackingDispositionStatusSchema` | _type_ / schema | `accepted` / `duplicate` / `identity-invalid` / `excluded-bot` — every one terminal |
 | `VisitEntryContext` / `VisitEntryContextShape` / `VisitBootstrapResponse` / `VisitBootstrapResponseSchema` | _type_ / schema | what a browser reports to open a visit (lineage, landing, referrer, UTM, display, screen, `buildId`, outbox health) and the lease it gets back |
 | `TrackingOutboxState` / `TrackingOutboxStateSchema` | _type_ / schema | `available` / `unavailable` |
@@ -2273,7 +2273,15 @@ adapter is used.
 | `createGeoIpResolver` / `GeoIpResolver` / `GeoIpResolverOptions` / `GeoIpSnapshot` | function / _type_ | public-IP lookup over one stable reader generation; unavailable start, last-known-good degraded reload and cleanup are explicit states |
 | `createMaxMindGeoIpLoader` / `MaxMindGeoIpLoaderOptions` / `MaxMindGeoIpPaths` | function / _type_ | lazy optional-peer City+ASN loader with stable before/after file revision checks |
 | `GeoIpReader` / `GeoIpReaderLoader` | _type_ | peer-neutral reader/generation seam for adapters and tests |
-| `GeoAttribution` / `mapGeoIpRecord` | _type_ / function | generic optional place and autonomous-system projection; application-specific fields remain outside |
+| `GeoAttribution` / `mapGeoIpRecord` | _type_ / function | strict readonly sparse City + ASN snapshot: continent, located and registered country as separate facts, GeoNames IDs, first region/city/postal, coordinates/timezone, `accuracyRadiusKm`, autonomous system and all source languages in five `localizedNames` groups; each malformed field is omitted on its own; custom resolver mappers remain app-owned — [guide](../guide/geo.md#lookups) |
+
+## `stitchkit/geo/contract`
+
+The place snapshot's schema, browser-safe, for a shared contract. Brings `zod`.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `GeoAttributionSchema` / `GeoAttribution` | schema / _type_ | the strict readonly Zod owner of the snapshot `stitchkit/geo` resolves — [guide](../guide/geo.md#lookups) |
 
 ---
 

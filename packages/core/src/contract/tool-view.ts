@@ -1,6 +1,7 @@
 import { type ZodType, z } from 'zod';
 import { isRecord } from '../internal/typed';
 import type { EndpointDef, ToolEndpointDef, TransportSource } from './define';
+import { isHttpOnlyEndpoint } from './endpoint-capabilities';
 
 /** What a tool view's `project` is told about the call besides the full result. */
 export interface ToolViewCall<TInput = unknown> {
@@ -114,7 +115,7 @@ export interface ToolViewNeedsToolTransport {
   'toolView needs a tool transport — add MCP, AGENT or CLI to expose': never;
 }
 
-type ToolTransportEndpoint<E> = E extends { expose: readonly ['HTTP'] }
+type ToolTransportEndpoint<E> = E extends { expose: readonly 'HTTP'[] }
   ? ToolViewNeedsToolTransport
   : E;
 
@@ -192,7 +193,7 @@ export function assertToolView(prefix: string, key: string, ep: EndpointDef): vo
     throw new Error(`${where} must be declared with withToolView, which types its project`);
   }
 
-  if (ep.rawResponse || ep.rawBody || ep.multipart || 'responseMeta' in ep || 'stream' in ep) {
+  if (isHttpOnlyEndpoint(ep)) {
     throw new Error(
       `${where} is only for a JSON tool endpoint — this one is HTTP-only by kind`,
     );

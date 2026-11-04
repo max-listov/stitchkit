@@ -43,10 +43,8 @@ describe('build artifacts are checked before roles start', () => {
         artifacts: ['packages/backend/nowhere'],
       },
     };
-    // The test used to stop at the artifact name, which is why nobody noticed
-    // that the second half of the sentence had become `[object Object]` when
-    // commands turned into `{ executable, args }`. A diagnostic exists to be
-    // retyped, so the assertion reads it the way an operator would.
+    // The full diagnostic must contain a command an operator can retype;
+    // serializing a command object as `[object Object]` is not actionable.
     expect(() => assertBuildArtifacts(unbuilt)).toThrow(
       /Missing build artifacts: packages\/backend\/nowhere — run `bun run build` first\./,
     );

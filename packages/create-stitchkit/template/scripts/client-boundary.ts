@@ -9,15 +9,12 @@ import { dirname, join, resolve } from 'node:path';
  * artifact and migration paths, and the name of every environment variable a
  * deployment supplies. One `import` from a module a client component happens to
  * use puts all of it, plus the Zod schema that parses it, into the browser
- * bundle. That is the exact mistake `app-identity.generated.ts` exists to
- * prevent, made from the other side — and it shipped, because nothing checked
- * the graph, only the file that imports directly.
+ * bundle. `app-identity.generated.ts` exposes only the public identity; the
+ * scanner follows the whole graph to keep the full declaration server-only.
  *
- * The check is a resolved FILE, not a spelling. Matching the string
- * `@app/config/declaration` catches the one way the leak was written the first
- * time and misses the two ways it comes back: a barrel that re-exports it, and
- * a relative path into the config package. Both end at the same file, so that
- * is what this follows.
+ * The check follows resolved files: a direct package import, a barrel and a
+ * relative path can all reach the same declaration. Workspace names come from
+ * package manifests so the check also follows a renamed package.
  */
 export interface ClientBoundaryScan {
   /** Repository root — where `packages/<name>` lives. */
@@ -77,25 +74,32 @@ function firstExistingFile(base: string): string | undefined {
   return undefined;
 }
 
-/** `@app/config/declaration` → the file its package's `exports` map names. */
 function resolveWorkspace(scan: ClientBoundaryScan, specifier: string): string | undefined {
-  const parts = specifier.split('/');
-  if (parts[0] !== '@app' || !parts[1]) return undefined;
-  const packageRoot = join(scan.root, 'packages', parts[1]);
-  const manifestPath = join(packageRoot, 'package.json');
-  if (!existsSync(manifestPath)) return undefined;
-  const subpath = parts.length > 2 ? `./${parts.slice(2).join('/')}` : '.';
-  const manifest: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
-  const exportsField =
-    typeof manifest === 'object' && manifest !== null
-      ? Reflect.get(manifest, 'exports')
+  const packagesRoot = join(scan.root, 'packages');
+  if (!existsSync(packagesRoot)) return undefined;
+  for (const entry of readdirSync(packagesRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const packageRoot = join(packagesRoot, entry.name);
+    const manifestPath = join(packageRoot, 'package.json');
+    if (!existsSync(manifestPath)) continue;
+    const manifest: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    if (typeof manifest !== 'object' || manifest === null) continue;
+    const name: unknown = Reflect.get(manifest, 'name');
+    if (typeof name !== 'string') continue;
+    if (specifier !== name && !specifier.startsWith(`${name}/`)) continue;
+    const subpath = specifier === name ? '.' : `.${specifier.slice(name.length)}`;
+    const exportsField: unknown = Reflect.get(manifest, 'exports');
+    const target: unknown =
+      typeof exportsField === 'string' && subpath === '.'
+        ? exportsField
+        : typeof exportsField === 'object' && exportsField !== null
+          ? Reflect.get(exportsField, subpath)
+          : undefined;
+    return typeof target === 'string'
+      ? firstExistingFile(resolve(packageRoot, target))
       : undefined;
-  const target =
-    typeof exportsField === 'object' && exportsField !== null
-      ? Reflect.get(exportsField, subpath)
-      : undefined;
-  if (typeof target !== 'string') return undefined;
-  return firstExistingFile(resolve(packageRoot, target));
+  }
+  return undefined;
 }
 
 export function resolveSpecifier(
@@ -103,13 +107,12 @@ export function resolveSpecifier(
   from: string,
   specifier: string,
 ): string | undefined {
-  if (specifier.startsWith('@app/')) return resolveWorkspace(scan, specifier);
   const base = specifier.startsWith('@/')
     ? join(scan.frontendSrc, specifier.slice(2))
     : specifier.startsWith('.')
       ? resolve(dirname(from), specifier)
       : undefined;
-  return base ? firstExistingFile(base) : undefined;
+  return base ? firstExistingFile(base) : resolveWorkspace(scan, specifier);
 }
 
 /** The import chain from a client entry to the declaration, if one exists. */

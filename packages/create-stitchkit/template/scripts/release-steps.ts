@@ -33,8 +33,8 @@ const MIGRATION_COMMANDS: Record<string, string[]> = {
  * A declared command as an operator can retype it.
  *
  * `${command}` on a `{ executable, args }` object prints `[object Object]`, so
- * the one diagnostic that exists to tell an operator what to run told them
- * nothing. Quoting is deliberate: an argument with a space has to survive being
+ * a diagnostic using it cannot tell an operator what to run. Quoting is
+ * deliberate: an argument with a space has to survive being
  * read back.
  */
 export function formatCommand(command: { executable: string; args: string[] }): string {

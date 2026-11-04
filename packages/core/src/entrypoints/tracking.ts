@@ -10,9 +10,7 @@
  */
 export {
   type AttributionStorage,
-  parseReferrer,
   parseUtmFromSearch,
-  type ReferrerRule,
   type ResolveAttributionInput,
   type ResolvedAttribution,
   resolveAttribution,

@@ -166,11 +166,30 @@ export type TypedClient<C extends Record<string, EndpointDef>> = {
   [K in keyof C]: EndpointFn<C[K]>;
 };
 
-type ExposesHttp<E> = E extends { expose: readonly Transport[] }
-  ? 'HTTP' extends E['expose'][number]
+type GuaranteesHttp<Exposure extends readonly Transport[]> = Exposure extends readonly [
+  infer First,
+  ...infer Rest extends readonly Transport[],
+]
+  ? [First] extends ['HTTP']
     ? true
-    : false
-  : true;
+    : GuaranteesHttp<Rest>
+  : Exposure extends readonly [...infer Rest extends readonly Transport[], infer Last]
+    ? [Last] extends ['HTTP']
+      ? true
+      : GuaranteesHttp<Rest>
+    : false;
+
+type ExposureHasHttp<Exposure> = Exposure extends undefined
+  ? true
+  : Exposure extends readonly Transport[]
+    ? GuaranteesHttp<Exposure>
+    : false;
+
+type ExposesHttp<Endpoint> = Endpoint extends unknown
+  ? 'expose' extends keyof Endpoint
+    ? ExposureHasHttp<Endpoint['expose']>
+    : true
+  : never;
 
 // ─── Scoped client (keys a `pathPrefix` consumes become required args) ────────
 //

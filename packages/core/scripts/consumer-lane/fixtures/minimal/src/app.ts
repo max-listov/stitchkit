@@ -13,6 +13,8 @@
  *    copy for the project's whole life and no source test could see it.
  */
 
+import './factory-exposure';
+import './geo-snapshot';
 import {
   type ApplicationShutdownResult,
   createActivityProjection,

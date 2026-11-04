@@ -14,8 +14,8 @@ describe('the acceptance gate writes only to a database of its own', () => {
   });
 
   test('an unset variable is refused with the line to paste', () => {
-    // The gate used to inherit DATABASE_URL. Defaulting to it is exactly the
-    // behaviour this replaces, so absence has to be a refusal, not a fallback.
+    // Falling back to DATABASE_URL would let the gate write to the deployment's
+    // database, so an absent acceptance URL must be rejected.
     expect(() => resolveAcceptanceDatabase({ DATABASE_URL: deployment })).toThrow(
       /ACCEPTANCE_DATABASE_URL=postgresql:\/\/app:secret@127\.0\.0\.1:5432\/starter_acceptance/,
     );
@@ -44,8 +44,8 @@ describe('the acceptance gate writes only to a database of its own', () => {
 
   test('the same name on another hostname is refused, because a hostname proves nothing', () => {
     // `localhost` and `127.0.0.1` are one server; so are two DNS names for the
-    // same PostgreSQL. A guard that compared `host:port/name` called these two
-    // different databases and let the gate migrate the deployment's own.
+    // same PostgreSQL. Comparing `host:port/name` cannot prove the databases
+    // are separate and could let a gate migrate the deployment's own.
     expect(() =>
       resolveAcceptanceDatabase({
         DATABASE_URL: 'postgresql://app@localhost:5432/starter',

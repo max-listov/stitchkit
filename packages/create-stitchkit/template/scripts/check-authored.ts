@@ -1,15 +1,15 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { parseSync, Visitor } from 'oxc-parser';
+import databasePackage from '../packages/db/package.json';
 
 const roots = ['packages', 'scripts', 'e2e'];
 const rootFiles = ['playwright.config.ts', 'ecosystem.config.cjs', 'ecosystem.dev.config.cjs'];
 const processEnvMarker = ['process', 'env'].join('.');
 const replacedThemePackage = ['next', 'themes'].join('-');
 const generatedDirectories = new Set(['.git', '.next', 'dist', 'node_modules']);
-// The supervision files used to read the environment directly to build an argv
-// for the web role. They no longer do — a role reads its own bindings — so they
-// are no longer environment boundaries, and this list is smaller by two.
+// Roles read their own validated bindings; supervision passes no environment
+// values in argv. Only runtime and tooling schemas are environment boundaries.
 const processEnvBoundaries = new Set([
   'packages/frontend/src/env.ts',
   'packages/config/src/server.ts',
@@ -25,8 +25,8 @@ function lineAt(source: string, offset: number): number {
  *
  * The gate refuses a cast because a cast can LAUNDER a type — claim something the value has not
  * been shown to be. A const-assertion cannot: it only narrows, it introduces no name, and it
- * cannot widen. Refusing it made five of the first fifteen findings on a real adoption false, in
- * a gate whose whole value is that its findings are worth acting on.
+ * cannot widen. Treating it as a type assertion would report a narrowing as an
+ * unproven type claim.
  *
  * `const` is a reserved word, so no type can be named `const` — the check has no false positive
  * of its own.
@@ -72,7 +72,8 @@ export function inspect(path: string, source: string): string[] {
     for (const specifier of source.matchAll(/from\s+['"]([^'"]+)['"]/g)) {
       const dependency = specifier[1];
       if (
-        dependency === '@app/db' ||
+        dependency === databasePackage.name ||
+        dependency?.startsWith(`${databasePackage.name}/`) ||
         dependency?.startsWith('@prisma/') ||
         (path.startsWith('packages/shared/') && dependency?.startsWith('node:')) ||
         (path.startsWith('packages/shared/') && dependency === 'bun')

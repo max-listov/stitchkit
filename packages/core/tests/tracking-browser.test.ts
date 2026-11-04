@@ -207,7 +207,7 @@ describe('attribution', () => {
       removeItem: (key: string) => void map.delete(key),
     };
   };
-  const base = { pathname: '/', hostname: 'app.example.com', referrer: '' };
+  const base = { pathname: '/', referrer: '' };
 
   test('a UTM in the address writes current-touch and leaves first-touch alone', () => {
     const store = storage();
@@ -218,7 +218,7 @@ describe('attribution', () => {
       now: 1,
     });
     expect(first.firstTouch.utm).toEqual({
-      source: 'google',
+      source: 'Google',
       medium: 'cpc',
       campaign: undefined,
       content: undefined,
@@ -230,37 +230,21 @@ describe('attribution', () => {
       storage: store,
       now: 2,
     });
-    expect(second.firstTouch.utm?.source).toBe('google');
+    expect(second.firstTouch.utm?.source).toBe('Google');
     expect(second.currentTouch.utm?.source).toBe('newsletter');
   });
 
-  test('the referrer map is the application’s; without it an external referrer is a referral', () => {
-    expect(
-      resolveAttribution({
+  test('external and same-host referrers stay facts without synthesised UTM', () => {
+    for (const referrer of ['https://t.me/channel', 'https://app.example.com/x']) {
+      const touch = resolveAttribution({
         ...base,
         search: '',
-        referrer: 'https://t.me/channel',
+        referrer,
         storage: storage(),
-      }).firstTouch.utm,
-    ).toEqual({ source: 't.me', medium: 'referral' });
-    expect(
-      resolveAttribution({
-        ...base,
-        search: '',
-        referrer: 'https://t.me/channel',
-        storage: storage(),
-        referrerMap: [{ pattern: /t\.me/, source: 'telegram', medium: 'social' }],
-      }).firstTouch.utm,
-    ).toEqual({ source: 'telegram', medium: 'social' });
-    // Same host is not a referrer.
-    expect(
-      resolveAttribution({
-        ...base,
-        search: '',
-        referrer: 'https://app.example.com/x',
-        storage: storage(),
-      }).firstTouch.utm,
-    ).toBeUndefined();
+      }).firstTouch;
+      expect(touch.utm).toBeUndefined();
+      expect(touch.referrer).toBe(referrer);
+    }
   });
 
   test('first-touch expires after ttlMs', () => {

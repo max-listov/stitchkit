@@ -12,6 +12,23 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Shared contracts create their factory without configuration and declare HTTP exposure on each
+  endpoint.
+- Generated application workspaces use the destination slug as their package scope in manifests,
+  imports, scripts, guides and the lockfile, including the repository example. Browser-boundary
+  checks identify workspace packages by their manifests, so renaming a scope keeps the checks active.
+- Scaffolding formats the completed project and organizes imports with its Biome configuration,
+  including with `--no-install`, so scope length and sort order do not leave a failing lint check.
+  The bounded formatter runs the native binary directly, so a timeout stops it before rollback.
+- Agent and Telegram templates declare their own Biome dependency instead of inheriting a formatter
+  from a parent directory or downloading an undeclared version.
+- Template comments describe current constraints and their reasons rather than narrating edits.
+- Local Agent and Telegram template dependencies link the current workspace rather than retaining a
+  copied dependency snapshot. Both templates pin transitive Zod resolution to the repository's version
+  so frozen installs keep one schema type identity.
+
 ## [0.6.18] - 2026-11-02
 
 ### Added

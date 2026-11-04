@@ -50,19 +50,20 @@
     "supervised-lane": "bun scripts/supervised-lane.ts"
   },
   "overrides": {
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.14",
-    "@prisma/adapter-pg": "^7.10.0",
-    "@prisma/client": "^7.10.0",
-    "@types/bun": "^1.4.2",
+    "@biomejs/biome": "^2.6.5",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
-    "dotenv": "^18.0.3",
-    "pg": "^8.23.0",
-    "pm2": "^7.0.4",
-    "prisma": "^7.10.0",
+    "dotenv": "^18.0.9",
+    "pg": "^8.23.1",
+    "pm2": "^7.1.2",
+    "prisma": "^7.10.1",
     "typescript": "^7.0.2",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   }
 }

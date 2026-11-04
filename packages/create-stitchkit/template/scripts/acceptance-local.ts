@@ -2,9 +2,9 @@
  * The runtime gates, against a deployment this script owns.
  *
  * `runtime:smoke` and `e2e` check a RUNNING deployment, so a gate list has to
- * bring one up. The wrong way to do that — and the way this replaced — is
+ * bring one up. A gate must not do so through
  * `pm2:prod`: it applies the declared migrations and reloads the developer's
- * own PM2 daemon, so "run these before handing work off" quietly meant "deploy".
+ * own PM2 daemon, turning verification into a deployment.
  * A gate may not mutate a deployment; it may only create and destroy its own.
  *
  * So everything here is this run's and nothing else's: its own `PM2_HOME`, its
@@ -12,12 +12,10 @@
  * stop that names the roles the declaration declares rather than deleting
  * whatever the daemon happened to hold.
  *
- * The database is the last thing this owned. It used to inherit `DATABASE_URL`,
- * which made a GATE a writer: the repository example's smoke posts a refresh,
- * and that upserts. It now runs against `ACCEPTANCE_DATABASE_URL` and refuses to
- * start when that is unset or names the deployment's own database — and the
- * deployment's URL is not in the child environment at all, so no role here can
- * reach it even by asking.
+ * The gate writes: the repository example's smoke posts a refresh that upserts.
+ * It requires `ACCEPTANCE_DATABASE_URL`, distinct from the deployment's own
+ * database. The deployment's URL is excluded from the child environment so no
+ * role here can reach it.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

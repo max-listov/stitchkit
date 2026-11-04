@@ -57,7 +57,7 @@ export type TrackingContractEndpoints<TSchemas extends TrackingSchemas<z.ZodObje
  * **Both endpoints are HTTP-only, and that is not a formality.** An endpoint
  * with no `expose` is a tool on MCP and AGENT by default, and this contract is
  * built here rather than by the application's own contract factory — so a
- * project that sets `toolExposure: 'explicit'` for everything it authors was
+ * project that sets a factory default of `['HTTP']` for everything it authors was
  * still handed a `track` tool it never asked for. An agent has nothing to gain
  * from a browser-event ingest and one thing to lose by having it: writes into
  * the application's visitor data, under its own name, indistinguishable

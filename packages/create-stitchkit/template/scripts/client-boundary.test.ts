@@ -31,9 +31,8 @@ describe('the declaration stays out of the browser', () => {
 });
 
 describe('the scanner fails however the import is written', () => {
-  // A check that only recognises the one spelling the leak had the first time
-  // is a check that passes while the leak is back. These fixtures write it the
-  // two other ways it can come back.
+  // Package, barrel and relative imports can reach the same declaration.
+  // Every spelling must be checked against the resolved file.
   const created: string[] = [];
   afterAll(() => {
     for (const path of created) rmSync(path, { recursive: true, force: true });
@@ -50,7 +49,7 @@ describe('the scanner fails however the import is written', () => {
     write(
       'packages/config/package.json',
       JSON.stringify({
-        name: '@app/config',
+        name: '@demo-shop/config',
         exports: { './declaration': './src/declaration.ts' },
       }),
     );
@@ -67,14 +66,13 @@ describe('the scanner fails however the import is written', () => {
     const scan = fixture({
       'packages/frontend/src/page.tsx':
         "'use client';\nimport { appDeclaration } from './lib';\nexport const value = appDeclaration;\n",
-      'packages/frontend/src/lib/index.ts': "export * from '@app/config/declaration';\n",
+      'packages/frontend/src/lib/index.ts': "export * from '@demo-shop/config/declaration';\n",
     });
     expect(findDeclarationLeaks(scan)).toHaveLength(1);
   });
 
   test('a relative path into the config package is a leak', () => {
-    // No `@app/` prefix anywhere in the file, so a check on the specifier
-    // string sees nothing at all.
+    // A relative import bypasses any check on the package's spelling.
     const scan = fixture({
       'packages/frontend/src/page.tsx':
         "'use client';\nimport { appDeclaration } from '../../config/src/declaration';\nexport const value = appDeclaration;\n",
@@ -85,7 +83,7 @@ describe('the scanner fails however the import is written', () => {
   test('a double-quoted import is a leak too', () => {
     const scan = fixture({
       'packages/frontend/src/page.tsx':
-        '\'use client\';\nimport { appDeclaration } from "@app/config/declaration";\nexport const value = appDeclaration;\n',
+        '\'use client\';\nimport { appDeclaration } from "@demo-shop/config/declaration";\nexport const value = appDeclaration;\n',
     });
     expect(findDeclarationLeaks(scan)).toHaveLength(1);
   });
@@ -99,6 +97,26 @@ describe('the scanner fails however the import is written', () => {
       'packages/frontend/src/lib/index.ts': "export const name = 'x';\n",
     });
     expect(findDeclarationLeaks(scan)).toEqual([]);
+  });
+
+  test('a matching subpath under a foreign scope is not a workspace import', () => {
+    const scan = fixture({
+      'packages/frontend/src/page.tsx':
+        "'use client';\nimport { appDeclaration } from '@foreign/config/declaration';\nexport const value = appDeclaration;\n",
+    });
+    expect(findDeclarationLeaks(scan)).toEqual([]);
+  });
+
+  test('the manifest name resolves a package whose directory has a different name', () => {
+    const scan = fixture({
+      'packages/config/package.json': JSON.stringify({
+        name: 'shop-configuration',
+        exports: { './declaration': './src/declaration.ts' },
+      }),
+      'packages/frontend/src/page.tsx':
+        "'use client';\nimport { appDeclaration } from 'shop-configuration/declaration';\nexport const value = appDeclaration;\n",
+    });
+    expect(findDeclarationLeaks(scan)).toHaveLength(1);
   });
 
   test('both quote styles and side-effect imports are read', () => {

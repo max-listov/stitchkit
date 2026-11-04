@@ -7,7 +7,6 @@ export interface TrackingPageContext {
   /** With the leading `?`, or empty. */
   search: string;
   origin: string;
-  hostname: string;
   title: string;
   referrer: string;
   viewportWidth: number;
@@ -51,7 +50,6 @@ export function browserTrackingHost(): TrackingHost {
       pathname: window.location.pathname,
       search: window.location.search,
       origin: window.location.origin,
-      hostname: window.location.hostname,
       title: document.title,
       referrer: document.referrer,
       viewportWidth: window.innerWidth,

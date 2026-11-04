@@ -5,9 +5,9 @@ import { env } from '@/env';
  * The public origin this response is being served on.
  *
  * Derived from the REQUEST, never from the build. An absolute address read at
- * build time is frozen into the artifact — `robots.txt` and `sitemap.xml` were
- * prerendered with one origin inside their bytes, so a single build could not
- * serve a second address. Reading the request instead makes one artifact
+ * build time is frozen into the artifact: prerendering `robots.txt` and
+ * `sitemap.xml` with one origin would prevent that build from serving a second
+ * address correctly. Reading the request makes one artifact
  * correct at every address it is ever routed to.
  *
  * **The request is not trusted on its own.** `x-forwarded-host` is set by
@@ -68,8 +68,8 @@ function isAllowedHost(host: string): boolean {
  *
  * Only two are possible, and anything else is a misconfigured proxy or a
  * forgery — both of which must be seen, not normalised. Mapping every unknown
- * value to `http` meant `ftp`, `javascript` and a truncated header all produced
- * a plausible-looking origin, and the answer went into canonical URLs.
+ * value to `http` would turn `ftp`, `javascript` and a truncated header into a
+ * plausible origin and put an unverified value into canonical URLs.
  *
  * A missing header is not a failure: a deployment reached directly has no
  * forwarding layer, and `http` is then the truth.

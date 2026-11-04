@@ -4,10 +4,13 @@ description: Two consuming applications carried the same visitor-tracking mechan
 type: decision
 status: active
 created: 2026-09-06
-updated: 2026-09-06
+updated: 2026-11-04 16:21 +07:00
 ---
 
 # 0166 — Tracking mechanics live in core; storage and domain stay outside
+
+The attribution clause is amended by [ADR 0282](0282-tracking-carries-facts-not-channel-classification.md):
+the browser carries raw tags, referrer and configured click-marker names; channel classification is server policy.
 
 ## Decision
 

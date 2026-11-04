@@ -4,8 +4,8 @@ import { join } from 'node:path';
 /**
  * The web role refuses a mode it does not understand.
  *
- * `argv[2] === 'development' ? 'dev' : 'start'` meant a typo, an empty string
- * and a missing argument all became production in silence — the one decision
+ * `argv[2] === 'development' ? 'dev' : 'start'` would turn a typo, an empty string
+ * and a missing argument into production in silence — the one decision
  * that changes whether the role serves a build or compiles on demand. Run as a
  * real process, because the failure has to happen before Next is spawned.
  */

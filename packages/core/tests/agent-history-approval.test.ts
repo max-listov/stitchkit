@@ -75,6 +75,7 @@ describe('approval history chronology', () => {
         type: 'tool-approval-request',
         toolCallId: 'write',
         approvalId: 'approve-write',
+        isAutomatic: false,
         signature: 'signature-write',
       },
     ]);

@@ -43,9 +43,8 @@ export function declaredRoleReadiness(
  * An IPv6 literal is bracketed; everything else is written as it stands.
  *
  * `http://::1:3211/health` is not an address with a port — it is not a URL at
- * all, and `fetch` refuses it. A role bound to a specific IPv6 address is a
- * legitimate deployment, and it used to make the readiness wait fail on the
- * spelling rather than on the role.
+ * all, and `fetch` refuses it. Brackets let readiness probe a legitimate IPv6
+ * binding instead of failing on URL syntax.
  */
 function authority(host: string, port: string): string {
   const literal = host.includes(':') && !host.startsWith('[');
@@ -57,8 +56,8 @@ function authority(host: string, port: string): string {
  *
  * A supervisor returns as soon as it has SPAWNED a process, and a role needs
  * seconds after that before it listens. Printing "running" at the moment of the
- * spawn is a claim nobody checked: the next command in the gate list dialled
- * the declared port and got a connection reset, which reads as a broken check
+ * spawn is a claim nobody checked: the next command can dial the declared port
+ * before it listens and get a connection reset, which reads as a broken check
  * rather than an application still booting.
  */
 export async function awaitRolesAnswering(

@@ -4,14 +4,12 @@ import { featureServerSchema } from './features';
 /**
  * Every environment variable this application reads, declared **once**.
  *
- * There used to be three overlapping copies — the server schema, the frontend
- * schema and the tooling schema — and they had already drifted in composition.
- * A fourth copy in the project declaration would have been worse still, so this
- * module is the source and everything else is a projection of it:
+ * This module is the source; the server schema, frontend schema, tooling schema
+ * and project declaration are projections so their requirements cannot drift:
  *
  * - `server.ts` validates all of them for the API role;
  * - `frontend/src/env.ts` projects the handful the web role reads;
- * - `scripts/declaration.ts` DERIVES `env.required` in `project.json` from
+ * - `scripts/declaration.ts` derives `env.variables` in `project.json` from
  *   here, so the declaration a deployment reads can never fall behind.
  *
  * Defaults, coercion and error messages live here and only here. The
@@ -111,9 +109,8 @@ const baseVariables = {
  *
  * A merge rather than a spread inside one literal, so an overlay can **tighten**
  * a variable the base declares optional — not only add new ones. Without that,
- * a project whose code dereferences a variable without a fallback had no way to
- * say so, and its declaration told a deployment the variable was optional while
- * the first render threw.
+ * a feature that requires a variable could not express that requirement, and
+ * the declaration would call it optional while the first render throws.
  */
 export const applicationVariables = { ...baseVariables, ...featureServerSchema };
 

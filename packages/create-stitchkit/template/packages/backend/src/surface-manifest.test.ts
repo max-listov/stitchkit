@@ -103,8 +103,8 @@ describe('surface conformance', () => {
       agentToolNames: ['read_note'],
       cliToolNames: ['read_note'],
     };
-    // A silent skip was the hole: no x-stitchkit-* keys meant no comparison at
-    // all. The default mode now refuses; opting out is an explicit decision.
+    // Without x-stitchkit-* metadata there is nothing to compare. The default
+    // mode rejects the document; opting out is an explicit decision.
     expect(() =>
       assertSurfaceConformance({ manifest, openApi: standardDocument, ...names }),
     ).toThrow(/no x-stitchkit-\* contract metadata/);
@@ -145,7 +145,7 @@ describe('surface conformance', () => {
   });
 
   test('the committed snapshot catches an expose edit that moves BOTH in-process sides together', () => {
-    // The probe that defeated the old check: removing AGENT/CLI from `expose`
+    // Removing AGENT/CLI from `expose`
     // changes the manifest AND the in-process tool lists in lockstep. The
     // snapshot is the anchor that does not move with the source.
     const snapshot = buildSurfaceManifest([service]);

@@ -5,10 +5,8 @@ import { join, resolve } from 'node:path';
 /**
  * Every repository path a guide names has to exist.
  *
- * `ADDING_A_FEATURE.md` is the one document a new consumer executes literally, and two of its
- * steps pointed at files the scaffold does not contain — `lib/api/client.ts` and a "shared
- * realtime source". The reader does not learn that by reading; they learn it by opening the path
- * and finding nothing, after having already trusted the sentence around it.
+ * A new consumer executes `ADDING_A_FEATURE.md` literally. Every referenced source file must
+ * exist so the reader can follow each step without discovering a missing path along the way.
  *
  * A path the guide tells you to CREATE is not a broken reference, so those are declared by the
  * guide itself: a line that introduces one carries `(created in this step)`. Everything else

@@ -2,12 +2,10 @@
  * The database the local acceptance gate is allowed to write to.
  *
  * `acceptance:local` creates and destroys its own deployment — its own PM2 home,
- * its own ephemeral ports, its own host allowlist. The database was the one
- * thing it still borrowed: it inherited `DATABASE_URL`, and the runtime gates
- * WRITE. The repository example's smoke posts `/api/repository/refresh` twice,
- * which upserts. So a gate a developer is told to run before handing work off
- * wrote rows into whatever `.env` happened to name — including a production
- * database, if that is what the machine was pointed at.
+ * its own ephemeral ports, its own host allowlist and its own database. Runtime
+ * gates WRITE: the repository example posts `/api/repository/refresh`, which
+ * upserts. Inheriting `DATABASE_URL` would let a verification run write to the
+ * deployment named by `.env`, including production.
  *
  * Fail-closed on purpose. An acceptance database that is merely *probably*
  * separate is the same defect one edit later, so an unset variable and one that

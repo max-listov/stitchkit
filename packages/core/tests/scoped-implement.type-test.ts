@@ -124,8 +124,10 @@ scopedDefine(
   },
 );
 
-const { defineContract: explicitDefine } = createContractFactory<'public' | 'admin'>({
-  toolExposure: 'explicit',
+const { defineContract: explicitDefine } = createContractFactory<
+  'public' | 'admin'
+>().configure({
+  toolExposure: { default: ['HTTP'] },
 });
 
 explicitDefine(

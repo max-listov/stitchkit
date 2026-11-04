@@ -6,7 +6,7 @@
  * the cause:
  *
  * 1. **Types.** The Agent template depends on `stitchkit` through
- *    `file:../../../core`, and the MCP SDK depends on `zod` in its own right.
+ *    `link:../../../core`, and the MCP SDK depends on `zod` in its own right.
  *    Zod brands its types with its own version, so two minors are two
  *    incompatible type systems — a schema built by one is not assignable to a
  *    parameter typed by the other. What surfaces is
@@ -42,6 +42,21 @@ function resolvedZod(lockfile: string): string | undefined {
 }
 
 describe('one zod across the repository and both templates', () => {
+  test('nested dependency copies cannot carry another Zod brand', () => {
+    const expected = resolvedZod('bun.lock');
+    if (expected === undefined) throw new Error('repository resolves no zod');
+    for (const [name, path] of Object.entries(TREES)) {
+      const versions = lockedResolutions(readFileSync(join(root, path), 'utf8'));
+      const copies = [...versions].filter(
+        ([dependency]) => dependency === 'zod' || dependency.endsWith('/zod'),
+      );
+      expect(copies.length, name).toBeGreaterThan(0);
+      for (const [dependency, version] of copies) {
+        expect(version, `${name}: ${dependency}`).toBe(expected);
+      }
+    }
+  });
+
   test('every tree resolves the same version', () => {
     const resolutions = Object.entries(TREES).map(
       ([name, lockfile]) => [name, resolvedZod(lockfile)] as const,

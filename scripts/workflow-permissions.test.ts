@@ -98,7 +98,7 @@ describe('target-aware CI graph', () => {
   test('the browser and Bun runtime remain immutable and lock-aligned', () => {
     const starter = section('starter', 'artifacts');
     expect(starter).toContain(
-      'v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27',
+      'v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f',
     );
     expect(starter).toContain('BUN_VERSION: 1.4.2');
     expect(starter).toContain('sha512sum --check');

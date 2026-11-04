@@ -349,7 +349,16 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
       options.signal,
       options.timeout ?? config.timeout ?? 30_000,
     );
-    const transport = resolveClientFetch(config.fetch);
+    // Ky settles a cancelled request with the abort reason as soon as the
+    // signal fires, so the transport's own rejection — the evidence of what the
+    // cancellation did to the request — is recorded here and kept as the cause.
+    let transportFailure: { readonly cause: unknown } | undefined;
+    const resolvedTransport = resolveClientFetch(config.fetch);
+    const transport: ClientFetch = (input, init) =>
+      resolvedTransport(input, init).catch((cause: unknown) => {
+        transportFailure = { cause };
+        throw cause;
+      });
     const kyOptions: Options = {
       fetch: createRetryAwareFetch(
         options.onUploadProgress
@@ -379,7 +388,11 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
 
     try {
       return await cancellation.run(() =>
-        readResponse<T>(client[method](url, kyOptions), options.responseType),
+        readResponse<T>(client[method](url, kyOptions), options.responseType).catch(
+          (error: unknown) => {
+            throw transportFailure && isAbortLikeError(error) ? transportFailure.cause : error;
+          },
+        ),
       );
     } catch (error) {
       throw requestFailure(error, emit);

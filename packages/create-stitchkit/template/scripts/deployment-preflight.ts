@@ -4,9 +4,8 @@
  * `runtime:smoke` checks a RUNNING deployment — that is what makes it a runtime
  * smoke rather than a build check. Without this the first `fetch` inside some
  * assertion fails with a bare `ECONNRESET`, which reads like a broken check
- * instead of an absent deployment and says nothing about what to do next. The
- * packed lane never saw it because the lane starts the roles itself; everyone
- * following the README's gate list saw it first.
+ * instead of an absent deployment and says nothing about what to do next. This
+ * preflight names the missing roles before any assertion tries to dial them.
  */
 export async function assertDeploymentIsAnswering(
   origins: Readonly<Record<string, string>>,

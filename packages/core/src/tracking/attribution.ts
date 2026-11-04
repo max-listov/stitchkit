@@ -1,12 +1,6 @@
 import { isRecord } from '../internal/typed';
+import { maskTrackingParameters, redactTrackingText } from './privacy';
 import type { AttributionData, UtmData } from './schemas';
-
-/** A referrer hostname pattern and the source/medium it stands for. */
-export interface ReferrerRule {
-  pattern: RegExp;
-  source: string;
-  medium: string;
-}
 
 export interface AttributionStorage {
   getItem(key: string): string | null;
@@ -21,16 +15,8 @@ export interface ResolveAttributionInput {
   referrer: string;
   /** `location.pathname`. */
   pathname: string;
-  /** `location.hostname` — a referrer from the same host is not a referrer. */
-  hostname: string;
-  storage: AttributionStorage;
-  /**
-   * Which referrer hosts map to a named source and medium. The framework has
-   * no built-in list: which hosts count as "social" or "organic" is the
-   * application's data (ADR 0002). An unmatched external referrer is
-   * `{ source: hostname, medium: 'referral' }`.
-   */
-  referrerMap?: readonly ReferrerRule[];
+  storage: AttributionStorage | null;
+  clickIdParams?: readonly string[];
   /** Storage key. Default `tracking.attribution`. */
   storageKey?: string;
   /** How long first-touch lives. Default 90 days. */
@@ -40,7 +26,8 @@ export interface ResolveAttributionInput {
 
 export interface ResolvedAttribution {
   firstTouch: AttributionData;
-  currentTouch: AttributionData;
+  /** This page's touch: its landing path is always known. */
+  currentTouch: AttributionData & { landingPage: string };
 }
 
 interface StoredTouch {
@@ -49,8 +36,8 @@ interface StoredTouch {
 }
 
 interface StoredAttribution {
+  version: 1;
   firstTouch: StoredTouch;
-  currentTouch: StoredTouch;
 }
 
 function isOptionalText(value: unknown): boolean {
@@ -80,6 +67,10 @@ function isStoredTouch(value: unknown): value is StoredTouch {
   return (
     isRecord(data) &&
     isUtm(data.utm) &&
+    (data.clickId === undefined ||
+      (typeof data.clickId === 'string' &&
+        data.clickId.length > 0 &&
+        data.clickId.length <= MAX_UTM_LENGTH)) &&
     isOptionalText(data.referrer) &&
     isOptionalText(data.landingPage)
   );
@@ -90,58 +81,68 @@ function isStoredTouch(value: unknown): value is StoredTouch {
  * and `zod` would be nine tenths of the client's weight for one read.
  */
 function isStoredAttribution(value: unknown): value is StoredAttribution {
-  return (
-    isRecord(value) && isStoredTouch(value.firstTouch) && isStoredTouch(value.currentTouch)
-  );
+  return isRecord(value) && value.version === 1 && isStoredTouch(value.firstTouch);
 }
 
-function normalize(value: string | null | undefined): string | undefined {
+function campaignValue(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
-  return value.toLowerCase().trim().slice(0, 200) || undefined;
+  return redactTrackingText(value).slice(0, MAX_UTM_LENGTH);
 }
 
 export function parseUtmFromSearch(search: string): UtmData | null {
   const params = new URLSearchParams(search);
-  const source = normalize(params.get('utm_source'));
-  if (!source) return null;
-  return {
+  const source = campaignValue(params.get('utm_source'));
+  const utm = {
     source,
-    medium: normalize(params.get('utm_medium')),
-    campaign: normalize(params.get('utm_campaign')),
-    content: normalize(params.get('utm_content')),
-    term: normalize(params.get('utm_term')),
+    medium: campaignValue(params.get('utm_medium')),
+    campaign: campaignValue(params.get('utm_campaign')),
+    content: campaignValue(params.get('utm_content')),
+    term: campaignValue(params.get('utm_term')),
   };
+  return Object.values(utm).some((value) => value !== undefined) ? utm : null;
 }
 
-export function parseReferrer(
-  referrer: string,
-  currentHostname: string,
-  referrerMap: readonly ReferrerRule[] = [],
-): { source: string; medium: string } | null {
-  if (!referrer) return null;
-  try {
-    const hostname = new URL(referrer).hostname.toLowerCase();
-    if (hostname === currentHostname.toLowerCase()) return null;
-    const match = referrerMap.find((rule) => rule.pattern.test(hostname));
-    return match
-      ? { source: match.source, medium: match.medium }
-      : { source: hostname, medium: 'referral' };
-  } catch {
-    return null;
+/** Refuse a click-marker list no request could carry; a client checks it once, at creation. */
+export function assertClickIdParams(names: readonly string[]): void {
+  for (const name of names) {
+    if (typeof name !== 'string' || name.length === 0 || name.length > MAX_UTM_LENGTH) {
+      throw new TypeError('clickIdParams names must contain 1–200 characters');
+    }
   }
 }
 
+/**
+ * A referrer as tracking keeps it: credentials masked, and the value of every
+ * configured click marker masked too — a referrer from the same site carries the
+ * landing query, click identifier included, in full.
+ */
+export function trackedReferrer(referrer: string, clickIdParams: readonly string[]): string {
+  return maskTrackingParameters(redactTrackingText(referrer), new Set(clickIdParams));
+}
+
+function clickIdFromSearch(search: string, names: readonly string[]): string | undefined {
+  const params = new URLSearchParams(search);
+  return names.find((name) => params.getAll(name).some((value) => value.length > 0));
+}
+
+/** Within the TTL; a capture time ahead of the clock cannot be aged and is not fresh. */
+function isFresh(capturedAt: number, now: number, ttlMs: number): boolean {
+  const age = now - capturedAt;
+  return age >= 0 && age <= ttlMs;
+}
+
 function readStored(
-  storage: AttributionStorage,
+  storage: AttributionStorage | null,
   key: string,
   now: number,
   ttlMs: number,
 ): StoredAttribution | null {
+  if (!storage) return null;
   try {
     const raw = storage.getItem(key);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
-    if (!isStoredAttribution(parsed) || now - parsed.firstTouch.capturedAt > ttlMs) {
+    if (!isStoredAttribution(parsed) || !isFresh(parsed.firstTouch.capturedAt, now, ttlMs)) {
       storage.removeItem(key);
       return null;
     }
@@ -152,10 +153,11 @@ function readStored(
 }
 
 function writeStored(
-  storage: AttributionStorage,
+  storage: AttributionStorage | null,
   key: string,
   value: StoredAttribution,
 ): void {
+  if (!storage) return;
   try {
     storage.setItem(key, JSON.stringify(value));
   } catch {
@@ -165,58 +167,35 @@ function writeStored(
 }
 
 /**
- * First-touch is written once and lives `ttlMs`; a new UTM in the address
- * changes only current-touch. Without UTM or an external referrer the entry
- * is direct, and that is recorded too.
+ * First-touch is written once and lives `ttlMs`; current-touch carries only
+ * this page's UTM, referrer and configured click marker. Channel classification
+ * and retaining a last non-direct channel belong to the application.
+ *
+ * Both touches leave here already masked: credentials in the landing path and
+ * the referrer ({@link trackedReferrer}), click marker values in the referrer.
  */
 export function resolveAttribution({
   search,
   referrer,
   pathname,
-  hostname,
   storage,
-  referrerMap = [],
+  clickIdParams = [],
   storageKey = 'tracking.attribution',
   ttlMs = 90 * 24 * 60 * 60 * 1000,
   now = Date.now(),
 }: ResolveAttributionInput): ResolvedAttribution {
+  assertClickIdParams(clickIdParams);
   const stored = readStored(storage, storageKey, now, ttlMs);
-  const urlUtm = parseUtmFromSearch(search);
-
-  if (urlUtm) {
-    const currentTouch: AttributionData = {
-      utm: urlUtm,
-      referrer: referrer || undefined,
-      landingPage: pathname,
-    };
-    const persisted: StoredAttribution = {
-      firstTouch: {
-        data: stored?.firstTouch.data ?? currentTouch,
-        capturedAt: stored?.firstTouch.capturedAt ?? now,
-      },
-      currentTouch: { data: currentTouch, capturedAt: now },
-    };
-    writeStored(storage, storageKey, persisted);
-    return {
-      firstTouch: persisted.firstTouch.data,
-      currentTouch: persisted.currentTouch.data,
-    };
-  }
-
-  if (stored)
-    return { firstTouch: stored.firstTouch.data, currentTouch: stored.currentTouch.data };
-
-  const fromReferrer = parseReferrer(referrer, hostname, referrerMap);
-  const firstTouch: AttributionData = {
-    utm: fromReferrer
-      ? { source: fromReferrer.source, medium: fromReferrer.medium }
-      : undefined,
-    referrer: referrer || undefined,
-    landingPage: pathname,
+  const currentTouch: ResolvedAttribution['currentTouch'] = {
+    utm: parseUtmFromSearch(search) ?? undefined,
+    clickId: clickIdFromSearch(search, clickIdParams),
+    referrer: referrer ? trackedReferrer(referrer, clickIdParams) : undefined,
+    landingPage: redactTrackingText(pathname),
   };
+  if (stored) return { firstTouch: stored.firstTouch.data, currentTouch };
   writeStored(storage, storageKey, {
-    firstTouch: { data: firstTouch, capturedAt: now },
-    currentTouch: { data: firstTouch, capturedAt: now },
+    version: 1,
+    firstTouch: { data: currentTouch, capturedAt: now },
   });
-  return { firstTouch, currentTouch: firstTouch };
+  return { firstTouch: currentTouch, currentTouch };
 }

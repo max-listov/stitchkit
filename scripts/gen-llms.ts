@@ -285,7 +285,7 @@ export const GUIDE_SLICES: GuideMap = {
   'frontend-integrations.md': { primary: './react' },
   'react.md': { primary: './react' },
   'keyboard.md': { primary: './react/keyboard' },
-  'geo.md': { primary: './geo' },
+  'geo.md': { primary: './geo', also: ['./geo/contract'] },
   'xlsx.md': { primary: './xlsx' },
   'voice.md': { primary: './voice' },
   'telegram.md': {

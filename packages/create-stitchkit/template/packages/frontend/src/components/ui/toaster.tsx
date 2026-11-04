@@ -38,9 +38,9 @@ export const toast = {
 };
 
 export function Toaster() {
-  // No explicit type argument: since @wrksz/themes 1.2 the parameter describes
+  // No explicit type argument: the parameter describes
   // the MAP, not the value, and it infers `const` — so naming the value union
-  // here made the result every member of `string` instead of narrowing it.
+  // here would widen the result to `string` instead of preserving the literals.
   const theme = useThemeValue({
     light: 'light',
     dark: 'dark',

@@ -148,7 +148,7 @@ describe('the drain floor has one home', () => {
   test('the API role reads its grace period from the declaration', () => {
     const source = read('packages/backend/src/index.ts');
     // A literal here would be a second number able to disagree with the one a
-    // supervisor reads, which is exactly how a 30s floor met a 15s kill timeout.
+    // supervisor reads, potentially allowing a 15s kill timeout for a 30s floor.
     expect(source).toContain('gracePeriodMs: apiRole.drainFloorMs');
     expect(source).not.toMatch(/gracePeriodMs:\s*\d/);
   });
@@ -157,8 +157,8 @@ describe('the drain floor has one home', () => {
 describe('an argument survives the generator intact', () => {
   test('a space and a quote reach the supervision file unmangled', () => {
     // The reason commands are argv and the generator serialises rather than
-    // concatenates: `split(' ')` destroyed quoted arguments, and building
-    // `'${part}'` by hand emitted invalid JavaScript for an argument
+    // concatenates: `split(' ')` destroys quoted arguments, and building
+    // `'${part}'` by hand emits invalid JavaScript for an argument
     // containing a quote.
     const awkward = {
       ...appDeclaration,
@@ -185,10 +185,8 @@ describe('an argument survives the generator intact', () => {
 });
 
 describe('the guidance a next agent reads names the keys that exist', () => {
-  // `AGENTS.md` is not documentation about the past — it is the instruction the
-  // next agent follows. It kept pointing at `env.required` for a whole release
-  // after the key became `env.variables`, which is worse than a stale comment:
-  // the agent goes looking for something that is not there.
+  // Guidance names current declaration keys so an agent can follow it without
+  // looking for fields that the declaration does not contain.
   const guidance = ['AGENTS.md', 'README.md'];
 
   for (const file of guidance) {

@@ -23,7 +23,7 @@ describe('query dehydration policy', () => {
 
   test('retries a server failure once and never retries a mutation', () => {
     // Asserted through the decision, not through the literal: the policy is a
-    // predicate now, and `retry === 1` would pass for a client that retries an
+    // predicate, and `retry === 1` would pass for a client that retries an
     // unauthorized request too.
     const defaults = getQueryClient().getDefaultOptions();
     const retry = defaults.queries?.retry;

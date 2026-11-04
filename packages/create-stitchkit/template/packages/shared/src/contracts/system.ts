@@ -1,9 +1,7 @@
 import { createContractFactory } from 'stitchkit';
 import { SystemStatusSchema } from '../schemas/system';
 
-const { defineContract } = createContractFactory<'public'>({
-  toolExposure: 'explicit',
-});
+const { defineContract } = createContractFactory<'public'>();
 
 export const systemContract = defineContract(
   { prefix: 'system', scope: 'public' },

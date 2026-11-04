@@ -26,8 +26,10 @@ const admins = defineContract(
   },
 );
 
-const { defineContract: defineExplicitContract } = createContractFactory<'public' | 'user'>({
-  toolExposure: 'explicit',
+const { defineContract: defineExplicitContract } = createContractFactory<
+  'public' | 'user'
+>().configure({
+  toolExposure: { default: ['HTTP'] },
 });
 
 const explicitSurface = defineExplicitContract(

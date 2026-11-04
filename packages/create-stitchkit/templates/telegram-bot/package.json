@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "overrides": {
+    "zod": "4.6.7"
+  },
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun dist/index.js",
@@ -15,12 +18,13 @@
   "dependencies": {
     "@grammyjs/auto-retry": "^2.0.2",
     "grammy": "^1.46.0",
-    "stitchkit": "file:../../../core",
-    "zod": "4.6.5"
+    "stitchkit": "link:../../../core",
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.5",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
-    "@types/bun": "^1.4.2",
+    "@types/bun": "^1.4.4",
     "typescript": "^7.0.2"
   },
   "engines": {

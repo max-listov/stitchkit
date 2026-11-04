@@ -116,6 +116,18 @@ export function redactTrackingText(input: string): string {
     );
 }
 
+/**
+ * Mask the values of the named parameters wherever they appear in a URL — the
+ * click markers an application recognises, whose value identifies one click.
+ * Names match exactly, as `URLSearchParams` reads them.
+ */
+export function maskTrackingParameters(input: string, names: ReadonlySet<string>): string {
+  if (names.size === 0) return input;
+  return input.replace(PARAMETER, (whole, separator: string, key: string) =>
+    names.has(decodeKey(key)) ? `${separator}${key}=${MASK}` : whole,
+  );
+}
+
 /** The same rule through a value of any shape: a secret key masks whatever it holds. */
 export function redactTrackingValue(value: unknown): unknown {
   if (typeof value === 'string') return redactTrackingText(value);

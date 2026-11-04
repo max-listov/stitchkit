@@ -3,8 +3,8 @@
  * each answer once rather than once per request.
  *
  * This is the price of deriving the public origin from the request instead of
- * the build: `robots.txt`, `sitemap.xml` and page metadata stopped being
- * prerendered constants. They are still constants *per address*, and this is
+ * the build: `robots.txt`, `sitemap.xml` and page metadata depend on the served
+ * address. They are constants *per address*, and this is
  * where that is spent — one render per address, not one per hit.
  *
  * Bounded and least-recently-used on purpose: part of every key comes from a

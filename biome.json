@@ -1,5 +1,11 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.5/schema.json",
+  "markdown": {
+    "formatter": { "enabled": false }
+  },
+  "yaml": {
+    "formatter": { "enabled": false }
+  },
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -138,7 +144,7 @@
         "useNamespaceKeyword": "error"
       },
       "nursery": {
-        "useSortedClasses": "off"
+        "useTailwindSortedClasses": "off"
       }
     }
   },

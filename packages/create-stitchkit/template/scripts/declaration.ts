@@ -12,11 +12,10 @@ import { applicationVariables } from '../packages/config/src/variables';
 /**
  * Everything derived from the project declaration.
  *
- * Two things used to be written by hand and had already drifted: the list of
- * environment variables (three overlapping copies) and the two PM2 files (nine
- * diverging lines, one of which killed the backend mid-drain every time). Both
- * are now DERIVED — from `variables.ts` and from `project.json` — and the gate
- * refuses a checked-in file that does not match what this module renders.
+ * Environment variables are derived from `variables.ts`; both PM2 files are
+ * derived from `project.json`. Independent copies can disagree about required
+ * variables or kill a backend before its drain ends. The gate refuses a
+ * checked-in file that does not match what this module renders.
  *
  * Note what stays on which side. Roles, commands, readiness and the drain floor
  * come from the declaration, because they are true of the code. Restart policy
@@ -49,13 +48,11 @@ export const LOCAL_SUPERVISION: SupervisionPolicy = {
  *
  * The server forces for `forceTimeoutMs` (5s by default) once the grace period
  * ends, and `onComplete` then closes MCP and the database. A supervisor sized to
- * the drain floor alone kills the role in the middle of that tail — which is why
- * the earlier check, comparing against the floor only, reported that supervision
- * "allows the full shutdown" while 15s + 5s met a 20s kill timeout exactly.
+ * the drain floor alone can kill the role in the middle of that tail. A 15s
+ * drain plus 5s of forcing already spends a 20s timeout before cleanup begins.
  */
 // Imported, not restated: the role enforces these, and a number in two places
-// is two numbers that can disagree — which is exactly how a 15s drain met a
-// 20s kill timeout.
+// is two numbers that can disagree about how long shutdown needs.
 const { FORCE_BUDGET_MS, CLEANUP_BUDGET_MS } = shutdownBudgets;
 
 /** The shortest time a supervisor may allow this role and still see it finish. */
@@ -66,10 +63,9 @@ export function terminationBudgetMs(role: ProjectRole): number {
 /**
  * JSON Schema types this projection can carry into the declaration.
  *
- * `number` used to be mapped to `integer`, which quietly told a deployment that
- * a fractional value was an integer — the declaration and the Zod contract it
- * is derived FROM would then disagree, which is the one failure the derivation
- * exists to prevent. A type with no faithful shape is refused instead: the
+ * Mapping `number` to `integer` would misrepresent fractional values and make
+ * the declaration disagree with its Zod source. A type with no faithful shape
+ * is rejected: the
  * declaration format gains the shape, or the project stops declaring that type.
  */
 const SHAPE_BY_JSON_TYPE: Record<string, ProjectEnvVariable['shape']> = {
@@ -115,8 +111,8 @@ function describeVariable(
   required: boolean,
 ): ProjectEnvVariable {
   if (property.enum) {
-    // Members are refused rather than stringified. `String(member)` turned
-    // numbers and booleans into text that no longer matched the value the Zod
+    // Members are rejected rather than stringified. `String(member)` would turn
+    // numbers and booleans into text that does not match the value the Zod
     // schema accepts, so a deployment reading the declaration would supply
     // something the application then rejects — the declaration would be derived
     // and still wrong.
@@ -156,9 +152,8 @@ export function renderProjectJson(): string {
 /**
  * The rule the drain floor exists for: a supervisor must allow at least as long
  * as the role needs to finish — the drain, the force that follows it, and the
- * cleanup after that. Shorter, and the process is killed mid-shutdown, which is
- * what a 15s kill timeout against a 30s floor did here, every time, for as long
- * as the two numbers lived in two hand-written files.
+ * cleanup after that. A 15s kill timeout against a 30s drain floor cannot allow
+ * orderly shutdown, even before forcing and cleanup take their own time.
  */
 export function assertSupervisionAllowsShutdown(
   declaration: ProjectDeclaration,

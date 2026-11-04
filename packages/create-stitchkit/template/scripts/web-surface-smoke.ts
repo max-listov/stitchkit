@@ -9,9 +9,8 @@ function publicUrl(origin: string, path: string): URL {
 /**
  * Every dial is bounded.
  *
- * A gate that hangs is worse than one that fails: it reports nothing, ever. An
- * endpoint that accepts the connection and never answers used to stop the whole
- * run with no output and no deadline.
+ * Every request has a deadline: an endpoint can accept the connection without
+ * answering, and the gate must report that failure within a bounded time.
  */
 function dial(url: URL, init?: RequestInit): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(DIAL_TIMEOUT_MS) });
@@ -113,10 +112,8 @@ function claimedHosts(hosts: string | undefined): string[] {
  *
  * The check can only dial an address the deployment claims: a forwarded host
  * outside `PUBLIC_WEB_HOSTS` is refused on purpose, and rightly so. Naming two
- * fixture hosts here therefore meant the deployment had to have been told about
- * those exact two names by somebody else — which only the packed lane ever was.
- * Everyone running the same command against their own deployment got a bare
- * 500 from a policy working exactly as designed.
+ * fixture hosts here would require every deployment to allow those exact names,
+ * or make the probe fail on host policy before checking portability.
  *
  * So the deployment declares and the check reads, instead of two copies of the
  * same fixture that must agree across two repositories.
@@ -224,7 +221,7 @@ export async function assertArtifactIsPlacementFree(
 
   // Same rule, one layer down. A forwarded protocol outside `http | https` is a
   // misconfigured proxy or a forgery, and both have to be visible: mapping
-  // every unknown value to `http` produced a plausible canonical origin from
+  // every unknown value to `http` would produce a plausible canonical origin from
   // `ftp`, `javascript` and a truncated header alike.
   const [claimedAddress] = plan.addresses;
   for (const proto of ['ftp', 'javascript', 'HTTPS://', '']) {

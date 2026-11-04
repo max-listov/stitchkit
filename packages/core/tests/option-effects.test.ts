@@ -34,6 +34,9 @@ const REGISTRY = `${TESTS}/fixtures/option-effects.json`;
 
 /** Where each covered configuration type is exported from. */
 const COVERED: Record<string, string> = {
+  ContractFactoryConfig: 'entrypoints/contract.ts',
+  ContractFactoryToolExposure: 'entrypoints/contract.ts',
+  ResolveAttributionInput: 'entrypoints/tracking.ts',
   ResolveTrackedClickOptions: 'entrypoints/tracking.ts',
   SessionCredentialsConfig: 'entrypoints/index.ts',
   ClientRequestOptions: 'entrypoints/contract.ts',

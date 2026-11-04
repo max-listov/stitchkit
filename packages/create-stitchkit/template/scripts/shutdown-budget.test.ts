@@ -30,10 +30,8 @@ describe('the termination budget is an upper bound, not an estimate', () => {
   });
 
   test('a close that hangs stops being waited for, and is named', async () => {
-    // The defect this exists for: the drain had a deadline, the closes after it
-    // had none, so a hung MCP session or database pool ran past the very kill
-    // timeout the budget had told the supervisor to allow — turning an orderly
-    // shutdown into the SIGKILL that runs no cleanup at all.
+    // MCP and database closes must fit the shutdown budget as well as the drain.
+    // An unbounded close would reach the supervisor's SIGKILL, which runs no cleanup.
     const result = await closeWithinBudget(
       [{ name: 'MCP', close: () => new Promise<void>(() => undefined) }],
       25,
@@ -63,10 +61,8 @@ describe('the termination budget is an upper bound, not an estimate', () => {
   });
 
   test('a close that fails is a failure, and keeps its cause', async () => {
-    // It used to be swallowed into `undefined` with the note that the budget is
-    // about time. The budget is — but a close that throws is a shutdown that
-    // did not happen, and reporting it as a clean exit with the reason gone is
-    // how a broken shutdown looks exactly like a working one.
+    // Timeouts and rejections are different shutdown failures. A rejected close
+    // must retain its cause rather than appear as a successful clean exit.
     const result = await closeWithinBudget([
       { name: 'database', close: () => Promise.reject(new Error('pool already gone')) },
     ]);

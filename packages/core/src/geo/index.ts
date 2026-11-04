@@ -1,5 +1,6 @@
 export { createMaxMindGeoIpLoader } from './maxmind';
-export { createGeoIpResolver, mapGeoIpRecord } from './resolver';
+export { mapGeoIpRecord } from './record';
+export { createGeoIpResolver } from './resolver';
 export type {
   GeoAttribution,
   GeoIpReader,

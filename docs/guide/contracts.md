@@ -162,33 +162,55 @@ tools. Narrow it with `expose`:
 
 - `expose: ['HTTP']` — HTTP only. The endpoint never becomes a tool.
 - `expose: ['MCP', 'AGENT']` — a tool only; no HTTP route.
-- omit `expose` — all transports.
+- `expose: []` — no transport; the endpoint stays hidden.
+- omit `expose` — HTTP, MCP and AGENT; CLI is opt-in.
 
-For a curated or security-sensitive tool surface, opt into explicit tool
-exposure at the scoped factory:
+Choose an application's default surface at its scoped factory. Scope and policy
+are inferred in separate calls, so the returned endpoint types retain exact transports:
 
 ```ts
-const { defineContract } = createContractFactory<AppScope>({
-  toolExposure: 'explicit',
+const { defineContract } = createContractFactory<AppScope>().configure({
+  toolExposure: { default: ['HTTP', 'CLI'] },
 })
 ```
 
-With this policy, omitting `expose` materializes `['HTTP']` on the returned
-endpoint. MCP, Agent and CLI then require an explicit endpoint array. The plain
-factory and `defineContract` keep the default-on behaviour above.
+An omitted `expose` (including `undefined`) materializes this array on the returned
+endpoint before validation. An explicit endpoint array **replaces** it, never merges
+with it: `['HTTP']` stays HTTP-only, `['MCP']` enables only MCP, and `[]` hides the
+operation everywhere. Types, HTTP routes, typed clients, tools, CLI, OpenAPI and
+transport summaries read that same materialized exposure.
 
-Consequently, `expose: ['HTTP']` is redundant inside a factory configured with
-`toolExposure: 'explicit'`: omit it unless the explicit spelling is useful to a
-local reader. Add `MCP`, `AGENT` or `CLI` only on endpoints that intentionally
-join those surfaces.
+HTTP client methods and URL builders require a **guaranteed** HTTP transport:
+pass a literal policy array directly to `configure` so its const generic infers
+the tuple. A stored array, even with `satisfies ContractFactoryConfig`, can widen
+to `Transport[]` and contain no HTTP at runtime,
+so it does not promise an HTTP method. Optional capabilities preserve both
+possible effective exposures rather than claiming an unfiltered default tuple.
 
-Tool transports (`MCP`, `AGENT`) skip four kinds of endpoint automatically:
-`multipart` (a file upload is not a tool call),
-[`rawResponse`](./server.md#raw-response-endpoints) (its answer is bytes, which
-a tool result cannot carry — it would serialize to `{}`),
-[`responseMeta`](./server.md#typed-json-response-metadata) (outbound HTTP
-headers have no meaning on a tool call) and `rawBody` (HTTP-only by
-construction).
+The same holds for an endpoint whose own type is broad, with or without a factory:
+a value annotated as `EndpointDef` or `FactoryScopedEndpoint<Scope>` carries
+`expose?: readonly Transport[]`, which may hold no HTTP, so it has no client method
+or URL. A helper that builds endpoints keeps their literal type with a const generic:
+
+```ts
+const endpoint = <const Endpoint extends FactoryScopedEndpoint<AppScope>>(value: Endpoint) => value
+```
+
+For a curated tool surface use `toolExposure: { default: ['HTTP'] }`, then name
+tool transports only on endpoints that intentionally join them. An empty default
+is legal. Each `configure` snapshots its array independently; it does not change
+the base factory, sibling configurations or authored endpoints. The no-config
+factory and plain `defineContract` keep the default-on behaviour above.
+
+Six intrinsic HTTP-only forms intersect an **implicit factory default** with HTTP:
+`multipart`, [`rawResponse`](./server.md#raw-response-endpoints),
+[`responseMeta`](./server.md#typed-json-response-metadata), `rawBody`, streaming
+responses and `HEAD`. Under `['HTTP', 'CLI']` they receive `['HTTP']`; under
+`['CLI']` or `[]` they receive `[]`, not an implicitly reopened HTTP route.
+An **explicit** non-HTTP exposure on any of them is a definition error, not a
+silent downgrade. `safelistedBody` only changes HTTP parsing and remains
+multi-transport. A factory policy applies only to contracts authored through
+that factory, not to contracts another helper builds internally.
 
 ## Tool options (`tool`)
 
@@ -206,7 +228,7 @@ endpoint that can never be a tool (a raw response, a stream, `responseMeta`,
 
 `expose` stays outside the group: it chooses transports, HTTP included.
 Setting `tool` on an endpoint with no tool transport — `expose: ['HTTP']`, or an
-omitted `expose` under a factory with `toolExposure: 'explicit'` — throws at
+omitted `expose` under a factory with a default containing no tool transport — throws at
 definition time. The pre-0.94 top-level keys (`toolName`, `toolView`, `ui`,
 `annotations`, `mcp`) are refused by name, with where each one went.
 

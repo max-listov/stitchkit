@@ -2,6 +2,7 @@ import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, parse, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
+import { defaultProjectFormatter, formatProject, type ProjectFormatter } from './format';
 import {
   APP_IDENTITY_PATH,
   createApplicationIdentity,
@@ -188,18 +189,23 @@ async function materialiseTemplateFiles(
 async function writeMaterialisedFiles(
   destination: string,
   files: MaterialisedTemplateFile[],
+  slug: string,
 ): Promise<void> {
   for (const file of files) {
     const targetPath = join(destination, file.outputPath);
     await mkdir(dirname(targetPath), { recursive: true });
+    const content =
+      typeof file.content === 'string'
+        ? file.content.replaceAll('@app/', `@${slug}/`)
+        : file.content;
     if (file.append) {
-      if (typeof file.content !== 'string') {
+      if (typeof content !== 'string') {
         throw new Error(`Append template entries must contain text: ${file.sourcePath}`);
       }
       const existing = await readFile(targetPath, 'utf8');
-      await writeFile(targetPath, `${existing.trimEnd()}\n${file.content.trimStart()}`);
+      await writeFile(targetPath, `${existing.trimEnd()}\n${content.trimStart()}`);
     } else {
-      await writeFile(targetPath, file.content);
+      await writeFile(targetPath, content);
     }
   }
 }
@@ -213,6 +219,8 @@ export async function scaffoldProject(
     identityModule?: boolean;
     lockfile?: boolean;
     stitchkitCatalogTarget?: string;
+    /** The formatter run over the finished tree; the generator's own native Biome by default. */
+    formatter?: ProjectFormatter;
   } = {},
 ): Promise<void> {
   const resolvedDestination = resolve(destination);
@@ -224,11 +232,13 @@ export async function scaffoldProject(
     await writeMaterialisedFiles(
       resolvedDestination,
       await materialiseTemplateFiles(templateDirectory),
+      identity.slug,
     );
     if (options.overlayDirectory) {
       await writeMaterialisedFiles(
         resolvedDestination,
         await materialiseTemplateFiles(options.overlayDirectory),
+        identity.slug,
       );
     }
     if (options.lockfile === false) {
@@ -270,10 +280,10 @@ export async function scaffoldProject(
       if (!dependencies) return dependencies;
       return {
         ...dependencies,
-        ...(dependencies.stitchkit?.startsWith('file:') && {
+        ...(dependencies.stitchkit?.startsWith('link:') && {
           stitchkit: localReference('stitchkit'),
         }),
-        ...(dependencies['stitchkit-tui']?.startsWith('file:') && {
+        ...(dependencies['stitchkit-tui']?.startsWith('link:') && {
           'stitchkit-tui': localReference('stitchkit-tui'),
         }),
       };
@@ -297,6 +307,7 @@ export async function scaffoldProject(
         2,
       )}\n`,
     );
+    formatProject(resolvedDestination, options.formatter ?? defaultProjectFormatter());
   } catch (error) {
     if (!destinationExisted) {
       await rm(resolvedDestination, { recursive: true, force: true });

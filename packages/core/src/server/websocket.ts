@@ -67,7 +67,7 @@ export function webSocketLane<TData>(lane: WebSocketLane<TData>): ComposedLane {
     match,
     handlers: {
       message(ws, message) {
-        if (match(ws)) handlers.message(ws, message);
+        if (match(ws)) handlers.message?.(ws, message);
       },
       open(ws) {
         if (match(ws)) handlers.open?.(ws);
@@ -112,7 +112,7 @@ export function composeWebSocketHandlers(
   return {
     ...config,
     message(ws, message) {
-      pick(ws)?.handlers.message(ws, message);
+      pick(ws)?.handlers.message?.(ws, message);
     },
     open(ws) {
       pick(ws)?.handlers.open?.(ws);

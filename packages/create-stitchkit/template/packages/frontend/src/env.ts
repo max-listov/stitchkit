@@ -11,8 +11,7 @@ config({ path: path.resolve(process.cwd(), '../../.env'), quiet: true });
  *
  * There is deliberately NO `client` block. A `NEXT_PUBLIC_` variable is
  * substituted at BUILD time, so declaring one freezes a value of the place into
- * the artifact — the built server chunk once carried
- * `NEXT_PUBLIC_API_URL:"http://…"` as a literal while a plain `WEB_PORT` stayed
+ * the artifact: `NEXT_PUBLIC_API_URL:"http://…"` becomes a literal while a plain `WEB_PORT` stays
  * a runtime read. Anything the browser needs is either relative (so it needs no
  * address at all), derived from the request, or read on the server and handed
  * down per request — never compiled in.

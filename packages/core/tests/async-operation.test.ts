@@ -936,7 +936,7 @@ describe('createAsyncOperationSnapshotSchema without progress', () => {
  * Who decides which transports carry an async operation.
  *
  * This contract is built INSIDE the framework, so an application that made
- * tools opt-in with `createContractFactory({ toolExposure: 'explicit' })` set
+ * tools opt-in with an HTTP-only factory default set
  * that default on its own factory and these endpoints never pass through it.
  * The same shape that handed a project a `track_<prefix>` tool it had already
  * opted out of, one subsystem over.

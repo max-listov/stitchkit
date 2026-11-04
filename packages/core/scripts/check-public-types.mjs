@@ -120,6 +120,7 @@ const ACCEPTED = {
   // (`expose`, `rawResponse`, `rawBody`, `responseMeta`), not by naming the member.
   HttpOnlyEndpointDef: 'member of the exported EndpointDef union',
   ToolEndpointDef: 'member of the exported EndpointDef union',
+  MultipartEndpointDef: 'member of the exported EndpointDef union, selected by multipart',
   RawResponseEndpointDef: 'member of the exported EndpointDef union',
   StreamingResponseEndpointDef: 'member of the exported EndpointDef union',
   EndpointStreamDescriptorBase:

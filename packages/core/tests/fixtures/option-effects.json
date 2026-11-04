@@ -1,4 +1,36 @@
 {
+  "ContractFactoryConfig": {
+    "toolExposure": {
+      "test": "configured default exposure drives HTTP, CLI and the transport manifest"
+    }
+  },
+  "ContractFactoryToolExposure": {
+    "default": {
+      "test": "configured default exposure drives HTTP, CLI and the transport manifest"
+    }
+  },
+  "ResolveAttributionInput": {
+    "search": {
+      "test": "first-touch storage key, clock and TTL never supply a previous current campaign"
+    },
+    "referrer": { "test": "a referrer reaches bootstrap without synthesised campaign tags" },
+    "pathname": {
+      "test": "first-touch storage key, clock and TTL never supply a previous current campaign"
+    },
+    "storage": { "test": "unavailable browser storage does not discard raw landing facts" },
+    "storageKey": {
+      "test": "first-touch storage key, clock and TTL never supply a previous current campaign"
+    },
+    "ttlMs": {
+      "test": "first-touch storage key, clock and TTL never supply a previous current campaign"
+    },
+    "now": {
+      "test": "first-touch storage key, clock and TTL never supply a previous current campaign"
+    },
+    "clickIdParams": {
+      "test": "the application selects click marker names and their priority"
+    }
+  },
   "ChunkedUploadConfig": {
     "file": {
       "test": "parts go in order and the server assembles the same file"

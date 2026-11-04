@@ -1,9 +1,8 @@
 import type { ContractDef, EndpointDef } from '../contract/define';
+import { HTTP_ONLY_EXPOSURE, isHttpOnlyEndpoint } from '../contract/endpoint-capabilities';
 import { mergeMeta } from '../contract/runtime-context';
 import { resolveRouteParamsSchema } from '../internal/route-pattern';
 import type { MethodDef } from './types';
-
-const HTTP_ONLY = Object.freeze(['HTTP'] as const);
 
 /** Everything a `MethodDef` takes from its contract endpoint — all but how it runs. */
 export type ContractMethodFields = Omit<MethodDef, 'handler' | 'multipartReceivers'>;
@@ -31,18 +30,11 @@ export function contractMethodFields(
     serviceName: contract.meta.prefix,
     key,
     toolName: endpoint.tool?.name,
-    // A raw endpoint's exposure is forced, not inherited: with `expose`
-    // undefined the framework's own default convention reads "MCP + AGENT on",
-    // so every pre-existing exposure reader — audit scripts, a bring-your-own
-    // transport — would conclude a download is a tool. Making it explicit keeps
-    // them correct without teaching them about `raw`. → ADR 0038.
-    expose:
-      endpoint.rawResponse ||
-      endpoint.rawBody ||
-      endpoint.responseMeta ||
-      ('stream' in endpoint && endpoint.stream)
-        ? HTTP_ONLY
-        : endpoint.expose,
+    // An HTTP-only endpoint's exposure is written out: with `expose` undefined
+    // the default convention reads "MCP + AGENT on", so an exposure reader —
+    // an audit script, a bring-your-own transport — would take a download for a
+    // tool (ADR 0038). An authored exposure, even an empty one, is kept as is.
+    expose: endpoint.expose ?? (isHttpOnlyEndpoint(endpoint) ? HTTP_ONLY_EXPOSURE : undefined),
     // Effective scope: per-endpoint override, else the contract group scope.
     // Always populated so `beforeHandle(ctx, endpoint)` can scope-gate from
     // `endpoint.scope` alone — no consumer ever re-resolves against a service.

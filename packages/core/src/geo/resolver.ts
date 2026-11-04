@@ -1,13 +1,7 @@
 import { messageOf } from '../internal/error-message';
 import { isPublicIp } from '../internal/request';
-import { isRecord } from '../internal/typed';
-import type {
-  GeoAttribution,
-  GeoIpReader,
-  GeoIpResolver,
-  GeoIpResolverOptions,
-  GeoIpSnapshot,
-} from './types';
+import { mapGeoIpRecord } from './record';
+import type { GeoIpReader, GeoIpResolver, GeoIpResolverOptions, GeoIpSnapshot } from './types';
 
 interface ReaderGeneration {
   readonly reader: GeoIpReader;
@@ -17,46 +11,6 @@ interface ReaderGeneration {
   closePromise?: Promise<void>;
   closeResolve?: () => void;
   closing?: boolean;
-}
-
-function text(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function finite(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return isRecord(value) ? value : undefined;
-}
-
-/** Map the common MaxMind record shape without exposing peer types. */
-export function mapGeoIpRecord(value: unknown): GeoAttribution | null {
-  const root = record(value);
-  if (!root) return null;
-  const country = record(root.country);
-  const subdivisions = Array.isArray(root.subdivisions)
-    ? record(root.subdivisions[0])
-    : undefined;
-  const city = record(root.city);
-  const postal = record(root.postal);
-  const location = record(root.location);
-  const names = (entry: Record<string, unknown> | undefined) => record(entry?.names);
-  const result: GeoAttribution = {
-    countryCode: text(country?.iso_code),
-    countryName: text(names(country)?.en),
-    regionCode: text(subdivisions?.iso_code),
-    regionName: text(names(subdivisions)?.en),
-    city: text(names(city)?.en),
-    postalCode: text(postal?.code),
-    latitude: finite(location?.latitude),
-    longitude: finite(location?.longitude),
-    timezone: text(location?.time_zone),
-    autonomousSystemNumber: finite(root.autonomous_system_number),
-    autonomousSystemOrganization: text(root.autonomous_system_organization),
-  };
-  return Object.values(result).some((entry) => entry !== undefined) ? result : null;
 }
 
 const errorMessage = (error: unknown): string => messageOf(error) || 'unknown reload error';

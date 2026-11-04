@@ -1,5 +1,6 @@
 import { type ZodObject, type ZodType, z } from 'zod';
 import type { HttpMethod, ToolTransport } from '../../contract/define';
+import { isHttpOnlyEndpoint } from '../../contract/endpoint-capabilities';
 import type {
   EndpointMcpPolicy,
   EndpointToolAnnotations,
@@ -205,7 +206,7 @@ export function projectToolSurface<TRuntime extends SurfaceRuntimeToolDefinition
       } else if (method.expose && !method.expose.includes(transport)) {
         continue;
       }
-      if (method.multipart || method.rawBody || method.responseMeta || method.rawResponse) {
+      if (isHttpOnlyEndpoint(method)) {
         continue;
       }
       const name = method.toolName ?? toToolName(service.name, methodName);

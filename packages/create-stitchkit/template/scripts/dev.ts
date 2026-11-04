@@ -105,10 +105,9 @@ function assertToolAvailable(command: string, instruction: string): void {
  * The validated environment the development processes run with.
  *
  * Every variable the DECLARATION names, and no hand-written list beside it: a
- * list here went stale the moment a variable was added, and a role declaring a
- * port whose name was missing got `Number(undefined)` — reported as
- * `Port NaN (WORKER_PORT) is already in use`, which is a false diagnosis of a
- * real mistake.
+ * separate list can omit a role's port variable, turning a missing binding into
+ * `Number(undefined)` and a misleading `Port NaN (WORKER_PORT) is already in use`.
+ * Reading the declaration keeps missing bindings distinct from occupied ports.
  */
 export async function developmentEnvironment(
   overrides: Record<string, string> = {},
@@ -128,10 +127,9 @@ if (import.meta.main) {
 
   const environment = await developmentEnvironment();
   const roles = declaredRoleReadiness(appDeclaration, environment);
-  // Reported only once it is TRUE. The supervisor returns at the spawn, and a
-  // development build needs seconds after that before it listens — so the line
-  // below used to be printed at a moment when nothing answered, and the next
-  // command in the gate list got a connection reset.
+  // The supervisor returns at spawn; a development build needs time before it
+  // listens. Report readiness only after every role answers so the next gate
+  // can connect.
   await awaitRolesAnswering(roles);
   console.log(`${appDeclaration.identity.name} development processes are running`);
   for (const role of roles) console.log(`${role.name}: ${role.url}`);

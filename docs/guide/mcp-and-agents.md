@@ -1098,8 +1098,8 @@ export const users = defineContract({ prefix: 'users' }, {
   reshapes values inside the full schema. With `output` alone it is a slice, and
   the full result must fit that schema — `withToolView` refuses the endpoint at
   compile time when it does not.
-- **Exposure.** A view needs a tool transport. With `createContractFactory({
-  toolExposure: 'explicit' })` an endpoint without `expose` is HTTP-only, so an
+- **Exposure.** A view needs a tool transport. With `createContractFactory<Scope>().configure({
+  toolExposure: { default: ['HTTP'] } })` an endpoint without `expose` is HTTP-only, so an
   endpoint with a view names its tool transports in `expose`.
 - **What it refuses.** `defineContract` rejects a view on an endpoint with no
   tool transport or no full `output`, on a raw, `rawBody`, multipart,

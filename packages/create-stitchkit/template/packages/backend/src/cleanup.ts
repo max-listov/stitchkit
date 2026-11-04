@@ -38,14 +38,11 @@ type StepOutcome =
  *
  * The two ways a step can end are kept apart. Running out of time and throwing
  * are different facts about a shutdown — one says a resource is still held, the
- * other says closing it is broken — and collapsing them (this used to discard
- * the rejection entirely) turned a failed shutdown into a clean exit with the
- * reason gone.
+ * other says closing it is broken. Both must retain their cause so a failed
+ * shutdown cannot appear as a clean exit.
  *
- * The clock is `performance.now()` and cannot be replaced. It used to be
- * `Date.now()` behind an injectable parameter, and both halves of that were
- * wrong for a deadline: a wall clock stepped backwards widens the very upper
- * bound a supervisor's kill timeout was derived from, and an injected clock
+ * The clock is `performance.now()` and cannot be replaced: a wall clock stepped
+ * backwards widens the upper bound of a supervisor's kill timeout, and an injected clock
  * that does not advance hands every step a full budget — a shutdown budget that
  * a test could switch off. Nothing needs to fake it: the regression that
  * matters runs a real process.

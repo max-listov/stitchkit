@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import databasePackage from '../packages/db/package.json';
 import { inspect } from './check-authored';
 
 describe('check:authored — assertions', () => {
@@ -25,7 +26,7 @@ describe('check:authored — assertions', () => {
     expect(finding).toContain('schema at the boundary');
   });
 
-  test('the angle-bracket form is refused too, and explicit any separately', () => {
+  test('rejects angle-bracket assertions and explicit any separately', () => {
     expect(inspect('scripts/x.ts', 'const a = <Foo>bar;\n')).toHaveLength(1);
     const anyFindings = inspect('scripts/y.ts', 'function f(a: any) { return a; }\n');
     expect(anyFindings).toHaveLength(1);
@@ -40,4 +41,18 @@ describe('check:authored — assertions', () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]).toContain('scripts/mixed.ts:2');
   });
+});
+
+test('the manifest names the database dependency forbidden to client code', () => {
+  for (const dependency of [databasePackage.name, `${databasePackage.name}/client`]) {
+    expect(
+      inspect('packages/shared/src/index.ts', `export * from '${dependency}';\n`),
+    ).toHaveLength(1);
+  }
+  expect(
+    inspect(
+      'packages/shared/src/index.ts',
+      `export * from '${databasePackage.name}-external';\n`,
+    ),
+  ).toEqual([]);
 });

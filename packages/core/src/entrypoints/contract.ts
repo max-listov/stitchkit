@@ -69,11 +69,11 @@ export {
   type VocabularyCodeMap,
 } from '../contract/errors-factory';
 export {
+  type ConfiguredScopedDefineContract,
+  type ConfiguredToolExposureEndpoints,
   type ContractFactoryConfig,
   type ContractFactoryToolExposure,
   createContractFactory,
-  type ExplicitScopedDefineContract,
-  type ExplicitToolExposureEndpoints,
   type FactoryScopedEndpoint,
   type ScopedContractDef,
   type ScopedDefineContract,

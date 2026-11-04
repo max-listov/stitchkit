@@ -73,11 +73,9 @@ describe('a release starts this source, not a previous one', () => {
   });
 
   test('a Markdown file counts, because a project may import one', async () => {
-    // The digest used to skip every `.md`, every test file and every directory
-    // called `generated`. All three are true of THIS project today and none is
-    // true by construction: MDX is an import, and a checked-in directory may be
-    // called anything. A digest that answers "fresh" about a stale build is the
-    // failure the stamp exists to prevent.
+    // Markdown, tests and directories named `generated` can all be source:
+    // MDX is an import, and a checked-in directory may be called anything.
+    // Excluding them could mark a stale build as fresh.
     const root = await tree({
       'src/index.ts': 'export const a = 1;\n',
       'content/post.md': 'before\n',

@@ -12,18 +12,20 @@ import {
   assertSafelistedBodyEndpoint,
   assertStreamingResponseEndpoint,
 } from './define-validation';
+import { assertEndpointExposure } from './endpoint-capabilities';
 import type { EndpointToolOptions } from './tool-options';
 import { assertToolView } from './tool-view';
+import { TOOL_TRANSPORTS, type Transport } from './transports';
 
 export type { PathParams } from '../internal/route-pattern';
+export {
+  ALL_TRANSPORTS,
+  TOOL_TRANSPORTS,
+  type ToolTransport,
+  type Transport,
+} from './transports';
 
 export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-
-export const ALL_TRANSPORTS = ['HTTP', 'MCP', 'AGENT', 'CLI'] as const;
-export type Transport = (typeof ALL_TRANSPORTS)[number];
-/** The transports a model or a tool client reads — every transport except HTTP. */
-export const TOOL_TRANSPORTS = ['MCP', 'AGENT', 'CLI'] as const satisfies readonly Transport[];
-export type ToolTransport = (typeof TOOL_TRANSPORTS)[number];
 
 /** Successful HTTP statuses that may be declared by a typed-data endpoint. */
 export type HttpSuccessStatus = 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 226;
@@ -190,7 +192,7 @@ interface EndpointDefBase extends EndpointRouteBase {
 }
 
 interface HttpOnlyEndpointDef extends EndpointDefBase {
-  expose: readonly ['HTTP'];
+  expose: readonly 'HTTP'[];
   tool?: never;
   rawResponse?: never;
   rawBody?: never;
@@ -200,8 +202,18 @@ interface HttpOnlyEndpointDef extends EndpointDefBase {
 /** The endpoint shape that may reach a tool transport. */
 export interface ToolEndpointDef extends EndpointDefBase {
   expose?: readonly Transport[];
+  multipart?: never;
   /** What the tool surface reads that HTTP does not. */
   tool?: EndpointToolOptions;
+  rawResponse?: never;
+  rawBody?: never;
+  responseMeta?: never;
+}
+
+interface MultipartEndpointDef extends EndpointDefBase {
+  multipart: MultipartDescriptor;
+  expose?: readonly 'HTTP'[];
+  tool?: never;
   rawResponse?: never;
   rawBody?: never;
   responseMeta?: never;
@@ -215,7 +227,7 @@ interface RawBodyEndpointDef extends EndpointDefBase {
   multipart?: never;
   rawResponse?: never;
   tool?: never;
-  expose?: readonly ['HTTP'];
+  expose?: readonly 'HTTP'[];
   responseMeta?: never;
 }
 
@@ -224,7 +236,7 @@ interface ResponseMetaEndpointDefBase extends EndpointDefBase {
   rawResponse?: never;
   tool?: never;
   contentType?: never;
-  expose?: readonly ['HTTP'];
+  expose?: readonly 'HTTP'[];
 }
 
 /** HTTP-only typed data with a declared body-capable success status. */
@@ -303,7 +315,7 @@ interface RawResponseEndpointDef extends EndpointDefBase {
   /** Never a tool, so tool options would be dead metadata. */
   tool?: never;
   /** Redundant but allowed, so `expose: ['HTTP']` survives a migration. */
-  expose?: readonly ['HTTP'];
+  expose?: readonly 'HTTP'[];
   responseMeta?: never;
 }
 
@@ -316,7 +328,7 @@ interface StreamingResponseEndpointDef extends EndpointDefBase {
   responseMeta?: never;
   multipart?: never;
   tool?: never;
-  expose?: readonly ['HTTP'];
+  expose?: readonly 'HTTP'[];
 }
 
 /** An explicit HTTP HEAD operation. Headers/status are handler-owned; the body is always stripped. */
@@ -330,7 +342,7 @@ export interface HeadEndpointDef extends EndpointRouteBase {
   maxJsonBodyBytes?: never;
   safelistedBody?: never;
   tool?: never;
-  expose?: readonly ['HTTP'];
+  expose?: readonly 'HTTP'[];
   responseMeta?: never;
   contentType?: string;
 }
@@ -338,6 +350,7 @@ export interface HeadEndpointDef extends EndpointRouteBase {
 export type EndpointDef =
   | HttpOnlyEndpointDef
   | ToolEndpointDef
+  | MultipartEndpointDef
   | RawBodyEndpointDef
   | ResponseMetaDataEndpointDef
   | ResponseMetaEmptyEndpointDef
@@ -402,6 +415,7 @@ export function defineContract(
 
   const toolTransports = new Map<string, { key: string; transports: Set<Transport> }>();
   for (const [key, ep] of Object.entries(materializedEndpoints)) {
+    assertEndpointExposure(meta.prefix, key, ep);
     // `desc` is the description a model reads to decide whether to call the
     // tool — an empty one passes the type check but ships an unusable tool.
     if (ep.desc.trim() === '') {
@@ -433,14 +447,12 @@ export function defineContract(
         ? ep.expose.filter((t) => t !== 'HTTP')
         : (['MCP', 'AGENT'] satisfies Transport[]),
     );
-    // Tool options only mean anything on a tool transport — setting them on an
-    // HTTP-only endpoint is a contract mistake. The type does **not** catch
-    // every case: a contract factory with `toolExposure: 'explicit'` makes an
-    // omitted `expose` HTTP-only after the types have spoken, and a contract
-    // assembled at runtime never met them. This guard is the real check.
+    // Tool options mean something only on a tool transport. The types do not
+    // see every case: a factory default materializes an omitted `expose` after
+    // they have spoken, and a contract assembled at runtime never met them.
     if (transports.size === 0) {
       throw new Error(
-        `Contract "${meta.prefix}": endpoint "${key}" sets tool options but is not exposed on any tool transport (${TOOL_TRANSPORTS.join(' / ')}) — a contract factory with toolExposure 'explicit' makes an omitted expose HTTP-only`,
+        `Contract "${meta.prefix}": endpoint "${key}" sets tool options but is not exposed on any tool transport (${TOOL_TRANSPORTS.join(' / ')}) — add a tool transport to expose or the factory default`,
       );
     }
     if (tool.view !== undefined) assertToolView(meta.prefix, key, ep);

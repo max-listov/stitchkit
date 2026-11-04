@@ -44,7 +44,6 @@ function fakeHost() {
     pathname: '/',
     search: '',
     origin: 'https://app.example.com',
-    hostname: 'app.example.com',
     title: 'Home',
     referrer: 'https://t.me/x',
     viewportWidth: 800,
@@ -199,8 +198,9 @@ describe('navigation', () => {
       page: '/',
       metadata: { activeDurationMs: 2_000, scrollDepthPercent: 0 },
     });
-    // The batch carries current-touch UTM.
-    expect(h.delivered.at(-1)?.utm?.source).toBe('news');
+    // Attribution is the visit's entry fact: a batch carries events, not a campaign.
+    for (const request of h.delivered)
+      expect(Object.keys(request).sort()).toEqual(['buildId', 'events']);
   });
 
   test('the same address again is not a new view', async () => {

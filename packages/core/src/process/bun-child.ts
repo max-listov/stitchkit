@@ -8,7 +8,8 @@ import { connectOwnerLossSocket } from './owner-loss-socket';
 export interface OwnedChild extends EventEmitter {
   readonly pid?: number;
   readonly exitCode: number | null;
-  readonly signalCode: NodeJS.Signals | null;
+  /** A signal's name, or its decimal number when it has none (a Linux real-time signal). */
+  readonly signalCode: string | null;
   readonly stdin: Writable;
   readonly stdout: Readable;
   readonly stderr: Readable;
@@ -19,7 +20,7 @@ export interface OwnedChild extends EventEmitter {
 export interface ObservableChild extends EventEmitter {
   readonly pid?: number;
   readonly exitCode: number | null;
-  readonly signalCode: NodeJS.Signals | null;
+  readonly signalCode: string | null;
   kill(signal: NodeJS.Signals): boolean;
 }
 
@@ -97,7 +98,8 @@ const waitClosed = (stream: Readable) =>
 interface BunSubprocess {
   readonly pid: number;
   readonly exitCode: number | null;
-  readonly signalCode: NodeJS.Signals | null;
+  /** Bun reports a signal that has no name by its number. */
+  readonly signalCode: NodeJS.Signals | number | null;
   readonly exited: Promise<unknown>;
   readonly stdio: readonly (number | null)[];
   kill(signal: NodeJS.Signals): void;
@@ -111,7 +113,7 @@ function defineBunChildren() {
   class BunProcess extends EventEmitter implements ObservableChild {
     pid: number | undefined;
     exitCode: number | null = null;
-    signalCode: NodeJS.Signals | null = null;
+    signalCode: string | null = null;
     #subprocess: BunSubprocess | undefined;
 
     constructor(protected readonly pipes: readonly Readable[]) {
@@ -123,7 +125,8 @@ function defineBunChildren() {
       this.#subprocess = subprocess;
       void subprocess.exited.then(() => {
         this.exitCode = subprocess.exitCode;
-        this.signalCode = subprocess.signalCode;
+        this.signalCode =
+          subprocess.signalCode === null ? null : String(subprocess.signalCode);
         this.emit('exit', this.exitCode, this.signalCode);
         // As a Node child does: a pipe nobody reads is drained, or it would never close.
         for (const pipe of this.pipes) if (pipe.readableFlowing === null) pipe.resume();

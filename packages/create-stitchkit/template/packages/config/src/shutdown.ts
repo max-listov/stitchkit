@@ -3,10 +3,9 @@
  *
  * `terminationBudgetMs` adds these to a role's drain floor and refuses a
  * supervision policy that allows less. That only means something if each part
- * is really bounded — and cleanup was not: the drain has a deadline, but the
- * closes that run after it (an MCP session, a database pool) had none, so the
- * "budget" was an estimate wearing the shape of an upper bound, and a role
- * could still be killed mid-shutdown by a timeout the generator had approved.
+ * is really bounded: MCP and database closes share a cleanup deadline after the
+ * drain. An unbounded close would turn the declared upper bound into an estimate
+ * and let the supervisor kill a role before its shutdown ends.
  *
  * They live here rather than in the generator because two readers need them and
  * a number in two places is two numbers: the generator, which tells a

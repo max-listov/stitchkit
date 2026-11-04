@@ -16,7 +16,7 @@ Both entrypoints are **evolving**.
 | the event envelope, the batch, the dispositions, the visit entry and lease schemas | the event **types**, their metadata, their labels |
 | the tab-shared outbox with reserved sequences and a short flush lease | which storage adapter (IndexedDB in a tab) |
 | the page-leave beacon that arrives, and its queued insurance copy | the session, the router, the React provider |
-| visible time, scroll milestones, `data-track` clicks, UTM first/current touch | the referrer → source map, the attribute names |
+| visible time, scroll milestones, `data-track` clicks, raw first/current touch | channel classification, click-marker names, the attribute names |
 | `dispositionTrackingBatch`, `issueVisitLease`, `activeIntervalOf`, presence | the tables, the transaction, adoption, geo, reports |
 
 ## Contract
@@ -63,7 +63,7 @@ const client = createTrackingClient<BrowserEvents>({
   deliver: (batch) => api.tracking.track(batch),   // or a socket first, HTTP as the fallback
   unloadUrl: urls.tracking.track(),
   outbox: createTrackingOutbox(indexedDbOutboxStorage('my-app-tracking')),
-  referrerMap: [{ pattern: /t\.me|telegram\.org/, source: 'telegram', medium: 'social' }],
+  clickIdParams: ['gclid', 'gbraid', 'wbraid', 'msclkid', 'yclid', 'ttclid', 'fbclid'],
   isAction: isInteractionAction,
   onVisit: (visitId) => rum.setVisit(visitId),
 })
@@ -75,6 +75,28 @@ const client = createTrackingClient<BrowserEvents>({
 client.track('ITEM_VIEW', { itemId, itemTitle })
 client.track('SIGN_OUT')
 ```
+
+Attribution carries observations, not a channel verdict. `utm` contains only the current URL's
+`utm_*` parameters, retaining case and whitespace up to 200 characters per field; tags without
+`utm_source` are valid. Parameter names are case-sensitive (`UTM_SOURCE` is not a tag), a repeated
+tag keeps its first value, and a whitespace-only value is kept as the fact it is. `referrer` carries
+the referring URL with credentials masked. Neither an external referrer nor a click marker creates
+campaign tags. Classify the channel on your server.
+
+Attribution belongs to the visit: the bootstrap entry carries it, and an event batch carries events
+only. Join events to their visit on the server to attribute them.
+
+`clickIdParams` is the application's ordered list of query-parameter names to recognise. There is no
+built-in list: the first configured name with a nonempty value becomes `clickId` in the touch and
+bootstrap entry. Only the name is retained, never the click ID's value: a referrer from your own site
+repeats the landing query, so the value of every configured marker in a referrer is masked too. An empty
+list collects none; names must contain 1–200 characters, and `createTrackingClient` refuses a list that
+does not. Bootstrap collects these facts even if browser storage is unavailable.
+
+`client.attribution()` returns `firstTouch` and `currentTouch`. The first is persisted for 90 days
+by default; the current is this capture's raw context, so an untagged page does not inherit an earlier
+campaign. The server owns any policy for retaining the last non-direct channel. Stored first-touch
+records carry a format version; unversioned attribution is discarded because its tags may be inferred.
 
 Two knobs match the client to your schema: `batchSize` is the contract's
 `maxEventsPerBatch` (a larger batch is a `400` the outbox can never retire),

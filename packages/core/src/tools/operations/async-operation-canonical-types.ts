@@ -158,7 +158,7 @@ export interface AsyncOperationContractBaseConfig<
    *
    * It has to be declarable HERE because this contract is built inside the
    * framework: an application that made tools opt-in with
-   * `createContractFactory({ toolExposure: 'explicit' })` set that default on
+   * `createContractFactory<Scope>().configure({ toolExposure: { default: ['HTTP'] } })` set that default on
    * its OWN factory, and these endpoints never pass through it. Without this
    * field a consumer who had decided that agents get only the tools it names
    * was still handed `start` and `cancel` — both effectful — with no way to say

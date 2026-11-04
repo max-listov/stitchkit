@@ -324,6 +324,17 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: true,
   },
   {
+    id: 'geo-contract',
+    subpath: './geo/contract',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit/geo/contract', 'GeoAttributionSchema'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: false,
+  },
+  {
     id: 'oauth-browser',
     subpath: './oauth',
     fixture: 'minimal',

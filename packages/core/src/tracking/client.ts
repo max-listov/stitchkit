@@ -11,7 +11,7 @@
  * application supplies — HTTP, a socket first), the React wrapper, the
  * session. → ADR 0166.
  */
-import type { ReferrerRule, ResolvedAttribution } from './attribution';
+import { assertClickIdParams, type ResolvedAttribution } from './attribution';
 import { sendUnloadBeacon } from './beacon';
 import type { ResolveTrackedClickOptions, TrackedClickAttributes } from './clicks';
 import { wireTrackingListeners } from './client-listeners';
@@ -23,7 +23,6 @@ import {
   materializeAll,
   pageAttribution,
   pageViewDraft,
-  redactedUtm,
   type VisitState,
 } from './client-visit';
 import type { TrackingHost } from './host';
@@ -32,7 +31,6 @@ import type {
   TrackEventsRequest,
   TrackEventsResponse,
   TrackingEventEnvelope,
-  UtmData,
   VisitBootstrapResponse,
   VisitEntryContext,
 } from './schemas';
@@ -118,7 +116,7 @@ export interface TrackingClientConfig<
   onFailure?: (what: string, error: unknown) => void;
   /** Whether an interaction name is one the application knows. Default: any. */
   isAction?: (action: string) => boolean;
-  referrerMap?: readonly ReferrerRule[];
+  clickIdParams?: readonly string[];
   clickAttributes?: TrackedClickAttributes;
   /** Click URL retention before `decorate`. Default `path-only`; `full` includes query/fragment. */
   hrefPolicy?: ResolveTrackedClickOptions['hrefPolicy'];
@@ -169,13 +167,6 @@ function unloadBeacon<TEvent extends TrackingEventEnvelope<string>>(
     unloadUrl === undefined ? false : sendUnloadBeacon(unloadUrl, JSON.stringify(request));
 }
 
-/** The campaign a visit is attributed to now, when the current touch carries one. */
-function currentUtmOf(attribution: ResolvedAttribution | null): UtmData | undefined {
-  return attribution?.currentTouch.utm?.source
-    ? redactedUtm(attribution.currentTouch.utm)
-    : undefined;
-}
-
 /** The client's periods and limits, defaulted, once its build id is known to be there. */
 function trackingTimings(config: {
   buildId: string;
@@ -206,6 +197,7 @@ export function createTrackingClient<
   type TType = keyof TMetadata & string;
   const { host, builtin, outbox } = config;
   const { heartbeatMs, renewAfterHiddenMs, pendingLimit, batchSize } = trackingTimings(config);
+  assertClickIdParams(config.clickIdParams ?? []);
   const fail = config.onFailure ?? (() => undefined);
   // Without `decorate` the event *is* the envelope — `TEvent` defaulted to it.
   // The one place the default's identity is asserted rather than proven.
@@ -228,12 +220,8 @@ export function createTrackingClient<
   const scroll = createScrollMilestones(config.scrollMilestones);
   const sequences = createVisitSequences(outbox, visit, config.sequence, fail);
 
-  const captureAttribution = (
-    search: string,
-    pathname: string,
-  ): ResolvedAttribution | null => {
-    if (!host.storage) return null;
-    attribution = pageAttribution(host, host.storage, config.referrerMap, search, pathname);
+  const captureAttribution = (search: string, pathname: string): ResolvedAttribution => {
+    attribution = pageAttribution(host, config.clickIdParams, search, pathname);
     return attribution;
   };
 
@@ -244,11 +232,7 @@ export function createTrackingClient<
     );
 
   const deliver = (events: TEvent[]): Promise<TrackEventsResponse | null> =>
-    deliverTrackedEvents(
-      config,
-      { buildId: config.buildId, events, utm: currentUtmOf(attribution) },
-      fail,
-    );
+    deliverTrackedEvents(config, { buildId: config.buildId, events }, fail);
 
   const flushOutbox = createOutboxFlusher({
     outbox,
@@ -318,7 +302,7 @@ export function createTrackingClient<
       send([draft]);
       return;
     }
-    unload({ buildId: config.buildId, events: [event], utm: currentUtmOf(attribution) });
+    unload({ buildId: config.buildId, events: [event] });
     if (outbox && visit.outboxAvailable)
       void outbox.enqueue(event).catch((error) => fail('unload event persistence', error));
   };
@@ -345,7 +329,7 @@ export function createTrackingClient<
     currentPage = pathname;
     meter.checkpoint();
     scroll.reset();
-    send([pageViewDraft(host, builtin.pageView, pathname, previous)]);
+    send([pageViewDraft(host, builtin.pageView, pathname, previous, config.clickIdParams)]);
   };
 
   const start = (): (() => void) => {

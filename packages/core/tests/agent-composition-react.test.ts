@@ -17,6 +17,10 @@ beforeAll(async () => {
 });
 afterAll(() => GlobalRegistrator.unregister());
 
+function View(props: { readonly controller: AgentController }) {
+  return createElement('p', null, useAgent(props.controller).status);
+}
+
 test('React views share one controller through StrictMode and unmount only their own subscriptions', () => {
   let state: AgentControllerState = { status: 'connecting', view: createAgentControlView() };
   const listeners = new Set<() => void>();
@@ -34,17 +38,14 @@ test('React views share one controller through StrictMode and unmount only their
       closed += 1;
     },
   };
-  function View() {
-    return createElement('p', null, useAgent(controller).status);
-  }
   const first = document.createElement('div');
   const second = document.createElement('div');
   const a = createRoot(first);
   const b = createRoot(second);
   try {
     act(() => {
-      a.render(createElement(StrictMode, null, createElement(View)));
-      b.render(createElement(View));
+      a.render(createElement(StrictMode, null, createElement(View, { controller })));
+      b.render(createElement(View, { controller }));
     });
     expect(listeners.size).toBe(2);
     act(() => {

@@ -8,14 +8,15 @@ import { reapAfterEachTest, trackGroupLeader } from './support/process-reaper';
 
 reapAfterEachTest();
 
+function ServerLayer() {
+  useKeyLayer({ kind: 'route', onKey: () => true });
+  useEscapeLayer({ kind: 'overlay', onEscape: () => true });
+  return createElement('span', null, 'server');
+}
+
 test('key and Escape layers render on the server without DOM globals', () => {
   expect(typeof window).toBe('undefined');
   expect(typeof document).toBe('undefined');
-  function ServerLayer() {
-    useKeyLayer({ kind: 'route', onKey: () => true });
-    useEscapeLayer({ kind: 'overlay', onEscape: () => true });
-    return createElement('span', null, 'server');
-  }
   expect(renderToStaticMarkup(createElement(ServerLayer))).toBe('<span>server</span>');
 });
 

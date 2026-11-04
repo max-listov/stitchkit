@@ -37,12 +37,12 @@ try {
         file.sha256,
         'Archive preserves original bytes',
       );
-    const opposite = !artifact.architectures.includes(process.arch);
+    const opposite: boolean = !artifact.architectures.includes(process.arch);
     const selected = artifact.files.find((file) => file.architecture === process.arch);
     const other = artifact.files.find(
       (file) => file.architecture && file.architecture !== process.arch,
     );
-    const modes = opposite
+    const modes: readonly string[] = opposite
       ? ['unsupported']
       : artifact.architectures.length === 2
         ? ['positive', 'missing', 'corrupt']
@@ -77,7 +77,7 @@ try {
           ...(mode === 'positive' ? [] : ['--expect-unavailable', mode]),
         ];
         const output = run(runtime, args, scratch);
-        const verdict =
+        const verdict: string =
           mode === 'positive'
             ? 'Darwin artifact native controls: ok'
             : `Darwin artifact backend ${mode}: refused`;
