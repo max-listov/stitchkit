@@ -109,13 +109,22 @@ try {
   ]);
   assert.equal(baseline.ok, false, 'native control must really hit the idle timer');
   assert.equal(baseline.errorName, 'TimeoutError');
-  assert.ok(baseline.elapsedMs >= 1000 && baseline.elapsedMs < 12_000);
+  assert.ok(
+    baseline.elapsedMs >= 1000 && baseline.elapsedMs < 12_000,
+    `native control settled after ${baseline.elapsedMs} ms`,
+  );
   for (const [lane, result] of [
     ['configured', configured],
     ['bare', bare],
   ]) {
     assert.equal(result.ok, true, lane);
-    assert.ok(result.elapsedMs >= 12_000 && result.elapsedMs < 20_000, lane);
+    // Surviving the 1 s idle timer is the claim: the reply comes at 12 s. The
+    // ceiling only refuses a hang, so it leaves room for a loaded runner
+    // compiling and starting three binaries side by side.
+    assert.ok(
+      result.elapsedMs >= 12_000 && result.elapsedMs < 30_000,
+      `${lane} settled after ${result.elapsedMs} ms`,
+    );
     assert.equal(seen.get(`/${lane}/slow`), 1);
     for (const [mode, code] of [
       ['deadline', 'REQUEST_TIMEOUT'],
@@ -125,7 +134,10 @@ try {
       const stopped = await run(lane, mode);
       assert.equal(stopped.ok, false);
       assert.equal(stopped.code, code);
-      assert.ok(stopped.elapsedMs < 5000);
+      assert.ok(
+        stopped.elapsedMs < 5000,
+        `${lane} ${mode} stopped after ${stopped.elapsedMs} ms`,
+      );
       assert.equal(seen.get(`/${lane}/${mode}`), 1, 'mutation cannot replay');
       await waitCancelled(`/${lane}/${mode}`);
       if (mode.startsWith('body-')) assert.ok(bodyHeaders.has(`/${lane}/${mode}`));
