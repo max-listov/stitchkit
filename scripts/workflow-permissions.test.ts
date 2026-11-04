@@ -100,7 +100,7 @@ describe('target-aware CI graph', () => {
     expect(starter).toContain(
       'v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f',
     );
-    expect(starter).toContain('BUN_VERSION: 1.4.2');
+    expect(starter).toContain('BUN_VERSION: 1.4.4');
     expect(starter).toContain('sha512sum --check');
     expect(starter).not.toContain('oven-sh/setup-bun');
   });

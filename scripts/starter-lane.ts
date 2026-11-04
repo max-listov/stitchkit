@@ -99,8 +99,9 @@ async function assertGeneratedStarterSupportsHead(generatedRoot: string): Promis
   );
 
   const requirements: [source: string, requirement: string][] = [
-    [rootManifest, '"@modelcontextprotocol/client": "^2.0.0"'],
-    [backendManifest, '"@modelcontextprotocol/server": "^2.0.0"'],
+    // The major is the invariant; the minor moves with every dependency update.
+    [rootManifest, '"@modelcontextprotocol/client": "^2.'],
+    [backendManifest, '"@modelcontextprotocol/server": "^2.'],
     [backend, 'createMcpHttpRoute'],
     // The session is closed on shutdown — the invariant is the close, not the
     // spelling of it. It used to read `await mcp.close()`, which the role now
