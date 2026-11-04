@@ -12,6 +12,14 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects resolve stitchkit 0.119.0 and the template's dependencies at their latest
+  stable versions: Biome 2.6.5 (pinned to the version the scaffolder formats with), Playwright
+  1.64.1, Next 16.4, framer-motion 14, `@wrksz/themes` 2, the MCP SDK 2.4 and Zod 4.6.7. The
+  template's code needs no change for the 0.119.0 breaking items: it uses the no-config factory with
+  literal endpoints, no tracking client and no GeoIP resolver.
+
 ### Fixed
 
 - Shared contracts create their factory without configuration and declare HTTP exposure on each
