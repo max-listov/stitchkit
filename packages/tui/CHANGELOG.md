@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** projects that pass `theme` to `defineAgentTui`, import `AgentTuiTheme`,
+`defaultAgentTuiTheme`, `resolveAgentTuiTheme` or `AgentTuiStatusTone`, or install `stitchkit-tui`
+without `react`, `@opentui/core` and `@opentui/react` of their own.
+
+- `stitchkit-tui` — **one palette for the whole kit.** `AgentTuiTheme`, `defaultAgentTuiTheme` and
+  `resolveAgentTuiTheme` are removed; the agent host, the widgets and the status line read one
+  `TerminalPalette` with a dark and a light variant, and every tone is a `TerminalTone`
+  (`AgentTuiStatusTone` is gone). `theme` keeps its field names and gains `themeMode`.
+
+  ```ts
+  // before
+  import { defaultAgentTuiTheme, type AgentTuiStatusTone } from 'stitchkit-tui';
+  // after
+  import { terminalPalettes, type TerminalTone } from 'stitchkit-tui/core';
+  defineAgentTui({ /* … */ theme: { accent: '#e58a66' }, themeMode: 'light' });
+  ```
+
+- `stitchkit-tui` — **React and OpenTUI are peers; `stitchkit` is an optional peer.** An
+  application that renders the kit's widgets inside its own tree needs the same React and renderer
+  copy, so the package no longer installs its own. Add `react`, `@opentui/core` and
+  `@opentui/react` in the ranges `bun info stitchkit-tui peerDependencies` prints. A monitor or CLI
+  front-end that imports only `stitchkit-tui/core` or `stitchkit-tui/widgets` no longer needs
+  `stitchkit`.
+
+### Added
+
+- `stitchkit-tui/widgets` — OpenTUI React widgets for building any terminal application: app shell
+  with breadcrumbs, status lines, fitted key hints and toasts; titled panels; a virtualized live
+  table with sort, tree, filter and htop keys; a sectioned picker with fuzzy search and match
+  highlighting; forms generated from JSON Schema; text and JSON pagers; htop meters and a core grid;
+  btop braille charts and sparklines; tabs with badges; spinner, progress bar, loading/error/empty
+  states, confirmation dialog, details and key help. The palette follows the terminal's reported
+  background, and every word comes from `TerminalLabels` (English and Russian bundled).
+- `stitchkit-tui/core` — the renderer-neutral state behind them: table, list, form (with
+  `terminalFormFieldsFromJsonSchema`), tabs, navigation stack, focus ring with layers, notices,
+  bounded time series, meters, progress and spinners, conflict-checked keymaps that also draw the
+  footer, multi-word fuzzy search, cell-width text measurement, truncation and wrapping, and
+  `sanitizeTerminalText` for any text the application did not write.
+- `stitchkit-tui-gallery` — every widget live in one binary: a method catalogue, a process monitor
+  and the small widgets, switchable between palettes and languages.
+
+### Fixed
+
+- `stitchkit-tui` — `stitchkit-agent` runs React's production build unless `NODE_ENV` says
+  otherwise. The development build records a performance measure with a props diff for every
+  render and Bun keeps them all, so a long session grew without bound.
+- `stitchkit-tui/core` — `reduceTerminalCollection` and `visibleTerminalCollectionRange` no longer
+  re-validate every key on each cursor step; keys are validated when they arrive.
+
 ## [0.2.14] - 2026-11-04
 
 ### Changed

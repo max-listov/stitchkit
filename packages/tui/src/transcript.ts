@@ -1,10 +1,11 @@
 import type { AgentMessage, AgentMessagePart, AgentSnapshot } from 'stitchkit/agent-runtime';
+import type { TerminalTone } from './core/theme';
 
 export interface AgentTuiTranscriptEntry {
   id: string;
   role: 'you' | 'agent' | 'tool' | 'system';
   text: string;
-  tone: 'primary' | 'muted' | 'success' | 'danger' | 'accent';
+  tone: TerminalTone;
 }
 
 function compactJson(value: unknown): string {

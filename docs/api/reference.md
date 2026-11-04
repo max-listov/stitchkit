@@ -1448,7 +1448,7 @@ Separate optional evolving Bun/OpenTUI package over a caller-composed headless h
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `defineAgentTui` | function | typed config for title/theme/status rows, model catalog, context, commands, runtime bundle and optional host-evidenced recovery policy; the default never requeues acquired effects |
+| `defineAgentTui` | function | typed config for title, `theme` (a `TerminalPalette` override) and `themeMode`, status rows, model catalog, context, commands, runtime bundle and optional host-evidenced recovery policy; the default never requeues acquired effects |
 | `runAgentTui` | function | start one fresh durable conversation and terminal controller, recover durable work and publish its authenticated local session; `initialConversationId` is an explicit resume override |
 | `defineTuiCommand` / `resolveTuiCommand` | function | typed composable slash-command registry; unknown slash input remains an ordinary model prompt |
 | `createAgentTuiController` | function | single admission, selection, approval, interruption and conversation-switch owner over the harness |
@@ -1458,7 +1458,7 @@ Separate optional evolving Bun/OpenTUI package over a caller-composed headless h
 | `defaultAgentTuiStatusLine` / `AgentTuiStatusLineFormatter` | function / _type_ | terminal-native default rows and a host formatter over model capacity, durable snapshot, activity, workspace and local identities; `statusLine: false` hides the rows |
 | `createAgentTuiDiagnosticRecorder` / `AgentTuiDiagnosticEventSchema` | function / schema | bounded per-session metadata journal that rejects prompt, reasoning, tool-input and provider-cause payloads before disk admission |
 
-The `stitchkit-agent` binary loads `stitchkit.agent.ts` by default and also exposes `sessions`,
+The `stitchkit-agent` binary runs React's production build unless `NODE_ENV` says otherwise and loads `stitchkit.agent.ts` by default and also exposes `sessions`,
 `status`, `send` and `interrupt`. `--workspace` addresses a host outside the caller's cwd,
 `send --idempotency-key` accepts caller-owned retry identity, and `interrupt` defaults to the
 active run returned by `status`. Session descriptors and sockets are local control credentials,
@@ -1481,6 +1481,45 @@ Renderer-neutral state only. This entrypoint imports neither React/OpenTUI nor t
 | `createTerminalCommandPalette` / `terminalCommandMatches` | function | bounded command filtering and keyboard selection over a collision-validated registry |
 | `resolveExactTerminalCommand` / `validateTerminalCommands` | function | exact dispatch and fail-closed name/alias validation |
 | `createTerminalOperationState` / `reduceTerminalOperationState` | function | confirmation and single-pending-operation lifecycle |
+| `createTerminalTable` / `reduceTerminalTable` / `projectTerminalTable` | function | live table: typed columns, rows validated on entry, sort with key tie-break and missing values last, tree expansion pruned to present rows, filter on displayed text, selection kept across data |
+| `layoutTerminalTableColumns` / `formatTerminalTableCell` / `visibleTerminalTableRows` / `terminalTableTreePrefix` | function | fixed and flexible column widths, `—` for missing values, the virtualized window, tree indentation |
+| `createTerminalList` / `reduceTerminalList` / `visibleTerminalListLines` | function | picker with sections, fuzzy query with title highlight ranges, multi-select, disabled items and "more above/below" counts |
+| `createTerminalForm` / `reduceTerminalForm` / `readTerminalForm` / `terminalFormFieldsFromJsonSchema` | function | typed fields (text, secret, number, integer, boolean, choice, JSON) from a JSON Schema, relative text edits, validation on leave and submit |
+| `createTerminalTabs` / `reduceTerminalTabs` | function | tabs with badges, wrap-around movement, digit selection and reconcile that keeps the selected tab |
+| `createTerminalNavigation` / `reduceTerminalNavigation` / `terminalBreadcrumbs` | function | screen stack keeping each level's state, root never popped |
+| `createTerminalFocus` / `reduceTerminalFocus` | function | focus ring plus layers that take the keyboard and give it back |
+| `createTerminalNotices` / `reduceTerminalNotices` / `nextTerminalNoticeExpiry` | function | bounded toasts on a caller clock, replaced by id |
+| `createTerminalTimeSeries` / `appendTerminalSample` / `sampleTerminalTimeSeries` | function | time window bounded by duration and sample count, value-in-force sampling with explicit gaps |
+| `terminalBrailleChart` / `terminalSparkline` / `terminalTimeAxis` / `terminalChartScale` | function | multi-series braille line or area chart as toned runs, sparkline, time axis |
+| `terminalMeter` / `layoutTerminalMeterGrid` | function | eighth-block bar toned by thresholds, unmeasured as muted; column-major core grid |
+| `terminalProgress` / `terminalSpinnerFrame` / `terminalIndeterminateBlock` / `formatTerminalDuration` | function | ratio, rate and ETA only when knowable; spinner frames; indeterminate bar; elapsed time |
+| `defineTerminalKeymap` / `matchTerminalKey` / `fitTerminalKeyHints` | function | conflict-checked bindings that both answer keys and draw a footer fitted to the width |
+| `terminalTableKeymap` / `terminalTableKey` / `terminalTabsKeymap` / `terminalTabsKey` | function | htop-style table bindings and tab bindings as keymaps |
+| `matchTerminalSearch` / `searchTerminalItems` / `terminalHighlightRuns` | function | multi-word fuzzy match with ranges, stable ranking, highlight runs |
+| `sanitizeTerminalText` / `terminalTextWidth` / `truncateTerminalText` / `fitTerminalText` / `wrapTerminalText` | function | strip escape and control sequences; measure, cut, pad and wrap by terminal cells |
+| `terminalTextEdit` / `applyTerminalTextEdit` | function | one-line edits as relative actions, so fast input is never lost |
+| `terminalJsonLines` / `layoutTerminalDetails` | function | toned, sanitized JSON lines; aligned key/value pairs |
+| `terminalPalettes` / `resolveTerminalPalette` / `TerminalPalette` / `TerminalTone` | value / function / _type_ | one semantic palette (surfaces plus `primary`, `muted`, `accent`, `success`, `warning`, `danger`) for dark and light terminals |
+| `terminalLabelsEn` / `terminalLabelsRu` / `TerminalLabels` | value / _type_ | every word the widgets draw |
+
+### `stitchkit-tui/widgets`
+
+OpenTUI React widgets over the core state. React, `@opentui/core` and `@opentui/react` are peers;
+this entrypoint never loads `stitchkit`.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `TerminalAppShell` / `TerminalPanel` / `TerminalStatusBar` / `TerminalKeyHints` | component | breadcrumbs, status lines, body, fitted key hints and toast overlay; titled rounded panels with a focus frame |
+| `TerminalTable` | component | virtualized live table with header sort marks, tree, filter line and htop keys |
+| `TerminalList` | component | sections, fuzzy search line with highlights, `›` cursor, meta, badges, multi-select, description |
+| `TerminalForm` | component | fields edited in place, cycling choices, masked secrets, inline errors |
+| `TerminalTextView` / `TerminalJsonView` | component | pager over sanitized wrapped text or toned JSON |
+| `TerminalMeter` / `TerminalMeterGrid` / `TerminalChart` / `TerminalSparkline` | component | htop meters and core grid; btop braille charts with axis |
+| `TerminalTabs` / `TerminalDialog` / `TerminalSpinner` / `TerminalProgressBar` / `TerminalAsyncView` / `TerminalDetails` / `TerminalNotices` / `TerminalHelp` | component | views, confirmation, loading, progress, async states, details, toasts, key help |
+| `TerminalThemeProvider` / `useTerminalPalette` / `useTerminalThemeMode` | component / hook | palette from the terminal's reported background (`auto`) or a fixed mode |
+| `TerminalLabelsProvider` / `TerminalFocusProvider` / `useTerminalFocused` | component / hook | product language and shared focus |
+
+The `stitchkit-tui-gallery` binary shows every widget live.
 
 ## `stitchkit/agent-runtime/sqlite/node`
 

@@ -7,8 +7,9 @@ import type {
 } from 'stitchkit/agent-runtime';
 import { AgentTuiApp } from './App';
 import type { AgentTuiConfig } from './config';
-import { createFileAgentModelSelectionStore, resolveAgentTuiTheme } from './config';
+import { createFileAgentModelSelectionStore } from './config';
 import { createAgentTuiController } from './controller';
+import { resolveTerminalPalette } from './core/theme';
 import { createAgentTuiDiagnosticRecorder } from './diagnostics';
 import {
   type AgentTuiSessionRequest,
@@ -132,6 +133,10 @@ export async function runAgentTui<CONTEXT>(
     launchMode: config.initialConversationId === undefined ? 'fresh' : 'explicit',
   });
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
+  const themeMode =
+    config.themeMode === undefined || config.themeMode === 'auto'
+      ? ((await renderer.waitForThemeMode(250)) ?? 'dark')
+      : config.themeMode;
   const root = createRoot(renderer);
   let closing: Promise<void> | undefined;
   const onSignal = (): void => void close();
@@ -164,7 +169,7 @@ export async function runAgentTui<CONTEXT>(
       catalog={catalog}
       {...(bundle.conversations && { conversations: bundle.conversations })}
       {...(config.commands && { commands: config.commands })}
-      theme={resolveAgentTuiTheme(config.theme)}
+      theme={resolveTerminalPalette(themeMode, config.theme)}
       workspace={workspace}
       {...(config.statusLine !== undefined && { statusLine: config.statusLine })}
       sessionId={host.sessionId}

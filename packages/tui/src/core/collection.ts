@@ -61,7 +61,9 @@ export function reduceTerminalCollection(
   state: TerminalCollectionState,
   action: TerminalCollectionAction,
 ): TerminalCollectionState {
-  const current = TerminalCollectionStateSchema.parse(state);
+  // State came out of `create` or this reducer and is typed; only new keys and
+  // sizes are validated, so a cursor step over a large collection stays O(1).
+  const current = state;
   if (action.type === 'reconcile') {
     const keys = uniqueKeys(action.keys);
     if (keys.length === 0)
@@ -76,31 +78,31 @@ export function reduceTerminalCollection(
         : keys[Math.min(previousIndex, keys.length - 1)];
     if (!selectedKey) throw new Error('Terminal collection survivor is unavailable');
     const index = keys.indexOf(selectedKey);
-    return TerminalCollectionStateSchema.parse({
+    return {
       ...current,
       keys,
       selectedKey,
       start: reveal(current.start, current.capacity, index, keys.length),
-    });
+    };
   }
   if (action.type === 'resize') {
     const capacity = z.int().positive().parse(action.capacity);
     const index =
       current.selectedKey === null ? -1 : current.keys.indexOf(current.selectedKey);
-    return TerminalCollectionStateSchema.parse({
+    return {
       ...current,
       capacity,
       start: index < 0 ? 0 : reveal(current.start, capacity, index, current.keys.length),
-    });
+    };
   }
   if (action.type === 'scroll') {
-    return TerminalCollectionStateSchema.parse({
+    return {
       ...current,
       start: Math.min(
-        Math.max(0, current.start + action.lines),
+        Math.max(0, current.start + z.int().parse(action.lines)),
         maximumStart(current.keys.length, current.capacity),
       ),
-    });
+    };
   }
   if (current.keys.length === 0) return current;
   const currentIndex =
@@ -121,20 +123,19 @@ export function reduceTerminalCollection(
   }
   const selectedKey = current.keys[nextIndex];
   if (!selectedKey) throw new Error('Terminal collection selection is unavailable');
-  return TerminalCollectionStateSchema.parse({
+  return {
     ...current,
     selectedKey,
     start: reveal(current.start, current.capacity, nextIndex, current.keys.length),
-  });
+  };
 }
 
 export function visibleTerminalCollectionRange(state: TerminalCollectionState): {
   start: number;
   end: number;
 } {
-  const parsed = TerminalCollectionStateSchema.parse(state);
   return {
-    start: parsed.start,
-    end: Math.min(parsed.keys.length, parsed.start + parsed.capacity),
+    start: state.start,
+    end: Math.min(state.keys.length, state.start + state.capacity),
   };
 }

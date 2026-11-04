@@ -115,7 +115,9 @@ Credential-free replay, scripted provider failures and deterministic race
 controls live in `stitchkit/agent-runtime/testing` for Bun and Node tests.
 The separately installed `stitchkit-tui` package adds a maintained Bun/OpenTUI host over those
 headless contracts; its `stitchkit-tui/core` entrypoint exposes renderer-neutral terminal state
-without React, OpenTUI or agent-runtime imports. Neither enters the core dependency graph.
+without React, OpenTUI or agent-runtime imports, and `stitchkit-tui/widgets` builds any terminal
+application on it — tables, pickers, forms, charts, meters, dialogs — with no agent runtime
+(`bunx stitchkit-tui-gallery` shows them all). Neither enters the core dependency graph.
 
 ## Managed application kernel
 
@@ -444,7 +446,7 @@ peer — an install pulls in only what the project actually uses.
 | Headless harness | optional surface | `stitchkit/agent-runtime/harness`; uses the same optional `ai` peer and canonical runtime. |
 | Agent coding tools | optional surface | `stitchkit/agent-runtime/coding-tools`; peer-free, host-authorized direct file and shell tools. |
 | Agent runtime testing | optional test surface | `stitchkit/agent-runtime/testing`; peer-free local fault server, replay and race fixtures. |
-| `stitchkit-tui` | separate optional package | Renderer-neutral `./core` state plus a Bun/OpenTUI terminal controller, commands, model/session pickers and authenticated local attachment over a caller-composed harness. |
+| `stitchkit-tui` | separate optional package | Renderer-neutral `./core` state, `./widgets` for terminal applications, plus a Bun/OpenTUI terminal controller, commands, model/session pickers and authenticated local attachment over a caller-composed harness. |
 | `@openrouter/ai-sdk-provider` | peer, optional | Only `stitchkit/agent-runtime/openrouter`; neutral runtime imports do not resolve it. |
 | SQLite | runtime built-in, optional | `bun:sqlite` through `stitchkit/agent-runtime/sqlite/bun`, or `node:sqlite` on Node ≥ 22.5 through the Node leaf. |
 | `grammy` | peer, optional | Only `stitchkit/application/grammy` at run time, and the declarations of `stitchkit/telegram/screens` and `stitchkit/telegram/grammy`; the neutral application kernel does not resolve it. |

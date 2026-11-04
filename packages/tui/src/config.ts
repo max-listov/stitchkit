@@ -13,6 +13,7 @@ import { AgentModelSelectionSchema } from 'stitchkit/agent-runtime';
 import type { HeadlessAgentHarness } from 'stitchkit/agent-runtime/harness';
 import { z } from 'zod';
 import type { AgentTuiCommand } from './commands';
+import type { TerminalPalette, TerminalThemeMode } from './core/theme';
 import type { AgentTuiStatusLineFormatter } from './status-line';
 
 const SelectionFileSchema = z
@@ -47,47 +48,21 @@ export interface AgentTuiConfig<CONTEXT> {
   /** Host evidence for acquired runs. The safe default skips anything not still queued. */
   recover?: AgentRuntimeRecoverOptions<CONTEXT>['decide'];
   commands?: readonly AgentTuiCommand[];
-  theme?: Partial<AgentTuiTheme>;
+  /** Colours over the palette of `themeMode`. */
+  theme?: Partial<TerminalPalette>;
+  /**
+   * The terminal background the palette is chosen for. `auto` (the default)
+   * asks the terminal and falls back to `dark` when it does not answer.
+   */
+  themeMode?: TerminalThemeMode | 'auto';
   /** Replace the default durable status rows, or set false to hide them. */
   statusLine?: AgentTuiStatusLineFormatter | false;
 }
-
-export interface AgentTuiTheme {
-  canvas: string;
-  panel: string;
-  panelRaised: string;
-  border: string;
-  borderActive: string;
-  primary: string;
-  muted: string;
-  accent: string;
-  success: string;
-  danger: string;
-  warning: string;
-}
-
-export const defaultAgentTuiTheme: AgentTuiTheme = {
-  canvas: '#111111',
-  panel: '#1e2129',
-  panelRaised: '#303441',
-  border: '#454a57',
-  borderActive: '#d9dde7',
-  primary: '#e6ebf5',
-  muted: '#828aa0',
-  accent: '#e58a66',
-  success: '#64df98',
-  danger: '#ff6b78',
-  warning: '#ffd04f',
-};
 
 export function defineAgentTui<CONTEXT>(
   config: AgentTuiConfig<CONTEXT>,
 ): AgentTuiConfig<CONTEXT> {
   return config;
-}
-
-export function resolveAgentTuiTheme(theme?: Partial<AgentTuiTheme>): AgentTuiTheme {
-  return { ...defaultAgentTuiTheme, ...theme };
 }
 
 export function createFileAgentModelSelectionStore(

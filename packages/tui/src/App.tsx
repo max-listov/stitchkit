@@ -20,17 +20,13 @@ import {
   setAgentTuiDraft,
   submitAgentTuiComposer,
 } from './composer';
-import type { AgentTuiTheme } from './config';
 import type { AgentTuiController, AgentTuiControllerState } from './controller';
 import { createTerminalFeedViewport, reduceTerminalFeedViewport } from './core';
+import type { TerminalPalette } from './core/theme';
 import { isAgentTuiExitKey } from './keyboard';
 import { searchAgentTuiModels } from './model-picker';
 import { createAgentTuiConversationId } from './session';
-import {
-  type AgentTuiStatusLineFormatter,
-  type AgentTuiStatusTone,
-  defaultAgentTuiStatusLine,
-} from './status-line';
+import { type AgentTuiStatusLineFormatter, defaultAgentTuiStatusLine } from './status-line';
 import { type AgentTuiTranscriptEntry, projectAgentTuiTranscript } from './transcript';
 
 type Dialog = 'help' | 'model' | 'sessions' | 'status' | 'tools' | 'skills' | 'permissions';
@@ -54,18 +50,6 @@ function roleLabel(role: AgentTuiTranscriptEntry['role']): string {
   if (role === 'agent') return 'AGENT';
   if (role === 'tool') return 'TOOL';
   return 'SYSTEM';
-}
-
-function toneColor(tone: AgentTuiTranscriptEntry['tone'], theme: AgentTuiTheme): string {
-  if (tone === 'muted') return theme.muted;
-  if (tone === 'success') return theme.success;
-  if (tone === 'danger') return theme.danger;
-  if (tone === 'accent') return theme.accent;
-  return theme.primary;
-}
-
-function statusToneColor(tone: AgentTuiStatusTone | undefined, theme: AgentTuiTheme): string {
-  return theme[tone ?? 'primary'];
 }
 
 function formatContext(tokens: number): string {
@@ -97,7 +81,7 @@ export function AgentTuiApp<CONTEXT>({
   catalog: AgentModelCatalog;
   conversations?: AgentConversationReader;
   commands?: readonly AgentTuiCommand[];
-  theme: AgentTuiTheme;
+  theme: TerminalPalette;
   workspace: string;
   statusLine?: AgentTuiStatusLineFormatter | false;
   sessionId: string;
@@ -448,7 +432,7 @@ export function AgentTuiApp<CONTEXT>({
               <text fg={entry.role === 'you' ? theme.accent : theme.muted}>
                 <strong>{roleLabel(entry.role)}</strong>
               </text>
-              <text fg={toneColor(entry.tone, theme)}>{entry.text}</text>
+              <text fg={theme[entry.tone]}>{entry.text}</text>
             </box>
           ))
         )}
@@ -576,7 +560,7 @@ export function AgentTuiApp<CONTEXT>({
               {row.map((segment, segmentIndex) => (
                 <span
                   key={`${segment.text}-${segmentIndex}`}
-                  fg={statusToneColor(segment.tone, theme)}
+                  fg={theme[segment.tone ?? 'primary']}
                   bg={segmentIndex % 2 === 0 ? theme.panel : theme.panelRaised}
                 >
                   {' '}

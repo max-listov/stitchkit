@@ -11,7 +11,8 @@
   },
   "type": "module",
   "bin": {
-    "stitchkit-agent": "./dist/cli.js"
+    "stitchkit-agent": "./dist/cli.js",
+    "stitchkit-tui-gallery": "./dist/gallery/main.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,6 +24,10 @@
     "./core": {
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js"
+    },
+    "./widgets": {
+      "types": "./dist/widgets/index.d.ts",
+      "import": "./dist/widgets/index.js"
     }
   },
   "files": [
@@ -36,22 +41,30 @@
   "scripts": {
     "check": "bun x tsc --noEmit",
     "test": "bun test",
-    "build": "rm -rf dist && bun build src/index.ts src/cli.ts src/core/index.ts --root src --outdir dist --target bun --packages external && bun x tsc -p tsconfig.build.json --emitDeclarationOnly && chmod +x dist/cli.js",
+    "build": "rm -rf dist && bun build src/index.ts src/cli.ts src/core/index.ts src/widgets/index.ts src/gallery/main.ts --root src --outdir dist --target bun --packages external --splitting && bun x tsc -p tsconfig.build.json --emitDeclarationOnly && chmod +x dist/cli.js dist/gallery/main.js",
     "prepublishOnly": "bun run check && bun run test && bun run build"
   },
   "dependencies": {
-    "@opentui/core": "^0.8.2",
-    "@opentui/react": "^0.8.2",
     "ai": "^7.0.162",
-    "react": "^19.3.1",
     "zod": "^4.6.7"
   },
   "peerDependencies": {
+    "@opentui/core": "^0.8.2",
+    "@opentui/react": "^0.8.2",
+    "react": "^19.3.1",
     "stitchkit": "workspace:^"
   },
+  "peerDependenciesMeta": {
+    "stitchkit": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@opentui/core": "^0.8.2",
+    "@opentui/react": "^0.8.2",
     "@types/bun": "^1.4.4",
     "@types/react": "^19.3.0",
+    "react": "^19.3.1",
     "stitchkit": "workspace:^",
     "typescript": "^7.0.2"
   },

@@ -4,18 +4,11 @@ import type {
   AgentSnapshot,
   AgentUsage,
 } from 'stitchkit/agent-runtime';
-
-export type AgentTuiStatusTone =
-  | 'primary'
-  | 'muted'
-  | 'accent'
-  | 'success'
-  | 'warning'
-  | 'danger';
+import type { TerminalTone } from './core/theme';
 
 export interface AgentTuiStatusSegment {
   text: string;
-  tone?: AgentTuiStatusTone;
+  tone?: TerminalTone;
 }
 
 export type AgentTuiStatusRows = readonly (readonly AgentTuiStatusSegment[])[];
@@ -90,7 +83,7 @@ export const defaultAgentTuiStatusLine: AgentTuiStatusLineFormatter = (context) 
       tone: 'muted',
     });
   }
-  const activityTone: AgentTuiStatusTone =
+  const activityTone: TerminalTone =
     context.activity === 'APPROVAL'
       ? 'warning'
       : context.activity === 'RUNNING'

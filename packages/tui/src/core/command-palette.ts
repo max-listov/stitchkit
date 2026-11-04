@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { searchTerminalItems } from './search';
 
 export const TerminalCommandDescriptorSchema = z
   .object({
@@ -60,14 +61,14 @@ export function terminalCommandMatches(
   const current = TerminalCommandPaletteStateSchema.parse(state);
   if (current.dismissed) return [];
   const parsed = validateTerminalCommands(commands);
-  const query = current.query.toLowerCase();
-  return parsed
-    .filter(
-      (command) =>
-        command.id.includes(query) ||
-        command.label.toLowerCase().includes(query) ||
-        command.aliases.some((alias) => alias.includes(query)),
-    )
+  // The kit's one search: names, aliases and labels, best match first.
+  return searchTerminalItems(
+    parsed,
+    current.query,
+    (command) => [command.id, ...command.aliases, command.label].join(' '),
+    { scattered: false },
+  )
+    .map(({ item }) => item)
     .slice(0, z.int().positive().parse(limit));
 }
 

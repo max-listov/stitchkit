@@ -6,6 +6,27 @@ const root = join(import.meta.dir, '..');
 const workspace = await mkdtemp(join(tmpdir(), 'stitchkit-tui-packed-'));
 const artifacts = join(workspace, 'artifacts');
 const consumer = join(workspace, 'consumer');
+const monitorConsumer = join(workspace, 'monitor-consumer');
+
+/** The renderer and React the kit expects from its consumer: one copy, the project's own. */
+const tuiManifest: unknown = JSON.parse(
+  await Bun.file(join(root, 'packages/tui/package.json')).text(),
+);
+function peerRange(name: string): string {
+  const peers =
+    typeof tuiManifest === 'object' && tuiManifest !== null
+      ? Reflect.get(tuiManifest, 'peerDependencies')
+      : undefined;
+  const range =
+    typeof peers === 'object' && peers !== null ? Reflect.get(peers, name) : undefined;
+  if (typeof range !== 'string') throw new Error(`stitchkit-tui declares no peer ${name}`);
+  return range;
+}
+const rendererPeers = {
+  '@opentui/core': peerRange('@opentui/core'),
+  '@opentui/react': peerRange('@opentui/react'),
+  react: peerRange('react'),
+};
 
 async function run(command: string[], cwd: string): Promise<string> {
   const child = Bun.spawn(command, { cwd, stdout: 'pipe', stderr: 'pipe' });
@@ -29,7 +50,7 @@ async function archive(prefix: string): Promise<string> {
 }
 
 try {
-  await run(['mkdir', '-p', artifacts, consumer], root);
+  await run(['mkdir', '-p', artifacts, consumer, monitorConsumer], root);
   await run(
     [
       'bun',
@@ -57,6 +78,7 @@ try {
         dependencies: {
           'stitchkit-tui': `file:${tuiArchive}`,
           stitchkit: `file:${coreArchive}`,
+          ...rendererPeers,
           typescript: '^7.0.0',
         },
       },
@@ -120,7 +142,53 @@ export default defineAgentTui({
     ),
   );
 
+  // A monitor with no agent runtime: only the kit, the renderer and React.
+  await writeFile(
+    join(monitorConsumer, 'package.json'),
+    `${JSON.stringify(
+      {
+        name: 'stitchkit-tui-monitor-consumer',
+        private: true,
+        type: 'module',
+        dependencies: { 'stitchkit-tui': `file:${tuiArchive}`, ...rendererPeers },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  await writeFile(
+    join(monitorConsumer, 'tsconfig.json'),
+    `${JSON.stringify({ compilerOptions: { jsx: 'react-jsx', jsxImportSource: '@opentui/react' } })}\n`,
+  );
+  await writeFile(
+    join(monitorConsumer, 'probe.tsx'),
+    `import { testRender } from '@opentui/react/test-utils';\n` +
+      `import { act } from 'react';\n` +
+      `import { createTerminalTable } from 'stitchkit-tui/core';\n` +
+      `import { TerminalMeter, TerminalTable } from 'stitchkit-tui/widgets';\n` +
+      `const table = createTerminalTable({ columns: [{ id: 'name', title: 'NAME', kind: 'text', width: { flex: 1 } }, { id: 'cpu', title: 'CPU%', kind: 'number', width: 6 }], rows: [{ key: 'a', cells: { name: 'packed-row', cpu: 12.5 } }], capacity: 3, sort: { columnId: 'cpu', direction: 'desc' } });\n` +
+      `const setup = await testRender(<box style={{ flexDirection: 'column' }}><TerminalMeter label="cpu0" value={50} max={100} width={30} /><TerminalTable state={table} onAction={() => {}} width={40} height={5} /></box>, { width: 40, height: 6 });\n` +
+      'await setup.renderOnce();\n' +
+      'const frame = setup.captureCharFrame();\n' +
+      'await act(async () => { await setup.dispose(); });\n' +
+      `for (const text of ['cpu0', '50.0%', 'packed-row', 'CPU%▼', '1 row']) if (!frame.includes(text)) throw new Error('packed widgets frame lacks ' + text + ':\\n' + frame);\n` +
+      `console.log('packed TUI widgets consumer: ok');\n`,
+  );
+
   await run(['bun', 'install', '--ignore-scripts'], consumer);
+  await run(['bun', 'install', '--ignore-scripts'], monitorConsumer);
+  if (await Bun.file(join(monitorConsumer, 'node_modules/stitchkit/package.json')).exists())
+    throw new Error('a monitor consumer received stitchkit it did not ask for');
+  for (const name of Object.keys(rendererPeers)) {
+    for (const directory of [consumer, monitorConsumer]) {
+      if (
+        await Bun.file(
+          join(directory, `node_modules/stitchkit-tui/node_modules/${name}/package.json`),
+        ).exists()
+      )
+        throw new Error(`the install holds a second ${name} under stitchkit-tui`);
+    }
+  }
   const manifestText = await run(
     ['tar', '-xOf', tuiArchive, 'package/package.json'],
     consumer,
@@ -152,6 +220,27 @@ export default defineAgentTui({
     throw new Error('packed TUI archive omits its CLI');
   if (!contents.includes('package/dist/core/index.js'))
     throw new Error('packed TUI archive omits its core entrypoint');
+  if (!contents.includes('package/dist/widgets/index.js'))
+    throw new Error('packed TUI archive omits its widgets entrypoint');
+  if (!contents.includes('package/dist/gallery/main.js'))
+    throw new Error('packed TUI archive omits its gallery binary');
+  // The gallery runs from the archive in a real terminal and draws its catalogue.
+  const gallery = await run(
+    [
+      'bash',
+      '-lc',
+      `(sleep 2; printf '\\003') | timeout 15s script -qec 'stty cols 100 rows 30; bun node_modules/.bin/stitchkit-tui-gallery' /dev/null`,
+    ],
+    monitorConsumer,
+  );
+  // Colour changes split a word on screen; the text a reader sees is what is left without them.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: removing the terminal's colour sequences
+  const shown = gallery.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '');
+  if (!shown.includes('Catalogue') || !shown.includes('Documents'))
+    throw new Error(`packed gallery did not draw its catalogue:\n${gallery.slice(-400)}`);
+  const widgetsProbe = await run(['bun', 'probe.tsx'], monitorConsumer);
+  if (!widgetsProbe.includes('packed TUI widgets consumer: ok'))
+    throw new Error('packed widgets probe was silent');
   await run(
     [
       'bun',

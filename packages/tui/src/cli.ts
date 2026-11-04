@@ -2,7 +2,6 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { AgentTuiConfig } from './config';
-import { runAgentTui } from './run';
 import {
   type AgentTuiSessionRequest,
   createAgentTuiClient,
@@ -38,6 +37,13 @@ function isAgentTuiConfig(value: unknown): value is AgentTuiConfig<unknown> {
     typeof Reflect.get(value, 'modelCatalog') === 'object'
   );
 }
+
+// React's development build records a performance measure, with a diff of the
+// changed props, for every component render, and Bun keeps every measure: a
+// long-lived terminal grows without bound. The host is a product, so it runs
+// React's production build unless the operator asks otherwise; React is loaded
+// only after this line, by the dynamic import below.
+process.env.NODE_ENV ??= 'production';
 
 const command = Bun.argv[2] ?? 'run';
 if (command === 'sessions') {
@@ -86,6 +92,7 @@ if (command === 'sessions') {
   }
   // Dynamic config loading is an intentional untyped module boundary. The
   // callable surface is checked above; consumer generics stay in the config.
+  const { runAgentTui } = await import('./run');
   await runAgentTui(config);
 } else {
   throw new Error(`Unknown command: ${command}`);

@@ -130,21 +130,27 @@
         "stitchkit-agent": "./dist/cli.js",
       },
       "dependencies": {
-        "@opentui/core": "^0.8.2",
-        "@opentui/react": "^0.8.2",
         "ai": "^7.0.162",
-        "react": "^19.3.1",
         "zod": "^4.6.7",
       },
       "devDependencies": {
+        "@opentui/core": "^0.8.2",
+        "@opentui/react": "^0.8.2",
         "@types/bun": "^1.4.4",
         "@types/react": "^19.3.0",
+        "react": "^19.3.1",
         "stitchkit": "workspace:^",
         "typescript": "^7.0.2",
       },
       "peerDependencies": {
+        "@opentui/core": "^0.8.2",
+        "@opentui/react": "^0.8.2",
+        "react": "^19.3.1",
         "stitchkit": "workspace:^",
       },
+      "optionalPeers": [
+        "stitchkit",
+      ],
     },
   },
   "overrides": {
