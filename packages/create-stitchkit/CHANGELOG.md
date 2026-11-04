@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.19] - 2026-11-04
+
 ### Changed
 
 - Generated projects resolve stitchkit 0.119.0 and the template's dependencies at their latest
