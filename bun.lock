@@ -125,9 +125,10 @@
     },
     "packages/tui": {
       "name": "stitchkit-tui",
-      "version": "0.2.14",
+      "version": "0.3.0",
       "bin": {
         "stitchkit-agent": "./dist/cli.js",
+        "stitchkit-tui-gallery": "./dist/gallery/main.js",
       },
       "dependencies": {
         "ai": "^7.0.162",

@@ -1,6 +1,6 @@
 # Upgrading stitchkit-tui
 
-## Unreleased migration: 0.3.0
+## Released migration: 0.3.0
 
 ### One palette for the kit
 
