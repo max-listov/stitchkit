@@ -31,6 +31,11 @@ is a lane whose red result lands on the release commit, the one commit whose run
 repaired in place (see [Order inside a release](./release-process.md#order-inside-a-release)).
 The supervised lane needs no global install: its supervisor is a pinned devDependency.
 
+The equivalence holds only on CI's toolchain. `scripts/bun-pin.test.ts`, part of every `verify`, fails
+on a Bun other than the one the workflows pin, and holds every pin — each workflow `bun-version`, the
+starter image's `BUN_VERSION` and every `packageManager` — to one version. 0.119.0 passed `verify`
+on Bun 1.4.4 and failed CI on the pinned 1.4.2, which cannot install relative `link:` dependencies.
+
 Lanes run side by side, and several read `packages/core/dist` while another rebuilds it — packing
 the core runs `prepack`, which starts with `rm -rf dist`. Everything that writes or reads that
 `dist` therefore runs under `scripts/package-build-lock.ts`, keyed on `packages/core`: the build,
