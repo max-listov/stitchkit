@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { mountAgent } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 import { z } from 'zod';
 import { createSurface } from '../packages/backend/src/surface';
 import {

@@ -14,7 +14,7 @@ import {
 } from 'stitchkit/agent-runtime/harness';
 import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter';
 import { createBunSqliteAgentRuntimeStore } from 'stitchkit/agent-runtime/sqlite/bun';
-import { mountAgent } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 import type { AgentTuiDiagnostics } from 'stitchkit-tui';
 import { z } from 'zod';
 import type { AgentConfig } from './config';

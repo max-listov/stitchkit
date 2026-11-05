@@ -12,6 +12,13 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects resolve stitchkit 0.120.0. The repository starter's surface conformance and
+  the agent starter import `mountAgent` from `stitchkit/tools/agent`, where 0.120.0 moved it;
+  `stitchkit/tools` itself now loads no optional peer. The recorded deferral of the starter head
+  lane for 0.120.0 is removed.
+
 ## [0.6.19] - 2026-11-04
 
 ### Changed
