@@ -8,7 +8,9 @@ test('the staged-path hook checks root and nested template Biome projects', asyn
     stderr: 'pipe',
   });
   child.stdin.write(
-    'scripts/check-staged.ts\0packages/create-stitchkit/template/package.json\0',
+    'scripts/check-staged.ts\0packages/create-stitchkit/template/package.json\0' +
+      'packages/create-stitchkit/templates/agent/src/runtime.ts\0' +
+      'packages/create-stitchkit/templates/telegram-bot/package.json\0',
   );
   child.stdin.end();
 
