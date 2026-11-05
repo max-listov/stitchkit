@@ -59,6 +59,14 @@ describe('terminal package import graph', () => {
     expect(named(reach('widgets/index.ts'), /^stitchkit/)).toEqual([]);
   });
 
+  test('the build entry loads no React, renderer or agent runtime', () => {
+    expect(named(reach('build/index.ts'), /^(react|@opentui\/|stitchkit)/)).toEqual([]);
+  });
+
+  test('the testing entry loads no agent runtime', () => {
+    expect(named(reach('testing/index.tsx'), /^stitchkit/)).toEqual([]);
+  });
+
   test('the CLI loads React only after choosing its build', () => {
     expect(named(reach('cli.ts'), /^(react|@opentui\/)/)).toEqual([]);
     const cli = readFileSync(path.join(source, 'cli.ts'), 'utf8');

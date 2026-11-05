@@ -13,16 +13,21 @@ after SIGINT or SIGTERM.
   come from the labels like every other. Add the two strings to a custom labels object.
   `// before: { …labels }` → `// after: { …labels, noFields: 'No parameters · Enter to run', crashed: 'The application stopped on an error' }`.
   See the [migration](UPGRADING.md).
-- `stitchkit-tui` — **`runAgentTui` exits the process on SIGINT, SIGTERM and SIGHUP** after it
-  closed the session host, the controller and the diagnostics. It used to close on SIGINT and
-  SIGTERM only, and a closed window (SIGHUP) left a process drawing frames.
+- `stitchkit-tui` — **`runAgentTui` exits the process on Ctrl-C, SIGTERM, SIGHUP and the other signals OpenTUI catches** after it
+  closed the session host, the controller and the diagnostics, or after `closeTimeoutMs` (5000 ms)
+  at the latest. It used to close on SIGINT and SIGTERM only and kept the process, and a closed
+  window (SIGHUP) left a process drawing frames. A host that owns the process opts out:
+  `// before: runAgentTui(config)` → `// after: runAgentTui(defineAgentTui({ …config, exitSignals: [] }))`.
+  See the [migration](UPGRADING.md).
 
 ### Added
 
 - `stitchkit-tui/widgets` — `runTerminalApp(screen, options)`: the renderer, the theme and labels
   providers, `TerminalErrorBoundary` showing the cause on screen, and an exit with 128 + the signal
-  number after `onClose` on SIGINT, SIGTERM and SIGHUP. OpenTUI listens for those signals to restore
-  the terminal, which cancels their default exit: any timer then kept a window-less process alive.
+  number after `onClose` on every signal OpenTUI catches (SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGABRT,
+  SIGPIPE, SIGBUS) and on a Ctrl-C no screen took, which raw mode delivers as a key. OpenTUI's own
+  listeners only restore the terminal, which cancels each signal's default exit: any timer then
+  kept a window-less process alive.
 - `stitchkit-tui/build` — `compileTerminalApp` and `terminalNativePlugin`: one executable for any
   Bun compile target from any machine. The target's `@opentui/core-<os>-<arch>` comes from the
   registry at the version the installed `@opentui/core` pins, verified against `bun.lock`; other
@@ -45,6 +50,8 @@ after SIGINT or SIGTERM.
 - Targets stitchkit `^0.120.0`, keeping consumers on one framework copy when they adopt the peer-free `stitchkit/tools` barrel.
 - The README names how to choose React's production build: at build time, never by setting
   `NODE_ENV` at run time.
+- The agent shell's palette follows the terminal's background while it runs, as the widgets do;
+  it was chosen once at start.
 
 ## [0.3.0] - 2026-11-04
 

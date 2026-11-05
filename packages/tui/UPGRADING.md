@@ -20,7 +20,7 @@ const labels: TerminalLabels = {
 ### Start through runTerminalApp
 
 **Who must act:** applications that create the renderer themselves (`createCliRenderer` +
-`createRoot`) and catch SIGHUP/SIGTERM to destroy it. Nothing breaks if you keep that code; replace
+`createRoot`) and catch signals to destroy it. Nothing breaks if you keep that code; replace
 it to drop the copy:
 
 ```tsx
@@ -32,8 +32,19 @@ process.on('SIGHUP', () => { renderer.destroy(); process.exit(129); });
 await runTerminalApp(<Home />, { onClose: () => store.close() });
 ```
 
-`runAgentTui` now exits the process on SIGINT, SIGTERM and SIGHUP after closing its host; an
-embedding host that must keep running after them starts the agent shell another way.
+### runAgentTui exits on signals
+
+**Who must act:** hosts that embed `runAgentTui` and must keep their process running after
+Ctrl-C, SIGTERM, SIGHUP or another signal OpenTUI catches.
+
+`runAgentTui` now closes its session and exits the process on those (128 + the signal number,
+130 for Ctrl-C), waiting at most `closeTimeoutMs` (5000 ms) for the close. Pass `exitSignals: []` to keep
+the process, and call the returned `close()` yourself:
+
+```ts
+const running = await runAgentTui(defineAgentTui({ ...config, exitSignals: [] }));
+process.on('SIGTERM', () => void running.close());
+```
 
 ## Released migration: 0.3.0
 

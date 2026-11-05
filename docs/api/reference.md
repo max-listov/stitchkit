@@ -1449,7 +1449,7 @@ Separate optional evolving Bun/OpenTUI package over a caller-composed headless h
 | Export | Kind | Summary |
 |--------|------|---------|
 | `defineAgentTui` | function | typed config for title, `theme` (a `TerminalPalette` override) and `themeMode`, status rows, model catalog, context, commands, runtime bundle and optional host-evidenced recovery policy; the default never requeues acquired effects |
-| `runAgentTui` | function | start one fresh durable conversation and terminal controller, recover durable work and publish its authenticated local session; `initialConversationId` is an explicit resume override |
+| `runAgentTui` | function | start one fresh durable conversation and terminal controller, recover durable work and publish its authenticated local session; `initialConversationId` is an explicit resume override; it closes the session and exits the process on Ctrl-C and every signal OpenTUI catches unless `exitSignals: []` |
 | `defineTuiCommand` / `resolveTuiCommand` | function | typed composable slash-command registry; unknown slash input remains an ordinary model prompt |
 | `createAgentTuiController` | function | single admission, selection, approval, interruption and conversation-switch owner over the harness |
 | `startAgentTuiSessionHost` / `createAgentTuiClient` | function | authenticated mode-`0600` Unix-socket host/client for status, submit and interrupt through that controller |
@@ -1512,7 +1512,7 @@ this entrypoint never loads `stitchkit`.
 | `TerminalAppShell` / `TerminalPanel` / `TerminalStatusBar` / `TerminalKeyHints` | component | breadcrumbs, status lines, body, fitted key hints and toast overlay; titled rounded panels with a focus frame |
 | `TerminalTable` | component | virtualized live table with header sort marks, tree, filter line and htop keys |
 | `TerminalList` | component | sections, fuzzy search line with highlights, `›` cursor, meta, badges, multi-select, description |
-| `runTerminalApp` / `RunTerminalAppOptions` / `RunningTerminalApp` | function / _type_ | start an application: renderer, theme and labels providers, the error boundary, and an exit with 128 + signal after `onClose` on SIGINT, SIGTERM and SIGHUP — a closed window leaves no orphan |
+| `runTerminalApp` / `RunTerminalAppOptions` / `RunningTerminalApp` | function / _type_ | start an application: renderer, theme and labels providers, the error boundary, and an exit with 128 + signal after `onClose` on Ctrl-C and every signal OpenTUI catches — a closed window leaves no orphan |
 | `TerminalErrorBoundary` / `TERMINAL_EXIT_SIGNALS` / `TerminalExitSignal` | component / value / _type_ | draws a render error and its stack in place of the screen, where OpenTUI's own boundary renders nothing under production React |
 | `TerminalForm` | component | fields edited in place, cycling choices, masked secrets, inline errors; a form without fields says so and submits `{}` on Enter |
 | `TerminalTextView` / `TerminalJsonView` | component | pager over sanitized wrapped text or toned JSON |

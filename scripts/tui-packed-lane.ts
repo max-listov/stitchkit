@@ -162,15 +162,15 @@ export default defineAgentTui({
   );
   await writeFile(
     join(monitorConsumer, 'probe.tsx'),
-    `import { testRender } from '@opentui/react/test-utils';\n` +
-      `import { act } from 'react';\n` +
+    `import { terminalNativeTarget } from 'stitchkit-tui/build';\n` +
       `import { createTerminalTable } from 'stitchkit-tui/core';\n` +
+      `import { renderTerminalTest } from 'stitchkit-tui/testing';\n` +
       `import { TerminalMeter, TerminalTable } from 'stitchkit-tui/widgets';\n` +
       `const table = createTerminalTable({ columns: [{ id: 'name', title: 'NAME', kind: 'text', width: { flex: 1 } }, { id: 'cpu', title: 'CPU%', kind: 'number', width: 6 }], rows: [{ key: 'a', cells: { name: 'packed-row', cpu: 12.5 } }], capacity: 3, sort: { columnId: 'cpu', direction: 'desc' } });\n` +
-      `const setup = await testRender(<box style={{ flexDirection: 'column' }}><TerminalMeter label="cpu0" value={50} max={100} width={30} /><TerminalTable state={table} onAction={() => {}} width={40} height={5} /></box>, { width: 40, height: 6 });\n` +
-      'await setup.renderOnce();\n' +
-      'const frame = setup.captureCharFrame();\n' +
-      'await act(async () => { await setup.dispose(); });\n' +
+      `if (terminalNativeTarget('bun-linux-x64').packageName !== '@opentui/core-linux-x64') throw new Error('packed build entry failed');\n` +
+      `const screen = await renderTerminalTest(<box style={{ flexDirection: 'column' }}><TerminalMeter label="cpu0" value={50} max={100} width={30} /><TerminalTable state={table} onAction={() => {}} width={40} height={5} /></box>, { width: 40, height: 6 });\n` +
+      'const frame = await screen.frame();\n' +
+      'await screen.close();\n' +
       `for (const text of ['cpu0', '50.0%', 'packed-row', 'CPU%▼', '1 row']) if (!frame.includes(text)) throw new Error('packed widgets frame lacks ' + text + ':\\n' + frame);\n` +
       `console.log('packed TUI widgets consumer: ok');\n`,
   );
@@ -222,6 +222,9 @@ export default defineAgentTui({
     throw new Error('packed TUI archive omits its core entrypoint');
   if (!contents.includes('package/dist/widgets/index.js'))
     throw new Error('packed TUI archive omits its widgets entrypoint');
+  for (const entry of ['build', 'testing'])
+    if (!contents.includes(`package/dist/${entry}/index.js`))
+      throw new Error(`packed TUI archive omits its ${entry} entrypoint`);
   if (!contents.includes('package/dist/gallery/main.js'))
     throw new Error('packed TUI archive omits its gallery binary');
   // The gallery runs from the archive in a real terminal and draws its catalogue.

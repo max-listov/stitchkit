@@ -10,7 +10,7 @@
  * checked against the sha512 `bun.lock` recorded. Packages of other platforms
  * become a module that throws, so the executable carries one native library.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -82,6 +82,8 @@ export interface TerminalNativePluginOptions {
   /** Where verified tarballs are unpacked; reused across builds. */
   cacheDirectory?: string;
   registry?: string;
+  /** How long the registry may take to send the tarball (120 s). */
+  fetchTimeoutMs?: number;
   fetch?: typeof fetch;
 }
 
@@ -126,40 +128,62 @@ export function terminalNativePlugin(options: TerminalNativePluginOptions): BunP
         `stitchkit-tui/build: ${lockfile} records no integrity for ${spec}; run bun install`,
       );
     }
+    const sha512 = (bytes: Uint8Array): string =>
+      `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+    // Keyed by the integrity, and the tarball kept beside the package: a cached copy is
+    // checked against bun.lock on every build, never trusted for its name alone.
+    const key = createHash('sha256').update(integrity).digest('hex').slice(0, 16);
     const directory = join(
       cacheDirectory,
-      `${target.packageName.replace('/', '+')}@${version}`,
+      `${target.packageName.replace('/', '+')}@${version}-${key}`,
     );
     const entry = join(directory, 'package', 'index.bun.js');
-    if (existsSync(entry)) return entry;
+    const cached = async (): Promise<boolean> => {
+      if (!existsSync(entry)) return false;
+      const kept = await readFile(join(directory, 'package.tgz')).catch(() => null);
+      return kept !== null && sha512(kept) === integrity;
+    };
+    if (await cached()) return entry;
     const basename = target.packageName.split('/')[1];
     const url = `${registry}/${target.packageName}/-/${basename}-${version}.tgz`;
-    const response = await download(url);
+    const response = await download(url, {
+      signal: AbortSignal.timeout(options.fetchTimeoutMs ?? 120_000),
+    });
     if (!response.ok)
       throw new Error(`stitchkit-tui/build: ${url} answered ${response.status}`);
     const tarball = new Uint8Array(await response.arrayBuffer());
-    const actual = `sha512-${createHash('sha512').update(tarball).digest('base64')}`;
+    const actual = sha512(tarball);
     if (actual !== integrity) {
       throw new Error(
         `stitchkit-tui/build: ${url} does not match bun.lock (${integrity}, got ${actual})`,
       );
     }
     // Unpack beside the cache and move into place, so a half-written package is never reused.
-    const staging = `${directory}.${process.pid}.partial`;
-    await rm(staging, { recursive: true, force: true });
+    const staging = `${directory}.${randomUUID()}.partial`;
     await mkdir(staging, { recursive: true });
-    await writeFile(join(staging, 'package.tgz'), tarball);
-    const tar = Bun.spawn(['tar', '-xzf', 'package.tgz'], { cwd: staging, stderr: 'pipe' });
-    if ((await tar.exited) !== 0) {
-      throw new Error(
-        `stitchkit-tui/build: cannot unpack ${url}: ${await new Response(tar.stderr).text()}`,
-      );
+    try {
+      await writeFile(join(staging, 'package.tgz'), tarball);
+      const tar = Bun.spawn(['tar', '-xzf', 'package.tgz'], { cwd: staging, stderr: 'pipe' });
+      if ((await tar.exited) !== 0) {
+        throw new Error(
+          `stitchkit-tui/build: cannot unpack ${url}: ${await new Response(tar.stderr).text()}`,
+        );
+      }
+      if (!existsSync(join(staging, 'package', 'index.bun.js'))) {
+        throw new Error(`stitchkit-tui/build: ${spec} has no index.bun.js`);
+      }
+      // A stale copy under this key failed its check above; another build may also have
+      // just finished the same package, which is then as good as ours.
+      if (existsSync(directory) && !(await cached())) {
+        await rm(directory, { recursive: true, force: true });
+      }
+      if (!existsSync(directory)) await rename(staging, directory).catch(() => undefined);
+      if (!(await cached()))
+        throw new Error(`stitchkit-tui/build: cannot cache ${spec} in ${directory}`);
+      return entry;
+    } finally {
+      await rm(staging, { recursive: true, force: true });
     }
-    await rm(directory, { recursive: true, force: true });
-    await rename(staging, directory);
-    if (!existsSync(entry))
-      throw new Error(`stitchkit-tui/build: ${spec} has no index.bun.js`);
-    return entry;
   }
 
   return {
@@ -218,7 +242,7 @@ export async function compileTerminalApp(
     compile: { target: options.target, outfile },
     define: { 'process.env.NODE_ENV': '"production"', ...options.define },
     minify: options.minify ?? true,
-    // The plugin's refusals (integrity, lockfile, musl) are the message; keep them.
+    // The plugin's refusals (integrity, lockfile) are the message; keep them.
     throw: false,
     plugins: [
       terminalNativePlugin({ target: options.target, ...options.native }),

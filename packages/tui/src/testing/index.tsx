@@ -52,6 +52,12 @@ export interface TerminalTestScreen {
 
 const SETTLE_MS = 5;
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+function hasModifier(modifiers: TerminalTestModifiers): boolean {
+  return modifiers !== undefined && Object.values(modifiers).some((value) => value === true);
+}
+
 /** Render a screen inside the kit's providers on a test terminal. */
 export async function renderTerminalTest(
   screen: ReactNode,
@@ -92,18 +98,22 @@ export async function renderTerminalTest(
     async press(key, modifiers) {
       await act(async () => {
         test.mockInput.pressKey(key, modifiers);
-        await Bun.sleep(key === 'ESCAPE' && !modifiers ? escapeDelayMs : SETTLE_MS);
+        // A lone Esc is held by the parser until its escape timeout passes.
+        await Bun.sleep(
+          key === 'ESCAPE' && !hasModifier(modifiers) ? escapeDelayMs : SETTLE_MS,
+        );
       });
       return frame();
     },
     async burst(keys) {
       await act(async () => {
         await test.mockInput.pressKeys([...keys]);
+        if (keys.at(-1) === 'ESCAPE') await Bun.sleep(escapeDelayMs);
       });
       return frame();
     },
     async type(text) {
-      for (const character of Array.from(text)) {
+      for (const { segment: character } of graphemes.segment(text)) {
         await act(async () => {
           test.mockInput.pressKey(character);
           await Bun.sleep(0);

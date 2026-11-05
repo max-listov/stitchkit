@@ -114,7 +114,7 @@ export function TerminalForm({
     (key) => {
       const id = matchTerminalKey(bindings, key)?.id;
       // A form without fields has nothing to type into: Enter runs it, Esc leaves.
-      if (!current) {
+      if (state.fields.length === 0) {
         if (id === 'submit') onAction({ type: 'submit' });
         else if (id === 'cancel' && onCancel) onCancel();
         else return false;

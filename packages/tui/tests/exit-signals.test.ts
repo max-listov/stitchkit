@@ -15,7 +15,7 @@ function alive(pid: number): boolean {
 }
 
 /** Start the fixture in a real pseudo-terminal and return its pid once it drew. */
-async function start(mode: 'kit' | 'bare') {
+async function start(mode: 'kit' | 'kit-owned' | 'bare') {
   const directory = mkdtempSync(join(tmpdir(), 'tui-exit-'));
   const pidFile = join(directory, 'pid');
   const shell = Bun.spawn(
@@ -35,6 +35,11 @@ async function start(mode: 'kit' | 'bare') {
   const pid = Number(readFileSync(pidFile, 'utf8'));
   return {
     pid,
+    /** Type into the terminal, as a person at the keyboard would. */
+    async type(text: string) {
+      shell.stdin.write(text);
+      await shell.stdin.flush();
+    },
     async stop() {
       if (alive(pid)) process.kill(pid, 'SIGKILL');
       shell.kill('SIGKILL');
@@ -59,6 +64,38 @@ describe('a terminal application whose window closed', () => {
     try {
       process.kill(app.pid, 'SIGHUP');
       expect(await exitedWithin(app.pid, 1000)).toBe(true);
+    } finally {
+      await app.stop();
+    }
+  }, 30_000);
+
+  test('exits within a second on Ctrl-C, which raw mode delivers as a key', async () => {
+    const app = await start('kit');
+    try {
+      // Give the screen a moment to mount its keyboard, as a person would.
+      await Bun.sleep(300);
+      await app.type('\x03');
+      expect(await exitedWithin(app.pid, 1000)).toBe(true);
+    } finally {
+      await app.stop();
+    }
+  }, 30_000);
+
+  test('exits on SIGQUIT, another signal OpenTUI catches', async () => {
+    const app = await start('kit');
+    try {
+      process.kill(app.pid, 'SIGQUIT');
+      expect(await exitedWithin(app.pid, 1000)).toBe(true);
+    } finally {
+      await app.stop();
+    }
+  }, 30_000);
+
+  test('leaves signals to a host that owns the process and passes no exit signals', async () => {
+    const app = await start('kit-owned');
+    try {
+      process.kill(app.pid, 'SIGHUP');
+      expect(await exitedWithin(app.pid, 1500)).toBe(false);
     } finally {
       await app.stop();
     }

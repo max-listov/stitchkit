@@ -184,6 +184,10 @@ export async function runAgentTui<CONTEXT>(
       themeMode: config.themeMode ?? 'auto',
       ...(config.theme && { palette: config.theme }),
       onClose: closeHost,
+      ...(config.exitSignals && { exitSignals: config.exitSignals }),
+      // The harness gets 1 s of grace and 1 s to force, the journal 2 s to flush: closing
+      // within those budgets must not be cut by the exit that follows a signal.
+      closeTimeoutMs: config.closeTimeoutMs ?? 5_000,
     },
   );
   return { sessionId: host.sessionId, close: app.close };

@@ -87,7 +87,8 @@ function Home() {
 }
 
 // The renderer, the theme and labels providers, an error boundary that shows the cause
-// on screen, and an exit on Ctrl-C, a kill or a closed window (SIGHUP).
+// on screen, and an exit on Ctrl-C, a kill, a closed window (SIGHUP) or any other signal OpenTUI
+// catches — so no orphan keeps drawing.
 await runTerminalApp(<Home />, { labels: terminalLabelsRu });
 ```
 
@@ -155,6 +156,9 @@ expect(await screen.press('ESCAPE')).toContain('› docs_read');
 await screen.close();
 ```
 
+Run tests under React's development build (the default of `bun test`): the production build has
+no `act`.
+
 React, `@opentui/core` and `@opentui/react` are peers: install them in the application, so one copy
 of each drives the whole tree. `stitchkit` is needed only for the agent host below.
 
@@ -185,7 +189,8 @@ Omit `statusLine` for the default projection, provide a formatter to replace eve
 to `false` to hide the status line. The formatter receives the selected catalog entry, workspace,
 activity, local identities and the canonical durable snapshot; it does not receive guessed token
 counts. `theme` overrides colours of the kit's `TerminalPalette`, and `themeMode` picks the dark or
-light palette.
+light palette. The host starts through `runTerminalApp`: Ctrl-C, a kill and a closed window (SIGHUP) close
+the session and exit the process; a host that owns its process passes `exitSignals: []`.
 
 The bundled CLI loads `stitchkit.agent.ts` by default:
 

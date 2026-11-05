@@ -1,6 +1,13 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { terminalNativePlugin, terminalNativeTarget } from '../src/build';
@@ -92,6 +99,24 @@ describe('the OpenTUI native package for another platform', () => {
     expect(code).toContain(
       '@opentui/core-darwin-arm64 is not in this executable: it was built for @opentui/core-linux-arm64',
     );
+  });
+
+  test('reuses a verified cache and fetches again when the kept tarball is corrupted', async () => {
+    const p = project();
+    const plugin = () =>
+      terminalNativePlugin({
+        target: 'bun-linux-arm64',
+        lockfile: join(p.root, 'bun.lock'),
+        cacheDirectory: join(p.root, 'cache'),
+        fetch: p.registry(p.tarball),
+      });
+    await bundle(p.root, plugin());
+    await bundle(p.root, plugin());
+    expect(p.requests).toHaveLength(1);
+    const [cached] = readdirSync(join(p.root, 'cache'));
+    writeFileSync(join(p.root, 'cache', cached ?? '', 'package.tgz'), 'corrupted');
+    expect(await bundle(p.root, plugin())).toContain('linux-arm64-native-marker');
+    expect(p.requests).toHaveLength(2);
   });
 
   test('refuses a tarball that does not match the lockfile', async () => {

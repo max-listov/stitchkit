@@ -15,6 +15,7 @@ import { z } from 'zod';
 import type { AgentTuiCommand } from './commands';
 import type { TerminalPalette, TerminalThemeMode } from './core/theme';
 import type { AgentTuiStatusLineFormatter } from './status-line';
+import type { TerminalExitSignal } from './widgets/app';
 
 const SelectionFileSchema = z
   .object({
@@ -57,6 +58,13 @@ export interface AgentTuiConfig<CONTEXT> {
   themeMode?: TerminalThemeMode | 'auto';
   /** Replace the default durable status rows, or set false to hide them. */
   statusLine?: AgentTuiStatusLineFormatter | false;
+  /**
+   * Signals that close the session and exit the process (default SIGINT, SIGTERM,
+   * SIGHUP). An embedding host that owns the process passes `[]` and calls `close()`.
+   */
+  exitSignals?: readonly TerminalExitSignal[];
+  /** The longest closing may take on a signal or Ctrl-C before the process exits anyway (5000 ms). */
+  closeTimeoutMs?: number;
 }
 
 export function defineAgentTui<CONTEXT>(
