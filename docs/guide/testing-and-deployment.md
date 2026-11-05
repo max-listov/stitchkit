@@ -315,8 +315,9 @@ fixture's transitive dependency.
 
 That includes `stitchkit/tools/invoker`: a minimal packed consumer imports it
 without MCP/AI peers and executes validation, output projection and normalized
-errors on Bun and Node. The broader `stitchkit/tools` barrel deliberately keeps
-the adapter peer budget.
+errors on Bun and Node, and so does `stitchkit/tools`, which loads no optional peer at
+runtime. The adapters keep their peer budgets on their own subpaths:
+`stitchkit/tools/mcp`, `stitchkit/tools/agent` and `stitchkit/tools/toolkit`.
 
 Beside the matrix, one case is about the ARTIFACT rather than the inventory: a
 program that injects the Socket.IO peer loaders is bundled and started in a
@@ -545,10 +546,7 @@ signal and deadline. Bind its process lifecycle with the truthful close-only
 sibling from `stitchkit/tools`:
 
 ```ts
-import {
-  bindStdioProcessSignals,
-  createStdioMcpServer,
-} from 'stitchkit/tools'
+import { bindStdioProcessSignals, createStdioMcpServer } from 'stitchkit/tools/mcp'
 
 const stdio = await createStdioMcpServer(config)
 const binding = bindStdioProcessSignals(stdio, {

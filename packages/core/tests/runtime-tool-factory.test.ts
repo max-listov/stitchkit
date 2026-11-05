@@ -3,9 +3,9 @@ import { z } from 'zod';
 import {
   buildToolManifest,
   createRuntimeToolFactory,
-  mountAgent,
   type ToolCallHooks,
 } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 
 function executable(tools: ReturnType<typeof mountAgent>, name: string) {
   const execute = tools[name]?.execute;

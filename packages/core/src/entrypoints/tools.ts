@@ -1,4 +1,3 @@
-export type { McpServer } from '@modelcontextprotocol/server';
 // The durability ENGINE, not only the port. It is self-contained — its runtime
 // closure is itself and zod, the ledger it needs is two methods, and it holds
 // no agent store, no run protocol and no model — so it meets every condition
@@ -56,7 +55,6 @@ export {
   type RegisteredClient,
 } from '../server/oauth/provider';
 export type { OperationIdentity } from '../server/types';
-export { type AgentContext, type AgentMountConfig, mountAgent } from '../tools/agent';
 export { AgentToolError, isAgentToolError } from '../tools/agent-tool-error';
 export type {
   DurableJsonValue,
@@ -96,60 +94,6 @@ export {
   type ToolManifestConfig,
   type ToolManifestEntry,
 } from '../tools/manifest';
-export {
-  EXT_APPS_BUNDLE_PLACEHOLDER,
-  inlineMcpAppBundle,
-  type McpAppCsp,
-  type McpAppResourceMeta,
-  type McpResourceDef,
-  RESOURCE_MIME_TYPE,
-} from '../tools/mcp/app';
-export {
-  MCP_CATALOG_META_KEY,
-  type McpCatalogStamp,
-  mcpCatalogMeta,
-  readMcpCatalogStamp,
-} from '../tools/mcp/catalog';
-export {
-  createMcpHandler,
-  createMcpHttpRoute,
-  type McpHandlerConfig,
-  type McpHttpConfig,
-  type McpHttpHandler,
-  type McpHttpSecurityConfig,
-  type McpLegacyPolicy,
-} from '../tools/mcp/handler';
-export {
-  buildMcpServer,
-  type DirectMcpSurfaceConfig,
-  type FiniteMcpSurfaceConfig,
-  type McpMountConfig,
-  type McpServerBuildConfig,
-  type McpServerSharedConfig,
-  mountMcp,
-  mountMcpResource,
-  validateMcpSchemas,
-} from '../tools/mcp/mount';
-export type {
-  IncompatibleSchemaPolicy,
-  McpSchemaValidationConfig,
-  McpSurfaceDefinition,
-  McpSurfaceRegistry,
-  ValidateMcpSchemasConfig,
-} from '../tools/mcp/prepare';
-export {
-  createStdioMcpServer,
-  type McpStdioHandle,
-  type StdioAuthConfig,
-  type StdioMcpServerConfig,
-} from '../tools/mcp/stdio';
-export {
-  bindStdioProcessSignals,
-  type StdioCloseTarget,
-  type StdioProcessSignalsBinding,
-  type StdioProcessSignalsErrorPhase,
-  type StdioProcessSignalsOptions,
-} from '../tools/mcp/stdio-signals';
 export {
   type CollectToolsConfig,
   collectTools,
@@ -241,7 +185,6 @@ export {
   type ToolCallRecord,
   type ToolLoggerConfig,
 } from '../tools/tool-logger';
-export { createToolkit, type Toolkit } from '../tools/toolkit';
 export {
   type DefineDownloadToolConfig,
   defineDownloadTool,

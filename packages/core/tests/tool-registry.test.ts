@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import { defineRuntimeTool, defineToolRegistry, mountAgent } from '../src/entrypoints/tools';
+import { defineRuntimeTool, defineToolRegistry } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 
 function fake(name: string) {
   return defineRuntimeTool({

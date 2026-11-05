@@ -7,7 +7,8 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/entrypoints/contract';
 import { implement } from '../src/entrypoints/server';
-import { findUntypedProperties, validateMcpSchemas } from '../src/entrypoints/tools';
+import { findUntypedProperties } from '../src/entrypoints/tools';
+import { validateMcpSchemas } from '../src/entrypoints/tools/mcp';
 
 const contract = (input: z.ZodType) =>
   defineContract(

@@ -9,7 +9,7 @@ import {
   generateOpenApiDocument,
   openApiRoute,
 } from 'stitchkit/server';
-import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools';
+import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools/mcp';
 import { closeWithinBudget, concludeShutdown } from './cleanup';
 import { prisma } from './lib/db';
 import { createSurface } from './surface';

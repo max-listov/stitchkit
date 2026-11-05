@@ -10,13 +10,13 @@ import {
 import {
   createRuntimeToolFactory,
   defineRuntimeTool,
-  mountAgent,
   type RuntimeAgentModelOutput,
   type RuntimeMcpPresentation,
   type RuntimeToolDefinition,
   type RuntimeToolDefinitionWithOutput,
   type RuntimeToolPresenters,
 } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 import { z } from 'zod';
 
 const input = z.object({ text: z.string() });

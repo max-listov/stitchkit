@@ -86,7 +86,8 @@ Server code imports server entrypoints:
 ```ts
 import { createServer, createHandler, implement } from 'stitchkit/server'
 import { createSocketIOServer, createAuthHook } from 'stitchkit/server'
-import { createMcpHandler, mountAgent } from 'stitchkit/tools'
+import { createMcpHandler } from 'stitchkit/tools/mcp'
+import { mountAgent } from 'stitchkit/tools/agent'
 import { createAgentRuntime, defineAgentProtocol } from 'stitchkit/agent-runtime'
 import { createBunSqliteAgentRuntimeStore } from 'stitchkit/agent-runtime/sqlite/bun'
 import { createApplication, defineManagedResource } from 'stitchkit/application'
@@ -251,7 +252,7 @@ size is the server's call — the contract's `limit` default — never the clien
 ### 5. MCP tools (for Claude, Cursor, etc.)
 
 ```ts
-import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools'
+import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools/mcp'
 
 const mcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
@@ -270,7 +271,7 @@ createServer({
 ### 6. AI Agent tools
 
 ```ts
-import { mountAgent } from 'stitchkit/tools'
+import { mountAgent } from 'stitchkit/tools/agent'
 import { generateText } from 'ai'
 
 const tools = mountAgent(service, { context: { userId: 'agent-1' } })
@@ -439,10 +440,10 @@ peer — an install pulls in only what the project actually uses.
 |------------|------|--------------|
 | `ky` | bundled, runtime | The HTTP client behind the typed client — ~13 KB, `fetch`-based, with retry, hooks and timeouts built in. The only thing stitchkit installs for you. |
 | `zod` | peer, **required** | Schemas are the single source of truth. A peer so your app and stitchkit share **one** `zod` instance — `z.infer` types and `instanceof` checks break across two copies. |
-| `@modelcontextprotocol/server` | peer, optional | MCP server surfaces in `stitchkit/tools`; SDK v2, protocol `2026-07-28`. |
+| `@modelcontextprotocol/server` | peer, optional | MCP server surfaces in `stitchkit/tools/mcp` and `stitchkit/tools/toolkit`; SDK v2, protocol `2026-07-28`. |
 | `@modelcontextprotocol/client` | development dependency, optional | Only consumers that run MCP client integration tests or build an MCP host. |
 | `@modelcontextprotocol/ext-apps` | peer, optional | Only MCP Apps (`ui://` resources and UI metadata). |
-| `ai` | peer, optional | `stitchkit/tools` agent tools and the optional server-only `stitchkit/agent-runtime`. |
+| `ai` | peer, optional | agent tools in `stitchkit/tools/agent` and `stitchkit/tools/toolkit`, and the optional server-only `stitchkit/agent-runtime`. |
 | Headless harness | optional surface | `stitchkit/agent-runtime/harness`; uses the same optional `ai` peer and canonical runtime. |
 | Agent coding tools | optional surface | `stitchkit/agent-runtime/coding-tools`; peer-free, host-authorized direct file and shell tools. |
 | Agent runtime testing | optional test surface | `stitchkit/agent-runtime/testing`; peer-free local fault server, replay and race fixtures. |

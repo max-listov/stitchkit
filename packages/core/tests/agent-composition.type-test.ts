@@ -7,7 +7,8 @@ import {
   createHeadlessAgentHarness,
   type HeadlessAgentModelResolver,
 } from '../src/entrypoints/agent-runtime/harness';
-import { composeToolLifecycle, mountAgent } from '../src/entrypoints/tools';
+import { composeToolLifecycle } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 
 declare const models: HeadlessAgentModelResolver<{ tenant: string }>;
 

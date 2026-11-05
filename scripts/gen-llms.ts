@@ -232,6 +232,8 @@ export const GUIDE_SLICES: GuideMap = {
       './tools/contract',
       './tools/invoker',
       './tools/mcp',
+      './tools/agent',
+      './tools/toolkit',
       './tools/connections',
       './remote',
     ],

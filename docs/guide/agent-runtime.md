@@ -12,16 +12,16 @@ updated: 2026-10-15 14:56 +07:00
 > **Maturity: evolving.** This surface is still finding its shape and may be
 > redefined in any minor release — always with a `### ⚠️ Breaking changes` entry
 > and a migration section, never silently. If your application already owns the
-> conversation loop, `mountAgent` from `stitchkit/tools` is the stable path.
+> conversation loop, `mountAgent` from `stitchkit/tools/agent` is the direct path.
 
 `stitchkit/agent-runtime` is the server-only, opinionated layer above
 `mountAgent`. Use it when the application wants Stitchkit to own conversation
 mechanics: durable acceptance, history projection, the AI SDK stream loop,
 checkpoints, keyed interruption, terminal commit and stable application events.
 
-If the application already owns that loop, continue importing `mountAgent` from
-`stitchkit/tools`. `stitchkit/tools` does not depend on this entrypoint at all;
-this entrypoint uses the tool executor from it, but pulls no MCP peer, so
+If the application already owns that loop, import `mountAgent` from
+`stitchkit/tools/agent`. Neither `stitchkit/tools` nor `stitchkit/tools/agent` depends on
+this entrypoint; this entrypoint uses the tool executor, but pulls no MCP peer, so
 choosing `mountAgent` alone costs you nothing from here.
 
 UI and shared DTO code must import canonical records and delivery validation from
@@ -45,12 +45,8 @@ persistence, event sinks and every Node context dependency.
 bun add stitchkit ai zod
 ```
 
-`mountAgent` from `stitchkit/tools` — used in the composition below — additionally
-needs the MCP peer, which that entrypoint imports statically:
-
-```sh
-bun add @modelcontextprotocol/server
-```
+`mountAgent` from `stitchkit/tools/agent` — used in the composition below — needs no
+peer beyond `ai`.
 
 OpenRouter is isolated so other runtime users do not resolve its package:
 
@@ -71,7 +67,8 @@ import {
   defineModelRegistry,
 } from 'stitchkit/agent-runtime'
 import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter'
-import { composeToolLifecycle, mountAgent } from 'stitchkit/tools'
+import { composeToolLifecycle } from 'stitchkit/tools'
+import { mountAgent } from 'stitchkit/tools/agent'
 
 const protocol = defineAgentProtocol({
   context: z.object({ userId: z.string() }),

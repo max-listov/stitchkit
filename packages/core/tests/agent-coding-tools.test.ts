@@ -11,7 +11,7 @@ import {
   type AgentCodingToolAuthorization,
   createAgentCodingTools,
 } from '../src/entrypoints/agent-runtime/coding-tools';
-import { mountAgent } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 import { processAlive } from './support/process-state';
 import { until } from './support/until';
 

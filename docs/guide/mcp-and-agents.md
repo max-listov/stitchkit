@@ -110,10 +110,10 @@ recursive calls without retaining request state. Every invocation gets a fresh
 tool-call context and runs the same extension resolution, input/output
 validation, lifecycle, hooks and output-strip reporter as mounted tools.
 
-The dedicated entrypoint needs only the normal `stitchkit`/`zod` install. Use
-the broader `stitchkit/tools` barrel when the same program also mounts MCP or AI
-adapters and has installed their optional peers. Both imports reach the same
-runner; this is dependency isolation, not a second execution implementation.
+The dedicated entrypoint needs only the normal `stitchkit`/`zod` install, and so does
+`stitchkit/tools`, which exports the same invoker beside the rest of the tool layer. Both
+imports reach the same runner; this is dependency isolation, not a second execution
+implementation.
 
 `invoke` returns the canonical discriminated `ToolResult`, not an AI SDK or MCP
 presentation envelope. `invokeOrThrow` returns validated data and throws the
@@ -135,9 +135,8 @@ get the view's defaults and projected answer, which is what `collectTools` and
 An MCP-only server imports `stitchkit/tools/mcp` and installs
 `stitchkit`, `zod` and `@modelcontextprotocol/server`. The leaf's runtime and strict
 NodeNext declarations require no `ai`. It exports the existing HTTP/stdio server,
-schema policy, catalog and resource helpers; their implementation and security are shared
-with the full `stitchkit/tools` barrel. Use that full barrel when the application also
-needs its AI SDK features.
+schema policy, catalog and resource helpers, and it is the only entrypoint that does:
+`stitchkit/tools` loads no optional peer. AI SDK tools come from `stitchkit/tools/agent`.
 
 `createMcpHandler` builds a complete stateless Streamable-HTTP MCP endpoint on
 the official TypeScript SDK v2 server package. It owns server creation,
@@ -861,7 +860,8 @@ stitchkit ships the OAuth **protocol mechanics**; the app supplies only
 **identity and storage**. Three pieces wire it together:
 
 ```ts
-import { createMcpHandler, createMcpHttpRoute, mountOAuthProvider, oauthProtectedResourceRoute } from 'stitchkit/tools'
+import { mountOAuthProvider, oauthProtectedResourceRoute } from 'stitchkit/tools'
+import { createMcpHandler, createMcpHttpRoute } from 'stitchkit/tools/mcp'
 import { createServer } from 'stitchkit/server'
 
 const resource = 'https://api.example.com/mcp'
@@ -1122,7 +1122,7 @@ see [Agent application runtime](./agent-runtime.md).
 `generateText` / `streamText`:
 
 ```ts
-import { mountAgent } from 'stitchkit/tools'
+import { mountAgent } from 'stitchkit/tools/agent'
 import { generateText } from 'ai'
 
 const tools = mountAgent(usersService, { context: { userId: 'agent-1' } })
@@ -1206,7 +1206,9 @@ result. Optional presentation callbacks map that result to MCP content and AI
 SDK model output without coupling the handler to either SDK:
 
 ```ts
-import { createMcpHandler, defineRuntimeTool, mountAgent } from 'stitchkit/tools'
+import { defineRuntimeTool } from 'stitchkit/tools'
+import { createMcpHandler } from 'stitchkit/tools/mcp'
+import { mountAgent } from 'stitchkit/tools/agent'
 import { z } from 'zod'
 
 const renderPreview = defineRuntimeTool({
@@ -1572,7 +1574,8 @@ hooks. The built-in `mountViewFile`, `mountWait`, `mountDownload` and
 media helper fetches with SSRF and path-traversal defenses:
 
 ```ts
-import { createMcpHandler, mountViewFile } from 'stitchkit/tools'
+import { mountViewFile } from 'stitchkit/tools'
+import { createMcpHandler } from 'stitchkit/tools/mcp'
 
 const handleMcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },

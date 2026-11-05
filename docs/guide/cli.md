@@ -22,7 +22,7 @@ types; the package keeps its required dependencies separate from optional SDKs.
 CLI runtime tools use the one runtime-tool declaration: identity, input and output
 schemas, handler, and explicit CLI exposure. SDK presenters are the adapter's extension
 of that declaration (the fourth type argument of `RuntimeToolDefinitionWithOutput`, or
-`defineRuntimeTool` in `stitchkit/tools`), which requires the corresponding peers. A typed
+`defineRuntimeTool` in `stitchkit/tools`), whose presenter types name the corresponding SDKs. A typed
 definition returned by `defineRuntimeTool` or `createRuntimeToolFactory` can be
 passed directly to both CLI and SDK mounts.
 

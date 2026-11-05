@@ -3,13 +3,17 @@ title: MCP server leaf has no AI SDK peer
 description: A supported server entrypoint preserves the canonical MCP implementation while isolating runtime and declaration peers.
 status: active
 created: 2026-10-04 13:11 +07:00
-updated: 2026-10-04 14:11 +07:00
+updated: 2026-11-05 08:58 +07:00
 type: decision
 ---
 
 # MCP server leaf has no AI SDK peer
 
 **Invariants:** I8, I9, I10, I13.
+
+Its first paragraph (the full tools barrel) is amended by
+[ADR 0284](0284-the-tools-barrel-loads-no-optional-peer.md): `stitchkit/tools` now loads no
+optional peer; the MCP-only leaf below stands.
 
 The full tools barrel deliberately serves both MCP and AI adapters. Importing it loads
 mountAgent and its AI SDK runtime peer even when a server never invokes a model. Removing

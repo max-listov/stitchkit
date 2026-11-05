@@ -15,7 +15,7 @@ import {
 } from '../src/entrypoints/agent-runtime';
 import { createAgentCodingTools } from '../src/entrypoints/agent-runtime/coding-tools';
 import { createHeadlessAgentHarness } from '../src/entrypoints/agent-runtime/harness';
-import { mountAgent } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 import { sqliteScratchDir } from './support/sqlite-scratch';
 
 const usage = {

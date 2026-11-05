@@ -1,5 +1,36 @@
 # Upgrading stitchkit
 
+## Unreleased migration: tools-barrel-subpaths
+
+### tools-barrel-subpaths
+
+**Who must act:** code importing the MCP server, `mountAgent` or `createToolkit` from
+`stitchkit/tools`. Imports of the registry, tool names, manifest, runtime and native tools, the
+invoker, the OAuth provider and the durability engine stay where they are.
+
+`stitchkit/tools` now loads no optional peer, so an application without
+`@modelcontextprotocol/server` and `ai` can import it. Move each adapter import to its subpath:
+
+```ts
+// before
+import { createMcpHandler, listToolNames, mountAgent } from 'stitchkit/tools'
+import { createToolkit } from 'stitchkit/tools'
+// after
+import { listToolNames } from 'stitchkit/tools'
+import { createMcpHandler } from 'stitchkit/tools/mcp'
+import { mountAgent } from 'stitchkit/tools/agent'
+import { createToolkit } from 'stitchkit/tools/toolkit'
+```
+
+| Names | New subpath | Peers it needs |
+|-------|-------------|----------------|
+| `createMcpHandler`, `createMcpHttpRoute`, `buildMcpServer`, `mountMcp`, `mountMcpResource`, `validateMcpSchemas`, `createStdioMcpServer`, `bindStdioProcessSignals`, `inlineMcpAppBundle`, `mcpCatalogMeta`, `readMcpCatalogStamp`, `EXT_APPS_BUNDLE_PLACEHOLDER`, `MCP_CATALOG_META_KEY`, `RESOURCE_MIME_TYPE` and their config types, `McpServer`, `IncompatibleSchemaPolicy`, `McpSchemaValidationConfig` | `stitchkit/tools/mcp` | `@modelcontextprotocol/server` |
+| `mountAgent`, `AgentMountConfig`, `AgentContext` | `stitchkit/tools/agent` | `ai` |
+| `createToolkit`, `Toolkit` | `stitchkit/tools/toolkit` | `@modelcontextprotocol/server`, `ai` |
+
+The move is mechanical: `bunx stitchkit upgrade --from 0.119.0` lists every import it touches, and
+`tsc` names any name still imported from `stitchkit/tools`. Behaviour is unchanged.
+
 ## Released migration: 0.119.0
 
 ### factory-default-exposure

@@ -46,7 +46,7 @@
     "stitchkit/telegram/html": 19,
     "stitchkit/telegram/screens": 76,
     "stitchkit/testing": 81,
-    "stitchkit/tools": 216,
+    "stitchkit/tools": 170,
     "stitchkit/tools/connections": 26,
     "stitchkit/tools/contract": 15,
     "stitchkit/tools/invoker": 4,
@@ -57,6 +57,8 @@
     "stitchkit/process": 15,
     "stitchkit/process/owner-loss": 1,
     "stitchkit/tools/mcp": 47,
+    "stitchkit/tools/agent": 3,
+    "stitchkit/tools/toolkit": 2,
     "stitchkit/http": 37,
     "stitchkit/realtime": 14
   },
@@ -528,11 +530,6 @@
       "names": ["OperationIdentity"]
     },
     {
-      "entrypoints": ["stitchkit/testing", "stitchkit/tools"],
-      "reason": "MCP schema validation policy is configured by mounts and by the surface tests",
-      "names": ["IncompatibleSchemaPolicy", "McpSchemaValidationConfig"]
-    },
-    {
       "entrypoints": ["stitchkit/tools", "stitchkit/tools/contract"],
       "reason": "the browser-safe contract-side subset of the tools surface",
       "names": [
@@ -570,54 +567,13 @@
     },
     {
       "entrypoints": ["stitchkit/tools", "stitchkit/tools/mcp"],
-      "reason": "The MCP-only leaf re-exports the same SDK server factories, protocol schemas, catalog, resource, signal and surface container owners; it introduces no alternate MCP implementation (ADR 0231).",
+      "reason": "Both name the one runtime-tool declaration and its neutral surface container; the MCP server, its schemas, catalog, resources and signals are exported by stitchkit/tools/mcp alone, so stitchkit/tools loads no optional peer (ADRs 0231 and 0284).",
       "names": [
-        "DirectMcpSurfaceConfig",
-        "EXT_APPS_BUNDLE_PLACEHOLDER",
-        "FiniteMcpSurfaceConfig",
-        "IncompatibleSchemaPolicy",
-        "MCP_CATALOG_META_KEY",
-        "McpAppCsp",
-        "McpAppResourceMeta",
-        "McpCatalogStamp",
-        "McpHandlerConfig",
-        "McpHttpConfig",
-        "McpHttpHandler",
-        "McpHttpSecurityConfig",
-        "McpLegacyPolicy",
-        "McpMountConfig",
-        "McpResourceDef",
-        "McpSchemaValidationConfig",
-        "McpServer",
-        "McpServerBuildConfig",
-        "McpServerSharedConfig",
-        "McpStdioHandle",
-        "McpSurfaceDefinition",
-        "McpSurfaceRegistry",
-        "RESOURCE_MIME_TYPE",
         "RuntimeMcpPresentation",
         "RuntimeToolDefinition",
         "RuntimeToolDefinitionWithOutput",
         "RuntimeToolDefinitionWithoutOutput",
-        "StdioAuthConfig",
-        "StdioCloseTarget",
-        "StdioMcpServerConfig",
-        "StdioProcessSignalsBinding",
-        "StdioProcessSignalsErrorPhase",
-        "StdioProcessSignalsOptions",
-        "ToolSurfaceProjection",
-        "ValidateMcpSchemasConfig",
-        "bindStdioProcessSignals",
-        "buildMcpServer",
-        "createMcpHandler",
-        "createMcpHttpRoute",
-        "createStdioMcpServer",
-        "inlineMcpAppBundle",
-        "mcpCatalogMeta",
-        "mountMcp",
-        "mountMcpResource",
-        "readMcpCatalogStamp",
-        "validateMcpSchemas"
+        "ToolSurfaceProjection"
       ]
     },
     {
@@ -724,7 +680,7 @@
       "reason": "Documented shapes a caller holds: MountableTool is what collectTools returns, ToolOperation the path-free operation both runners execute; exported so the value can be named, not re-derived with Parameters<…>."
     },
     {
-      "entrypoint": "stitchkit/tools",
+      "entrypoint": "stitchkit/tools/mcp",
       "names": ["EXT_APPS_BUNDLE_PLACEHOLDER", "MCP_CATALOG_META_KEY"],
       "reason": "Documented constants of the MCP surface: the token inlineMcpAppBundle replaces and the namespaced _meta key a client reads the catalog stamp under."
     },

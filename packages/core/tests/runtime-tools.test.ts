@@ -10,12 +10,9 @@ import {
   setRequestDimensions,
 } from '../src/entrypoints/observability';
 import { implement } from '../src/entrypoints/server';
-import {
-  buildMcpServer,
-  defineRuntimeTool,
-  mountAgent,
-  type ToolCallHooks,
-} from '../src/entrypoints/tools';
+import { defineRuntimeTool, type ToolCallHooks } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
+import { buildMcpServer } from '../src/entrypoints/tools/mcp';
 
 async function connect(server: McpServer): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

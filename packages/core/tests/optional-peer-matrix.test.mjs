@@ -42,7 +42,7 @@ describe('optional peer matrix', () => {
 
   test('a feature with two absent runtime peers accepts whichever package Node resolves first', () => {
     const expectation = {
-      caseName: 'tools-mcp-feature',
+      caseName: 'tools-toolkit',
       expected: ['Cannot find package'],
       expectedAny: ["'ai'", "'@modelcontextprotocol/server'"],
     };
@@ -60,6 +60,6 @@ describe('optional peer matrix', () => {
         ...expectation,
         result: { failed: true, output: "Cannot find package 'unrelated-peer'" },
       }),
-    ).toThrow('tools-mcp-feature: missing-peer diagnostic mismatch');
+    ).toThrow('tools-toolkit: missing-peer diagnostic mismatch');
   });
 });

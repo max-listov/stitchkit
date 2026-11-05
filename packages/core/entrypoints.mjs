@@ -29,6 +29,8 @@ export const ENTRYPOINTS = [
   },
   { subpath: './tools', source: 'src/entrypoints/tools.ts', browser: false },
   { subpath: './tools/mcp', source: 'src/entrypoints/tools/mcp.ts', browser: false },
+  { subpath: './tools/agent', source: 'src/entrypoints/tools/agent.ts', browser: false },
+  { subpath: './tools/toolkit', source: 'src/entrypoints/tools/toolkit.ts', browser: false },
   { subpath: './tools/contract', source: 'src/entrypoints/tools/contract.ts', browser: true },
   { subpath: './tools/invoker', source: 'src/entrypoints/tools/invoker.ts', browser: false },
   {

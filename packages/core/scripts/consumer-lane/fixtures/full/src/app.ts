@@ -32,11 +32,7 @@ import { createObservability, type RequestEvent } from 'stitchkit/observability'
 import { createEntityCacheHandlers, type EntityCacheEvent } from 'stitchkit/react';
 import { implement, ShutdownOptionsSchema } from 'stitchkit/server';
 import {
-  bindStdioProcessSignals,
-  buildMcpServer,
   buildToolManifest,
-  createMcpHandler,
-  createMcpHttpRoute,
   createToolInvoker,
   defineDownloadTool,
   defineRuntimeTool,
@@ -45,20 +41,26 @@ import {
   defineWaitTool,
   describeToolCatalog,
   type ErrorHintFn,
-  EXT_APPS_BUNDLE_PLACEHOLDER,
   flattenToolJsonSchema,
-  inlineMcpAppBundle,
   listToolNames,
-  mountAgent,
-  RESOURCE_MIME_TYPE,
   summarizeTransports,
   type ToolCallContext,
   type ToolCallHooks,
   type ToolLifecycle,
   type ToolPresentationSchema,
   type ToolResult,
-  validateMcpSchemas,
 } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
+import {
+  bindStdioProcessSignals,
+  buildMcpServer,
+  createMcpHandler,
+  createMcpHttpRoute,
+  EXT_APPS_BUNDLE_PLACEHOLDER,
+  inlineMcpAppBundle,
+  RESOURCE_MIME_TYPE,
+  validateMcpSchemas,
+} from 'stitchkit/tools/mcp';
 import { z } from 'zod';
 
 declare const process: {

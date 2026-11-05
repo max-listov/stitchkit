@@ -58,9 +58,9 @@ changed default, stricter validation):
    ```md
    ### ⚠️ Breaking changes
 
-   - `stitchkit/tools` — **`createMcpHandler` no longer accepts `foo`** — it moved to `bar` because …
+   - `stitchkit/tools/mcp` — **`createMcpHandler` no longer accepts `foo`** — it moved to `bar` because …
      `// before: createMcpHandler({ foo })` → `// after: createMcpHandler({ bar })` → ADR NNNN
-     **Affects:** `stitchkit/tools` createMcpHandler(foo)
+     **Affects:** `stitchkit/tools/mcp` createMcpHandler(foo)
    ```
 
    Each item ends with one `**Affects:**` line, on one line: backticked entrypoint(s), then the

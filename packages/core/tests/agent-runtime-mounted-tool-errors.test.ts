@@ -14,11 +14,8 @@ import {
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
 import { AppError } from '../src/entrypoints/contract';
-import {
-  defineRuntimeTool,
-  mountAgent,
-  type RuntimeToolDefinition,
-} from '../src/entrypoints/tools';
+import { defineRuntimeTool, type RuntimeToolDefinition } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 import { sqliteScratchDir } from './support/sqlite-scratch';
 
 const roots: string[] = [];

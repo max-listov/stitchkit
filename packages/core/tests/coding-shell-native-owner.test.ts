@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ShellOutputSchema } from '../src/agent-runtime/coding-tool-contract';
 import type { AgentProcessSandbox, AgentSandboxProcess } from '../src/agent-runtime/sandbox';
 import { createAgentCodingTools } from '../src/entrypoints/agent-runtime/coding-tools';
-import { mountAgent } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -191,7 +191,7 @@ describe('coding shell shared native ownership', () => {
     roots.push(root);
     const entry = new URL('../src/entrypoints/agent-runtime/coding-tools.ts', import.meta.url)
       .pathname;
-    const mount = new URL('../src/entrypoints/tools.ts', import.meta.url).pathname;
+    const mount = new URL('../src/entrypoints/tools/agent.ts', import.meta.url).pathname;
     const child = Bun.spawn(
       [
         process.execPath,

@@ -15,8 +15,8 @@ import {
   createLocalStepDurability,
   defineRuntimeTool,
   defineToolRegistry,
-  mountAgent,
 } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 import { z } from 'zod';
 
 const probe = spawnSync('/usr/bin/bwrap', [

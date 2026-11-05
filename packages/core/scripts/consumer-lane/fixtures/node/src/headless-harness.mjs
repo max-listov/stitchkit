@@ -12,7 +12,8 @@ import {
   createHeadlessAgentHarness,
 } from 'stitchkit/agent-runtime/harness';
 import { AppError } from 'stitchkit/contract';
-import { composeToolLifecycle, defineRuntimeTool, mountAgent } from 'stitchkit/tools';
+import { composeToolLifecycle, defineRuntimeTool } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 import { z } from 'zod';
 import './approval-chronology.mjs';
 

@@ -22,7 +22,8 @@ import {
   createAgentHarnessFileResources,
   createHeadlessAgentHarness,
 } from 'stitchkit/agent-runtime/harness';
-import { composeToolLifecycle, mountAgent } from 'stitchkit/tools';
+import { composeToolLifecycle } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 
 const resources = createAgentHarnessFileResources({
   roots: [{ id: 'guide', kind: 'instruction', path: instructionRoot }],
@@ -46,8 +47,8 @@ compose your authorization with the run's `toolFenceLifecycle` by `composeToolLi
 fence rejects a call from a run that no longer owns the conversation, and it must run exactly
 once. Every mount option remains available, including registry, runtime tools, extension,
 coercion, output stripping, hooks and durability, and the callback may be async. The same callback
-still accepts arbitrary typed AI SDK tools and prepareStep. `stitchkit/tools` needs the same `ai` and
-`@modelcontextprotocol/server` peers as any `mountAgent` use; the base harness stays AI-only.
+still accepts arbitrary typed AI SDK tools and prepareStep. `mountAgent` comes from `stitchkit/tools/agent`, which needs only the `ai` peer the
+harness already has; the base harness stays AI-only.
 The resource reader is explicitly selected: filtered allowlists do not gain tools merely
 because a loader exists. Root IDs, kinds, provenance and limits are unchanged.
 

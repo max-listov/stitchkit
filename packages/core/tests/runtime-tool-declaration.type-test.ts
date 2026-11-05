@@ -16,7 +16,8 @@ import {
   type RuntimeToolDefinition,
   type RuntimeToolDefinitionWithOutput,
 } from '../src/entrypoints/cli';
-import { defineRuntimeTool, mountAgent } from '../src/entrypoints/tools';
+import { defineRuntimeTool } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 import {
   buildMcpServer,
   type RuntimeToolDefinition as McpRegisteredTool,

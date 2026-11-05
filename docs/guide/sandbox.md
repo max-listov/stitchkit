@@ -49,7 +49,7 @@ Storage is process-durable, without a power-loss/fsync guarantee.
 
 ```ts
 import { createSandboxCodingTools } from 'stitchkit/agent-runtime/sandbox';
-import { mountAgent } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 
 const tools = mountAgent([], {
   runtimeTools: createSandboxCodingTools(handle, {

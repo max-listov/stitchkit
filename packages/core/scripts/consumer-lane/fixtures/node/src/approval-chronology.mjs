@@ -7,7 +7,7 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { defineAgentProtocol, projectAgentHistoryDetailed } from 'stitchkit/agent-runtime';
 import { createAgentCodingTools } from 'stitchkit/agent-runtime/coding-tools';
 import { createHeadlessAgentHarness } from 'stitchkit/agent-runtime/harness';
-import { mountAgent } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 import { z } from 'zod';
 
 // SQLite drivers are runtime-specific leaves; neither host imports the other driver.

@@ -44,8 +44,10 @@ own, recorded as an ADR.
 | `stitchkit/primitives` | browser **and** server | evolving | generic values and declarations for lifecycle, access, audit, delivery and exports, exact money and rounding tables |
 | `stitchkit/server` | server (Bun) | stable | `createServer`, `implement`, hooks, auth, Socket.IO server, server primitives |
 | `stitchkit/node` | server (Node ≥ 22) | stable | `serveNode` + the runtime-agnostic core — the Node mirror of `/server` |
-| `stitchkit/tools` | server | stable | `createMcpHandler`, `mountMcp`, `mountAgent`, the OAuth provider, native tools |
+| `stitchkit/tools` | server | stable | the transport-neutral tool layer — registry, tool names and manifest, runtime tools, native tools, the OAuth provider, the durability engine; loads no optional peer at runtime |
 | `stitchkit/tools/mcp` | server (Bun or Node) | evolving | the canonical MCP HTTP/stdio server, schemas and typed MCP presenters; only Zod and the MCP server SDK peers |
+| `stitchkit/tools/agent` | server (Bun or Node) | evolving | `mountAgent` — a contract's operations as AI SDK tools; only Zod and the `ai` peer |
+| `stitchkit/tools/toolkit` | server (Bun or Node) | evolving | `createToolkit` — one tool set served over MCP and to an AI SDK agent; the MCP server SDK and `ai` peers |
 | `stitchkit/tools/contract` | browser + server | evolving | the shapes a tool surface speaks — async-operation contract, snapshot and cancel schemas, view-file input/output — without the runtime that serves them |
 | `stitchkit/tools/invoker` | server | stable | peer-free `createToolInvoker` over the canonical contract tool runner |
 | `stitchkit/tools/connections` | server (Bun or Node) | evolving | consume external MCP servers and a bounded OpenAPI subset — typed reauthorization, a per-request host fence and per-call credentials |
@@ -192,7 +194,10 @@ map — feature → packages:
 | `createServer` (Bun) | — (uses `Bun.serve`) |
 | `serveNode` (Node ≥ 22) | `srvx` (+ `@types/bun` dev) |
 | In-process contract tools (`stitchkit/tools/invoker`) | — |
-| MCP / agent adapters (`stitchkit/tools`) | `@modelcontextprotocol/server` `ai` |
+| Tool layer — registry, tool names, runtime tools (`stitchkit/tools`) | — |
+| MCP server (`stitchkit/tools/mcp`) | `@modelcontextprotocol/server` |
+| AI SDK agent tools (`stitchkit/tools/agent`) | `ai` |
+| MCP and agent toolkit (`stitchkit/tools/toolkit`) | `@modelcontextprotocol/server` `ai` |
 | Agent application runtime (`stitchkit/agent-runtime`) | `ai` |
 | Headless Agent harness (`stitchkit/agent-runtime/harness`) | `ai` |
 | Agent coding tools (`stitchkit/agent-runtime/coding-tools`) | — |
@@ -221,15 +226,16 @@ bun add socket.io @socket.io/bun-engine    # e.g. the Socket.IO server on Bun
 ```
 
 Dynamic optional-peer adapters fail with an actionable error naming the package
-and install command. Static entrypoints such as `stitchkit/tools` fail during
+and install command. Static entrypoints such as `stitchkit/tools/mcp` fail during
 ESM resolution by naming the exact missing package; the feature-to-peer matrix
 below is the canonical install command.
 
-The combined tools entry owns MCP and AI-agent adapters, so install both runtime
-peers before importing `stitchkit/tools`:
+`stitchkit/tools` itself loads no optional peer. Install the peer of the adapter
+you import — both for `stitchkit/tools/toolkit`:
 
 ```bash
-bun add @modelcontextprotocol/server@^2 ai@^7
+bun add @modelcontextprotocol/server@^2   # stitchkit/tools/mcp
+bun add ai@^7                             # stitchkit/tools/agent
 ```
 
 Browser, HTTP-client and React entrypoints remain usable without either MCP

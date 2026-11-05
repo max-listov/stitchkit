@@ -4,7 +4,9 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { AppError, defineContract, defineErrors } from '../src/entrypoints/contract';
 import { createHandler, implement } from '../src/entrypoints/server';
-import { buildMcpServer, createToolInvoker, mountAgent } from '../src/entrypoints/tools';
+import { createToolInvoker } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
+import { buildMcpServer } from '../src/entrypoints/tools/mcp';
 
 const { errors, codes, definitions, isCode } = defineErrors({
   SESSION_NOT_FOUND: { status: 404 },

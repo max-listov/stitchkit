@@ -19,7 +19,8 @@ import {
   createAgentHarnessFileResources,
   createHeadlessAgentHarness,
 } from '../src/entrypoints/agent-runtime/harness';
-import { defineRuntimeTool, mountAgent } from '../src/entrypoints/tools';
+import { defineRuntimeTool } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 import { sqliteScratchDir } from './support/sqlite-scratch';
 
 const usage = {

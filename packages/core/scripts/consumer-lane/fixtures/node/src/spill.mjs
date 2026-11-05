@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSqliteAgentSpillStore } from 'stitchkit/agent-runtime';
 import { createAgentCodingTools } from 'stitchkit/agent-runtime/coding-tools';
-import { mountAgent } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 import { packedSqlite, proof } from './packed-sqlite.mjs';
 
 const { handle } = packedSqlite();

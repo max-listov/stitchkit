@@ -1629,57 +1629,25 @@ SDK, `ai`, or other optional tool peers, so it is safe in a thin CLI bundle.
 
 ## `stitchkit/tools`
 
-Server-only. Turns contracts into MCP and AI-agent tools. MCP server surfaces
-need the `@modelcontextprotocol/server` v2 peer; MCP hosts/tests use the separate
-`@modelcontextprotocol/client` package. Agent surfaces need the `ai` peer.
-
-Framework-owned MCP tools advertise the exact declared output schema and return
-the validated value unchanged as `structuredContent`, including arrays, scalars
-and `null`. Tools without an output contract advertise and return no structured
-payload.
+Server-only, and imported without any optional peer: the transport-neutral tool layer —
+the registry, tool names and manifest, runtime tools, native tools, the invoker, the OAuth
+provider and the durability engine. An application that serves its operations over HTTP and
+CLI lists its tool names here with neither MCP nor the AI SDK installed. The adapters that
+need a peer have their own subpaths: [`stitchkit/tools/mcp`](#stitchkittoolsmcp) (the MCP
+server SDK), [`stitchkit/tools/agent`](#stitchkittoolsagent) (the `ai` peer) and
+[`stitchkit/tools/toolkit`](#stitchkittoolstoolkit) (both). → ADR 0284.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createMcpHandler` | function | a stateless dual-era Streamable-HTTP MCP handler — [guide](../guide/mcp-and-agents.md#mcp--createmcphandler) |
-| `createMcpHttpRoute` | function | framework-owned `RawRoute` adapter for an MCP HTTP handler |
-| `createStdioMcpServer` | function | a complete stdio MCP server — [guide](../guide/mcp-and-agents.md#mcp-over-stdio--createstdiomcpserver) |
-| `bindStdioProcessSignals` | function | explicitly bind OS signals to one close-only stdio handle — [guide](../guide/testing-and-deployment.md#stdio-process-signals) |
-| `buildMcpServer` | function | build an `McpServer` from contract/runtime surfaces; no-auth configs omit the second argument |
-| `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
-| `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service; failed executions reject through the SDK tool-error channel with a safe typed envelope, while successful output is never classified by field name — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
 | `defineRuntimeTool` | function | define one validated pathless operation for explicit MCP, Agent and/or CLI surfaces — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createRuntimeToolFactory` | function | bind shared identity and Zod-validated per-call context for runtime tools — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
-| `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner; use peer-free `stitchkit/tools/invoker`, or the full `stitchkit/tools` adapter barrel — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |
-| `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
+| `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner; use `stitchkit/tools/invoker` or `stitchkit/tools`, both peer-free — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |
 | `mountViewFile` | function | a native multimodal "view file" MCP tool |
 | `resolveMedia` | function | resolve a media reference for a tool result |
-| `validateMcpSchemas` | function | object-shaped assertion over the exact advertised schema surface — compatibility, typed properties and portable formats ([guide](../guide/mcp-and-agents.md#mcp-schema-validation-profile)) |
 | `listToolNames` | function | every contract/runtime tool name with origin, identity and transports — for stable snapshots — [guide](../guide/mcp-and-agents.md#pinning-tool-names--listtoolnames) |
 | `listContractToolNames` | function | the same listing straight from contracts — no handlers or stub services needed |
 | `describeToolCatalog` | function | inspect the exact model-facing names, source identities, schema byte sizes and deferred state; an explicit total byte budget fails closed |
 | `ToolCatalogConfig` / `ToolCatalogEntry` | _type_ | catalog source, transport, optional explicit schema budget and one inspectable result row |
-| `McpHandlerConfig` | _type_ | server surface plus stateless HTTP transport config |
-| `McpHttpConfig` | _type_ | HTTP auth, protected-resource, legacy-era and security options |
-| `McpHttpHandler` | _type_ | framework-owned `{ fetch(request), close() }` lifecycle |
-| `McpHttpSecurityConfig` | _type_ | Fetch-boundary Host and Origin allowlists |
-| `McpLegacyPolicy` | _type_ | `'serve' \| 'reject'` protocol-era compatibility policy |
-| `McpStdioHandle` | _type_ | closeable official stdio transport handle |
-| `StdioMcpServerConfig` | _type_ | config for `createStdioMcpServer` |
-| `StdioCloseTarget` | _type_ | minimal close-only target accepted by `bindStdioProcessSignals` |
-| `StdioProcessSignalsOptions` | _type_ | signal source, close callbacks and phased error reporting |
-| `StdioProcessSignalsBinding` | _type_ | close-only signal binding with observed `promise` and listener `close()` |
-| `StdioProcessSignalsErrorPhase` | _type_ | `'prepare' \| 'close' \| 'complete'` reporting phase |
-| `McpServerBuildConfig` | _type_ | shared config for `buildMcpServer` |
-| `McpServerSharedConfig` | _type_ | transport-neutral options shared by direct and finite surface configs |
-| `McpServer` | _type_ | official split-SDK server instance accepted by raw extension points |
-| `DirectMcpSurfaceConfig` | _type_ | static or identity-dynamic `services` / `runtimeTools` source |
-| `FiniteMcpSurfaceConfig` | _type_ | bounded `surfaces` registry plus typed selector |
-| `McpSurfaceDefinition` | _type_ | one immutable `{ services, runtimeTools }` MCP surface |
-| `McpSurfaceRegistry` | _type_ | finite keyed surface registry for eager preparation |
-| `StdioAuthConfig` | _type_ | startup identity composed into `StdioMcpServerConfig` |
-| `McpMountConfig` | _type_ | config for `mountMcp` |
-| `McpSchemaValidationConfig` | _type_ | shared `{ policy, requireTypedProperties, allowUntyped, requirePortableFormats, allowFormats }` profile |
-| `ValidateMcpSchemasConfig` | _type_ | standalone validation profile plus `services`, `extend`, flattening and logger |
 | `RuntimeToolDefinition` | _type_ | heterogeneous registration of pathless operations in `runtimeTools: [...]`; an inline handler is contextually typed by the parsed object, a definition constructed with its own schema registers unchanged, and the runner validates input before the handler |
 | `RuntimeToolDefinitionBase` | _type_ | common name, identity, input, exposure and MCP metadata fields |
 | `RuntimeToolDefinitionWithOutput` | _type_ | the one neutral construction: identity, schemas and a handler typed from them; the fourth type argument names the adapter's `present` extension (`RuntimeToolPresenters<…>` here, `RuntimeMcpToolPresenters<…>` on `stitchkit/tools/mcp`, none by default) |
@@ -1705,11 +1673,8 @@ payload.
 | `CimdCacheEvent` | _type_ | observable CIMD cache hit, miss, revalidation and eviction event |
 | `createSecureClientMetadataFetcher` | function | production HTTPS, DNS/IP-pinned CIMD fetcher |
 | `RuntimeAgentModelOutput` | _type_ | AI SDK model-facing text/JSON/content output returned by `present.agent` |
-| `AgentMountConfig` | _type_ | config for `mountAgent` |
 | `AgentToolRegistry` / `AgentToolRegistryBuilder` / `AgentToolRegistryInput` | _type_ | the composed runtime surface and its builder: declared defaults, `replace`/`disable` by name, and the exact `{ tools, names }` a mount receives |
 | `defineToolRegistry` | function | compose runtime tools over one declared default set; an unknown `replace`/`disable` name is refused instead of silently leaving the default in place |
-| `AgentContext` | _type_ | the context merged into agent tool handlers |
-| `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` |
 | `ToolExtend` | _type_ | extra-args extension for `mountMcp` / `mountAgent` |
 | `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` gate for tool calls — [guide](../guide/mcp-and-agents.md#guarding-tools--lifecycle) |
 | `ToolExecutionControlReason` | _type_ | internal managed-execution stop reason: stale run or requested interruption |
@@ -1741,7 +1706,6 @@ payload.
 | `NonPortableFormat` | _type_ | one `{ path, format }` portability finding |
 | `PORTABLE_JSON_SCHEMA_FORMATS` | constant | portable-format baseline used by MCP validation |
 | `ToolNameEntry` | _type_ | one `listToolNames` row — `{ kind, name, service, method, transports }` |
-| `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |
 
 ### Native tools
@@ -1845,6 +1809,77 @@ mountAgent(services, { durability: (toolCallId) => myLedgerFor(toolCallId) });
 | `AgentToolError` | class | the model-safe envelope a failed agent tool throws |
 | `isAgentToolError` | function | brand check for it — a consumer running its own loop no longer parses the message |
 
+### Introspection & internals
+
+Advanced building blocks — the shared machinery the mounts are built on.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `collectTools` | function | resolve a service's methods to mountable tools (the shared resolver) |
+| `createToolLogger` | function | a ready `afterToolCall` that logs every tool call — [guide](../guide/mcp-and-agents.md#logging-tool-calls--createtoollogger) |
+| `summarizeTransports` | function | mixed contract/runtime operation counts and per-source breakdown for a boot-time summary |
+| `buildToolManifest` | function | transport-aware searchable `{ name, description, inputSchema }` rows from a mixed surface |
+| `ToolLoggerConfig` | _type_ | config for `createToolLogger` |
+| `ToolCallRecord` | _type_ | the structured record `createToolLogger` passes to `onRecord` |
+| `TransportSummary` | _type_ | `{ contractServices, runtimeTools, totals, sources }` from `summarizeTransports` |
+| `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
+| `ToolSurfaceProjection` | _type_ | the one readonly `{ services?, runtimeTools? }` container shared by full, MCP-only and introspection surfaces (`buildToolManifest`, `listToolNames`, `summarizeTransports` take `ToolSurfaceProjection<RuntimeToolDefinition>`) |
+| `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options |
+| `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments, including object guards restored from JSON Schema; arbitrary transform pipes stay untouched; throws a `ZodError` naming the field when a union that keeps a string member receives a string that parses to an array its array member accepts |
+| `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions into conservative object joins; scalar collisions retain provable types, object/array collisions retain structural alternatives, and field descriptions retain discriminator labels plus availability/requiredness hints; the projection never executes validation |
+| `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |
+| `MountableTool` | _type_ | one operation with separate executable CLI argument schema and model-facing presentation schema |
+| `ToolManifestEntry` | _type_ | one `buildToolManifest` row |
+
+---
+
+## `stitchkit/tools/mcp`
+
+Server-only, and the one place the MCP server is exported. Its runtime and strict NodeNext
+declarations require Zod and the `@modelcontextprotocol/server` v2 peer, with no AI SDK peer;
+MCP hosts and tests use the separate `@modelcontextprotocol/client` package.
+
+Framework-owned MCP tools advertise the exact declared output schema and return
+the validated value unchanged as `structuredContent`, including arrays, scalars
+and `null`. Tools without an output contract advertise and return no structured
+payload. See [MCP guide](../guide/mcp-and-agents.md#mcp--createmcphandler).
+
+| Export | Kind | Purpose |
+|--------|------|---------|
+| `createMcpHandler` | function | a stateless dual-era Streamable-HTTP MCP handler — [guide](../guide/mcp-and-agents.md#mcp--createmcphandler) |
+| `createMcpHttpRoute` | function | framework-owned `RawRoute` adapter for an MCP HTTP handler |
+| `createStdioMcpServer` | function | a complete stdio MCP server — [guide](../guide/mcp-and-agents.md#mcp-over-stdio--createstdiomcpserver) |
+| `bindStdioProcessSignals` | function | explicitly bind OS signals to one close-only stdio handle — [guide](../guide/testing-and-deployment.md#stdio-process-signals) |
+| `buildMcpServer` | function | build an `McpServer` from contract/runtime surfaces; no-auth configs omit the second argument |
+| `mountMcp` | function | add contract tools to an existing `McpServer` — [guide](../guide/mcp-and-agents.md#mountmcp) |
+| `validateMcpSchemas` | function | object-shaped assertion over the exact advertised schema surface — compatibility, typed properties and portable formats ([guide](../guide/mcp-and-agents.md#mcp-schema-validation-profile)) |
+| `McpHandlerConfig` | _type_ | server surface plus stateless HTTP transport config |
+| `McpHttpConfig` | _type_ | HTTP auth, protected-resource, legacy-era and security options |
+| `McpHttpHandler` | _type_ | framework-owned `{ fetch(request), close() }` lifecycle |
+| `McpHttpSecurityConfig` | _type_ | Fetch-boundary Host and Origin allowlists |
+| `McpLegacyPolicy` | _type_ | `'serve' \| 'reject'` protocol-era compatibility policy |
+| `McpStdioHandle` | _type_ | closeable official stdio transport handle |
+| `StdioMcpServerConfig` | _type_ | config for `createStdioMcpServer` |
+| `StdioCloseTarget` | _type_ | minimal close-only target accepted by `bindStdioProcessSignals` |
+| `StdioProcessSignalsOptions` | _type_ | signal source, close callbacks and phased error reporting |
+| `StdioProcessSignalsBinding` | _type_ | close-only signal binding with observed `promise` and listener `close()` |
+| `StdioProcessSignalsErrorPhase` | _type_ | `'prepare' \| 'close' \| 'complete'` reporting phase |
+| `McpServerBuildConfig` | _type_ | shared config for `buildMcpServer` |
+| `McpServerSharedConfig` | _type_ | transport-neutral options shared by direct and finite surface configs |
+| `McpServer` | _type_ | official split-SDK server instance accepted by raw extension points |
+| `DirectMcpSurfaceConfig` | _type_ | static or identity-dynamic `services` / `runtimeTools` source |
+| `FiniteMcpSurfaceConfig` | _type_ | bounded `surfaces` registry plus typed selector |
+| `McpSurfaceDefinition` | _type_ | one immutable `{ services, runtimeTools }` MCP surface |
+| `McpSurfaceRegistry` | _type_ | finite keyed surface registry for eager preparation |
+| `StdioAuthConfig` | _type_ | startup identity composed into `StdioMcpServerConfig` |
+| `McpMountConfig` | _type_ | config for `mountMcp` |
+| `McpSchemaValidationConfig` | _type_ | shared `{ policy, requireTypedProperties, allowUntyped, requirePortableFormats, allowFormats }` profile |
+| `ValidateMcpSchemasConfig` | _type_ | standalone validation profile plus `services`, `extend`, flattening and logger |
+| `IncompatibleSchemaPolicy` | _type_ | `'throw' \| 'skip' \| 'warn'` |
+| `RuntimeToolDefinitionWithOutput` / `RuntimeToolDefinitionWithoutOutput` | _type_ | the one neutral construction, shared with `stitchkit/cli` and `stitchkit/tools`; MCP-only presenters are its fourth type argument, `RuntimeMcpToolPresenters<z.output<typeof output>>` |
+| `RuntimeToolDefinition` | _type_ | heterogeneous registration; the canonical runner validates input/output before invocation |
+| `RuntimeMcpToolPresenters` / `RuntimeMcpPresentation` | _type_ | official SDK content without framework-owned `structuredContent` or `isError`; one presenter owner shared with the full SDK surface |
+
 ### Catalog stamp
 
 Every advertised tool and every tool result carries the fingerprint of the catalog it came
@@ -1878,44 +1913,26 @@ Interactive MCP resources — [ADR 0019](../decisions/0019-generic-native-tools.
 | `McpAppResourceMeta` | _type_ | resource `_meta` for an MCP App |
 | `McpAppCsp` | _type_ | the widget content-security policy |
 
-### Introspection & internals
+## `stitchkit/tools/agent`
 
-Advanced building blocks — the shared machinery the mounts are built on.
+Server-only. A contract's operations as Vercel AI SDK tools; needs Zod and the `ai`
+peer, not the MCP server SDK. → ADR 0284.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `collectTools` | function | resolve a service's methods to mountable tools (the shared resolver) |
-| `createToolLogger` | function | a ready `afterToolCall` that logs every tool call — [guide](../guide/mcp-and-agents.md#logging-tool-calls--createtoollogger) |
-| `summarizeTransports` | function | mixed contract/runtime operation counts and per-source breakdown for a boot-time summary |
-| `buildToolManifest` | function | transport-aware searchable `{ name, description, inputSchema }` rows from a mixed surface |
-| `ToolLoggerConfig` | _type_ | config for `createToolLogger` |
-| `ToolCallRecord` | _type_ | the structured record `createToolLogger` passes to `onRecord` |
-| `TransportSummary` | _type_ | `{ contractServices, runtimeTools, totals, sources }` from `summarizeTransports` |
-| `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
-| `ToolSurfaceProjection` | _type_ | the one readonly `{ services?, runtimeTools? }` container shared by full, MCP-only and introspection surfaces (`buildToolManifest`, `listToolNames`, `summarizeTransports` take `ToolSurfaceProjection<RuntimeToolDefinition>`) |
-| `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options |
-| `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments, including object guards restored from JSON Schema; arbitrary transform pipes stay untouched; throws a `ZodError` naming the field when a union that keeps a string member receives a string that parses to an array its array member accepts |
-| `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions into conservative object joins; scalar collisions retain provable types, object/array collisions retain structural alternatives, and field descriptions retain discriminator labels plus availability/requiredness hints; the projection never executes validation |
-| `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |
-| `MountableTool` | _type_ | one operation with separate executable CLI argument schema and model-facing presentation schema |
-| `ToolManifestEntry` | _type_ | one `buildToolManifest` row |
+| `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service; failed executions reject through the SDK tool-error channel with a safe typed envelope, while successful output is never classified by field name — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
+| `AgentMountConfig` | _type_ | config for `mountAgent` |
+| `AgentContext` | _type_ | the context merged into agent tool handlers |
 
----
+## `stitchkit/tools/toolkit`
 
-## `stitchkit/tools/mcp`
+Server-only. One context-typed tool set served over MCP and to an AI SDK agent, so it
+needs both the `@modelcontextprotocol/server` and `ai` peers. → ADR 0284.
 
-A server-only leaf over the same MCP owner as `stitchkit/tools`. Its runtime and strict
-NodeNext declarations require Zod and `@modelcontextprotocol/server`, with no AI SDK peer.
-HTTP/stdio factories, mounts, schema policy, catalog and resource helpers keep their canonical
-behavior and names. See [MCP guide](../guide/mcp-and-agents.md#mcp--createmcphandler).
-
-| Export | Kind | Purpose |
+| Export | Kind | Summary |
 |--------|------|---------|
-| `createMcpHandler` / `createMcpHttpRoute` / `buildMcpServer` / `mountMcp` | function | the shared authenticated HTTP handler, raw-route adapter, SDK server and contract mount |
-| `createStdioMcpServer` / `bindStdioProcessSignals` | function | the shared stdio server and bounded process cleanup |
-| `RuntimeToolDefinitionWithOutput` / `RuntimeToolDefinitionWithoutOutput` | _type_ | the one neutral construction, shared with `stitchkit/cli` and `stitchkit/tools`; MCP-only presenters are its fourth type argument, `RuntimeMcpToolPresenters<z.output<typeof output>>` |
-| `RuntimeToolDefinition` | _type_ | heterogeneous registration; the canonical runner validates input/output before invocation |
-| `RuntimeMcpToolPresenters` / `RuntimeMcpPresentation` | _type_ | official SDK content without framework-owned `structuredContent` or `isError`; one presenter owner shared with the full SDK surface |
+| `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
+| `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` |
 
 ## `stitchkit/tools/connections`
 

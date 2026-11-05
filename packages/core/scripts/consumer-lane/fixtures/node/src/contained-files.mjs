@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createAgentCodingTools } from 'stitchkit/agent-runtime/coding-tools';
 import { createAgentHarnessFileResources } from 'stitchkit/agent-runtime/harness';
-import { mountAgent } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 import { entryBoundaryControls } from './contained-entry-controls.mjs';
 
 const roots = [];

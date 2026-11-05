@@ -34,7 +34,7 @@ import {
   createFaultProviderServer,
   createReplayAgentProvider,
 } from '../src/entrypoints/agent-runtime/testing';
-import { mountAgent } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 
 function sqlite(): SqliteDatabase {
   const raw = new Database(':memory:');

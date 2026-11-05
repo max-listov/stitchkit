@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentCodingTools } from 'stitchkit/agent-runtime/coding-tools';
-import { mountAgent } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 import { proof } from './packed-sqlite.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'stitchkit-packed-sandbox-'));

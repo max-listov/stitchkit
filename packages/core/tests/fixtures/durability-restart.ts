@@ -4,7 +4,8 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { createBunSqliteAgentRuntimeStore } from '../../src/agent-runtime/sqlite-bun';
 import { createAgentRuntime, defineAgentProtocol } from '../../src/entrypoints/agent-runtime';
-import { defineRuntimeTool, mountAgent } from '../../src/entrypoints/tools';
+import { defineRuntimeTool } from '../../src/entrypoints/tools';
+import { mountAgent } from '../../src/entrypoints/tools/agent';
 
 const [filename, effects, phase] = process.argv.slice(2);
 if (!filename || !effects) throw new Error('fixture requires paths');

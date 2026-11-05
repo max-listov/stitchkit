@@ -14,7 +14,7 @@ import {
   AgentHarnessApprovalRejectedError,
   createHeadlessAgentHarness,
 } from '../src/entrypoints/agent-runtime/harness';
-import { mountAgent } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },

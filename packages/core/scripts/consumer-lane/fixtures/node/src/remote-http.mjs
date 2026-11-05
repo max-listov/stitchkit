@@ -13,7 +13,8 @@ import { AppError } from 'stitchkit/contract';
 import { withExclusiveLock } from 'stitchkit/files';
 import { implement, serveNode } from 'stitchkit/node';
 import { implementRemote } from 'stitchkit/remote';
-import { isAgentToolError, mountAgent } from 'stitchkit/tools';
+import { isAgentToolError } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 import { createMcpHandler } from 'stitchkit/tools/mcp';
 import { contract } from './remote-http-contract.mjs';
 

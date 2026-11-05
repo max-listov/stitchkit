@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createAgentCodingTools } from 'stitchkit/agent-runtime/coding-tools';
 import { createBubblewrapSandboxBackend } from 'stitchkit/agent-runtime/sandbox';
 import { observeProcessInstance, probeProcessOwner } from 'stitchkit/process';
-import { mountAgent } from 'stitchkit/tools';
+import { mountAgent } from 'stitchkit/tools/agent';
 
 assert.equal(
   process.platform,

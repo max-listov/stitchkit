@@ -15,6 +15,30 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** code importing the MCP server, `mountAgent` or `createToolkit` from `stitchkit/tools`. Code that imports only the registry, tool names, runtime and native tools, the invoker, the OAuth provider or the durability engine from `stitchkit/tools` changes nothing. See the [migration](docs/guide/upgrading.md#tools-barrel-subpaths).
+
+- `stitchkit/tools` — **the tools barrel loads no optional peer; MCP, the agent mount and the toolkit have their own subpaths.**
+  An application serving its operations over HTTP and CLI could not import `listToolNames` without
+  installing `@modelcontextprotocol/server` and `ai`: the barrel re-exported the MCP server factories,
+  `mountAgent` and `createToolkit`, and ESM resolution of the entry needed both optional peers. Import
+  the MCP server — `createMcpHandler`, `createMcpHttpRoute`, `buildMcpServer`, `mountMcp`,
+  `mountMcpResource`, `validateMcpSchemas`, `createStdioMcpServer`, `bindStdioProcessSignals`, the
+  catalog stamp and MCP Apps helpers and their config types — from `stitchkit/tools/mcp`, which already
+  exported them; `mountAgent`, `AgentMountConfig` and `AgentContext` from the new
+  `stitchkit/tools/agent` (the `ai` peer); `createToolkit` and `Toolkit` from the new
+  `stitchkit/tools/toolkit` (both peers). A build check walks the built `stitchkit/tools` graph and fails
+  on any optional peer import. `// before: import { createMcpHandler, mountAgent } from 'stitchkit/tools'`
+  → `// after: import { createMcpHandler } from 'stitchkit/tools/mcp'; import { mountAgent } from 'stitchkit/tools/agent'`.
+  [ADR 0284](docs/decisions/0284-the-tools-barrel-loads-no-optional-peer.md);
+  [migration](docs/guide/upgrading.md#tools-barrel-subpaths).
+  **Affects:** `stitchkit/tools` createMcpHandler, createMcpHttpRoute, buildMcpServer, mountMcp, mountMcpResource, validateMcpSchemas, createStdioMcpServer, bindStdioProcessSignals, inlineMcpAppBundle, mcpCatalogMeta, readMcpCatalogStamp, EXT_APPS_BUNDLE_PLACEHOLDER, MCP_CATALOG_META_KEY, RESOURCE_MIME_TYPE, McpServer, McpHandlerConfig, McpHttpConfig, McpHttpHandler, McpHttpSecurityConfig, McpLegacyPolicy, McpMountConfig, McpServerBuildConfig, McpServerSharedConfig, DirectMcpSurfaceConfig, FiniteMcpSurfaceConfig, McpSurfaceDefinition, McpSurfaceRegistry, McpSchemaValidationConfig, ValidateMcpSchemasConfig, IncompatibleSchemaPolicy, McpStdioHandle, StdioMcpServerConfig, StdioAuthConfig, StdioCloseTarget, StdioProcessSignalsOptions, StdioProcessSignalsBinding, StdioProcessSignalsErrorPhase, McpCatalogStamp, McpResourceDef, McpAppResourceMeta, McpAppCsp, mountAgent, AgentMountConfig, AgentContext, createToolkit, Toolkit
+
+### Added
+
+- `stitchkit/tools/agent` — `mountAgent` with only Zod and the `ai` peer; `stitchkit/tools/toolkit` — `createToolkit`, the one subpath that needs both the MCP server SDK and `ai`. Both start evolving.
+
 ## [0.119.0] - 2026-11-04
 
 ### ⚠️ Breaking changes

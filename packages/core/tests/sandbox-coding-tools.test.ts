@@ -7,7 +7,7 @@ import {
   createBubblewrapSandboxBackend,
   createSandboxCodingTools,
 } from '../src/entrypoints/agent-runtime/sandbox';
-import { mountAgent } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 
 const probe = spawnSync('/usr/bin/bwrap', [
   '--unshare-all',

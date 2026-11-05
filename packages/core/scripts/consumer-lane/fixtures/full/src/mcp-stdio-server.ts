@@ -1,6 +1,6 @@
 import { defineContract } from 'stitchkit/contract';
 import { implement } from 'stitchkit/server';
-import { createStdioMcpServer } from 'stitchkit/tools';
+import { createStdioMcpServer } from 'stitchkit/tools/mcp';
 import { z } from 'zod';
 
 const contract = defineContract(

@@ -9,7 +9,8 @@ import {
   recordAgentSandboxProbe,
 } from '../src/entrypoints/agent-runtime';
 import { createAgentCodingTools } from '../src/entrypoints/agent-runtime/coding-tools';
-import { defineRuntimeTool, describeToolCatalog, mountAgent } from '../src/entrypoints/tools';
+import { defineRuntimeTool, describeToolCatalog } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 
 const roots: string[] = [];
 

@@ -2,7 +2,8 @@ import { expect, test } from 'bun:test';
 import { z } from 'zod';
 import { AppError } from '../src/contract/errors';
 import { AgentRunSchema, type AgentRuntimeRunContext } from '../src/entrypoints/agent-runtime';
-import { composeToolLifecycle, defineRuntimeTool, mountAgent } from '../src/entrypoints/tools';
+import { composeToolLifecycle, defineRuntimeTool } from '../src/entrypoints/tools';
+import { mountAgent } from '../src/entrypoints/tools/agent';
 
 test('the one-line harness composition retains mapped identity, mount options, hooks, authorization and exactly one fence', async () => {
   const seen: string[] = [];

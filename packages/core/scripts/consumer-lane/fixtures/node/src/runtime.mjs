@@ -18,7 +18,7 @@ import {
 import { createCli, defineCliCommand } from 'stitchkit/cli';
 import { defineContract } from 'stitchkit/contract';
 import { createHandler, implement } from 'stitchkit/server';
-import { createMcpHandler } from 'stitchkit/tools';
+import { createMcpHandler } from 'stitchkit/tools/mcp';
 import { z } from 'zod';
 
 const agentStore = createMemoryAgentRuntimeStore();

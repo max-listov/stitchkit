@@ -1,5 +1,5 @@
 import { createAgentCodingTools } from '../../src/entrypoints/agent-runtime/coding-tools';
-import { mountAgent } from '../../src/entrypoints/tools';
+import { mountAgent } from '../../src/entrypoints/tools/agent';
 
 const { entryBoundaryControls } = await import(
   new URL(
