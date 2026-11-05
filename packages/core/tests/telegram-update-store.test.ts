@@ -6,7 +6,7 @@
  * skipped here and nowhere else.
  */
 import { Database } from 'bun:sqlite';
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { SQL } from 'bun';
 import {
   checkTelegramUpdateStore,
@@ -268,10 +268,18 @@ describe.skipIf(postgresUrl === undefined)('postgres', () => {
     return postgresTelegramUpdateStore({ query: query(sql), table, createTable });
   };
 
+  // A test's clients close with it: pools kept for the whole file add up to more
+  // connections than a shared server has free, and the next connect is refused.
+  afterEach(async () => {
+    for (const sql of clients.splice(0)) await sql.close();
+  });
   afterAll(async () => {
-    const [admin] = clients;
-    for (const table of tables) await admin?.unsafe(`DROP TABLE IF EXISTS ${table}`);
-    for (const sql of clients) await sql.close();
+    const admin = new SQL({ url: postgresUrl ?? '', max: 1 });
+    try {
+      for (const table of tables) await admin.unsafe(`DROP TABLE IF EXISTS ${table}`);
+    } finally {
+      await admin.close();
+    }
   });
 
   test('keeps the rules, with bigint columns read back as strings', async () => {
