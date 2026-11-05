@@ -108,7 +108,7 @@ export interface RunTerminalAppOptions {
   exitSignals?: readonly TerminalExitSignal[];
   /**
    * Ctrl-C arrives as a key in raw mode, not as SIGINT: one no screen took closes the
-   * application and exits with 130, like SIGINT. On by default.
+   * application and exits with 0: it is the application's quit key. On by default.
    */
   exitOnCtrlC?: boolean;
   /** Release what the screens hold — sockets, timers, child processes — before the process exits. */
@@ -224,7 +224,7 @@ export async function runTerminalApp(
         {...(options.palette && { palette: options.palette })}
       >
         <TerminalLabelsProvider labels={options.labels ?? terminalLabelsEn}>
-          {options.exitOnCtrlC === false ? null : <CtrlCExit onExit={() => exitWith(130)} />}
+          {options.exitOnCtrlC === false ? null : <CtrlCExit onExit={() => exitWith(0)} />}
           <TerminalErrorBoundary onError={options.onError}>
             {typeof screen === 'function' ? (
               <FactoryScreen factory={screen} app={app} />

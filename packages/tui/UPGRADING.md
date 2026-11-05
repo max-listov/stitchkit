@@ -38,7 +38,7 @@ await runTerminalApp(<Home />, { onClose: () => store.close() });
 Ctrl-C, SIGTERM, SIGHUP or another signal OpenTUI catches.
 
 `runAgentTui` now closes its session and exits the process on those (128 + the signal number,
-130 for Ctrl-C), waiting at most `closeTimeoutMs` (5000 ms) for the close. Pass `exitSignals: []` to keep
+0 for Ctrl-C, the quit key), waiting at most `closeTimeoutMs` (5000 ms) for the close. Pass `exitSignals: []` to keep
 the process, and call the returned `close()` yourself:
 
 ```ts

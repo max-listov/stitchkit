@@ -25,7 +25,8 @@ after SIGINT or SIGTERM.
 - `stitchkit-tui/widgets` — `runTerminalApp(screen, options)`: the renderer, the theme and labels
   providers, `TerminalErrorBoundary` showing the cause on screen, and an exit with 128 + the signal
   number after `onClose` on every signal OpenTUI catches (SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGABRT,
-  SIGPIPE, SIGBUS) and on a Ctrl-C no screen took, which raw mode delivers as a key. OpenTUI's own
+  SIGPIPE, SIGBUS), and with 0 on a Ctrl-C no screen took — the quit key, which raw mode delivers
+  as a key, not as SIGINT. OpenTUI's own
   listeners only restore the terminal, which cancels each signal's default exit: any timer then
   kept a window-less process alive.
 - `stitchkit-tui/build` — `compileTerminalApp` and `terminalNativePlugin`: one executable for any
