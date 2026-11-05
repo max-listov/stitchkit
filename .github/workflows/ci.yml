@@ -274,7 +274,9 @@ jobs:
     if: needs.plan.outputs.darwin == 'true'
     needs: [plan, darwin-native]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    # The lane plus three qualifications take 5–7 minutes; a slow hosted x64 runner took
+    # 10+ with every check green and was cancelled, so the budget leaves room for one.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
