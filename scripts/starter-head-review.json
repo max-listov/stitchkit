@@ -1,0 +1,5 @@
+{
+  "coreVersion": "0.120.0",
+  "outcome": "deferred",
+  "reason": "The template's surface conformance and the agent template import mountAgent from stitchkit/tools, which compiles against the published target ^0.119.0 and not against 0.120.0, where it moved to stitchkit/tools/agent; one source cannot satisfy both. The starter migrates after 0.120.0 is on npm, advances its catalog and removes this record."
+}
