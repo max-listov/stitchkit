@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.120.0] - 2026-11-05
+
 ### ⚠️ Breaking changes
 
 **Who must act:** code importing the MCP server, `mountAgent` or `createToolkit` from `stitchkit/tools`. Code that imports only the registry, tool names, runtime and native tools, the invoker, the OAuth provider or the durability engine from `stitchkit/tools` changes nothing. See the [migration](docs/guide/upgrading.md#tools-barrel-subpaths).

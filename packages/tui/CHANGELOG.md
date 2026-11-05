@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-05
+
 ### ⚠️ Breaking changes
 
 **Who must act:** projects that build their own `TerminalLabels` object instead of using

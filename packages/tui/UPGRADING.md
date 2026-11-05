@@ -1,6 +1,6 @@
 # Upgrading stitchkit-tui
 
-## Unreleased migration: app runtime
+## Released migration: 0.4.0
 
 ### Two more labels
 

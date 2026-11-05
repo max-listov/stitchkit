@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: tools-barrel-subpaths
+## Released migration: 0.120.0
 
 ### tools-barrel-subpaths
 
