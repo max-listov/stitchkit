@@ -1481,7 +1481,7 @@ Renderer-neutral state only. This entrypoint imports neither React/OpenTUI nor t
 | `createTerminalCommandPalette` / `terminalCommandMatches` | function | bounded command filtering and keyboard selection over a collision-validated registry |
 | `resolveExactTerminalCommand` / `validateTerminalCommands` | function | exact dispatch and fail-closed name/alias validation |
 | `createTerminalOperationState` / `reduceTerminalOperationState` | function | confirmation and single-pending-operation lifecycle |
-| `createTerminalTable` / `reduceTerminalTable` / `projectTerminalTable` | function | live table: typed columns, rows validated on entry, sort with key tie-break and missing values last, tree expansion pruned to present rows, filter on displayed text, selection kept across data |
+| `createTerminalTable` / `reduceTerminalTable` / `projectTerminalTable` | function | live table: typed columns, rows validated on entry, sort with key tie-break and missing values last, tree expansion pruned to present rows, filter on displayed text, selection kept across data; a row's `tone` and a column's `tone(value, row)` colour state |
 | `layoutTerminalTableColumns` / `formatTerminalTableCell` / `visibleTerminalTableRows` / `terminalTableTreePrefix` | function | fixed and flexible column widths, `—` for missing values, the virtualized window, tree indentation |
 | `createTerminalList` / `reduceTerminalList` / `visibleTerminalListLines` | function | picker with sections, fuzzy query with title highlight ranges, multi-select, disabled items and "more above/below" counts |
 | `createTerminalForm` / `reduceTerminalForm` / `readTerminalForm` / `terminalFormFieldsFromJsonSchema` | function | typed fields (text, secret, number, integer, boolean, choice, JSON) from a JSON Schema, relative text edits, validation on leave and submit |
@@ -1510,7 +1510,8 @@ this entrypoint never loads `stitchkit`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `TerminalAppShell` / `TerminalPanel` / `TerminalStatusBar` / `TerminalKeyHints` | component | breadcrumbs, status lines, body, fitted key hints and toast overlay; titled rounded panels with a focus frame |
-| `TerminalTable` | component | virtualized live table with header sort marks, tree, filter line and htop keys |
+| `TerminalTable` | component | virtualized live table with header sort marks, tree, filter line and htop keys; row and cell tones in the palette, bold or dim where colour is missing |
+| `terminalToneAttributes` | function | the text attribute that carries a tone without colour: `danger` and `warning` bold, `muted` dim |
 | `TerminalList` | component | sections, fuzzy search line with highlights, `›` cursor, meta, badges, multi-select, description |
 | `runTerminalApp` / `RunTerminalAppOptions` / `RunningTerminalApp` | function / _type_ | start an application: renderer, theme and labels providers, the error boundary, and an exit with 128 + signal after `onClose` on Ctrl-C and every signal OpenTUI catches — a closed window leaves no orphan |
 | `TerminalErrorBoundary` / `TERMINAL_EXIT_SIGNALS` / `TerminalExitSignal` | component / value / _type_ | draws a render error and its stack in place of the screen, where OpenTUI's own boundary renders nothing under production React |

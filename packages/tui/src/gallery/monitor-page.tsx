@@ -28,7 +28,21 @@ const columns: TerminalTableColumn[] = [
     width: 7,
     format: (v) => `${Math.round(Number(v))}M`,
   },
+  {
+    id: 'state',
+    title: 'STATE',
+    kind: 'text',
+    width: 8,
+    // The state reads in colour before the word: errored red, online green.
+    tone: (value) =>
+      value === 'errored' ? 'danger' : value === 'online' ? 'success' : undefined,
+  },
 ];
+
+/** Every seventh service is stopped and every eleventh errored, as on a real host. */
+function serviceState(app: number): 'online' | 'stopped' | 'errored' {
+  return app % 11 === 4 ? 'errored' : app % 7 === 3 ? 'stopped' : 'online';
+}
 
 function noise(seed: number): number {
   const x = Math.sin(seed * 12.9898) * 43_758.5453;
@@ -45,7 +59,11 @@ function rows(tick: number): TerminalTableRowInput[] {
         pid: 1000 + app,
         cpu: Math.round(noise(app * 31 + tick) * 400) / 10,
         mem: app % 9 === 0 ? null : 40 + noise(app) * 600,
+        state: serviceState(app),
       },
+      // A stopped service is muted and an errored one red, row and all.
+      ...(serviceState(app) === 'stopped' && { tone: 'muted' as const }),
+      ...(serviceState(app) === 'errored' && { tone: 'danger' as const }),
     },
     ...Array.from({ length: 4 }, (_, worker) => ({
       key: `app-${app}/w${worker}`,
@@ -55,7 +73,10 @@ function rows(tick: number): TerminalTableRowInput[] {
         pid: 20_000 + app * 10 + worker,
         cpu: Math.round(noise(app * 7 + worker + tick) * 1000) / 10,
         mem: 10 + noise(worker + app) * 100,
+        state: serviceState(app),
       },
+      ...(serviceState(app) === 'stopped' && { tone: 'muted' as const }),
+      ...(serviceState(app) === 'errored' && { tone: 'danger' as const }),
     })),
   ]).flat();
 }

@@ -6,6 +6,7 @@ import {
   type TerminalCollectionState,
 } from './collection';
 import { applyTerminalTextEdit, sanitizeTerminalText, type TerminalTextEdit } from './text';
+import { type TerminalTone, TerminalToneSchema } from './theme';
 
 export const TerminalTableColumnSchema = z
   .object({
@@ -25,13 +26,25 @@ export const TerminalTableColumnSchema = z
 
 export type TerminalTableCellValue = string | number | null;
 
-/** A column; `format` turns a present value into the text a reader sees and the filter searches. */
+/** What a column says about one of its cells: the tone it is drawn in, or none for the row's. */
+export type TerminalTableCellTone = (
+  value: TerminalTableCellValue,
+  row: TerminalTableRow,
+) => TerminalTone | undefined;
+
+/**
+ * A column; `format` turns a present value into the text a reader sees and the
+ * filter searches, and `tone` colours a cell by its value — a `fail` status in
+ * `danger` — over the row's tone.
+ */
 export type TerminalTableColumn = z.input<typeof TerminalTableColumnSchema> & {
   format?: (value: string | number) => string;
+  tone?: TerminalTableCellTone;
 };
 
 type ParsedColumn = z.output<typeof TerminalTableColumnSchema> & {
   format?: (value: string | number) => string;
+  tone?: TerminalTableCellTone;
 };
 
 export const TerminalTableRowSchema = z
@@ -41,6 +54,8 @@ export const TerminalTableRowSchema = z
     parentKey: z.string().min(1).nullable().default(null),
     /** One value per column id; `null` is "not measured" and shows as `—`. */
     cells: z.record(z.string(), z.union([z.string(), z.number(), z.null()])),
+    /** The state of the whole row in colour: a stopped process `muted`, a failed one `danger`. */
+    tone: TerminalToneSchema.optional(),
   })
   .strict();
 
@@ -96,9 +111,13 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'bas
 function parseColumns(columns: readonly TerminalTableColumn[]): ParsedColumn[] {
   if (columns.length === 0) throw new Error('A terminal table needs at least one column');
   const parsed = columns.map((column) => {
-    const { format, ...shape } = column;
+    const { format, tone, ...shape } = column;
     const value = TerminalTableColumnSchema.parse(shape);
-    return format === undefined ? value : { ...value, format };
+    return {
+      ...value,
+      ...(format !== undefined && { format }),
+      ...(tone !== undefined && { tone }),
+    };
   });
   if (new Set(parsed.map(({ id }) => id)).size !== parsed.length) {
     throw new Error('Terminal table column ids must be unique');

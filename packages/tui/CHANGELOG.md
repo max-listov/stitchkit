@@ -24,6 +24,12 @@ after SIGINT or SIGTERM.
 
 ### Added
 
+- `stitchkit-tui/core`, `stitchkit-tui/widgets` — `TerminalTable` draws state in colour: a row's
+  `tone` (`muted` for a stopped process, `danger` for a failed one) and a column's
+  `tone(value, row)` for one cell over it, from the palette of the terminal's background. The
+  selected row keeps its tone; `danger` and `warning` are also bold and `muted` dim
+  (`terminalToneAttributes`), so the state stays visible without colour. The gallery's monitor
+  shows a STATE column with stopped services muted and errored ones red.
 - `stitchkit-tui/widgets` — `runTerminalApp(screen, options)`: the renderer, the theme and labels
   providers, `TerminalErrorBoundary` showing the cause on screen, and an exit with 128 + the signal
   number after `onClose` on every signal OpenTUI catches (SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGABRT,

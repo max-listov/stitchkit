@@ -1,3 +1,4 @@
+import { TextAttributes } from '@opentui/core';
 import { useRenderer } from '@opentui/react';
 import {
   createContext,
@@ -11,8 +12,20 @@ import {
   resolveTerminalPalette,
   type TerminalPalette,
   type TerminalThemeMode,
+  type TerminalTone,
   terminalPalettes,
 } from '../core/theme';
+
+/**
+ * The text attribute that carries a tone where colour does not: `danger` and
+ * `warning` are bold, `muted` is dim. A terminal without colour, `NO_COLOR` or
+ * a reader who does not tell red from green still sees which rows stand out.
+ */
+export function terminalToneAttributes(tone: TerminalTone | undefined): number {
+  if (tone === 'danger' || tone === 'warning') return TextAttributes.BOLD;
+  if (tone === 'muted') return TextAttributes.DIM;
+  return TextAttributes.NONE;
+}
 
 const PaletteContext = createContext<TerminalPalette>(terminalPalettes.dark);
 

@@ -13,7 +13,7 @@ import {
 import { fitTerminalText, sanitizeTerminalText, terminalTextEdit } from '../core/text';
 import { useTerminalFocused, useTerminalLabels } from './context';
 import { TerminalKeyPriority, useTerminalKeyboard } from './keyboard';
-import { useTerminalPalette } from './theme';
+import { terminalToneAttributes, useTerminalPalette } from './theme';
 
 export interface TerminalTableProps {
   state: TerminalTableState;
@@ -138,12 +138,13 @@ export function TerminalTable({
       </text>
       {rows.map((view, slot) => {
         const selected = view.row.key === state.collection.selectedKey;
-        const tone =
-          selected && active
+        // An ancestor shown only for a filter match stays muted, whatever its state.
+        const rowTone = view.matched ? view.row.tone : undefined;
+        const tone = rowTone
+          ? palette[rowTone]
+          : (selected && active) || view.matched
             ? palette.primary
-            : view.matched
-              ? palette.primary
-              : palette.muted;
+            : palette.muted;
         return (
           <text
             key={slot}
@@ -159,9 +160,21 @@ export function TerminalTable({
                 index === 0
                   ? fitTerminalText(prefix + text, width, align)
                   : ` ${fitTerminalText(text, width, align)}`;
-              const missing = view.row.cells[column.id] === null;
+              const value = view.row.cells[column.id] ?? null;
+              const missing = value === null;
+              const cellTone =
+                missing || !view.matched ? undefined : column.tone?.(value, view.row);
+              const fg = cellTone
+                ? palette[cellTone]
+                : missing && !selected
+                  ? palette.muted
+                  : undefined;
               return (
-                <span key={column.id} {...(missing && !selected && { fg: palette.muted })}>
+                <span
+                  key={column.id}
+                  {...(fg && { fg })}
+                  attributes={terminalToneAttributes(cellTone ?? rowTone)}
+                >
                   {cell}
                 </span>
               );
