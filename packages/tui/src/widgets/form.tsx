@@ -112,8 +112,14 @@ export function TerminalForm({
 
   useTerminalKeyboard(
     (key) => {
-      if (!current) return false;
       const id = matchTerminalKey(bindings, key)?.id;
+      // A form without fields has nothing to type into: Enter runs it, Esc leaves.
+      if (!current) {
+        if (id === 'submit') onAction({ type: 'submit' });
+        else if (id === 'cancel' && onCancel) onCancel();
+        else return false;
+        return true;
+      }
       // A typed field takes Space and the arrows as text, not as cycling.
       if (id === 'change' && cycles)
         onAction({ type: 'cycle', delta: key.name === 'left' ? -1 : 1 });
@@ -142,6 +148,15 @@ export function TerminalForm({
     ),
     Math.floor(width / 3),
   );
+  if (state.fields.length === 0) {
+    return (
+      <box style={{ flexDirection: 'column', width }}>
+        <text fg={palette.muted} wrapMode='none'>
+          {truncateTerminalText(labels.noFields, width)}
+        </text>
+      </box>
+    );
+  }
   return (
     <box style={{ flexDirection: 'column', width }}>
       {state.fields.map((field, index) => {

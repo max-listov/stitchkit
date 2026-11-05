@@ -1512,7 +1512,9 @@ this entrypoint never loads `stitchkit`.
 | `TerminalAppShell` / `TerminalPanel` / `TerminalStatusBar` / `TerminalKeyHints` | component | breadcrumbs, status lines, body, fitted key hints and toast overlay; titled rounded panels with a focus frame |
 | `TerminalTable` | component | virtualized live table with header sort marks, tree, filter line and htop keys |
 | `TerminalList` | component | sections, fuzzy search line with highlights, `›` cursor, meta, badges, multi-select, description |
-| `TerminalForm` | component | fields edited in place, cycling choices, masked secrets, inline errors |
+| `runTerminalApp` / `RunTerminalAppOptions` / `RunningTerminalApp` | function / _type_ | start an application: renderer, theme and labels providers, the error boundary, and an exit with 128 + signal after `onClose` on SIGINT, SIGTERM and SIGHUP — a closed window leaves no orphan |
+| `TerminalErrorBoundary` / `TERMINAL_EXIT_SIGNALS` / `TerminalExitSignal` | component / value / _type_ | draws a render error and its stack in place of the screen, where OpenTUI's own boundary renders nothing under production React |
+| `TerminalForm` | component | fields edited in place, cycling choices, masked secrets, inline errors; a form without fields says so and submits `{}` on Enter |
 | `TerminalTextView` / `TerminalJsonView` | component | pager over sanitized wrapped text or toned JSON |
 | `TerminalMeter` / `TerminalMeterGrid` / `TerminalChart` / `TerminalSparkline` | component | htop meters and core grid; btop braille charts with axis |
 | `TerminalTabs` / `TerminalDialog` / `TerminalSpinner` / `TerminalProgressBar` / `TerminalAsyncView` / `TerminalDetails` / `TerminalNotices` / `TerminalHelp` | component | views, confirmation, loading, progress, async states, details, toasts, key help |
@@ -1520,6 +1522,23 @@ this entrypoint never loads `stitchkit`.
 | `TerminalLabelsProvider` / `TerminalFocusProvider` / `useTerminalFocused` | component / hook | product language and shared focus |
 
 The `stitchkit-tui-gallery` binary shows every widget live.
+
+### `stitchkit-tui/build`
+
+Build-time only; imports Bun and no React.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `compileTerminalApp` / `CompileTerminalAppOptions` | function / _type_ | one standalone executable for any Bun compile target, from any machine, with React's production build defined |
+| `terminalNativePlugin` / `TerminalNativePluginOptions` | function / _type_ | the `Bun.build` plugin behind it: the target's `@opentui/core-<os>-<arch>` at the pinned version from the registry, verified against `bun.lock`; other platforms' packages throw; musl refused |
+| `terminalNativeTarget` / `TerminalNativeTarget` | function / _type_ | the native package a compile target needs |
+
+### `stitchkit-tui/testing`
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `renderTerminalTest` / `TerminalTestScreen` / `TerminalTestOptions` | function / _type_ | a screen inside the kit's providers on a test terminal; `press`, `type`, `burst`, `advance`, `waitForText`, `resize` run inside React's `act` and wait out a lone Esc |
+| `TerminalTestKey` / `TerminalTestModifiers` | _type_ | the mock input's key names and modifiers |
 
 ## `stitchkit/agent-runtime/sqlite/node`
 

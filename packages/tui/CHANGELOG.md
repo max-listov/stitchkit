@@ -2,6 +2,50 @@
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** projects that build their own `TerminalLabels` object instead of using
+`terminalLabelsEn` / `terminalLabelsRu`, and hosts that relied on `runAgentTui` staying alive
+after SIGINT or SIGTERM.
+
+- `stitchkit-tui/core` — **`TerminalLabels` gains `noFields` and `crashed`.** A form without fields
+  now says it has no parameters, and `runTerminalApp` heads an escaped render error; both words
+  come from the labels like every other. Add the two strings to a custom labels object.
+  `// before: { …labels }` → `// after: { …labels, noFields: 'No parameters · Enter to run', crashed: 'The application stopped on an error' }`.
+  See the [migration](UPGRADING.md).
+- `stitchkit-tui` — **`runAgentTui` exits the process on SIGINT, SIGTERM and SIGHUP** after it
+  closed the session host, the controller and the diagnostics. It used to close on SIGINT and
+  SIGTERM only, and a closed window (SIGHUP) left a process drawing frames.
+
+### Added
+
+- `stitchkit-tui/widgets` — `runTerminalApp(screen, options)`: the renderer, the theme and labels
+  providers, `TerminalErrorBoundary` showing the cause on screen, and an exit with 128 + the signal
+  number after `onClose` on SIGINT, SIGTERM and SIGHUP. OpenTUI listens for those signals to restore
+  the terminal, which cancels their default exit: any timer then kept a window-less process alive.
+- `stitchkit-tui/build` — `compileTerminalApp` and `terminalNativePlugin`: one executable for any
+  Bun compile target from any machine. The target's `@opentui/core-<os>-<arch>` comes from the
+  registry at the version the installed `@opentui/core` pins, verified against `bun.lock`; other
+  platforms' packages become a module that throws; musl targets are refused, because OpenTUI picks
+  musl at run time. React's production build is defined at build time.
+- `stitchkit-tui/testing` — `renderTerminalTest`: a screen inside the kit's providers on a test
+  terminal; every key runs inside React's `act` and a lone Esc waits out the parser's escape
+  timeout, so a test has no `act` and no sleeps.
+
+### Fixed
+
+- `stitchkit-tui/widgets` — `TerminalForm` without fields answers Enter with `onSubmit({})` and Esc
+  with `onCancel`; it ignored every key.
+- `stitchkit-tui/widgets` — a screen that throws under React's production build shows its error:
+  OpenTUI's root boundary is compiled with `jsxDEV`, which production React does not export, and
+  left the terminal blank.
+
+### Changed
+
+- Targets stitchkit `^0.120.0`, keeping consumers on one framework copy when they adopt the peer-free `stitchkit/tools` barrel.
+- The README names how to choose React's production build: at build time, never by setting
+  `NODE_ENV` at run time.
+
 ## [0.3.0] - 2026-11-04
 
 ### ⚠️ Breaking changes

@@ -28,6 +28,14 @@
     "./widgets": {
       "types": "./dist/widgets/index.d.ts",
       "import": "./dist/widgets/index.js"
+    },
+    "./build": {
+      "types": "./dist/build/index.d.ts",
+      "import": "./dist/build/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
     }
   },
   "files": [
@@ -41,7 +49,7 @@
   "scripts": {
     "check": "bun x tsc --noEmit",
     "test": "bun test",
-    "build": "rm -rf dist && bun build src/index.ts src/cli.ts src/core/index.ts src/widgets/index.ts src/gallery/main.ts --root src --outdir dist --target bun --packages external --splitting && bun x tsc -p tsconfig.build.json --emitDeclarationOnly && chmod +x dist/cli.js dist/gallery/main.js",
+    "build": "rm -rf dist && bun build src/index.ts src/cli.ts src/core/index.ts src/widgets/index.ts src/build/index.ts src/testing/index.tsx src/gallery/main.ts --root src --outdir dist --target bun --packages external --splitting && bun x tsc -p tsconfig.build.json --emitDeclarationOnly && chmod +x dist/cli.js dist/gallery/main.js",
     "prepublishOnly": "bun run check && bun run test && bun run build"
   },
   "dependencies": {

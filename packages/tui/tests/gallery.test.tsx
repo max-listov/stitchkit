@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { testRender } from '@opentui/react/test-utils';
-import { act } from 'react';
 import { TerminalGallery } from '../src/gallery/app';
+import { renderTerminalTest } from '../src/testing';
 
 const WIDTH = 100;
 const HEIGHT = 34;
@@ -10,49 +9,22 @@ const HEIGHT = 34;
 async function gallery() {
   let now = 1_000_000;
   const clock = () => now;
-  const setup = await testRender(<TerminalGallery clock={clock} onExit={() => undefined} />, {
-    width: WIDTH,
-    height: HEIGHT,
-  });
-  const frame = async (): Promise<string> => {
-    await act(async () => {
-      await Bun.sleep(5);
-    });
-    await setup.renderOnce();
-    return setup.captureCharFrame();
-  };
-  const press = async (
-    key: Parameters<typeof setup.mockInput.pressKey>[0],
-    modifiers?: Parameters<typeof setup.mockInput.pressKey>[1],
-  ) => {
-    await act(async () => {
-      setup.mockInput.pressKey(key, modifiers);
-      await Bun.sleep(5);
-    });
-    return frame();
-  };
-  const type = async (text: string) => {
-    await act(async () => {
-      await setup.mockInput.typeText(text);
-      await Bun.sleep(5);
-    });
-    return frame();
-  };
-  const advance = async (ms: number) => {
+  const screen = await renderTerminalTest(
+    <TerminalGallery clock={clock} onExit={() => undefined} />,
+    { width: WIDTH, height: HEIGHT },
+  );
+  const advance = (ms: number) => {
     now += ms;
-    await act(async () => {
-      await Bun.sleep(ms);
-    });
-    return frame();
+    return screen.advance(ms);
   };
-  const close = async () => {
-    await act(async () => {
-      await setup.dispose();
-    });
+  return {
+    frame: screen.frame,
+    press: screen.press,
+    type: screen.type,
+    advance,
+    close: screen.close,
+    burst: screen.burst,
   };
-  const burst = (keys: Parameters<typeof setup.mockInput.pressKeys>[0]) =>
-    setup.mockInput.pressKeys(keys);
-  return { frame, press, type, advance, close, burst };
 }
 
 describe('terminal gallery', () => {
@@ -130,10 +102,7 @@ describe('terminal gallery', () => {
     const g = await gallery();
     try {
       // Down, down and Enter before any render in between open the third item.
-      await act(async () => {
-        await g.burst(['ARROW_DOWN', 'ARROW_DOWN', 'RETURN']);
-      });
-      const screen = await g.frame();
+      const screen = await g.burst(['ARROW_DOWN', 'ARROW_DOWN', 'RETURN']);
       expect(screen).toContain('Catalogue › docs_projects');
     } finally {
       await g.close();

@@ -38,6 +38,10 @@ export interface TerminalLabels {
   top: string;
   bottom: string;
   required: string;
+  /** What a form with no fields shows: Enter still submits it. */
+  noFields: string;
+  /** The heading `runTerminalApp` draws above an error that escaped the screens. */
+  crashed: string;
   scroll: (percent: number) => string;
 }
 
@@ -75,6 +79,8 @@ export const terminalLabelsEn: TerminalLabels = Object.freeze<TerminalLabels>({
   top: 'top',
   bottom: 'bottom',
   required: 'required',
+  noFields: 'No parameters · Enter to run',
+  crashed: 'The application stopped on an error',
   scroll: (percent) => `${percent}%`,
 });
 
@@ -117,5 +123,7 @@ export const terminalLabelsRu: TerminalLabels = Object.freeze<TerminalLabels>({
   top: 'в начало',
   bottom: 'в конец',
   required: 'обязательно',
+  noFields: 'Параметров нет · Enter — выполнить',
+  crashed: 'Приложение остановилось из-за ошибки',
   scroll: (percent) => `${percent}%`,
 });

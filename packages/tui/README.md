@@ -48,8 +48,7 @@ a confirmation, a spinner, a JSON result, toasts), a process monitor and the sma
 cycles auto/dark/light and Ctrl+L switches English/Russian.
 
 ```tsx
-import { createCliRenderer } from '@opentui/core';
-import { createRoot, useTerminalDimensions } from '@opentui/react';
+import { useTerminalDimensions } from '@opentui/react';
 import { useReducer } from 'react';
 import {
   createTerminalList,
@@ -57,10 +56,9 @@ import {
   terminalLabelsRu,
 } from 'stitchkit-tui/core';
 import {
+  runTerminalApp,
   TerminalAppShell,
-  TerminalLabelsProvider,
   TerminalList,
-  TerminalThemeProvider,
   terminalListKeymap,
 } from 'stitchkit-tui/widgets';
 
@@ -88,14 +86,9 @@ function Home() {
   );
 }
 
-const renderer = await createCliRenderer();
-createRoot(renderer).render(
-  <TerminalThemeProvider mode="auto">
-    <TerminalLabelsProvider labels={terminalLabelsRu}>
-      <Home />
-    </TerminalLabelsProvider>
-  </TerminalThemeProvider>,
-);
+// The renderer, the theme and labels providers, an error boundary that shows the cause
+// on screen, and an exit on Ctrl-C, a kill or a closed window (SIGHUP).
+await runTerminalApp(<Home />, { labels: terminalLabelsRu });
 ```
 
 What the widgets promise:
@@ -109,11 +102,58 @@ What the widgets promise:
 - **Foreign text is sanitized.** Anything shown from data passes `sanitizeTerminalText`; JSON is
   printed toned and escaped.
 - **Live screens stay put.** Tables and lists draw only their window, rows are rewritten in place,
-  every line has a fixed position, and a time series is bounded by its window. The kit's own
-  binaries run React's production build; set `NODE_ENV=production` for any screen that lives for
-  hours, because React's development build records a measure for every render and Bun keeps them.
+  every line has a fixed position, and a time series is bounded by its window. A screen that
+  lives for hours runs React's production build (below), because the development build records a
+  measure for every render and Bun keeps them.
 - **Words and colours have one source.** `TerminalLabels` (English and Russian bundled) and one
   semantic `TerminalPalette` per terminal background, followed automatically in `auto` mode.
+
+### React's production build
+
+Choose it when the code is **compiled**, never by setting `NODE_ENV` at run time. Bun compiles
+JSX to `jsxDEV` when it does not find a `tsconfig.json` with `jsx` from the working directory — a
+start from a monorepo root — and React's production runtime has no `jsxDEV`: the screen stays
+blank. OpenTUI's own root error boundary is compiled the same way, so it cannot show that error
+either; `runTerminalApp`'s boundary can.
+
+- An executable: `compileTerminalApp` (below) defines `process.env.NODE_ENV` as `"production"`.
+- From source: `bun --define process.env.NODE_ENV='"production"' src/main.tsx`, and put
+  `/** @jsxImportSource @opentui/react */` at the top of each screen file so its JSX does not
+  depend on which `tsconfig.json` Bun finds.
+
+### One executable for any platform
+
+`bun build --compile --target=bun-linux-x64` on a Mac fails with `Could not resolve:
+"@opentui/core-linux-x64"`: OpenTUI imports one native package per platform and a package manager
+installs only the current machine's. `compileTerminalApp` adds the target's package — the version
+the installed `@opentui/core` pins, downloaded from the registry and checked against the sha512 in
+`bun.lock` — and replaces every other platform's with a module that throws. Musl targets are
+refused: OpenTUI picks musl at run time from `OPENTUI_LIBC`.
+
+```ts
+import { compileTerminalApp } from 'stitchkit-tui/build';
+
+await compileTerminalApp({ entry: 'src/main.tsx', outfile: 'dist/app-linux-x64', target: 'bun-linux-x64' });
+```
+
+`terminalNativePlugin({ target })` is the same step as a plugin for a `Bun.build` of your own.
+
+### Testing a screen
+
+`renderTerminalTest` renders a screen inside the kit's providers on a test terminal and drives it
+by real keys. Every step runs inside React's `act`, so the effects of the screen a key opened — its
+keyboard subscription too — have run before the next key, and a lone Esc waits out the input
+parser's escape timeout. A test has no `act` and no sleeps:
+
+```tsx
+import { renderTerminalTest } from 'stitchkit-tui/testing';
+
+const screen = await renderTerminalTest(<Catalogue />, { width: 100, height: 30 });
+await screen.press('RETURN');
+await screen.type('alpha');
+expect(await screen.press('ESCAPE')).toContain('› docs_read');
+await screen.close();
+```
 
 React, `@opentui/core` and `@opentui/react` are peers: install them in the application, so one copy
 of each drives the whole tree. `stitchkit` is needed only for the agent host below.

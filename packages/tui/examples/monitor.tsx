@@ -1,38 +1,38 @@
 /**
  * A live monitor screen on a real terminal:
- * `NODE_ENV=production bun examples/monitor.tsx`. A screen that lives for
- * hours runs React's production build: the development build records a
- * performance measure with a props diff for every render, and Bun keeps them.
+ * `bun --define process.env.NODE_ENV='"production"' examples/monitor.tsx`. A screen
+ * that lives for hours runs React's production build: the development build records
+ * a performance measure with a props diff for every render, and Bun keeps them.
+ * A compiled executable (`compileTerminalApp`) gets the production build itself.
  * Tab / Shift-Tab or 1–3 switch tabs; in the process table ↑↓ j k PgUp PgDn
  * Home End move, → ← open and close a service, < > pick the sort column, I
  * inverts it, / filters, Enter shows the selected row; q quits.
  */
-import { createCliRenderer } from '@opentui/core';
-import { createRoot } from '@opentui/react';
-import { TerminalKeyPriority, useTerminalKeyboard } from '../src/widgets';
+import { runTerminalApp, TerminalKeyPriority, useTerminalKeyboard } from '../src/widgets';
 import { createMonitorStore, Monitor } from '../tests/fixtures/monitor';
 
 const tickMs = Number(process.env.MONITOR_TICK_MS ?? 1000);
 const ticks = Number(process.env.MONITOR_TICKS ?? Number.POSITIVE_INFINITY);
 const rssLog = process.env.MONITOR_RSS_LOG;
 
-const renderer = await createCliRenderer({ exitOnCtrlC: true });
 const store = createMonitorStore();
 
 /** `q` quits — through the kit's router, so a `q` typed into the filter stays a letter. */
-function App() {
+function App({ onQuit }: { onQuit(): void }) {
   useTerminalKeyboard(
     (key) => {
       if (key.name !== 'q' || key.ctrl) return false;
-      renderer.destroy();
-      process.exit(0);
+      onQuit();
+      return true;
     },
     { priority: TerminalKeyPriority.global },
   );
   return <Monitor store={store} />;
 }
 
-createRoot(renderer).render(<App />);
+const app = await runTerminalApp(({ close }) => (
+  <App onQuit={() => void close().then(() => process.exit(0))} />
+));
 
 let tick = 0;
 const timer = setInterval(async () => {
@@ -52,7 +52,7 @@ const timer = setInterval(async () => {
   }
   if (tick >= ticks) {
     clearInterval(timer);
-    renderer.destroy();
+    await app.close();
     process.exit(0);
   }
 }, tickMs);

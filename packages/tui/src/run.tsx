@@ -1,6 +1,5 @@
 import path from 'node:path';
-import { createCliRenderer } from '@opentui/core';
-import { createRoot } from '@opentui/react';
+import type { ComponentProps } from 'react';
 import type {
   AgentRecoverableDescriptor,
   AgentRuntimeRecoveryDecision,
@@ -9,7 +8,6 @@ import { AgentTuiApp } from './App';
 import type { AgentTuiConfig } from './config';
 import { createFileAgentModelSelectionStore } from './config';
 import { createAgentTuiController } from './controller';
-import { resolveTerminalPalette } from './core/theme';
 import { createAgentTuiDiagnosticRecorder } from './diagnostics';
 import {
   type AgentTuiSessionRequest,
@@ -18,6 +16,13 @@ import {
   createAgentTuiSessionId,
   startAgentTuiSessionHost,
 } from './session';
+import { runTerminalApp } from './widgets/app';
+import { useTerminalPalette } from './widgets/theme';
+
+/** The agent shell in the palette `runTerminalApp` resolved for this terminal. */
+function ThemedAgentTuiApp(props: Omit<ComponentProps<typeof AgentTuiApp>, 'theme'>) {
+  return <AgentTuiApp {...props} theme={useTerminalPalette()} />;
+}
 
 function runtimeContext<CONTEXT>(config: AgentTuiConfig<CONTEXT>): Promise<CONTEXT> {
   return Promise.resolve(config.context());
@@ -132,66 +137,54 @@ export async function runAgentTui<CONTEXT>(
     conversationId: initialConversationId,
     launchMode: config.initialConversationId === undefined ? 'fresh' : 'explicit',
   });
-  const renderer = await createCliRenderer({ exitOnCtrlC: false });
-  const themeMode =
-    config.themeMode === undefined || config.themeMode === 'auto'
-      ? ((await renderer.waitForThemeMode(250)) ?? 'dark')
-      : config.themeMode;
-  const root = createRoot(renderer);
-  let closing: Promise<void> | undefined;
-  const onSignal = (): void => void close();
-  const close = (): Promise<void> => {
-    if (closing) return closing;
-    process.off('SIGINT', onSignal);
-    process.off('SIGTERM', onSignal);
-    renderer.destroy();
-    closing = (async () => {
-      try {
-        diagnostics.record({
-          schemaVersion: 1,
-          occurredAt: new Date().toISOString(),
-          type: 'host-closed',
-          sessionId,
-          conversationId: controller.state().conversationId,
-        });
-        await host.close();
-        await controller.close();
-      } finally {
-        await diagnostics.close();
-        renderer.destroy();
-      }
-    })();
-    return closing;
+  const closeHost = async (): Promise<void> => {
+    try {
+      diagnostics.record({
+        schemaVersion: 1,
+        occurredAt: new Date().toISOString(),
+        type: 'host-closed',
+        sessionId,
+        conversationId: controller.state().conversationId,
+      });
+      await host.close();
+      await controller.close();
+    } finally {
+      await diagnostics.close();
+    }
   };
-  root.render(
-    <AgentTuiApp
-      controller={controller}
-      catalog={catalog}
-      {...(bundle.conversations && { conversations: bundle.conversations })}
-      {...(config.commands && { commands: config.commands })}
-      theme={resolveTerminalPalette(themeMode, config.theme)}
-      workspace={workspace}
-      {...(config.statusLine !== undefined && { statusLine: config.statusLine })}
-      sessionId={host.sessionId}
-      title={config.title ?? 'Stitchkit agent'}
-      onConversationChange={async (conversationId, reason) => {
-        const previousConversationId = hostConversationId;
-        await host.setConversationId(conversationId);
-        hostConversationId = conversationId;
-        diagnostics.record({
-          schemaVersion: 1,
-          occurredAt: new Date().toISOString(),
-          type: 'conversation-changed',
-          sessionId,
-          previousConversationId,
-          conversationId,
-          reason,
-        });
-      }}
-      onExit={close}
-    />,
+  const app = await runTerminalApp(
+    ({ close }) => (
+      <ThemedAgentTuiApp
+        controller={controller}
+        catalog={catalog}
+        {...(bundle.conversations && { conversations: bundle.conversations })}
+        {...(config.commands && { commands: config.commands })}
+        workspace={workspace}
+        {...(config.statusLine !== undefined && { statusLine: config.statusLine })}
+        sessionId={host.sessionId}
+        title={config.title ?? 'Stitchkit agent'}
+        onConversationChange={async (conversationId, reason) => {
+          const previousConversationId = hostConversationId;
+          await host.setConversationId(conversationId);
+          hostConversationId = conversationId;
+          diagnostics.record({
+            schemaVersion: 1,
+            occurredAt: new Date().toISOString(),
+            type: 'conversation-changed',
+            sessionId,
+            previousConversationId,
+            conversationId,
+            reason,
+          });
+        }}
+        onExit={close}
+      />
+    ),
+    {
+      themeMode: config.themeMode ?? 'auto',
+      ...(config.theme && { palette: config.theme }),
+      onClose: closeHost,
+    },
   );
-  process.once('SIGINT', onSignal);
-  process.once('SIGTERM', onSignal);
-  return { sessionId: host.sessionId, close };
+  return { sessionId: host.sessionId, close: app.close };
 }

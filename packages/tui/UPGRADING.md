@@ -1,5 +1,40 @@
 # Upgrading stitchkit-tui
 
+## Unreleased migration: app runtime
+
+### Two more labels
+
+**Who must act:** projects that build their own `TerminalLabels` object instead of spreading
+`terminalLabelsEn` or `terminalLabelsRu`.
+
+Add the two words; `tsc` names the object that lacks them.
+
+```ts
+const labels: TerminalLabels = {
+  ...myLabels,
+  noFields: 'No parameters · Enter to run',
+  crashed: 'The application stopped on an error',
+};
+```
+
+### Start through runTerminalApp
+
+**Who must act:** applications that create the renderer themselves (`createCliRenderer` +
+`createRoot`) and catch SIGHUP/SIGTERM to destroy it. Nothing breaks if you keep that code; replace
+it to drop the copy:
+
+```tsx
+// before
+const renderer = await createCliRenderer();
+createRoot(renderer).render(<TerminalThemeProvider mode='auto'><Home /></TerminalThemeProvider>);
+process.on('SIGHUP', () => { renderer.destroy(); process.exit(129); });
+// after
+await runTerminalApp(<Home />, { onClose: () => store.close() });
+```
+
+`runAgentTui` now exits the process on SIGINT, SIGTERM and SIGHUP after closing its host; an
+embedding host that must keep running after them starts the agent shell another way.
+
 ## Released migration: 0.3.0
 
 ### One palette for the kit

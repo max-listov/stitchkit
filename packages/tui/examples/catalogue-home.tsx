@@ -1,13 +1,11 @@
-/** The README's catalogue home screen (importing the source instead of the package), kept compiling: `NODE_ENV=production bun examples/catalogue-home.tsx`. */
-import { createCliRenderer } from '@opentui/core';
-import { createRoot, useTerminalDimensions } from '@opentui/react';
+/** The README's catalogue home screen (importing the source instead of the package), kept compiling: `bun examples/catalogue-home.tsx`. */
+import { useTerminalDimensions } from '@opentui/react';
 import { useReducer } from 'react';
 import { createTerminalList, reduceTerminalList, terminalLabelsRu } from '../src/core';
 import {
+  runTerminalApp,
   TerminalAppShell,
-  TerminalLabelsProvider,
   TerminalList,
-  TerminalThemeProvider,
   terminalListKeymap,
 } from '../src/widgets';
 
@@ -50,11 +48,4 @@ function Home() {
   );
 }
 
-const renderer = await createCliRenderer();
-createRoot(renderer).render(
-  <TerminalThemeProvider mode='auto'>
-    <TerminalLabelsProvider labels={terminalLabelsRu}>
-      <Home />
-    </TerminalLabelsProvider>
-  </TerminalThemeProvider>,
-);
+await runTerminalApp(<Home />, { labels: terminalLabelsRu });
