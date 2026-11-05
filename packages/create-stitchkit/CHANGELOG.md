@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.20] - 2026-11-05
+
 ### Changed
 
 - Generated projects resolve stitchkit 0.120.0. The repository starter's surface conformance and
