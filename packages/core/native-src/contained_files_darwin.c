@@ -7,6 +7,7 @@
 #include <node_api.h>
 #include <libproc.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <sys/resource.h>
 #include <sys/sysctl.h>
 #include <stdbool.h>
@@ -19,6 +20,12 @@
 
 static const char *filesystem_error_code(int code) {
   switch (code) {
+    case EACCES: return "EACCES";
+    case EPERM: return "EPERM";
+    case EBADF: return "EBADF";
+    case EIO: return "EIO";
+    case EMFILE: return "EMFILE";
+    case ENFILE: return "ENFILE";
     case ENOENT: return "ENOENT";
     case ENOTDIR: return "ENOTDIR";
     case ELOOP: return "ELOOP";
@@ -120,8 +127,42 @@ static napi_value open_directory_at(napi_env env, napi_callback_info info) {
   return open_named_at(env, values[0], values[1], (search_only ? O_SEARCH : O_RDONLY) | O_DIRECTORY);
 }
 
+static napi_value reopen_directory(napi_env env, napi_callback_info info) {
+  napi_value values[2];
+  if (!two_arguments(env, info, values)) return NULL;
+  int directory;
+  bool search_only;
+  if (!integer_argument(env, values[0], &directory) ||
+      napi_get_value_bool(env, values[1], &search_only) != napi_ok) {
+    napi_throw_type_error(env, NULL, "Expected directory and search-only boolean");
+    return NULL;
+  }
+  int descriptor = openat(directory, ".", (search_only ? O_SEARCH : O_RDONLY) |
+                          O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (descriptor < 0) return fail(env, "openat directory capability");
+  napi_value result;
+  napi_create_int32(env, descriptor, &result);
+  return result;
+}
+
 static napi_value open_file_at(napi_env env, napi_callback_info info) {
   return open_at(env, info, O_RDONLY | O_NONBLOCK);
+}
+
+/* Used only by the isolated command guard, never in the application process. */
+static napi_value change_directory(napi_env env, napi_callback_info info) {
+  napi_value value;
+  size_t count = 1;
+  int directory;
+  if (napi_get_cb_info(env, info, &count, &value, NULL, NULL) != napi_ok || count != 1) {
+    napi_throw_type_error(env, NULL, "Expected one directory descriptor");
+    return NULL;
+  }
+  if (!integer_argument(env, value, &directory)) return NULL;
+  if (fchdir(directory) < 0) return fail(env, "fchdir");
+  napi_value result;
+  napi_get_undefined(env, &result);
+  return result;
 }
 
 static napi_value create_file_at(napi_env env, napi_callback_info info) {
@@ -190,15 +231,41 @@ static napi_value stat_at(napi_env env, napi_callback_info info) {
   return stat_object(env, &metadata);
 }
 
+static bool directory_progress(napi_env env, napi_value callback, bool entry) {
+  if (callback == NULL) return true;
+  napi_value receiver, argument, result;
+  napi_get_undefined(env, &receiver);
+  napi_get_boolean(env, entry, &argument);
+  return napi_call_function(env, receiver, callback, 1, &argument, &result) == napi_ok;
+}
+
 static napi_value list_at(napi_env env, napi_callback_info info) {
-  napi_value values[1];
-  size_t count = 1;
-  if (napi_get_cb_info(env, info, &count, values, NULL, NULL) != napi_ok || count != 1) {
-    napi_throw_type_error(env, NULL, "Expected one directory descriptor");
+  napi_value values[3];
+  size_t count = 3;
+  if (napi_get_cb_info(env, info, &count, values, NULL, NULL) != napi_ok || count < 1) {
+    napi_throw_type_error(env, NULL, "Expected directory descriptor and optional entry limit");
     return NULL;
   }
   int directory;
   if (!integer_argument(env, values[0], &directory)) return NULL;
+  napi_value progress = NULL;
+  napi_valuetype progress_type;
+  if (count > 2 && napi_typeof(env, values[2], &progress_type) == napi_ok &&
+      progress_type != napi_undefined) {
+    if (progress_type != napi_function) {
+      napi_throw_type_error(env, NULL, "Directory progress must be a function");
+      return NULL;
+    }
+    progress = values[2];
+  }
+  int limit = INT_MAX;
+  napi_valuetype limit_type;
+  if (count > 1 && napi_typeof(env, values[1], &limit_type) == napi_ok &&
+      limit_type != napi_undefined &&
+      (!integer_argument(env, values[1], &limit) || limit <= 0)) {
+    napi_throw_range_error(env, NULL, "Entry limit must be positive");
+    return NULL;
+  }
   int duplicate = dup(directory);
   if (duplicate < 0) return fail(env, "dup");
   DIR *stream = fdopendir(duplicate);
@@ -209,14 +276,28 @@ static napi_value list_at(napi_env env, napi_callback_info info) {
   napi_value result;
   napi_create_array(env, &result);
   uint32_t index = 0;
+  uint32_t visited = 0;
   struct dirent *entry;
   /* readdir reports failure only through errno, and every call below may leave one behind. */
-  for (errno = 0; (entry = readdir(stream)) != NULL; errno = 0) {
+  errno = 0;
+  while (visited < (uint32_t)limit) {
+    if (!directory_progress(env, progress, false)) {
+      closedir(stream);
+      return NULL;
+    }
+    errno = 0;
+    entry = readdir(stream);
+    if (entry == NULL) break;
     if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+    visited++;
+    if (!directory_progress(env, progress, true)) {
+      closedir(stream);
+      return NULL;
+    }
     struct stat metadata;
     if (fstatat(directory, entry->d_name, &metadata, AT_SYMLINK_NOFOLLOW) < 0) {
       /* An entry removed after readdir returned it was simply not there. */
-      if (errno == ENOENT) continue;
+      if (errno == ENOENT) { errno = 0; continue; }
       int saved = errno;
       closedir(stream);
       errno = saved;
@@ -227,6 +308,7 @@ static napi_value list_at(napi_env env, napi_callback_info info) {
     napi_create_string_utf8(env, entry->d_name, NAPI_AUTO_LENGTH, &name);
     napi_set_named_property(env, item, "name", name);
     napi_set_element(env, result, index++, item);
+    errno = 0;
   }
   int saved = errno;
   closedir(stream);
@@ -371,6 +453,8 @@ static napi_value initialize(napi_env env, napi_value exports) {
   const napi_property_descriptor methods[] = {
       {"processIdentity", NULL, process_identity, NULL, NULL, NULL, napi_default, NULL},
       {"openDirectoryAt", NULL, open_directory_at, NULL, NULL, NULL, napi_default, NULL},
+      {"reopenDirectory", NULL, reopen_directory, NULL, NULL, NULL, napi_default, NULL},
+      {"changeDirectory", NULL, change_directory, NULL, NULL, NULL, napi_default, NULL},
       {"openFileAt", NULL, open_file_at, NULL, NULL, NULL, napi_default, NULL},
       {"createFileAt", NULL, create_file_at, NULL, NULL, NULL, napi_default, NULL},
       {"createDirectoryAt", NULL, create_directory_at, NULL, NULL, NULL, napi_default, NULL},

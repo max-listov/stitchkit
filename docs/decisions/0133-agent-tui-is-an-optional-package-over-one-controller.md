@@ -4,7 +4,7 @@ description: "Terminal product mechanics live in stitchkit-tui while the headles
 type: decision
 status: accepted
 created: 2026-08-30
-updated: 2026-08-30
+updated: 2026-11-09 22:13 +07:00
 ---
 
 # ADR 0133 — Agent TUI is an optional package over one controller
@@ -51,3 +51,13 @@ whole workspace on the first ordinary dependency symlink.
 - The Agent starter shrinks to `stitchkit.agent.ts` plus host policy instead of forking the TUI.
 - This supersedes ADR 0132's decision to keep the complete TUI implementation in the starter; the
   explicit Agent template itself remains accepted.
+
+## Amendment (stitchkit-tui 0.4.1): bounded requests and one conversation per action
+
+Additive; the decision above stands.
+
+- **The session host enforces its 65,536-byte request ceiling while the body streams,** before EOF,
+  so an unfinished oversized request is refused with 413 instead of being held open.
+- **Controller actions capture conversation, model and context together.** A conversation switch
+  publishes identity and snapshot atomically after loading; a pending switch keeps commands attached
+  to the visible conversation, and a newer switch supersedes it.

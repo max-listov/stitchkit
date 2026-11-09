@@ -49,6 +49,7 @@ export async function runCodingShell(input: {
   executable: string;
   args: readonly string[];
   cwd: string;
+  cwdDescriptor?: number;
   environment: Readonly<Record<string, string>>;
   signal?: AbortSignal;
   timeoutMs: number;
@@ -150,6 +151,7 @@ export async function runCodingShell(input: {
         input.maxOutputBytes,
         input.artifacts ? artifactPayloadLimit : 0,
       ),
+      ...(input.cwdDescriptor !== undefined && { cwdDescriptor: input.cwdDescriptor }),
     },
   );
   try {

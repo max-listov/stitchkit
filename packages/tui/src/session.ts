@@ -232,6 +232,7 @@ export async function startAgentTuiSessionHost(input: {
   try {
     server = Bun.serve({
       unix: socketPath,
+      maxRequestBodySize: MAX_REQUEST_BYTES,
       async fetch(request) {
         if (request.headers.get('authorization') !== `Bearer ${token}`) {
           return Response.json({ error: 'UNAUTHORIZED' }, { status: 401 });

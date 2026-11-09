@@ -52,10 +52,16 @@ function nodeChild(input: {
     input.args,
   );
   const child = spawn(executable, args, {
-    cwd: input.cwd,
+    cwd: input.ownerLoss.cwdDescriptor === undefined ? input.cwd : undefined,
     env: input.env,
     detached: input.group,
-    stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+    stdio: [
+      'pipe',
+      'pipe',
+      'pipe',
+      'pipe',
+      ...(input.ownerLoss.cwdDescriptor === undefined ? [] : [input.ownerLoss.cwdDescriptor]),
+    ],
   });
   const control = child.stdio[3];
   if (!(control instanceof Duplex)) {
@@ -63,7 +69,12 @@ function nodeChild(input: {
     throw new Error('Owner-loss guard supplied no control pipe');
   }
   attachOwnerLossControl(child, control);
-  return child;
+  const { stdin, stdout, stderr } = child;
+  if (!stdin || !stdout || !stderr) {
+    abortOwnerLossLaunch(child.pid);
+    throw new Error('Owner-loss guard supplied incomplete command pipes');
+  }
+  return Object.assign(child, { stdin, stdout, stderr });
 }
 
 /** A channel the command inherited: this package holds no pipe for it, so there is nothing to read. */
@@ -140,10 +151,18 @@ export function spawnInheritedCommand(input: {
           input.args,
         );
         const spawned = spawn(executable, args, {
-          cwd: input.cwd,
+          cwd: input.ownerLoss.cwdDescriptor === undefined ? input.cwd : undefined,
           env: input.env,
           detached: input.group,
-          stdio: ['inherit', 'inherit', 'inherit', 'pipe'],
+          stdio: [
+            'inherit',
+            'inherit',
+            'inherit',
+            'pipe',
+            ...(input.ownerLoss.cwdDescriptor === undefined
+              ? []
+              : [input.ownerLoss.cwdDescriptor]),
+          ],
         });
         const control = spawned.stdio[3];
         if (!(control instanceof Duplex)) {

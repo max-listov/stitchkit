@@ -34,6 +34,7 @@ const REGISTRY = `${TESTS}/fixtures/option-effects.json`;
 
 /** Where each covered configuration type is exported from. */
 const COVERED: Record<string, string> = {
+  AgentCodingSearchLimits: 'agent-runtime/coding-search-limits.ts',
   ContractFactoryConfig: 'entrypoints/contract.ts',
   ContractFactoryToolExposure: 'entrypoints/contract.ts',
   ResolveAttributionInput: 'entrypoints/tracking.ts',

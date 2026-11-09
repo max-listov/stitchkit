@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit-tui` — the session host refuses a request body over its byte ceiling with 413 before
+  the body ends; it waited for EOF, so an unfinished oversized stream held the request open.
+- `stitchkit-tui` — submit, model selection, approval and interrupt keep the conversation they
+  started in across their awaits and a concurrent switch; a message typed in one conversation
+  could be sent to the next one with the first one's model.
+
 ## [0.4.0] - 2026-11-05
 
 ### ⚠️ Breaking changes

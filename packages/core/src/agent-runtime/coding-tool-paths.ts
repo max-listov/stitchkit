@@ -1,7 +1,9 @@
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { forbidden } from '../contract/errors';
+import { openPinnedDirectory } from '../internal/contained-directory';
 import { misspelledContainedSegment } from '../internal/contained-files';
+import type { ContainedFileHandle } from '../internal/contained-handle';
 import { errnoOf } from '../internal/errno';
 import {
   type AgentCodingToolAuthorization,
@@ -10,6 +12,7 @@ import {
   AgentCodingToolPathAuthorizationSchema,
 } from './coding-tool-contract';
 import { codingPathRefusal, codingRefusal } from './coding-tool-refusals';
+import type { ContainedScanBudget } from './contained-scan-budget';
 
 function within(root: string, target: string): boolean {
   const relative = path.relative(root, target);
@@ -203,10 +206,22 @@ export async function authorizeCodingPath(
 export async function authorizeCodingPathChain(
   config: AgentCodingToolConfig,
   relative: string,
+  root: ContainedFileHandle,
+  budget?: ContainedScanBudget,
 ): Promise<void> {
   // Before any policy reads the string: a rule cannot match a spelling the disk does not hold.
   if (relative !== '.') {
-    const misspelled = await misspelledContainedSegment(await realpath(config.root), relative);
+    const misspelled = await misspelledContainedSegment(
+      root,
+      relative,
+      budget && {
+        check: () => budget.check(),
+        directory: () => budget.directory(),
+        entry: () => budget.entry(),
+        remainingEntries: () => budget.remainingEntries(),
+        wait: (operation, dispose) => budget.wait(operation, dispose),
+      },
+    );
     if (misspelled !== undefined) {
       codingPathRefusal(
         'BAD_REQUEST',
@@ -221,7 +236,9 @@ export async function authorizeCodingPathChain(
   if (!config.authorizePath) return;
   const segments = relative === '.' ? ['.'] : relative.split('/');
   for (let depth = 1; depth <= segments.length; depth += 1) {
-    await authorizeCodingPath(config, segments.slice(0, depth).join('/'));
+    const authorize = () => authorizeCodingPath(config, segments.slice(0, depth).join('/'));
+    if (budget) await budget.wait(authorize);
+    else await authorize();
   }
 }
 
@@ -229,9 +246,12 @@ const codingPathLocks = new Map<string, Promise<void>>();
 
 /** Serialize framework-owned compare-and-replace transactions for one canonical target. */
 export async function withCodingPathLock<T>(
-  target: string,
+  root: ContainedFileHandle,
+  relative: string,
   work: () => Promise<T>,
 ): Promise<T> {
+  const identity = await root.stat();
+  const target = `${identity.dev}:${identity.ino}:${relative}`;
   const previous = codingPathLocks.get(target) ?? Promise.resolve();
   let release = (): void => undefined;
   const current = new Promise<void>((resolve) => {
@@ -258,4 +278,18 @@ export function textOccurrences(source: string, search: string): number {
     offset = found + search.length;
   }
   return count;
+}
+
+/** Select the workspace capability before any asynchronous host policy runs. */
+export async function withCodingRoot<T>(
+  configured: string,
+  work: (root: ContainedFileHandle, canonicalPath: string) => Promise<T>,
+): Promise<T> {
+  const canonical = await realpath(configured);
+  const root = await openPinnedDirectory(canonical);
+  try {
+    return await work(root, canonical);
+  } finally {
+    await root.close();
+  }
 }

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ToolTransport } from '../contract/define';
+import { AgentCodingSearchLimitsSchema } from './coding-search-limits';
 import type { AgentProcessSandbox, AgentSandboxRestriction } from './sandbox';
 
 export const AgentCodingToolLimitsSchema = z
@@ -12,9 +13,7 @@ export const AgentCodingToolLimitsSchema = z
     maxShellOutputBytes: z.int().positive(),
     maxArtifactBytes: z.int().positive(),
     maxListEntries: z.int().positive(),
-    maxSearchResults: z.int().positive(),
-    maxSearchFiles: z.int().positive(),
-    maxSearchDepth: z.int().nonnegative(),
+    ...AgentCodingSearchLimitsSchema.shape,
     shellTimeoutMs: z.int().positive(),
     shellTerminationGraceMs: z.int().positive(),
   })
@@ -282,6 +281,11 @@ const DEFAULT_LIMITS: AgentCodingToolLimits = {
   maxSearchResults: 100,
   maxSearchFiles: 10_000,
   maxSearchDepth: 32,
+  maxSearchDirectories: 1_000,
+  maxSearchEntries: 20_000,
+  maxSearchBytes: 16_777_216,
+  maxSearchOutputBytes: 65_536,
+  searchTimeoutMs: 5_000,
   shellTimeoutMs: 30_000,
   shellTerminationGraceMs: 250,
 };

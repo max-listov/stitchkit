@@ -218,10 +218,16 @@ export function spawnBunChild(input: BunSpawnInput): OwnedChild {
       : [input.executable, ...input.args];
     const subprocess = guarded
       ? Bun.spawn(command, {
-          cwd: input.cwd,
+          cwd: ownerLoss.cwdDescriptor === undefined ? input.cwd : undefined,
           env: input.env,
           detached: input.group,
-          stdio: ['pipe', 'pipe', 'pipe', 'socket-fd'],
+          stdio: [
+            'pipe',
+            'pipe',
+            'pipe',
+            'socket-fd',
+            ...(ownerLoss.cwdDescriptor === undefined ? [] : [ownerLoss.cwdDescriptor]),
+          ],
         })
       : Bun.spawn(command, {
           cwd: input.cwd,
@@ -270,10 +276,16 @@ export function spawnBunInheritedChild(input: BunSpawnInput): ObservableChild {
       : [input.executable, ...input.args];
     const subprocess = guarded
       ? Bun.spawn(command, {
-          cwd: input.cwd,
+          cwd: ownerLoss.cwdDescriptor === undefined ? input.cwd : undefined,
           env: input.env,
           detached: input.group,
-          stdio: ['inherit', 'inherit', 'inherit', 'socket-fd'],
+          stdio: [
+            'inherit',
+            'inherit',
+            'inherit',
+            'socket-fd',
+            ...(ownerLoss.cwdDescriptor === undefined ? [] : [ownerLoss.cwdDescriptor]),
+          ],
         })
       : Bun.spawn(command, {
           cwd: input.cwd,

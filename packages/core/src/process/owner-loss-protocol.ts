@@ -3,6 +3,7 @@ export const OWNER_LOSS_GUARD_FLAG = '--stitchkit-owner-loss-guard-v1';
 export interface OwnerLossGuardInvocation {
   readonly entry: string;
   readonly signalTarget: 'group' | 'leader';
+  readonly cwdDescriptor?: number;
 }
 
 /** The owner-loss guard is certified only on the two POSIX kernels exercised by release CI. */
@@ -21,6 +22,7 @@ export function ownerLossGuardCommand(
     guard.entry,
     OWNER_LOSS_GUARD_FLAG,
     guard.signalTarget,
+    ...(guard.cwdDescriptor === undefined ? [] : ['--stitchkit-cwd-fd', '4']),
     executable,
     ...args,
   ];

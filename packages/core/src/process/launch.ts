@@ -37,6 +37,7 @@ export interface NativeCommandLaunchDriver {
   cleanupTimeoutMs?: number;
   timeoutMs?: number;
   closeTimeoutMs?: number;
+  cwdDescriptor?: number;
 }
 
 /** Driver overrides retain the same finite, safe-integer budget admission. */
@@ -175,8 +176,14 @@ export function launchNativeCommand({
     // A command in the caller's group is never a group leader of its own.
     group: options.group === 'own' && (driver?.group ?? true),
     ownerLoss:
-      options.ownerLoss === 'terminate'
-        ? { entry: ownerLossGuardEntry(), signalTarget: options.stop.target }
+      options.ownerLoss === 'terminate' || driver?.cwdDescriptor !== undefined
+        ? {
+            entry: ownerLossGuardEntry(),
+            signalTarget: options.stop.target,
+            ...(driver?.cwdDescriptor !== undefined && {
+              cwdDescriptor: driver.cwdDescriptor,
+            }),
+          }
         : undefined,
   };
   let inherited: NativeCommandLaunchedProcess | undefined;

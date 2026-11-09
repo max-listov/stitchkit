@@ -131,6 +131,31 @@ export function refuseMissingCodingPath(error: unknown, relative: string): never
   throw error;
 }
 
+/**
+ * A directory argument (`list_directory` and `glob` paths, `run_command` cwd) that cannot be
+ * opened as a directory. Directory capabilities never follow a symlink, so a symlink alias is
+ * refused the same way as a file, and the model is told to name the real directory.
+ */
+export function refuseUnopenableCodingDirectory(error: unknown, relative: string): never {
+  const code = errnoOf(error);
+  if (code === 'ENOENT') {
+    codingPathRefusal('NOT_FOUND', 'This directory does not exist', relative, {
+      hint: 'List a parent directory to see what is there.',
+    });
+  }
+  if (code === 'ENOTDIR' || code === 'ELOOP') {
+    codingPathRefusal(
+      'BAD_REQUEST',
+      'This path is not a directory; symlinks are not followed',
+      relative,
+      {
+        hint: 'Name a real directory by its workspace-relative path; list the parent to see what is there.',
+      },
+    );
+  }
+  return refuseMissingCodingPath(error, relative);
+}
+
 /** The workspace moved while the host decided: the caller's answer is to look again. */
 function refuseChangedPath(error: unknown, relative: string): void {
   if (error instanceof ContainedPathChangedError) {

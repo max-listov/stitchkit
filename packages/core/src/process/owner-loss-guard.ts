@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
+import { closeSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { loadDarwinBinding } from '../internal/darwin-binding';
 import { errnoOf } from '../internal/errno';
 import { hostIsBun, spawnBunGuardTarget } from './bun-child';
 import { OWNER_LOSS_GUARD_FLAG } from './owner-loss-protocol';
@@ -103,6 +105,7 @@ function runOwnerLossGuard(
   signalTarget: string | undefined,
   executable: string | undefined,
   args: readonly string[],
+  cwdDescriptor?: number,
 ): void {
   const bun = hostIsBun();
   const control = bun
@@ -169,6 +172,18 @@ function runOwnerLossGuard(
     removeForwarders();
     refuseTarget(control, cause);
   };
+  if (cwdDescriptor !== undefined) {
+    try {
+      // This guard is a dedicated child; changing its cwd cannot affect the host.
+      if (process.platform === 'darwin') loadDarwinBinding().changeDirectory(cwdDescriptor);
+      else if (process.platform === 'linux') process.chdir(`/proc/self/fd/${cwdDescriptor}`);
+      else throw new Error('Descriptor command directories require Linux or macOS');
+      closeSync(cwdDescriptor);
+    } catch (cause) {
+      targetUnavailable(cause);
+      return;
+    }
+  }
   if (!bun) spawnNodeTarget(executable, args, targetStarted, targetExit, targetUnavailable);
   else spawnBunTarget(executable, args, targetStarted, targetExit, targetUnavailable);
 }
@@ -179,7 +194,15 @@ function startOwnerLossGuardEntry(): void {
   if (process.argv[2] !== OWNER_LOSS_GUARD_FLAG) return;
   const entry = process.argv[1];
   if (entry === undefined || fileURLToPath(import.meta.url) !== entry) return;
-  runOwnerLossGuard(process.argv[3], process.argv[4], process.argv.slice(5));
+  const pinnedCwd = process.argv[4] === '--stitchkit-cwd-fd';
+  if (pinnedCwd && process.argv[5] !== '4')
+    throw new Error('Invalid command directory descriptor');
+  runOwnerLossGuard(
+    process.argv[3],
+    process.argv[pinnedCwd ? 6 : 4],
+    process.argv.slice(pinnedCwd ? 7 : 5),
+    pinnedCwd ? 4 : undefined,
+  );
   guardInvocation = true;
 }
 

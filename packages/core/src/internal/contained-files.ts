@@ -1,5 +1,5 @@
 import { constants, type Stats } from 'node:fs';
-import { lstat, open, readdir } from 'node:fs/promises';
+import { lstat, open, opendir, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
   createDirectoryAt,
@@ -25,37 +25,7 @@ export interface ContainedFile {
   content?: { text: string; bytes: number; mode: number };
 }
 
-export interface ContainedFileScan {
-  files: readonly ContainedFile[];
-  truncated: boolean;
-  skippedDirectories: number;
-  skippedSymlinks: number;
-  /**
-   * Entries the host's `authorizePath` rejected while walking. A denied path
-   * used to disappear from every listing exactly like an absent one; naming
-   * them is what lets a caller tell "the host refused this" from "there is
-   * nothing here". Only the name and kind are carried — never content.
-   */
-  denied: readonly { relative: string; kind: ContainedEntryKind }[];
-  /** The `denied` list hit its cap; there are more refusals than named. */
-  deniedTruncated: boolean;
-}
-
 export type ContainedEntryKind = 'file' | 'directory' | 'symlink' | 'other';
-
-function containedEntryKind(entry: {
-  isDirectory(): boolean;
-  isFile(): boolean;
-  isSymbolicLink(): boolean;
-}): ContainedEntryKind {
-  return entry.isDirectory()
-    ? 'directory'
-    : entry.isSymbolicLink()
-      ? 'symlink'
-      : entry.isFile()
-        ? 'file'
-        : 'other';
-}
 
 function sameIdentity(left: Stats, right: Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
@@ -130,82 +100,61 @@ async function statAt(
 
 export async function listAt(
   directory: ContainedFileHandle,
+  maxEntries?: number,
+  progress?: { check(): void; entry(): void },
 ): Promise<readonly ContainedDirectoryEntry[]> {
+  progress?.check();
   if (process.platform === 'darwin') {
     return loadDarwinBinding()
-      .listAt(directory.fd)
+      .listAt(
+        directory.fd,
+        maxEntries,
+        progress
+          ? (entry) => {
+              if (entry) progress.entry();
+              progress.check();
+            }
+          : undefined,
+      )
       .map(({ name, mode }) => ({ name, ...entryMetadata(mode) }));
+  }
+  if (maxEntries !== undefined) {
+    const stream = await opendir(descriptorPath(directory), { bufferSize: 1 });
+    const entries: ContainedDirectoryEntry[] = [];
+    try {
+      while (entries.length < maxEntries) {
+        progress?.check();
+        const entry = await stream.read();
+        if (entry) progress?.entry();
+        progress?.check();
+        if (!entry) break;
+        entries.push(entry);
+      }
+      return entries;
+    } finally {
+      await stream.close();
+    }
   }
   return readdir(descriptorPath(directory), { withFileTypes: true });
 }
 
-/** One directory's direct children, read through pinned descriptors. */
-export async function listContainedDirectory(
-  root: string,
+/** One descendant directory opened from the request's selected root. */
+export async function openContainedDirectory(
+  root: string | ContainedFileHandle,
   relative: string,
-  maxEntries: number,
-  authorizePath?: (relative: string) => boolean | Promise<boolean>,
-): Promise<{
-  entries: {
-    name: string;
-    kind: 'file' | 'directory' | 'symlink' | 'other';
-    bytes?: number;
-  }[];
-  truncated: boolean;
-  /** Direct children the host's policy refused, capped at `maxEntries`. */
-  denied: { name: string; kind: ContainedEntryKind }[];
-  deniedTruncated: boolean;
-}> {
+  beforeOpen?: () => void,
+): Promise<ContainedFileHandle> {
   let current = await openPinnedDirectory(root);
   try {
-    if (relative !== '.') {
+    if (relative !== '.')
       for (const segment of safeSegments(relative)) {
+        beforeOpen?.();
         current = await descend(current, await openDirectoryAt(current, segment));
       }
-    }
-    const raw = [...(await listAt(current))];
-    raw.sort((left, right) => left.name.localeCompare(right.name));
-    const admitted: ContainedDirectoryEntry[] = [];
-    const denied: { name: string; kind: ContainedEntryKind }[] = [];
-    for (const entry of raw) {
-      const entryPath = relative === '.' ? entry.name : path.join(relative, entry.name);
-      if (authorizePath && !(await authorizePath(entryPath))) {
-        denied.push({ name: entry.name, kind: containedEntryKind(entry) });
-        continue;
-      }
-      admitted.push(entry);
-    }
-    const entries: {
-      name: string;
-      kind: 'file' | 'directory' | 'symlink' | 'other';
-      bytes?: number;
-    }[] = [];
-    for (const entry of admitted.slice(0, maxEntries)) {
-      const kind = containedEntryKind(entry);
-      if (kind !== 'file') {
-        entries.push({ name: entry.name, kind });
-        continue;
-      }
-      const metadata = await statAt(current, entry.name);
-      entries.push({
-        name: entry.name,
-        kind,
-        ...(metadata && { bytes: metadata.size }),
-      });
-    }
-    // Directories first, then files — the order a reader scans a tree in.
-    entries.sort((left, right) => {
-      if (left.kind === right.kind) return left.name.localeCompare(right.name);
-      return left.kind === 'directory' ? -1 : right.kind === 'directory' ? 1 : 0;
-    });
-    return {
-      entries,
-      truncated: admitted.length > maxEntries,
-      denied: denied.slice(0, maxEntries),
-      deniedTruncated: denied.length > maxEntries,
-    };
-  } finally {
+    return current;
+  } catch (error) {
     await current.close();
+    throw error;
   }
 }
 
@@ -221,7 +170,7 @@ export interface ContainedParent {
  * happens, and cannot do that without knowing what would be created.
  */
 export async function missingContainedDirectories(
-  root: string,
+  root: string | ContainedFileHandle,
   relative: string,
 ): Promise<string[]> {
   const segments = safeSegments(relative);
@@ -276,28 +225,53 @@ function alternateSpellings(name: string): string[] {
  * segment is not misspelled; the caller reports it.
  */
 export async function misspelledContainedSegment(
-  root: string,
+  root: string | ContainedFileHandle,
   relative: string,
+  progress?: {
+    check(): void;
+    directory(): void;
+    entry(): void;
+    remainingEntries(): number | undefined;
+    wait<T>(operation: () => Promise<T>, disposeLate?: (value: T) => void): Promise<T>;
+  },
 ): Promise<string | undefined> {
   const segments = safeSegments(relative);
-  let current = await openPinnedDirectory(root);
+  const wait = <T>(operation: () => Promise<T>, disposeLate?: (value: T) => void) =>
+    progress ? progress.wait(operation, disposeLate) : operation();
+  const dispose = (handle: ContainedFileHandle) => {
+    void handle.close().catch(() => undefined);
+  };
+  let current = await wait(() => openPinnedDirectory(root), dispose);
   try {
     for (const [index, segment] of segments.entries()) {
+      progress?.check();
       const exists = async (name: string): Promise<boolean> =>
-        (await statAt(current, name).catch(() => null)) !== null;
+        (await wait(() => statAt(current, name).catch(() => null))) !== null;
       let folded = false;
       for (const spelling of alternateSpellings(segment)) {
         folded ||= await exists(spelling);
       }
       if (folded && (await exists(segment))) {
-        const stored = (await listAt(current)).some(({ name }) => name === segment);
+        const maximum = progress?.remainingEntries();
+        const entries = await wait(() => listAt(current, maximum, progress));
+        // Native stat may drop a concurrently deleted name after counting it.
+        // Only observed-entry accounting can prove the spelling scan complete.
+        progress?.remainingEntries();
+        const stored = entries.some(({ name }) => name === segment);
         if (!stored) return segment;
       }
       if (index === segments.length - 1) return undefined;
-      const next = await openDirectoryAt(current, segment).catch((error: unknown) => {
-        if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(errnoOf(error) ?? '')) return null;
-        throw error;
-      });
+      progress?.directory();
+      const next = await wait(
+        () =>
+          openDirectoryAt(current, segment).catch((error: unknown) => {
+            if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(errnoOf(error) ?? '')) return null;
+            throw error;
+          }),
+        (handle) => {
+          if (handle) dispose(handle);
+        },
+      );
       if (!next) return undefined;
       current = await descend(current, next);
     }
@@ -316,7 +290,7 @@ export class UnapprovedContainedDirectoryError extends Error {
 }
 
 export async function openContainedParent(
-  root: string,
+  root: string | ContainedFileHandle,
   relative: string,
   options: { createDirectories?: readonly string[] } = {},
 ): Promise<ContainedParent> {
@@ -349,7 +323,7 @@ export async function openContainedParent(
 
 /** Open a final regular-file candidate through pinned ancestors without following symlinks. */
 export async function openContainedFile(
-  root: string,
+  root: string | ContainedFileHandle,
   relative: string,
 ): Promise<ContainedFileHandle> {
   const parent = await openContainedParent(root, relative);
@@ -385,7 +359,7 @@ async function reopen<T>(relative: string, open: () => Promise<T>): Promise<T> {
 }
 
 export async function assertContainedFileCurrent(
-  root: string,
+  root: string | ContainedFileHandle,
   relative: string,
   expected: ContainedFileHandle,
 ): Promise<void> {
@@ -400,7 +374,7 @@ export async function assertContainedFileCurrent(
 }
 
 export async function assertContainedParentCurrent(
-  root: string,
+  root: string | ContainedFileHandle,
   relative: string,
   expected: ContainedFileHandle,
 ): Promise<void> {
@@ -429,45 +403,4 @@ export async function openContainedParentFile(
     throw new Error('Contained path is not a regular file');
   }
   return handle;
-}
-
-export async function readContainedUtf8Handle(
-  handle: ContainedFileHandle,
-  maxBytes: number,
-): Promise<{ text: string; bytes: number; mode: number }> {
-  const metadata = await handle.stat();
-  if (!metadata.isFile()) throw new Error('Contained path is not a regular file');
-  if (metadata.size > maxBytes) throw new Error('Contained file exceeds byte budget');
-  const buffer = Buffer.alloc(metadata.size);
-  let offset = 0;
-  while (offset < buffer.byteLength) {
-    const { bytesRead } = await handle.read(
-      buffer,
-      offset,
-      buffer.byteLength - offset,
-      offset,
-    );
-    if (bytesRead === 0) break;
-    offset += bytesRead;
-  }
-  if (offset !== metadata.size) throw new Error('Contained file changed while being read');
-  return {
-    text: new TextDecoder('utf-8', { fatal: true }).decode(buffer),
-    bytes: offset,
-    mode: metadata.mode,
-  };
-}
-
-/** Open the final path without following any mutable ancestor or replacement symlink. */
-export async function readContainedUtf8File(
-  root: string,
-  relative: string,
-  maxBytes: number,
-): Promise<{ text: string; bytes: number; mode: number }> {
-  const handle = await openContainedFile(root, relative);
-  try {
-    return await readContainedUtf8Handle(handle, maxBytes);
-  } finally {
-    await handle.close();
-  }
 }

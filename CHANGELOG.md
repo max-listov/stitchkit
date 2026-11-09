@@ -15,6 +15,40 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** hosts that build a complete `AgentCodingToolLimits` value, read exact `list_directory`, `glob` or `search_files` outputs, rely on a symlink `run_command` cwd or on `glob` returning no paths for a missing `path`, or send search regexes with named backreferences or counted repetition above 1,000. A host mounting the coding tools with partial limits and ordinary queries changes nothing. See the [migration](docs/guide/upgrading.md#unreleased-migration-bounded-coding-search).
+
+- `stitchkit/agent-runtime/coding-tools` — **search reports its coverage and bounds traversal before reading.**
+  `search_files` prunes incompatible glob branches before authorization/open, streams matches,
+  honors cancellation and bounds directory opens, entries, total content bytes, elapsed time and
+  the entire serialized result. `coverage` distinguishes a complete empty result from denied,
+  unreadable, cancelled or limited work. Directory errors carry a relative path, operation and code.
+  Regex searches keep JavaScript syntax, modifiers and Annex B forms. A line whose backtracking
+  work, with repetition capped at the line's length, stays within 2^24 steps runs natively; any
+  other line runs on a cached linear automaton that observes the deadline inside the line (ten to
+  forty times slower than native matching, with no catastrophic case). Named backreferences,
+  counted repetition above 1,000 and, for patterns that need the automaton, more than 16,384 automaton states,
+  65,536 construction steps or 4,194,304 overlapping character-set memberships now refuse beside numbered backreferences and
+  lookaround; an invalid pattern's refusal carries the engine's reason.
+  Before: `{ query: '(?<w>a)\\k<w>', regex: true }` → after: `{ query: '(a)a', regex: true }`.
+  A `glob` path or `run_command` cwd that is missing, a file or a symlink refuses with
+  `NOT_FOUND`/`BAD_REQUEST` and a hint, as `list_directory` does; a missing `glob` path used to
+  return no paths.
+  Hosts constructing a full
+  `AgentCodingToolLimits` value add the five search ceilings; partial `limits` use finite defaults.
+  [ADR 0285](docs/decisions/0285-search-bounds-the-work-before-reading.md),
+  [migration](docs/guide/upgrading.md#unreleased-migration-bounded-coding-search).
+  List and glob use the same budgets and coverage, including bounded canonical spelling checks;
+  list raw enumeration respects maxListEntries and glob patterns have a 4,096-unit ceiling.
+  Every filesystem tool pins root before either policy; ordinary command cwd is inherited by
+  the isolated guard. Symlink cwd descendants refuse; custom sandbox launchers own cwd capture.
+  **Affects:** `stitchkit/agent-runtime/coding-tools` createAgentCodingTools, AgentCodingToolLimitsSchema, AgentCodingToolLimits, behaviour
+
+### Fixed
+
+- API reference export tables are checked against each actual entrypoint in both directions.
+
 ## [0.120.0] - 2026-11-05
 
 ### ⚠️ Breaking changes

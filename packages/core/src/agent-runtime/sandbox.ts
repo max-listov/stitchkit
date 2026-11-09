@@ -51,7 +51,11 @@ export interface AgentSandboxOutputStream {
  * object's identity ({@link probeAgentProcessSandbox}).
  */
 export interface AgentProcessSandbox {
-  /** Optional lifecycle-owned launcher; the coding profile still owns output and deadline handling. */
+  /**
+   * Optional lifecycle-owned launcher. The adapter owns atomic capture of its pathname cwd
+   * and isolation at spawn; the SDK checks identity at handoff but cannot pin this custom
+   * launcher's filesystem operations. The coding profile owns output and deadline handling.
+   */
   spawn?(input: Parameters<AgentProcessSandbox['prepare']>[0]): AgentSandboxProcess;
   /** Grade what this sandbox enforces; a throw or a non-grade is read as `unavailable`. */
   probe(): AgentSandboxGrade | Promise<AgentSandboxGrade>;

@@ -129,6 +129,35 @@ function exportsOf(file: string): string[] {
   return checker.getExportsOfModule(moduleSymbol).map((symbol) => symbol.getName());
 }
 
+/** Export table cells belong to the exact entrypoint section, including its subsections. */
+function claimedExportNames(reference: string, entry: string): string[] {
+  const heading = `## \`${entry}\``;
+  const start = reference.indexOf(`${heading}\n`);
+  if (start < 0) return [];
+  const section = reference.slice(start + heading.length).split('\n## ')[0] ?? '';
+  return [...section.matchAll(/^\| ((?:`[^`]+`[^|]*)+)\|/gm)].flatMap((row) =>
+    [...(row[1] ?? '').matchAll(/`([A-Za-z_][A-Za-z0-9_]*)`/g)].map((match) => match[1] ?? ''),
+  );
+}
+
+test('export claims distinguish real rows, ghost rows, prose and adjacent entrypoints', () => {
+  const reference =
+    '## `stitchkit/example`\n\nProse mentions `otherName`.\n\n| Export | Kind |\n|---|---|\n| `realName` / `GhostExport` | function |\n\n## `stitchkit/elsewhere`\n\n| `elsewhereName` | function |\n';
+  expect(claimedExportNames(reference, 'stitchkit/example')).toEqual([
+    'realName',
+    'GhostExport',
+  ]);
+  const actual = new Set(['realName']);
+  expect(
+    claimedExportNames(reference, 'stitchkit/example').filter((name) => !actual.has(name)),
+  ).toEqual(['GhostExport']);
+  expect(
+    claimedExportNames(reference.replace(' / `GhostExport`', ''), 'stitchkit/example').filter(
+      (name) => !actual.has(name),
+    ),
+  ).toEqual([]);
+});
+
 /** Every backticked identifier in the reference — the "documented" set. */
 function documentedNames(): Set<string> {
   const txt = readFileSync(REFERENCE, 'utf8');
@@ -149,6 +178,12 @@ describe('reference.md coverage', () => {
     test(`every export of ${entry} is documented`, () => {
       const missing = exportsOf(file).filter((name) => !documented.has(name));
       expect(missing).toEqual([]);
+    });
+
+    test(`every claimed export of ${entry} exists`, () => {
+      const reference = readFileSync(REFERENCE, 'utf8');
+      const claimed = claimedExportNames(reference, entry);
+      expect(claimed.filter((name) => !exportsOf(file).includes(name))).toEqual([]);
     });
 
     test(`public surface of ${entry} matches its exact snapshot`, () => {

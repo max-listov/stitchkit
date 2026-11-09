@@ -1,5 +1,53 @@
 # Upgrading stitchkit
 
+## Unreleased migration: bounded-coding-search
+
+**Who must act:** hosts that construct a complete `AgentCodingToolLimits` value, inspect exact
+`list_directory`, `glob` or `search_files` output objects, rely on symlink cwd aliases, call `glob` on a path that may not exist, or send regex named backreferences or counted repetition above 1,000.
+
+Partial `limits` still fill finite defaults. Complete values add:
+
+```ts
+maxSearchDirectories: 1_000,
+maxSearchEntries: 20_000,
+maxSearchBytes: 16_777_216,
+maxSearchOutputBytes: 65_536,
+searchTimeoutMs: 5_000,
+```
+
+Read `coverage.complete` on list, glob and search before interpreting an empty result.
+List raw enumeration is also capped by `maxListEntries`; glob patterns have a 4,096-unit ceiling.
+The ordinary command cwd is a pinned directory, so descendant symlink cwd aliases are refused;
+use the real relative directory name. Custom sandbox launchers own atomic cwd capture.
+`coverage.reasons` names stopped
+budgets, cancellation, denial, unreadable files and lines beyond the searchable byte ceiling.
+`coverage.scope` names the workspace-relative include, exclusion policy and symlink policy;
+directory/entry/read-byte counters report work reached by the bounded reader. Denied and error
+lists can themselves be truncated. The entire UTF-8 JSON result fits `maxSearchOutputBytes`
+(minimum 1,024); an input whose minimum envelope cannot fit refuses before I/O.
+
+Regex queries keep JavaScript syntax, `(?ims-ims:…)` modifiers and Annex B forms, and their
+cost is bounded per line: a line whose backtracking work, repetition capped at the line's length,
+stays within 2^24 steps runs natively, any other line in linear time. Named backreferences,
+counted repetition above 1,000 and patterns needing the automaton with more than 16,384 automaton states, 65,536
+construction steps (nested repetition of an empty group such as `(?:(?:){1000}){1000}`) or
+4,194,304 overlapping character-set memberships now return `BAD_REQUEST`
+before authorization or file access, as
+numbered backreferences and lookaround already did. Spell the repeated text out, for example
+replace `{ query: '(?<w>ab)\\k<w>', regex: true }` with `{ query: '(ab)ab', regex: true }`.
+
+`glob` with a `path` that is missing, a file or a symlink now refuses (`NOT_FOUND` or
+`BAD_REQUEST`, with a hint) instead of returning no paths; treat that refusal as "nothing
+there". `run_command` refuses such a `cwd` the same way.
+
+Glob matching preserves `**`, `*`, `?` and literal punctuation, including embedded `**`.
+A pattern that prunes directories may produce an explanatory `hint` without counting unseen
+files. `glob` confines traversal to its requested path and viable pattern prefixes.
+
+Traversal checks cancellation and deadlines at CPU checkpoints and races asynchronous waits.
+Late opened handles are closed; in-flight operating-system calls are not claimed to be interrupted.
+Reaching an entry or result ceiling conservatively reports partial coverage without a lookahead.
+
 ## Released migration: 0.120.0
 
 ### tools-barrel-subpaths

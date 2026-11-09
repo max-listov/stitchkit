@@ -1,4 +1,30 @@
 {
+  "AgentCodingSearchLimits": {
+    "maxSearchResults": {
+      "test": "result cap stops before reading the next file and path mode reads no content"
+    },
+    "maxSearchFiles": {
+      "test": "each search traversal limit changes coverage and bounded work"
+    },
+    "maxSearchDepth": {
+      "test": "each search traversal limit changes coverage and bounded work"
+    },
+    "maxSearchDirectories": {
+      "test": "each search traversal limit changes coverage and bounded work"
+    },
+    "maxSearchEntries": {
+      "test": "each search traversal limit changes coverage and bounded work"
+    },
+    "maxSearchBytes": {
+      "test": "each search traversal limit changes coverage and bounded work"
+    },
+    "maxSearchOutputBytes": {
+      "test": "serialized search budget covers escaped matches, large context and diagnostics"
+    },
+    "searchTimeoutMs": {
+      "test": "search cancellation and deadlines release asynchronous host authorization"
+    }
+  },
   "ContractFactoryConfig": {
     "toolExposure": {
       "test": "configured default exposure drives HTTP, CLI and the transport manifest"

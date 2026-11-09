@@ -11,11 +11,17 @@ export interface DarwinEntry {
 export interface DarwinBinding {
   processIdentity(pid: number): unknown;
   openDirectoryAt(directory: number, name: string, searchOnly: boolean): number;
+  reopenDirectory(directory: number, searchOnly: boolean): number;
+  changeDirectory(directory: number): void;
   openFileAt(directory: number, name: string): number;
   createFileAt(directory: number, name: string, mode: number): number;
   createDirectoryAt(directory: number, name: string, mode: number): boolean;
   statAt(directory: number, name: string): Omit<DarwinEntry, 'name'> | null;
-  listAt(directory: number): readonly DarwinEntry[];
+  listAt(
+    directory: number,
+    maxEntries?: number,
+    progress?: (entry: boolean) => void,
+  ): readonly DarwinEntry[];
   renameAt(directory: number, source: string, target: string): void;
   unlinkAt(directory: number, name: string): void;
 }
@@ -43,6 +49,8 @@ export function loadDarwinBinding(): DarwinBinding {
   }
   const methods = [
     'openDirectoryAt',
+    'reopenDirectory',
+    'changeDirectory',
     'openFileAt',
     'createFileAt',
     'createDirectoryAt',

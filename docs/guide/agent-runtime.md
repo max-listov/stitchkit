@@ -297,14 +297,24 @@ outermost first, stopping at the first refusal; discovery rooted at `.` also ask
 Thus denying `credentials` denies everything
 under it. The comparison is segment-wise, so it does not deny `credentials-backup`, and a path of
 depth N costs N questions for direct access. Directory decisions happen before descent; file decisions and
-`search_files.include` happen before opening content. Requested paths use `/`: a backslash is
+`search_files.include` happen before opening content. Incompatible glob directory prefixes are
+pruned before policy or directory opens. Requested paths use `/`: a backslash is
 refused rather than normalised, because the workspace walk reads it as a separator and every
 authorization callback would otherwise be asked about a different decomposition than the one opened. File paths are relative, bounded and contained after
 descriptor-relative resolution: each ancestor is opened without following symlinks. Reads and edits
 stay pinned through authorization; `write_file` plans before it and opens the parent after, because
 the parent it creates does not exist yet. Reads revalidate the pinned file identity;
 writes and patches revalidate the pinned parent identity; search and resource discovery descend
-only through opened directories. A path that changed during authorization refuses with `CONFLICT`.
+only through opened directories. Every filesystem tool selects its root capability before operation or path authorization and retains
+that identity if a callback replaces the root path or configured alias. On Linux and macOS the ordinary
+command launcher inherits a pinned cwd through its isolated guard — one short-lived guard process
+per command, tens of milliseconds — and the application process never changes cwd. Where
+contained descriptors are unavailable (Windows), `run_command` accepts a cwd whose realpath is
+that same name under the root — a symlink segment refuses there too — and checks the directory's
+identity again immediately before launch, after every host decision.
+A custom sandbox launcher owns atomic cwd capture at its pathname handoff; the SDK refuses a
+changed identity after policy/prepare and immediately before that handoff. A path that changed
+during direct-access authorization refuses with `CONFLICT`.
 A path spelled differently from the name stored on disk refuses before any policy reads it, so on a
 case-insensitive volume a rule on `credentials` cannot be passed by asking for `CREDENTIALS`.
 NUL bytes are refused before either host policy sees a path.
@@ -358,11 +368,51 @@ crosses a process boundary and is rebuilt from the wire.
 excluded directory is not "no files", and a model told only "nothing found" concludes the wrong
 thing. `search_files` takes `regex`, `context` lines and an anchored `include` pattern matched
 against the whole workspace-relative path. `*` does not cross `/`, so files in subdirectories need
-`**/`; `scannedFiles` counts files admitted by both that filter and host authorization. A `hint`
-explains the zero only when the filter produced it, rejecting every file the scan reached; an empty
-tree and a host refusal return the same empty result without blaming the pattern. Regex is bounded by
-refusing backreferences and lookaround and capping line length rather than by a timeout, because a
-JavaScript `RegExp` cannot be interrupted once it starts backtracking. With an optional `AgentCodingArtifactStore`, shell output beyond the inline
+`**/`; `scannedFiles` counts files admitted by both that filter and host authorization that reached
+comparison. One finite glob automaton matches files and prunes incompatible directory prefixes;
+`glob` also confines its walk to the requested path. A `hint` can explain include filtering or
+pruning, without counting files below unopened directories.
+
+Search processes one file at a time. List, glob and search share directory, entry, serialized-output,
+timeout and cancellation budgets, including canonical spelling checks before path authorization.
+`list_directory` caps raw enumeration at the smaller of `maxListEntries` and `maxSearchEntries`;
+its coverage scope lists symlinks while glob/search skip them. Glob patterns are limited to 4,096
+UTF-16 units. A scoped glob measures depth from its requested base directory. In addition to `maxSearchFiles` (10,000), `maxSearchDepth`
+(32), `maxSearchResults` (100) and `maxReadBytes` (262,144), hosts can configure
+`maxSearchDirectories` (1,000 directory-open attempts, root included), `maxSearchEntries`
+(20,000 entries observed by bounded readers), `maxSearchBytes` (16,777,216 aggregate content
+bytes, including rejected UTF-8), `maxSearchOutputBytes` (65,536 bytes for the entire serialized
+UTF-8 JSON, minimum 1,024) and `searchTimeoutMs` (5,000). An input whose minimum coverage
+envelope cannot fit the output ceiling refuses before filesystem access. Directory readers cap
+enumeration before materialization and sorting; reaching an entry or result ceiling is
+conservatively partial, without reading a lookahead entry or match.
+
+`list_directory`, `glob` and `search_files` return `coverage.complete` and `coverage.reasons`
+to distinguish full empty results from partial work. Glob `resultTruncated` conservatively marks
+the result ceiling even when no extra match was read.
+Coverage names the include/exclusion/symlink scope, directory and entry counters, actual content
+bytes and elapsed milliseconds. Limits, cancellation, denial, unreadable files and oversized
+lines are explicit reasons. `errors` names only a workspace-relative path, operation and safe code;
+`errorsTruncated` and `deniedTruncated` report shortened diagnostics. Excluded directories and
+symlinks are outside the declared search scope. The caller's signal and deadline reach host
+authorization, file reads and traversal; CPU checkpoints and asynchronous races stop further work.
+Late opened handles are closed, while already-running kernel calls may finish later. Directory
+enumeration and glob matching have internal checkpoints; cancellation stops their producer loops.
+Host policy and visitor exceptions propagate to error hooks with their original cause, rather
+than becoming filesystem diagnostics. Diagnostic byte admission is linear and checks the deadline
+even for an empty result.
+
+Regex searches use JavaScript `RegExp` syntax without flags — groups, alternation, classes,
+anchors, `\b`, quantifiers and `(?ims-ims:…)` modifiers — with bounded cost per line. A line
+whose backtracking work (paths × longest path × line length × (number of groups + 1), every
+repetition capped at the line length beyond the iterations it requires) stays within 2^24 steps runs on the native engine, so ordinary `.*` searches over code
+lines keep native speed and the deadline is observed between lines; any other line runs on a
+cached linear automaton, so `(a+)+$` on a long line costs the same as `a+` and the deadline is
+observed inside the line. Backreferences and
+lookaround refuse before I/O; lines over 8,192 UTF-8 bytes are skipped with incomplete coverage.
+Literal queries allow up to 8,192 UTF-16 units and include patterns up to 4,096.
+
+With an optional `AgentCodingArtifactStore`, shell output beyond the inline
 preview continues into an opaque bounded artifact and `read_output` reads slices without
 exposing a host path. Without a store, the previous finite output-limit behavior is unchanged.
 

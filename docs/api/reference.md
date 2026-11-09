@@ -224,7 +224,7 @@ from the root `stitchkit`.
 | `McpProgressUpdate` | _type_ | one mid-call progress update — `message`, and `progress`/`total` when the operation knows a scale |
 | `McpReportProgress` | _type_ | `ctx.reportProgress` — sends one update to the host that asked for progress; a no-op when none did, and never throws |
 | `McpRoundOutcome` | _type_ | managed multi-round attempt outcome |
-| `EndpointHandlerContext` | _type_ | one endpoint handler's fully inferred params, input, files and runtime context |
+| `HandlerContext` | _type_ | contract handler's fully inferred params, input, files and runtime context |
 | `EndpointFn` | _type_ | the call signature of one client method |
 | `TypedClient` | _type_ | the full typed client for a contract |
 | `TypedHttpClient` | _type_ | the typed client, HTTP endpoints only (`= ScopedHttpClient<C, unknown>`) |
@@ -378,6 +378,8 @@ schedules, transports and file generation remain application-owned.
 
 
 ## `stitchkit/server`
+
+`EndpointHandlerContext` is the server endpoint handler’s inferred params, input, files and runtime context.
 
 Server-only. Builds and runs the HTTP server, and carries the server primitives.
 Also re-exports the error helpers from `stitchkit/contract`.
@@ -615,6 +617,8 @@ lane never reaches the hooks on either runtime.
 
 ## `stitchkit/application`
 
+Construct a directory inbox with `createDirectoryInbox` from `stitchkit/application/directory-inbox`.
+
 `StartFact` also carries `previousDrainUpperBoundMs`: the time from a predecessor's recorded admission stop to this start when its exit is `interrupted`, otherwise `null`. This is an upper bound, and does not identify a kill signal or supervisor deadline.
 
 
@@ -640,7 +644,7 @@ cutovers are covered by the executable
 | `NotificationOutboxItem` / `NotificationOutboxReceipt` / `NotificationOutboxState` / `NotificationSend` / `NotificationFailureClassification` / `DroppedNotification` / `EnqueueNotification` | _type_ | versioned queue records, stable send identity and delivery decisions |
 | `notificationOutboxStateSchema` | function | strict persisted-state schema over an application payload schema |
 | `notificationOutboxResource` / `NotificationOutboxResource` / `NotificationOutboxResourceConfig` | function / _type_ | thin managed-resource scheduler over an outbox handle |
-| `createDirectoryInbox` (from `stitchkit/application/directory-inbox`) / `DirectoryInbox` / `DirectoryInboxConfig` / `DirectoryInboxDelivery` / `DirectoryInboxResource` | function / _type_ | one managed directory inbox for files or durable `accept({ source, key, entry })` (`entry` is the schema's input, stored as given); a hard-linked file is set aside as `invalid`; first payload wins, bounded capacity/bytes/receipts and renewable fenced leases; delivery begins after readiness and effects remain at least once |
+| `DirectoryInbox` / `DirectoryInboxConfig` / `DirectoryInboxDelivery` / `DirectoryInboxResource` | _type_ | one managed directory inbox for files or durable `accept({ source, key, entry })` (`entry` is the schema's input, stored as given); a hard-linked file is set aside as `invalid`; first payload wins, bounded capacity/bytes/receipts and renewable fenced leases; delivery begins after readiness and effects remain at least once |
 | `DirectoryInboxIdentitySchema` / `DirectoryInboxIdentity` / `DirectoryInboxAccept` / `DirectoryInboxAcceptResultSchema` / `DirectoryInboxAcceptResult` | schema / _type_ | validated source/key, typed entry and durable accepted/duplicate result with filename; duplicates do not replace the first payload |
 | `StateStoreUpdateContext` | _type_ | real active protected transaction: `assertHeld()` refuses after ownership loss or completion; custom adapters supply this context to their transition |
 | `DirectoryInboxStateSchema` / `DirectoryInboxState` / `DirectoryInboxRejection` / `DirectoryInboxRejectionReasonSchema` / `DirectoryInboxRejectionReason` | schema / _type_ | the inbox's claims, receipts and rejections (`invalid`, `too-large`, `attempt-limit`) |
@@ -723,9 +727,10 @@ cutovers are covered by the executable
 
 ### Bounded diagnostic journal
 
+Construct the writer with `createDiagnosticJournal` from `stitchkit/application/diagnostic-journal`.
+
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createDiagnosticJournal` | function | create one schema-owned FIFO JSONL writer with bounded retained memory, exclusive local path ownership and finite rotation |
 | `DiagnosticJournalConfig` / `DiagnosticJournal` | _type_ | owner schema/path/limits/failure observer, `startupScan` (`tails` by default, or `full`), `onStartupRefusal` (`quarantine` by default, or `fail`) and the synchronous `submit`, bounded-wait `flush`/`close`, status handle |
 | `DiagnosticJournalLimitsSchema` / `DiagnosticJournalLimits` | schema / _type_ | positive event, pending-item, pending-byte, file-byte and retained-file limits |
 | `DiagnosticJournalLockPolicySchema` / `DiagnosticJournalLockPolicy` | schema / _type_ | `refuse` (default) or `reclaim-stale`, which reclaims only a lock whose recorded owner is provably gone |
@@ -1331,28 +1336,28 @@ artifact store is supplied, `read_output`.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createAgentCodingTools` | function | construct direct host-authorized bounded file, listing, glob, search, exact-snippet edit, shell and artifact runtime-tool definitions; `edit_file` inserts `newText` literally in both single and `replaceAll` modes; every ordinary refusal is a typed code with an instructive `hint`, and filesystem operations use Linux `/proc/self/fd` or the packaged macOS Node-API backend and otherwise fail closed |
-| `AGENT_CODING_TOOL_NAMES` | const | the mounted tool names — `read_file`, `write_file`, `edit_file`, `list_directory`, `glob`, `search_files`, `run_command`, `read_output` |
 | `AgentCodingToolDefinition` | _type_ | peer-free structural direct-tool shape accepted by the canonical runtime-tool surface |
 | `AgentCodingToolConfig` | _type_ | absolute root, required operation authorization, optional async/sync `authorizePath({ path })` shared by direct file effects and discovery, finite executable alias map, exact child environment and optional limits |
 | `AgentCodingToolAuthorizationSchema` / `AgentCodingToolAuthorization` | schema / _type_ | discriminated read/write/search/patch/shell/artifact decision presented to host policy before effect |
 | `AgentCodingToolPathAuthorizationSchema` / `AgentCodingToolPathAuthorization` | schema / _type_ | strict workspace-relative path presented to the shared path policy before disclosure, opening or mutation |
-| `AgentCodingToolLimitsSchema` / `AgentCodingToolLimits` | schema / _type_ | explicit path/read/write/argument-count/argument-byte/output/artifact/timeout/termination-grace ceilings |
+| `AgentCodingToolLimitsSchema` / `AgentCodingToolLimits` | schema / _type_ | explicit path/read/write/argument-count/argument-byte/output/artifact/timeout/termination-grace ceilings; shared discovery directory/entry/serialized-output/deadline ceilings, aggregate search-read ceiling and measured coverage |
 | `AgentCodingArtifactStore` | _type_ | host-owned opaque artifact write and bounded read boundary |
-| `FileReadInputSchema` / `FileReadOutputSchema` | schema | bounded strict-UTF-8 byte slice; offsets must align with UTF-8 code-point boundaries |
-| `FileWriteInputSchema` / `FileWriteOutputSchema` | schema | create-only by default or explicit atomic replacement; symlink targets fail closed |
-| `createShellInputSchema` / `ShellOutputSchema` | schema | enumerated executable alias plus arguments and concrete relative cwd; explicit exited/timeout/output-limit/cancelled outcome |
 
-File/search operations pin directory descriptors across authorization and the actual effect;
+File/search operations select a root descriptor before both policy callback kinds and pin directory descriptors across authorization and the actual effect;
 resource discovery uses the same ancestor-safe traversal. This closes parent rename/symlink races
-without claiming an executable sandbox. The default ceilings are 4,096 path bytes, 256 KiB read/write/output, 128 shell arguments, 64 KiB
+without claiming an executable sandbox. The ordinary command launcher passes a pinned cwd to its
+isolated guard (inherited fd 4); a custom sandbox launcher owns atomic capture of its pathname cwd. List/glob/search report coverage; canonical spelling work consumes the same budget. List raw entries
+are capped by maxListEntries and maxSearchEntries, and glob patterns by 4,096 UTF-16 units.
+The default ceilings are 4,096 path bytes, 256 KiB read/write/output, 128 shell arguments, 64 KiB
 of aggregate argument text, 4 MiB per artifact and 30 seconds. The root is a path-resolution
 boundary, not an OS sandbox; executable behavior, process
 isolation, credentials and external-effect idempotency remain host responsibilities.
 
 When `authorizePath` denies a path, direct read/write/edit returns `FORBIDDEN`, while
 `list_directory`, `glob` and `search_files` omit it. Denial is recursive: direct access and
-discovery base paths are checked against `.` and every ancestor, outermost first and segment-wise,
-so denying `credentials` denies `credentials/token.txt` but not `credentials-backup`. Directory
+discovery base paths check every named ancestor, outermost first and segment-wise; `.` is
+checked only when the requested base itself is `.`, so subtree allowlists remain usable. Thus
+denying `credentials` denies `credentials/token.txt` but not `credentials-backup`. Directory
 admission happens before descent and file admission before opening; `search_files.include` is also
 applied before content is read. Requested paths must use `/` — a backslash is refused, because the
 containment walk reads it as a separator while a callback would read it as one name.

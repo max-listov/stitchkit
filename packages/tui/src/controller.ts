@@ -68,6 +68,7 @@ export async function createAgentTuiController<CONTEXT>(input: {
     for (const listener of listeners) listener(current);
   };
   let refreshVersion = 0;
+  let switchVersion = 0;
   const refresh = async (): Promise<void> => {
     const targetConversationId = conversationId;
     const version = ++refreshVersion;
@@ -146,8 +147,8 @@ export async function createAgentTuiController<CONTEXT>(input: {
   });
   await refresh();
 
-  const selected = async (): Promise<string> => {
-    const found = await input.selections.load(conversationId);
+  const selected = async (targetConversationId: string): Promise<string> => {
+    const found = await input.selections.load(targetConversationId);
     if (!found) throw new Error('Select a model before submitting');
     return found.modelId;
   };
@@ -162,11 +163,15 @@ export async function createAgentTuiController<CONTEXT>(input: {
     async submit(rawText, idempotencyKey = crypto.randomUUID()) {
       const text = rawText.trim();
       if (!text) throw new Error('Agent message is empty');
-      const modelId = await selected();
+      const targetConversationId = conversationId;
+      const [modelId, context] = await Promise.all([
+        selected(targetConversationId),
+        input.context(),
+      ]);
       const ticket = input.harness.submit({
-        conversationId,
+        conversationId: targetConversationId,
         idempotencyKey,
-        context: await input.context(),
+        context,
         parts: [{ type: 'text', text }],
         metadata: { modelId },
       });
@@ -187,37 +192,46 @@ export async function createAgentTuiController<CONTEXT>(input: {
     },
     async switchConversation(nextConversationId) {
       const previousModelId = current.selectedModelId;
-      conversationId = nextConversationId;
-      const version = ++refreshVersion;
+      const version = ++switchVersion;
+      ++refreshVersion;
       const snapshot = await input.harness.snapshot(nextConversationId);
-      if (version !== refreshVersion || conversationId !== nextConversationId) return;
-      current = {
-        conversationId: nextConversationId,
-        snapshot,
-        streaming: {},
-      };
+      if (version !== switchVersion) return;
       let nextSelection = await input.selections.load(nextConversationId);
-      if (version !== refreshVersion || conversationId !== nextConversationId) return;
+      if (version !== switchVersion) return;
       if (!nextSelection) {
         const modelId = previousModelId ?? input.catalog.models[0]?.id;
         if (!modelId) throw new Error('The Agent TUI model catalog is empty');
         nextSelection = { modelId, selectedAt: new Date().toISOString() };
         await input.selections.save(nextConversationId, nextSelection);
-        if (version !== refreshVersion || conversationId !== nextConversationId) return;
+        if (version !== switchVersion) return;
       }
+      conversationId = nextConversationId;
+      ++refreshVersion;
+      current = {
+        conversationId,
+        snapshot,
+        streaming: {},
+        selectedModelId: nextSelection.modelId,
+      };
       await refresh();
     },
     async respondToApproval(approved, reason) {
       const approval = current.pendingApproval;
       if (!approval) throw new Error('No approval is pending');
+      const targetConversationId = approval.conversationId;
+      const pinned = pinnedModel(current.snapshot, approval.runId);
+      const [modelId, context] = await Promise.all([
+        pinned ?? selected(targetConversationId),
+        input.context(),
+      ]);
       const ticket = await input.harness.respondToApproval({
-        conversationId,
+        conversationId: targetConversationId,
         approvalId: approval.approvalId,
         approved,
         ...(reason && { reason }),
-        context: await input.context(),
+        context,
         metadata: {
-          modelId: pinnedModel(current.snapshot, approval.runId) ?? (await selected()),
+          modelId,
         },
       });
       const admission = await ticket.admission;

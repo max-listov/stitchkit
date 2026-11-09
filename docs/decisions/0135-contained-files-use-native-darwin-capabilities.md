@@ -4,7 +4,7 @@ description: "macOS file tools traverse pinned directories with a packaged Node-
 type: decision
 status: accepted
 created: 2026-08-30
-updated: 2026-08-30
+updated: 2026-11-09 22:13 +07:00
 ---
 
 # ADR 0135 — Contained files use native Darwin directory capabilities
@@ -49,3 +49,19 @@ addition to the otherwise equivalent local gate.
 - Bun and Node share one Node-API binary per architecture and one JavaScript policy surface.
 - A new operating system or architecture requires an explicit backend, packaged artifact and real
   packed-consumer lane; names such as `/dev/fd` are never treated as proof of semantics.
+
+## Amendment (0.121.0): the root is selected before policy, and commands enter it
+
+Additive; the decision above stands.
+
+- **Root selection happens before either host policy callback.** Reopening a root capability uses
+  openat on the descriptor itself, never its former pathname, so a policy that replaces the root
+  path or its alias cannot redirect the operation it is deciding.
+- **The ordinary coding command inherits the selected cwd as fd 4 in an isolated owner-loss guard.**
+  Linux changes that child's cwd through its descriptor path; Darwin uses fchdir in the native leaf.
+  The guard closes fd 4 before launching the target, which inherits the cwd. Where contained
+  descriptors are unavailable (Windows), `run_command` accepts a cwd whose realpath is that same
+  name under the root, refuses a symlink segment, and checks the directory's identity again
+  immediately before launch.
+- **A custom sandbox launcher accepts a pathname and owns atomic capture of that directory;** the SDK
+  checks identity at the handoff without promising descriptor containment inside the adapter.

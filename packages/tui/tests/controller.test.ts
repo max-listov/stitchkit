@@ -216,3 +216,109 @@ describe('Agent TUI controller model selection', () => {
     await controller.close();
   });
 });
+
+test('submit keeps its conversation and model while a selection load is deferred', async () => {
+  const fixture = fakeHarness();
+  const store = createMemoryAgentModelSelectionStore();
+  await store.save('one', { modelId: 'model-a', selectedAt: observedAt });
+  await store.save('two', { modelId: 'model-b', selectedAt: observedAt });
+  let defer = false;
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const selections = {
+    ...store,
+    async load(id: string) {
+      const value = await store.load(id);
+      if (defer && id === 'one') {
+        started.resolve();
+        await release.promise;
+      }
+      return value;
+    },
+  };
+  const controller = await createAgentTuiController({
+    harness: fixture.harness,
+    catalog,
+    selections,
+    conversationId: 'one',
+    context: () => ({}),
+  });
+  defer = true;
+  const pending = controller.submit('belongs to one').catch((error) => error);
+  await started.promise;
+  await controller.switchConversation('two');
+  release.resolve();
+  expect(await pending).toBeInstanceOf(Error);
+  expect(fixture.submissions[0]).toMatchObject({
+    conversationId: 'one',
+    metadata: { modelId: 'model-a' },
+    parts: [{ type: 'text', text: 'belongs to one' }],
+  });
+  expect(controller.state().conversationId).toBe('two');
+  await controller.close();
+});
+
+test('approval retains the original run model across a deferred context and conversation switch', async () => {
+  const fixture = fakeHarness({
+    snapshot: pinnedSnapshot('model-a'),
+    approval: {
+      conversationId: 'main',
+      runId: 'run-1',
+      messageId: 'assistant-1',
+      approvalId: 'approval-1',
+      callId: 'call-1',
+      toolName: 'edit_file',
+      input: {},
+    },
+  });
+  const context = Promise.withResolvers<Record<string, never>>();
+  const controller = await createAgentTuiController({
+    harness: fixture.harness,
+    catalog,
+    selections: createMemoryAgentModelSelectionStore(),
+    conversationId: 'main',
+    context: () => context.promise,
+  });
+  const pending = controller.respondToApproval(true).catch((error) => error);
+  await controller.switchConversation('other');
+  await controller.selectModel('model-b');
+  context.resolve({});
+  expect(await pending).toBeInstanceOf(Error);
+  expect(fixture.approvalDecisions[0]).toMatchObject({
+    conversationId: 'main',
+    approvalId: 'approval-1',
+    metadata: { modelId: 'model-a' },
+  });
+  expect(controller.state().selectedModelId).toBe('model-b');
+  await controller.close();
+});
+
+test('interrupt uses the visible snapshot while a conversation switch is pending', async () => {
+  const slow = Promise.withResolvers<AgentSnapshot>();
+  const interrupted: Array<{ conversationId: string; runId: string }> = [];
+  const fixture = fakeHarness({
+    snapshotFor: async (id) => (id === 'two' ? slow.promise : pinnedSnapshot('model-a')),
+  });
+  fixture.harness.interrupt = async (input) => {
+    interrupted.push(input);
+    return { outcome: 'applied', snapshot: pinnedSnapshot('model-a') };
+  };
+  const controller = await createAgentTuiController({
+    harness: fixture.harness,
+    catalog,
+    selections: createMemoryAgentModelSelectionStore(),
+    conversationId: 'main',
+    context: () => ({}),
+  });
+  const pending = controller.switchConversation('two');
+  const interrupt = controller.interrupt();
+  try {
+    expect(interrupted).toEqual([{ conversationId: 'main', runId: 'run-1' }]);
+  } finally {
+    slow.resolve(emptySnapshot('two'));
+    await Promise.all([pending, interrupt]);
+  }
+  expect(controller.state().snapshot.conversationId).toBe('two');
+  await expect(controller.interrupt()).rejects.toThrow('No active run');
+  await controller.close();
+});

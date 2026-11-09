@@ -263,7 +263,7 @@ describe('host-authorized Agent coding tools', () => {
       ).toMatchObject({
         matches: [],
         scannedFiles: 0,
-        hint: expect.stringContaining('rejected all 1 file'),
+        hint: expect.stringContaining('pruned incompatible directories'),
       });
       expect(
         await executable(tools, 'search_files')({ query, mode, include: '**/*.ts' }, options),
@@ -326,7 +326,7 @@ describe('host-authorized Agent coding tools', () => {
     const options = { toolCallId: 'patch', messages: [], context: undefined };
     expect(
       await executable(tools, 'search_files')({ query: 'beta', mode: 'content' }, options),
-    ).toEqual({
+    ).toMatchObject({
       matches: [{ path: 'source.txt', line: 2, text: 'beta' }],
       truncated: false,
       scannedFiles: 1,
@@ -394,7 +394,7 @@ describe('host-authorized Agent coding tools', () => {
         { query: 'package.json', mode: 'path' },
         { toolCallId: 'search', messages: [], context: undefined },
       ),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       matches: [{ path: 'package.json' }],
       truncated: false,
       scannedFiles: 1,
@@ -1029,14 +1029,18 @@ describe('host-authorized Agent coding tools', () => {
   test('bounds shell output, timeout and cancellation', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-shell-'));
     roots.push(root);
-    const tools = mountAgent([], {
-      runtimeTools: createAgentCodingTools({
-        root,
-        authorize: () => true,
-        executables: { printf: '/usr/bin/printf', sleep: '/usr/bin/sleep' },
-        limits: { maxShellOutputBytes: 8, shellTimeoutMs: 20 },
-      }),
-    });
+    const shellTools = (shellTimeoutMs: number) =>
+      mountAgent([], {
+        runtimeTools: createAgentCodingTools({
+          root,
+          authorize: () => true,
+          executables: { printf: '/usr/bin/printf', sleep: '/usr/bin/sleep' },
+          limits: { maxShellOutputBytes: 8, shellTimeoutMs },
+        }),
+      });
+    // Output admission gets enough time to start the isolated cwd guard. The
+    // timeout assertion below keeps its independent short execution budget.
+    const tools = shellTools(1_000);
     const options = { toolCallId: 'shell', messages: [], context: undefined };
     const limited = await executable(tools, 'run_command')(
       { executable: 'printf', args: ['0123456789abcdef'] },
@@ -1047,7 +1051,7 @@ describe('host-authorized Agent coding tools', () => {
       stdout: '01234567',
       outcome: 'output-limit',
     });
-    const timedOut = await executable(tools, 'run_command')(
+    const timedOut = await executable(shellTools(20), 'run_command')(
       { executable: 'sleep', args: ['1'] },
       options,
     );
@@ -1119,7 +1123,7 @@ describe('host-authorized Agent coding tools', () => {
         root,
         authorize: () => true,
         executables: { missing: path.join(root, 'missing-executable') },
-        limits: { shellTimeoutMs: 20, shellTerminationGraceMs: 20 },
+        limits: { shellTimeoutMs: 1_000, shellTerminationGraceMs: 20 },
       }),
     });
     const originalError = console.error;

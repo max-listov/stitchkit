@@ -75,12 +75,22 @@ export async function createDirectoryAt(
  * pinned parents. The returned capability remains the selected directory if it is renamed.
  */
 export async function openPinnedDirectory(
-  absolute: string,
+  absolute: string | ContainedFileHandle,
   options: { create?: boolean; readable?: boolean } = {},
   io: { realpath(path: string): Promise<string> } = { realpath },
 ): Promise<ContainedFileHandle> {
   if (process.platform !== 'linux' && process.platform !== 'darwin') {
     throw new Error('Contained filesystem operations support Linux and macOS only');
+  }
+  // Reopen the capability itself, never its former name. Each walk owns its
+  // descriptor and directory offset; closing it leaves the request root alive.
+  if (typeof absolute !== 'string') {
+    const searchOnly = options.readable === false;
+    if (process.platform === 'darwin')
+      return new NumericFileHandle(
+        loadDarwinBinding().reopenDirectory(absolute.fd, searchOnly),
+      );
+    return open(`${descriptorPath(absolute)}/.`, directoryFlags(searchOnly));
   }
   let prefix = path.resolve(absolute);
   const missing: string[] = [];

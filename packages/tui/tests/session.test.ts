@@ -125,3 +125,53 @@ describe('local Agent TUI session host', () => {
     expect(await Bun.file(path.join(directory, 'reusedpid.json')).exists()).toBe(false);
   });
 });
+
+test('rejects an oversized unfinished stream before EOF and accepts the exact byte boundary', async () => {
+  const rootDirectory = await mkdtemp(path.join(tmpdir(), 'stitchkit-tui-'));
+  temporaryDirectories.push(rootDirectory);
+  let handled = 0;
+  const host = await startAgentTuiSessionHost({
+    rootDirectory,
+    conversationId: 'main',
+    handle: async (request) => {
+      handled++;
+      return {
+        requestId: request.requestId,
+        outcome: 'ok',
+        sessionId: host.sessionId,
+        conversationId: 'main',
+      };
+    },
+  });
+  try {
+    const [descriptor] = await listAgentTuiSessions(rootDirectory);
+    if (!descriptor) throw new Error('missing descriptor');
+    const headers = { Authorization: `Bearer ${descriptor.token}` };
+    const base = JSON.stringify({ requestId: 'boundary', operation: 'status' });
+    const boundary = await fetch('http://localhost/request', {
+      method: 'POST',
+      unix: descriptor.socketPath,
+      headers,
+      body: base + ' '.repeat(65536 - Buffer.byteLength(base)),
+      signal: AbortSignal.timeout(1000),
+    });
+    expect(boundary.status).toBe(200);
+    const before = handled;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(70000));
+      },
+    });
+    const oversized = await fetch('http://localhost/request', {
+      method: 'POST',
+      unix: descriptor.socketPath,
+      headers,
+      body: stream,
+      signal: AbortSignal.timeout(1000),
+    });
+    expect(oversized.status).toBe(413);
+    expect(handled).toBe(before);
+  } finally {
+    await host.close();
+  }
+});
