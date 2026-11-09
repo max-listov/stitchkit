@@ -11,7 +11,7 @@ import { waitForProcessGroupExit } from './group-settlement';
 export function createCommandDeadline(timeoutMs: number, reason: unknown) {
   assertPositiveSafeInteger('Command deadline', timeoutMs, RangeError);
   const controller = new AbortController();
-  const deadline = performance.now() + timeoutMs;
+  let deadline = performance.now() + timeoutMs;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const schedule = () => {
     const remaining = deadline - performance.now();
@@ -23,6 +23,14 @@ export function createCommandDeadline(timeoutMs: number, reason: unknown) {
     signal: controller.signal,
     cancel() {
       if (timer !== undefined) clearTimeout(timer);
+    },
+    /** Grant `nextMs` from now instead; an expired deadline stays expired. */
+    restart(nextMs: number) {
+      assertPositiveSafeInteger('Command deadline', nextMs, RangeError);
+      if (controller.signal.aborted) return;
+      if (timer !== undefined) clearTimeout(timer);
+      deadline = performance.now() + nextMs;
+      schedule();
     },
   };
 }

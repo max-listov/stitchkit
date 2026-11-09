@@ -50,6 +50,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ### Fixed
 
+- `stitchkit/process` — **`timeoutMs` counts from the moment the command started.** A guarded
+  command (`ownerLoss: 'terminate'`) starts its guard first; that start, tens of milliseconds, used
+  the command's own budget, so a short budget timed out a command that never got to run. The
+  guard's start is now bounded by `timeoutMs` or 5 seconds, whichever is longer.
+  **Affects:** `stitchkit/process` behaviour
 - API reference export tables are checked against each actual entrypoint in both directions.
 
 ## [0.120.0] - 2026-11-05

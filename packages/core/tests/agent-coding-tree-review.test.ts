@@ -1,5 +1,14 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AgentCodingToolConfig } from '../src/entrypoints/agent-runtime/coding-tools';
@@ -392,8 +401,8 @@ test('run_command keeps a pathname working directory where contained descriptors
   }
 });
 
-test.if(process.platform === 'linux')(
-  'run_command enters the pinned directory on Linux without a guard process between host and command',
+test.if(process.platform === 'linux' || process.platform === 'darwin')(
+  'run_command enters the pinned directory within a short budget; Linux starts no guard process',
   async () => {
     const root = await workspace();
     const outside = await workspace();
@@ -418,11 +427,10 @@ test.if(process.platform === 'linux')(
       cwd: 'sub',
     });
     expect(swapped).toBe(true);
-    // The 40 ms budget is the command's own: no process starts inside it before the command.
+    // The 40 ms budget is the command's own: a guard's start (macOS) does not use it.
     expect(result.outcome).toBe('exited');
-    expect(result.stdout.trim().split('\n')).toEqual([
-      String(process.pid),
-      path.join(root, 'sub-old'),
-    ]);
+    const [parent, directory] = result.stdout.trim().split('\n');
+    expect(directory).toBe(await realpath(path.join(root, 'sub-old')));
+    if (process.platform === 'linux') expect(parent).toBe(String(process.pid));
   },
 );

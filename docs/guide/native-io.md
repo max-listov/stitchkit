@@ -167,7 +167,9 @@ concurrently or cancel the stream you ignore. Cancelling a stream drops its late
 command fails or is stopped, both streams error and the bytes still queued are dropped.
 
 A command needs a caller `signal` or a finite `timeoutMs` (1 to 2147483647 ms, the native timer
-range; a larger value is refused, never turned into 1 ms). Streaming runs for the caller's lifetime,
+range; a larger value is refused, never turned into 1 ms). `timeoutMs` counts from the moment the
+command started. A guarded command (`ownerLoss: 'terminate'`) first starts its guard; that start is
+bounded by `timeoutMs` or 5 seconds, whichever is longer, and does not use the command's budget. Streaming runs for the caller's lifetime,
 with no hidden 60-second timeout or 1 MiB output limit. `capture` defaults to false; `true` requires
 `maxOutputBytes` for the combined stdout and stderr. The limit counts source bytes; the API returns
 `Uint8Array` and does not decode invalid UTF-8. The result holds the observed `exitCode: number | null`

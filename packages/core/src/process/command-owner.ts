@@ -23,6 +23,9 @@ import { failedCommandStart } from './start-failure';
 import { signalCommandChild } from './terminate';
 import type { NativeCommandTransport } from './transport';
 
+/** How long a guarded command may take to start before its own `timeoutMs` begins. */
+const GUARD_START_FLOOR_MS = 5_000;
+
 /** One-shot native execution; sandbox policy/admission is composed above this owner. */
 export function startNativeCommand(
   input: NativeCommandOptions,
@@ -60,11 +63,14 @@ export function startNativeCommand(
     options.signal?.removeEventListener('abort', abort);
     killOn?.removeEventListener('abort', kill);
   };
+  // A guarded command starts as a second process: the guard's own start is not the command's
+  // time, so it gets a floor of its own, and the command's budget begins once it started.
+  const guarded = options.ownerLoss === 'terminate' || driver?.cwdDescriptor !== undefined;
   const deadline =
     timeoutMs === undefined
       ? undefined
       : createCommandDeadline(
-          timeoutMs,
+          guarded ? Math.max(timeoutMs, GUARD_START_FLOOR_MS) : timeoutMs,
           new NativeCommandError('COMMAND_LIMIT', 'Command deadline exceeded', {
             reason: 'deadline',
           }),
@@ -175,6 +181,7 @@ export function startNativeCommand(
       ]);
       void drains.catch((error) => controller.abort(error));
       const pid = await raceAbort(started, controller.signal);
+      if (timeoutMs !== undefined) deadline?.restart(timeoutMs);
       if (pid !== undefined) options.onLeaderStarted?.({ pid });
       admitted.resolve();
       await raceAbort(Promise.all([drains, leader.then(settleLeader)]), controller.signal);

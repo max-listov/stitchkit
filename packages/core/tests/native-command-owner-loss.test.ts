@@ -155,6 +155,26 @@ test('ownerLoss preserves command output, exit status, deadlines and caller canc
     }),
   ).rejects.toMatchObject({ code: 'COMMAND_LIMIT', reason: 'deadline' });
 
+  // The guard's own start is not the command's time: a budget shorter than that start still
+  // runs a command that finishes well within it. Only runs whose guard start outlasted the
+  // budget prove it, so the check waits for one.
+  let informative = 0;
+  for (let attempt = 0; attempt < 20 && informative < 2; attempt += 1) {
+    const created = performance.now();
+    let startedAfter = 0;
+    const quick = await runNativeCommand({
+      executable: '/usr/bin/true',
+      ownerLoss: 'terminate',
+      timeoutMs: 40,
+      onLeaderStarted: () => {
+        startedAfter = performance.now() - created;
+      },
+    });
+    expect(quick.exitCode).toBe(0);
+    if (startedAfter > 40) informative += 1;
+  }
+  expect(informative).toBe(2);
+
   const controller = new AbortController();
   const reason = new Error('caller cancelled');
   const cancelled = runNativeCommand({

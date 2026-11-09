@@ -4,7 +4,7 @@ description: "macOS file tools traverse pinned directories with a packaged Node-
 type: decision
 status: accepted
 created: 2026-08-30
-updated: 2026-11-09 22:22 +07:00
+updated: 2026-11-09 22:36 +07:00
 ---
 
 # ADR 0135 — Contained files use native Darwin directory capabilities
@@ -60,9 +60,10 @@ Additive; the decision above stands.
 - **The ordinary coding command enters the selected cwd through its descriptor.** On Linux the
   command is spawned directly with the descriptor's `/proc/<pid>/fd/<n>` link as its cwd; the
   kernel resolves that link to the opened directory itself, not by name, and no extra process
-  starts inside the command's time budget. Darwin has no such link: the cwd is inherited as fd 4
-  by an isolated owner-loss guard that enters it with fchdir in the native leaf and closes fd 4
-  before launching the target, which inherits the cwd. Where contained
+  starts. Darwin has no such link: the cwd is inherited as fd 4 by an isolated owner-loss guard
+  that enters it with fchdir in the native leaf and closes fd 4 before launching the target, which
+  inherits the cwd. The command's `shellTimeoutMs` counts from the target's start, as every
+  guarded command's `timeoutMs` does. Where contained
   descriptors are unavailable (Windows), `run_command` accepts a cwd whose realpath is that same
   name under the root, refuses a symlink segment, and checks the directory's identity again
   immediately before launch.
