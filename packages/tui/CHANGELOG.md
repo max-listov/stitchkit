@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-09
+
 ### Fixed
 
 - `stitchkit-tui` — the session host refuses a request body over its byte ceiling with 413 before

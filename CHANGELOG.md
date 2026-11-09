@@ -15,9 +15,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.121.0] - 2026-11-09
+
 ### ⚠️ Breaking changes
 
-**Who must act:** hosts that build a complete `AgentCodingToolLimits` value, read exact `list_directory`, `glob` or `search_files` outputs, rely on a symlink `run_command` cwd or on `glob` returning no paths for a missing `path`, or send search regexes with named backreferences or counted repetition above 1,000. A host mounting the coding tools with partial limits and ordinary queries changes nothing. See the [migration](docs/guide/upgrading.md#unreleased-migration-bounded-coding-search).
+**Who must act:** hosts that build a complete `AgentCodingToolLimits` value, read exact `list_directory`, `glob` or `search_files` outputs, rely on a symlink `run_command` cwd or on `glob` returning no paths for a missing `path`, or send search regexes with named backreferences or counted repetition above 1,000. A host mounting the coding tools with partial limits and ordinary queries changes nothing. See the [migration](docs/guide/upgrading.md#bounded-coding-search).
 
 - `stitchkit/agent-runtime/coding-tools` — **search reports its coverage and bounds traversal before reading.**
   `search_files` prunes incompatible glob branches before authorization/open, streams matches,
@@ -38,7 +40,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   Hosts constructing a full
   `AgentCodingToolLimits` value add the five search ceilings; partial `limits` use finite defaults.
   [ADR 0285](docs/decisions/0285-search-bounds-the-work-before-reading.md),
-  [migration](docs/guide/upgrading.md#unreleased-migration-bounded-coding-search).
+  [migration](docs/guide/upgrading.md#bounded-coding-search).
   List and glob use the same budgets and coverage, including bounded canonical spelling checks;
   list raw enumeration respects maxListEntries and glob patterns have a 4,096-unit ceiling.
   Every filesystem tool pins root before either policy; ordinary command cwd is inherited by

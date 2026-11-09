@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: bounded-coding-search
+## Released migration: 0.121.0
+
+### bounded-coding-search
 
 **Who must act:** hosts that construct a complete `AgentCodingToolLimits` value, inspect exact
 `list_directory`, `glob` or `search_files` output objects, rely on symlink cwd aliases, call `glob` on a path that may not exist, or send regex named backreferences or counted repetition above 1,000.
