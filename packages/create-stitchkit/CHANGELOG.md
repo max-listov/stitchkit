@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.21] - 2026-11-09
+
 ### Changed
 
 - Generated projects resolve stitchkit 0.121.0. The agent starter's coding tools bound
@@ -26,7 +28,7 @@ step is overwritten by the next release.
   `startOrReload --update-env`, so the generated supervision files now pass every variable
   `project.json` declares through each role's `env`; a value injected by the deployment still
   wins over the file, and `NODE_ENV` stays the file's run mode. Existing projects adopt it by the
-  [migration](./UPGRADING.md#unreleased-migration-supervision-passes-declared-environment).
+  [migration](./UPGRADING.md#supervision-passes-declared-environment).
 
 ## [0.6.20] - 2026-11-05
 

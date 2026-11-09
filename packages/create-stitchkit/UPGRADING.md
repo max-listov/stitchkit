@@ -60,7 +60,9 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
-## Unreleased migration: supervision passes declared environment
+## Released migration: 0.6.21
+
+### supervision passes declared environment
 
 Additive, and worth taking: without it a changed `.env` stays stale in a running role until
 `pm2 delete`.
