@@ -43,8 +43,9 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   [migration](docs/guide/upgrading.md#bounded-coding-search).
   List and glob use the same budgets and coverage, including bounded canonical spelling checks;
   list raw enumeration respects maxListEntries and glob patterns have a 4,096-unit ceiling.
-  Every filesystem tool pins root before either policy; ordinary command cwd is inherited by
-  the isolated guard. Symlink cwd descendants refuse; custom sandbox launchers own cwd capture.
+  Every filesystem tool pins root before either policy; an ordinary command enters its pinned
+  cwd through the descriptor's `/proc` link on Linux and through an isolated fchdir guard on
+  macOS. Symlink cwd descendants refuse; custom sandbox launchers own cwd capture.
   **Affects:** `stitchkit/agent-runtime/coding-tools` createAgentCodingTools, AgentCodingToolLimitsSchema, AgentCodingToolLimits, behaviour
 
 ### Fixed

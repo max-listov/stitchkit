@@ -391,3 +391,38 @@ test('run_command keeps a pathname working directory where contained descriptors
     if (platform) Object.defineProperty(process, 'platform', platform);
   }
 });
+
+test.if(process.platform === 'linux')(
+  'run_command enters the pinned directory on Linux without a guard process between host and command',
+  async () => {
+    const root = await workspace();
+    const outside = await workspace();
+    await mkdir(path.join(root, 'sub'));
+    let swapped = false;
+    const run = mounted({
+      root,
+      executables: { sh: '/bin/sh' },
+      limits: { shellTimeoutMs: 40 },
+      authorize: async () => {
+        if (!swapped) {
+          swapped = true;
+          await rename(path.join(root, 'sub'), path.join(root, 'sub-old'));
+          await symlink(outside, path.join(root, 'sub'));
+        }
+        return true;
+      },
+    });
+    const result = await run('run_command', {
+      executable: 'sh',
+      args: ['-c', 'echo "$PPID"; pwd -P'],
+      cwd: 'sub',
+    });
+    expect(swapped).toBe(true);
+    // The 40 ms budget is the command's own: no process starts inside it before the command.
+    expect(result.outcome).toBe('exited');
+    expect(result.stdout.trim().split('\n')).toEqual([
+      String(process.pid),
+      path.join(root, 'sub-old'),
+    ]);
+  },
+);

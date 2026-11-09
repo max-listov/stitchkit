@@ -4,7 +4,7 @@ description: "macOS file tools traverse pinned directories with a packaged Node-
 type: decision
 status: accepted
 created: 2026-08-30
-updated: 2026-11-09 22:13 +07:00
+updated: 2026-11-09 22:22 +07:00
 ---
 
 # ADR 0135 — Contained files use native Darwin directory capabilities
@@ -57,9 +57,12 @@ Additive; the decision above stands.
 - **Root selection happens before either host policy callback.** Reopening a root capability uses
   openat on the descriptor itself, never its former pathname, so a policy that replaces the root
   path or its alias cannot redirect the operation it is deciding.
-- **The ordinary coding command inherits the selected cwd as fd 4 in an isolated owner-loss guard.**
-  Linux changes that child's cwd through its descriptor path; Darwin uses fchdir in the native leaf.
-  The guard closes fd 4 before launching the target, which inherits the cwd. Where contained
+- **The ordinary coding command enters the selected cwd through its descriptor.** On Linux the
+  command is spawned directly with the descriptor's `/proc/<pid>/fd/<n>` link as its cwd; the
+  kernel resolves that link to the opened directory itself, not by name, and no extra process
+  starts inside the command's time budget. Darwin has no such link: the cwd is inherited as fd 4
+  by an isolated owner-loss guard that enters it with fchdir in the native leaf and closes fd 4
+  before launching the target, which inherits the cwd. Where contained
   descriptors are unavailable (Windows), `run_command` accepts a cwd whose realpath is that same
   name under the root, refuses a symlink segment, and checks the directory's identity again
   immediately before launch.

@@ -306,9 +306,11 @@ stay pinned through authorization; `write_file` plans before it and opens the pa
 the parent it creates does not exist yet. Reads revalidate the pinned file identity;
 writes and patches revalidate the pinned parent identity; search and resource discovery descend
 only through opened directories. Every filesystem tool selects its root capability before operation or path authorization and retains
-that identity if a callback replaces the root path or configured alias. On Linux and macOS the ordinary
-command launcher inherits a pinned cwd through its isolated guard — one short-lived guard process
-per command, tens of milliseconds — and the application process never changes cwd. Where
+that identity if a callback replaces the root path or configured alias. On Linux the ordinary
+command launcher spawns the command with the pinned directory's `/proc` descriptor link as its cwd;
+on macOS it inherits the pinned cwd through an isolated guard — one short-lived guard process per
+command, tens of milliseconds, counted inside `shellTimeoutMs`. The application process never
+changes cwd. Where
 contained descriptors are unavailable (Windows), `run_command` accepts a cwd whose realpath is
 that same name under the root — a symlink segment refuses there too — and checks the directory's
 identity again immediately before launch, after every host decision.

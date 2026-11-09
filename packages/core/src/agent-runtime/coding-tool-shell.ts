@@ -119,8 +119,17 @@ export function createShellCodingTool(
         // A pathname directory (sandboxes, platforms without contained descriptors) is checked
         // once more after every host decision; a pinned descriptor needs no name.
         if (config.sandbox || cwd.descriptor === undefined) assertSandboxCwd();
+        const ordinary = !config.sandbox?.adapter.spawn && cwd.descriptor !== undefined;
+        // Linux enters the pinned directory through its magic link, which the kernel resolves to
+        // the descriptor's own directory, not by name; macOS has none, so a guard enters it with
+        // fchdir before the command starts.
+        const linkedCwd =
+          ordinary && process.platform === 'linux'
+            ? `/proc/${process.pid}/fd/${cwd.descriptor}`
+            : undefined;
         return await runCodingShell({
-          ...(!config.sandbox?.adapter.spawn &&
+          ...(ordinary &&
+            linkedCwd === undefined &&
             cwd.descriptor !== undefined && { cwdDescriptor: cwd.descriptor }),
           ...(config.sandbox?.adapter.spawn && {
             spawn: () => {
@@ -138,7 +147,7 @@ export function createShellCodingTool(
           executableName: input.executable,
           executable: executablePath,
           args: executableArgs,
-          cwd: cwd.absolute,
+          cwd: linkedCwd ?? cwd.absolute,
           environment,
           ...(signal && { signal }),
           timeoutMs: limits.shellTimeoutMs,
