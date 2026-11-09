@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "catalog": {
-    "stitchkit": "^0.120.0"
+    "stitchkit": "^0.121.0"
   },
   "overrides": {
     "@playwright/test": "1.64.1",

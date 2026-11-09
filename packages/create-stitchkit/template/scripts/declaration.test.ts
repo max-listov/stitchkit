@@ -202,3 +202,34 @@ describe('the guidance a next agent reads names the keys that exist', () => {
     });
   }
 });
+
+describe('a re-run of the supervisor sees the current environment', () => {
+  // PM2 keeps the CLI environment a role first started with and applies only the
+  // app's \`env\` block on reload: measured with \`pm2 startOrReload --update-env\`,
+  // a value changed in \`.env\` stayed stale until it was passed through \`env\`.
+  for (const name of ['ecosystem.config.cjs', 'ecosystem.dev.config.cjs']) {
+    test(`${name} passes every declared variable through each role's env`, () => {
+      const probe = Bun.spawnSync({
+        cmd: [
+          process.execPath,
+          '-e',
+          `const { apps } = require(${JSON.stringify(resolve(root, name))}); console.log(JSON.stringify(apps.map((app) => app.env)));`,
+        ],
+        cwd: root,
+        env: {
+          ...Bun.env,
+          DATABASE_URL: 'postgres://probe@localhost/probe',
+          NODE_ENV: 'probe',
+        },
+      });
+      expect(probe.exitCode).toBe(0);
+      const environments: Record<string, string>[] = JSON.parse(probe.stdout.toString());
+      expect(environments.length).toBe(appDeclaration.roles.length);
+      for (const env of environments) {
+        expect(env.DATABASE_URL).toBe('postgres://probe@localhost/probe');
+        // The run mode is the file's, whatever the launching shell exported.
+        expect(env.NODE_ENV).toBe(name.includes('.dev.') ? 'development' : 'production');
+      }
+    });
+  }
+});

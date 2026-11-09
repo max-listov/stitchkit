@@ -12,6 +12,22 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects resolve stitchkit 0.121.0. The agent starter's coding tools bound
+  `search_files`, `glob` and `list_directory` work and report its coverage, and `run_command`
+  refuses a missing, file or symlink `cwd` in words; a project that reads exact tool outputs or
+  builds a complete `AgentCodingToolLimits` value follows the stitchkit 0.121.0 migration.
+
+### Fixed
+
+- A repeated `bun run dev` applies a changed `.env` to roles that are already running. PM2 keeps
+  the CLI environment a role first started with and applies only an app's `env` block on
+  `startOrReload --update-env`, so the generated supervision files now pass every variable
+  `project.json` declares through each role's `env`; a value injected by the deployment still
+  wins over the file, and `NODE_ENV` stays the file's run mode. Existing projects adopt it by the
+  [migration](./UPGRADING.md#unreleased-migration-supervision-passes-declared-environment).
+
 ## [0.6.20] - 2026-11-05
 
 ### Changed

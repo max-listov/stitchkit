@@ -9,11 +9,16 @@ const processEnvMarker = ['process', 'env'].join('.');
 const replacedThemePackage = ['next', 'themes'].join('-');
 const generatedDirectories = new Set(['.git', '.next', 'dist', 'node_modules']);
 // Roles read their own validated bindings; supervision passes no environment
-// values in argv. Only runtime and tooling schemas are environment boundaries.
+// values in argv. Runtime and tooling schemas are environment boundaries, and so
+// are the generated supervision files: PM2 applies only an app's \`env\` block on
+// reload, so they hand each role the variables \`project.json\` declares — names
+// derived from the one environment schema, never a value of their own.
 const processEnvBoundaries = new Set([
   'packages/frontend/src/env.ts',
   'packages/config/src/server.ts',
   'scripts/tooling-env.ts',
+  'ecosystem.config.cjs',
+  'ecosystem.dev.config.cjs',
 ]);
 
 function lineAt(source: string, offset: number): number {

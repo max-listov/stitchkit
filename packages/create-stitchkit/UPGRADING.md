@@ -60,6 +60,20 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
+## Unreleased migration: supervision passes declared environment
+
+Additive, and worth taking: without it a changed `.env` stays stale in a running role until
+`pm2 delete`.
+
+1. In `scripts/declaration.ts`, after the `config({ path: … })` call that `renderEcosystem`
+   emits, emit a `declared` object built from `declaration.env.variables` — each declared name
+   with its current value from the process environment, values that are absent left out — and
+   render each role's `env` as `{ ...declared, NODE_ENV: '<mode>' }`.
+2. In `scripts/check-authored.ts`, add `ecosystem.config.cjs` and `ecosystem.dev.config.cjs` to
+   the environment boundaries: they pass only names the environment schema declares.
+3. Run `bun run gen:declaration`, then `bun run dev`. Check with `pm2 env <role>` that a value
+   changed in `.env` arrives without `pm2 delete`.
+
 ## Released migration: 0.6.1
 
 ### Canonical query client factory

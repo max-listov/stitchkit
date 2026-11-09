@@ -169,6 +169,9 @@ export function assertSupervisionAllowsShutdown(
   }
 }
 
+/** Spelled in parts: this generator emits the supervision files' environment access, it does not read any. */
+const ENVIRONMENT = ['process', 'env'].join('.');
+
 const BANNER = `// GENERATED FILE — do not edit.
 //
 // Rendered from \`project.json\` by \`scripts/declaration.ts\`; run
@@ -194,6 +197,16 @@ const declaration = require('./project.json');
 // win over a file in the repository. The file fills gaps; it does not overrule
 // the place.
 config({ path: path.join(__dirname, '.env'), quiet: true });
+
+// PM2 applies an app's \`env\` block on every start and reload, but not the CLI
+// environment it saw when the role first started: every declared variable goes
+// through \`env\`, so a changed \`.env\` or deployment value reaches a running role
+// on the next \`bun run dev\` without \`pm2 delete\`.
+const declared = Object.fromEntries(
+  declaration.env.variables
+    .map(({ name }) => [name, ${ENVIRONMENT}[name]])
+    .filter(([, value]) => value !== undefined),
+);
 
 module.exports = {
   apps: [
@@ -228,7 +241,7 @@ function renderApp(
       autorestart: ${LOCAL_SUPERVISION.restart},
       // >= this role's full shutdown budget of ${terminationBudgetMs(role)}ms.
       kill_timeout: ${LOCAL_SUPERVISION.killTimeoutMs},
-      env: { NODE_ENV: '${mode}' },
+      env: { ...declared, NODE_ENV: '${mode}' },
     },`;
 }
 

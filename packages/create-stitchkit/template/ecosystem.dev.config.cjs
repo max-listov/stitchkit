@@ -14,6 +14,16 @@ const declaration = require('./project.json');
 // the place.
 config({ path: path.join(__dirname, '.env'), quiet: true });
 
+// PM2 applies an app's `env` block on every start and reload, but not the CLI
+// environment it saw when the role first started: every declared variable goes
+// through `env`, so a changed `.env` or deployment value reaches a running role
+// on the next `bun run dev` without `pm2 delete`.
+const declared = Object.fromEntries(
+  declaration.env.variables
+    .map(({ name }) => [name, process.env[name]])
+    .filter(([, value]) => value !== undefined),
+);
+
 module.exports = {
   apps: [
     {
@@ -33,7 +43,7 @@ module.exports = {
       autorestart: true,
       // >= this role's full shutdown budget of 25000ms.
       kill_timeout: 30000,
-      env: { NODE_ENV: 'development' },
+      env: { ...declared, NODE_ENV: 'development' },
     },
     {
       name: `${declaration.identity.slug}-web-dev`,
@@ -52,7 +62,7 @@ module.exports = {
       autorestart: true,
       // >= this role's full shutdown budget of 15000ms.
       kill_timeout: 30000,
-      env: { NODE_ENV: 'development' },
+      env: { ...declared, NODE_ENV: 'development' },
     },
   ],
 };
