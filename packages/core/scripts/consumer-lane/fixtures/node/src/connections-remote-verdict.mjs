@@ -8,6 +8,7 @@ import { defineContract } from 'stitchkit/contract';
 import { implement } from 'stitchkit/server';
 import { createMcpHandler } from 'stitchkit/tools/mcp';
 import { z } from 'zod';
+import { listenFetchable } from './listen-fetchable.mjs';
 
 // Separate builds duplicate the provenance owner, while Zod remains one peer.
 // Ordinary subpath imports share the package's split chunks and cannot prove this boundary.
@@ -119,10 +120,7 @@ const server = createServer(async (request, response) => {
   response.writeHead(result.status, Object.fromEntries(result.headers));
   response.end(Buffer.from(await result.arrayBuffer()));
 });
-await new Promise((resolve, reject) => {
-  server.once('error', reject);
-  server.listen(0, '127.0.0.1', resolve);
-});
+await listenFetchable(server);
 const address = server.address();
 if (!address || typeof address === 'string') throw new Error('HTTP fixture did not bind');
 

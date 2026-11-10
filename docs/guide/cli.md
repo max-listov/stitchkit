@@ -688,15 +688,27 @@ Rules worth knowing before you rely on them:
 A failed call still reports its own error and exit code. An aggregate over an
 error is not an answer to the question that was asked.
 
-If the command succeeds but its requested view cannot be built, the CLI writes
-the complete original result to stdout, using the normal JSON format (`--json`
-still selects compact output). It writes a separate structured
-`CLI_PRESENTATION_FAILED` diagnostic to stderr and exits with `8`, configurable
-through `exitCodes`. Its `details.operationSucceeded: true` and `retryable: false`
-distinguish a presentation refusal from a failed operation; `details.cause`
-preserves the safe reason. Recover the answer from stdout instead of repeating
-the mutation. Domain retry hints are not appended to this diagnostic. CLI
-argument errors detected before execution still exit with `2`
+If the command succeeds but its requested view cannot be built, the CLI writes a
+structured `CLI_PRESENTATION_FAILED` diagnostic to stderr and exits with `8`,
+configurable through `exitCodes`. Its `details.operationSucceeded: true` and
+`retryable: false` distinguish a presentation refusal from a failed operation;
+`details.cause` preserves the safe reason, such as the misspelled field and the
+fields that are there. Domain retry hints are not appended to this diagnostic.
+
+What reaches stdout depends on whether the command can be called again for its answer,
+and `details.resultOnStdout` states which case occurred:
+
+| Command | stdout | Recover the answer by |
+|---|---|---|
+| has an effect | the complete original result in the normal JSON format (`--json` still selects compact output) | reading stdout — never by repeating the mutation |
+| only reads | nothing | repeating the command with a corrected view |
+
+A managed command only reads when its tool declares `annotations.readOnlyHint: true`,
+or declares no `readOnlyHint` and its method is `GET`. `readOnlyHint: false` on a `GET`
+endpoint keeps the result on stdout. A native `defineCliCommand` declares neither fact,
+so a failed `present` always keeps the validated result on stdout.
+
+CLI argument errors detected before execution still exit with `2`
 and have no successful result to preserve.
 
 ## Named profiles

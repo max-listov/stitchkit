@@ -1128,15 +1128,23 @@ describe('host-authorized Agent coding tools', () => {
     });
     const originalError = console.error;
     console.error = () => undefined;
+    // The refusal is caught directly, not awaited through `expect().rejects`: under `bun test`
+    // that matcher settled this rejection only on the event loop's next unrelated wake-up (up to
+    // about 0.9 s), so the bound measured the harness instead of the refusal.
+    let failure: unknown;
     const failedAt = performance.now();
-    await expect(
-      executable(brokenTools, 'run_command')(
+    try {
+      await executable(brokenTools, 'run_command')(
         { executable: 'missing', args: [] },
         { toolCallId: 'spawn-error', messages: [], context: undefined },
-      ),
-    ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
+      );
+    } catch (error) {
+      failure = error;
+    }
+    const failedIn = performance.now() - failedAt;
     console.error = originalError;
-    expect(performance.now() - failedAt).toBeLessThan(500);
+    expect(failure).toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
+    expect(failedIn).toBeLessThan(500);
   });
 
   if (process.platform !== 'win32') {

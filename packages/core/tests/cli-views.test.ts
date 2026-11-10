@@ -127,10 +127,11 @@ describe('createCli — aggregate views', () => {
     expect(lines).toHaveLength(ITEMS.length + 2);
   });
 
-  test('an absent view field preserves the result, never inventing an empty group', async () => {
+  test('an absent view field is refused, never inventing an empty group', async () => {
     const { out, err, code } = await run(['item_list', '--count-by', 'stat']);
     expect(code).toBe(8);
-    expect(JSON.parse(out)).toEqual({ items: ITEMS });
+    // The command is a read: nothing is printed, the corrected call returns the answer.
+    expect(out).toBe('');
     expect(JSON.parse(err).details.cause.details.message).toContain(
       'no record carries the field "stat"',
     );

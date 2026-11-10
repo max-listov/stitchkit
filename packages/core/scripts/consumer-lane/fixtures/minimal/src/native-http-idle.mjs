@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listenFetchable } from './listen-fetchable.mjs';
 
 const installed = fileURLToPath(import.meta.resolve('stitchkit'));
 assert.ok(installed.includes('/node_modules/stitchkit/'));
@@ -80,7 +81,7 @@ server.timeout = 0;
 server.requestTimeout = 0;
 const scratch = await mkdtemp(join(tmpdir(), 'stitchkit-native-idle-'));
 try {
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await listenFetchable(server);
   const address = server.address();
   assert.ok(address && typeof address === 'object');
   const baseUrl = `http://127.0.0.1:${address.port}`;

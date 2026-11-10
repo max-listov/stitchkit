@@ -315,6 +315,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0283](0283-factory-default-exposure-is-materialized-by-capability.md) | Factory defaults materialize endpoint exposure by capability | Accepted — independent scope/policy inference, immutable defaults and explicit overrides drive every surface; amends 0062 | I1, I3, I8, I9, I12, I14 |
 | [0284](0284-the-tools-barrel-loads-no-optional-peer.md) | The tools barrel loads no optional peer | Accepted — `stitchkit/tools` is the transport-neutral tool layer; the MCP server lives on `stitchkit/tools/mcp`, `mountAgent` on `stitchkit/tools/agent`, `createToolkit` on `stitchkit/tools/toolkit`; amends 0231 | I7, I8, I14 |
 | [0285](0285-search-bounds-the-work-before-reading.md) | Search bounds the work before reading | Accepted — one glob automaton prunes the pinned walker; search streams files under work, cancellation and whole-result budgets with explicit coverage | I8, I10, I12, I13 |
+| [0286](0286-a-refused-view-withholds-a-read-and-keeps-an-effect.md) | A refused view withholds a read and keeps an effect | Accepted — after a refused managed CLI view a read prints nothing and names the field, a command with an effect keeps its result on stdout; `details.resultOnStdout` states which | I9, I13, I14 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

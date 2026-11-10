@@ -596,6 +596,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `OpenApiConfig` | _type_ | config for `generateOpenApiDocument` (incl. `includeMethod` — curate a public subset) — [guide](../guide/server.md#curating-the-spec--includemethod) |
 | `OpenApiDocument` | _type_ | the generated document |
 | `OpenApiInfo` | _type_ | the spec `info` block |
+| `OpenApiSecurity` | _type_ | `OpenApiConfig.security` — named schemes and the schemes each protected scope accepts — [guide](../guide/server.md#security-schemes--security) |
+| `OpenApiSecurityScheme` | _type_ | one way a caller presents its credential: HTTP bearer or basic, or an API key in a header, query or cookie |
 | `OpenApiServer` | _type_ | a spec `servers` entry |
 
 ---
@@ -1229,7 +1231,9 @@ Delivery exports are `AgentAdmissionEventSchema`, `AgentAttemptResetEventSchema`
 `AgentRunStateEventSchema`, `AgentRunOperationEventSchema`, `AgentTerminalEventSchema`,
 `AgentTransientDeltaEventSchema`,
 `AgentReasoningStartEventSchema`, `AgentReasoningDeltaEventSchema`,
-`AgentReasoningEndEventSchema`, `AgentToolStatusEventSchema`, `AgentRuntimeEvent`,
+`AgentReasoningEndEventSchema`, `AgentToolStatusEventSchema`, `AgentToolProgressEventSchema` (what a
+running tool reported through `ctx.reportProgress`, transient and never part of the model's input),
+`AgentRuntimeEvent`,
 `AgentRuntimeEventCursor`, `AgentRuntimeEventCursorSchema`, `AgentRuntimeCursorAdvance`,
 `advanceAgentRuntimeEventCursor`, `agentDurableEventId`, `AgentRuntimeEventSink`,
 `AgentRuntimeEventSinkConfig` and `createAgentRuntimeEventSink`. Cursor gaps require a canonical
@@ -1383,7 +1387,10 @@ including `AgentAttemptResetEventSchema` for `attempt-reset`),
 `AgentControlErrorCodeSchema` / `AgentControlErrorCode` (the one vocabulary of every control
 error code: `FORBIDDEN`, `CONNECTION_CLOSED`, `REQUEST_CAPACITY`, `ATTACHMENT_CAPACITY`,
 `LEASE_CONFLICT`, `EVENT_OVERFLOW` and the rest), `AgentMultiSessionCursorSchema` /
-`AgentMultiSessionCursor`, `AgentConversationView`, `AgentControlView`,
+`AgentMultiSessionCursor`, `AgentConversationView`, `AgentControlView`, `AgentRunTransient` (a
+run's streamed text, reasoning and running tool calls before its next checkpoint),
+`AgentToolActivity` (one running call with its last reported progress),
+`AGENT_TOOL_PROGRESS_MESSAGE_MAX` (the longest progress message a run publishes),
 `advanceAgentMultiSessionCursor`, `createAgentControlView`, `reduceAgentControlSnapshot`,
 `reduceAgentControlEvent` and
 `agentDurableEventId`. It imports no model provider, executor, store, event sink

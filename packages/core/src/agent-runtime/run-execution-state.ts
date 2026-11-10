@@ -95,6 +95,12 @@ export interface RunExecutionState {
   readonly absorbed: Map<string, string[]>;
   eventsSinceCheckpoint: number;
   sequence: number;
+  /**
+   * Tool calls whose terminal `tool-status` is out. A progress report from one
+   * of them is late — a promise the handler left running — and is dropped, so
+   * it cannot reappear on a screen that already shows the call settled.
+   */
+  readonly settledToolCalls: Set<string>;
   terminalReason: AgentTerminalReason;
   // A requeued run re-executes from scratch and pays the provider again, so
   // its figure continues the one the earlier attempt persisted rather than

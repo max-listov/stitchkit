@@ -211,10 +211,71 @@ export function advanceAgentMultiSessionCursor(
   };
 }
 
+/** A tool call still running, with the last progress it reported. */
+export interface AgentToolActivity {
+  toolName: string;
+  message?: string;
+  progress?: number;
+  total?: number;
+}
+
+/** What a run shows while it streams, before its next checkpoint makes it durable. */
+export interface AgentRunTransient {
+  text: string;
+  reasoning: string;
+  /** Running tool calls that reported progress, by call id; a call leaves on its terminal status. */
+  tools: Readonly<Record<string, AgentToolActivity>>;
+}
+
 export interface AgentConversationView {
   snapshot?: AgentSnapshot;
   resyncRequired: boolean;
-  transientByRun: Readonly<Record<string, { text: string; reasoning: string }>>;
+  transientByRun: Readonly<Record<string, AgentRunTransient>>;
+}
+
+const EMPTY_TRANSIENT: AgentRunTransient = { text: '', reasoning: '', tools: {} };
+
+/** The run's transient state after one event; an event that is not about it leaves it as it was. */
+function nextRunTransient(
+  transient: AgentRunTransient,
+  event: AgentRuntimeEvent,
+): AgentRunTransient {
+  switch (event.type) {
+    case 'assistant-delta':
+      return { ...transient, text: transient.text + event.textDelta };
+    case 'reasoning-delta':
+      return { ...transient, reasoning: transient.reasoning + event.textDelta };
+    case 'attempt-reset':
+      return EMPTY_TRANSIENT;
+    case 'tool-progress': {
+      const { toolName, message, progress, total } = event;
+      return {
+        ...transient,
+        tools: {
+          ...transient.tools,
+          [event.callId]: {
+            toolName,
+            ...(message !== undefined && { message }),
+            ...(progress !== undefined && { progress }),
+            ...(total !== undefined && { total }),
+          },
+        },
+      };
+    }
+    case 'tool-status': {
+      if (event.status === 'started' || !Object.hasOwn(transient.tools, event.callId)) {
+        return transient;
+      }
+      return {
+        ...transient,
+        tools: Object.fromEntries(
+          Object.entries(transient.tools).filter(([callId]) => callId !== event.callId),
+        ),
+      };
+    }
+    default:
+      return transient;
+  }
 }
 export interface AgentControlView {
   cursor: AgentMultiSessionCursor;
@@ -273,15 +334,10 @@ export function reduceAgentControlEvent(
       },
     };
   }
-  const transient = current.transientByRun[event.runId] ?? { text: '', reasoning: '' };
-  const nextTransient =
-    event.type === 'assistant-delta'
-      ? { ...transient, text: transient.text + event.textDelta }
-      : event.type === 'reasoning-delta'
-        ? { ...transient, reasoning: transient.reasoning + event.textDelta }
-        : event.type === 'attempt-reset'
-          ? { text: '', reasoning: '' }
-          : transient;
+  const nextTransient = nextRunTransient(
+    current.transientByRun[event.runId] ?? EMPTY_TRANSIENT,
+    event,
+  );
   const snapshotStale = durable(event) && current.snapshot?.version !== event.snapshotVersion;
   const transientByRun =
     event.type === 'terminal'

@@ -9,9 +9,10 @@ import {
   type TextStreamPart,
   type ToolSet,
 } from 'ai';
+import type { LocalStepDurability } from '../durability/contract';
 import { createLocalStepDurability } from '../durability/engine';
 import { streamAgentTextBoundary } from '../internal/ai-sdk-typed';
-import { createToolDurabilityContext } from '../tools/durability-context';
+import { createRuntimeToolContext } from '../tools/runtime-call-context';
 import { deferredToolRepair } from './deferred-tools-internal';
 import type { AgentInjectableInput } from './injection';
 import { ownedProviderStream } from './owned-provider-stream';
@@ -33,6 +34,7 @@ import {
 } from './run-stream-parts';
 import type { PreparedTurn } from './run-turn-preparation';
 import { addUsage, normalizeSdkUsage } from './runtime-internals';
+import { createToolProgressReporter } from './tool-progress';
 
 /** What outlives one provider attempt: the retry count and what the SDK carries forward. */
 interface AttemptLoopState {
@@ -190,6 +192,33 @@ async function prepareAttemptStep<CONTEXT, TOOLS extends ToolSet>(
   return { ...preparedStep, model };
 }
 
+/** The step ledger of one tool call: the host's durability port, or the runtime's local one. */
+function runToolDurability<CONTEXT, TOOLS extends ToolSet>(
+  context: AttemptContext<CONTEXT, TOOLS>,
+  toolName: string,
+  toolCallId: string,
+  signal: AbortSignal | undefined,
+): LocalStepDurability {
+  const { config } = context.execution.dependencies;
+  const { state } = context.execution;
+  const port = config.durability;
+  if (typeof port === 'function')
+    return port({
+      store: config.store,
+      conversationId: state.run.conversationId,
+      runId: state.run.id,
+      toolName,
+      toolCallId,
+      signal,
+    });
+  return createLocalStepDurability({
+    store: config.store,
+    conversationId: state.run.conversationId,
+    runId: JSON.stringify([state.run.id, toolName, toolCallId]),
+    signal,
+  });
+}
+
 function startAttemptStream<CONTEXT, TOOLS extends ToolSet>(
   context: AttemptContext<CONTEXT, TOOLS>,
   attempt: ModelAttempt,
@@ -197,7 +226,7 @@ function startAttemptStream<CONTEXT, TOOLS extends ToolSet>(
 ) {
   const { execution, turn } = context;
   const { config } = execution.dependencies;
-  const { state, idleDeadline, operationLifecycle } = execution;
+  const { idleDeadline, operationLifecycle } = execution;
   const { tools } = turn;
   const attemptSignal = AbortSignal.any([
     execution.executionSignal,
@@ -206,31 +235,28 @@ function startAttemptStream<CONTEXT, TOOLS extends ToolSet>(
   return streamAgentTextBoundary<TOOLS>({
     model: turn.selectedModel.model,
     tools,
-    ...(config.durability && {
-      toolsContext: Object.fromEntries(
-        Object.keys(tools).map((toolName) => [
+    // Every tool call gets the run's progress reporter, and its step ledger
+    // when the runtime has one. A tool that declares its own `contextSchema`
+    // owns its context contract, so the runtime's opaque object is not put
+    // where the SDK would validate it against that schema.
+    toolsContext: Object.fromEntries(
+      Object.entries(tools)
+        .filter(([, tool]) => tool.contextSchema === undefined)
+        .map(([toolName]) => [
           toolName,
-          createToolDurabilityContext((toolCallId, signal) => {
-            const port = config.durability;
-            if (typeof port === 'function')
-              return port({
-                store: config.store,
-                conversationId: state.run.conversationId,
-                runId: state.run.id,
-                toolName,
-                toolCallId,
-                signal,
-              });
-            return createLocalStepDurability({
-              store: config.store,
-              conversationId: state.run.conversationId,
-              runId: JSON.stringify([state.run.id, toolName, toolCallId]),
+          createRuntimeToolContext((toolCallId, signal) => ({
+            ...(config.durability && {
+              durability: runToolDurability(context, toolName, toolCallId, signal),
+            }),
+            reportProgress: createToolProgressReporter(
+              execution,
+              toolName,
+              toolCallId,
               signal,
-            });
-          }),
+            ),
+          })),
         ]),
-      ),
-    }),
+    ),
     instructions: turn.projection.withCarriedSystem(turn.prompt.instructions),
     messages: turn.history,
     abortSignal: attemptSignal,

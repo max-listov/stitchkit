@@ -15,6 +15,7 @@ import {
   defineMcpClientConnection,
   mountConnections,
 } from 'stitchkit/tools/connections';
+import { listenFetchable } from './listen-fetchable.mjs';
 
 const MiB = 1024 * 1024;
 const marker = 'packed-private-url-token-body-stack-marker';
@@ -114,7 +115,7 @@ async function fixture(mode = 'json') {
             : payload,
         );
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await listenFetchable(server);
   const address = server.address();
   assert.ok(address && typeof address === 'object');
   return {

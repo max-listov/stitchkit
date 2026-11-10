@@ -94,6 +94,25 @@ export const AgentToolStatusEventSchema = EventIdentitySchema.extend({
   input: z.json().optional(),
   output: z.json().optional(),
 });
+/** The longest progress message a run publishes; a longer one is cut to this. */
+export const AGENT_TOOL_PROGRESS_MESSAGE_MAX = 280;
+
+/**
+ * What a running tool said about itself through `ctx.reportProgress` — the
+ * same fields an MCP host receives. Transient like a text delta: it is for the
+ * screen while the call runs, never part of the model's input or of the
+ * durable history, and the call's terminal `tool-status` supersedes it.
+ */
+export const AgentToolProgressEventSchema = EventIdentitySchema.extend({
+  type: z.literal('tool-progress'),
+  runtimeEpoch: z.string().min(1),
+  sequence: z.int().nonnegative(),
+  callId: AgentRecordIdSchema,
+  toolName: z.string().min(1),
+  message: z.string().max(AGENT_TOOL_PROGRESS_MESSAGE_MAX).optional(),
+  progress: z.number().finite().optional(),
+  total: z.number().finite().optional(),
+});
 export const AgentTerminalEventSchema = EventIdentitySchema.extend({
   type: z.literal('terminal'),
   eventId: AgentRecordIdSchema,
@@ -115,6 +134,7 @@ export const AgentRuntimeEventSchema = z.discriminatedUnion('type', [
   AgentRunStateEventSchema,
   AgentRunOperationEventSchema,
   AgentToolStatusEventSchema,
+  AgentToolProgressEventSchema,
   AgentTerminalEventSchema,
 ]);
 export type AgentRuntimeEvent = z.infer<typeof AgentRuntimeEventSchema>;

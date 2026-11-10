@@ -74,6 +74,7 @@ function assertPreserved(result, command, json, expectedExit = 8) {
   assert.equal(diagnostic.error, 'CLI_PRESENTATION_FAILED');
   assert.equal(diagnostic.retryable, false);
   assert.equal(diagnostic.details.operationSucceeded, true);
+  assert.equal(diagnostic.details.resultOnStdout, true);
   assert.equal(diagnostic.details.command, command);
   assert.ok(diagnostic._hint.includes('Do not repeat'));
   assert.ok(!result.err.includes('private presenter'));

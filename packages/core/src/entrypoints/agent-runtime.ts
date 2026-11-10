@@ -96,6 +96,7 @@ export {
   type AgentRuntimeEventSinkConfig,
   type AgentRuntimePublisher,
   AgentTerminalEventSchema,
+  AgentToolProgressEventSchema,
   AgentToolStatusEventSchema,
   AgentTransientDeltaEventSchema,
   advanceAgentRuntimeEventCursor,

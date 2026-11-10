@@ -9,6 +9,8 @@ import {
 import { implement } from '../src/entrypoints/server';
 import { defineCliCommand } from '../src/tools/cli/command';
 import { type CliConfig, createCli } from '../src/tools/cli/create-cli';
+import { emitPresentationFailure } from '../src/tools/cli/format';
+import type { ToolFailure } from '../src/tools/execute-result';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
 const CreateInput = z.object({ refuse: z.boolean().optional() });
@@ -107,6 +109,7 @@ describe('a successful call survives a failed CLI presentation', () => {
       expect(diagnostic.error).toBe('CLI_PRESENTATION_FAILED');
       expect(diagnostic.retryable).toBe(false);
       expect(diagnostic.details.operationSucceeded).toBe(true);
+      expect(diagnostic.details.resultOnStdout).toBe(true);
       expect(diagnostic.details.command).toBe('record_create');
       expect(diagnostic.details.cause.details.message).toContain('pendingPaths, pages');
       expect(diagnostic._hint).toContain('stdout');
@@ -189,4 +192,141 @@ describe('a successful call survives a failed CLI presentation', () => {
       expect(result.err).not.toContain('private presenter failure');
     });
   }
+});
+
+const ListOutput = z.object({
+  items: z.array(z.object({ id: z.string(), name: z.string() })),
+});
+const listed = { items: [{ id: 'a', name: 'Alpha' }] };
+
+function readContract(
+  method: 'GET' | 'POST',
+  annotations?: { readOnlyHint: boolean },
+): ReturnType<typeof implement> {
+  return implement(
+    defineContract(
+      { prefix: 'catalogue', scope: 'public' },
+      {
+        list: {
+          method,
+          path: '/',
+          desc: 'List records',
+          expose: ['CLI'],
+          output: ListOutput,
+          tool: { name: 'record_list', ...(annotations && { annotations }) },
+        },
+      },
+    ),
+    { list: () => listed },
+  );
+}
+
+describe('a read withholds its result when the requested view is refused', () => {
+  for (const json of [false, true]) {
+    test(`a GET tool names the unknown column and prints nothing (json=${json})`, async () => {
+      const result = await run(
+        ['record_list', '--table', 'id,nosuchcolumn', ...(json ? ['--json'] : [])],
+        { services: [readContract('GET')] },
+      );
+      expect(result.out).toBe('');
+      expect(result.code).toBe(8);
+      const diagnostic = JSON.parse(result.err);
+      expect(diagnostic.error).toBe('CLI_PRESENTATION_FAILED');
+      expect(diagnostic.details.operationSucceeded).toBe(true);
+      expect(diagnostic.details.resultOnStdout).toBe(false);
+      expect(diagnostic.details.cause.details.message).toContain('"nosuchcolumn"');
+      expect(diagnostic.details.cause.details.message).toContain('id, name');
+      expect(diagnostic._hint).toContain('Repeat it with a corrected view');
+      expect(diagnostic._hint).not.toContain('stdout');
+    });
+  }
+
+  test('a known column of the same read still renders its table', async () => {
+    const result = await run(['record_list', '--table', 'id'], {
+      services: [readContract('GET')],
+    });
+    expect(result.code).toBe(0);
+    expect(result.err).toBe('');
+    expect(result.out).toContain('a');
+    expect(result.out).not.toContain('Alpha');
+  });
+
+  test('a declared read-only hint withholds the result of a non-GET tool', async () => {
+    const result = await run(['record_list', '--table', 'nosuchcolumn'], {
+      services: [readContract('POST', { readOnlyHint: true })],
+    });
+    expect(result.out).toBe('');
+    expect(result.code).toBe(8);
+    expect(JSON.parse(result.err).details.resultOnStdout).toBe(false);
+  });
+
+  test('a GET tool declared not read-only keeps its result on stdout', async () => {
+    const result = await run(['record_list', '--table', 'nosuchcolumn'], {
+      services: [readContract('GET', { readOnlyHint: false })],
+    });
+    expect(JSON.parse(result.out)).toEqual(listed);
+    expect(result.code).toBe(8);
+    expect(JSON.parse(result.err).details.resultOnStdout).toBe(true);
+    expect(JSON.parse(result.err)._hint).toContain('Do not repeat');
+  });
+
+  test('a runtime-discovered read follows the same rule and the configured exit code', async () => {
+    const runtime = defineRuntimeTool({
+      name: 'remote_list',
+      description: 'A remote read exposed through a runtime catalogue',
+      identity: { serviceName: 'remote', action: 'list', method: 'GET' },
+      input: z.object({}),
+      output: ListOutput,
+      transports: ['CLI'],
+      handler: () => listed,
+    });
+    const result = await run(['remote_list', '--count-by', 'nosuchcolumn'], {
+      runtimeTools: [runtime],
+      exitCodes: { CLI_PRESENTATION_FAILED: 42 },
+    });
+    expect(result.out).toBe('');
+    expect(result.code).toBe(42);
+    expect(JSON.parse(result.err).details.cause.details.message).toContain('"nosuchcolumn"');
+  });
+});
+
+describe('the diagnostic states what reached stdout', () => {
+  const failure: ToolFailure = {
+    ok: false,
+    code: 'BAD_REQUEST',
+    details: { message: 'no view' },
+  };
+  function emit(data: unknown, repeatable: boolean) {
+    let out = '';
+    let err = '';
+    const code = emitPresentationFailure(
+      { ok: true, data },
+      failure,
+      {
+        stdout: (text) => {
+          out += text;
+        },
+        stderr: (text) => {
+          err += text;
+        },
+      },
+      { json: true, toolName: 'probe', repeatable },
+    );
+    return { out, code, diagnostic: JSON.parse(err) };
+  }
+
+  test('an effect without a payload claims no stdout result and forbids a repeat', () => {
+    const { out, code, diagnostic } = emit(undefined, false);
+    expect(out).toBe('');
+    expect(code).toBe(8);
+    expect(diagnostic.details.resultOnStdout).toBe(false);
+    expect(diagnostic._hint).toBe('The command returned no result. Do not repeat it.');
+  });
+
+  test('an effect with a payload and a read report opposite facts', () => {
+    expect(emit({ id: 'x' }, false).diagnostic.details.resultOnStdout).toBe(true);
+    const read = emit({ id: 'x' }, true);
+    expect(read.out).toBe('');
+    expect(read.diagnostic.details.resultOnStdout).toBe(false);
+  });
 });

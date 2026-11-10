@@ -405,6 +405,7 @@
     "@modelcontextprotocol/server": "^2.4.0",
     "@openrouter/ai-sdk-provider": "^3.1.0",
     "@opentelemetry/api": "^1.10.0",
+    "@seriousme/openapi-schema-validator": "^2.11.0",
     "@socket.io/bun-engine": "^0.1.2",
     "@socket.io/component-emitter": "^3.1.2",
     "@tanstack/react-query": "5.105.3",

@@ -79,7 +79,8 @@ export async function runNativeCommand<
         emission.result,
         emission.presentationFailure,
         { stdout, stderr },
-        emitOptionsFor(config, options.json, command),
+        // A native command declares no read-only fact, so its result is never withheld.
+        { ...emitOptionsFor(config, options.json, command), repeatable: false },
       ),
     );
   }

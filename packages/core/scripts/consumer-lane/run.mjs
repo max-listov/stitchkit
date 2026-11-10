@@ -196,6 +196,15 @@ try {
     const dir = join(workdir, name);
     fixtureDirectories[name] = dir;
     cpSync(join(here, 'fixtures', name), dir, { recursive: true });
+    // One copy of the fixture support module, placed beside each package's
+    // sources: a fixture package is installed alone, so it cannot import a
+    // sibling directory of the repository.
+    if (existsSync(join(dir, 'src'))) {
+      cpSync(
+        join(here, 'fixture-support', 'listen-fetchable.mjs'),
+        join(dir, 'src', 'listen-fetchable.mjs'),
+      );
+    }
 
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
     manifest.dependencies.stitchkit = `file:${tarball}`;

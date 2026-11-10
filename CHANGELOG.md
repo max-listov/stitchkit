@@ -15,6 +15,44 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** scripts and agents that read stdout after a managed CLI command exits with `CLI_PRESENTATION_FAILED` when the command is a `GET` endpoint or a tool declaring `annotations.readOnlyHint: true`. Commands with an effect and native `defineCliCommand` presenters change nothing. See the [migration](docs/guide/upgrading.md#read-view-refusal).
+
+- `stitchkit/cli` — **a read withholds its result when the requested view is refused.**
+  A misspelled `--table`, `--count-by`, `--sum` or `--sort` field on a command that only reads
+  prints nothing to stdout: the diagnostic names the field and the fields that are there, and the
+  answer is one corrected call away. A command only reads when its tool declares
+  `annotations.readOnlyHint: true`, or declares no `readOnlyHint` and its method is `GET`. A command
+  with an effect still prints its complete result, because repeating it would repeat the effect.
+  `details.resultOnStdout` states which case occurred.
+  Before: `app user_list --table id,nosuchcolumn` → exit `8`, every record on stdout.
+  After: exit `8`, stdout empty; `app user_list --table id,name` returns the table.
+  [migration](docs/guide/upgrading.md#read-view-refusal).
+
+### Added
+
+- `stitchkit/server` — `generateOpenApiDocument({ security })` describes how a caller presents its
+  credential: named HTTP bearer, basic or API key (header, query, cookie) schemes become
+  `components.securitySchemes`, and each protected operation gets a standard `security`
+  requirement, keyed by the scopes the contracts already declare. Generation refuses a protected
+  scope with no scheme, naming the operation, instead of advertising it as open. Without
+  `security` the document is unchanged. Two new type exports, `OpenApiSecurity` and
+  `OpenApiSecurityScheme`, raise the `stitchkit/server` surface ceiling from 220 to 222 so a host
+  can type its scheme table. [guide](docs/guide/server.md#security-schemes--security)
+- `stitchkit/agent-runtime` — a long tool tells the agent's screen what it is doing. What a
+  handler reports through `ctx.reportProgress` under the agent runtime becomes a transient
+  `tool-progress` event of the run (`AgentToolProgressEventSchema`) with the call's `callId`; it
+  was a no-op there, so the run showed `started` and nothing else until the result. The model
+  still reads only the tool's result. Messages are cut to `AGENT_TOOL_PROGRESS_MESSAGE_MAX`,
+  reports of one call closer than 250 ms are dropped, and nothing is published after the call
+  settles. In `stitchkit/agent-runtime/browser`, `reduceAgentControlEvent` keeps each running
+  call's last report in `transientByRun[runId].tools` (`AgentRunTransient`,
+  `AgentToolActivity`) and drops it on the call's terminal status. A reducer or `switch` written
+  by hand over `AgentRuntimeEvent` sees one more `type`. The surface ceilings move from 373 to 374
+  (`stitchkit/agent-runtime`) and from 92 to 96 (`stitchkit/agent-runtime/browser`) for these
+  names. [guide](docs/guide/agent-runtime.md)
+
 ## [0.121.0] - 2026-11-09
 
 ### ⚠️ Breaking changes

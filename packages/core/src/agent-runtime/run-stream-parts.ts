@@ -32,7 +32,8 @@ export interface StreamPartScope {
  * The fields every transient event of this run leads with, in the order the
  * events have always carried them. Taking one advances the sequence.
  */
-function transientHead<CONTEXT, TOOLS extends ToolSet>(
+/** The identity every transient event of this run carries, with the next sequence. */
+export function transientHead<CONTEXT, TOOLS extends ToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
 ) {
   const { state } = execution;
@@ -139,6 +140,7 @@ async function applyToolPart<CONTEXT, TOOLS extends ToolSet>(
       emittedAt: now().toISOString(),
     });
   } else if (part.type === 'tool-result') {
+    state.settledToolCalls.add(part.toolCallId);
     state.parts.push(
       AgentMessagePartSchema.parse({
         type: 'tool-result',
@@ -158,6 +160,7 @@ async function applyToolPart<CONTEXT, TOOLS extends ToolSet>(
       emittedAt: now().toISOString(),
     });
   } else if (part.type === 'tool-error') {
+    state.settledToolCalls.add(part.toolCallId);
     state.internalCause = part.error;
     if (isToolExecutionControlError(part.error)) {
       await publish({
@@ -193,6 +196,7 @@ async function applyToolPart<CONTEXT, TOOLS extends ToolSet>(
       emittedAt: now().toISOString(),
     });
   } else if (part.type === 'tool-output-denied') {
+    state.settledToolCalls.add(part.toolCallId);
     state.parts.push(
       AgentMessagePartSchema.parse({
         type: 'tool-result',

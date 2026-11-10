@@ -483,7 +483,10 @@ render: async (ctx) => {
 
 `reportProgress` is present on every **tool** call — MCP, agent and CLI — so a
 handler never branches on transport, and it does nothing wherever nobody is
-listening. It is absent on the HTTP transport, which has no channel for it, so a
+listening. Under the agent runtime somebody is: each report becomes a transient
+`tool-progress` event of the run, so the person watching the agent sees the
+stage while the model still reads only the tool's result (see
+[Agent runtime → events](./agent-runtime.md)). It is absent on the HTTP transport, which has no channel for it, so a
 handler that also serves HTTP writes `ctx.reportProgress?.(…)`. It never throws and never
 rejects: a message about work must not be able to kill the work it describes, so
 a refused notification leaves the host exactly where a host that never asked for

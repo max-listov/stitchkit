@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { ApiError } from 'stitchkit/http';
 import { createHandler, implement } from 'stitchkit/server';
+import { listenFetchable } from './listen-fetchable.mjs';
 import {
   client,
   contract,
@@ -110,7 +111,7 @@ try {
     next(error);
   });
   io.on('connection', (socket) => socket.emit('greeting', { message: 'realtime hello' }));
-  await new Promise((resolve) => transport.listen(0, '127.0.0.1', resolve));
+  await listenFetchable(transport);
   const url = `http://127.0.0.1:${transport.address().port}`;
   const accepted = realtimeClient(url, 'accepted');
   let denied;

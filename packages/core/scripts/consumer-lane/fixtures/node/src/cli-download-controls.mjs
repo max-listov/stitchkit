@@ -5,12 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCli } from 'stitchkit/cli';
 import { z } from 'zod';
+import { listenFetchable } from './listen-fetchable.mjs';
 
 /** The public CLI path in packed, relocated and embedded Darwin artifacts. */
 export async function cliDownloadControls(unavailable = false) {
   const root = await mkdtemp(join(tmpdir(), 'sk-artifact-download-'));
   const server = createServer((_request, response) => response.end(Buffer.from([0, 255, 42])));
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await listenFetchable(server);
   try {
     const address = server.address();
     assert.ok(address && typeof address === 'object');

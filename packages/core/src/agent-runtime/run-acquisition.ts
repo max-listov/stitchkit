@@ -111,6 +111,7 @@ export async function acquireRun<CONTEXT, TOOLS extends ToolSet>(
     absorbed: new Map<string, string[]>(),
     eventsSinceCheckpoint: 0,
     sequence: 0,
+    settledToolCalls: new Set<string>(),
     terminalReason: 'success',
     nonModelUsage: input.acceptedRun.usage,
     modelUsage: undefined,

@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { createCli } from 'stitchkit/cli';
 import { defineMcpClientConnection, mountConnections } from 'stitchkit/tools/connections';
 import { z } from 'zod';
+import { listenFetchable } from './listen-fetchable.mjs';
 
 const input = z.object({ data: z.record(z.string().regex(/^[a-z][a-z0-9_]*$/), z.unknown()) });
 const inputSchema = z.toJSONSchema(input);
@@ -86,10 +87,7 @@ const server = createServer(async (request, response) => {
   response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }));
 });
 
-await new Promise((resolve, reject) => {
-  server.once('error', reject);
-  server.listen(0, '127.0.0.1', resolve);
-});
+await listenFetchable(server);
 const address = server.address();
 if (!address || typeof address === 'string') throw new Error('HTTP fixture did not bind');
 

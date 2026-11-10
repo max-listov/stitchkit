@@ -3,13 +3,13 @@ import { jsonSchema, tool } from 'ai';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
 import { AgentToolError } from './agent-tool-error';
-import { resolveToolDurability } from './durability-context';
 import type { ToolDurability, ToolDurabilityFactory } from './durability-port';
 import { isToolExecutionControlError } from './execute';
 import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from './execute-hooks';
 import { toolCauseFromResult, toolResultFromError } from './execute-result';
 import { createToolRunner, formatToolError, type ToolExtend } from './mount';
 import type { AgentToolRegistry } from './registry';
+import { resolveRuntimeToolCall } from './runtime-call-context';
 import { agentPresenterOf } from './runtime-tool';
 import type { RuntimeToolDefinition } from './runtime-tool-declaration';
 import { collectToolSurface } from './surface';
@@ -93,17 +93,27 @@ export function mountAgent(
     });
     const execute = async (rawArgs: unknown, options: ToolExecutionOptions<unknown>) => {
       const args = isRecord(rawArgs) ? rawArgs : {};
-      // The runtime's own durability travels in the SDK call context; an
-      // application that runs its own loop declares a factory instead. The
-      // context wins where both exist: it is the runtime driving the call, and
-      // its ledger is the one the run is recorded in.
+      // The runtime's own durability and progress travel in the SDK call
+      // context; an application that runs its own loop declares a durability
+      // factory instead. The context wins where both exist: it is the runtime
+      // driving the call, and its ledger is the one the run is recorded in.
+      const runtimeCall = resolveRuntimeToolCall(
+        options.context,
+        options.toolCallId,
+        options.abortSignal,
+      );
       const durability: ToolDurability | undefined =
-        resolveToolDurability(options.context, options.toolCallId, options.abortSignal) ??
+        runtimeCall?.durability ??
         config.durability?.(options.toolCallId, options.abortSignal);
       // The provider's call id travels as ordinary call context, so it reaches
       // `beforeToolCall` / `afterToolCall` / `onToolError` on the existing hook
-      // seam instead of through a second observation channel of its own.
-      const callContext = { signal: options.abortSignal, toolCallId: options.toolCallId };
+      // seam instead of through a second observation channel of its own. The
+      // runtime's reporter replaces the no-op `ctx.reportProgress` the same way.
+      const callContext = {
+        signal: options.abortSignal,
+        toolCallId: options.toolCallId,
+        ...(runtimeCall && { reportProgress: runtimeCall.reportProgress }),
+      };
       const executeTool = durability
         ? createToolRunner({
             source: 'agent',

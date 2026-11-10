@@ -9,7 +9,7 @@ import {
 } from '../src/entrypoints/tools';
 import type { MethodDef } from '../src/server/types';
 import { mountAgent } from '../src/tools/agent';
-import { createToolDurabilityContext } from '../src/tools/durability-context';
+import { createRuntimeToolContext } from '../src/tools/runtime-call-context';
 
 /*
  * `mountAgent` could already put `step` / `sleep` / `waitFor` into a tool body — but only
@@ -154,7 +154,11 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
       {
         toolCallId: 'call-10',
         messages: [],
-        context: createToolDurabilityContext(() => fromRuntime.durability as never),
+        context: createRuntimeToolContext(() => ({
+          durability: fromRuntime.durability as never,
+          // This test is about the ledger; progress has its own file.
+          reportProgress: () => Promise.resolve(),
+        })),
       },
     );
     expect(fromRuntime.ran).toEqual(['render']);

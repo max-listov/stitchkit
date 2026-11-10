@@ -157,6 +157,7 @@ export {
   type OpenApiServer,
   openApiRoute,
 } from '../server/openapi';
+export type { OpenApiSecurity, OpenApiSecurityScheme } from '../server/openapi-security';
 export {
   bindProcessSignals,
   type ProcessSignalName,

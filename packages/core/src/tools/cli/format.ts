@@ -106,14 +106,32 @@ export function emitResult(
   return cliExitCode(result, opts.exitCodes);
 }
 
-/** A presentation failure cannot erase a successfully completed operation. */
+function presentationFailureHint(repeatable: boolean, printed: boolean): string {
+  if (repeatable) {
+    return 'The result was not printed: this command only reads. Repeat it with a corrected view.';
+  }
+  return printed
+    ? 'The complete, unformatted result is on stdout. Do not repeat the command to recover its result.'
+    : 'The command returned no result. Do not repeat it.';
+}
+
+/**
+ * A presentation failure cannot erase a successfully completed operation.
+ *
+ * A command with an effect prints its complete result, because a second call
+ * would repeat the effect instead of recovering the answer. A command that only
+ * reads withholds it: the answer is one corrected call away, and an unformatted
+ * payload is exactly what the caller asked not to receive.
+ */
 export function emitPresentationFailure(
   result: Extract<ToolResult, { ok: true }>,
   failure: ToolFailure,
   writers: CliWriters,
-  opts: EmitOptions,
+  opts: EmitOptions & { repeatable: boolean },
 ): number {
-  emitResult(result, writers, opts);
+  // A success without a payload prints nothing either way.
+  const printed = !opts.repeatable && result.data !== undefined;
+  if (printed) emitResult(result, writers, opts);
   return emitResult(
     {
       ok: false,
@@ -123,9 +141,10 @@ export function emitPresentationFailure(
         message: 'The command completed successfully, but its result presentation failed.',
         command: opts.toolName,
         operationSucceeded: true,
+        resultOnStdout: printed,
         cause: formatToolError(failure),
       },
-      hint: 'The complete, unformatted result is on stdout. Do not repeat the command to recover its result.',
+      hint: presentationFailureHint(opts.repeatable, printed),
     },
     writers,
     // A domain error hint may suggest retrying the operation; no operation failed here.

@@ -1430,3 +1430,51 @@ is simply never emitted, so nothing about a hidden endpoint leaks.
 const internal = openApiRoute('/internal/openapi.json', fullDoc)   // behind auth
 const publicSpec = openApiRoute('/openapi.json', publicDoc)         // curated
 ```
+
+### Security schemes — `security`
+
+A generic client reads the spec to learn how to authenticate, and a scope name
+alone does not tell it which header to send. Pass `security` to describe that in
+standard OpenAPI terms: named schemes become `components.securitySchemes`, and
+every protected operation gets a `security` requirement. It is keyed by the
+scopes your contracts already declare, so there is no second list of which
+endpoint is protected:
+
+```ts
+const publicDoc = generateOpenApiDocument({
+  info: { title: 'Public API', version: '1.0.0' },
+  services: [account],
+  includeMethod: (m) => m.meta?.public === true,
+  security: {
+    schemes: {
+      apiKey: { type: 'http', scheme: 'bearer', description: 'An account API key' },
+    },
+    // Each protected scope → the schemes that satisfy it, any one of them.
+    scopes: { account: ['apiKey'] },
+  },
+})
+```
+
+A scheme is `{ type: 'http', scheme: 'bearer' | 'basic' }` or
+`{ type: 'apiKey', in: 'header' | 'query' | 'cookie', name }` (a session cookie
+is the `cookie` form). An operation is described by the scope the auth hook
+checks it under:
+
+| The operation's scope | In the document |
+|---|---|
+| `'public'` | no `security`, no 401/403 |
+| listed in `scopes` with schemes | `security: [{ apiKey: [] }, …]` and 401/403 |
+| listed with an empty list — a custom scope whose rule is `'public'` | no `security`, no 401/403 |
+| not listed | generation throws, naming the operation |
+| none of its own | read as `defaultScope` — pass the same value as `createAuthHook({ defaultScope })` |
+
+Generation refuses a protected scope it cannot describe instead of emitting the
+operation as open — a client would otherwise call it without a credential. Only
+the operations the document advertises need a mapping: a method `includeMethod`
+filters out is never checked. A scheme `scopes` names but `schemes` does not
+declare, and an entry for `'public'`, are refused the same way.
+
+The metadata describes your policy; it does not enforce it. The auth hook is
+still the only gate, and removing `security` changes the document, never a
+401 or 403. Credential values never belong here: describe where the key goes,
+not what it is.

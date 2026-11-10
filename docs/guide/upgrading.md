@@ -1,5 +1,31 @@
 # Upgrading stitchkit
 
+## Unreleased migration: read-view-refusal
+
+**Who must act:** scripts and agents that read stdout after a managed CLI command exits with
+`CLI_PRESENTATION_FAILED` (`8` by default) when that command is a `GET` endpoint or a tool
+declaring `annotations.readOnlyHint: true`. Commands with an effect and native
+`defineCliCommand` presenters change nothing.
+
+A read no longer prints its complete result when the requested view is refused; stdout is
+empty and the diagnostic carries `details.resultOnStdout: false`.
+
+```sh
+# before: the full list arrived on stdout beside the diagnostic
+app user_list --table id,nosuchcolumn > users.json   # exit 8, users.json holds every record
+
+# after: repeat the read with a field the diagnostic names
+app user_list --table id,nosuchcolumn                # exit 8, stdout empty
+app user_list --table id,name
+```
+
+A `GET` endpoint whose call has an effect that must not be repeated declares it, and keeps
+its result on stdout:
+
+```ts
+tool: { name: 'token_rotate', annotations: { readOnlyHint: false } }
+```
+
 ## Released migration: 0.121.0
 
 ### bounded-coding-search

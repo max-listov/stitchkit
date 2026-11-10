@@ -9,6 +9,7 @@ import { DEFAULT_EXIT_CODES, emitPresentationFailure, emitResult } from './forma
 import { filterCommands, renderCommandHelp, renderTopHelp } from './help';
 import { buildManagedSurface, type ManagedSurface } from './managed-surface';
 import { prepareInvocation } from './prepare';
+import { isRepeatableRead } from './repeatable-read';
 import { type CliRoute, type CliSession, emitOptionsFor } from './session';
 import { unavailableCommand, unavailableCommandJson } from './unavailable';
 import { renderCliView, stringifyGroups } from './view';
@@ -175,7 +176,7 @@ async function runManagedCommand<
     toolArgs,
     options,
   });
-  return emitManagedResult(session, command, result, options);
+  return emitManagedResult(session, command, result, options, isRepeatableRead(tool.method));
 }
 
 /** One call through the shared tool runner, then `--wait` polling over the same runner. */
@@ -244,6 +245,7 @@ async function emitManagedResult<
   command: string,
   initial: ToolResult,
   options: CliRunOptions,
+  repeatable: boolean,
 ): Promise<void> {
   const { config } = session;
   const { stdout, stderr, exit } = session.io;
@@ -282,7 +284,7 @@ async function emitManagedResult<
           result,
           failure,
           { stdout, stderr },
-          emitOptionsFor(config, options.json, command),
+          { ...emitOptionsFor(config, options.json, command), repeatable },
         ),
       );
     }

@@ -94,7 +94,8 @@ for (const path of ['', '.x', 'x.', 'x..y', '__proto__', 'x.__proto__.y']) {
     const result = await run(data, argv);
     assert.equal(result.code, 8);
     assert.equal(result.calls, 1);
-    assert.deepEqual(JSON.parse(result.out), data);
+    // A read withholds its result: the corrected call returns it.
+    assert.equal(result.out, '');
     assert.ok(
       JSON.parse(result.err).details.cause.details.message.includes(
         'not a readable field path',
@@ -122,16 +123,18 @@ for (const { argv, expected } of [
   assert.deepEqual(JSON.parse(result.out), expected);
 }
 
-function assertPresentationFailure(result, data, json) {
+function assertPresentationFailure(result) {
   assert.equal(result.code, 8);
   assert.equal(result.calls, 1);
-  assert.equal(result.out, `${JSON.stringify(data, null, json ? undefined : 2)}\n`);
+  // The synthetic command is a GET: its answer is one corrected call away.
+  assert.equal(result.out, '');
   const diagnostic = JSON.parse(result.err);
   assert.equal(diagnostic.error, 'CLI_PRESENTATION_FAILED');
   assert.equal(diagnostic.retryable, false);
   assert.equal(diagnostic.details.operationSucceeded, true);
+  assert.equal(diagnostic.details.resultOnStdout, false);
   assert.equal(diagnostic.details.command, 'list');
-  assert.ok(diagnostic._hint.includes('Do not repeat'));
+  assert.ok(diagnostic._hint.includes('Repeat it with a corrected view'));
   return diagnostic.details.cause.details.message;
 }
 for (const ascending of [false, true]) {
@@ -175,9 +178,7 @@ for (const field of ['toString', 'constructor', 'nested.toString', 'nested.const
   ]) {
     const result = await run(data, [...argv, '--json']);
     assert.ok(
-      assertPresentationFailure(result, data, true).includes(
-        `no record carries the field "${field}"`,
-      ),
+      assertPresentationFailure(result).includes(`no record carries the field "${field}"`),
     );
   }
 }
@@ -201,7 +202,7 @@ for (const argv of [
 ]) {
   for (const json of [false, true]) {
     const result = await run(nonempty, [...argv, ...(json ? ['--json'] : [])]);
-    const message = assertPresentationFailure(result, nonempty, json);
+    const message = assertPresentationFailure(result);
     assert.ok(message.includes('no record carries the field "missing"'));
     assert.ok(message.includes('available: amount, status'));
   }
@@ -220,8 +221,6 @@ assert.deepEqual(
 assert.ok(
   assertPresentationFailure(
     await run(sparse, ['--sort', 'a', '--top', '1', '--table', 'a,missing', '--json']),
-    sparse,
-    true,
   ).includes('no record carries the field "missing"'),
 );
 // Largest first holds for keys a JSON object would otherwise sort, and markers stay distinct.
@@ -251,14 +250,12 @@ for (const [data, argv] of [
   [{ total: 0, items: [] }, ['--sort', 'total']],
 ]) {
   assert.ok(
-    assertPresentationFailure(await run(data, argv), data, false).includes(
-      'belongs to the result object',
-    ),
+    assertPresentationFailure(await run(data, argv)).includes('belongs to the result object'),
   );
 }
 for (const data of [null, 0, { total: 0 }, { items: [], other: [] }]) {
   const result = await run(data, ['--count-by', 'status']);
-  assert.ok(assertPresentationFailure(result, data, false).includes('an aggregate needs'));
+  assert.ok(assertPresentationFailure(result).includes('an aggregate needs'));
 }
 
 const refusal = await run({ items: [], total: 0 }, ['--refuse', '--count-by', 'status']);

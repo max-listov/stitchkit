@@ -1282,6 +1282,19 @@ or it keeps the failed attempt's partial text on screen.
   start and output on completion. A mounted typed failure carries the same safe
   `{ error, retryable, details?, _hint? }` envelope as the durable result; an unknown
   internal cause remains generic and stays in local observability only;
+- `tool-progress` is transient: what a running tool handler reported through
+  `ctx.reportProgress` — `message`, `progress` and `total`, the fields an MCP host
+  receives — with the call's `callId` and `toolName`. It never enters the
+  model's input or the durable history. A message longer than
+  `AGENT_TOOL_PROGRESS_MESSAGE_MAX` (280) is cut, reports of one call closer
+  than 250 ms apart are dropped, and a report after the call's terminal
+  `tool-status` or after its attempt was abandoned is dropped; the terminal
+  status carries the final word. `reduceAgentControlEvent` keeps the last
+  report of each running call in `transientByRun[runId].tools[callId]` and
+  removes it on that call's `completed`, `failed` or `interrupted`. The runtime
+  hands its reporter to a call through the SDK tool context, beside its step
+  ledger; a tool that declares its own `contextSchema` keeps that contract and
+  reports nowhere;
 - `terminal` follows the winning terminal CAS.
 
 `loop.checkpointEveryEvents` batches ordinary stream parts (default `20`) and

@@ -5,6 +5,7 @@ import { Agent, createServer, get } from 'node:http';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
+import { listenFetchable } from './listen-fetchable.mjs';
 
 const run = promisify(execFile);
 export async function execute(file, args = [], options = {}) {
@@ -104,10 +105,7 @@ export async function distributionServer(storageRoot) {
     socketIds.set(socket, socketId);
     socket.once('close', (hadError) => record({ socketId, event: 'socket-close', hadError }));
   });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
+  await listenFetchable(server);
   const address = server.address();
   assert.ok(address && typeof address === 'object');
   return {

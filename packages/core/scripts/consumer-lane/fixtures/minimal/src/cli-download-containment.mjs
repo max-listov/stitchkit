@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCli } from 'stitchkit/cli';
 import { z } from 'zod';
+import { listenFetchable } from './listen-fetchable.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'sk-download-contained-'));
 const original = Buffer.from('existing external file');
@@ -31,7 +32,7 @@ const server = createServer(async (req, res) => {
   await requestHook();
   res.end(downloaded);
 });
-await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+await listenFetchable(server);
 const address = server.address();
 assert.ok(address && typeof address === 'object');
 const url = `http://127.0.0.1:${address.port}/media`;

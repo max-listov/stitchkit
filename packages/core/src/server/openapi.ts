@@ -11,11 +11,18 @@
  * `$ref` de-duplication can come later if a spec grows unwieldy.
  */
 
+import type { MultipartDescriptor } from '../contract/client-types';
 import { DEFAULT_CONTRACT_STREAM_FRAME_BYTES } from '../contract/stream';
 import { inputIsQuery } from '../internal/http-input';
 import { joinRoutePath, parseTrailingWildcard } from '../internal/route-pattern';
 import { isRecord } from '../internal/typed';
 import { jsonSchemaFields, toJsonSchema } from '../json-schema/json-schema';
+import {
+  type OpenApiSecurity,
+  type OpenApiSecurityScheme,
+  PUBLIC_SCOPE,
+  planOpenApiSecurity,
+} from './openapi-security';
 import type { MethodDef, RawRoute, ServiceDef } from './types';
 
 export interface OpenApiInfo {
@@ -50,6 +57,14 @@ export interface OpenApiConfig {
    * separate filtered document for a public route (see the guide).
    */
   includeMethod?: (method: Readonly<MethodDef>) => boolean;
+  /**
+   * How a caller presents its credential, by the scopes the contracts already
+   * declare. Emits `components.securitySchemes` and a `security` requirement on
+   * every protected operation, so a generic client knows which header to send.
+   * Generation refuses a protected scope with no scheme rather than advertise
+   * the endpoint as open. Omit for a document without security metadata.
+   */
+  security?: OpenApiSecurity;
 }
 
 export interface OpenApiDocument {
@@ -57,6 +72,7 @@ export interface OpenApiDocument {
   info: OpenApiInfo;
   servers?: OpenApiServer[];
   paths: Record<string, Record<string, unknown>>;
+  components?: { securitySchemes: Record<string, OpenApiSecurityScheme> };
 }
 
 const ERROR_ENVELOPE_SCHEMA: Record<string, unknown> = {
@@ -106,16 +122,63 @@ function errorResponse(description: string): Record<string, unknown> {
   };
 }
 
-function errorResponses(scope: string | undefined): Record<string, unknown> {
+function errorResponses(guarded: boolean): Record<string, unknown> {
   const responses: Record<string, unknown> = {
     '400': errorResponse('Validation error'),
     '500': errorResponse('Server error'),
   };
-  if (scope && scope !== 'public') {
+  if (guarded) {
     responses['401'] = errorResponse('Unauthorized');
     responses['403'] = errorResponse('Forbidden');
   }
   return responses;
+}
+
+/**
+ * A multipart body: the input fields beside one binary property per declared
+ * file, with its cardinality, size and media-type policy.
+ */
+function multipartRequestBody(
+  inputSchema: MethodDef['inputSchema'],
+  multipart: MultipartDescriptor,
+): Record<string, unknown> {
+  const inputJson = safeJson(inputSchema, 'input');
+  const baseProps = isRecord(inputJson.properties) ? inputJson.properties : {};
+  const baseRequired = Array.isArray(inputJson.required) ? inputJson.required : [];
+  const fileProperties: Record<string, unknown> = {};
+  const requiredFiles: string[] = [];
+  for (const [field, policy] of Object.entries(multipart.files)) {
+    const binary = {
+      type: 'string',
+      format: 'binary',
+      ...(policy.maxBytes !== undefined && { maxLength: policy.maxBytes }),
+      ...(policy.contentTypes !== undefined && {
+        'x-accepted-content-types': policy.contentTypes,
+      }),
+    };
+    fileProperties[field] =
+      policy.multiple === true
+        ? {
+            type: 'array',
+            items: binary,
+            minItems: policy.required === false ? 0 : 1,
+            ...(policy.maxFiles !== undefined && { maxItems: policy.maxFiles }),
+          }
+        : binary;
+    if (policy.required !== false) requiredFiles.push(field);
+  }
+  return {
+    required: baseRequired.length > 0 || requiredFiles.length > 0,
+    content: {
+      'multipart/form-data': {
+        schema: {
+          type: 'object',
+          properties: { ...baseProps, ...fileProperties },
+          required: [...baseRequired, ...requiredFiles],
+        },
+      },
+    },
+  };
 }
 
 /**
@@ -126,6 +189,7 @@ function errorResponses(scope: string | undefined): Record<string, unknown> {
  * surface.
  */
 export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument {
+  const security = config.security ? planOpenApiSecurity(config.security) : undefined;
   const groups = [
     ...(config.services ?? []).map((service) => ({ pathPrefix: undefined, service })),
     ...(config.groups ?? []).flatMap((group) =>
@@ -190,7 +254,13 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
         }
       }
 
-      const responses: Record<string, unknown> = { ...errorResponses(method.scope) };
+      const requirement = security?.requirement(method.scope, `${method.method} ${fullPath}`);
+      // With security declared, the requirement is the one answer to "does
+      // this need a credential"; without it, the scope name alone says so.
+      const guarded = security
+        ? requirement !== undefined
+        : method.scope !== undefined && method.scope !== PUBLIC_SCOPE;
+      const responses: Record<string, unknown> = { ...errorResponses(guarded) };
       if (method.rawResponse) {
         // A raw endpoint has no output schema, but "204 No content" would be a
         // lie — it answers with a body the handler owns. Document the declared
@@ -241,6 +311,7 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
         'x-stitchkit-has-output': Boolean(method.outputSchema || method.stream),
         ...(method.stream && { 'x-stitchkit-stream': true }),
         ...(parameters.length > 0 && { parameters }),
+        ...(requirement && { security: requirement }),
         responses,
       };
       if (trailingWildcard) {
@@ -253,46 +324,7 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
       }
       if (!inputInQuery && (method.inputSchema || method.multipart)) {
         if (method.multipart) {
-          const inputJson = safeJson(method.inputSchema, 'input');
-          const baseProps = isRecord(inputJson.properties) ? inputJson.properties : {};
-          const baseRequired = Array.isArray(inputJson.required) ? inputJson.required : [];
-          const fileProperties: Record<string, unknown> = {};
-          const requiredFiles: string[] = [];
-          for (const [field, policy] of Object.entries(method.multipart.files)) {
-            const binary = {
-              type: 'string',
-              format: 'binary',
-              ...(policy.maxBytes !== undefined && { maxLength: policy.maxBytes }),
-              ...(policy.contentTypes !== undefined && {
-                'x-accepted-content-types': policy.contentTypes,
-              }),
-            };
-            fileProperties[field] =
-              policy.multiple === true
-                ? {
-                    type: 'array',
-                    items: binary,
-                    minItems: policy.required === false ? 0 : 1,
-                    ...(policy.maxFiles !== undefined && { maxItems: policy.maxFiles }),
-                  }
-                : binary;
-            if (policy.required !== false) requiredFiles.push(field);
-          }
-          operation.requestBody = {
-            required: baseRequired.length > 0 || requiredFiles.length > 0,
-            content: {
-              'multipart/form-data': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    ...baseProps,
-                    ...fileProperties,
-                  },
-                  required: [...baseRequired, ...requiredFiles],
-                },
-              },
-            },
-          };
+          operation.requestBody = multipartRequestBody(method.inputSchema, method.multipart);
         } else if (method.inputSchema) {
           // An all-optional body is not required — the runtime parses an empty
           // body as `{}`, so a spec that marks it required would be wrong.
@@ -322,6 +354,7 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
     info: config.info,
     ...(config.servers && { servers: config.servers }),
     paths,
+    ...(security && { components: { securitySchemes: { ...security.schemes } } }),
   };
 }
 

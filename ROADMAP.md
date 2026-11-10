@@ -109,9 +109,8 @@ The 1.0 milestone is **API stability**, not new surface. Before it ships:
   application aligned with the already-shipped HTTP, MCP, CLI, realtime and
   React surfaces.
 - **Documentation quality.** Keep the guide, API reference, upgrade path and
-  generated LLM docs synchronized. A rendered documentation site remains a
-  separately scoped idea in
-  an open idea, not a commitment.
+  generated LLM docs synchronized. A rendered documentation site remains an
+  open idea, not a commitment.
 
 When the public API has held steady across several consumers, 1.0 locks it
 under semantic versioning — breaking changes only on a major bump.
