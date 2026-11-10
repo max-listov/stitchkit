@@ -28,6 +28,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { placeFixtureSupport } from './fixture-support/place.mjs';
 import { runInstalledConsumerProofs } from './installed-proof-runner.ts';
 import { declarationProofArguments, declarationProofVariants } from './installed-proofs.ts';
 import { qualifyNeutralLibrary } from './neutral-library.mjs';
@@ -196,15 +197,7 @@ try {
     const dir = join(workdir, name);
     fixtureDirectories[name] = dir;
     cpSync(join(here, 'fixtures', name), dir, { recursive: true });
-    // One copy of the fixture support module, placed beside each package's
-    // sources: a fixture package is installed alone, so it cannot import a
-    // sibling directory of the repository.
-    if (existsSync(join(dir, 'src'))) {
-      cpSync(
-        join(here, 'fixture-support', 'listen-fetchable.mjs'),
-        join(dir, 'src', 'listen-fetchable.mjs'),
-      );
-    }
+    if (existsSync(join(dir, 'src'))) placeFixtureSupport(join(dir, 'src'));
 
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
     manifest.dependencies.stitchkit = `file:${tarball}`;

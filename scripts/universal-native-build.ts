@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
+import { placeFixtureSupport } from '../packages/core/scripts/consumer-lane/fixture-support/place.mjs';
 import {
   NativeAssetManifestSchema,
   nativeLoaderSource,
@@ -69,6 +70,7 @@ try {
       join(core, 'scripts/consumer-lane/fixtures/node/src', file),
       join(fixture, file),
     );
+  placeFixtureSupport(fixture);
   const packageRoot = join(fixture, 'node_modules/stitchkit');
   const metadataPath = join(packageRoot, 'native-assets.json');
   const published = NativeAssetManifestSchema.parse(

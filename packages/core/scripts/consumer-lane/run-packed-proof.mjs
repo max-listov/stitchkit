@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { placeFixtureSupport } from './fixture-support/place.mjs';
 import { runInstalledConsumerProofs } from './installed-proof-runner.ts';
 import {
   declarationProofArguments,
@@ -39,6 +40,7 @@ export async function runPackedProof({ artifact, proofId }) {
   try {
     const consumer = join(scratch, proof.fixture);
     cpSync(join(here, 'fixtures', proof.fixture), consumer, { recursive: true });
+    placeFixtureSupport(join(consumer, 'src'));
     const manifestPath = join(consumer, 'package.json');
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
     manifest.dependencies.stitchkit = `file:${artifact}`;
