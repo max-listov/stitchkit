@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: read-view-refusal
+## Released migration: 0.122.0
+
+### read-view-refusal
 
 **Who must act:** scripts and agents that read stdout after a managed CLI command exits with
 `CLI_PRESENTATION_FAILED` (`8` by default) when that command is a `GET` endpoint or a tool

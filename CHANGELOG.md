@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.122.0] - 2026-11-10
+
 ### ⚠️ Breaking changes
 
 **Who must act:** scripts and agents that read stdout after a managed CLI command exits with `CLI_PRESENTATION_FAILED` when the command is a `GET` endpoint or a tool declaring `annotations.readOnlyHint: true`. Commands with an effect and native `defineCliCommand` presenters change nothing. See the [migration](docs/guide/upgrading.md#read-view-refusal).
@@ -28,7 +30,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   `details.resultOnStdout` states which case occurred.
   Before: `app user_list --table id,nosuchcolumn` → exit `8`, every record on stdout.
   After: exit `8`, stdout empty; `app user_list --table id,name` returns the table.
-  [migration](docs/guide/upgrading.md#read-view-refusal).
+  [migration](docs/guide/upgrading.md#read-view-refusal). → ADR 0286
+  **Affects:** `stitchkit/cli` behaviour
 
 ### Added
 

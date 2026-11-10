@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-10
+
+### Changed
+
+- `stitchkit-tui` — tracks stitchkit 0.122.0, so a project installing both gets one stitchkit.
+
 ## [0.4.1] - 2026-11-09
 
 ### Fixed
