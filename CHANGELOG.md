@@ -15,6 +15,17 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/agent-runtime` — a deferred tool search carrying `reason: 'inactive_call'` reads its
+  query as a tool name only when it is the exact name of a tool on the surface; any other query
+  is ranked like an unmarked one, through `search.select` when configured. The whole query was
+  taken as a name whenever the field was present, and a model that set the field on a query in
+  words received `NO_MATCH` from a catalog holding the tool. The input schema tells the model the
+  field is the runtime's to write; that sentence adds about 50 bytes to the search tool's schema,
+  which counts toward `activation.maxSchemaBytes`.
+  **Affects:** `stitchkit/agent-runtime` behaviour
+
 ## [0.122.1] - 2026-11-10
 
 ### Fixed

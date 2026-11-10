@@ -73,9 +73,14 @@ export function createDeferredSearchTool<CONTEXT>(
     transports: ['AGENT'],
     handler: async ({ input }): Promise<DeferredAgentToolReceipt> => {
       const queryOversized = utf8Bytes(input.query) > config.search.maxQueryBytes;
+      // The runtime writes `inactive_call` beside the exact name of a tool the
+      // model called while it was inactive. The field is part of the input
+      // schema, so a model can set it on a query in words too; there it says
+      // nothing about the query, and the query is ranked like any other.
+      const inactiveCall = input.reason === 'inactive_call' && surface.byName.has(input.query);
       const proposed = queryOversized
         ? []
-        : input.reason === 'inactive_call'
+        : inactiveCall
           ? [input.query]
           : config.search.select
             ? await config.search.select({
@@ -120,7 +125,7 @@ export function createDeferredSearchTool<CONTEXT>(
       }
       const status = refused
         ? 'SELECTION_REFUSED'
-        : input.reason === 'inactive_call' && admitted.length > 0
+        : inactiveCall && admitted.length > 0
           ? 'SEARCH_REQUIRED'
           : admitted.length > 0
             ? 'SELECTED'

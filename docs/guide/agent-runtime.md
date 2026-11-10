@@ -216,7 +216,11 @@ Selection is a versioned receipt in the ordinary durable tool-result history.
 The latest valid same-run search replaces the earlier selection; parallel
 searches in one step merge in call order. Recovery reconstructs it, while a
 different run or finite surface cannot inherit it. Known inactive calls take a
-recoverable `SEARCH_REQUIRED` search round; unknown names still fail.
+recoverable `SEARCH_REQUIRED` search round; unknown names still fail. The
+runtime marks that round with `reason: 'inactive_call'` beside the exact tool
+name. The field is the runtime's to write; a model that sets it anyway gets
+the same `SEARCH_REQUIRED` answer with an exact name, and with a query in words
+the field is ignored and the query is ranked as usual.
 
 Every ceiling is required. `maxSchemaBytes` measures UTF-8 bytes over canonical
 name, description and presentation schema. It is useful for before/after

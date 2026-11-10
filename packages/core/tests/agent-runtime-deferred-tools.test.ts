@@ -445,6 +445,157 @@ describe('deferred Agent tool surface', () => {
 });
 
 /**
+ * `reason: 'inactive_call'` is what the runtime writes beside the exact name of
+ * a tool the model called while it was inactive. The field is in the search
+ * input schema, so a model sets it on its own queries too. Read as a name
+ * whenever the field is present, a query in words answers `NO_MATCH` from a
+ * catalog that holds the tool, and the model concludes the operation does not
+ * exist; so the field counts only beside an exact name.
+ */
+describe('a search marked inactive_call', () => {
+  async function receiptFor(
+    input: { query: string; reason?: 'inactive_call' },
+    select?: (query: string) => string[],
+  ): Promise<unknown> {
+    let step = 0;
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        step += 1;
+        const chunks =
+          step === 1
+            ? [
+                {
+                  type: 'tool-call',
+                  toolCallId: 'search-1',
+                  toolName: 'tool_search',
+                  input: JSON.stringify(input),
+                },
+              ]
+            : [
+                { type: 'text-start', id: 'answer' },
+                { type: 'text-delta', id: 'answer', delta: 'complete' },
+                { type: 'text-end', id: 'answer' },
+              ];
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              ...chunks,
+              {
+                type: 'finish',
+                finishReason: { unified: step === 1 ? 'tool-calls' : 'stop', raw: undefined },
+                usage,
+              },
+            ],
+          } as never),
+        };
+      },
+    });
+    const described = (name: string, description: string) =>
+      defineRuntimeTool({
+        name,
+        description,
+        identity: { serviceName: 'catalog', action: name, method: 'POST' },
+        input: z.object({}),
+        output: z.object({}),
+        handler: () => ({}),
+      });
+    const deferred = createDeferredAgentToolSurface({
+      runtimeTools: [
+        described('residence_read', 'Days of permitted stay left in a country.'),
+        described('disk_read', 'Free space on the data volume.'),
+      ],
+      search: {
+        name: 'tool_search',
+        maxQueryBytes: 128,
+        maxResults: 2,
+        maxResultBytes: 2_048,
+        ...(select && { select: ({ query }) => select(query) }),
+      },
+      activation: { maxSelectedTools: 2, maxActiveTools: 4, maxSchemaBytes: 4_096 },
+    });
+    const runtime = createAgentRuntime({
+      protocol,
+      store: createMemoryAgentRuntimeStore(),
+      models: { resolve: () => ({ descriptor, model }) },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: (context) => deferred.mount(context),
+      loop: { maxSteps: 2, prepareStep: deferred.prepareStep() },
+    });
+    const result = await runtime.submit({
+      conversationId: 'marked-search',
+      idempotencyKey: 'one',
+      context: { mode: 'member' },
+      parts: [{ type: 'text', text: 'find it' }],
+      metadata: {},
+    }).result;
+    await runtime.close();
+    const part = result.message.parts.find(
+      (entry) => entry.type === 'tool-result' && entry.toolName === 'tool_search',
+    );
+    return part?.type === 'tool-result' ? part.output : undefined;
+  }
+
+  test('a query in words selects what the same query selects without the mark', async () => {
+    const query = 'visa stay permit country deadline';
+    const plain = await receiptFor({ query });
+    const marked = await receiptFor({ query, reason: 'inactive_call' });
+
+    expect(plain).toMatchObject({ status: 'SELECTED', selected: ['residence_read'] });
+    expect(marked).toMatchObject({ status: 'SELECTED', selected: ['residence_read'] });
+  });
+
+  test('a query in words reaches the configured selector', async () => {
+    const asked: string[] = [];
+    const marked = await receiptFor(
+      { query: 'how long may I stay', reason: 'inactive_call' },
+      (query) => {
+        asked.push(query);
+        return ['residence_read'];
+      },
+    );
+
+    expect(asked).toEqual(['how long may I stay']);
+    expect(marked).toMatchObject({ status: 'SELECTED', selected: ['residence_read'] });
+  });
+
+  test('an exact name is still answered as an inactive call, past the selector', async () => {
+    const asked: string[] = [];
+    const marked = await receiptFor(
+      { query: 'residence_read', reason: 'inactive_call' },
+      (query) => {
+        asked.push(query);
+        return ['disk_read'];
+      },
+    );
+
+    expect(asked).toEqual([]);
+    expect(marked).toMatchObject({ status: 'SEARCH_REQUIRED', selected: ['residence_read'] });
+  });
+
+  test('a name in another case is ranked, and an empty selection answers nothing', async () => {
+    const cased = await receiptFor({ query: ' Residence_Read ', reason: 'inactive_call' });
+    const empty = await receiptFor(
+      { query: 'how long may I stay', reason: 'inactive_call' },
+      () => [],
+    );
+
+    expect(cased).toMatchObject({ status: 'SELECTED', selected: ['residence_read'] });
+    expect(empty).toMatchObject({ status: 'NO_MATCH', selected: [] });
+  });
+
+  test('the model is told the mark is not its own to set', () => {
+    const reason = placeholderDeferredSearch('tool_search').input.shape.reason;
+
+    expect(reason.description).toContain('Leave it out');
+  });
+});
+
+/**
  * A `NO_MATCH` the model can act on.
  *
  * Observed on a real run against 0.83.2: the catalog held `resource_clock:

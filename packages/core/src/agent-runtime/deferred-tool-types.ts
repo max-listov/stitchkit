@@ -13,7 +13,10 @@ export const DeferredAgentToolSearchInputSchema = z.object({
     .describe(
       'An exact tool name, or words describing the tool. Matched as one phrase first, then word by word.',
     ),
-  reason: z.enum(['inactive_call']).optional(),
+  reason: z
+    .enum(['inactive_call'])
+    .optional()
+    .describe('Written by the runtime. Leave it out.'),
 });
 export const DeferredAgentToolMatchSchema = z.object({
   name: z.string(),
