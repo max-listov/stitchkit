@@ -58,6 +58,17 @@ export const cliArgumentProofs: InstalledConsumerProof[] = [
     marker: 'packed remote schema verdict: ok',
   },
   {
+    id: 'cli-mcp-read-view',
+    fixture: 'node',
+    entry: 'cli-mcp-read-view.mjs',
+    files: [],
+    peers: ['zod', 'ai', '@modelcontextprotocol/server', '@modelcontextprotocol/ext-apps'],
+    platforms: ['linux', 'darwin', 'win32'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed CLI over MCP read view: ok',
+  },
+  {
     id: 'cli-option-occurrences',
     fixture: 'minimal',
     entry: 'cli-option-occurrences.mjs',

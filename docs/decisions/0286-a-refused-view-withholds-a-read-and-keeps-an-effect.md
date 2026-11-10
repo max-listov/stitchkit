@@ -4,12 +4,14 @@ description: When a managed CLI view is refused, a command that only reads print
 type: decision
 status: accepted
 created: 2026-11-10 13:48 +07:00
-updated: 2026-11-10 13:48 +07:00
+updated: 2026-11-10 14:37 +07:00
 ---
 
 # ADR 0286 — A refused view withholds a read and keeps an effect
 
-Serves **I9**, **I13**, **I14**.
+Serves **I9**, **I13**, **I14**. Amended by
+[ADR 0287](0287-a-read-says-it-reads-on-every-tool-surface.md): a `GET` declaring
+`destructiveHint: true` is not a read, and the MCP surface publishes the rule.
 
 ## Context
 

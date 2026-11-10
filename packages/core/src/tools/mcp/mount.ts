@@ -123,7 +123,6 @@ export function mountPreparedMcp(
       {
         name,
         description: method.desc,
-        annotations: method.annotations,
         ui: method.ui,
       },
       descriptor,

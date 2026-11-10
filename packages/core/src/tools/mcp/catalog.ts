@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { compareCodeUnits, serializeCanonicalJson } from '../../internal/canonical-json';
 import { isRecord } from '../../internal/typed';
 import { toJsonSchema } from '../../json-schema/json-schema';
+import { publishedToolAnnotations } from '../read-operation';
 import type { PreparedMcpServerSurface, PreparedMcpTool } from './prepare';
 
 /**
@@ -45,7 +46,8 @@ function toolFingerprint(descriptor: PreparedMcpTool): unknown {
     output: descriptor.outputSchema
       ? toJsonSchema(descriptor.outputSchema, 'output', 'any')
       : null,
-    annotations: mountable.method.annotations ?? null,
+    // The stamp hashes what `tools/list` publishes, not what was declared.
+    annotations: publishedToolAnnotations(mountable.method) ?? null,
   };
 }
 

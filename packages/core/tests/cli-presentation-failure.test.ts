@@ -201,7 +201,7 @@ const listed = { items: [{ id: 'a', name: 'Alpha' }] };
 
 function readContract(
   method: 'GET' | 'POST',
-  annotations?: { readOnlyHint: boolean },
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean },
 ): ReturnType<typeof implement> {
   return implement(
     defineContract(
@@ -268,6 +268,14 @@ describe('a read withholds its result when the requested view is refused', () =>
     expect(result.code).toBe(8);
     expect(JSON.parse(result.err).details.resultOnStdout).toBe(true);
     expect(JSON.parse(result.err)._hint).toContain('Do not repeat');
+  });
+
+  test('a GET tool declared destructive keeps its result on stdout', async () => {
+    const result = await run(['record_list', '--table', 'nosuchcolumn'], {
+      services: [readContract('GET', { destructiveHint: true })],
+    });
+    expect(JSON.parse(result.out)).toEqual(listed);
+    expect(JSON.parse(result.err).details.resultOnStdout).toBe(true);
   });
 
   test('a runtime-discovered read follows the same rule and the configured exit code', async () => {

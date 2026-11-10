@@ -63,7 +63,6 @@ export function mountPreparedRuntimeMcp(
       {
         name: definition.name,
         description: definition.description,
-        annotations: definition.annotations,
         ui: definition.ui,
         ...(present && { present }),
       },

@@ -9,6 +9,11 @@ if (
   !script
 )
   throw new Error('usage: native-inherit-probe <pipe|inherit> <own|caller> <script>');
+// A terminal's Ctrl-C goes to every process of the foreground group, this one
+// included. A caller that shares its group with a command outlives the signal
+// to see how the command ended; dying here would close the terminal under the
+// command before its own answer to the signal was read.
+process.on('SIGINT', () => undefined);
 const result = await runNativeCommand({
   executable: '/bin/sh',
   args: ['-c', script],

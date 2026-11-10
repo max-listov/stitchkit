@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import type { EndpointToolAnnotations } from '../../contract/tool-options';
 import { isRecord } from '../../internal/typed';
+import { readDiscoveredToolAnnotations } from '../read-operation';
 import { defineRuntimeTool, type RuntimeToolDefinition } from '../runtime-tool';
 import { connectionMaxResponseBytes, connectionTimeoutMs } from './limits';
 import { McpHttpClient } from './mcp-client';
@@ -18,6 +20,8 @@ interface DiscoveredMcpTool {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  /** The server's own hints about the tool; whether it only reads is the one the CLI acts on. */
+  annotations?: EndpointToolAnnotations;
 }
 
 /** Discover and mount every tool one MCP connection exposes. */
@@ -61,7 +65,10 @@ export async function mountMcpConnection(
       const definition = defineRuntimeTool({
         name,
         description,
+        // Calling an MCP tool is a POST whatever the tool does; whether it only
+        // reads is the server's published hint, carried as it was given.
         identity: { serviceName: connection.name, action: name, method: 'POST' },
+        ...(tool.annotations && { annotations: tool.annotations }),
         ...(connection.transports && { transports: connection.transports }),
         input,
         output: z.unknown(),
@@ -104,10 +111,12 @@ function readDiscoveredTools(listed: unknown, connectionName: string): Discovere
   const tools: DiscoveredMcpTool[] = [];
   for (const raw of listed.tools) {
     if (!isRecord(raw) || typeof raw.name !== 'string') continue;
+    const annotations = readDiscoveredToolAnnotations(raw.annotations);
     tools.push({
       name: raw.name,
       ...(typeof raw.description === 'string' && { description: raw.description }),
       ...(isRecord(raw.inputSchema) && { inputSchema: raw.inputSchema }),
+      ...(annotations && { annotations }),
     });
   }
   return tools;

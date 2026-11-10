@@ -302,6 +302,36 @@ schema and annotations, and nothing else — it moves when the contract moves an
 not when a handler does. Raw SDK registrations stay consumer-owned and are
 outside it.
 
+### Saying which tools only read — `readOnlyHint`
+
+A host reads a tool's `annotations` to group tools and to choose permission
+defaults, and a CLI mounted over this surface reads them to decide what a
+refused view may withhold ([CLI → views](./cli.md#aggregate-views)). The server publishes the
+annotations the tool declared, and states `readOnlyHint: true` for a read that
+declared none:
+
+| The tool | Published `readOnlyHint` |
+|---|---|
+| declares `readOnlyHint`, either way | as declared |
+| `GET` with no `readOnlyHint` | `true` |
+| `GET` declaring `destructiveHint: true` and no `readOnlyHint` | none |
+| any other method with no `readOnlyHint` | none |
+
+A runtime tool follows the same rule by its `identity.method`. A raw SDK
+registration (`mountWait`, `mountViewFile` and the like) publishes only what it
+passes. The catalog digest hashes the published annotations, so it moves once
+when a server starts publishing the derived hint.
+
+> **A `GET` with an effect must say so.** Hosts may run a tool that publishes
+> `readOnlyHint: true` without asking. An endpoint that changes something on
+> `GET` — marks as seen, rotates a token — declares
+> `tool: { annotations: { readOnlyHint: false } }`.
+
+A client connection (`defineMcpClientConnection`) carries the hints a server
+published onto the tools it mounts, field by field: a hint of the wrong type is
+dropped and the tool stays. The mounted tool is as read-only as its server says
+it is, and a surface that re-publishes mounted tools passes those hints on.
+
 ### Shaping arguments before validation — `beforeToolCall`
 
 `beforeToolCall` sees the arguments as they arrived and may **replace** them:

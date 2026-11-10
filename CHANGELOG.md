@@ -15,6 +15,25 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/tools/mcp` — the MCP server publishes `readOnlyHint: true` for a `GET` tool that
+  declared no `readOnlyHint`; it published only declared annotations, so a read was
+  indistinguishable from a write to every MCP client. A declared `readOnlyHint` is published as
+  written, and a `GET` declaring `destructiveHint: true` gets none. The catalog digest hashes the
+  published annotations and moves once on upgrade. A `GET` endpoint with an effect must declare
+  `readOnlyHint: false`: a host may run a read-only tool without asking. → ADR 0287
+  **Affects:** `stitchkit/tools/mcp` behaviour
+- `stitchkit/tools/connections` — `defineMcpClientConnection` carries the annotations a server
+  published onto the tools it mounts; it dropped them, so a CLI built over an MCP surface printed
+  a read's complete result on a refused view (`--table` with an unknown column) while the same
+  command over the contract printed nothing. A hint of the wrong type is dropped and the tool
+  stays. The mounted tool is as read-only as its server says it is. → ADR 0287
+  **Affects:** `stitchkit/tools/connections` behaviour
+- `stitchkit/cli` — a `GET` command declaring `destructiveHint: true` without `readOnlyHint`
+  keeps its result on stdout after a refused view; it was treated as a read. → ADR 0287
+  **Affects:** `stitchkit/cli` behaviour
+
 ## [0.122.0] - 2026-11-10
 
 ### ⚠️ Breaking changes

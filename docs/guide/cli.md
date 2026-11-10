@@ -704,9 +704,18 @@ and `details.resultOnStdout` states which case occurred:
 | only reads | nothing | repeating the command with a corrected view |
 
 A managed command only reads when its tool declares `annotations.readOnlyHint: true`,
-or declares no `readOnlyHint` and its method is `GET`. `readOnlyHint: false` on a `GET`
-endpoint keeps the result on stdout. A native `defineCliCommand` declares neither fact,
-so a failed `present` always keeps the validated result on stdout.
+or declares no `readOnlyHint` and its method is `GET`. `readOnlyHint: false`, or
+`destructiveHint: true` without a `readOnlyHint`, on a `GET` endpoint keeps the result on stdout. A native
+`defineCliCommand` declares neither fact, so a failed `present` always keeps the validated
+result on stdout.
+
+A CLI that mounts a server's tools through `defineMcpClientConnection` never sees the
+method — every MCP call is a `POST` — so it reads the `readOnlyHint` the server
+publishes. A Stitchkit server publishes it for every `GET` by the rule above
+([MCP → `readOnlyHint`](./mcp-and-agents.md#saying-which-tools-only-read--readonlyhint)),
+so the same command behaves the same over the contract and over MCP. The hint is the
+server's word: a server that labels a write as read-only makes the CLI withhold that
+write's result on a refused view, and repeating the command repeats the effect.
 
 CLI argument errors detected before execution still exit with `2`
 and have no successful result to preserve.

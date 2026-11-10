@@ -12,6 +12,7 @@ import type { ToolCallContext, ToolCallHooks } from '../execute-hooks';
 import { type ToolResult, toolResultFromError } from '../execute-result';
 import { observed } from '../internal/observe-hook';
 import type { MountableTool } from '../mount';
+import { publishedToolAnnotations } from '../read-operation';
 import { presentationMetadata } from '../schema/presentation';
 import { type McpCatalogStamp, stampToolRegistration, stampToolResult } from './catalog';
 import type { PreparedMcpTool } from './prepare';
@@ -23,7 +24,6 @@ import { runInMcpRequestContext } from './trace';
 export interface McpToolPresentation {
   name: string;
   description: string;
-  annotations?: EndpointToolAnnotations;
   ui?: EndpointUiMeta;
   /** A runtime tool's own MCP answer, built from its validated output. */
   present?(data: unknown): unknown | Promise<unknown>;
@@ -79,7 +79,10 @@ export function registerMcpTool(
   if (descriptor.outputSchema) toolConfig.outputSchema = descriptor.outputSchema;
   // MCP `ToolAnnotations` — behavioural hints a host reads to group tools
   // (read-only vs destructive), pick permission defaults and show a title.
-  if (presentation.annotations) toolConfig.annotations = presentation.annotations;
+  // Derived here, where every contract and runtime tool is registered, so a
+  // read says it reads whether or not its declaration spelled the hint out.
+  const annotations = publishedToolAnnotations(mountable.method);
+  if (annotations) toolConfig.annotations = annotations;
   // MCP Apps (SEP-1865): carry `_meta.ui` so a host renders the named `ui://`
   // resource as an interactive widget for this tool's results. The legacy flat
   // `ui/resourceUri` key is set alongside — some hosts still read it (matches

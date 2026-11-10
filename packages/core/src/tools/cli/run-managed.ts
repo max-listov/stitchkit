@@ -1,6 +1,7 @@
 import type { ZodObject } from 'zod';
 import { type ToolFailure, type ToolResult, toolResultFromError } from '../execute-result';
 import { createToolRunner, type MountableTool } from '../mount';
+import { isRepeatableRead } from '../read-operation';
 import type { parseCliArgs } from './args';
 import { isReservedBoolWord } from './args-fields';
 import { CliArgumentError } from './argument-error';
@@ -9,7 +10,6 @@ import { DEFAULT_EXIT_CODES, emitPresentationFailure, emitResult } from './forma
 import { filterCommands, renderCommandHelp, renderTopHelp } from './help';
 import { buildManagedSurface, type ManagedSurface } from './managed-surface';
 import { prepareInvocation } from './prepare';
-import { isRepeatableRead } from './repeatable-read';
 import { type CliRoute, type CliSession, emitOptionsFor } from './session';
 import { unavailableCommand, unavailableCommandJson } from './unavailable';
 import { renderCliView, stringifyGroups } from './view';
