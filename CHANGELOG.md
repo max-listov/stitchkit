@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.123.0] - 2026-11-11
+
 ### ⚠️ Breaking changes
 
 **Who must act:** HTTP callers and `onError` code maps that read `NOT_FOUND` to mean "no such route" or "no such tool or command", contract-client callers that branch on the router's `METHOD_NOT_ALLOWED`, and applications whose CLI exposes a command with an input field named `schema`. See the migrations: [unknown-operation](docs/guide/upgrading.md#unknown-operation), [cli-schema-option](docs/guide/upgrading.md#cli-schema-option).

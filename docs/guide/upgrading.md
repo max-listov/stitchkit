@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: unknown-operation
+## Released migration: 0.123.0
+
+### unknown-operation
 
 **Who must act:** HTTP callers and `onError` code maps that read `NOT_FOUND` to mean "no such
 route", callers of `createCliInvoker`, `--wait` and `createToolInvoker` that read `NOT_FOUND` for
@@ -29,7 +31,7 @@ if (error.code === 'NOT_FOUND') showMissingRecord()         // the handler's own
 A `createErrorHook` `codeMap` that spells `NOT_FOUND` for clients adds
 `UNKNOWN_OPERATION: 'not_found'` to keep the previous wire code.
 
-## Unreleased migration: cli-schema-option
+### cli-schema-option
 
 **Who must act:** applications whose CLI exposes a command with an input field named `schema`.
 
