@@ -59,6 +59,11 @@ const ACCEPTED = {
   ParamArrayValue: 'inference helper — what a repeated query param may be',
   ControlledKeys: 'inference helper — cursor keys the hook owns',
   CursorParam: 'inference helper — the cursor field, derived from the contract',
+  OperationOutput:
+    'inference helper — a process operation handler returns its endpoint output',
+  OperationItem: 'inference helper — a process stream handler yields its endpoint item',
+  UnaryOperationKeys: 'inference helper — the non-streaming endpoint keys of a contract',
+  StreamOperationKeys: 'inference helper — the streaming endpoint keys of a contract',
   WithStaticContext: 'inference helper — toolkit context shape',
   WithAuthContext: 'inference helper — toolkit context shape',
   StreamingEndpoint: 'inference helper — defineMultipartStream derives it from the endpoint',

@@ -21,6 +21,7 @@ export {
 } from '../process/contract';
 export {
   createOperationProcesses,
+  type OperationCallContext,
   type OperationProcesses,
   type OperationProcessesConfig,
 } from '../process/operation';

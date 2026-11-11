@@ -69,9 +69,9 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   per child process: the caller's abort and `timeoutMs` end the process, `maxResponseBytes`
   answers `OPERATION_RESPONSE_TOO_LARGE`, a call beyond `maxConcurrent` answers `OPERATION_BUSY`
   instead of queueing, and a stream delivers items as they are produced. `runOperationProcess`
-  is the child side. The surface ceiling rises 15 → 21 for `createOperationProcesses`,
-  `runOperationProcess`, `OperationProcesses`, `OperationProcessesConfig`, `OperationProcessIo`
-  and `OperationProcessService`.
+  is the child side. The surface ceiling rises 15 → 22 for `createOperationProcesses`,
+  `runOperationProcess`, `OperationProcesses`, `OperationProcessesConfig`, `OperationCallContext`,
+  `OperationProcessIo` and `OperationProcessService`.
   [guide](docs/guide/native-io.md#a-contract-operation-in-a-process-of-its-own). → ADR 0290
 - `stitchkit/cli` — **a managed command prints and exit-codes its own result.**
   `CliConfig.results` declares `present` and `exitCode` per command name, with the signatures and

@@ -101,23 +101,27 @@ export function fingerprintOperations(
   return { fingerprint: canonicalDigest(digests), operations: digests };
 }
 
-type FingerprintedContract = ContractDef<Record<string, EndpointDef>, string>;
-
 /**
  * The fingerprint of the operations a client of these contracts can call —
  * every endpoint HTTP carries. Stitchkit computes it; what a difference means
  * is the application's decision.
  */
 export function contractFingerprint(
-  contracts: FingerprintedContract | readonly FingerprintedContract[],
+  contracts:
+    | ContractDef<Record<string, EndpointDef>, string>
+    | readonly ContractDef<Record<string, EndpointDef>, string>[],
 ): ContractFingerprint {
-  const list: readonly FingerprintedContract[] = Array.isArray(contracts)
+  const list: readonly ContractDef<Record<string, EndpointDef>, string>[] = Array.isArray(
+    contracts,
+  )
     ? contracts
     : [contracts];
   return fingerprintOperations(list.flatMap(contractOperations));
 }
 
-function contractOperations(contract: FingerprintedContract): FingerprintedOperation[] {
+function contractOperations(
+  contract: ContractDef<Record<string, EndpointDef>, string>,
+): FingerprintedOperation[] {
   const operations: FingerprintedOperation[] = [];
   for (const [key, endpoint] of typedEntries(contract.endpoints)) {
     if (endpoint.expose && !endpoint.expose.includes('HTTP')) continue;

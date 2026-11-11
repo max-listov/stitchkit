@@ -2747,6 +2747,7 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 | `runOperationProcess` | function | the child side: read one call from stdin, run it against `implement(contract, handlers)` services, write the answer |
 | `OperationProcessesConfig` | _type_ | the child command and the three bounds of `createOperationProcesses` |
 | `OperationProcesses` | _type_ | `unary(contract, key)`, `stream(contract, key)` and the `active` count |
+| `OperationCallContext` | _type_ | what a process-operation handler reads of its call: `params`, `input` and the caller's `signal` |
 | `OperationProcessService` | _type_ | what `runOperationProcess` reads of a service; the result of `implement` fits |
 | `OperationProcessIo` | _type_ | injectable call source, writer and stop signal of `runOperationProcess` |
 | `streamNativeCommand` | function | starts a command under the same group ownership, stop policy and bounds as `runNativeCommand` and returns `stdout` / `stderr` as `ReadableStream<Uint8Array>`, `result` and `stop()`; a slow reader slows the child, a cancelled stream drops its bytes, a failed command errors both streams |

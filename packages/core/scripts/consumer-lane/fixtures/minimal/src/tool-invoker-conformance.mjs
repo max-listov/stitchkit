@@ -32,6 +32,6 @@ assert.equal(
 );
 await assert.rejects(
   () => invoker.invokeOrThrow('missing', {}),
-  (error) => error?.code === 'NOT_FOUND',
+  (error) => error?.code === 'UNKNOWN_OPERATION',
 );
 console.log(`packed ${process.versions.bun ? 'Bun' : 'Node'} tool invoker: ok`);

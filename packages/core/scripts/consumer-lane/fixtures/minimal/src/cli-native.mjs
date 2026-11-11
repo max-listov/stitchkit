@@ -205,7 +205,7 @@ for (const name of ['measure', 'managed']) {
 }
 const unknown = await invoker.invoke('absent', {});
 assert.equal(unknown.ok, false);
-assert.equal(unknown.error.code, 'NOT_FOUND');
+assert.equal(unknown.error.code, 'UNKNOWN_OPERATION');
 // The tools barrel loads no optional peer (ADR 0284): unbundled, under Bun and
 // Node, a peer-free consumer lists its tool names. The adapter that composes
 // both peers still names the missing one.

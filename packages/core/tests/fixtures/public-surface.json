@@ -2283,6 +2283,7 @@
     "NativeCommandStopPolicy",
     "NativeCommandStream",
     "NativeCommandStreamOptions",
+    "OperationCallContext",
     "OperationProcessIo",
     "OperationProcessService",
     "OperationProcesses",

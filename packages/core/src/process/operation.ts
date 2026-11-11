@@ -52,32 +52,32 @@ export interface OperationProcessesConfig {
   timeoutMs: number;
 }
 
-/** What a handler built here reads of its call. */
-interface OperationCallContext {
+/** What a handler built by `createOperationProcesses` reads of its call. */
+export interface OperationCallContext {
   params?: unknown;
   input?: unknown;
   signal?: AbortSignal;
 }
 
-type OutputOf<E> = E extends { output: z.ZodType<infer O> } ? O : undefined;
-type ItemOf<E> = E extends { stream: { item: z.ZodType<infer I> } } ? I : never;
-type StreamKeys<T> = {
+type OperationOutput<E> = E extends { output: z.ZodType<infer O> } ? O : undefined;
+type OperationItem<E> = E extends { stream: { item: z.ZodType<infer I> } } ? I : never;
+type StreamOperationKeys<T> = {
   [K in keyof T]: T[K] extends { stream: object } ? K : never;
 }[keyof T];
-type UnaryKeys<T> = Exclude<keyof T, StreamKeys<T>>;
+type UnaryOperationKeys<T> = Exclude<keyof T, StreamOperationKeys<T>>;
 
 /** The handlers `createOperationProcesses` builds, and how many calls run now. */
 export interface OperationProcesses {
   /** The handler of one unary operation, executed in a process of its own. */
-  unary<T extends Record<string, EndpointDef>, K extends UnaryKeys<T> & string>(
+  unary<T extends Record<string, EndpointDef>, K extends UnaryOperationKeys<T> & string>(
     contract: ContractDef<T, string>,
     key: K,
-  ): (context: OperationCallContext) => Promise<OutputOf<T[K]>>;
+  ): (context: OperationCallContext) => Promise<OperationOutput<T[K]>>;
   /** The handler of one streaming operation: items arrive as the process produces them. */
-  stream<T extends Record<string, EndpointDef>, K extends StreamKeys<T> & string>(
+  stream<T extends Record<string, EndpointDef>, K extends StreamOperationKeys<T> & string>(
     contract: ContractDef<T, string>,
     key: K,
-  ): (context: OperationCallContext) => AsyncIterable<ItemOf<T[K]>>;
+  ): (context: OperationCallContext) => AsyncIterable<OperationItem<T[K]>>;
   /** Calls running now. */
   readonly active: number;
 }
