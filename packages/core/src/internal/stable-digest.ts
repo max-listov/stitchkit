@@ -89,6 +89,14 @@ function mix128(input: string): [number, number, number, number] {
  * construction; a caller digesting something else has to say what it means.
  */
 export function argumentsDigest(args: Record<string, unknown>): string {
-  const lanes = mix128(serializeCanonicalJson(args));
+  return canonicalDigest(args);
+}
+
+/**
+ * The same 128-bit identity over any JSON value — a schema, a set of
+ * operations — for callers whose subject is not a call's arguments.
+ */
+export function canonicalDigest(value: unknown): string {
+  const lanes = mix128(serializeCanonicalJson(value));
   return lanes.map((lane) => lane.toString(16).padStart(8, '0')).join('');
 }

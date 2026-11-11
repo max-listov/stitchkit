@@ -39,7 +39,9 @@ export {
   type CliCommandDefinitionBase,
   type CliCommandDefinitionWithOutput,
   type CliCommandDefinitionWithoutOutput,
+  type CliResultPolicy,
   defineCliCommand,
+  defineCliResult,
 } from '../tools/cli/command';
 export {
   type CliConfig,

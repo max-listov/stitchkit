@@ -27,6 +27,7 @@ export {
   type ScopedUrlBuilderRegistry,
   type UrlBuilderConfig,
 } from '../browser/client';
+export { type ContractIdentity, readContractIdentity } from '../browser/contract-identity';
 export {
   type ApiEvent,
   type ApiEventListener,

@@ -208,7 +208,10 @@ Six intrinsic HTTP-only forms intersect an **implicit factory default** with HTT
 responses and `HEAD`. Under `['HTTP', 'CLI']` they receive `['HTTP']`; under
 `['CLI']` or `[]` they receive `[]`, not an implicitly reopened HTTP route.
 An **explicit** non-HTTP exposure on any of them is a definition error, not a
-silent downgrade. `safelistedBody` only changes HTTP parsing and remains
+silent downgrade — with one exception: a streaming response may list `'CLI'`
+(`['HTTP', 'CLI']`, or `['CLI']` for a feed only a terminal reads) and then runs
+as a [command printing a line per item](./cli.md#a-contract-stream-as-a-command).
+It is still never an MCP or agent tool. `safelistedBody` only changes HTTP parsing and remains
 multi-transport. A factory policy applies only to contracts authored through
 that factory, not to contracts another helper builds internally.
 

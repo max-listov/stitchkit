@@ -173,12 +173,24 @@ async function dispatch<TServer>(
         new AppError('METHOD_NOT_ALLOWED', {
           message: `Method ${req.method} not allowed`,
           status: 405,
+          // The router's own refusal says so: a handler may throw a 405 of its
+          // own, and a caller must be able to tell the two apart.
+          details: { method: req.method, path: url.pathname, allow },
         }),
       );
       res.headers.set('Allow', allow.join(', '));
       return res;
     }
-    return respondError(new AppError('NOT_FOUND', { message: 'Not found', status: 404 }));
+    // Not `NOT_FOUND`: that is a handler saying its object does not exist. A
+    // caller built from a newer contract must be able to tell "this server has
+    // no such operation" from "the operation ran and found nothing".
+    return respondError(
+      new AppError('UNKNOWN_OPERATION', {
+        message: `No operation at ${req.method} ${url.pathname}`,
+        status: 404,
+        details: { method: req.method, path: url.pathname },
+      }),
+    );
   }
 
   return dispatchEndpoint(state, request, match);

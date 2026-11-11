@@ -5,7 +5,12 @@ import { type ToolFailure, type ToolResult, toolResultFromError } from '../execu
 import { coerceJsonArgs } from '../schema/coerce';
 import { buildToolPresentationSchema } from '../schema/presentation';
 import type { CliRunOptions } from './args';
-import type { CliWriters } from './format';
+import {
+  type CliWriters,
+  type EmitOptions,
+  emitPresentationFailure,
+  emitResult,
+} from './format';
 
 export interface CliCommandContext<TInput extends ZodObject> extends CliWriters {
   input: z.output<TInput>;
@@ -25,21 +30,46 @@ export interface CliCommandDefinitionBase<TInput extends ZodObject> {
   input: TInput;
 }
 
+/**
+ * How a successfully validated result leaves the process: its stdout bytes and
+ * its exit code. One shape for a native command (`defineCliCommand`) and for a
+ * managed command (`CliConfig.results`), so a result is printed and exit-coded
+ * by one rule whichever way the command was declared.
+ */
+export interface CliResultPolicy<TResult> {
+  // Method signatures on purpose: a policy typed against its own schema is held
+  // by a CLI that knows only "some validated result", and methods are what let
+  // the precise declaration stand where the general one is expected.
+  /** Pure post-validation stdout presentation; returned bytes are written verbatim once. */
+  present?(context: { result: TResult; options: Readonly<CliRunOptions> }): string;
+  /** Process exit code for a successfully validated result. */
+  exitCode?(result: TResult): number;
+  /** The schema the policy is typed against; a managed command checks it is its own. */
+  output?: ZodType;
+}
+
+/**
+ * Type a managed command's result policy against the schema its operation
+ * returns. Pass the very schema the contract declares: the CLI refuses at
+ * startup a policy whose schema is not the one its command answers with, so a
+ * policy cannot be mounted on a command whose result it does not describe.
+ */
+export function defineCliResult<TOutput extends ZodType>(
+  output: TOutput,
+  policy: Pick<CliResultPolicy<z.output<TOutput>>, 'present' | 'exitCode'>,
+): CliResultPolicy<z.output<TOutput>> {
+  return { ...policy, output };
+}
+
 export interface CliCommandDefinitionWithOutput<
   TInput extends ZodObject,
   TOutput extends ZodType,
-> extends CliCommandDefinitionBase<TInput> {
+> extends CliCommandDefinitionBase<TInput>,
+    CliResultPolicy<z.output<TOutput>> {
   output: TOutput;
   handler: (
     context: CliCommandContext<TInput>,
   ) => z.output<TOutput> | Promise<z.output<TOutput>>;
-  /** Pure post-validation stdout presentation; returned bytes are written verbatim once. */
-  present?: (context: {
-    result: z.output<TOutput>;
-    options: Readonly<CliRunOptions>;
-  }) => string;
-  /** Process exit code for a successfully validated result. */
-  exitCode?: (result: z.output<TOutput>) => number;
 }
 
 export interface CliCommandDefinitionWithoutOutput<TInput extends ZodObject>
@@ -65,7 +95,7 @@ export function defineCliCommand(definition: CliCommandDefinition): CliCommandDe
   return definition;
 }
 
-export interface PreparedCliCommandEmission {
+interface PreparedCliCommandEmission {
   result: ToolResult;
   presentation?: string;
   presentationFailure?: ToolFailure;
@@ -95,28 +125,35 @@ export function cliCommandReturnsResult(
  * disagree and the divergence would show up as a script that branches wrong.
  */
 export function cliCommandSuccessExitCode(
-  definition: CliCommandDefinition,
+  policy: CliResultPolicy<unknown> | undefined,
   data: unknown,
 ): number {
-  const successExitCode = definition.exitCode?.(data) ?? 0;
+  const successExitCode = policy?.exitCode?.(data) ?? 0;
   if (!Number.isSafeInteger(successExitCode) || successExitCode < 0 || successExitCode > 255) {
     throw new Error('CLI success exit code must be an integer from 0 to 255');
   }
   return successExitCode;
 }
 
-/** Apply native-only presentation policy after canonical output validation. */
-export function prepareCliCommandEmission(
+/** The result policy a native command declares; a printing command has none. */
+export function cliCommandResultPolicy(
   definition: CliCommandDefinition,
+): CliResultPolicy<unknown> | undefined {
+  return cliCommandReturnsResult(definition) ? definition : undefined;
+}
+
+/** Apply a command's result policy after canonical output validation. */
+function prepareCliCommandEmission(
+  policy: CliResultPolicy<unknown> | undefined,
   result: ToolResult,
   options: Readonly<CliRunOptions>,
 ): PreparedCliCommandEmission {
-  if (!result.ok || definition.output === undefined) {
+  if (!result.ok || policy === undefined) {
     return { result, successExitCode: 0 };
   }
   let successExitCode: number;
   try {
-    successExitCode = cliCommandSuccessExitCode(definition, result.data);
+    successExitCode = cliCommandSuccessExitCode(policy, result.data);
   } catch (error) {
     return {
       result: toolResultFromError(new Error('CLI result policy failed', { cause: error })),
@@ -124,8 +161,8 @@ export function prepareCliCommandEmission(
     };
   }
   try {
-    if (definition.present === undefined) return { result, successExitCode };
-    const presentation = definition.present({ result: result.data, options });
+    if (policy.present === undefined) return { result, successExitCode };
+    const presentation = policy.present({ result: result.data, options });
     if (typeof presentation !== 'string') {
       throw new Error('CLI result presenter must return a string');
     }
@@ -139,6 +176,37 @@ export function prepareCliCommandEmission(
       successExitCode,
     };
   }
+}
+
+/**
+ * Print one result under its command's policy and return the process exit code.
+ *
+ * The single place a policy meets the terminal: a native command and a managed
+ * one answer through it, so `present`, `exitCode` and a failed presentation
+ * behave identically on both.
+ */
+export function emitCliCommandResult(
+  policy: CliResultPolicy<unknown> | undefined,
+  result: ToolResult,
+  options: Readonly<CliRunOptions>,
+  writers: CliWriters,
+  emit: EmitOptions & { repeatable: boolean },
+): number {
+  const emission = prepareCliCommandEmission(policy, result, options);
+  if (emission.result.ok && emission.presentationFailure !== undefined) {
+    return emitPresentationFailure(
+      emission.result,
+      emission.presentationFailure,
+      writers,
+      emit,
+    );
+  }
+  if (emission.result.ok && emission.presentation !== undefined) {
+    writers.stdout(emission.presentation);
+    return emission.successExitCode;
+  }
+  const emitted = emitResult(emission.result, writers, emit);
+  return emission.result.ok ? emission.successExitCode : emitted;
 }
 
 export function cliCommandPresentationSchema(

@@ -1,8 +1,11 @@
 import type { EndpointStreamDescriptor } from '../contract/define';
 import { AppError } from '../contract/errors';
 import { normalizeError } from '../contract/normalize';
-import { DEFAULT_CONTRACT_STREAM_FRAME_BYTES } from '../contract/stream';
-import { untilAborted } from '../internal/until-aborted';
+import {
+  contractStreamLifetimeExceeded,
+  DEFAULT_CONTRACT_STREAM_FRAME_BYTES,
+  readContractStreamItems,
+} from '../contract/stream';
 import {
   isStreamCancellation,
   ownHttpStream,
@@ -63,23 +66,16 @@ export function contractStreamResponse(
 
   const frames = async function* () {
     if (closing) return;
-    let terminalSeen = descriptor.terminal === undefined;
     try {
-      for (;;) {
-        pendingNext = Promise.resolve(iterator.next());
-        const next = await untilAborted(pendingNext, operationAbort.signal);
-        if (next.done) break;
-        const parsed = descriptor.item.safeParse(next.value);
-        if (!parsed.success) {
-          console.error('[stitchkit] contract stream item failed validation:', parsed.error);
-          throw new AppError('STREAM_ITEM_INVALID', {
-            message: 'Stream item did not match its contract',
-            status: 500,
-          });
-        }
-        const item = parsed.data;
-        const terminal = descriptor.terminal?.safeParse(item).success ?? false;
-        if (terminal) terminalSeen = true;
+      const items = readContractStreamItems(
+        iterator,
+        descriptor,
+        operationAbort.signal,
+        (pending) => {
+          pendingNext = pending;
+        },
+      );
+      for await (const { item, terminal } of items) {
         const frame = descriptor.framing === 'item' ? item : { type: 'data', data: item };
         if (encodedBytes(frame, format) > maxFrameBytes) {
           console.error(
@@ -91,13 +87,8 @@ export function contractStreamResponse(
           });
         }
         yield frame;
+        // A terminal that completes the operation is the stream's last frame.
         if (terminal && descriptor.completion === 'terminal') return;
-      }
-      if (!terminalSeen) {
-        throw new AppError('STREAM_TERMINAL_MISSING', {
-          message: 'Stream completed before its declared terminal item',
-          status: 500,
-        });
       }
       if (descriptor.framing !== 'item') yield { type: 'end' };
     } catch (error) {
@@ -106,10 +97,7 @@ export function contractStreamResponse(
         if (descriptor.framing === 'item') return;
         yield {
           type: 'error',
-          error: new AppError('STREAM_LIFETIME_EXCEEDED', {
-            message: 'Stream exceeded its declared lifetime',
-            status: 408,
-          }).toJSON().error,
+          error: contractStreamLifetimeExceeded().toJSON().error,
         };
         return;
       }

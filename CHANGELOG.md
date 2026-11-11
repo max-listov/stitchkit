@@ -15,6 +15,84 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** HTTP callers and `onError` code maps that read `NOT_FOUND` to mean "no such route" or "no such tool or command", contract-client callers that branch on the router's `METHOD_NOT_ALLOWED`, and applications whose CLI exposes a command with an input field named `schema`. See the migrations: [unknown-operation](docs/guide/upgrading.md#unknown-operation), [cli-schema-option](docs/guide/upgrading.md#cli-schema-option).
+
+- `stitchkit/server`, `stitchkit`, `stitchkit/cli`, `stitchkit/tools/invoker` — **a call no surface
+  can route is `UNKNOWN_OPERATION`, not `NOT_FOUND`.** A client built from a newer contract could
+  not tell "this server has no such operation" from "the operation found nothing". The server
+  answers an unmatched route `404 UNKNOWN_OPERATION` with `details: { method, path }`; a contract
+  client reports that and the router's `405` for its own call as `UNKNOWN_OPERATION` with
+  `details.operation` (`prefix.key`). The in-process surfaces say the same: an unknown command in
+  `createCliInvoker`, an unknown `--wait` target and an unknown name in `createToolInvoker`.
+  `NOT_FOUND` is a handler's answer. The CLI exit code stays `4`.
+  Before: `error.code === 'NOT_FOUND'` for an unknown route, command or tool. After: `error.code === 'UNKNOWN_OPERATION'`.
+  [migration](docs/guide/upgrading.md#unknown-operation). → ADR 0288
+  **Affects:** `stitchkit/server` behaviour; `stitchkit` behaviour; `stitchkit/cli` behaviour; `stitchkit/tools/invoker` behaviour
+
+- `stitchkit/cli` — **`schema` is a reserved option name.** `<app> <command> --schema` prints one
+  JSON line with the JSON Schema of the command's input and output (`item` for a stream command),
+  derived from the operation's Zod schemas, without validating arguments or calling anything. A
+  command field named `schema` is therefore a startup error for a contract command and makes a
+  runtime-catalogue command unavailable.
+  Before: `input: z.object({ schema: z.string() })`. After: `input: z.object({ schemaName: z.string() })`.
+  [migration](docs/guide/upgrading.md#cli-schema-option). → ADR 0289
+  **Affects:** `stitchkit/cli` behaviour
+
+### Added
+
+- `stitchkit/contract`, `stitchkit/server`, `stitchkit` — **a contract has a fingerprint, and
+  a client can read the server's.** `contractFingerprint(contracts)` is a synchronous digest of
+  the operations HTTP carries, whole and per operation; annotations and field order do not move
+  it. `withContractIdentity(services)` returns the services to mount together with
+  `contractIdentityContract`, and `readContractIdentity(contracts, client)` returns both sides as
+  a value over HTTP or a Unix socket; Stitchkit compares nothing. The surface ceilings rise for
+  these names: `stitchkit/contract` 106 → 110 (`contractFingerprint`, `ContractFingerprintSchema`,
+  `ContractFingerprint`, `contractIdentityContract`), `stitchkit/server` 222 → 223
+  (`withContractIdentity`), `stitchkit` 237 → 243 (the four contract names it re-exports,
+  `readContractIdentity`, `ContractIdentity`).
+  [guide](docs/guide/client.md#which-contract-does-the-server-speak). → ADR 0288
+- `stitchkit/server` — the router's `405 METHOD_NOT_ALLOWED` carries
+  `details: { method, path, allow }`, so a caller can tell it from a `405` a handler throws.
+- `stitchkit/files/packaging` — **a client builds into one self-contained file.**
+  `buildClientArtifact` bundles an entry module into a single file, writes its SHA-256 beside it,
+  refuses a module graph that reaches one of `forbiddenModules` with `ForbiddenModuleError`, and
+  can pack an npm archive proven to install and import in an empty directory. The surface ceiling
+  rises 10 → 15 for `buildClientArtifact`, `ClientArtifact`, `ClientArtifactOptions`,
+  `ForbiddenModule` and `ForbiddenModuleError`.
+  [guide](docs/guide/native-io.md#a-client-as-one-self-contained-file).
+- `stitchkit/process` — **a contract operation runs in a process of its own.**
+  `createOperationProcesses` returns contract handlers (`unary`, `stream`) that execute one call
+  per child process: the caller's abort and `timeoutMs` end the process, `maxResponseBytes`
+  answers `OPERATION_RESPONSE_TOO_LARGE`, a call beyond `maxConcurrent` answers `OPERATION_BUSY`
+  instead of queueing, and a stream delivers items as they are produced. `runOperationProcess`
+  is the child side. The surface ceiling rises 15 → 21 for `createOperationProcesses`,
+  `runOperationProcess`, `OperationProcesses`, `OperationProcessesConfig`, `OperationProcessIo`
+  and `OperationProcessService`.
+  [guide](docs/guide/native-io.md#a-contract-operation-in-a-process-of-its-own). → ADR 0290
+- `stitchkit/cli` — **a managed command prints and exit-codes its own result.**
+  `CliConfig.results` declares `present` and `exitCode` per command name, with the signatures and
+  guarantees of `defineCliCommand`; `defineCliResult(output, policy)` types them against the
+  operation's output schema, and a policy typed against another schema is refused at startup.
+  `createCliInvoker` applies `exitCode`. The surface ceiling rises 89 → 91 for `defineCliResult`
+  and `CliResultPolicy`. [guide](docs/guide/cli.md#the-same-policy-for-a-managed-command). → ADR 0289
+- `stitchkit/contract`, `stitchkit/cli` — **a contract stream runs as a command.** A streaming
+  endpoint may list `'CLI'` in `expose`; the command prints a line per validated item, formats
+  items through `results[command].present`, and cancels the operation when stdout is closed,
+  `CliConfig.signal` aborts or `stream.lifetimeMs` passes (exit `7`).
+  [guide](docs/guide/cli.md#a-contract-stream-as-a-command). → ADR 0289
+- `stitchkit/remote` — `implementRemote` forwards a streaming endpoint as a stream: the proxy
+  keeps the contract's `stream` descriptor and its handler yields the remote items, so a proxied
+  stream is carried by HTTP and by a CLI command like a local one.
+
+### Fixed
+
+- `stitchkit/cli` — a result written after the reader of stdout has gone (`| head`) is dropped
+  and the command exits with its own code; the write is no longer retried through the
+  asynchronous stream.
+  **Affects:** `stitchkit/cli` behaviour
+
 ## [0.122.2] - 2026-11-10
 
 ### Fixed

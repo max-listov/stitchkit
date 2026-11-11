@@ -269,7 +269,7 @@ for (const target of ['blocked', 'unknown', 'healthy']) {
       expect(error.error).toBe('CLI_COMMAND_UNAVAILABLE');
       expect(error.details.message).toBe(reason);
     } else if (target === 'unknown') {
-      expect(error.error).toBe('NOT_FOUND');
+      expect(error.error).toBe('UNKNOWN_OPERATION');
       expect(error.details.message).toBe('--wait: no command "unknown" to poll');
     }
   });

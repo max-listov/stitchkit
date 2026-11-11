@@ -9,6 +9,14 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Whether a value can be read with `for await` — an async generator, a stream, any async iterable. */
+export function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
+    return false;
+  }
+  return typeof Reflect.get(value, Symbol.asyncIterator) === 'function';
+}
+
 /** Invoke a runtime-discovered handler after a fail-first function check. */
 export function callRuntimeHandler(handler: unknown, context: unknown): unknown {
   if (typeof handler !== 'function') {

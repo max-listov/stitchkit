@@ -60,6 +60,15 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
+## Unreleased migration: unknown operation keeps the not_found wire code
+
+Take it together with the stitchkit release that answers an unmatched route
+`UNKNOWN_OPERATION`; on an earlier stitchkit the entry is inert.
+
+1. In `packages/backend/src/transport/errors.ts`, add `UNKNOWN_OPERATION: 'not_found'` to
+   `codeMap`, beside `NOT_FOUND`.
+2. Request a path the backend does not route and check the answer's code is `not_found`.
+
 ## Released migration: 0.6.21
 
 ### supervision passes declared environment

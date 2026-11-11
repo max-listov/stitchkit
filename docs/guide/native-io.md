@@ -344,6 +344,65 @@ refused there and nothing is stopped after its leader exits. A command whose gro
 launcher supplied by a host) has no group to stop, and `descendants` has nothing to act on there.
 
 
+## A contract operation in a process of its own
+
+A handler that reads gigabytes holds the server's event loop while it reads, and every cheap
+operation on that server waits behind it. `createOperationProcesses` runs such an operation in a
+child process, one per call, on top of `runNativeCommand` and `streamNativeCommand`. What it
+returns are ordinary contract handlers, so the operation is routed, gated and validated like any
+other:
+
+```ts
+import { createOperationProcesses, runOperationProcess } from 'stitchkit/process'
+
+// server
+const processes = createOperationProcesses({
+  command: { executable: process.execPath, args: [cliPath, '__operation'], envPolicy: 'ambient' },
+  maxConcurrent: 2,              // a third call is refused, not queued
+  maxResponseBytes: 8 * 1024 * 1024,
+  timeoutMs: 60_000,
+})
+const service = implement(searchContract, {
+  search: processes.unary(searchContract, 'search'),
+  follow: processes.stream(searchContract, 'follow'),
+  count: ({ input }) => countCheaply(input),   // stays in process
+})
+
+// the child: the same contract, the real handlers
+if (process.argv[2] === '__operation') {
+  process.exitCode = await runOperationProcess([implement(searchContract, realHandlers)])
+}
+```
+
+- **The contract's schemas hold at the server.** The server validates the input before it starts
+  a process — a bad call never costs one — and validates the answer against the output schema
+  after; a stream item is validated against `stream.item` on its way out. The child receives the
+  input the server already parsed and does not parse it again.
+- **The call and the answer cross as JSON.** A schema whose parsed value JSON cannot carry — a
+  `Date`, a `Map`, a `bigint` — cannot be an input or an output of such an operation: the value
+  arrives as its JSON form and the output check refuses it. A call may weigh up to 64 MiB; bytes
+  an operation works on belong in a file it is told the path of.
+- **The call's end is the process's end.** The caller's abort (`ctx.signal`) stops the process
+  group under the command's `stop` policy. A unary call also ends at `timeoutMs` with
+  `REQUEST_TIMEOUT`. A stream's deadline is the contract's own `stream.lifetimeMs`: when it
+  passes, the stream ends with `STREAM_LIFETIME_EXCEEDED` and the process is stopped; without it
+  a stream lives until it ends or its reader leaves.
+- **The answer is bounded.** `maxResponseBytes` bounds the whole answer of a unary operation and
+  each item of a stream; more is `OPERATION_RESPONSE_TOO_LARGE`. Only stdout counts: what the
+  child writes to stderr does not spend the answer's budget.
+- **The count is bounded.** A call beyond `maxConcurrent` is refused with `503 OPERATION_BUSY`
+  (`retryable: true`) at once. There is no queue: a queue without a bound is the same memory the
+  process boundary was meant to protect. A call that cannot start gives its slot back.
+- **A stream delivers as it produces.** `processes.stream` yields each item when the child
+  writes it.
+
+A refusal the child's handler throws arrives as that same `AppError` — code, status, details,
+hint and retryability — for a unary call and in the middle of a stream alike. A process that
+dies, writes something that is not an answer, or cannot start is `OPERATION_PROCESS_FAILED`; the
+last 16 KiB of its stderr stay in the error's cause for the log and never reach the caller.
+`processes.active` reports the calls running now. The child reads one call from stdin and writes
+its answer to stdout, so its handlers must not print there.
+
 ## Replacing hand-written wrappers
 
 An atomic-file wrapper becomes one `writeFileAtomic` call with the chosen options. A bounded
@@ -705,6 +764,45 @@ Malformed inputs, a manifest whose `formatVersion` is not 2 and other IO errors 
 A missing or corrupt companion at runtime yields the native `unavailable` result with the safe
 stage and code from the observer; it never certifies a dead owner. Preserve the raw cause internally.
 The plugin does not parse consumer JS or establish a second runtime native implementation.
+
+## A client as one self-contained file
+
+A package that owns a server usually ships a typed client for it, and the client's consumers
+must not inherit the server's dependencies. `buildClientArtifact` (`stitchkit/files/packaging`)
+bundles one entry module into a single file, publishes its SHA-256 beside it and can prove an
+npm archive of it:
+
+```ts
+import { buildClientArtifact } from 'stitchkit/files/packaging'
+
+const artifact = await buildClientArtifact({
+  entry: 'src/api-client.ts',
+  outFile: 'dist/api-client.js',              // + dist/api-client.js.sha256
+  forbiddenModules: ['chalk', '@acme/terminal-ui', 'src/terminal/', /providers\//],
+  package: {
+    name: '@acme/api-client', version: '1.4.0', outDir: 'dist',
+    exports: ['createApiClient'],
+  },
+})
+// artifact.file, artifact.sha256, artifact.bytes, artifact.modules, artifact.package.tarball
+```
+
+- **`forbiddenModules`** refuses a bundle whose module graph reaches a listed module with a
+  `ForbiddenModuleError` naming the module and what imports it. A bare or scoped name
+  (`'chalk'`, `'@scope/pkg'`) is a package: it is matched by the specifier that imports it, so a
+  linked or workspace package is caught wherever it really lives, and by its installed path. A
+  string with a slash matches a fragment of the project's own source path; a `RegExp` is tested
+  against each module's absolute path. Nothing is left at `outFile` when the build is refused.
+- **`package`** packs the file as an npm archive, installs it into an empty directory, imports
+  it by name and checks every name in `exports`. A client that still reaches for the building
+  package's `node_modules` fails there, before it reaches a consumer; a failed proof removes the
+  file and its hash again.
+- **`runtime`** is the platform the file is built for — `node` by default, which Bun also runs,
+  or `bun` or `browser`; a module the platform does not have fails the build.
+
+The build, the pack and the verification each run Bun as a bounded command: `timeoutMs`
+(default 120 s) is the deadline of each step, `signal` cancels, and `executable` names the Bun
+binary when it is not `bun` on `PATH`.
 
 ## Qualification boundaries
 

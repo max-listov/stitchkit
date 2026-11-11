@@ -12,6 +12,14 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Fixed
+
+- A generated project keeps answering `not_found` for a request no route matches. Stitchkit
+  answers such a request `UNKNOWN_OPERATION` where it used to answer `NOT_FOUND`, and the
+  starter's error map now spells both as `not_found`; without the entry the framework's own code
+  would reach clients. Existing projects adopt it by
+  [`UPGRADING.md`](./UPGRADING.md#unknown-operation-keeps-the-not_found-wire-code).
+
 ## [0.6.21] - 2026-11-09
 
 ### Changed

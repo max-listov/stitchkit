@@ -5,6 +5,7 @@ import { commandShapeIssue } from './command-shape';
 import { buildCliSurface } from './invoke';
 import type { CliCommandPresentation } from './policy';
 import type { CliSession } from './session';
+import type { CliStreamOperation } from './stream-surface';
 
 /**
  * The managed surface, or the reason there isn't one.
@@ -23,6 +24,7 @@ export type ManagedSurface<TAuth> =
       auth: Awaited<TAuth> | undefined;
       help: Map<string, CliCommandPresentation>;
       tools: Map<string, MountableTool>;
+      streams: Map<string, CliStreamOperation>;
     }
   | {
       resolved: false;
@@ -70,12 +72,12 @@ export async function buildManagedSurface<
   // The same walk the in-process invoker does, from the same function: if the
   // two ever built the surface separately, a line of a stream and the same
   // call typed at a prompt could resolve to different tools.
-  const { tools, help } = buildCliSurface(
+  const { tools, streams, help } = buildCliSurface(
     config,
     auth,
     nativeHelp,
     applicationGlobalNames,
     commandShapeIssue,
   );
-  return { resolved: true, auth, help, tools };
+  return { resolved: true, auth, help, tools, streams };
 }

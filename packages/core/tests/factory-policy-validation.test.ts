@@ -148,7 +148,6 @@ describe('factory policy validation', () => {
       { method: 'POST', rawBody: true, input: JsonSchema },
       { method: 'POST', multipart: { files: { file: {} } } },
       { method: 'GET', responseMeta: {} },
-      { method: 'GET', stream: { item: TextSchema } },
     ];
     for (const variant of variants) {
       const endpoints = JSON.parse('{"bad":{"path":"/","desc":"Bad","expose":["CLI"]}}');
@@ -161,6 +160,20 @@ describe('factory policy validation', () => {
         'Contract "contradictory": endpoint "bad" is HTTP-only — remove CLI from expose',
       );
       expect(() => defineContract({ prefix: 'plain' }, endpoints)).toThrow('HTTP-only');
+    }
+  });
+
+  test('a stream is carried by HTTP and CLI and refuses every tool transport', () => {
+    const stream = (expose: string[]) => {
+      const endpoints = JSON.parse('{"feed":{"method":"GET","path":"/","desc":"Feed"}}');
+      Object.assign(endpoints.feed, { expose, stream: { item: TextSchema } });
+      return endpoints;
+    };
+    expect(() => defineContract({ prefix: 'plain' }, stream(['HTTP', 'CLI']))).not.toThrow();
+    for (const transport of ['MCP', 'AGENT']) {
+      expect(() => defineContract({ prefix: 'plain' }, stream(['HTTP', transport]))).toThrow(
+        `Contract "plain": endpoint "feed" is a stream, carried by HTTP and CLI only — remove ${transport} from expose`,
+      );
     }
   });
 

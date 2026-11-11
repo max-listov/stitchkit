@@ -5,12 +5,20 @@ import { isRepeatableRead } from '../read-operation';
 import type { parseCliArgs } from './args';
 import { isReservedBoolWord } from './args-fields';
 import { CliArgumentError } from './argument-error';
+import { emitCliCommandResult } from './command';
 import { DEFAULT_DOWNLOAD_MAX_BYTES, downloadResults } from './download';
 import { DEFAULT_EXIT_CODES, emitPresentationFailure, emitResult } from './format';
 import { filterCommands, renderCommandHelp, renderTopHelp } from './help';
 import { buildManagedSurface, type ManagedSurface } from './managed-surface';
+import { cliResultPolicy } from './policy';
 import { prepareInvocation } from './prepare';
-import { type CliRoute, type CliSession, emitOptionsFor } from './session';
+import { runStreamCommand } from './run-stream';
+import {
+  type CliRoute,
+  type CliSession,
+  emitOptionsFor,
+  renderCommandSchema,
+} from './session';
 import { unavailableCommand, unavailableCommandJson } from './unavailable';
 import { renderCliView, stringifyGroups } from './view';
 import { pollUntilDone } from './wait';
@@ -26,7 +34,7 @@ export async function runManagedInvocation<
 >(session: CliSession<TAuth, TContext, TGlobals>, route: CliRoute<TGlobals>): Promise<void> {
   const { config } = session;
   const { stdout, stderr, exit } = session.io;
-  const { command, helpRequested, beforeSeparator } = route;
+  const { command, helpRequested, schemaRequested, beforeSeparator } = route;
   const topLevelHelp =
     route.route.topLevelHelp ||
     command === undefined ||
@@ -41,7 +49,7 @@ export async function runManagedInvocation<
   const managed = await buildManagedSurface(
     session,
     route.typedGlobals,
-    !topLevelHelp && !helpRequested,
+    !topLevelHelp && !helpRequested && !schemaRequested,
   );
   if (topLevelHelp) return respondTopLevelHelp(session, route, managed);
   if (!managed.resolved) {
@@ -125,6 +133,10 @@ async function runManagedCommand<
     stdout(renderCommandHelp(config.name, command, descriptor, applicationOptions));
     return exit(0);
   }
+  if (route.schemaRequested) {
+    stdout(renderCommandSchema(command, descriptor));
+    return exit(0);
+  }
   if (descriptor.unavailableReason !== undefined) {
     return exit(
       emitResult(
@@ -134,8 +146,9 @@ async function runManagedCommand<
       ),
     );
   }
+  const stream = managed.streams.get(command);
   const tool = managed.tools.get(command);
-  if (!tool) throw new Error('[stitchkit] managed CLI executable invariant failed');
+  if (!tool && !stream) throw new Error('[stitchkit] managed CLI executable invariant failed');
   const prepared = await prepareInvocation(
     command,
     route.commandArgv,
@@ -172,6 +185,8 @@ async function runManagedCommand<
     return exit(0);
   }
 
+  if (stream) return runStreamCommand(session, route, managed, stream, { toolArgs, options });
+  if (!tool) throw new Error('[stitchkit] managed CLI executable invariant failed');
   const result = await executeManagedTool(session, route, command, managed, tool, {
     toolArgs,
     options,
@@ -221,8 +236,11 @@ async function executeManagedTool<
         if (!pollTool) {
           return {
             ok: false,
-            code: 'NOT_FOUND',
-            details: { message: `--wait: no command "${toolName}" to poll` },
+            code: 'UNKNOWN_OPERATION',
+            details: {
+              message: `--wait: no command "${toolName}" to poll`,
+              operation: toolName,
+            },
           };
         }
         return runTool(pollTool, args);
@@ -299,10 +317,16 @@ async function emitManagedResult<
     result = { ...result, data: viewed.data };
   }
 
-  const exitCode = emitResult(
+  // The policy speaks only for the operation's own result: a view answers a
+  // different question, and after `--wait` the result is the polled command's.
+  const policy =
+    options.view === undefined && !options.wait ? cliResultPolicy(config, command) : undefined;
+  const exitCode = emitCliCommandResult(
+    policy,
     result,
+    options,
     { stdout, stderr },
-    emitOptionsFor(config, options.json, command),
+    { ...emitOptionsFor(config, options.json, command), repeatable },
   );
   return exit(downloadsOk ? exitCode : 1);
 }

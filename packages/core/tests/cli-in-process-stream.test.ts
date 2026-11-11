@@ -161,7 +161,7 @@ describe('a parsed call runs in this process', () => {
     const surface = await invoker();
     const outcome = await surface.invoke('no_such_command', {});
     expect(outcome.ok).toBe(false);
-    expect(outcome.error?.code).toBe('NOT_FOUND');
+    expect(outcome.error?.code).toBe('UNKNOWN_OPERATION');
   });
 
   test('nothing is written and nothing exits', async () => {
@@ -237,7 +237,7 @@ describe('one operation per line', () => {
     // `jsonl` is a native command and is deliberately NOT part of the managed
     // surface — it writes, and an operation that writes has no result to return.
     expect(answer?.ok).toBe(false);
-    expect(answer?.error).toMatchObject({ code: 'NOT_FOUND' });
+    expect(answer?.error).toMatchObject({ code: 'UNKNOWN_OPERATION' });
   });
 });
 

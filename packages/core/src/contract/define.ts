@@ -319,7 +319,11 @@ interface RawResponseEndpointDef extends EndpointDefBase {
   responseMeta?: never;
 }
 
-/** A validated HTTP-only stream whose client yields schema-derived items. */
+/**
+ * A validated stream whose client yields schema-derived items. HTTP carries it
+ * by default; listing `'CLI'` in `expose` makes it a command that prints a line
+ * per item, with or without the HTTP route. It is never a tool.
+ */
 interface StreamingResponseEndpointDef extends EndpointDefBase {
   stream: EndpointStreamDescriptor;
   output?: never;
@@ -328,7 +332,7 @@ interface StreamingResponseEndpointDef extends EndpointDefBase {
   responseMeta?: never;
   multipart?: never;
   tool?: never;
-  expose?: readonly 'HTTP'[];
+  expose?: readonly ('HTTP' | 'CLI')[];
 }
 
 /** An explicit HTTP HEAD operation. Headers/status are handler-owned; the body is always stripped. */

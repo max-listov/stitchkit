@@ -85,6 +85,12 @@ export {
   ManagedFileRefSchema,
 } from '../contract/file-ref';
 export {
+  type ContractFingerprint,
+  ContractFingerprintSchema,
+  contractFingerprint,
+} from '../contract/fingerprint';
+export { contractIdentityContract } from '../contract/identity';
+export {
   decodeCursor,
   encodeCursor,
   type Paginated,

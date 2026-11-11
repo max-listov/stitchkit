@@ -115,7 +115,7 @@ describe('createToolInvoker', () => {
       throw new Error('expected unknown tool failure');
     } catch (error) {
       expect(AppError.is(error)).toBe(true);
-      if (AppError.is(error)) expect(error.code).toBe('NOT_FOUND');
+      if (AppError.is(error)) expect(error.code).toBe('UNKNOWN_OPERATION');
     }
 
     expect(() => createToolInvoker([service, service], { transport: 'AGENT' })).toThrow(

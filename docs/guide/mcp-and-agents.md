@@ -120,7 +120,7 @@ presentation envelope. `invokeOrThrow` returns validated data and throws the
 runner's normalized `AppError` on failure, preserving an application error's
 code, status, message, details and hint without reconstructing it from the
 model-safe envelope. Unexpected throws remain scrubbed. An unknown name throws
-`AppError('NOT_FOUND')` before the runner because there is no operation identity
+`AppError('UNKNOWN_OPERATION')` before the runner because there is no operation identity
 against which hooks could run. Duplicate and provider-invalid names fail when
 the invoker is created.
 

@@ -1,5 +1,50 @@
 # Upgrading stitchkit
 
+## Unreleased migration: unknown-operation
+
+**Who must act:** HTTP callers and `onError` code maps that read `NOT_FOUND` to mean "no such
+route", callers of `createCliInvoker`, `--wait` and `createToolInvoker` that read `NOT_FOUND` for
+an unknown command or tool name, and contract-client callers that branch on the router's
+`METHOD_NOT_ALLOWED`.
+
+A call no surface can route is answered `UNKNOWN_OPERATION`; `NOT_FOUND` is left to handlers.
+
+- The server answers an unmatched route `404 UNKNOWN_OPERATION` with `details: { method, path }`.
+- A contract client reports both routing refusals of its own call — that `404` and the router's
+  `405` — as `UNKNOWN_OPERATION` with `details.operation`. A `405` thrown by a handler is
+  unchanged.
+- `createCliInvoker().invoke`, an unknown `--wait` target and `createToolInvoker` answer
+  `UNKNOWN_OPERATION` for a name they do not have. The CLI exit code for it is `4`, as it was for
+  `NOT_FOUND`.
+
+```ts
+// before
+if (error.code === 'NOT_FOUND') showMissingPage()
+
+// after
+if (error.code === 'UNKNOWN_OPERATION') showMissingPage()   // no such route, command or tool
+if (error.code === 'NOT_FOUND') showMissingRecord()         // the handler's own answer
+```
+
+A `createErrorHook` `codeMap` that spells `NOT_FOUND` for clients adds
+`UNKNOWN_OPERATION: 'not_found'` to keep the previous wire code.
+
+## Unreleased migration: cli-schema-option
+
+**Who must act:** applications whose CLI exposes a command with an input field named `schema`.
+
+`--schema` is a framework option that prints a command's JSON Schema, so a command field of that
+name can no longer receive a value. A contract command declaring it fails at startup; a
+runtime-catalogue command becomes unavailable with the reason in help. Rename the field.
+
+```ts
+// before
+input: z.object({ schema: z.string() })     // app export --schema public
+
+// after
+input: z.object({ schemaName: z.string() }) // app export --schema-name public
+```
+
 ## Released migration: 0.122.0
 
 ### read-view-refusal

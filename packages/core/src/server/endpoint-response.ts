@@ -8,6 +8,7 @@ import type { ResponseMetadata } from '../contract/define';
 import { AppError } from '../contract/errors';
 import { validateDeclaredOutput } from '../contract/normalize';
 import type { RuntimeContext } from '../contract/runtime-context';
+import { isAsyncIterable } from '../internal/typed';
 import { contractStreamResponse } from './contract-stream';
 import type { HandlerState, RequestState } from './handler-state';
 import { applyCors, requestCorsHeaders } from './middleware/cors';
@@ -21,13 +22,6 @@ export interface EndpointOutcome {
   result: unknown;
   responseMetadata: ResponseMetadata | undefined;
   streamAbort: AbortController | undefined;
-}
-
-function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
-  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
-    return false;
-  }
-  return typeof Reflect.get(value, Symbol.asyncIterator) === 'function';
 }
 
 export async function endpointResponse<TServer>(

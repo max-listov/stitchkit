@@ -137,6 +137,8 @@ export function readCliTokens(
       else if (name === 'wait') options.wait = enabled;
       else if (name === 'quiet') options.quiet = enabled;
       else if (name === 'ascending') ascending = enabled;
+      // `--schema` is answered from the route, before any argument is parsed.
+      else if (name === 'schema') continue;
       else options.help = options.help || enabled;
       continue;
     }

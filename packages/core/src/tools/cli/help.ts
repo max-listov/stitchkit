@@ -10,6 +10,7 @@ const GLOBAL_OPTIONS = [
   ['--output-dir <dir>', 'Download result media into a directory'],
   ['--quiet', 'Suppress non-essential stderr output'],
   ['--dry-run', 'Print the resolved call without executing it'],
+  ['--schema', 'Print the JSON Schema of a command input and output'],
   ['--help, -h', 'Show help for a command'],
   ['--help <text>', 'List only the commands matching a substring'],
   ['--count-by <field>', 'Count records per distinct value of a field'],

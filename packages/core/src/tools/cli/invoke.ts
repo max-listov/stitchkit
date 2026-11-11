@@ -34,12 +34,15 @@ import type { ZodObject, z } from 'zod';
 import type { ServiceDef, StitchLogger } from '../../server/types';
 import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute-hooks';
 import { type ToolResult, toolErrorFromResult, toolResultFromError } from '../execute-result';
+import { toolSurfaceOutputSchema } from '../internal/tool-view';
 import { createToolRunner, type MountableTool } from '../mount';
 import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
 import { collectToolSurface } from '../surface';
 import type { CliRunOptions } from './args';
 import {
   type CliCommandDefinition,
+  type CliResultPolicy,
+  cliCommandResultPolicy,
   cliCommandReturnsResult,
   cliCommandSuccessExitCode,
   executeCliCommand,
@@ -50,7 +53,9 @@ import {
   assertCliPoliciesResolved,
   type CliCommandPresentation,
   type CliPresentationPolicyConfig,
+  cliResultPolicy,
 } from './policy';
+import { type CliStreamOperation, collectCliStreams } from './stream-surface';
 
 export type CliSurfaceSource<TAuth, TValue> =
   | readonly TValue[]
@@ -142,7 +147,7 @@ export interface CliInvoker {
   readonly commands: readonly CliInvokerCommand[];
   /**
    * Run one parsed call. Never writes, never exits. An unknown command is a
-   * `NOT_FOUND` result rather than a throw, because a stream must answer the
+   * `UNKNOWN_OPERATION` result rather than a throw, because a stream must answer the
    * line that was wrong and keep reading the ones that follow.
    */
   invoke(command: string, args: Record<string, unknown>): Promise<CliInvocationResult>;
@@ -200,7 +205,7 @@ export async function createCliInvoker<
   const typedGlobals = parseCliGlobals(config.globalOptions, globals);
   const auth = await (config.resolveAuth ? config.resolveAuth(typedGlobals) : config.auth);
   // Only the half that returns a value. A printing command stays unreachable
-  // here and answers NOT_FOUND, which is the honest answer: it has no result to
+  // here and answers UNKNOWN_OPERATION, which is the honest answer: it has no result to
   // give and running it would write into a caller that never asked for output.
   const natives = new Map<string, CliCommandDefinition>(
     (config.commands ?? [])
@@ -235,8 +240,8 @@ export async function createCliInvoker<
         return cliInvocationResult(
           {
             ok: false,
-            code: 'NOT_FOUND',
-            details: { message: `Unknown command "${command}"` },
+            code: 'UNKNOWN_OPERATION',
+            details: { message: `Unknown command "${command}"`, operation: command },
           },
           command,
           config,
@@ -248,9 +253,38 @@ export async function createCliInvoker<
       } catch (error) {
         result = toolResultFromError(error);
       }
-      return cliInvocationResult(result, command, config);
+      return withSuccessExitCode(
+        cliInvocationResult(result, command, config),
+        cliResultPolicy(config, command),
+        result,
+        command,
+        config,
+      );
     },
   };
+}
+
+/**
+ * Give a successful invocation the exit code its command's policy declares —
+ * through the function the printed path uses, so the two cannot disagree.
+ */
+function withSuccessExitCode(
+  invocation: CliInvocationResult,
+  policy: CliResultPolicy<unknown> | undefined,
+  result: ToolResult,
+  command: string,
+  config: { errorHint?: ErrorHintFn; exitCodes?: ExitCodeMap },
+): CliInvocationResult {
+  if (!result.ok || policy === undefined) return invocation;
+  try {
+    return { ...invocation, exitCode: cliCommandSuccessExitCode(policy, result.data) };
+  } catch (error) {
+    return cliInvocationResult(
+      toolResultFromError(new Error('CLI result policy failed', { cause: error })),
+      command,
+      config,
+    );
+  }
 }
 
 /**
@@ -297,17 +331,13 @@ async function runNativeCommand<
     config.coerceJsonArgs ?? true,
     globals,
   );
-  let invocation = cliInvocationResult(result, definition.name, config);
-  if (invocation.ok) {
-    try {
-      invocation = {
-        ...invocation,
-        exitCode: cliCommandSuccessExitCode(definition, result.ok ? result.data : undefined),
-      };
-    } catch (error) {
-      invocation = cliInvocationResult(toolResultFromError(error), definition.name, config);
-    }
-  }
+  const invocation = withSuccessExitCode(
+    cliInvocationResult(result, definition.name, config),
+    cliCommandResultPolicy(definition),
+    result,
+    definition.name,
+    config,
+  );
   if (out === '' && err === '') return invocation;
   return {
     ...invocation,
@@ -338,7 +368,11 @@ export function buildCliSurface<
     passthroughField: string | undefined,
     globalNames: ReadonlySet<string>,
   ) => string | undefined,
-): { tools: Map<string, MountableTool>; help: Map<string, CliCommandPresentation> } {
+): {
+  tools: Map<string, MountableTool>;
+  streams: Map<string, CliStreamOperation>;
+  help: Map<string, CliCommandPresentation>;
+} {
   const services =
     typeof config.services === 'function' ? config.services(auth) : (config.services ?? []);
   const runtimeTools =
@@ -371,8 +405,46 @@ export function buildCliSurface<
       help.set(mountable.name, descriptor);
     }
   }
+  const streams = collectCliStreams(services);
+  for (const [name, stream] of streams) {
+    const descriptor = applyCliPresentationPolicy(
+      name,
+      {
+        ...managedCliDescriptor(stream.tool),
+        outputSchema: stream.descriptor.item,
+        stream: true,
+      },
+      config,
+    );
+    const issue = shapeIssue?.(
+      name,
+      descriptor,
+      help.has(name),
+      config.passthrough?.[name],
+      applicationGlobalNames,
+    );
+    if (issue !== undefined) throw new Error(issue);
+    help.set(name, descriptor);
+  }
   assertCliPoliciesResolved(help, config);
-  return { tools, help };
+  for (const [name, policy] of Object.entries(config.results ?? {})) {
+    if (!tools.has(name) && !streams.has(name)) {
+      throw new Error(
+        `[stitchkit] CLI result policy "${name}" targets a command that is not managed; a native command declares present and exitCode on defineCliCommand`,
+      );
+    }
+    if (policy.output !== undefined && policy.output !== help.get(name)?.outputSchema) {
+      throw new Error(
+        `[stitchkit] CLI result policy "${name}" is typed against a schema that is not the one the command answers with; pass the command's own output schema to defineCliResult`,
+      );
+    }
+    if (streams.has(name) && policy.exitCode !== undefined) {
+      throw new Error(
+        `[stitchkit] CLI result policy "${name}" declares exitCode for a stream command; a stream has no single result to classify`,
+      );
+    }
+  }
+  return { tools, streams, help };
 }
 
 /** How a managed tool presents itself — the same shape a native command builds. */
@@ -383,5 +455,6 @@ export function managedCliDescriptor(
     description: tool.method.desc,
     argumentSchema: tool.argumentSchema,
     presentationSchema: tool.presentationSchema,
+    outputSchema: toolSurfaceOutputSchema(tool.method),
   };
 }

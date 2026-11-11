@@ -6,7 +6,7 @@ import type { ClientRequestOptions } from '../contract/client-types';
 import type { ContractDef, EndpointDef } from '../contract/define';
 import { AppError, STITCH_ERROR_STATUS } from '../contract/errors';
 import type { RuntimeContext } from '../contract/runtime-context';
-import { isRecord } from '../internal/typed';
+import { isAsyncIterable, isRecord } from '../internal/typed';
 import { contractMethodFields } from '../server/contract-method';
 import type { MethodDef, ServiceDef } from '../server/types';
 
@@ -86,6 +86,16 @@ export interface ImplementRemoteOptions {
   ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
+/** Remote stream items, with a failure mid-stream projected like a failed call. */
+async function* forwardedStream(source: AsyncIterable<unknown>): AsyncGenerator<unknown> {
+  try {
+    yield* source;
+  } catch (err) {
+    if (ApiError.is(err)) throw projectRemoteError(err);
+    throw err;
+  }
+}
+
 /**
  * Bind a contract to a remote HTTP client, producing a `ServiceDef` whose every
  * handler forwards the call to the remote API. The transport twin of
@@ -111,9 +121,6 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
   for (const [key, endpoint] of Object.entries(contract.endpoints)) {
     methods[key] = {
       ...contractMethodFields(contract, key, endpoint),
-      // The proxy answers a streaming endpoint as it always has — as a plain
-      // forwarded call — rather than taking on the stream framing here.
-      stream: undefined,
       // Elicitation rounds are asked and answered here, but the forwarded call
       // carries only `params` and `input`: the answers would never reach the
       // origin. A proxied tool therefore asks nothing — the origin's own MCP
@@ -140,9 +147,15 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
             : args;
           refuseCancelled(ctx.signal);
           const requestOptions = { signal: ctx.signal };
-          return await (endpointHasArguments(endpoint)
+          const answer = await (endpointHasArguments(endpoint)
             ? call.withOptions(finalArgs, requestOptions)
             : call.withOptions(requestOptions));
+          // A stream is forwarded as a stream: the remote items are this
+          // handler's source, read under the same contract descriptor by
+          // whichever surface carries the proxy.
+          return 'stream' in endpoint && isAsyncIterable(answer)
+            ? forwardedStream(answer)
+            : answer;
         } catch (err) {
           // The typed client throws `ApiError` on a non-2xx remote response.
           // Translate it to the framework `AppError` so the real code / status /

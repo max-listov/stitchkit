@@ -31,6 +31,8 @@ The browser-and-server entrypoint. Re-exports everything from
 | `RegistryScope` | _type_ | contract-scope union inferred from a scoped client registry value |
 | `createUrlBuilder` | function | build synchronous browser-native URLs for all HTTP endpoints; body methods accept URL-bound args only — [guide](../guide/client.md#contract-url-builders) |
 | `createUrlBuilders` | function | build one exact URL builder per contract in a registry |
+| `readContractIdentity` | function | read the server's contract fingerprint in one call and return it beside the client's own — [guide](../guide/client.md#which-contract-does-the-server-speak) |
+| `ContractIdentity` | _type_ | `{ client, server }` fingerprints; `server` is `undefined` when the server answers no identity |
 | `UrlBuilderConfig` | _type_ | explicit `{ baseUrl }` source for a URL builder |
 | `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`) |
 | `ClientFetch` | _type_ | injectable Fetch-compatible transport used by framework and application-owned adapters |
@@ -83,6 +85,9 @@ The browser-and-server entrypoint. Re-exports everything from
 | `StreamLineLimitError` / `StreamTruncatedLineError` | class | a line past `maxLineBytes` (`limitBytes`, `lineBytes`; a `RangeError`) and a source ended inside a line under `require-newline` (`lineBytes`; a `SyntaxError`) |
 | `resumableIterator` | function | re-open a long-lived stream from the last delivered cursor, with jittered backoff, a caller-owned terminal item and prompt abort — [guide](../guide/client.md#resumable-streams) |
 | `createBackoff` | function | exponential backoff with subtractive jitter as a value: `next()` / `reset()` |
+| `contractFingerprint` | function | synchronous digest of the operations HTTP carries, whole and per `prefix.key` — [guide](../guide/client.md#which-contract-does-the-server-speak) |
+| `ContractFingerprintSchema` / `ContractFingerprint` | schema / _type_ | `{ fingerprint, operations }` — one digest for the set and one per operation |
+| `contractIdentityContract` | contract | the operation a server answers its fingerprint with; mount it with `withContractIdentity` |
 | `ContractStreamFrameSchema` / `ContractStreamFrame` | schema / _type_ | default on-the-wire `data` / safe `error` / `end` envelope of a contract-first stream |
 | `ContractStreamFraming` / `ContractStreamCompletion` | _types_ | opt-in item-vs-envelope framing and terminal-vs-stream-end completion policies |
 | `StreamFinalLinePolicy` | _type_ | permissive or newline-required final NDJSON line policy |
@@ -391,6 +396,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `createServer` | function | build the router and start `Bun.serve` — [guide](../guide/server.md#createserver) |
 | `createHandler` | function | the router as a bare `(req) => Response` — [guide](../guide/server.md#createserver) |
 | `implement` | function | bind a contract to typed handlers — [guide](../guide/server.md#implement) |
+| `withContractIdentity` | function | the given services plus the one answering `contractIdentityContract` with their fingerprint — the list to mount — [guide](../guide/client.md#which-contract-does-the-server-speak) |
 | `createImplement` | function | fix the handler context type once |
 | `createScopedImplement` | function | fix one scope→context map, then type every handler by its endpoint's effective scope; `.declare(contract)(handlers)` types without binding for the registry path, `.stream(scope, …)` covers streaming multipart — [guide](../guide/server.md#per-scope-handler-context--createscopedimplement) |
 | `ScopedHandlers` | _type_ | handler map typed per endpoint by its effective scope |
@@ -2513,6 +2519,7 @@ SDK nor the `ai` peer.
 |--------|------|---------|
 | `createCli` | function | build and run a CLI from contracts; a runtime catalogue field conflicting with reserved/global argv options disables only that entry, retained in help with its reason; invocation returns `CLI_COMMAND_UNAVAILABLE` before side effects — [guide](../guide/cli.md#when-one-runtime-command-cannot-be-represented-in-argv) |
 | `defineCliCommand` | function | define one Zod-typed CLI-only executable command with optional validated-result presentation/exit policy |
+| `defineCliResult` | function | type a managed command's `present` / `exitCode` policy against its output schema, for `CliConfig.results` — [guide](../guide/cli.md#the-same-policy-for-a-managed-command) |
 | `parseCliArgs` | function | argv → typed tool args against a schema; inline `--field:=JSON` assigns a whole JSON value, including null, while ordinary string flags remain lexical; named array options together with bare positionals require an explicit `positionals` policy (advanced) |
 | `routeCliArgv` | function | select the command out of argv without duplicating the global-option grammar (advanced) |
 | `extractCliGlobalOptions` | function | lift the application's own global options out of argv before routing (advanced) |
@@ -2563,6 +2570,7 @@ SDK nor the `ai` peer.
 | `CliCommandDefinitionBase` | _type_ | native command name, description and input schema |
 | `CliCommandDefinitionWithOutput` | _type_ | native command with validated declared output and typed optional `present` / successful `exitCode` callbacks |
 | `CliCommandDefinitionWithoutOutput` | _type_ | native void command without an output contract |
+| `CliResultPolicy` | _type_ | `present` / successful `exitCode` callbacks of one command, typed against its validated result; `CliConfig.results` holds one per managed command |
 | `CliCommandContext` | _type_ | parsed input, framework run options, the application's `globals` and stdout/stderr writers |
 | `CliRunOptions` | _type_ | parsed global flags (`--json` compacts success/error records, `--wait`, …) |
 | `ParsedCliArgs` | _type_ | result of `parseCliArgs` |
@@ -2735,6 +2743,12 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 | Export | Kind | Purpose |
 |---|---|---|
 | `runNativeCommand` | function | caller-lifetime streaming or explicitly bounded binary capture |
+| `createOperationProcesses` | function | run contract operations in one-call child processes: `unary` / `stream` return contract handlers bounded by `maxConcurrent`, `maxResponseBytes` and `timeoutMs` — [guide](../guide/native-io.md#a-contract-operation-in-a-process-of-its-own) |
+| `runOperationProcess` | function | the child side: read one call from stdin, run it against `implement(contract, handlers)` services, write the answer |
+| `OperationProcessesConfig` | _type_ | the child command and the three bounds of `createOperationProcesses` |
+| `OperationProcesses` | _type_ | `unary(contract, key)`, `stream(contract, key)` and the `active` count |
+| `OperationProcessService` | _type_ | what `runOperationProcess` reads of a service; the result of `implement` fits |
+| `OperationProcessIo` | _type_ | injectable call source, writer and stop signal of `runOperationProcess` |
 | `streamNativeCommand` | function | starts a command under the same group ownership, stop policy and bounds as `runNativeCommand` and returns `stdout` / `stderr` as `ReadableStream<Uint8Array>`, `result` and `stop()`; a slow reader slows the child, a cancelled stream drops its bytes, a failed command errors both streams |
 | `NativeCommandStream` | type | what `streamNativeCommand` returns: `stdout`, `stderr`, `result` (its buffers are empty) and `stop()` |
 | `NativeCommandStreamOptions` | type | `NativeCommandOptions` without `capture`, `onOutput` and `stdio`, which the streams own |
@@ -2793,6 +2807,16 @@ has no `outputPath`, because nothing is written beside the executable. Keep comp
 without splitting, preserve every output, and write each asset's `bytes` to its `outputPath`.
 This evolving entrypoint is a build dependency; runtime imports do not reach it.
 The detailed recipe is in [native IO](../guide/native-io.md#public-native-packaging).
+
+It also owns the build of a client into one self-contained file:
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `buildClientArtifact` | function | bundle a client entry into one self-contained file with its SHA-256, refuse forbidden modules in the graph, optionally pack and verify an npm archive — [guide](../guide/native-io.md#a-client-as-one-self-contained-file) |
+| `ClientArtifactOptions` | _type_ | entry, output file, runtime, forbidden modules and the optional package to pack and verify |
+| `ClientArtifact` | _type_ | the built file, its SHA-256 and size, the bundled modules and the verified archive |
+| `ForbiddenModule` | _type_ | a package name, a source path fragment or a `RegExp` over module paths |
+| `ForbiddenModuleError` | class | the refusal of a bundle that reaches a forbidden module: `module` and `importedBy` |
 
 ## `stitchkit/http`
 

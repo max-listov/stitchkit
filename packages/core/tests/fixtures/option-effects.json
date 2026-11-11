@@ -39,11 +39,15 @@
     "search": {
       "test": "first-touch storage key, clock and TTL never supply a previous current campaign"
     },
-    "referrer": { "test": "a referrer reaches bootstrap without synthesised campaign tags" },
+    "referrer": {
+      "test": "a referrer reaches bootstrap without synthesised campaign tags"
+    },
     "pathname": {
       "test": "first-touch storage key, clock and TTL never supply a previous current campaign"
     },
-    "storage": { "test": "unavailable browser storage does not discard raw landing facts" },
+    "storage": {
+      "test": "unavailable browser storage does not discard raw landing facts"
+    },
     "storageKey": {
       "test": "first-touch storage key, clock and TTL never supply a previous current campaign"
     },
@@ -1535,6 +1539,57 @@
     },
     "hrefPolicy": {
       "test": "hrefPolicy retains internal and outbound query and fragment only when full"
+    }
+  },
+  "ClientArtifactOptions": {
+    "entry": {
+      "test": "one call gives the file, its hash and an archive that installs and imports"
+    },
+    "outFile": {
+      "test": "one call gives the file, its hash and an archive that installs and imports"
+    },
+    "runtime": {
+      "test": "runtime selects what the file may import from its platform"
+    },
+    "forbiddenModules": {
+      "test": "a forbidden module in the graph is refused by name and leaves no file"
+    },
+    "package": {
+      "test": "one call gives the file, its hash and an archive that installs and imports"
+    },
+    "executable": {
+      "test": "executable, timeoutMs and signal bound the build tool"
+    },
+    "timeoutMs": {
+      "test": "executable, timeoutMs and signal bound the build tool"
+    },
+    "signal": {
+      "test": "executable, timeoutMs and signal bound the build tool"
+    }
+  },
+  "OperationProcessesConfig": {
+    "command": {
+      "test": "answers through the contract, and a bad input never starts a process"
+    },
+    "maxConcurrent": {
+      "test": "an answer over the bound and a call over the limit are two different refusals"
+    },
+    "maxResponseBytes": {
+      "test": "an answer over the bound and a call over the limit are two different refusals"
+    },
+    "timeoutMs": {
+      "test": "the deadline ends the process with REQUEST_TIMEOUT"
+    }
+  },
+  "OperationProcessIo": {
+    "readCall": {
+      "test": "the child reads its call, writes its answer and stops through injected io"
+    },
+    "write": {
+      "test": "the child reads its call, writes its answer and stops through injected io"
+    },
+    "signal": {
+      "test": "the child reads its call, writes its answer and stops through injected io"
     }
   }
 }

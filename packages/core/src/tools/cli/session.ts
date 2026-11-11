@@ -3,7 +3,11 @@
  * registered at startup (the session) and what argv asked for (the route).
  */
 import type { ZodObject, z } from 'zod';
-import { type JsonSchemaField, jsonSchemaFields } from '../../json-schema/json-schema';
+import {
+  type JsonSchemaField,
+  jsonSchemaFields,
+  toJsonSchema,
+} from '../../json-schema/json-schema';
 import { buildToolPresentationSchema } from '../schema/presentation';
 import { extractCliGlobalOptions } from './args';
 import { isReservedBoolWord, parseReservedBool } from './args-fields';
@@ -28,6 +32,7 @@ function nativeDescriptor(
     description: definition.description,
     argumentSchema: definition.input,
     presentationSchema: cliCommandPresentationSchema(definition),
+    outputSchema: definition.output,
   };
 }
 
@@ -111,6 +116,8 @@ export interface CliRoute<TGlobals extends ZodObject> {
   commandArgv: string[];
   beforeSeparator: string[];
   helpRequested: boolean;
+  /** `--schema` — answered like help: before identity, validation and the call. */
+  schemaRequested: boolean;
 }
 
 /**
@@ -165,16 +172,19 @@ export function resolveCliRoute<
     commandArgv.indexOf('--') === -1
       ? commandArgv
       : commandArgv.slice(0, commandArgv.indexOf('--'));
-  const helpRequested = beforeSeparator.some((token) => {
-    if (token === '--help' || token === '-h') return true;
-    const option = classifyLongOptionToken(token);
-    return (
-      option?.name === 'help' &&
-      option.value !== undefined &&
-      isReservedBoolWord(option.value) &&
-      parseReservedBool('help', option.value)
-    );
-  });
+  const asked = (name: 'help' | 'schema'): boolean =>
+    beforeSeparator.some((token) => {
+      if (token === `--${name}` || (name === 'help' && token === '-h')) return true;
+      const option = classifyLongOptionToken(token);
+      return (
+        option?.name === name &&
+        option.value !== undefined &&
+        isReservedBoolWord(option.value) &&
+        parseReservedBool(name, option.value)
+      );
+    });
+  const helpRequested = asked('help');
+  const schemaRequested = !helpRequested && asked('schema');
   return {
     globals,
     typedGlobals,
@@ -183,7 +193,32 @@ export function resolveCliRoute<
     commandArgv,
     beforeSeparator,
     helpRequested,
+    schemaRequested,
   };
+}
+
+/**
+ * `--schema`: one line of JSON carrying the JSON Schema of a command's input
+ * and of its successful result, converted from the very Zod schemas the call
+ * is validated against.
+ */
+export function renderCommandSchema(
+  command: string,
+  descriptor: CliCommandPresentation,
+): string {
+  return `${JSON.stringify({
+    command,
+    input: descriptor.presentationSchema,
+    ...(descriptor.outputSchema !== undefined && {
+      // The dialect of `input`: one document, one dialect.
+      [descriptor.stream ? 'item' : 'output']: toJsonSchema(
+        descriptor.outputSchema,
+        'output',
+        'any',
+        'draft-07',
+      ),
+    }),
+  })}\n`;
 }
 
 /** The emit options every result path shares; only `json` and the tool name vary. */

@@ -289,7 +289,7 @@ describe('enrich', () => {
 
     await handler(new Request('http://x/missing'));
 
-    expect(completions(lines)[0]?.fields.errorCode).toBe('NOT_FOUND');
+    expect(completions(lines)[0]?.fields.errorCode).toBe('UNKNOWN_OPERATION');
   });
 
   test('built-in JSON and a custom logger agree on the raw error code', async () => {

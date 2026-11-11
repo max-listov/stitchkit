@@ -55,6 +55,10 @@ const onError = createErrorHook({
     SANDBOX_UNAVAILABLE: 'unavailable',
     SANDBOX_INSUFFICIENT: 'unavailable',
     SPILL_REFERENCE_UNKNOWN: 'not_found',
+    UNKNOWN_OPERATION: 'not_found',
+    OPERATION_BUSY: 'unavailable',
+    OPERATION_RESPONSE_TOO_LARGE: 'internal',
+    OPERATION_PROCESS_FAILED: 'internal',
     INTERNAL_SERVER_ERROR: 'internal',
     // `satisfies Record<StitchErrorCode, …>` HERE on purpose: this fixture is
     // the one place that should notice a new framework code, so adding one

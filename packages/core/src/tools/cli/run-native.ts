@@ -1,13 +1,18 @@
 import type { ZodObject } from 'zod';
 import {
   type CliCommandDefinition,
+  cliCommandResultPolicy,
+  emitCliCommandResult,
   executeCliCommand,
-  prepareCliCommandEmission,
 } from './command';
-import { emitPresentationFailure, emitResult } from './format';
 import { renderCommandHelp } from './help';
 import { prepareInvocation } from './prepare';
-import { type CliRoute, type CliSession, emitOptionsFor } from './session';
+import {
+  type CliRoute,
+  type CliSession,
+  emitOptionsFor,
+  renderCommandSchema,
+} from './session';
 
 /**
  * A command the application wrote itself. It never waits, downloads or needs the
@@ -30,6 +35,10 @@ export async function runNativeCommand<
   if (!descriptor) throw new Error('[stitchkit] native CLI descriptor invariant failed');
   if (helpRequested) {
     stdout(renderCommandHelp(config.name, command, descriptor, applicationOptions));
+    return exit(0);
+  }
+  if (route.schemaRequested) {
+    stdout(renderCommandSchema(command, descriptor));
     return exit(0);
   }
   const prepared = await prepareInvocation(
@@ -72,28 +81,14 @@ export async function runNativeCommand<
     config.coerceJsonArgs ?? true,
     globals,
   );
-  const emission = prepareCliCommandEmission(native, result, options);
-  if (emission.result.ok && emission.presentationFailure !== undefined) {
-    return exit(
-      emitPresentationFailure(
-        emission.result,
-        emission.presentationFailure,
-        { stdout, stderr },
-        // A native command declares no read-only fact, so its result is never withheld.
-        { ...emitOptionsFor(config, options.json, command), repeatable: false },
-      ),
-    );
-  }
-  let emittedExitCode: number;
-  if (emission.result.ok && emission.presentation !== undefined) {
-    stdout(emission.presentation);
-    emittedExitCode = 0;
-  } else {
-    emittedExitCode = emitResult(
-      emission.result,
+  return exit(
+    emitCliCommandResult(
+      cliCommandResultPolicy(native),
+      result,
+      options,
       { stdout, stderr },
-      emitOptionsFor(config, options.json, command),
-    );
-  }
-  return exit(emission.result.ok ? emission.successExitCode : emittedExitCode);
+      // A native command declares no read-only fact, so its result is never withheld.
+      { ...emitOptionsFor(config, options.json, command), repeatable: false },
+    ),
+  );
 }

@@ -44,6 +44,7 @@ export {
   type UnixListenConfig,
 } from '../server/bun';
 export { type CacheOptions, cacheHeaders, createCache } from '../server/cache';
+export { withContractIdentity } from '../server/contract-identity';
 export { createHandler } from '../server/create';
 export {
   createErrorHook,

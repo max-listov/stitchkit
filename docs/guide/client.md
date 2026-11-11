@@ -738,6 +738,75 @@ seventh constructor argument remains `ErrorOptions`, including `cause`; the opti
 retryability argument is eighth. Closed error/frame schemas must accept the new optional
 field before their producer declares it.
 
+## Which contract does the server speak
+
+A client is built from one version of a contract and a server from another
+whenever the two are deployed separately. Three facts then look alike unless
+they are told apart: the server has no such operation, the operation ran and
+found nothing, and the field is simply absent.
+
+**An operation the server cannot route is `UNKNOWN_OPERATION`.** A server
+answers an unmatched route with `404 UNKNOWN_OPERATION`
+(`details: { method, path }`), never `NOT_FOUND` — that code is a handler
+saying its object does not exist. A contract client adds the operation it was
+calling, and reads the router's `405` for its own call the same way, because it
+always calls with the method its contract declares. The router's `405` carries
+`details: { method, path, allow }`; a `METHOD_NOT_ALLOWED` a handler throws
+itself has no `allow` list and stays `METHOD_NOT_ALLOWED`.
+
+```ts
+try {
+  await api.search({ query })
+} catch (error) {
+  if (error instanceof ApiError && error.code === 'UNKNOWN_OPERATION') {
+    // error.details.operation === 'records.search' — this server predates it
+  }
+}
+```
+
+**The fingerprint says so before the call.** `contractFingerprint(contracts)`
+(`stitchkit/contract`) is a synchronous digest of the operations HTTP carries —
+method, route and the JSON Schemas of params, input, output and stream item —
+with one digest per operation under `operations['prefix.key']`. It is the same
+value in every process and runtime. A server answers its own through an
+ordinary contract it mounts by choice, and a client reads both sides in one
+call, over HTTP or a Unix socket alike:
+
+```ts
+// server: the list to mount, with the identity of exactly that list
+import { withContractIdentity } from 'stitchkit/server'
+createServer({ services: withContractIdentity(services) })
+
+// client
+import { readContractIdentity } from 'stitchkit'
+const { client, server } = await readContractIdentity(contracts, config)
+if (server === undefined) {
+  // the server does not answer its identity: it predates it or did not mount it
+} else if (server.operations['records.search'] === undefined) {
+  // this server has no `records.search`
+} else if (server.operations['records.get'] !== client.operations['records.get']) {
+  // `records.get` has another schema there: a missing field may be "not sent yet"
+}
+```
+
+Both fingerprints arrive as a value; a difference never throws. Stitchkit
+computes the two identities and compares nothing — what a mismatch means is the
+application's decision. The client's fingerprint is computed locally and is not
+sent to the server. The identity operation is public and lists operation names,
+which is why it is mounted explicitly. Routing alone cannot always tell the
+cases apart — a new `GET /records/search` reaches an older server's
+`GET /records/:name` and comes back `NOT_FOUND` — so a client that must know
+reads the fingerprint rather than inferring from a refusal.
+
+What the fingerprint covers is what constrains a value. An endpoint's `desc`, a
+field's `.describe()` or `.meta()` annotations, and the order of an object's
+fields do not move it; a type, a constraint, a required field, a method or a
+route does. It does not cover a stream's wire framing or format, `multipart`,
+`rawResponse` and `contentType`, and it cannot tell apart types JSON Schema has
+no word for — a `Date` and a `bigint` both read as "anything". Two different schemas registered
+under one `.meta({ id })` are refused by Zod's own conversion, here as in OpenAPI. The digest
+identifies, it does not authenticate: it is not a cryptographic hash.
+
 ## Auth events
 
 The HTTP client emits events your app can react to globally:

@@ -244,7 +244,7 @@ describe('named wildcard contract validation', () => {
     for (const path of ['/esc/items/%E0%A4%A', '/esc/files/a/%ZZ']) {
       const res = await handler(new Request(`http://x${path}`));
       expect(res.status).toBe(404);
-      expect(await res.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
+      expect(await res.json()).toMatchObject({ error: { code: 'UNKNOWN_OPERATION' } });
       expect(res.headers.get('x-request-id')).toBeTruthy();
     }
     const ok = await handler(new Request('http://x/esc/items/a%20b'));

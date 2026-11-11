@@ -1,6 +1,8 @@
+import type { ZodType } from 'zod';
 import { isUnsafeKey } from '../../internal/safe-json';
 import { type JsonSchemaField, jsonSchemaFields } from '../../json-schema/json-schema';
 import { describeSchemaFields } from './args-fields';
+import type { CliResultPolicy } from './command';
 
 export interface CliPresentationPolicyConfig {
   /** Command selected when argv contains no explicit command. */
@@ -9,6 +11,12 @@ export interface CliPresentationPolicyConfig {
   optionAliases?: Readonly<Record<string, Readonly<Record<string, string>>>>;
   /** Exact ordered argv-positional fields per command; an empty array disables positionals. */
   positionals?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Terminal presentation and success exit code of a managed command's result,
+   * keyed by command name — `{ lookup: defineCliResult(LookupOutput, { present, exitCode }) }`.
+   * Declared where the CLI is mounted, because a client and a server print nothing.
+   */
+  results?: Readonly<Record<string, CliResultPolicy<unknown>>>;
 }
 
 export interface CliCommandPresentation {
@@ -17,6 +25,10 @@ export interface CliCommandPresentation {
   unavailableReason?: string;
   argumentSchema: Parameters<typeof describeSchemaFields>[0];
   presentationSchema: Record<string, unknown>;
+  /** The schema a successful result is validated against; absent when none is declared. */
+  outputSchema?: ZodType;
+  /** A contract stream: the command prints a line per item, and `outputSchema` is one item. */
+  stream?: true;
   /** Canonical field name → one short alias. */
   aliases: ReadonlyMap<string, string>;
   /**
@@ -108,6 +120,16 @@ function resolvePositionals(
   return [...configured];
 }
 
+/** The result policy mounted for one command, if any. */
+export function cliResultPolicy(
+  config: Pick<CliPresentationPolicyConfig, 'results'>,
+  command: string,
+): CliResultPolicy<unknown> | undefined {
+  return config.results && Object.hasOwn(config.results, command)
+    ? config.results[command]
+    : undefined;
+}
+
 export function applyCliPresentationPolicy(
   command: string,
   descriptor: Omit<CliCommandPresentation, 'aliases' | 'positionals'>,
@@ -137,6 +159,7 @@ export function assertCliPoliciesResolved(
   const configuredNames = new Set([
     ...Object.keys(config.optionAliases ?? {}),
     ...Object.keys(config.positionals ?? {}),
+    ...Object.keys(config.results ?? {}),
   ]);
   if (config.defaultCommand !== undefined) configuredNames.add(config.defaultCommand);
   for (const name of configuredNames) {

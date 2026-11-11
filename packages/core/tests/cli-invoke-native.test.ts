@@ -37,7 +37,7 @@ const invoker = () =>
   createCliInvoker({ name: 'gg', commands: [describeCommand, printing, coded] });
 
 describe('a native command that returns a result is invokable in process', () => {
-  test('describe answers with its validated result, not NOT_FOUND', async () => {
+  test('describe answers with its validated result, not UNKNOWN_OPERATION', async () => {
     const result = await (await invoker()).invoke('describe', { model: 'flux' });
     expect(result).toEqual({
       ok: true,
@@ -50,10 +50,10 @@ describe('a native command that returns a result is invokable in process', () =>
     expect((await invoker()).commands.map((command) => command.name)).toContain('describe');
   });
 
-  test('a printing command stays outside and answers NOT_FOUND', async () => {
+  test('a printing command stays outside and answers UNKNOWN_OPERATION', async () => {
     const result = await (await invoker()).invoke('jsonl', {});
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('NOT_FOUND');
+    expect(result.error?.code).toBe('UNKNOWN_OPERATION');
     expect((await invoker()).commands.map((command) => command.name)).not.toContain('jsonl');
   });
 

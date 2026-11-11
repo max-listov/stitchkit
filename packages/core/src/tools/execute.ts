@@ -1,5 +1,5 @@
 import type { ZodType, z } from 'zod';
-import type { TransportSource } from '../contract/define';
+import type { EndpointStreamDescriptor, TransportSource } from '../contract/define';
 import { validateDeclaredOutput } from '../contract/normalize';
 import type { RuntimeContext } from '../contract/runtime-context';
 import type { EndpointToolView } from '../contract/tool-view';
@@ -50,6 +50,12 @@ export interface ToolOperation extends OperationIdentity {
   outputSchema?: ZodType;
   /** Applied only by a runner built for the tool surface. → ADR 0196. */
   toolView?: EndpointToolView;
+  /**
+   * A contract stream: the handler's answer is the source itself, read item by
+   * item under this descriptor by the surface that carries it. No output schema
+   * applies to the source as a whole.
+   */
+  stream?: EndpointStreamDescriptor;
   handler(ctx: RuntimeContext): unknown | Promise<unknown>;
 }
 
@@ -178,6 +184,7 @@ async function invokeToolHandler(
   }
 
   let data: unknown = await method.handler(ctx);
+  if (method.stream !== undefined) return { ok: true, data };
 
   if (lifecycle?.afterHandle) {
     const transformed = await lifecycle.afterHandle(ctx, data, method);

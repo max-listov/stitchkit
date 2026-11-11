@@ -1,4 +1,7 @@
-/** POSIX Node/Bun finite native commands, independent of the agent runtime. */
+/**
+ * POSIX Node/Bun finite native commands, independent of the agent runtime, and contract
+ * operations executed in one-call child processes on top of them.
+ */
 
 export {
   observeProcessInstance,
@@ -16,6 +19,16 @@ export {
   type NativeCommandSettlement,
   type NativeCommandStopPolicy,
 } from '../process/contract';
+export {
+  createOperationProcesses,
+  type OperationProcesses,
+  type OperationProcessesConfig,
+} from '../process/operation';
+export {
+  type OperationProcessIo,
+  type OperationProcessService,
+  runOperationProcess,
+} from '../process/operation-child';
 export {
   type NativeCommandStream,
   type NativeCommandStreamOptions,

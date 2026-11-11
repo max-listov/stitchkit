@@ -59,9 +59,17 @@ export function assertEndpointExposure(
     );
   }
   if (isHttpOnlyEndpoint(endpoint)) {
-    const unsupported = exposure.data.filter((transport) => transport !== 'HTTP');
+    // A stream is the one HTTP-only shape a terminal can also carry: a line per
+    // item. It is still never a tool — a model call has one answer, not a feed.
+    const carriers: readonly string[] =
+      'stream' in endpoint && endpoint.stream ? ['HTTP', 'CLI'] : ['HTTP'];
+    const unsupported = exposure.data.filter((transport) => !carriers.includes(transport));
     if (unsupported.length > 0) {
-      throw new Error(`${where} is HTTP-only — remove ${unsupported.join(', ')} from expose`);
+      throw new Error(
+        carriers.length > 1
+          ? `${where} is a stream, carried by ${carriers.join(' and ')} only — remove ${unsupported.join(', ')} from expose`
+          : `${where} is HTTP-only — remove ${unsupported.join(', ')} from expose`,
+      );
     }
   }
 }

@@ -16,6 +16,7 @@ import {
 import { createClientRouteMatcher, joinClientBaseUrl, planClientRequest } from './client-url';
 import type { HttpClient as HttpAdapter, UnauthorizedMatcher } from './http';
 import type { ClientFetch } from './transport';
+import { namedOperation } from './unknown-operation';
 
 export type { ClientFetch } from './transport';
 
@@ -111,7 +112,11 @@ export function createClient<
     setClientMethod(
       client,
       key,
-      createEndpointMethod(endpoint, makeExecutor(endpoint), contractConfig),
+      createEndpointMethod(
+        endpoint,
+        namedOperation(makeExecutor(endpoint), `${contract.meta.prefix}.${String(key)}`),
+        contractConfig,
+      ),
     );
   }
 

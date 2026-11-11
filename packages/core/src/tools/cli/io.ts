@@ -6,9 +6,20 @@ import { readPipedStdin } from './stdin';
 /** Where one invocation writes, reads and exits — injected sinks or the real process. */
 export interface CliIo {
   stdout: (text: string) => void;
+  /**
+   * Write to stdout and say whether its reader is still there. A feed has to
+   * learn that nobody reads it — `head -1` closing the pipe ends the command;
+   * an ordinary result is written once and has nothing to stop.
+   */
+  stdoutWhileOpen: (text: string) => boolean;
   stderr: (text: string) => void;
   exit: (code: number) => void;
   readStdin: () => Promise<string | null>;
+}
+
+/** The write error of a pipe whose reading end has closed. */
+function isReaderGone(error: unknown): boolean {
+  return isRecord(error) && (error.code === 'EPIPE' || error.code === 'ERR_STREAM_DESTROYED');
 }
 
 export function createCliIo(
@@ -46,6 +57,7 @@ export function createCliIo(
       try {
         offset += writeSync(fd, bytes, offset, bytes.length - offset);
       } catch (error) {
+        if (fd === 1 && isReaderGone(error)) throw error;
         if (isRecord(error) && error.code === 'EAGAIN') {
           // A synchronous pause: the descriptor is full and there is nothing
           // else this invocation may do until the reader drains it.
@@ -68,7 +80,24 @@ export function createCliIo(
       }
     }
   };
-  const stdout = config.stdout ?? ((text: string) => writeFd(1, text));
+  const writeStdout = config.stdout ?? ((text: string) => writeFd(1, text));
+  let readerGone = false;
+  const stdoutWhileOpen = (text: string): boolean => {
+    if (readerGone) return false;
+    try {
+      writeStdout(text);
+      return true;
+    } catch (error) {
+      if (!isReaderGone(error)) throw error;
+      readerGone = true;
+      return false;
+    }
+  };
+  // A result written after its reader left has nowhere to go and nothing to
+  // report: the pipeline's exit status belongs to whoever closed it.
+  const stdout = (text: string): void => {
+    stdoutWhileOpen(text);
+  };
   const stderr = config.stderr ?? ((text: string) => writeFd(2, text));
   const exit =
     config.exit ??
@@ -81,5 +110,5 @@ export function createCliIo(
       else void pendingWrite.then(() => process.exit(writeFailed ? 1 : code));
     });
   const readStdin = config.stdin ?? readPipedStdin;
-  return { stdout, stderr, exit, readStdin };
+  return { stdout, stdoutWhileOpen, stderr, exit, readStdin };
 }

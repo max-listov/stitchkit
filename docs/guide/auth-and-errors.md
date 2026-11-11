@@ -531,7 +531,8 @@ error round-trips without adding correlation data to the response body.
 
 A `code` is a free string — your app codes (`BOT_NOT_FOUND`, …) are yours and the
 core never models them (ADR 0002). But stitchkit itself emits a set of its own:
-`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `METHOD_NOT_ALLOWED`,
+`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `UNKNOWN_OPERATION`,
+`METHOD_NOT_ALLOWED`,
 `CONFLICT`, `RATE_LIMITED`, `REQUEST_ABORTED`, `REQUEST_TIMEOUT`,
 `VALIDATION_ERROR`, `FILE_INVALID_PATH`,
 `FILE_OUTSIDE_ROOT`, `FILE_NOT_FOUND`, `FILE_NOT_REGULAR`,
@@ -541,7 +542,8 @@ core never models them (ADR 0002). But stitchkit itself emits a set of its own:
 `WAIT_FAILED`, `CLI_COMMAND_UNAVAILABLE`, `CLI_PRESENTATION_FAILED`, `DOWNLOAD_NOT_FOUND`, `VIEW_HTTP_ERROR`,
 `CONNECTION_TIMEOUT`, `CONNECTION_RESPONSE_TOO_LARGE`,
 `CONNECTION_REQUEST_FAILED`, `UPSTREAM_TOOL_ERROR`,
-`OPERATION_NOT_SUCCEEDED`, `STREAM_ITEM_INVALID`, `STREAM_FRAME_TOO_LARGE`,
+`OPERATION_NOT_SUCCEEDED`, `OPERATION_BUSY`, `OPERATION_RESPONSE_TOO_LARGE`,
+`OPERATION_PROCESS_FAILED`, `STREAM_ITEM_INVALID`, `STREAM_FRAME_TOO_LARGE`,
 `STREAM_TERMINAL_MISSING`, `STREAM_LIFETIME_EXCEEDED`,
 `GRAMMY_WEBHOOK_NOT_ACCEPTING`, `SANDBOX_UNAVAILABLE`, `SANDBOX_INSUFFICIENT`,
 `SPILL_REFERENCE_UNKNOWN`, `INTERNAL_SERVER_ERROR` — a set that grows in
@@ -569,7 +571,8 @@ envelope is a published contract, at the cost of an edit on those releases:
 // a map written exhaustively stops compiling on every addition. Codes you leave
 // out fall through to `unmappedCode`.
 const STITCH_TO_APP: Partial<Record<StitchErrorCode, AppCode>> = {
-  NOT_FOUND: 'NOT_FOUND', METHOD_NOT_ALLOWED: 'METHOD_NOT_ALLOWED',
+  NOT_FOUND: 'NOT_FOUND', UNKNOWN_OPERATION: 'NOT_FOUND',
+  METHOD_NOT_ALLOWED: 'METHOD_NOT_ALLOWED',
   BAD_REQUEST: 'VALIDATION_ERROR', VALIDATION_ERROR: 'VALIDATION_ERROR',
   UNAUTHORIZED: 'UNAUTHORIZED', FORBIDDEN: 'FORBIDDEN', CONFLICT: 'CONFLICT',
   RATE_LIMITED: 'RATE_LIMITED', INTERNAL_SERVER_ERROR: 'INTERNAL_SERVER_ERROR',
@@ -695,7 +698,8 @@ const onError = createErrorHook({
   codeMap: {
     BAD_REQUEST: 'bad_request', VALIDATION_ERROR: 'bad_request',
     UNAUTHORIZED: 'unauthenticated', FORBIDDEN: 'forbidden',
-    NOT_FOUND: 'not_found', METHOD_NOT_ALLOWED: 'not_found',
+    NOT_FOUND: 'not_found', UNKNOWN_OPERATION: 'not_found',
+    METHOD_NOT_ALLOWED: 'not_found',
     CONFLICT: 'conflict', RATE_LIMITED: 'rate_limited',
     INTERNAL_SERVER_ERROR: 'internal',
   },

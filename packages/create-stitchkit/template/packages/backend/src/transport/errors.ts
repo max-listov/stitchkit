@@ -9,6 +9,7 @@ const codeMap = {
   UNAUTHORIZED: 'unauthorized',
   FORBIDDEN: 'forbidden',
   NOT_FOUND: 'not_found',
+  UNKNOWN_OPERATION: 'not_found',
   METHOD_NOT_ALLOWED: 'method_not_allowed',
   CONFLICT: 'conflict',
   RATE_LIMITED: 'rate_limited',

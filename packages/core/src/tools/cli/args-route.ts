@@ -32,7 +32,15 @@ export function looksLikeOption(token: string): boolean {
   return token.startsWith('--') || /^-[A-Za-z]/.test(token);
 }
 
-const BOOL_OPTIONS = new Set(['json', 'wait', 'quiet', 'dry-run', 'help', 'ascending']);
+const BOOL_OPTIONS = new Set([
+  'json',
+  'wait',
+  'quiet',
+  'dry-run',
+  'help',
+  'schema',
+  'ascending',
+]);
 export const VIEW_OPTIONS = new Set(['count-by', 'sum', 'by', 'top', 'table', 'sort']);
 const VALUE_OPTIONS = new Set(['wait-timeout', 'output-dir', ...VIEW_OPTIONS]);
 export const RESERVED_CLI_OPTIONS = new Set([...BOOL_OPTIONS, ...VALUE_OPTIONS]);

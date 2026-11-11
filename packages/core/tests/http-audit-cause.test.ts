@@ -124,7 +124,7 @@ describe('the HTTP audit row names its cause', () => {
     const { event } = await callAndAudit('/widgets');
 
     expect(event?.ok).toBe(false);
-    expect(event?.errorCode).toBe('NOT_FOUND');
+    expect(event?.errorCode).toBe('UNKNOWN_OPERATION');
   });
 
   test('a successful request records no error at all', async () => {

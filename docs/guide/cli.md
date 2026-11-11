@@ -205,6 +205,49 @@ result on stdout and reports `CLI_PRESENTATION_FAILED` separately, as described
 under [Aggregate views](#aggregate-views). Void native commands cannot declare
 either callback.
 
+### The same policy for a managed command
+
+A command that comes from a contract or a runtime tool declares the same two
+callbacks where the CLI is mounted — `CliConfig.results`, keyed by command name.
+A client and a server print nothing, so the policy belongs to the CLI, not to
+the contract. `defineCliResult` types both callbacks against the operation's
+output schema:
+
+```ts
+import { createCli, defineCliResult } from 'stitchkit/cli'
+
+await createCli({
+  name: 'myapp',
+  version: '1.0.0',
+  services: [recordService],
+  results: {
+    lookup: defineCliResult(LookupOutput, {
+      present: ({ result, options }) =>
+        options.json ? `${JSON.stringify(result)}\n` : `${result.location ?? 'not found'}\n`,
+      exitCode: (result) => (result.found ? 0 : 1),
+    }),
+  },
+})
+```
+
+The guarantees are the native ones, because one function applies both: the
+callbacks run only after the operation's output is validated, `present` is
+called with and without `--json` — honouring it is the presenter's — and
+returns the exact stdout bytes, a throwing `present` reports
+`CLI_PRESENTATION_FAILED`, and a throwing or out-of-range `exitCode` becomes
+`INTERNAL_SERVER_ERROR`.
+
+The schema handed to `defineCliResult` is the command's own output schema — the
+object the contract declares, or the item schema of a stream. A policy typed
+against any other schema is a startup error, as is a key naming no managed
+command or naming a native one.
+
+The policy speaks for the command's own result only. An
+[aggregate view](#aggregate-views) (`--table`, `--count-by`, …) answers a
+different question, and after `--wait` the result is the polled command's, so
+both print without the policy. `createCliInvoker` applies `exitCode` — the
+in-process code equals the printed one — and never calls `present`.
+
 `--version`, a selected native command and its command help run before
 `resolveAuth`, services, context or runtime-tool factories. Top-level help is
 also credential-free when managed surfaces are static. A dynamic factory must
@@ -403,6 +446,7 @@ same Zod schema an HTTP or MCP call does.
 | `--output-dir <dir>`  | Download result media into a directory                     |
 | `--quiet`             | Suppress non-essential stderr output                       |
 | `--dry-run`           | Print the resolved call without executing                  |
+| `--schema`            | One JSON line: the JSON Schema of a command's input and output |
 | `--help`, `-h`        | Usage — top-level or per-command flag table                |
 | `--help <text>`       | List only the commands matching a substring                |
 | `--count-by <field>`  | Count records per distinct value — see [Aggregate views](#aggregate-views) |
@@ -418,8 +462,31 @@ newline-terminated JSON record on its respective stream; progress and CLI usage
 diagnostics remain ordinary stderr text. This keeps stdout pipeable and
 `2>/dev/null` clean. The process exit code carries the error class (`0` ok,
 `VALIDATION_ERROR → 1`, `UNAUTHORIZED → 2`, `FORBIDDEN → 3`, `NOT_FOUND → 4`,
+`UNKNOWN_OPERATION → 4`, `TIMEOUT → 7`, `STREAM_LIFETIME_EXCEEDED → 7`,
 `CLI_PRESENTATION_FAILED → 8`,
 …) — override per app with `exitCodes`.
+
+### The schema of a command — `--schema`
+
+`myapp <command> --schema` prints one line of JSON and exits `0` without
+validating arguments or calling anything:
+
+```json
+{"command":"lookup","input":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},"output":{"type":"object","properties":{"found":{"type":"boolean"}},"required":["found"]}}
+```
+
+`input` is the schema the command's arguments are read by — the one `--help`
+renders — and `output` is the JSON Schema of the result, both derived from the
+operation's Zod schemas and both in JSON Schema draft-07, so a script or another
+program can hold a command to its schema without a copy. A command without a
+declared output carries no `output`; a
+[stream command](#a-contract-stream-as-a-command) carries `item` instead.
+Managed and native commands answer alike. Like `--help`, the answer needs no
+identity when the managed surface is static; a surface built by a
+`services` or `runtimeTools` function resolves identity first to learn its
+commands. `schema` is a reserved option name: a command field called `schema`
+is a startup error for a contract command and makes a runtime-catalogue command
+unavailable, like every other reserved name.
 
 ### A narrower question than "all of them"
 
@@ -505,7 +572,7 @@ reason in `details.message` on stderr; the default exit code is 1. `--json`
 compacts the error as usual; `exitCodes` and `errorHint` apply. The refusal precedes
 command argument parsing, stdin, context, hooks and the handler; `--dry-run` cannot
 turn it into success. A known unavailable `--wait` target returns the same refusal;
-an unknown target keeps `NOT_FOUND`.
+an unknown target answers `UNKNOWN_OPERATION`.
 
 This isolates only reserved/global **field** conflicts in `runtimeTools`.
 Native commands and contract-defined `services` still fail at startup for those
@@ -1047,6 +1114,59 @@ your server. A channel is two documents at two addresses — which of them a bui
 consults is your decision, and `assertCliPublishable` is told about all of them
 rather than taught the shape of any.
 
+## A contract stream as a command
+
+A streaming endpoint whose `expose` lists `'CLI'` is a command that prints one
+line per item — `['HTTP', 'CLI']` for a stream both carry, `['CLI']` for a feed
+only a terminal reads:
+
+```ts
+watch: {
+  method: 'POST', path: '/watch', desc: 'Follow record events',
+  expose: ['HTTP', 'CLI'],
+  input: z.object({ record: z.string() }),
+  stream: { item: RecordEvent },
+}
+```
+
+```sh
+myapp watch_record --record main | head -n 5
+```
+
+The command is named from the contract prefix and the endpoint key
+(`records.watch` → `watch_record`); a stream takes no `tool` group, so it has no
+`tool.name`. `optionAliases` and `positionals` apply as to any command.
+
+The call opens through the same runner as every command — validation, the
+`lifecycle.beforeHandle` gate, hooks — and the handler's async iterable is read
+by the loop the HTTP response uses: each item is validated against
+`stream.item` (`STREAM_ITEM_INVALID` otherwise), a declared `terminal` item
+completes the command, and a stream that ends before it fails with
+`STREAM_TERMINAL_MISSING`. A stream proxied by `implementRemote` is a stream
+here too. Without a policy an item is one compact JSON line;
+`results[command].present` formats each item instead. A presenter that throws
+ends the feed with `CLI_PRESENTATION_FAILED` after the lines already printed.
+`exitCode` is refused for a stream at startup — a feed has no single result to
+classify.
+
+How a feed ends:
+
+| End | stdout / stderr | Exit |
+| --- | --- | --- |
+| the stream completes | every item | `0` |
+| stdout is closed (`head`, a pager that quit) | the items read so far | `0` |
+| `CliConfig.signal` aborts | nothing more, no error | `130` (`REQUEST_ABORTED`) |
+| `stream.lifetimeMs` passes | `STREAM_LIFETIME_EXCEEDED` on stderr | `7` |
+| the source or an item fails | the error on stderr | by its code |
+
+In every case the handler's `ctx.signal` aborts and the source is asked to
+close. The command does not wait for a source that ignores its signal: the
+deadline and the cancellation are the command's, not the source's.
+
+`--wait`, `--output-dir` and aggregate views do not apply to a stream and exit
+`2`; a stream command is not reachable through `createCliInvoker`, whose answer
+is one result per line.
+
 ## One operation per line — `createCliInvoker`
 
 The most common way an agent drives a CLI is not one command: it is a stream —
@@ -1099,7 +1219,7 @@ await createCliInvoker({ name: 'myapp', services, commands: [describe] })
 ```
 
 A command that declares `output?: never` prints itself and returns nothing, so
-there is no result to hand back; it answers `NOT_FOUND` and stays on the command
+there is no result to hand back; it answers `UNKNOWN_OPERATION` and stays on the command
 line, where stdout exists. Your stream command is one of these, which is why a
 stream still cannot invoke itself.
 

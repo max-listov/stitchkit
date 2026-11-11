@@ -23,6 +23,7 @@
  *     BAD_REQUEST: 'bad_request', VALIDATION_ERROR: 'bad_request',
  *     UNAUTHORIZED: 'unauthenticated', FORBIDDEN: 'forbidden',
  *     NOT_FOUND: 'not_found', METHOD_NOT_ALLOWED: 'not_found',
+ *     UNKNOWN_OPERATION: 'not_found',
  *     CONFLICT: 'conflict', RATE_LIMITED: 'rate_limited',
  *     INTERNAL_SERVER_ERROR: 'internal',
  *   },
