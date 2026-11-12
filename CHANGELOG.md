@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.123.1] - 2026-11-12
+
 ### Fixed
 
 - `stitchkit/files`, `stitchkit/process`, `stitchkit/application`, `stitchkit/telegram` — **the first exclusive lock of a
