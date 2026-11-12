@@ -1,7 +1,8 @@
-import { chmod, unlink } from 'node:fs/promises';
+import { unlink } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readBoundedBody } from '../internal/bounded-body';
 import { errnoOf } from '../internal/errno';
+import { bindUnixSocket } from '../internal/unix-socket';
 import { SandboxError, type SandboxNetworkPolicy } from './sandbox-contract';
 
 /** Explicit HTTP gateway over a Unix socket; CONNECT and arbitrary TCP are never exposed. */
@@ -95,11 +96,20 @@ export async function createSandboxBroker(
   );
   server.requestTimeout = 30_000;
   server.headersTimeout = 5_000;
-  await new Promise<void>((resolve, reject) => {
+  const listening = new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(socketPath, resolve);
+    server.once('listening', resolve);
   });
-  await chmod(socketPath, 0o600);
+  try {
+    // Only the sandbox may reach the gateway: the socket is owner-only from birth.
+    bindUnixSocket({ path: socketPath, mode: 0o600 }, (path) => server.listen(path));
+  } catch (error) {
+    // The refusal is the failure; a listen error reported after it adds nothing.
+    listening.catch(() => undefined);
+    server.close();
+    throw error;
+  }
+  await listening;
   return {
     abortRequests() {
       for (const controller of controllers) controller.abort();

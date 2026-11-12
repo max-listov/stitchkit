@@ -378,11 +378,14 @@ bind error of the loser). A regular file at the path, another user's socket, or
 a live listener each fail with a specific error instead of being unlinked. A
 clean `server.shutdown()` removes the file.
 
-`mode` tightens the socket file permissions after listen. Bun creates the file
-`0755` under a normal umask — since `connect(2)` requires *write* permission
-that is already owner-only in practice — but when access to the socket **is**
-the credential, set `mode: 0o600` explicitly and let the filesystem be the
-policy. The Socket.IO lifecycle (`socket`) cannot mount on a unix listener
+`mode` is the socket's permission from birth: the socket is bound under a umask
+narrowed to exactly that mode, so no other process ever sees it wider — a
+`chmod` after listen leaves the umask rights on disk until it runs
+([`bindUnixSocket`](native-io.md#a-unix-socket-private-from-birth)). Without
+`mode` Bun creates the file `0755` under a normal umask — since `connect(2)`
+requires *write* permission that is already owner-only in practice — but when
+access to the socket **is** the credential, set `mode: 0o600` explicitly and let
+the filesystem be the policy. The Socket.IO lifecycle (`socket`) cannot mount on a unix listener
 (socket.io clients dial TCP only — construction error); Bun's own WebSocket
 client cannot dial a unix path either. Unix listeners are Bun-only: `srvx`
 resolves a numeric port unconditionally, so `stitchkit/node` does not offer

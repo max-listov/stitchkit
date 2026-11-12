@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, symlink } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  bindUnixSocket,
   createManagedFileBoundary,
   writeFileAtomic,
   writeFileAtomicSync,
@@ -79,6 +81,17 @@ try {
   }
   await verifyCommandLifecycle(root);
   await verifySettlementDiagnostics(root);
+  const door = createServer((_request, response) => response.end('door'));
+  const socket = join(root, 'd.sock');
+  const listening = new Promise((resolve) => door.once('listening', resolve));
+  bindUnixSocket({ path: socket, mode: 0o600 }, (path) => door.listen(path));
+  await listening;
+  assert.equal((await stat(socket)).mode & 0o777, 0o600);
+  await new Promise((resolve) => door.close(resolve));
+  assert.throws(
+    () => bindUnixSocket({ path: file, mode: 0o600 }, () => undefined),
+    /already exists/,
+  );
   console.log('packed native primitives: ok');
 } finally {
   await rm(root, { recursive: true, force: true });

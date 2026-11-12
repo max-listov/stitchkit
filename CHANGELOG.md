@@ -15,6 +15,31 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/files` — **`bindUnixSocket({ path, mode }, bind)`: a unix socket that exists only
+  with its mode.** `bind(2)` takes a socket's rights from the umask and accepts no mode, so `chmod`
+  after `listen` leaves `0755` on disk until it runs, and a process watching the path sees it even
+  with `chmodSync` on the next line. The function narrows the umask to exactly `mode` for the one
+  synchronous `bind(path)` — `Bun.serve({ unix: path })` or a `node:http`/`node:net`
+  `listen(path)` — and restores it in `finally`. The path must be free beforehand and a socket with
+  exactly `mode` afterwards: a failed or late bind and a directory whose default ACL overrides the
+  umask are refused, a socket born with other rights is removed first. Services that each kept
+  their own "narrow the umask around `Bun.serve`" copy take this one; the `stitchkit/files` budget
+  grows by the function and `UnixSocketBinding`.
+
+### Fixed
+
+- `stitchkit/server`, `stitchkit/agent-runtime/sandbox` — **a unix socket with `mode` is born with
+  it instead of being narrowed after it exists.** `createServer({ unix: { path, mode } })` listened
+  under the process umask and called `chmodSync` next: an observer in another process saw the socket
+  `0755` in 9 of 30 starts under umask `022`, and a readiness check that met it in that window
+  refused the service. The sandbox HTTP gateway did the same with `await chmod(…, 0o600)`. Both now
+  bind through `bindUnixSocket`; the stale-socket probe still runs before the bind, under the
+  normal umask. A socket the filesystem would give other rights than `mode` now fails the start
+  instead of being published wider.
+  **Affects:** `stitchkit/server` createServer(unix); `stitchkit/agent-runtime/sandbox` createBubblewrapSandboxBackend(behaviour)
+
 ## [0.123.3] - 2026-11-12
 
 ### Added

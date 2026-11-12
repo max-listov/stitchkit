@@ -41,6 +41,7 @@ export {
   type SweepAtomicStagingOptions,
   sweepAtomicStaging,
 } from '../internal/atomic-staging';
+export { bindUnixSocket, type UnixSocketBinding } from '../internal/unix-socket';
 export {
   type ExclusiveLock,
   ExclusiveLockError,

@@ -553,6 +553,14 @@
       "test": "exact lock mode survives restrictive umask and null refuses ownerless locks and guards"
     }
   },
+  "UnixSocketBinding": {
+    "path": {
+      "test": "bindUnixSocket binds the path it is given and refuses one that is taken"
+    },
+    "mode": {
+      "test": "a unix socket bound through bindUnixSocket is born with exactly its mode"
+    }
+  },
   "WriteFileAtomicOptions": {
     "mode": {
       "test": "the mode is the one asked for, not what the umask leaves of it"

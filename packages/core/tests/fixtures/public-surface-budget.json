@@ -23,7 +23,7 @@
     "stitchkit/cli/publish": 4,
     "stitchkit/contract": 110,
     "stitchkit/declaration": 30,
-    "stitchkit/files": 38,
+    "stitchkit/files": 40,
     "stitchkit/files/packaging": 15,
     "stitchkit/geo": 11,
     "stitchkit/geo/contract": 2,

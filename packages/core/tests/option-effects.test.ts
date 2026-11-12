@@ -108,6 +108,7 @@ const COVERED: Record<string, string> = {
   EndpointToolView: 'entrypoints/contract.ts',
   ExclusiveLockOptions: 'entrypoints/files.ts',
   WriteFileAtomicOptions: 'entrypoints/files.ts',
+  UnixSocketBinding: 'entrypoints/files.ts',
   SweepAtomicStagingOptions: 'entrypoints/files.ts',
   ManagedFileReadOptions: 'entrypoints/files.ts',
   CanonicalJsonOptions: 'entrypoints/primitives.ts',

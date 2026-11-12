@@ -91,6 +91,43 @@ filesystems or survival of a power loss; the disk state is whatever the filesyst
 `createManagedFileBoundary.write(..., { durable: true })` uses the same publish owner and parent sync;
 its create stays a create, and `replace: true` allows replacement explicitly.
 
+## A unix socket private from birth
+
+When access to a socket is the credential, the socket must never exist with wider rights. `bind(2)`
+accepts no mode — a socket file takes its rights from the process umask — so `chmod` after `listen`
+leaves the umask rights (`0755` under `022`) on disk until it runs, and a process watching the path
+sees them even when `chmodSync` is the very next line. `bindUnixSocket` binds under a umask narrowed
+to exactly `mode` for one synchronous call and restores it before any other JavaScript runs:
+
+```ts
+import { createServer } from 'node:http'
+import { bindUnixSocket } from 'stitchkit/files'
+
+// Bun
+const server = bindUnixSocket({ path: '/run/app/door.sock', mode: 0o600 }, (path) =>
+  Bun.serve({ unix: path, fetch: () => new Response('ok') }),
+)
+
+// Node (and Bun's node:http) — the bind happens inside `listen`; its error arrives on 'error'
+const door = createServer(handler)
+bindUnixSocket({ path: '/run/app/door.sock', mode: 0o600 }, (path) => door.listen(path))
+```
+
+`createServer({ unix: { path, mode } })` from `stitchkit/server` binds through the same function.
+
+- The path must be free: whatever stands there after the call was created by it. Remove a stale
+  socket first (`createServer` probes and reclaims one); an existing file is refused before anything
+  binds.
+- After the call the path must be a socket with exactly `mode`, or the call throws. A bind that
+  failed (Node and Bun report a `listen` error asynchronously), one that binds later than the call,
+  and a directory whose default ACL — not the umask — decides the rights all end here; a socket born
+  with other rights is removed first, so no client reaches it by path. The listener your `bind`
+  started is yours to stop.
+- The umask is process-wide. A file another thread creates during the call is born at most as
+  permissive as the socket — narrower, never wider. Work that needs the normal umask, a child
+  process above all, runs before the call, not inside `bind`. A Node worker thread cannot set the
+  umask and gets that error.
+
 ## Strict reads
 
 ```ts

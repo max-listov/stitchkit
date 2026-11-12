@@ -1,5 +1,6 @@
 /** Bun-owned server adapter and its concrete public types. */
-import { chmodSync, statSync, unlinkSync } from 'node:fs';
+import { statSync, unlinkSync } from 'node:fs';
+import { bindUnixSocket } from '../internal/unix-socket';
 import { createHandler } from './create';
 import { createProxyOrigin, type ProxyOriginConfig } from './proxy-origin';
 import {
@@ -34,10 +35,11 @@ export type ServerPassthrough = Omit<
 >;
 
 /**
- * Unix domain socket listener. The plain-string form binds the path as-is;
- * the object form additionally tightens the socket file mode after listen —
- * `mode: 0o600` is the right choice when access to the socket IS the
- * credential (a local daemon whose only auth is filesystem permission).
+ * Unix domain socket listener. The plain-string form binds the path under the
+ * process umask; the object form binds it with exactly `mode` from birth
+ * (`bindUnixSocket` from `stitchkit/files`) — `mode: 0o600` is the right choice
+ * when access to the socket IS the credential (a local daemon whose only auth
+ * is filesystem permission).
  */
 export type UnixListenConfig = string | { path: string; mode?: number };
 
@@ -145,6 +147,56 @@ function assertUnixListenConfig(config: BunServerConfig, unixPath: string): void
     throw new Error(
       '[stitchkit] createServer: the Socket.IO lifecycle cannot listen on a unix socket — socket.io clients dial TCP only',
     );
+  }
+}
+
+interface UnixServeOptions {
+  bunExtra: ServerPassthrough | undefined;
+  development: BunDevelopmentOptions | undefined;
+  websocket: BunWebSocketHandlers | undefined;
+  fetch: BunFetchHandler;
+}
+
+/** Start `Bun.serve` on a unix socket; with a `mode`, the socket is born with exactly it. */
+function listenOnUnixSocket(
+  unix: { path: string; mode: number | undefined },
+  { bunExtra, development, websocket, fetch }: UnixServeOptions,
+): BunServer {
+  // The probe child runs before any umask is narrowed, so it inherits the normal one.
+  reclaimStaleUnixSocket(unix.path);
+  // The unix branch carries no `port`/`hostname` keys at all — Bun accepts
+  // and silently ignores `port` beside `unix`, which would mask config bugs.
+  // TCP-only passthrough keys are stripped the same way: Bun's unix options
+  // variant types them out, and they are meaningless on a socket file.
+  const { reusePort, ipv6Only, http3, http2, http1, idleTimeout, ...unixExtra } =
+    bunExtra ?? {};
+  void reusePort;
+  void ipv6Only;
+  void http3;
+  void http2;
+  void http1;
+  void idleTimeout;
+  const listen = (path: string): BunServer =>
+    websocket
+      ? Bun.serve({
+          ...unixExtra,
+          ...(development && { development }),
+          unix: path,
+          websocket,
+          fetch,
+        })
+      : Bun.serve({ ...unixExtra, ...(development && { development }), unix: path, fetch });
+  if (unix.mode === undefined) return listen(unix.path);
+  let started: BunServer | undefined;
+  try {
+    return bindUnixSocket({ path: unix.path, mode: unix.mode }, (path) => {
+      started = listen(path);
+      return started;
+    });
+  } catch (error) {
+    // A refused birth leaves a started listener behind; it must not outlive the refusal.
+    void started?.stop(true).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -301,34 +353,10 @@ export function createServer(config: BunServerConfig): BunServerHandle {
   };
 
   if (unixPath !== undefined) {
-    reclaimStaleUnixSocket(unixPath);
-    // The unix branch carries no `port`/`hostname` keys at all — Bun accepts
-    // and silently ignores `port` beside `unix`, which would mask config bugs.
-    // TCP-only passthrough keys are stripped the same way: Bun's unix options
-    // variant types them out, and they are meaningless on a socket file.
-    const { reusePort, ipv6Only, http3, http2, http1, idleTimeout, ...unixExtra } =
-      bunExtra ?? {};
-    void reusePort;
-    void ipv6Only;
-    void http3;
-    void http2;
-    void http1;
-    void idleTimeout;
-    runtime = trackedWebSocket
-      ? Bun.serve({
-          ...unixExtra,
-          ...(development && { development }),
-          unix: unixPath,
-          websocket: trackedWebSocket,
-          fetch,
-        })
-      : Bun.serve({
-          ...unixExtra,
-          ...(development && { development }),
-          unix: unixPath,
-          fetch,
-        });
-    if (unixMode !== undefined) chmodSync(unixPath, unixMode);
+    runtime = listenOnUnixSocket(
+      { path: unixPath, mode: unixMode },
+      { bunExtra, development, websocket: trackedWebSocket, fetch },
+    );
   } else {
     runtime = trackedWebSocket
       ? Bun.serve({
