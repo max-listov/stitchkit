@@ -120,10 +120,13 @@ try {
   ]) {
     assert.equal(result.ok, true, lane);
     // Surviving the 1 s idle timer is the claim: the reply comes at 12 s. The
-    // ceiling only refuses a hang, so it leaves room for a loaded runner
+    // server's timer runs in another process and a macOS runner fires it a
+    // millisecond early (11999 ms measured), so the floor sits a second below
+    // the reply — still eleven idle periods past the timer it must survive.
+    // The ceiling only refuses a hang, so it leaves room for a loaded runner
     // compiling and starting three binaries side by side.
     assert.ok(
-      result.elapsedMs >= 12_000 && result.elapsedMs < 30_000,
+      result.elapsedMs >= 11_000 && result.elapsedMs < 30_000,
       `${lane} settled after ${result.elapsedMs} ms`,
     );
     assert.equal(seen.get(`/${lane}/slow`), 1);
