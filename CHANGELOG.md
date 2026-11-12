@@ -15,6 +15,22 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/http`, `stitchkit` — **a contract client takes arguments once: `bound`.**
+  `createClient(contract, http, { bound: { slug } })` returns methods without `slug`: the key
+  leaves every method's arguments in the type, and an operation whose every argument is bound is
+  called with none (`client.session()`, `client.session.withOptions(options)`). The value travels
+  where the caller's argument would — a path parameter, a key `pathPrefix` consumes, the query of
+  a `GET` / `DELETE`, a body or multipart field — and reaches only the endpoints that declare the
+  key, so nothing is added to a query or body that did not name it. An application with one fixed
+  value per client no longer wraps every operation and repeats its input types. The same option
+  works in `createClients`, `createScopedClients`, `createUrlBuilder`, `createUrlBuilders` and
+  `createScopedUrlBuilders`. `ScopedHttpClient`, `ScopedUrlBuilder`, `ScopedEndpointFn` and
+  `ScopedUrlFn` gain an optional third type parameter naming the bound keys, and
+  `ContractClientConfig` a second one for the bound object.
+  [guide](docs/guide/client.md#bound-arguments)
+
 ## [0.123.1] - 2026-11-12
 
 ### Fixed

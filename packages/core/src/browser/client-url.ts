@@ -158,7 +158,8 @@ function compileSegmentTest(
   return (actual) => expression.test(actual);
 }
 
-function extractParamNames(path: string): string[] {
+/** The names a route template takes from its arguments: `:name` segments and a trailing wildcard. */
+export function routeParamNames(path: string): string[] {
   const matches = path.match(/:(\w+)/g);
   const names = matches ? matches.map((match) => match.slice(1)) : [];
   const wildcard = parseTrailingWildcard(path);
@@ -195,7 +196,7 @@ function stripConsumedArgs(
   scopeKeys: readonly string[],
 ): Record<string, unknown> {
   const consumed = new Set(scopeKeys);
-  for (const name of extractParamNames(path)) consumed.add(name);
+  for (const name of routeParamNames(path)) consumed.add(name);
 
   const remaining: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(args)) {

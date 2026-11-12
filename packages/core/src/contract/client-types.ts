@@ -198,14 +198,37 @@ type ExposesHttp<Endpoint> = Endpoint extends unknown
 // every method's args even though they are not in the endpoint schemas. `Extra`
 // is `{ [K in consumed]: string }`, or `unknown` for a plain client (so
 // `EndpointArgs<E> & unknown = EndpointArgs<E>` — identical to `EndpointFn`).
-type ArgsWith<E, Extra> = EndpointArgs<E> & Extra;
+//
+// `Bound` names the arguments the client was given once (`bound` in its config): they leave every
+// method's args, and a method whose every argument is bound takes none. The omit distributes, so
+// an input that is a union keeps its variants.
+type WithoutBound<Args, Bound extends PropertyKey> = [Bound] extends [never]
+  ? Args
+  : Args extends unknown
+    ? Omit<Args, Bound>
+    : never;
 
-export type ScopedEndpointFn<E, Extra> = [keyof ArgsWith<E, Extra>] extends [never]
+type ArgsWith<E, Extra, Bound extends PropertyKey> = WithoutBound<
+  EndpointArgs<E> & Extra,
+  Bound
+>;
+
+export type ScopedEndpointFn<E, Extra, Bound extends PropertyKey = never> = [
+  keyof ArgsWith<E, Extra, Bound>,
+] extends [never]
   ? ClientEndpointWithoutArgs<EndpointOutput<E>>
-  : ClientEndpointWithArgs<ArgsWith<E, Extra>, EndpointOutput<E>>;
+  : ClientEndpointWithArgs<ArgsWith<E, Extra, Bound>, EndpointOutput<E>>;
 
-export type ScopedHttpClient<C extends Record<string, EndpointDef>, Extra> = {
-  [K in keyof C as ExposesHttp<C[K]> extends true ? K : never]: ScopedEndpointFn<C[K], Extra>;
+export type ScopedHttpClient<
+  C extends Record<string, EndpointDef>,
+  Extra,
+  Bound extends PropertyKey = never,
+> = {
+  [K in keyof C as ExposesHttp<C[K]> extends true ? K : never]: ScopedEndpointFn<
+    C[K],
+    Extra,
+    Bound
+  >;
 };
 
 // A plain client is the scoped client with no extra keys (`unknown`), so
@@ -220,14 +243,27 @@ type IsUrlBuildable<E> = ExposesHttp<E>;
 type EndpointUrlArgs<E> = EndpointParamsInput<E> &
   (E extends { method: 'GET' | 'DELETE' } ? InferInput<Prop<E, 'input'>> : unknown);
 
-type UrlArgsWith<E, Extra> = EndpointUrlArgs<E> & Extra;
+type UrlArgsWith<E, Extra, Bound extends PropertyKey> = WithoutBound<
+  EndpointUrlArgs<E> & Extra,
+  Bound
+>;
 
-export type ScopedUrlFn<E, Extra> = [keyof UrlArgsWith<E, Extra>] extends [never]
+export type ScopedUrlFn<E, Extra, Bound extends PropertyKey = never> = [
+  keyof UrlArgsWith<E, Extra, Bound>,
+] extends [never]
   ? () => string
-  : (args: UrlArgsWith<E, Extra>) => string;
+  : (args: UrlArgsWith<E, Extra, Bound>) => string;
 
-export type ScopedUrlBuilder<C extends Record<string, EndpointDef>, Extra> = {
-  [K in keyof C as IsUrlBuildable<C[K]> extends true ? K : never]: ScopedUrlFn<C[K], Extra>;
+export type ScopedUrlBuilder<
+  C extends Record<string, EndpointDef>,
+  Extra,
+  Bound extends PropertyKey = never,
+> = {
+  [K in keyof C as IsUrlBuildable<C[K]> extends true ? K : never]: ScopedUrlFn<
+    C[K],
+    Extra,
+    Bound
+  >;
 };
 
 export type TypedUrlBuilder<C extends Record<string, EndpointDef>> = ScopedUrlBuilder<

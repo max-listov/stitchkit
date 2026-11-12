@@ -7,7 +7,7 @@ import type {
 } from '../contract/client-types';
 import type { ContractDef, EndpointDef } from '../contract/define';
 import { isRecord, mapObject, typedEntries } from '../internal/typed';
-import { endpointHasArguments } from './client-arguments';
+import { type BoundEndpointArguments, boundEndpointArguments } from './client-bound';
 import {
   type ClientRequestExecutor,
   createFetchExecutor,
@@ -47,9 +47,19 @@ export type PathPrefixArgs<K extends string> = { [P in K]: string };
  * and they become required, typed args on every method of the returned client —
  * no hand-written scoped-client wrapper.
  */
-export interface ContractClientConfig<K extends string = never> {
+export interface ContractClientConfig<
+  K extends string = never,
+  B extends Record<string, unknown> = Record<never, never>,
+> {
   pathPrefix?: string | ((args: PathPrefixArgs<K>) => string);
   stripPrefixKeys?: readonly K[];
+  /**
+   * Arguments given once for every call, e.g. `{ tenantId }`. A bound key leaves the args of
+   * every method, and a method whose every argument is bound is called with none. The value goes
+   * where the caller's argument would: a path parameter, a prefix key, the query or the body.
+   * An endpoint that does not declare the key does not receive it.
+   */
+  bound?: B;
 }
 
 /**
@@ -94,11 +104,12 @@ export function contractEndpointMatchers<
 export function createClient<
   T extends Record<string, EndpointDef>,
   const K extends string = never,
+  const B extends Record<string, unknown> = Record<never, never>,
 >(
   contract: ContractDef<T, string>,
   configOrClient: ClientConfig | HttpAdapter,
-  contractConfig?: ContractClientConfig<K>,
-): ScopedHttpClient<T, ScopedKeys<K>> {
+  contractConfig?: ContractClientConfig<K, B>,
+): ScopedHttpClient<T, ScopedKeys<K>, keyof B> {
   const client: Partial<TypedHttpClient<T>> = {};
   const makeExecutor = isHttpAdapter(configOrClient)
     ? (endpoint: EndpointDef) =>
@@ -115,12 +126,12 @@ export function createClient<
       createEndpointMethod(
         endpoint,
         namedOperation(makeExecutor(endpoint), `${contract.meta.prefix}.${String(key)}`),
-        contractConfig,
+        boundEndpointArguments(endpoint, contract.meta.prefix, contractConfig),
       ),
     );
   }
 
-  return client as unknown as ScopedHttpClient<T, ScopedKeys<K>>;
+  return client as unknown as ScopedHttpClient<T, ScopedKeys<K>, keyof B>;
 }
 
 /**
@@ -131,13 +142,14 @@ export function createClient<
 export function createClients<
   T extends Record<string, ContractDef<Record<string, EndpointDef>, string>>,
   const K extends string = never,
+  const B extends Record<string, unknown> = Record<never, never>,
 >(
   contracts: T,
   configOrClient: ClientConfig | HttpAdapter,
-  contractConfig?: ContractClientConfig<K>,
-): { [P in keyof T]: ScopedHttpClient<T[P]['endpoints'], ScopedKeys<K>> } {
+  contractConfig?: ContractClientConfig<K, B>,
+): { [P in keyof T]: ScopedHttpClient<T[P]['endpoints'], ScopedKeys<K>, keyof B> } {
   type BatchClients = {
-    [P in keyof T]: ScopedHttpClient<T[P]['endpoints'], ScopedKeys<K>>;
+    [P in keyof T]: ScopedHttpClient<T[P]['endpoints'], ScopedKeys<K>, keyof B>;
   };
   return mapObject<T, BatchClients>(contracts, (_key, contract) =>
     createClient(contract, configOrClient, contractConfig),
@@ -148,7 +160,7 @@ export type ClientContract = ContractDef<Record<string, EndpointDef>, string>;
 export type ClientRegistryValue = ClientContract | readonly ClientContract[];
 
 export type ScopeClientConfigs<TScope extends string> = {
-  [S in TScope]: ContractClientConfig<string>;
+  [S in TScope]: ContractClientConfig<string, Record<string, unknown>>;
 };
 
 type RegistryContract<R> = R extends readonly (infer C)[] ? C : R;
@@ -157,10 +169,11 @@ export type RegistryScope<R> =
 type PrefixKeys<C> = C extends { stripPrefixKeys: readonly (infer K extends string)[] }
   ? K
   : never;
+type BoundKeys<C> = C extends { bound: infer B } ? keyof B : never;
 type ClientForContract<C, Configs> =
   C extends ContractDef<infer E, infer S>
     ? S extends keyof Configs
-      ? ScopedHttpClient<E, ScopedKeys<PrefixKeys<Configs[S]>>>
+      ? ScopedHttpClient<E, ScopedKeys<PrefixKeys<Configs[S]>>, BoundKeys<Configs[S]>>
       : never
     : never;
 type UnionToIntersection<U> = (U extends unknown ? (value: U) => void : never) extends (
@@ -174,7 +187,7 @@ type ScopedNamespace<R, Configs> = UnionToIntersection<
 type UrlBuilderForContract<C, Configs> =
   C extends ContractDef<infer E, infer S>
     ? S extends keyof Configs
-      ? ScopedUrlBuilder<E, ScopedKeys<PrefixKeys<Configs[S]>>>
+      ? ScopedUrlBuilder<E, ScopedKeys<PrefixKeys<Configs[S]>>, BoundKeys<Configs[S]>>
       : never
     : never;
 type ScopedUrlNamespace<R, Configs> = UnionToIntersection<
@@ -194,9 +207,12 @@ export type ScopedUrlBuilderRegistry<
 
 function buildScopedRegistry<Output>(
   contracts: Record<string, ClientRegistryValue>,
-  scopeConfigs: Record<string, ContractClientConfig<string>>,
+  scopeConfigs: Record<string, ContractClientConfig<string, Record<string, unknown>>>,
   surfaceName: string,
-  build: (contract: ClientContract, config: ContractClientConfig<string>) => object,
+  build: (
+    contract: ClientContract,
+    config: ContractClientConfig<string, Record<string, unknown>>,
+  ) => object,
 ): Output {
   const registry: Record<string, object> = {};
   for (const [namespace, value] of Object.entries(contracts)) {
@@ -252,32 +268,31 @@ function setClientMethod(target: object, key: PropertyKey, method: unknown): voi
   (target as Record<PropertyKey, unknown>)[key] = method;
 }
 
-function createEndpointMethod<K extends string>(
+function createEndpointMethod(
   endpoint: EndpointDef,
   execute: ClientRequestExecutor,
-  contractConfig?: ContractClientConfig<K>,
+  bound: BoundEndpointArguments,
 ): unknown {
-  const hasScopedArguments = (contractConfig?.stripPrefixKeys?.length ?? 0) > 0;
-  if (endpointHasArguments(endpoint) || hasScopedArguments) {
-    const method = (requestArgs: unknown) =>
-      settle(execute, readClientRequestArgs(requestArgs), undefined);
+  if (!bound.complete) {
+    // A bound value wins over the same key in the call: the type does not offer that key.
+    const readArgs = (requestArgs: unknown): Record<string, unknown> => ({
+      ...readClientRequestArgs(requestArgs),
+      ...bound.values,
+    });
+    const method = (requestArgs: unknown) => settle(execute, readArgs(requestArgs), undefined);
     return Object.assign(method, {
       withOptions: (...args: unknown[]) => {
         refuseExtraWithOptionsArguments(endpoint, args.length, 2);
-        return settle(
-          execute,
-          readClientRequestArgs(args[0]),
-          readClientRequestOptions(endpoint, args[1]),
-        );
+        return settle(execute, readArgs(args[0]), readClientRequestOptions(endpoint, args[1]));
       },
     });
   }
 
-  const method = () => settle(execute, {}, undefined);
+  const method = () => settle(execute, { ...bound.values }, undefined);
   return Object.assign(method, {
     withOptions: (...args: unknown[]) => {
       refuseExtraWithOptionsArguments(endpoint, args.length, 1);
-      return settle(execute, {}, readClientRequestOptions(endpoint, args[0]));
+      return settle(execute, { ...bound.values }, readClientRequestOptions(endpoint, args[0]));
     },
   });
 }
@@ -409,19 +424,26 @@ export interface UrlBuilderConfig {
 export function createUrlBuilder<
   T extends Record<string, EndpointDef>,
   const K extends string = never,
+  const B extends Record<string, unknown> = Record<never, never>,
 >(
   contract: ContractDef<T, string>,
   source: UrlBuilderConfig,
-  contractConfig?: ContractClientConfig<K>,
-): ScopedUrlBuilder<T, ScopedKeys<K>> {
+  contractConfig?: ContractClientConfig<K, B>,
+): ScopedUrlBuilder<T, ScopedKeys<K>, keyof B> {
   const builder: Partial<TypedUrlBuilder<T>> = {};
   for (const [key, endpoint] of typedEntries(contract.endpoints)) {
     if (endpoint.expose && !endpoint.expose.includes('HTTP')) continue;
+    const bound = boundEndpointArguments(
+      endpoint,
+      contract.meta.prefix,
+      contractConfig,
+      'url',
+    );
     setClientMethod(builder, key, (args?: Record<string, unknown>) => {
       const plan = planClientRequest(
         endpoint,
         contract.meta.prefix,
-        args ?? {},
+        { ...args, ...bound.values },
         contractConfig,
       );
       if (
@@ -437,19 +459,20 @@ export function createUrlBuilder<
       return joinClientBaseUrl(source.baseUrl, plan.relativeUrl);
     });
   }
-  return builder as unknown as ScopedUrlBuilder<T, ScopedKeys<K>>;
+  return builder as unknown as ScopedUrlBuilder<T, ScopedKeys<K>, keyof B>;
 }
 
 export function createUrlBuilders<
   T extends Record<string, ContractDef<Record<string, EndpointDef>, string>>,
   const K extends string = never,
+  const B extends Record<string, unknown> = Record<never, never>,
 >(
   contracts: T,
   source: UrlBuilderConfig,
-  contractConfig?: ContractClientConfig<K>,
-): { [P in keyof T]: ScopedUrlBuilder<T[P]['endpoints'], ScopedKeys<K>> } {
+  contractConfig?: ContractClientConfig<K, B>,
+): { [P in keyof T]: ScopedUrlBuilder<T[P]['endpoints'], ScopedKeys<K>, keyof B> } {
   type BatchBuilders = {
-    [P in keyof T]: ScopedUrlBuilder<T[P]['endpoints'], ScopedKeys<K>>;
+    [P in keyof T]: ScopedUrlBuilder<T[P]['endpoints'], ScopedKeys<K>, keyof B>;
   };
   return mapObject<T, BatchBuilders>(contracts, (_key, contract) =>
     createUrlBuilder(contract, source, contractConfig),

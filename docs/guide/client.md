@@ -859,6 +859,8 @@ interface ContractClientConfig {
    *  they are not also sent there (the endpoint's own path `:params` are
    *  stripped automatically; list any *extra* keys here). */
   stripPrefixKeys?: string[]
+  /** Arguments given once for every call — see "Bound arguments" below. */
+  bound?: Record<string, unknown>
 }
 ```
 
@@ -878,6 +880,36 @@ widgets.create({ tenantId: 't_123', name: 'A' }) // POST /tenants/t_123/widgets 
 List it in `stripPrefixKeys` so it lands in the URL **and is removed from the
 query/body** — otherwise it would be sent twice. Endpoint path `:params` are
 stripped for you; only extra prefix keys need listing.
+
+### Bound arguments
+
+A client that always calls with the same value — a site that knows its `slug` for the whole page
+load, a tenant-scoped service — states the value once in `bound`. The key leaves the arguments of
+every method, in the type and at the call, and a method whose every argument is bound is called
+with none:
+
+```ts
+// site contract: GET /:slug/session, GET /:slug/courses/:courseSlug, POST /:slug/orders { item }
+const site = createClient(siteContract, http, { bound: { slug } })
+
+site.session()                  // GET  /api/site/acme/session
+site.course({ courseSlug })     // GET  /api/site/acme/courses/intro
+site.order({ item: 'book' })    // POST /api/site/acme/orders   body: { item }
+site.session.withOptions({ signal })
+site.course({ slug, courseSlug }) // type error: `slug` is not an argument any more
+```
+
+- The value travels where the caller's argument would: a path parameter, a key `pathPrefix`
+  consumes, a query parameter of a `GET` / `DELETE`, a body or multipart field.
+- An endpoint receives a bound key only if it declares it — as a path parameter, a prefix key, or a
+  field of its `params` / `input` object schema. A bound `lang` reaches the operations whose input
+  has `lang` and is not added to the others.
+- A bound value wins over the same key passed by an untyped caller.
+- `createClients`, `createScopedClients` (per scope), `createUrlBuilder`, `createUrlBuilders` and
+  `createScopedUrlBuilders` take the same option. A URL builder binds what a URL carries: path and
+  prefix keys, and the input of a `GET` / `DELETE`.
+- Write the object in place (`{ bound: { slug } }`): the keys are read from its type, so a value
+  typed `Record<string, string>` names no key and binds nothing in the types.
 
 ## React data layer
 
