@@ -10,6 +10,7 @@
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { platform } from 'node:os';
+import { type CommandLauncher, type LaunchedCommand, launchWithBun } from './bun-command';
 import { isRecord } from './typed';
 
 /**
@@ -42,21 +43,82 @@ async function firstReadableLine(paths: readonly string[]): Promise<string | nul
 }
 
 /**
- * A bounded command's stdout. A function, not `promisify(execFile)` at module scope: a module of
- * this graph may be loaded where `node:util` is an empty shim (a browser bundle that reaches the
- * server leaf for an error class), and loading it must not run Node.
+ * Off Bun the command goes through `node:child_process`: the lock is imported by applications
+ * that run on Node. Called inside a function, never at module scope: a module of this graph may
+ * be loaded where the Node built-ins are empty shims (a browser bundle that reaches the server
+ * leaf for an error class), and loading it must not run Node.
  */
-function run(
-  file: string,
-  args: readonly string[],
-  options: { timeout: number; maxBuffer: number },
-): Promise<{ stdout: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { ...options, encoding: 'utf8' }, (error, stdout) => {
+const launchWithNode: CommandLauncher = (file, args, maxBuffer) => {
+  let stop = (): void => undefined;
+  const stdout = new Promise<string>((resolve, reject) => {
+    const child = execFile(file, args, { maxBuffer, encoding: 'utf8' }, (error, text) => {
       if (error) reject(error);
-      else resolve({ stdout });
+      else resolve(text);
     });
+    stop = () => {
+      child.kill('SIGKILL');
+    };
   });
+  return { stdout, stop: () => stop() };
+};
+
+interface CommandLimits {
+  readonly timeout: number;
+  readonly maxBuffer: number;
+  readonly signal?: AbortSignal;
+  readonly launch?: CommandLauncher;
+}
+
+/**
+ * A bounded command's stdout. The deadline and the caller's signal end the wait themselves,
+ * whether or not the command's end is ever reported: the wait does not depend on the child.
+ */
+function run(file: string, args: readonly string[], limits: CommandLimits): Promise<string> {
+  const { timeout, maxBuffer, signal } = limits;
+  const launch = limits.launch ?? launchWithBun ?? launchWithNode;
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    let command: LaunchedCommand;
+    try {
+      command = launch(file, args, maxBuffer);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const abandon = (reason: unknown): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      command.stop();
+      reject(reason);
+    };
+    const onAbort = (): void => abandon(signal?.reason);
+    const timer = setTimeout(
+      () => abandon(new Error(`${file} did not answer within ${timeout} ms`)),
+      timeout,
+    );
+    signal?.addEventListener('abort', onAbort, { once: true });
+    command.stdout.then(
+      (text) => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        resolve(text);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** @internal What the tests replace in a command: who starts it and how long it may take. */
+export interface CommandSeam {
+  readonly launch?: CommandLauncher;
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -71,38 +133,65 @@ export function parsePlatformUuid(dump: string): string | null {
 }
 
 /**
- * @internal `command` is a seam for the tests. macOS keeps no machine-id file, so the I/O cannot be
- * removed — but which executable answers can be, and that makes the branch provable off darwin.
+ * @internal `command` and `seam` are for the tests. macOS keeps no machine-id file, so the I/O
+ * cannot be removed — but which executable answers can be, and that makes the branch provable off
+ * darwin.
  */
-export async function readDarwinPlatformUuid(command = 'ioreg'): Promise<string | null> {
+export async function readDarwinPlatformUuid(
+  command = 'ioreg',
+  signal?: AbortSignal,
+  seam: CommandSeam = {},
+): Promise<string | null> {
   // Spawned at most once per process and only on darwin, and bounded: a lock acquisition must not
-  // hang on a registry read. `node:child_process` rather than `Bun.spawn` — this layer is
-  // fetch-clean and must not reach for a runtime global, and the lock is imported by applications
-  // that do not run on Bun at all.
+  // hang on a registry read.
   try {
-    const { stdout } = await run(command, ['-rd1', '-c', 'IOPlatformExpertDevice'], {
-      timeout: 2_000,
+    const stdout = await run(command, ['-rd1', '-c', 'IOPlatformExpertDevice'], {
+      timeout: seam.timeoutMs ?? 2_000,
       maxBuffer: 1 << 20,
+      ...(signal !== undefined && { signal }),
+      ...(seam.launch !== undefined && { launch: seam.launch }),
     });
     return parsePlatformUuid(stdout);
   } catch {
-    // Absent, unreadable, over budget or past the deadline: all of them mean this machine did not
-    // answer, which `attribute` already handles as `unattributable` rather than as a wrong answer.
+    // Absent, unreadable, over budget, past the deadline or cancelled: all of them mean this
+    // machine did not answer, which `attribute` already handles as `unattributable` rather than
+    // as a wrong answer.
     return null;
   }
 }
 
-export async function machineIdentity(declared: string | undefined): Promise<string | null> {
+/**
+ * @internal What an undeclared identity is read from. The tests replace `detect` with a read whose
+ * command never reports its end, and `forget` drops the memoized answer between cases.
+ */
+export const identitySource = {
+  detect(signal?: AbortSignal): Promise<string | null> {
+    return platform() === 'darwin'
+      ? readDarwinPlatformUuid('ioreg', signal)
+      : firstReadableLine(['/etc/machine-id', '/var/lib/dbus/machine-id']);
+  },
+  forget(): void {
+    detectedIdentity = undefined;
+  },
+};
+
+/**
+ * A cancelled detection answers `null` and is not remembered: the caller that cancelled is leaving,
+ * and the next one asks the platform again.
+ */
+export async function machineIdentity(
+  declared: string | undefined,
+  signal?: AbortSignal,
+): Promise<string | null> {
   // A declared identity wins: an application on a platform that offers none, or one that knows its
   // own deployment better than the platform does, states it. Detection is memoized because it is a
   // read of an unchanging OS fact, not a policy the caller could want re-evaluated.
   if (declared !== undefined) return declared;
   if (detectedIdentity !== undefined) return detectedIdentity;
-  detectedIdentity =
-    platform() === 'darwin'
-      ? await readDarwinPlatformUuid()
-      : await firstReadableLine(['/etc/machine-id', '/var/lib/dbus/machine-id']);
-  return detectedIdentity;
+  const detected = await identitySource.detect(signal);
+  if (signal?.aborted) return null;
+  detectedIdentity = detected;
+  return detected;
 }
 
 /**
@@ -151,7 +240,7 @@ export async function probeLiveness(
  */
 export async function isZombieProcess(
   pid: number,
-  seam: { procRoot?: string; psCommand?: string } = {},
+  seam: { procRoot?: string; psCommand?: string } & CommandSeam = {},
 ): Promise<boolean> {
   const { procRoot = '/proc', psCommand = 'ps' } = seam;
   try {
@@ -164,9 +253,10 @@ export async function isZombieProcess(
     // No `/proc` — ask `ps`, which answers on darwin and the BSDs.
   }
   try {
-    const { stdout } = await run(psCommand, ['-o', 'state=', '-p', String(pid)], {
-      timeout: 2_000,
+    const stdout = await run(psCommand, ['-o', 'state=', '-p', String(pid)], {
+      timeout: seam.timeoutMs ?? 2_000,
       maxBuffer: 1 << 16,
+      ...(seam.launch !== undefined && { launch: seam.launch }),
     });
     return stdout.trim().startsWith('Z');
   } catch {

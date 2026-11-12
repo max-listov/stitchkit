@@ -67,7 +67,7 @@ export interface ExclusiveLockAttemptOptions {
 export type ExclusiveLockAttempt =
   | { readonly held: HeldExclusiveLock }
   | {
-      /** The `EEXIST` the exclusive create produced. */
+      /** The `EEXIST` the exclusive create produced, or what a cancelled attempt stopped on. */
       readonly error: unknown;
       /** Present when a reclaim was considered. */
       readonly diagnosis?: ExclusiveLockDiagnosis;
@@ -164,7 +164,7 @@ async function sweepStagedLocks(
     const candidate = join(directory, name);
     const state = await readLockFile(candidate, undefined, signal);
     if (!state?.owner) continue;
-    if ((await diagnose(state, machine)).liveness !== 'gone') continue;
+    if ((await diagnose(state, machine, signal)).liveness !== 'gone') continue;
     await unlinkIfSame(
       candidate,
       state.ino,
@@ -203,7 +203,10 @@ async function createOwned(
   options: ExclusiveLockAttemptOptions,
   reclaimed: boolean,
 ): Promise<HeldExclusiveLock> {
-  const identity = await machineIdentity(options.machineIdentity);
+  const identity = await machineIdentity(options.machineIdentity, options.signal);
+  // A cancelled detection says nothing about this machine; a record written from it would
+  // publish an owner without one. Nothing is staged yet, so the attempt ends here.
+  if (options.signal?.aborted) throw options.signal.reason;
   const instance = await readProcessInstance(process.pid);
   const owner: ExclusiveLockOwner = {
     pid: process.pid,
@@ -349,7 +352,7 @@ async function reclaimUnderGuard(
     );
     if (readFailure !== undefined) return { refused: true, cause: readFailure };
     if (state) {
-      const diagnosis = await diagnose(state, options.machineIdentity);
+      const diagnosis = await diagnose(state, options.machineIdentity, options.signal);
       if (options.signal?.aborted) return { refused: true };
       if (!reclaimable(state, diagnosis, options.ownerlessGraceMs))
         return { refused: true, cause: diagnosis.cause };
@@ -363,7 +366,8 @@ async function reclaimUnderGuard(
     // An ordinary acquirer never unlinks, but it may create the file between
     // that unlink and this create; it then holds the lock, and this refuses.
     return await createOwned(path, options, state !== undefined).catch((error: unknown) => {
-      if (isCode(error, 'EEXIST')) return { refused: true, cause: error };
+      if (isCode(error, 'EEXIST') || options.signal?.aborted)
+        return { refused: true, cause: error };
       throw error;
     });
   } finally {
@@ -384,6 +388,8 @@ export async function attemptExclusiveLock(
   try {
     return { held: await createOwned(path, options, false) };
   } catch (error) {
+    // A cancelled attempt is a refusal whatever it stopped on; the caller reads its own signal.
+    if (options.signal?.aborted) return { error };
     if (!isCode(error, 'EEXIST')) throw error;
     if (!options.reclaim) return { error };
     let readFailure: unknown;
@@ -395,7 +401,7 @@ export async function attemptExclusiveLock(
       options.signal,
     );
     const diagnosis = {
-      ...(await diagnose(state, options.machineIdentity)),
+      ...(await diagnose(state, options.machineIdentity, options.signal)),
       ...(readFailure !== undefined && { cause: readFailure }),
     };
     if (options.signal?.aborted) return { error, diagnosis };

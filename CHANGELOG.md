@@ -15,6 +15,20 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/files`, `stitchkit/process`, `stitchkit/application`, `stitchkit/telegram` — **the first exclusive lock of a
+  process no longer waits on a child process whose end is never reported.** On macOS the first
+  acquisition reads the machine identity from `ioreg`, and a liveness probe may ask `ps`. Inside
+  `bun test`, Bun's `node:child_process` can lose a child's end under host load; `execFile` then
+  called back with neither the output nor its own timeout, and `withExclusiveLock` hung without
+  honouring `signal` or `timeoutMs`. Under Bun both commands now start through `Bun.spawn`, and on
+  every runtime the 2 s deadline ends the wait itself, whether or not the child's end arrives. A
+  `signal` that fires during the identity read ends the acquisition with `LOCK_ABORTED`; nothing is
+  published from a read that did not answer, and a cancelled read is asked again by the next
+  acquisition.
+  **Affects:** `stitchkit/files` behaviour; `stitchkit/process` behaviour; `stitchkit/application` behaviour; `stitchkit/telegram` behaviour
+
 ## [0.123.0] - 2026-11-11
 
 ### ⚠️ Breaking changes

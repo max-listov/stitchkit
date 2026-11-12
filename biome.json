@@ -189,7 +189,8 @@
         "packages/core/src/**/*.ts",
         "!packages/core/src/server/bun.ts",
         "!packages/core/src/server/file.ts",
-        "!packages/core/src/process/bun-child.ts"
+        "!packages/core/src/process/bun-child.ts",
+        "!packages/core/src/internal/bun-command.ts"
       ],
       "linter": {
         "rules": {
@@ -198,7 +199,7 @@
               "level": "error",
               "options": {
                 "deniedGlobals": {
-                  "Bun": "Fetch-clean source cannot use the Bun global; keep it in server/bun.ts, server/file.ts or process/bun-child.ts."
+                  "Bun": "Fetch-clean source cannot use the Bun global; keep it in server/bun.ts, server/file.ts, process/bun-child.ts or internal/bun-command.ts."
                 }
               }
             }

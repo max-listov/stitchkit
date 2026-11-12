@@ -99,11 +99,12 @@ export interface RecordedLock extends FileIdentity {
 export async function diagnose(
   lock: RecordedLock | undefined,
   declaredIdentity: string | undefined,
+  signal?: AbortSignal,
 ): Promise<ExclusiveLockDiagnosis> {
   const owner = lock?.owner;
   if (!lock || !owner)
     return { attribution: 'unattributable', liveness: 'not-probed', owner: null };
-  const attribution = attribute(owner, await machineIdentity(declaredIdentity));
+  const attribution = attribute(owner, await machineIdentity(declaredIdentity, signal));
   if (attribution !== 'this-machine') return { attribution, liveness: 'not-probed', owner };
   const evidence = await probeProcessOwner(owner.pid, owner.process);
   if (
