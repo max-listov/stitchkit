@@ -2144,6 +2144,7 @@ injected grammY bot. → ADR 0143, ADR 0201, ADR 0274 — [guide](../guide/teleg
 | `telegramOperatorSender` / `TelegramOperatorSenderConfig` | function / _type_ | the standard `send`: `sendMessage` into the chat and topic, plain text unless `parseMode`; with `'HTML'` the markup is cleaned and cut by what it shows, so the channel's cut never leaves a tag open |
 | `createTelegramLocalFiles` | function | files the local Bot API server wrote under `<root>/<token>/`: `resolve(file_path)` and `remove(file_path)` only inside the bot's directory, judged on real paths so a link is judged by where it leads; `check()` for readiness. Recommended root variable: `BOT_API_FILES_ROOT` |
 | `TelegramLocalFilesConfig` / `TelegramLocalFiles` / `TelegramLocalFilesCheck` / `TelegramLocalFileError` / `TelegramLocalFileRefusal` | _type_ / class | `root`, `token`; refusals `root-not-absolute` / `bot-directory-unavailable` / `outside-bot-directory` / `missing` / `not-a-file`, never carrying the path or the token |
+| `readTelegramVoiceWaveform` / `ReadTelegramVoiceWaveformOptions` | function / _type_ | the packed waveform `sendVoice` takes, from a mono 16-bit little-endian PCM side copy of the recording, read in chunks; `signal` stops it between chunks; an empty or cut file is refused with `TelegramVoiceWaveformError` (`stitchkit/telegram/voice`), never named in it — [guide](../guide/telegram.md#voice-waveforms) |
 | `callTelegramBotApi` / `TelegramBotApiCall` / `TelegramBotApiError` | function / _type_ / class | one Bot API method over `fetch`; a refusal keeps `error_code`, `description` and `parameters` for the classifier, and no error names the URL |
 | `TELEGRAM_BOT_TOKEN_PATTERN` / `redactTelegramBotToken` | constant / function | the secret half of a bot token — the bot's id before the colon is not matched; `redact` and every logger on it mask it already, `redactTelegramBotToken(text)` masks every token in a string to `123456:[redacted]` |
 | `claimTelegramWebhook` | function | set the webhook only where it already points here, or by naming the host it is taken from; confirm Telegram holds it; pending updates kept unless `dropPendingUpdates` |
@@ -2197,6 +2198,22 @@ parse serves a server send and a browser preview. → ADR 0213 —
 | `checkTelegramHtml` / `TelegramHtmlCheck` / `TelegramHtmlProblem` | function / _type_ | the first thing Telegram would refuse, unrepaired — `bare-character` / `unsupported-tag` / `unmatched-end-tag` / `unclosed-tag` — and the visible text before it |
 | `escapeTelegramHtml` | function | `&`, `<`, `>` and `"` escaped for Telegram's HTML |
 | `TELEGRAM_TEXT_LIMIT` / `TELEGRAM_CAPTION_LIMIT` | constant | 4096 and 1024, counted after the markup is parsed, in UTF-16 code units |
+
+---
+
+## `stitchkit/telegram/voice`
+
+The waveform of a voice message — the bars under its play button — as one format for the server
+that packs it and the page that draws it. No peer, no file, no network. →
+[guide](../guide/telegram.md#voice-waveforms)
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `packTelegramVoiceWaveform` | function | the 100 loudest absolute samples of 100 equal parts (`0`–`32768`) into the base64 of 63 bytes `sendVoice` takes: 5-bit levels packed little-endian, scaled like Telegram Desktop by 1.8 × the mean peak, never below a floor of 2500, so silence stays zero and a quiet recording stays low |
+| `unpackTelegramVoiceWaveform` | function | the levels of a waveform, `0`–`31`, one per 5 bits: 100 from a packed one, as many as it holds from one Telegram drew |
+| `readTelegramVoiceWaveformSupport` / `TelegramVoiceWaveformSupport` | function / _type_ | from a `getMe` result of any shape: `supported` only when the server declares `supports_voice_waveform` and `voice_waveform_version` 1; `version` as declared, `null` when none (the public Bot API) |
+| `TelegramVoiceWaveformError` / `TelegramVoiceWaveformRefusal` | class / _type_ | `peak-count` / `peak-value` / `malformed` / `empty-pcm` / `truncated-pcm` |
+| `TELEGRAM_VOICE_WAVEFORM_SAMPLES` / `TELEGRAM_VOICE_WAVEFORM_MAX_LEVEL` / `TELEGRAM_VOICE_WAVEFORM_VERSION` | constant | 100 parts, levels up to 31, field version 1 |
 
 ---
 

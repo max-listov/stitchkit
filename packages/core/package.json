@@ -213,6 +213,10 @@
       "types": "./dist/entrypoints/telegram/html.d.ts",
       "import": "./dist/entrypoints/telegram/html.js"
     },
+    "./telegram/voice": {
+      "types": "./dist/entrypoints/telegram/voice.d.ts",
+      "import": "./dist/entrypoints/telegram/voice.js"
+    },
     "./telegram/screens": {
       "types": "./dist/entrypoints/telegram/screens.d.ts",
       "import": "./dist/entrypoints/telegram/screens.js"

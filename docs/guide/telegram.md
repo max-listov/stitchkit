@@ -16,6 +16,7 @@ way: [ADR 0201](../decisions/0201-a-telegram-bot-is-assembled-from-primitives.md
 | the operator's chat: product events, apart from the journal | `createTelegramOperatorChannel` |
 | a broadcast that survives crashes, deploys and Ctrl-C | `runTelegramBroadcast` |
 | a file the local Bot API server wrote to disk | `createTelegramLocalFiles` |
+| the waveform of a voice message: packed for `sendVoice`, drawn in a page | `readTelegramVoiceWaveform`, `stitchkit/telegram/voice` — [below](#voice-waveforms) |
 | why a send was refused | `classifyTelegramSendFailure` — [auth and errors](auth-and-errors.md#telegram-mini-apps) |
 | Mini App `initData` | `verifyTelegramInitData` — [auth and errors](auth-and-errors.md#telegram-mini-apps) |
 | one Bot API call without a bot library | `callTelegramBotApi` |
@@ -606,3 +607,50 @@ server with `--local`) both resolve. A refusal carries a reason
 answers whether the directory is there to read and delete from; a resource that
 throws on `{ ready: false }` in `start` keeps the bot from answering before it
 can read its media.
+
+## Voice waveforms
+
+A voice message carries its waveform: the bars under the play button, 100
+levels of 5 bits. The public Bot API takes no waveform in `sendVoice`, so
+Telegram draws its own. A local Bot API server that takes one says so in
+`getMe` with `supports_voice_waveform: true` and `voice_waveform_version: 1`.
+
+The waveform is computed from a decoded side copy of the recording. The file
+being sent stays byte for byte what it was:
+
+```ts
+import { readTelegramVoiceWaveform } from 'stitchkit/telegram'
+import { readTelegramVoiceWaveformSupport } from 'stitchkit/telegram/voice'
+
+// ffmpeg -nostdin -i voice.ogg -map 0:a:0 -ac 1 -ar 8000 -f s16le wave.pcm
+const waveform = await readTelegramVoiceWaveform(pcmPath, { signal })
+
+if (!readTelegramVoiceWaveformSupport(await bot.api.getMe()).supported) {
+  throw new Error('this Bot API server draws its own waveform')
+}
+const options = { duration, waveform } satisfies Parameters<typeof bot.api.sendVoice>[2] & {
+  waveform: string
+}
+await bot.api.sendVoice(chatId, new InputFile(oggPath), options)
+```
+
+The levels follow Telegram Desktop. Each of the 100 parts keeps its loudest
+sample, and the scale is 1.8 times the mean of those peaks, never below 2500
+of 16-bit PCM. A loud passage does not flatten the quiet ones to nothing, and
+a quiet recording is not stretched to look loud. Silence stays at zero. The
+PCM is read in chunks, so a long recording is never held in memory; at 8 kHz,
+six hours of audio is under 350 MB of PCM. A file with no sample or one cut
+inside a sample is refused with `TelegramVoiceWaveformError` (`empty-pcm`,
+`truncated-pcm`), and the waveform is never made up.
+
+Whether a server that does not declare support still gets the voice is the
+bot's decision. It can refuse to send, or send without the field and let
+Telegram draw the bars. `readTelegramVoiceWaveformSupport` reads any answer:
+`supported` means version 1, and `version` is what the server declared, or
+`null` when it declared nothing.
+
+`stitchkit/telegram/voice` has no peer and touches no file, so a page drawing
+the bars reads the same format: `unpackTelegramVoiceWaveform(waveform)` gives
+the levels `0`–`31`, 100 for a waveform packed here and as many as it holds
+for one Telegram drew itself. `packTelegramVoiceWaveform(peaks)` packs 100
+peaks already found by other means.

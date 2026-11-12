@@ -120,6 +120,10 @@ export {
 } from '../telegram/update-store-sqlite';
 export { parseTelegramUser, type TelegramUser } from '../telegram/user';
 export {
+  type ReadTelegramVoiceWaveformOptions,
+  readTelegramVoiceWaveform,
+} from '../telegram/voice-waveform-pcm';
+export {
   type ClaimTelegramWebhookConfig,
   checkTelegramWebhook,
   claimTelegramWebhook,

@@ -165,7 +165,7 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
   [
     'telegram.md',
     'Telegram bots',
-    'stitchkit/telegram — the journal, the operator channel, resumable broadcasts, local Bot API files, webhook ownership and durable update intake, message markup (stitchkit/telegram/html); the bot as application resources',
+    'stitchkit/telegram — the journal, the operator channel, resumable broadcasts, local Bot API files, webhook ownership and durable update intake, message markup (stitchkit/telegram/html), voice waveforms (stitchkit/telegram/voice); the bot as application resources',
   ],
   [
     'telegram-screens.md',
@@ -292,7 +292,7 @@ export const GUIDE_SLICES: GuideMap = {
   'voice.md': { primary: './voice' },
   'telegram.md': {
     primary: './telegram',
-    also: ['./telegram/html', './application/grammy', './observability'],
+    also: ['./telegram/html', './telegram/voice', './application/grammy', './observability'],
   },
   'telegram-screens.md': { primary: './telegram/screens', also: ['./telegram'] },
   'upgrading.md': UPGRADING,

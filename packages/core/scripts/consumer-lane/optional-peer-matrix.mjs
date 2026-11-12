@@ -821,6 +821,19 @@ console.log('xlsx browser: ok');`,
     execute: true,
   },
   {
+    // A voice waveform is packed on the server and drawn in the page from one
+    // format: the browser row is the claim.
+    id: 'telegram-voice',
+    subpath: './telegram/voice',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: featureSource('stitchkit/telegram/voice', 'unpackTelegramVoiceWaveform'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
     // The budget transformer is typed by grammY's `Transformer` and never
     // imports grammY at run time, so the bundle stays free of it.
     id: 'telegram-grammy',

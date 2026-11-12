@@ -47,6 +47,7 @@ const entrypoints = [
   'stitchkit/react/keyboard/testing',
   'stitchkit/telegram/screens',
   'stitchkit/telegram/html',
+  'stitchkit/telegram/voice',
 ];
 for (const name of entrypoints) {
   await import(name);

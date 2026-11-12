@@ -58,9 +58,10 @@ own, recorded as an ADR.
 | `stitchkit/process/owner-loss` | bundled server entry (Bun, POSIX) | evolving | narrow bootstrap that keeps the process runner lazy while carrying its owner-loss guard in a single-file bundle |
 | `stitchkit/files/packaging` | build time (Bun or Node) | evolving | installed native asset graph, integrity, Bun packaging plugin and the artifact loader check; a client bundled into one self-contained, hashed and verified file; no runtime install policy |
 | `stitchkit/files` | server (Bun or Node) | stable | peer-free managed local-file boundary |
-| `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, one outbound budget per bot token with weighted albums and per-chat 429 pauses, resumable broadcasts, the operator channel with dedupe, a Bot API transport that separates a request that never left from an unknown outcome, local Bot API files, webhook ownership and durable webhook update intake |
+| `stitchkit/telegram` | server (Bun or Node) | evolving | peer-free Telegram platform primitives — Mini App `initData` verification, send-failure classification, one outbound budget per bot token with weighted albums and per-chat 429 pauses, resumable broadcasts, the operator channel with dedupe, a Bot API transport that separates a request that never left from an unknown outcome, local Bot API files, the waveform of a voice message read from its PCM, webhook ownership and durable webhook update intake |
 | `stitchkit/telegram/grammy` | server (Bun or Node) | evolving | the token's outbound budget as one grammY client transformer — a 429 that comes back as a response pauses its chat, and a cancelled wait is a request that never left |
 | `stitchkit/telegram/html` | browser and server | evolving | Telegram's HTML as a tree — clean any markup to what Telegram accepts, cut long text into valid parts by what the reader sees, check markup before it is sent |
+| `stitchkit/telegram/voice` | browser and server | evolving | the waveform of a voice message as one format — packed for `sendVoice` the way Telegram Desktop scales it, unpacked to draw it, a `getMe` read of whether the server takes it |
 | `stitchkit/telegram/screens` | server (Bun or Node) | evolving | a bot's menus as declared screens over grammY — typed paths, actions and input, message reconciliation, state in any `StorageAdapter`, a test chat |
 | `stitchkit/tracking` | browser **and** server | evolving | visitor-tracking mechanics — `createTrackingClient`, the tab-shared outbox, the page-leave beacon, attribution, the contract factory; no event vocabulary, no React |
 | `stitchkit/tracking/contract` | browser **and** server | evolving | the wire shapes — the contract factory, event and visit schemas, the performance sample and its trust threshold; brings `zod` |
@@ -217,6 +218,7 @@ map — feature → packages:
 | grammY lifecycle adapters (`stitchkit/application/grammy`) | `grammy` |
 | Telegram platform primitives (`stitchkit/telegram`) | — (peer-free) |
 | Telegram message markup (`stitchkit/telegram/html`) | — (peer-free) |
+| Telegram voice waveforms (`stitchkit/telegram/voice`) | — (peer-free) |
 | Telegram grammY client transformer (`stitchkit/telegram/grammy`) | `grammy` (types only; the bot brings it) |
 | Telegram screens (`stitchkit/telegram/screens`) | `grammy` (types only; the bot brings it) |
 | OpenTelemetry gauges (`stitchkit/application/opentelemetry`) | `@opentelemetry/api` |

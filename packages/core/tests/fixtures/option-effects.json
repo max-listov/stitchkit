@@ -809,6 +809,11 @@
       "test": "a relative file_path resolves inside the bot directory; so does a --local absolute one"
     }
   },
+  "ReadTelegramVoiceWaveformOptions": {
+    "signal": {
+      "test": "a signal stops the read with its own reason, before the file and between chunks"
+    }
+  },
   "ModelInvocationConfig": {
     "store": {
       "test": "durable idempotency fences concurrent callers and survives SQLite reopen and archive restore"

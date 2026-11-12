@@ -142,6 +142,7 @@ export const ENTRYPOINTS = [
     browser: false,
   },
   { subpath: './telegram/html', source: 'src/entrypoints/telegram/html.ts', browser: true },
+  { subpath: './telegram/voice', source: 'src/entrypoints/telegram/voice.ts', browser: true },
   {
     subpath: './telegram/screens',
     source: 'src/entrypoints/telegram/screens.ts',

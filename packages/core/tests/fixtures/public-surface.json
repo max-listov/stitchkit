@@ -2343,6 +2343,7 @@
   "stitchkit/telegram": [
     "ClaimTelegramWebhookConfig",
     "PostgresTelegramUpdateStoreConfig",
+    "ReadTelegramVoiceWaveformOptions",
     "ReceiveTelegramWebhookOptions",
     "SqliteTelegramUpdateStoreConfig",
     "StoredTelegramUpdate",
@@ -2437,6 +2438,7 @@
     "parseTelegramUser",
     "postgresTelegramUpdateStore",
     "postgresTelegramUpdateStoreSchema",
+    "readTelegramVoiceWaveform",
     "receiveTelegramWebhook",
     "redactTelegramBotToken",
     "runTelegramBroadcast",
@@ -2468,6 +2470,17 @@
     "splitTelegramHtml",
     "telegramHtmlText",
     "truncateTelegramHtml"
+  ],
+  "stitchkit/telegram/voice": [
+    "TELEGRAM_VOICE_WAVEFORM_MAX_LEVEL",
+    "TELEGRAM_VOICE_WAVEFORM_SAMPLES",
+    "TELEGRAM_VOICE_WAVEFORM_VERSION",
+    "TelegramVoiceWaveformError",
+    "TelegramVoiceWaveformRefusal",
+    "TelegramVoiceWaveformSupport",
+    "packTelegramVoiceWaveform",
+    "readTelegramVoiceWaveformSupport",
+    "unpackTelegramVoiceWaveform"
   ],
   "stitchkit/telegram/screens": [
     "ActionInputSchema",

@@ -15,6 +15,21 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/telegram/voice`, `stitchkit/telegram` — **the waveform of a voice message, one format
+  for every bot.** `readTelegramVoiceWaveform(pcmPath, { signal })` reads a mono 16-bit PCM side
+  copy of a recording in chunks and returns the packed waveform `sendVoice` takes on a local Bot
+  API server that accepts one; `readTelegramVoiceWaveformSupport(await bot.api.getMe())` says
+  whether the server does (`supports_voice_waveform`, `voice_waveform_version` 1). The levels are
+  scaled the way Telegram Desktop scales them — 1.8 × the mean peak, never below a floor — so
+  silence stays zero and a quiet recording is not stretched to look loud. The new browser-safe
+  entrypoint `stitchkit/telegram/voice` holds the format itself: `packTelegramVoiceWaveform(peaks)`,
+  `unpackTelegramVoiceWaveform(waveform)` for a page drawing the bars, and
+  `TelegramVoiceWaveformError` with its reasons. Bots that each packed 5-bit levels, read `getMe`
+  and scaled the bars their own way now share one implementation; the `stitchkit/telegram`
+  budget grows by these two names, and `stitchkit/telegram/voice` starts evolving at nine.
+
 ## [0.123.2] - 2026-11-12
 
 ### Added
