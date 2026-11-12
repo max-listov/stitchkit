@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.123.3] - 2026-11-12
+
 ### Added
 
 - `stitchkit/telegram/voice`, `stitchkit/telegram` — **the waveform of a voice message, one format
