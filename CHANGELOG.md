@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.123.2] - 2026-11-12
+
 ### Added
 
 - `stitchkit/http`, `stitchkit` — **a contract client takes arguments once: `bound`.**
