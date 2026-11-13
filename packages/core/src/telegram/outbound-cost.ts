@@ -1,6 +1,6 @@
 import { isRecord } from '../internal/typed';
 
-/** The methods that produce a Telegram message and therefore spend the budget. */
+/** The methods Telegram counts as sent messages, including widget data edits. */
 const SEND_METHODS: ReadonlySet<string> = new Set([
   'sendMessage',
   'sendPhoto',
@@ -26,6 +26,9 @@ const SEND_METHODS: ReadonlySet<string> = new Set([
   'sendGiveaway',
   'sendLivePhoto',
   'sendRichMessage',
+  'sendWidget',
+  'sendSharedWidget',
+  'editMessageWidgetData',
   'copyMessage',
   'copyMessages',
   'forwardMessage',
@@ -41,7 +44,7 @@ const WEIGHTED_METHODS: ReadonlyMap<string, string> = new Map([
   ['forwardMessages', 'message_ids'],
 ]);
 
-/** One message-producing call costs one; an empty or malformed array still costs one. */
+/** One counted call costs one; an empty or malformed weighted array still costs one. */
 export function sendCost(method: string, payload: unknown): number {
   if (!SEND_METHODS.has(method)) return 0;
   const field = WEIGHTED_METHODS.get(method);

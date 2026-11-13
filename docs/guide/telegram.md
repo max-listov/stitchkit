@@ -106,9 +106,13 @@ cast, and a send cancelled in the queue then waits for its slot and fails as
   128-bit identity, never the credential, and `stats()` contains no token.
 - **A message is the unit.** `sendMediaGroup` and `sendPaidMedia` cost their
   media length, `copyMessages` and `forwardMessages` cost their message ids, and
-  a follow-up call to action after an album costs one more. Reads and edits
-  (`getMe`, `getFile`, `editMessage*`, `deleteMessage`, `sendChatAction`) do not
-  spend the budget.
+  a follow-up call to action after an album costs one more. `sendWidget`,
+  `sendSharedWidget` and `editMessageWidgetData` each cost one; Telegram counts
+  [a widget data edit as a sent message](https://core.telegram.org/bots/widgets#changing-the-state),
+  including an inline edit without `chat_id`. `answerWidgetQuery` and
+  `editSharedWidgetData` cost zero, as do reads and ordinary edits
+  (`getMe`, `getFile`, `editMessageText`, `deleteMessage`, `sendChatAction`).
+  The shared widget's own edit limit is separate from this token budget.
 - **Two lanes share one rate.** A call is `interactive` by default; a campaign passes
   `{ lane: 'bulk' }` to `run` or `acquire`, or installs
   `telegramBudgetTransformer(budget, { lane: 'bulk' })` on its own `Api`. A waiting
@@ -146,7 +150,7 @@ cast, and a send cancelled in the queue then waits for its slot and fails as
   The refusal may be thrown or returned: a client transformer sits below the
   place where grammY turns Telegram's `{ ok: false, error_code: 429, … }` body into
   a `GrammyError`, so `run` reads that body too and hands it back unchanged.
-  A 429 from an edit or a read concerns that call and pauses nothing;
+  A 429 from a zero-cost call concerns that call and pauses nothing;
   `budget.pauseAfter(error, { chatId })` remains for a caller who decides otherwise, and pauses
   the token when it names no chat. A network failure is rethrown unchanged and stays `unknown`; a 5xx
   is rethrown unchanged and stays `server-error`. Neither is retried by the
@@ -159,10 +163,11 @@ cast, and a send cancelled in the queue then waits for its slot and fails as
   `not-dispatched`, safe to repeat); a send cancelled after it was handed on is
   the client's own error — not evidence that Telegram did not accept it — so
   keep the outcome unknown rather than retrying it as a definite failure.
-- **Non-send retries wait without spending.** An edit or delete retry that got
+- **Non-send retries wait without spending.** An ordinary edit or delete retry that got
   a 429 records the pause with `budget.pauseAfter(error, { chatId })`, then uses
   `await budget.waitUntilResumed(signal, { chatId })`; it shares that chat's pause
   and the token's, and takes no message slot. Without `chatId` it pauses the token.
+  An `editMessageWidgetData` retry uses `run` instead: it costs another message.
 
 `telegramBroadcastSender` and `telegramOperatorSender` still send through
 `callTelegramBotApi`; they are not a second budget. Their returned function does

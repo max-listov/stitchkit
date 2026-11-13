@@ -11,7 +11,8 @@
  * another budget. The unit is a Telegram message: `sendMediaGroup` and
  * `sendPaidMedia` cost their media length, `copyMessages` and
  * `forwardMessages` cost their message ids, and the follow-up call to action
- * after an album is one more message.
+ * after an album is one more message. `sendWidget`, `sendSharedWidget` and
+ * `editMessageWidgetData` each cost one, including an inline widget edit.
  *
  * Two lanes share that one rate. An `interactive` call is granted before any
  * `bulk` call that is waiting, so a person's reply never queues behind a
@@ -23,8 +24,8 @@
  * words a group's limit, a chat's pace and the bot's own limit alike, and only
  * the addressee differs, so one chat's refusal is read as that chat's. Refusals
  * from several chats inside a short window are read as the bot's own limit and
- * pause the token, as does a 429 with no chat to blame. A 429 on an edit or a
- * read concerns that call and pauses nothing. A network failure or a 5xx is
+ * pause the token, as does a 429 with no chat to blame. A 429 on a call that
+ * spends no message concerns that call and pauses nothing. A network failure or a 5xx is
  * returned to the caller unchanged: repeating a send whose external outcome is
  * unknown is the caller's decision, and a primitive that retried it would turn
  * one unknown message into two.
@@ -178,8 +179,8 @@ export interface TelegramOutboundBudget {
   pauseAfter(error: unknown, options?: TelegramOutboundChatOptions): void;
   /**
    * Wait out the current pause without spending a token, and that chat's own
-   * with `chatId`. For a retry path that is not a send (edit, delete) and does
-   * not go through `acquire`.
+   * with `chatId`. For a retry path that spends no message (`editMessageText`,
+   * delete) and does not go through `acquire`.
    */
   waitUntilResumed(signal?: AbortSignal, options?: TelegramOutboundChatOptions): Promise<void>;
   /** Measured counters. It never contains the token. */
@@ -242,7 +243,7 @@ function createBudget(
     const call = chatId === undefined ? {} : { chatId };
     if (cost > 0) await queue.acquire(cost, signal, { ...options, ...call });
     if (signal?.aborted) throw signal.reason;
-    // Telegram's limit on editing one message says nothing about sending the next one.
+    // Only a call counted as a sent message can pause the outbound budget.
     const pauseOnRefusal = (refusal: unknown): void => {
       if (cost > 0 && options?.refusal !== 'call') pauseAfter(refusal, call);
     };

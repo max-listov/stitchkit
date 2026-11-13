@@ -140,10 +140,24 @@ describe('createManualClock', () => {
 
   test('a callback that throws rejects advance with its error', async () => {
     const clock = createManualClock();
+    const failure = new Error('timer failed');
+    let nextFired = false;
     clock.schedule(() => {
-      throw new Error('timer failed');
+      throw failure;
     }, 1);
-    await expect(clock.advance(5)).rejects.toThrow('timer failed');
+    clock.schedule(() => {
+      nextFired = true;
+    }, 2);
+    const [outcome] = await Promise.allSettled([clock.advance(5)]);
+    expect(outcome?.status).toBe('rejected');
+    if (outcome?.status === 'rejected') expect(outcome.reason).toBe(failure);
+    expect(clock.now()).toBe(1);
+    expect(nextFired).toBe(false);
+    expect(clock.pending()).toBe(1);
+    await clock.advance(4);
+    expect(nextFired).toBe(true);
+    expect(clock.now()).toBe(5);
+    expect(clock.pending()).toBe(0);
   });
 
   test('time waits for an open hold, and a hold past the limit is named', async () => {

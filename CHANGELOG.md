@@ -15,6 +15,18 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/telegram` — **Widget sends and message widget data edits spend the outbound
+  budget.** `sendWidget`, `sendSharedWidget` and `editMessageWidgetData` each cost one message
+  under `telegramOutboundBudget().run`, share the send schedule and apply the existing 429
+  pause policy. An inline widget edit without a chat pauses the token on 429. `answerWidgetQuery`
+  and `editSharedWidgetData` remain free; the budget never retries a call.
+  **Affects:** `stitchkit/telegram` telegramOutboundBudget, TelegramOutboundBudget(run)
+
+- Tests — settle the manual clock's rejected advance before asserting its callback error,
+  and verify that a subsequent advance runs the remaining timer after the failure.
+
 ## [0.123.4] - 2026-11-12
 
 ### Added
