@@ -1,0 +1,47 @@
+# One repetition of a scheduled CI run whose only unproven lanes lost their hosted runner.
+# GitHub sometimes never assigns a macOS runner or shuts one down mid-job; the nightly run then
+# goes red with no defect in the code. `scripts/ci-retry.ts` reads GitHub's own markers for that,
+# and only then re-runs the failed jobs of the same run — same SHA, same plan, the lost lanes and
+# the aggregates that refused them. A push run (exact-SHA release evidence), a code failure and a
+# second attempt are never repeated, so a lane lost twice still leaves the run red.
+name: CI retry
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  retry:
+    name: Repeat lanes that lost their runner
+    if: >-
+      github.event.workflow_run.event == 'schedule' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Reads the run's jobs, annotations and logs; re-runs its failed jobs.
+      actions: write
+      checks: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Repeat the run once if every unproven lane lost its runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: bun scripts/ci-retry.ts

@@ -10,7 +10,11 @@ import { join } from 'node:path';
  * `packageManager` name one version, and the gate's own test suite runs only on it.
  */
 const PIN_FILES = {
-  workflows: ['.github/workflows/ci.yml', '.github/workflows/release.yml'],
+  workflows: [
+    '.github/workflows/ci.yml',
+    '.github/workflows/ci-retry.yml',
+    '.github/workflows/release.yml',
+  ],
   manifests: [
     'packages/tui/package.json',
     'packages/create-stitchkit/package.json',

@@ -4,7 +4,7 @@ description: Package-aware evidence lanes, one-SHA release trains and immutable 
 type: architecture
 status: active
 created: 2026-08-14
-updated: 2026-10-13 10:36 +07:00
+updated: 2026-11-16 20:27 +07:00
 ---
 
 # CI and exact-SHA release pipeline
@@ -164,6 +164,25 @@ The semantic planner refuses contradictory lane flags or starter modes. Assembly
 status both use `scripts/ci-evidence.ts` over named `needs` results. Selected jobs must succeed;
 unselected jobs may succeed or be skipped; failed or cancelled jobs are refused. Plan and repository checks always succeed before assembly.
 Final status also requires successful artifacts exactly when the plan requests them.
+
+## A lost hosted runner in the nightly run
+
+The evidence check fails closed on a lane GitHub never ran: a job no runner acquired reports
+`abandoned`, and a runner shut down mid-job ends its step with exit 143. Neither is a defect, and a
+nightly run that goes red for them teaches readers to ignore red. `.github/workflows/ci-retry.yml`
+runs when `CI` completes and repeats it once, through `scripts/ci-retry.ts`, only when all of these
+hold:
+
+- the run is `schedule`, its first attempt, concluded `failure`;
+- every unproven lane carries GitHub's own loss marker — the annotation "The job was not acquired by
+  Runner", or the log line "The runner has received a shutdown signal" / "lost communication with
+  the server". An exit code is never a marker: a test can send SIGTERM too;
+- no lane other than the aggregates `artifacts` and `result`, which refuse a lost lane, failed.
+
+The repetition is `rerun-failed-jobs` of the same run: same SHA and plan, only the lost lanes and
+their dependents run again. A push run — the exact-SHA evidence publication reads — is never
+repeated, a code failure stays red, and the second attempt is not repeated, so a lane lost twice
+still leaves the run red. The retry job alone holds `actions: write`.
 
 The packed local-HEAD starter lane (`starterModes` containing `head`) follows
 `starterHeadDecision` (`scripts/release-starter-head.ts`, [ADR 0099](../decisions/0099-starter-head-skips-require-versioned-review.md)):

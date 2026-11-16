@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CI_AGGREGATE_JOB_NAMES } from './ci-retry';
 
 const root = join(import.meta.dir, '..');
 const ci = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 const release = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
+const retry = readFileSync(join(root, '.github/workflows/ci-retry.yml'), 'utf8');
 
 function section(name: string, next?: string): string {
   const start = ci.indexOf(`\n  ${name}:\n`);
@@ -20,7 +22,7 @@ describe('workflow trust boundary', () => {
   });
 
   test('every third-party action is pinned to a full commit SHA', () => {
-    for (const source of [ci, release]) {
+    for (const source of [ci, release, retry]) {
       for (const match of source.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)) {
         expect(match[1]).toMatch(/@[0-9a-f]{40}\b/);
       }
@@ -28,10 +30,30 @@ describe('workflow trust boundary', () => {
   });
 
   test('workflow permissions default to read-only', () => {
-    for (const source of [ci, release]) {
+    for (const source of [ci, release, retry]) {
       expect(source.slice(0, source.indexOf('jobs:'))).toMatch(
         /permissions:\s*\n\s+contents:\s*read/,
       );
+    }
+  });
+
+  test('the retry repeats only a first failed scheduled attempt, and only the retry job may write', () => {
+    expect(retry).toContain('workflows: [CI]');
+    expect(retry).toContain("github.event.workflow_run.event == 'schedule'");
+    expect(retry).toContain("github.event.workflow_run.conclusion == 'failure'");
+    expect(retry).toContain('github.event.workflow_run.run_attempt == 1');
+    expect(retry.match(/actions:\s*write/g)).toHaveLength(1);
+    expect(retry).toContain('bun scripts/ci-retry.ts');
+    expect(retry).not.toContain('--dry-run');
+    expect(ci).not.toContain('actions: write');
+  });
+
+  test('the retry knows the aggregates by the names ci.yml gives them', () => {
+    for (const [job, name] of [
+      ['artifacts', CI_AGGREGATE_JOB_NAMES[0]],
+      ['result', CI_AGGREGATE_JOB_NAMES[1]],
+    ] as const) {
+      expect(section(job)).toContain(`name: ${name}\n`);
     }
   });
 });
