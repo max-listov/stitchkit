@@ -5,7 +5,7 @@ import {
   grammyPollingResource,
 } from 'stitchkit/application/grammy';
 import { telegramOutboundBudget } from 'stitchkit/telegram';
-import { telegramBudgetTransformer } from 'stitchkit/telegram/grammy';
+import { telegramBudgetTransformer, telegramWidgetApi } from 'stitchkit/telegram/grammy';
 import {
   back,
   createScreenTestChat,
@@ -79,4 +79,27 @@ budgetApi.config.use(telegramBudgetTransformer(budget));
 await budgetApi.sendMessage(1, 'limited').catch(() => undefined);
 if (budget.stats().pausedChats !== 1)
   throw new Error('budget: a returned 429 did not pause its chat');
+// Widgets: the methods take grammY's own client and keyboard types, and run
+// through its transformer, so a widget send spends one slot of the budget.
+const widgetBudget = telegramOutboundBudget({ token: 'packed-widget-token' });
+const widgetApi = new Api('packed-widget-token', {
+  fetch: async () =>
+    Response.json({
+      ok: true,
+      result: {
+        message_id: 3,
+        chat: { id: 1, type: 'private' },
+        widget: { html: '<b>w</b>' },
+      },
+    }),
+});
+widgetApi.config.use(telegramBudgetTransformer(widgetBudget));
+const sent = await telegramWidgetApi(widgetApi).sendWidget({
+  chat_id: 1,
+  html: '<b>w</b>',
+  chat_data: '',
+  reply_markup: { inline_keyboard: [[{ text: 'Open', url: 'https://example.com' }]] },
+});
+if (sent.message_id !== 3 || widgetBudget.stats().messages !== 1)
+  throw new Error('widgets: the send did not spend exactly one budgeted message');
 console.log('grammy consumer: typed adapters ok');

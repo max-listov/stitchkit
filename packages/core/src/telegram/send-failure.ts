@@ -267,8 +267,8 @@ export function classifyTelegramSendFailure(error: unknown): TelegramSendFailure
  * - `other`: everything else, including a malformed payload — the caller's to
  *   raise.
  *
- * Internal to the screens: it reads Telegram's prose the same way
- * {@link classifyTelegramSendFailure} does and is not a public vocabulary.
+ * Internal to the screens and the widget edit: it reads Telegram's prose the
+ * same way {@link classifyTelegramSendFailure} does and is not a public vocabulary.
  */
 export type TelegramEditRefusal =
   | 'not-modified'
@@ -291,6 +291,8 @@ const EDIT_REFUSALS: readonly (readonly [RegExp, TelegramEditRefusal])[] = [
 ];
 
 export function classifyTelegramEditRefusal(error: unknown): TelegramEditRefusal {
+  // A request that never left was refused by nobody, whatever its cause says.
+  if (isTelegramNotDispatched(error)) return 'other';
   const description = descriptionOf(error);
   for (const [pattern, refusal] of EDIT_REFUSALS) {
     if (pattern.test(description)) return refusal;

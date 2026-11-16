@@ -14,13 +14,9 @@ import {
   TelegramNotDispatchedError,
 } from '../src/entrypoints/telegram';
 import { telegramBudgetTransformer } from '../src/entrypoints/telegram/grammy';
-import { createManualClock, type ManualClock } from '../src/entrypoints/testing';
+import { createManualClock } from '../src/entrypoints/testing';
+import { type BotApiAnswer, botClient, OK } from './support/telegram-bot-client';
 import { manualBudget } from './support/telegram-budget-clock';
-
-interface BotApiCall {
-  readonly chat: unknown;
-  readonly at: number;
-}
 
 /** The signal type grammY declares for a call: the `abort-controller` polyfill's, not the platform's. */
 type GrammySignal = NonNullable<Parameters<Transformer>[3]>;
@@ -33,10 +29,6 @@ type GrammySignal = NonNullable<Parameters<Transformer>[3]>;
 function grammySignal(signal: AbortSignal | LegacySignal): GrammySignal {
   return signal as unknown as GrammySignal;
 }
-
-type BotApiAnswer = { readonly status: number; readonly body: unknown } | 'hang';
-
-const OK = { status: 200, body: { ok: true, result: { message_id: 1 } } } as const;
 
 function tooManyRequests(retryAfter?: number): BotApiAnswer {
   return {
@@ -51,32 +43,6 @@ function tooManyRequests(retryAfter?: number): BotApiAnswer {
       ...(retryAfter !== undefined && { parameters: { retry_after: retryAfter } }),
     },
   };
-}
-
-/** A grammY client whose HTTP layer answers like Bot API, with the budget as its one transformer. */
-function botClient(
-  clock: ManualClock,
-  budget: ReturnType<typeof manualBudget>['budget'],
-  answerFor: (call: number) => BotApiAnswer = () => OK,
-): { api: Api; calls: BotApiCall[] } {
-  const calls: BotApiCall[] = [];
-  const respond = async (_url: unknown, init?: RequestInit): Promise<Response> => {
-    const payload: unknown = JSON.parse(String(init?.body));
-    calls.push({ chat: Reflect.get(Object(payload), 'chat_id'), at: clock.now() });
-    const answer = answerFor(calls.length);
-    if (answer === 'hang') {
-      return new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
-          once: true,
-        });
-      });
-    }
-    return Response.json(answer.body, { status: answer.status });
-  };
-  const fetchBotApi = Object.assign(respond, { preconnect: () => undefined });
-  const api = new Api('123456:fixture-token', { fetch: fetchBotApi });
-  api.config.use(telegramBudgetTransformer(budget));
-  return { api, calls };
 }
 
 describe('the budget as a grammY client transformer', () => {

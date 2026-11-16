@@ -15,6 +15,30 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/telegram/grammy` — **`telegramWidgetApi(api)`: the Bot API 10.4 widget methods over
+  the client a bot already has.** `sendWidget`, `editMessageWidgetData` and `answerWidgetQuery`
+  take their Bot API parameters and `{ signal }`, and go through the client's `api.raw`, so every
+  transformer of that client runs them: with `telegramBudgetTransformer` installed a send or an edit
+  spends one message of the token's budget and an answer waits for none. No second client, limiter
+  or retry. Input over Telegram's byte limits throws `ZodError` before any request; an already
+  aborted signal throws `TelegramNotDispatchedError`; a request is handed on once; `message is not
+  modified` on an edit is success; an unexpected successful answer is an error whose outcome is
+  unknown. The public surface ceiling of `stitchkit/telegram/grammy` moves from 1 to 7 names for
+  the function, its interface, the three parameter types and the call options.
+  [guide](docs/guide/telegram.md#widgets)
+
+- `stitchkit/telegram` — **Widget limits and shapes.** `TELEGRAM_WIDGET_LIMITS`, the byte-counted
+  `TelegramWidgetHtmlSchema` (1–32768 bytes, at most 4096 after the runtime's zlib at level 9 — an
+  estimate of Telegram's, so keep a margin) and
+  `TelegramWidgetDataSchema` (0–1024 bytes; NUL and unpaired surrogates refused, `''` is a value),
+  `TelegramWidgetMessageSchema` for the sent message and `TelegramWidgetQuerySchema` for
+  `Update.widget_query`, both parsed loosely so fields Telegram adds pass through.
+  `parseTelegramWidgetQuery` returns the id of a query that does not parse, so it can be refused
+  instead of left to time out. The public surface ceiling of `stitchkit/telegram` moves from 107 to
+  116 names for the limits, four schemas, their three types and the parser.
+
 ## [0.123.5] - 2026-11-13
 
 ### Fixed

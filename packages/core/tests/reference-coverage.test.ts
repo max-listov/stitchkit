@@ -303,6 +303,23 @@ const DOCUMENTED_ADDITIONS: Record<string, readonly string[]> = {
     'TelegramUpdateExhaustionQuery',
     'TelegramUpdateFencedStore',
     'TelegramUpdateOwnershipLostError',
+    'TELEGRAM_WIDGET_LIMITS',
+    'TelegramWidgetDataSchema',
+    'TelegramWidgetHtmlSchema',
+    'TelegramWidgetMessage',
+    'TelegramWidgetMessageSchema',
+    'TelegramWidgetQuery',
+    'TelegramWidgetQueryParse',
+    'TelegramWidgetQuerySchema',
+    'parseTelegramWidgetQuery',
+  ],
+  'stitchkit/telegram/grammy': [
+    'TelegramAnswerWidgetQueryParams',
+    'TelegramEditMessageWidgetDataParams',
+    'TelegramSendWidgetParams',
+    'TelegramWidgetApi',
+    'TelegramWidgetCallOptions',
+    'telegramWidgetApi',
   ],
 };
 

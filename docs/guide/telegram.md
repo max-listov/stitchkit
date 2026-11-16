@@ -12,6 +12,7 @@ way: [ADR 0201](../decisions/0201-a-telegram-bot-is-assembled-from-primitives.md
 | the bot as resources: command menu, then long polling with updates admitted by batch | `grammyBotResources` — [application kernel](application-kernel.md#optional-grammy-adapter) |
 | a bot on a webhook: set only where it is this process's, updates recorded before Telegram is answered | `claimTelegramWebhook`, `createTelegramUpdateIntake`, `receiveTelegramWebhook` — [below](#a-bot-on-a-webhook) |
 | text for Telegram's HTML: cleaned, cut to the limit, checked | `stitchkit/telegram/html` — [below](#message-markup) |
+| widgets: send, change their data, answer their queries, under the token's budget | `telegramWidgetApi` from `stitchkit/telegram/grammy` — [below](#widgets) |
 | the process journal | `createJsonLogger` from `stitchkit/observability` |
 | the operator's chat: product events, apart from the journal | `createTelegramOperatorChannel` |
 | a broadcast that survives crashes, deploys and Ctrl-C | `runTelegramBroadcast` |
@@ -375,6 +376,75 @@ with new sockets inside `connectBudgetMs` (default 5 s, which also bounds the ad
 round waits `connectAttemptMs`, default 2 s). The answer must arrive within `responseTimeoutMs` (default 30 s) and fit
 `maxResponseBytes` (default 1 MiB). It speaks HTTP/1.1 over `https:`, and over `http:` for a
 local Bot API server, and it uses no proxy: where the network needs one, keep `fetch`.
+
+## Widgets
+
+A widget (Bot API 10.4) is HTML that the Telegram app runs and draws inside a message, with data
+of its own the bot changes and queries it sends to the bot. grammY 1.46 does not type the three
+methods, and a bot that reaches for them tends to build a second client and with it a second
+limiter. `telegramWidgetApi` takes the client the bot already has and calls the methods through
+its `api.raw`, so the client's transformers — the outbound budget among them — run every call:
+
+```ts
+import { telegramOutboundBudget } from 'stitchkit/telegram'
+import { telegramBudgetTransformer, telegramWidgetApi } from 'stitchkit/telegram/grammy'
+
+bot.api.config.use(telegramBudgetTransformer(telegramOutboundBudget({ token: env.BOT_TOKEN })))
+const widgets = telegramWidgetApi(bot.api)
+
+const message = await widgets.sendWidget(
+  { chat_id, html, chat_data: state, allow_queries: true, reply_markup },
+  { signal },
+)
+await widgets.editMessageWidgetData(
+  { chat_id, message_id: message.message_id, chat_data: next },
+  { signal },
+)
+await widgets.answerWidgetQuery({ widget_query_id: query.id, data: answer }, { signal })
+```
+
+The parameters are the Bot API's, by their Bot API names, so the call reads as the grammY call it
+becomes once grammY types the method. A field is sent when it is not `undefined`: `chat_data: ''`
+reaches Telegram and removes the data, an omitted field keeps it. An edit names `chat_id` with
+`message_id`, or `inline_message_id`, and changes `chat_data`, `public_data` or both.
+
+- **Limits are checked before the request, in UTF-8 bytes.** `TELEGRAM_WIDGET_LIMITS`: HTML 1–32768
+  bytes and at most 4096 after zlib level 9; `chat_data`, `public_data` and an answer 0–1024; query
+  data 1–64. One emoji is four bytes, one Cyrillic letter two. NUL and an unpaired surrogate are
+  refused too. A refused value throws `ZodError` naming its field and size: nothing was sent, and
+  the same input will be refused again, so a durable sender records it as failed rather than
+  retrying. `TelegramWidgetHtmlSchema` and `TelegramWidgetDataSchema` are the same checks for a
+  sender that wants its own margin first.
+- **The compressed size is an estimate.** It is measured with the runtime's own zlib at level 9,
+  and zlib builds differ by tens of bytes near 4096 — Node's output is smaller than Bun's on the
+  same HTML — while Telegram does not say which it runs. HTML that compresses close to the limit
+  can pass here and be refused by Telegram; keep a margin below 4096.
+- **A send and an edit cost one message; an answer costs none.** Telegram counts a data edit as a
+  sent message, so both wait for the token's schedule and a 429 pauses their chat; an inline edit
+  has no chat and a 429 on it pauses the token. `answerWidgetQuery` waits for no slot and no pause:
+  Telegram expects the answer within `TELEGRAM_WIDGET_LIMITS.answerWindowMs` (15 s).
+- **What happens to a call is said by its error.** An already aborted `signal`, or one aborted
+  while the call waits for its slot, throws `TelegramNotDispatchedError` — nothing left, safe to
+  send again. A request handed to the client is never repeated: a failure after that point may
+  have been delivered, and a send whose outcome is unknown is the caller's to settle.
+  `message is not modified` on an edit is success. A successful answer that is not what the method
+  returns — `true` where a message was due, as a grammY webhook reply gives — is an error with the
+  parse failure as its `cause`: the request was sent and its outcome is unknown.
+- **Queries are answered at intake.** `widget_query` must be in the webhook's or polling's
+  `allowed_updates`; grammY's `Update` type does not name it yet, so read
+  `update.widget_query` with `parseTelegramWidgetQuery`. It returns `{ query }`, or `{ id, error }`
+  for a query that does not parse — an unknown `type` or data outside 1–64 bytes — whose id is
+  enough to answer it with a refusal rather than leave the widget waiting, or `undefined` without
+  an id. Telegram's message, chat and query objects are parsed loosely: fields it adds later pass
+  through.
+- **Shared widgets are not here.** `is_shared`, `sendSharedWidget`, `editSharedWidgetData` and
+  `shared_widget_query` are outside this API; in production Telegram sends widgets to private
+  chats only.
+
+The installed
+[`telegram-widget-api.mjs`](../../packages/core/scripts/consumer-lane/fixtures/minimal/src/telegram-widget-api.mjs)
+fixture runs the packed methods through the packed budget transformer on Bun and Node with no
+grammY installed.
 
 ## Message markup
 

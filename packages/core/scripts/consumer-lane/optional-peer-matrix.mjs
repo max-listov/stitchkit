@@ -858,6 +858,30 @@ console.log('xlsx browser: ok');`,
     execute: true,
   },
   {
+    // The widget methods reach grammY only through the client they are given
+    // (`api.raw`), so this bundle, too, must stay free of it.
+    id: 'telegram-grammy-widget-api',
+    subpath: './telegram/grammy',
+    fixture: 'grammy',
+    installedPeers: FIXTURE_PEERS.grammy,
+    target: 'bun',
+    source: featureSource('stitchkit/telegram/grammy', 'telegramWidgetApi'),
+    runtimePeers: [],
+    declarationPeers: ['grammy'],
+    execute: true,
+  },
+  {
+    id: 'telegram-grammy-widget-api-node',
+    subpath: './telegram/grammy',
+    fixture: 'node',
+    installedPeers: FIXTURE_PEERS.node,
+    target: 'node',
+    source: featureSource('stitchkit/telegram/grammy', 'telegramWidgetApi'),
+    runtimePeers: [],
+    declarationPeers: ['grammy'],
+    execute: true,
+  },
+  {
     // Screens are middleware over the bot's own `ctx.api` and grammY's
     // `StorageAdapter`: grammY is named in the declarations and never imported
     // at run time, so the bundle stays free of it on either runtime.

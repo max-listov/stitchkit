@@ -157,6 +157,17 @@ export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).par
     marker: 'packed telegram outbound budget: ok',
   },
   {
+    id: 'telegram-widget-api',
+    fixture: 'minimal',
+    entry: 'telegram-widget-api.mjs',
+    files: [],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed telegram widget api: ok',
+  },
+  {
     id: 'cli-publication',
     expectedMs: 23_000,
     fixture: 'minimal',

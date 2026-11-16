@@ -2165,18 +2165,27 @@ injected grammY bot. → ADR 0143, ADR 0201, ADR 0274 — [guide](../guide/teleg
 | `postgresTelegramUpdateStore` / `PostgresTelegramUpdateStoreConfig` / `TelegramPostgresQuery` | function / _type_ | the store in Postgres over the client the application holds, as one `query(text, parameters)` returning rows — Bun `sql.unsafe`, Prisma `$queryRawUnsafe`, `pg` `pool.query`; each rule one conditional statement; `table`, `createTable` (default `true`) |
 | `postgresTelegramUpdateStoreSchema` | function | the table, idempotent `claim_id` upgrade and index as a statement for a migration, safe to run twice; required before fenced methods when `createTable: false`, while legacy base methods remain compatible with the prior table |
 | `checkTelegramUpdateStore` | function | put any store through every rule, each on a fresh store from `make`, concurrent claims included; resolves with the violations, empty when it keeps them |
+| `TELEGRAM_WIDGET_LIMITS` | constant | Bot API 10.4 widget limits, sizes in UTF-8 bytes: `htmlBytes` 32768, `compressedHtmlBytes` 4096 after zlib level 9 (checked with the runtime's zlib, an estimate of Telegram's), `dataBytes` 1024 for `chat_data`, `public_data` and an answer, `queryDataBytes` 64, `answerWindowMs` 15 000 — [guide](../guide/telegram.md#widgets) |
+| `TelegramWidgetHtmlSchema` / `TelegramWidgetDataSchema` | schema | widget HTML (1–32768 bytes, at most 4096 compressed) and widget data (0–1024 bytes), counted in UTF-8 bytes; NUL and an unpaired surrogate are refused, an empty data string is a value |
+| `TelegramWidgetMessageSchema` / `TelegramWidgetMessage` | schema / _type_ | the message `sendWidget` returns — `message_id`, `chat`, `widget` with `html` and its data; parsed loosely, so fields Telegram adds pass through |
+| `TelegramWidgetQuerySchema` / `TelegramWidgetQuery` | schema / _type_ | `Update.widget_query`: `id`, `from`, `chat` with `message_id` or `inline_message_id`, `chat_instance`, `type` (`data` / `sign_data` / `sent_transaction`), `data` of 1–64 bytes, `widget_id` |
+| `parseTelegramWidgetQuery` / `TelegramWidgetQueryParse` | function / _type_ | read `update.widget_query`: `{ query }`, or `{ id, error }` for a query that does not parse — its id is enough to answer it with a refusal — or `undefined` without an id |
 
 ---
 
 ## `stitchkit/telegram/grammy`
 
-The token's outbound budget as one grammY client transformer. Server-only, Bun
-or Node; `grammy` appears in the declarations and is never imported at run time —
-the bot brings it. → ADR 0274 — [guide](../guide/telegram.md#one-token-one-outbound-budget)
+The token's outbound budget as one grammY client transformer, and the widget
+methods over the same client. Server-only, Bun or Node; `grammy` appears in the
+declarations and is never imported at run time — the bot brings it. → ADR 0274 —
+[guide](../guide/telegram.md#one-token-one-outbound-budget), [widgets](../guide/telegram.md#widgets)
 
 | Export | Kind | Summary |
 |--------|------|---------|
 | `telegramBudgetTransformer` | function | `bot.api.config.use(telegramBudgetTransformer(budget))`: every Bot API call runs under the token's `telegramOutboundBudget`; a 429 that comes back as a response pauses the token, a cancellation before the request was handed on throws `TelegramNotDispatchedError`, a cancellation in flight stays the client's own error; it never retries |
+| `telegramWidgetApi` / `TelegramWidgetApi` | function / _type_ | `telegramWidgetApi(bot.api)`: `sendWidget`, `editMessageWidgetData` and `answerWidgetQuery` through the client's `api.raw`, so its transformers — the outbound budget among them — run each call; input over a limit throws `ZodError` before any request, an already aborted signal throws `TelegramNotDispatchedError`, a request is handed on once and never repeated, `message is not modified` is success, and an unexpected successful answer is an error whose outcome is unknown |
+| `TelegramSendWidgetParams` / `TelegramEditMessageWidgetDataParams` / `TelegramAnswerWidgetQueryParams` | _type_ | the methods' Bot API parameters by their Bot API names; an edit names `chat_id` with `message_id` or `inline_message_id`, and `chat_data` or `public_data` (`''` removes it, an omitted field keeps it) |
+| `TelegramWidgetCallOptions` | _type_ | `signal` for one call: aborted before the request leaves, the call is not dispatched |
 
 ---
 

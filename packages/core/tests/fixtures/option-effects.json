@@ -1604,5 +1604,10 @@
     "signal": {
       "test": "the child reads its call, writes its answer and stops through injected io"
     }
+  },
+  "TelegramWidgetCallOptions": {
+    "signal": {
+      "test": "an aborted signal before the call is not dispatched, and nothing leaves"
+    }
   }
 }

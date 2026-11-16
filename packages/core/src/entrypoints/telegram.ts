@@ -138,3 +138,14 @@ export {
   type TelegramWebhookState,
   telegramWebhookUrl,
 } from '../telegram/webhook';
+export {
+  parseTelegramWidgetQuery,
+  TELEGRAM_WIDGET_LIMITS,
+  TelegramWidgetDataSchema,
+  TelegramWidgetHtmlSchema,
+  type TelegramWidgetMessage,
+  TelegramWidgetMessageSchema,
+  type TelegramWidgetQuery,
+  type TelegramWidgetQueryParse,
+  TelegramWidgetQuerySchema,
+} from '../telegram/widget';
