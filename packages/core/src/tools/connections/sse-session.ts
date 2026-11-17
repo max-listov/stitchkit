@@ -8,8 +8,10 @@ import { fetchConnection } from './http';
 import { type JsonRpcRequest, unwrap } from './json-rpc';
 import {
   awaitConnection,
+  connectionMaxResponseBytes,
   readBoundedText,
   readConnectionErrorText,
+  recordConnectionRead,
   withConnectionDeadline,
 } from './limits';
 import {
@@ -26,8 +28,8 @@ interface SseSessionOptions {
   baseUrl: string;
   allowedHosts: ReadonlySet<string>;
   headers: Record<string, string>;
-  timeoutMs: number;
-  maxResponseBytes: number;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
   phaseLimits?: McpPhaseLimits;
   initialContext?: ConnectionReadContext;
 }
@@ -139,6 +141,7 @@ export class SseSession {
         this.options.allowedHosts,
         this.connectionName,
       );
+      context.touch?.();
       await this.assertStatus(post, context);
       await readBoundedText(post, context.maxResponseBytes, this.connectionName, context);
       return message.id === undefined
@@ -187,7 +190,7 @@ export class SseSession {
   private observeChunk(bytes: number): void {
     const active = this.endpointReady ? this.active : new Set([this.endpointContext]);
     for (const context of active) {
-      context.observedReadBytes += bytes;
+      recordConnectionRead(context, bytes);
       const total = (this.streamBytes.get(context) ?? 0) + bytes;
       this.streamBytes.set(context, total);
       if (total > context.maxResponseBytes) {
@@ -215,7 +218,7 @@ export class SseSession {
       await this.assertStatus(response, this.endpointContext);
       for await (const frame of readSseFrames(
         response,
-        this.options.maxResponseBytes,
+        connectionMaxResponseBytes(this.options.maxResponseBytes),
         this.connectionName,
         {
           signal: this.controller.signal,

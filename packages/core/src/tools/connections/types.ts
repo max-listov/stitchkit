@@ -1,4 +1,5 @@
 import type { ToolTransport } from '../../contract/define';
+import type { McpCatalogStamp } from '../mcp/catalog-stamp';
 import type { ConnectionTokenProvider, ConnectionToolSkipReporter } from './runtime';
 
 /** Where one external MCP server lives, plus static request headers. */
@@ -29,8 +30,19 @@ export type ConnectionOperation =
 
 /** Positive finite integer bounds for one logical operation. */
 export interface ConnectionOperationLimits {
-  /** Deadline in milliseconds, including transport negotiation and body reads. */
+  /**
+   * Deadline in milliseconds, including transport negotiation and body reads. Defaults to the
+   * connection's shared `timeoutMs`; with neither set, discovery allows 300_000 and a call 30_000.
+   */
   timeoutMs?: number;
+  /**
+   * End the operation when nothing arrives for this many milliseconds — response headers and
+   * every body chunk restart it, so a slow transfer that keeps delivering is not cut off.
+   * Discovery with no declared `timeoutMs` (here or shared) defaults to 30_000; otherwise, and
+   * for a call, there is none unless set — a tool may compute in silence before it answers.
+   * Fails with `ConnectionTimeoutError` whose `deadline` is `'idle'`.
+   */
+  idleTimeoutMs?: number;
   /** Raw response-body byte ceiling, including SSE framing. */
   maxResponseBytes?: number;
 }
@@ -51,12 +63,21 @@ export interface McpClientConnectionConfig {
   instanceKey?: string;
   /** Extra hosts a request may name, beside the connection URL's own host. */
   allowHosts?: readonly string[];
-  /** Shared logical-operation deadline; defaults to 30_000 milliseconds. */
+  /**
+   * Shared logical-operation deadline for both phases. Unset, discovery allows 300_000
+   * milliseconds (its idle deadline ends a dead one) and a call 30_000.
+   */
   timeoutMs?: number;
   /** Response body ceiling in bytes; defaults to 1 MiB. */
   maxResponseBytes?: number;
   /** Discovery and call overrides; omitted fields inherit the shared bounds. */
   limits?: McpConnectionLimits;
+  /**
+   * Where the discovered catalog is kept between processes. When the server stamps its
+   * catalog (a Stitchkit server does), a stored catalog with the live stamp is mounted without
+   * asking for `tools/list`; any other answer lists and stores again.
+   */
+  catalog?: McpConnectionCatalogStore;
   /**
    * Which surfaces this server's discovered tools appear on; default MCP and
    * AGENT. Naming `['CLI']` is how a whole server becomes a set of commands,
@@ -65,6 +86,26 @@ export interface McpClientConnectionConfig {
    * is explicit everywhere else in the framework too.
    */
   transports?: readonly ToolTransport[];
+}
+
+/** One stored `tools/list` result and the catalog stamp it was listed under. */
+export interface McpConnectionCatalogEntry {
+  stamp: McpCatalogStamp;
+  /** The `tools/list` result exactly as received, before any `tools` filter. */
+  result: unknown;
+}
+
+/**
+ * The application's storage for a connection's discovered catalog — a file, a database row.
+ * A failing `load` or `store` costs a `tools/list`, never the mount; a loaded entry is
+ * validated before it is used.
+ */
+export interface McpConnectionCatalogStore {
+  load():
+    | McpConnectionCatalogEntry
+    | undefined
+    | Promise<McpConnectionCatalogEntry | undefined>;
+  store(entry: McpConnectionCatalogEntry): void | Promise<void>;
 }
 
 /** A defined MCP connection. */

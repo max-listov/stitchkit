@@ -13,7 +13,7 @@ export {
   type McpCatalogStamp,
   mcpCatalogMeta,
   readMcpCatalogStamp,
-} from '../../tools/mcp/catalog';
+} from '../../tools/mcp/catalog-stamp';
 export {
   createMcpHandler,
   createMcpHttpRoute,

@@ -3,7 +3,7 @@ import { isRecord } from '../../internal/typed';
 import type { ToolCallHooks, ToolLifecycle } from '../execute-hooks';
 import type { ToolResult } from '../execute-result';
 import { createToolRunner } from '../mount';
-import type { McpCatalogStamp } from './catalog';
+import type { McpCatalogStamp } from './catalog-stamp';
 import type { PreparedRuntimeMcpTool } from './prepare';
 import { registerMcpTool } from './register';
 import type { McpRoundRuntime } from './round';

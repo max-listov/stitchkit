@@ -19,9 +19,11 @@ export {
 export {
   ConnectionAuthorizationRequiredError,
   ConnectionBudgetExceededError,
+  type ConnectionDeadline,
   type ConnectionFailureContext,
   ConnectionRequestError,
   ConnectionResponseTooLargeError,
+  type ConnectionTimeoutContext,
   ConnectionTimeoutError,
   ConnectionUrlError,
 } from '../../tools/connections/errors';
@@ -40,6 +42,8 @@ export type {
   ConnectionPhase,
   McpClientConnection,
   McpClientConnectionConfig,
+  McpConnectionCatalogEntry,
+  McpConnectionCatalogStore,
   McpConnectionLimits,
   McpConnectionTransport,
   McpToolFilter,

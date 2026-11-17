@@ -1,5 +1,5 @@
 import { ConnectionResponseTooLargeError } from './errors';
-import { awaitConnection } from './limits';
+import { awaitConnection, recordConnectionRead } from './limits';
 import type { ConnectionReadContext } from './operation-limits';
 
 export interface SseFrame {
@@ -47,7 +47,7 @@ export async function* readSseFrames(
       if (done) break;
       bytes += value.byteLength;
       if (options.onChunk) options.onChunk(value.byteLength);
-      else if (options.context) options.context.observedReadBytes += value.byteLength;
+      else if (options.context) recordConnectionRead(options.context, value.byteLength);
       if (options.totalLimit && bytes > (context()?.maxResponseBytes ?? maxBytes)) {
         throw tooLarge(bytes);
       }

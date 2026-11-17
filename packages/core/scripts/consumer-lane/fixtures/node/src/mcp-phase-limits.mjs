@@ -209,6 +209,7 @@ async function deadlineProof() {
     assert.deepEqual(stopped.error?.details, {
       message: 'Connection deadline exceeded',
       reason: 'deadline-exceeded',
+      deadline: 'total',
       operation: 'initialize',
       phase: 'discovery',
       timeoutMs: 1000,

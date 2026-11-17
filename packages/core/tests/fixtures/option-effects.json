@@ -1500,6 +1500,9 @@
     },
     "transports": {
       "test": "a connection that opts in contributes commands with no per-definition rewriting"
+    },
+    "catalog": {
+      "test": "the second start lists nothing; a changed catalog lists again"
     }
   },
   "McpConnectionLimits": {
@@ -1516,6 +1519,9 @@
     },
     "maxResponseBytes": {
       "test": "call.maxResponseBytes admits a large call without enlarging discovery"
+    },
+    "idleTimeoutMs": {
+      "test": "a link that goes silent fails on the idle deadline, naming it"
     }
   },
   "NormalizeErrorOptions": {
@@ -1608,6 +1614,44 @@
   "TelegramWidgetCallOptions": {
     "signal": {
       "test": "an aborted signal before the call is not dispatched, and nothing leaves"
+    }
+  },
+  "CliUpdateApplyConfig": {
+    "asset": {
+      "test": "apply verifies the decompressed digest and replaces by rename"
+    },
+    "targetPath": {
+      "test": "apply verifies the decompressed digest and replaces by rename"
+    },
+    "timeoutMs": {
+      "test": "negative control: the same link under a one-second total deadline fails"
+    },
+    "idleTimeoutMs": {
+      "test": "a silent link fails on the idle deadline and keeps what arrived"
+    },
+    "partialPath": {
+      "test": "the second attempt asks for the rest and receives only the rest"
+    },
+    "maxBytes": {
+      "test": "the size ceiling counts the kept part too, and a crossed one leaves nothing"
+    },
+    "allowPrivateHosts": {
+      "test": "a private address is refused before anything is transferred"
+    },
+    "manifest": {
+      "test": "an asset the signed manifest does not name is refused"
+    },
+    "trust": {
+      "test": "a trust root with no manifest is a configuration error, not a silent pass"
+    },
+    "backupPath": {
+      "test": "a candidate that passes is installed with its backup"
+    },
+    "verify": {
+      "test": "a candidate that fails leaves the target, makes no backup, and is removed"
+    },
+    "verifyTimeoutMs": {
+      "test": "a candidate that hangs is refused at the deadline, and told so"
     }
   }
 }

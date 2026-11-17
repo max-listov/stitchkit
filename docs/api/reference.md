@@ -1885,7 +1885,7 @@ payload. See [MCP guide](../guide/mcp-and-agents.md#mcp--createmcphandler).
 
 | Export | Kind | Purpose |
 |--------|------|---------|
-| `createMcpHandler` | function | a stateless dual-era Streamable-HTTP MCP handler — [guide](../guide/mcp-and-agents.md#mcp--createmcphandler) |
+| `createMcpHandler` | function | a stateless dual-era Streamable-HTTP MCP handler; each response carries the served surface's catalog stamp as the `stitchkit-catalog` header (none with `rawTools`) — [guide](../guide/mcp-and-agents.md#mcp--createmcphandler) |
 | `createMcpHttpRoute` | function | framework-owned `RawRoute` adapter for an MCP HTTP handler |
 | `createStdioMcpServer` | function | a complete stdio MCP server — [guide](../guide/mcp-and-agents.md#mcp-over-stdio--createstdiomcpserver) |
 | `bindStdioProcessSignals` | function | explicitly bind OS signals to one close-only stdio handle — [guide](../guide/testing-and-deployment.md#stdio-process-signals) |
@@ -1929,7 +1929,10 @@ retained session to push `notifications/tools/list_changed` down; the stamp need
 Store the stamp beside the tools when you list them, compare it against the one on every
 result, and re-list when they differ — including on a refusal, which is exactly when a
 stale catalog is the likeliest explanation and the least visible one. The server side
-needs no wiring: every mount stamps what it advertises.
+needs no wiring: every mount stamps what it advertises — each tool's name, description,
+schemas, annotations and `ui` resource — and `createMcpHandler` sends the same stamp as the
+`stitchkit-catalog` response header, `initialize` included, which is what a connection's
+`catalog` store is checked against before `tools/list`.
 
 | Export | Kind | Summary |
 |--------|------|---------|
@@ -1984,9 +1987,11 @@ and approval path.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `defineMcpClientConnection` | function | declare one external MCP server connection over Streamable HTTP with an optional SSE fallback |
-| `ConnectionOperationLimits` / `McpConnectionLimits` | _type_ | positive finite deadline/raw byte ceilings with independent discovery/call overrides; omitted fields inherit the shared bounds |
+| `ConnectionOperationLimits` / `McpConnectionLimits` | _type_ | positive finite deadline, idle deadline (`idleTimeoutMs`: nothing arrived for that long — headers and every chunk restart it) and raw byte ceilings with independent discovery/call overrides; omitted fields inherit the shared bounds, and discovery with no declared `timeoutMs` allows 300 s in total and 30 s of silence while a call keeps 30 s and no idle deadline; a declared `timeoutMs` has an idle deadline only when one is declared too |
 | `ConnectionPhase` / `ConnectionOperation` / `ConnectionFailureContext` | _type_ | closed operation/phase vocabulary and measured read context for existing typed connection errors |
-| `ConnectionTimeoutError` / `ConnectionResponseTooLargeError` | class | bounded operation refusal, with phase, operation and finite observed bytes; safe tool projection retains the raw cause locally |
+| `ConnectionTimeoutError` / `ConnectionResponseTooLargeError` | class | bounded operation refusal, with phase, operation and finite observed bytes — a timeout also says which `deadline` fired (`'total'` or `'idle'`, with `timeoutMs` the limit that fired); safe tool projection retains the raw cause locally |
+| `ConnectionDeadline` / `ConnectionTimeoutContext` | _type_ | `'total' \| 'idle'`, and a timeout's diagnostics with the deadline that fired (default `'total'`) |
+| `McpConnectionCatalogStore` / `McpConnectionCatalogEntry` | _type_ | `{ load, store }` the application gives a connection's `catalog`, and the `{ stamp, result }` it keeps: when the server's `initialize` answer carries a catalog stamp (a Stitchkit server's does), a stored `tools/list` result whose stamp — and every tool's — matches is mounted without listing; anything else lists and stores again, and a failing store is a miss |
 | `defineOpenApiConnection` | function | declare one OpenAPI document (object, JSON text or JSON URL) as a tool surface |
 | `mountConnections` | function | discover every connection and return readonly `RuntimeToolDefinition`s for `mountAgent`; reported structural failures and bounds stay local, while unions and string-format/pattern refusals (including inside record keys) are judged by the server that owns the original schema (ADR 0266, ADR 0272) |
 | `ConnectionAuthorizationRequiredError` | class | typed reauthorization signal raised on `401` with credentials resolved again on the next call |
@@ -2000,7 +2005,7 @@ and approval path.
 | `ConnectionToolSkipReporter` | _type_ | `(skipped) => void` — called per discovered tool the mount could not build; defaults to a stderr line, and the rest of the surface still mounts |
 | `SkippedConnectionTool` | _type_ | `{ connection, tool, reason }` — which tool was not mounted, and why |
 | `McpClientConnection` | _type_ | a defined MCP client connection |
-| `McpClientConnectionConfig` | _type_ | name, transport, tool filter, token provider, instance key, allowed hosts and `transports` — naming `['CLI']` makes the whole server's discovered tools commands, with no per-definition rewriting |
+| `McpClientConnectionConfig` | _type_ | name, transport, tool filter, token provider, instance key, allowed hosts, bounds, `catalog` store and `transports` — naming `['CLI']` makes the whole server's discovered tools commands, with no per-definition rewriting |
 | `McpConnectionTransport` | _type_ | `{ url, headers? }` for one MCP endpoint |
 | `McpToolFilter` | _type_ | `{ allow?, block? }` discovered-tool filter |
 | `OpenApiConnection` | _type_ | a defined OpenAPI connection |
@@ -2558,7 +2563,7 @@ SDK nor the `ai` peer.
 | `CliProfileError` | class | an `AppError` refusing a named profile that is missing, unreadable or shared between users |
 | `renderCliInstaller` | function | generate the one-line installer from a build manifest, with the URL and digest substituted — [guide](../guide/cli.md#distribution-and-self-update) |
 | `checkCliUpdate` | function | bounded, interval-limited, never-throwing check for a newer published build |
-| `applyCliUpdate` | function | download, verify the decompressed digest and replace the binary by rename |
+| `applyCliUpdate` | function | download, verify the decompressed digest and replace the binary by rename; with `partialPath` an interrupted download continues with `Range`/`If-Range`, and a continued file that fails its checks is downloaded once more from zero |
 | `assertCliPublishable` | function | refuse republishing one version from a different commit — takes one manifest or every manifest already published, because the promise a version makes does not stop at a channel boundary |
 | `rollbackCliUpdate` / `CliRollbackConfig` / `RolledBackCliUpdate` | function / _types_ | put the kept previous build back, digest-checked first and written by the same atomic rename the update uses |
 | `signCliManifest` / `verifyCliManifest` / `cliManifestSigningPayload` | function | Ed25519 over `{name, version, commit, builtAt, assets[]}` — every asset's digest included, so the chain closes on the file that executes |
@@ -2574,7 +2579,7 @@ SDK nor the `ai` peer.
 | `CliBuildStampSchema` / `CliBuildStamp` | schema / _type_ | the version/commit/build time carried inside a binary |
 | `CliInstallerConfig` | _type_ | manifest, binary name, default install directory, and an optional `asset` — omit it for one script that selects the target by `uname` |
 | `CliUpdateCheckConfig` / `CliUpdateCheck` | _type_ | check inputs, and its four answers — `skipped`, `current`, `outdated`, `unknown` |
-| `CliUpdateApplyConfig` / `AppliedCliUpdate` | _type_ | apply inputs — including `verify`, run on an executable candidate beside the target before the backup and the replacement, within `verifyTimeoutMs` — and the replaced path, byte count and digest |
+| `CliUpdateApplyConfig` / `AppliedCliUpdate` | _type_ | apply inputs — including `verify`, run on an executable candidate beside the target before the backup and the replacement, within `verifyTimeoutMs`; `timeoutMs` (default 30 minutes) and `idleTimeoutMs` (default 30 s of silence when `timeoutMs` is not declared); `partialPath` for a resumable download — and the replaced path, byte count and digest |
 | `CliProfileStore` / `CliProfileStoreConfig` / `ResolvedCliProfile` | _type_ | the profile store, its directory/schema/hint config, and one resolution |
 | `CliResultView` | _type_ | the requested view — `count`, `sum`, or `records` (ordered and/or table-rendered) |
 | `CliViewOutput` | _type_ | a JSON value, or the one human-facing text shape |

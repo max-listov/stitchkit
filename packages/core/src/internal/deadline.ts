@@ -61,3 +61,82 @@ export async function withSignalDeadline<T>(
     clearTimeout(timer);
   }
 }
+
+/** The signal and progress hook a body runs under in {@link withIdleDeadline}. */
+export interface IdleDeadline {
+  /** Aborts with the parent's reason, or with `makeReason()` when no progress arrives in time. */
+  readonly signal: AbortSignal;
+  /** Report progress: the quiet period starts again. Does nothing once the body settled. */
+  touch(): void;
+}
+
+/**
+ * Run `body` under a deadline that restarts on every `touch()` — "nothing arrived for
+ * `idleMs`" rather than "the whole exchange took too long", so a slow transfer that keeps
+ * delivering is never cut off while a silent one still ends.
+ *
+ * With `idleMs` undefined there is no idle timer and `signal` is the parent's own. The timer is
+ * cleared on every outcome, and a `touch()` that arrives after the body settled — a read still
+ * finishing behind a released await — re-arms nothing, so no timer outlives the call.
+ */
+export async function withIdleDeadline<T>(
+  idleMs: number | undefined,
+  parent: AbortSignal,
+  makeReason: () => unknown,
+  body: (idle: IdleDeadline) => Promise<T>,
+): Promise<T> {
+  if (idleMs === undefined) return body({ signal: parent, touch: () => undefined });
+  parent.throwIfAborted();
+  const quiet = new AbortController();
+  const timer = startIdleTimer(idleMs, () => quiet.abort(makeReason()));
+  const signal = AbortSignal.any([parent, quiet.signal]);
+  const touch = () => {
+    if (!signal.aborted) timer.touch();
+  };
+  try {
+    return await body({ signal, touch });
+  } finally {
+    timer.stop();
+  }
+}
+
+/** A quiet-period timer: `touch()` restarts it, `stop()` ends it for good. */
+export interface IdleTimer {
+  touch(): void;
+  stop(): void;
+}
+
+/**
+ * Call `onIdle` once `idleMs` pass without a `touch()`. After `stop()` — or after it fired —
+ * nothing re-arms it, so a late `touch()` from a read still draining cannot leave a timer
+ * behind. The one timer behind {@link withIdleDeadline} and the guarded fetch's idle bound.
+ */
+export function startIdleTimer(
+  idleMs: number,
+  onIdle: () => void,
+  options: { unref?: boolean } = {},
+): IdleTimer {
+  assertPositiveSafeInteger('Idle timer idleMs', idleMs, RangeError);
+  if (idleMs > MAX_TIMER_MS) throw new RangeError('Idle timer idleMs exceeds the timer range');
+  let done = false;
+  const arm = () => {
+    const handle = setTimeout(() => {
+      done = true;
+      onIdle();
+    }, idleMs);
+    if (options.unref) handle.unref?.();
+    return handle;
+  };
+  let handle = arm();
+  return {
+    touch() {
+      if (done) return;
+      clearTimeout(handle);
+      handle = arm();
+    },
+    stop() {
+      done = true;
+      clearTimeout(handle);
+    },
+  };
+}

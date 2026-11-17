@@ -22,6 +22,7 @@ import {
   selectCliBuildAsset,
 } from './manifest';
 import { decodeCliAsset } from './publication-assets';
+import { downloadCliAsset } from './resumable-download';
 import {
   type CliSignatureVerdict,
   type CliTrustRoot,
@@ -31,7 +32,9 @@ import {
 
 const DEFAULT_CHECK_TIMEOUT_MS = 2_000;
 const DEFAULT_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1_000;
-const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000;
+/** A build is tens of megabytes; on a slow link that is minutes, and silence is what ends it. */
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1_000;
+const DEFAULT_DOWNLOAD_IDLE_TIMEOUT_MS = 30_000;
 const DEFAULT_VERIFY_TIMEOUT_MS = 30_000;
 const MANIFEST_MAX_BYTES = 256 * 1_024;
 /** A compiled single-platform CLI is tens of megabytes; this is the ceiling. */
@@ -202,7 +205,25 @@ export interface CliUpdateApplyConfig {
   asset: CliBuildAsset;
   /** The file to replace; defaults to the running executable. */
   targetPath?: string;
+  /**
+   * How long the download may take, in milliseconds — bounding the response headers and,
+   * separately, the body. Default 1 800 000 (30 minutes).
+   */
   timeoutMs?: number;
+  /**
+   * End the download when nothing arrives for this many milliseconds — no response yet, or no
+   * chunk since the last one. Default 30 000 when `timeoutMs` is not set either; with a
+   * declared `timeoutMs` there is none unless set.
+   */
+  idleTimeoutMs?: number;
+  /**
+   * Keep the transfer in this file between attempts, so an interrupted download continues from
+   * where it stopped (`Range` with `If-Range`) instead of starting over. A record of what the part
+   * holds is kept at `<partialPath>.json`, and `<partialPath>.lock` refuses a second download into
+   * the same part. Put it in the application's state directory; both files are removed once the
+   * download is decoded, whether it was the build or not. Unset: nothing survives a failure.
+   */
+  partialPath?: string;
   maxBytes?: number;
   allowPrivateHosts?: boolean;
   /**
@@ -292,28 +313,25 @@ export async function applyCliUpdate(config: CliUpdateApplyConfig): Promise<Appl
       throw new Error('[stitchkit] update: the asset is not one the signed manifest names');
     }
   }
-  const response = await fetchGuarded(
-    new URL(config.asset.url),
-    config.allowPrivateHosts ?? false,
-    {
-      timeoutMs: config.timeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS,
-      bodyTimeoutMs: config.timeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS,
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`[stitchkit] update download responded ${response.status}`);
-  }
-  const transferred = await readCapped(response, config.maxBytes ?? DEFAULT_MAX_ASSET_BYTES);
-  if (!transferred) throw new Error('[stitchkit] update download exceeded the size ceiling');
-
+  const maxBytes = config.maxBytes ?? DEFAULT_MAX_ASSET_BYTES;
   // Bounded by the size the manifest declares — which, with a trust root, is a
   // signed number. Unbounded, a 0.3 MB archive expands to 300 MB before any
   // digest can disagree with it, and the ceiling on the TRANSFER (256 MB)
   // permits roughly a thousand times that on the output.
-  const { bytes, sha256 } = await decodeCliAsset(
-    transferred,
-    config.asset,
-    config.maxBytes ?? DEFAULT_MAX_ASSET_BYTES,
+  const { bytes, sha256 } = await downloadCliAsset(
+    {
+      url: new URL(config.asset.url),
+      sha256: config.asset.sha256,
+      allowPrivateHosts: config.allowPrivateHosts ?? false,
+      maxBytes,
+      timeoutMs: config.timeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS,
+      // The defaults are a pair: a declared `timeoutMs` keeps meaning exactly what it did.
+      ...((config.idleTimeoutMs !== undefined || config.timeoutMs === undefined) && {
+        idleTimeoutMs: config.idleTimeoutMs ?? DEFAULT_DOWNLOAD_IDLE_TIMEOUT_MS,
+      }),
+      ...(config.partialPath !== undefined && { partialPath: config.partialPath }),
+    },
+    (transferred) => decodeCliAsset(transferred, config.asset, maxBytes),
   );
 
   if (config.verify)

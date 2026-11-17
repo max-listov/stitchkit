@@ -10,7 +10,8 @@ import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute-hooks
 import { createToolRunner, type ToolExtend } from '../mount';
 import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
 import { type McpResourceDef, RESOURCE_MIME_TYPE } from './app';
-import { type McpCatalogStamp, mcpCatalogStamp } from './catalog';
+import { mcpCatalogStamp } from './catalog';
+import type { McpCatalogStamp } from './catalog-stamp';
 import {
   formatMcpResult,
   type McpSchemaValidationConfig,
@@ -288,6 +289,16 @@ function isMcpServerBuildConfig(value: unknown): value is McpServerBuildConfig<u
   return isRecord(value) && isRecord(value.serverInfo);
 }
 
+const servedCatalogs = new WeakMap<McpServer, McpCatalogStamp>();
+
+/**
+ * The stamp of everything a built server advertises in `tools/list`, or `undefined` when part
+ * of it is unknown to Stitchkit (`rawTools`).
+ */
+export function servedMcpCatalog(server: McpServer): McpCatalogStamp | undefined {
+  return servedCatalogs.get(server);
+}
+
 /** Build one fresh server from a deterministic surface prepared by its owner. */
 export function buildMcpServerFromPrepared<TAuth>(
   config: McpServerBuildConfig<TAuth>,
@@ -322,6 +333,9 @@ export function buildMcpServerFromPrepared<TAuth>(
   const server = new McpServer(config.serverInfo, serverOptions);
   const context = config.context?.(auth);
   const catalog = mcpCatalogStamp(prepared);
+  // Raw SDK registrations are outside the stamp, so a surface carrying them never claims to
+  // know its whole catalog.
+  if (!config.rawTools) servedCatalogs.set(server, catalog);
   mountPreparedMcp(server, prepared.contractTools, {
     catalog,
     context,

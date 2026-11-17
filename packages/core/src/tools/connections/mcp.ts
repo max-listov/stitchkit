@@ -3,7 +3,7 @@ import type { EndpointToolAnnotations } from '../../contract/tool-options';
 import { isRecord } from '../../internal/typed';
 import { readDiscoveredToolAnnotations } from '../read-operation';
 import { defineRuntimeTool, type RuntimeToolDefinition } from '../runtime-tool';
-import { connectionMaxResponseBytes, connectionTimeoutMs } from './limits';
+import { listMcpCatalog } from './catalog-cache';
 import { McpHttpClient } from './mcp-client';
 import { mcpToolFailure, unwrapMcpResult } from './mcp-envelope';
 import {
@@ -38,8 +38,10 @@ export async function mountMcpConnection(
     new McpHttpClient(connection.name, instanceId, {
       transport: connection.transport,
       allowedHosts,
-      timeoutMs: connectionTimeoutMs(connection.timeoutMs),
-      maxResponseBytes: connectionMaxResponseBytes(connection.maxResponseBytes),
+      ...(connection.timeoutMs !== undefined && { timeoutMs: connection.timeoutMs }),
+      ...(connection.maxResponseBytes !== undefined && {
+        maxResponseBytes: connection.maxResponseBytes,
+      }),
       ...(connection.limits && { limits: connection.limits }),
     });
   const discovery = createClient();
@@ -47,7 +49,11 @@ export async function mountMcpConnection(
     { instanceId, provider: connection.token, client: discovery },
     async (token) => {
       await discovery.initialize(token);
-      return discovery.request('tools/list', {}, token);
+      return listMcpCatalog({
+        store: connection.catalog,
+        served: discovery.servedCatalog(),
+        list: () => discovery.request('tools/list', {}, token),
+      });
     },
   ).finally(() => discovery.teardown());
 

@@ -16,6 +16,7 @@ export type PinnedTransport = (
   url: URL,
   resolved: { address: string; family: 4 | 6 },
   signal: AbortSignal | undefined,
+  headers?: Record<string, string>,
 ) => Promise<Response>;
 
 /**
@@ -44,7 +45,8 @@ export async function requestPinned(
         method: 'GET',
         signal,
         ...(url.protocol === 'https:' ? { servername: url.hostname } : {}),
-        headers: { host: url.host, accept: '*/*', ...headers },
+        // The pinned `Host` is the guard's, never a caller header's.
+        headers: { accept: '*/*', ...headers, host: url.host },
       },
       (response) => {
         answered = true;

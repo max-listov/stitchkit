@@ -160,9 +160,19 @@ export class ConnectionBudgetExceededError extends Error implements ToolErrorPro
   }
 }
 
+/** Which deadline ended an operation: the whole exchange's, or the quiet period's. */
+export type ConnectionDeadline = 'total' | 'idle';
+
+/** Diagnostics of a timeout: the operation, and which of its deadlines fired. */
+export interface ConnectionTimeoutContext extends ConnectionFailureContext {
+  /** Defaults to `'total'`. */
+  deadline?: ConnectionDeadline;
+}
+
 /**
  * One logical operation exceeded its deadline. The original error remains
  * available to in-process observers while tools receive its safe projection.
+ * `timeoutMs` is the limit that fired — `idleTimeoutMs` when `deadline` is `'idle'`.
  */
 export class ConnectionTimeoutError extends Error implements ToolErrorProjection {
   readonly connectionName: string;
@@ -170,16 +180,23 @@ export class ConnectionTimeoutError extends Error implements ToolErrorProjection
   readonly operation: ConnectionOperation;
   readonly phase: ConnectionPhase;
   readonly observedReadBytes: number;
+  readonly deadline: ConnectionDeadline;
 
   constructor(
     connectionName: string,
     timeoutMs: number,
-    context: ConnectionFailureContext = {},
+    context: ConnectionTimeoutContext = {},
   ) {
-    super(`Connection "${connectionName}" timed out after ${timeoutMs} ms`);
+    const deadline = context.deadline ?? 'total';
+    super(
+      deadline === 'idle'
+        ? `Connection "${connectionName}" received nothing for ${timeoutMs} ms`
+        : `Connection "${connectionName}" timed out after ${timeoutMs} ms`,
+    );
     this.name = 'ConnectionTimeoutError';
     this.connectionName = connectionName;
     this.timeoutMs = timeoutMs;
+    this.deadline = deadline;
     this.operation = context.operation ?? 'request';
     this.phase = context.phase ?? 'call';
     this.observedReadBytes = context.observedReadBytes ?? 0;
@@ -193,6 +210,7 @@ export class ConnectionTimeoutError extends Error implements ToolErrorProjection
       details: {
         message,
         reason: 'deadline-exceeded',
+        deadline: this.deadline,
         operation: this.operation,
         phase: this.phase,
         timeoutMs: this.timeoutMs,

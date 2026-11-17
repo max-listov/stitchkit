@@ -20,6 +20,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { raceAbort } from './abort-race';
 import { readBoundedChunks } from './bounded-body';
+import { type IdleTimer, startIdleTimer } from './deadline';
 import type { PinnedTransport } from './pinned-http';
 import * as pinnedHttp from './pinned-http';
 
@@ -186,6 +187,14 @@ export interface GuardedFetchOptions {
    * body must still end. Default 120 seconds.
    */
   bodyTimeoutMs?: number;
+  /**
+   * End the fetch when nothing arrives for this long — no headers yet, or no body chunk since
+   * the last one. A slow download that keeps delivering is never cut off by it; `bodyTimeoutMs`
+   * still bounds the whole body. Unset: no idle bound.
+   */
+  idleTimeoutMs?: number;
+  /** Request headers (`Range`, `If-Range`), sent on every hop to the starting URL's origin and dropped on a redirect to another. */
+  headers?: Record<string, string>;
   /** Optional caller cancellation, combined with both deadlines. */
   signal?: AbortSignal;
   /**
@@ -226,6 +235,17 @@ export async function fetchGuarded(
     );
   }, timeoutMs);
   headerTimer.unref?.();
+  const idle =
+    options.idleTimeoutMs === undefined
+      ? undefined
+      : startIdleTimer(
+          options.idleTimeoutMs,
+          () =>
+            controller.abort(
+              new Error(`fetch received nothing for ${options.idleTimeoutMs}ms`),
+            ),
+          { unref: true },
+        );
   const transport = options.transport ?? pinnedHttp.requestPinned;
   let settled = false;
   try {
@@ -240,7 +260,11 @@ export async function fetchGuarded(
       // The one resolution of this hop. `allowPrivate` widens the address check,
       // not the number of lookups: the connection still uses this answer.
       const resolved = await resolveAddress(url, allowPrivate, signal, options.dns);
-      const res = await transport(url, resolved, signal);
+      // Request headers belong to the origin they were written for; a redirect elsewhere
+      // does not carry them.
+      const headers = url.origin === start.origin ? options.headers : undefined;
+      const res = await transport(url, resolved, signal, headers);
+      idle?.touch();
       const location =
         res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
       if (location === null) {
@@ -251,15 +275,69 @@ export async function fetchGuarded(
           controller.abort(new Error(`fetch body was not consumed within ${bodyTimeoutMs}ms`));
         }, bodyTimeoutMs);
         bodyTimer.unref?.();
-        return res;
+        return observeBody(res, signal, idle, bodyTimer);
       }
       await res.body?.cancel();
       url = new URL(location, url);
     }
     throw new Error('too many redirects');
   } finally {
-    if (!settled) clearTimeout(headerTimer);
+    if (!settled) {
+      clearTimeout(headerTimer);
+      idle?.stop();
+    }
   }
+}
+
+/**
+ * Idle progress is counted when the reader takes a chunk, which with backpressure is when the
+ * socket delivers it; a reader slower than the idle deadline ends the fetch.
+ *
+ * The same response, with every body chunk counted as idle progress, both timers ended when the
+ * body ends, and a body that fails because a deadline aborted the fetch failing with that
+ * deadline's reason — not with the socket's bare "aborted".
+ */
+function observeBody(
+  res: Response,
+  signal: AbortSignal,
+  idle: IdleTimer | undefined,
+  bodyTimer: ReturnType<typeof setTimeout>,
+): Response {
+  const end = () => {
+    idle?.stop();
+    clearTimeout(bodyTimer);
+  };
+  if (!res.body) {
+    end();
+    return res;
+  }
+  const reader = res.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          end();
+          controller.close();
+          return;
+        }
+        idle?.touch();
+        controller.enqueue(value);
+      } catch (error) {
+        end();
+        controller.error(signal.aborted ? signal.reason : error);
+      }
+    },
+    cancel(reason) {
+      end();
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
 }
 
 /** The address this hop connects to — the one answer that passed the check. */

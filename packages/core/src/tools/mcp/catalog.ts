@@ -1,32 +1,9 @@
 import { createHash } from 'node:crypto';
 import { compareCodeUnits, serializeCanonicalJson } from '../../internal/canonical-json';
-import { isRecord } from '../../internal/typed';
 import { toJsonSchema } from '../../json-schema/json-schema';
 import { publishedToolAnnotations } from '../read-operation';
+import { type McpCatalogStamp, mcpCatalogMeta } from './catalog-stamp';
 import type { PreparedMcpServerSurface, PreparedMcpTool } from './prepare';
-
-/**
- * The `_meta` key carrying the catalog stamp, on every advertised tool and on
- * every tool result.
- *
- * Namespaced, because `_meta` is shared ground: a host, the official SDK and
- * the application all write into it, and a bare `catalog` would eventually mean
- * two things at once.
- */
-export const MCP_CATALOG_META_KEY = 'stitchkit/catalog';
-
-/**
- * What the server says its advertised catalog currently is.
- *
- * `digest` changes whenever any advertised tool's name, description, input
- * schema, output schema or annotations change — and only then. `tools` is the
- * count, carried because it makes a mismatch legible without a second lookup
- * ("they advertise 41, I hold 39").
- */
-export interface McpCatalogStamp {
-  digest: string;
-  tools: number;
-}
 
 /**
  * Prepared surfaces are immutable and long-lived, and every request to a
@@ -48,6 +25,9 @@ function toolFingerprint(descriptor: PreparedMcpTool): unknown {
       : null,
     // The stamp hashes what `tools/list` publishes, not what was declared.
     annotations: publishedToolAnnotations(mountable.method) ?? null,
+    // A client keeps a listed catalog by this digest, so everything `tools/list` publishes
+    // about the tool is in it — the MCP Apps resource included.
+    ui: mountable.method.ui ?? null,
   };
 }
 
@@ -82,27 +62,6 @@ export function mcpCatalogStamp(surface: PreparedMcpServerSurface): McpCatalogSt
   };
   stampCache.set(surface, stamp);
   return stamp;
-}
-
-/** The `_meta` fragment a stamped tool or result carries. */
-export function mcpCatalogMeta(stamp: McpCatalogStamp): Record<string, unknown> {
-  return { [MCP_CATALOG_META_KEY]: { ...stamp } };
-}
-
-/**
- * Read a catalog stamp out of a peer's `_meta`, or `null` when there is none.
- *
- * Parsed, not trusted: this arrives over the wire from another process, and the
- * fact that it describes a catalog does not exempt it from being validated.
- */
-export function readMcpCatalogStamp(meta: unknown): McpCatalogStamp | null {
-  if (!isRecord(meta)) return null;
-  const value: unknown = meta[MCP_CATALOG_META_KEY];
-  if (!isRecord(value)) return null;
-  const { digest, tools } = value;
-  if (typeof digest !== 'string' || digest.length === 0) return null;
-  if (typeof tools !== 'number' || !Number.isInteger(tools) || tools < 0) return null;
-  return { digest, tools };
 }
 
 /**

@@ -14,9 +14,15 @@ import {
 } from '../../server/oauth/metadata';
 import type { RawRoute } from '../../server/types';
 import {
+  MCP_CATALOG_HEADER,
+  type McpCatalogStamp,
+  mcpCatalogHeaderValue,
+} from './catalog-stamp';
+import {
   buildMcpServer,
   buildMcpServerFromPrepared,
   type McpServerBuildConfig,
+  servedMcpCatalog,
 } from './mount';
 import {
   type McpSurfaceRegistry,
@@ -157,7 +163,10 @@ export function createMcpHandler<
   const TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
 >(config: McpHandlerConfig<TAuth, TSurfaces>): McpHttpHandler {
   const buildPrepared = prepareStaticSurface(config);
-  const authByCarrier = new WeakMap<AuthInfo, { value: TAuth }>();
+  const authByCarrier = new WeakMap<
+    AuthInfo,
+    { value: TAuth; served?: McpCatalogStamp | undefined }
+  >();
   let closed = false;
   const closing = new AbortController();
 
@@ -168,7 +177,9 @@ export function createMcpHandler<
         throw new Error('[stitchkit] MCP request reached the SDK without resolved auth');
       }
       const auth = resolved.value;
-      return buildPrepared ? buildPrepared(auth) : buildMcpServer(config, auth);
+      const server = buildPrepared ? buildPrepared(auth) : buildMcpServer(config, auth);
+      resolved.served = servedMcpCatalog(server);
+      return server;
     },
     {
       legacy: config.legacy === 'reject' ? 'reject' : 'stateless',
@@ -222,12 +233,11 @@ export function createMcpHandler<
         clientId: config.multiRound?.state.principal(auth) ?? 'stitchkit',
         scopes: [],
       };
-      authByCarrier.set(authCarrier, { value: auth });
+      const resolved: { value: TAuth; served?: McpCatalogStamp | undefined } = { value: auth };
+      authByCarrier.set(authCarrier, resolved);
       try {
-        return observeRejection(
-          request,
-          await sdkHandler.fetch(request, { authInfo: authCarrier }),
-        );
+        const response = await sdkHandler.fetch(request, { authInfo: authCarrier });
+        return observeRejection(request, withCatalogHeader(response, resolved.served));
       } finally {
         authByCarrier.delete(authCarrier);
       }
@@ -239,6 +249,21 @@ export function createMcpHandler<
       await sdkHandler.close();
     },
   };
+}
+
+/**
+ * Carry the served catalog's stamp on the response, so a client holding a stored catalog can
+ * tell from `initialize` alone whether `tools/list` would answer anything new.
+ */
+function withCatalogHeader(response: Response, served: McpCatalogStamp | undefined): Response {
+  if (!served) return response;
+  const headers = new Headers(response.headers);
+  headers.set(MCP_CATALOG_HEADER, mcpCatalogHeaderValue(served));
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 /** Mount an MCP handler as an ordinary framework-owned raw HTTP route. */

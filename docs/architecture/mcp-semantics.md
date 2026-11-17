@@ -48,10 +48,19 @@ fault in the source — because nothing in the refusal mentions the catalog.
 So every advertised tool and every tool result carries
 `_meta["stitchkit/catalog"] = { digest, tools }`: the fingerprint of the exact
 advertised surface (`mcpCatalogStamp`), covering each tool's name, description,
-input schema, output schema and annotations. A consumer stores the stamp when it
-lists, compares it on responses it was already receiving, and so learns its copy
+input schema, output schema, annotations and `ui` resource. A consumer stores the stamp
+when it lists, compares it on responses it was already receiving, and so learns its copy
 is stale **without making a request to find out** — including on the refusal a
 stale copy causes, which is when the question actually gets asked.
+
+`createMcpHandler` sends the same stamp of the surface each request was served from as
+the `stitchkit-catalog` response header, on the `initialize` answer included (the SDK
+assembles that result and leaves no `_meta` to fill), unless the handler has `rawTools`,
+which are outside the digest. An MCP client connection with a `catalog` store reads it
+there and mounts its stored `tools/list` result while the stamps agree: the stored entry,
+every tool in it and their number must match the announced stamp, and a listing is stored
+only under the same proof, so a rolling deploy that answers `initialize` and `tools/list`
+from two builds stores nothing (ADR 0293).
 
 `notifications/tools/list_changed` is the push-shaped answer to the same
 problem, and this framework cannot send it: `createMcpHandler` is stateless by

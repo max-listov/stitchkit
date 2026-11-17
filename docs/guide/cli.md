@@ -947,6 +947,31 @@ Carry the build stamp inside the binary (`CliBuildStampSchema`,
 `formatCliBuildStamp`) so the tool can say what it is rather than leaving the
 reader to infer it from behaviour.
 
+#### A download on a slow link
+
+A build is tens of megabytes, and on a slow link that is minutes. `applyCliUpdate` bounds
+the download by silence rather than length: `idleTimeoutMs` (default 30 seconds) ends it
+when nothing has arrived for that long, and `timeoutMs` (default 30 minutes) bounds the
+response headers and, separately, the body. A declared `timeoutMs` keeps meaning exactly that,
+with an idle deadline only when `idleTimeoutMs` is declared too.
+
+Give it a `partialPath` in your state directory and an interrupted download continues where
+it stopped:
+
+```ts
+await applyCliUpdate({ asset: check.asset, partialPath: join(stateDir, 'update.part') })
+```
+
+Every received chunk is appended to that file, and `<partialPath>.json` records the URL, the
+build's digest and the server's validator (a strong `ETag`, else `Last-Modified`). The next
+attempt asks for the rest with `Range` and `If-Range`; `206` from the right offset continues
+the file, `200` (the build changed) replaces it, `416` with the full length means it is
+already whole. A part is never trusted: the finished transfer is decoded and checked against
+the manifest like a fresh one, and a continued file that fails — a corrupt part, a build
+re-published under the same URL — is thrown away and downloaded once more from zero. Both
+files are removed once the download is decoded, and `<partialPath>.lock` refuses a second
+update into the same part while one is running. The size ceiling counts the kept part too.
+
 #### A manifest inside your own network
 
 The check goes through the same SSRF boundary every outbound fetch does, so a
@@ -1350,8 +1375,13 @@ const discovered = await mountConnections([
     token: () => key,
     transports: ['CLI'],   // the opt-in: this server's tools are commands
     limits: {
-      discovery: { timeoutMs: 30_000, maxResponseBytes: 4 * 1024 * 1024 },
+      discovery: { maxResponseBytes: 4 * 1024 * 1024 }, // 300 s total, 30 s of silence
       call: { timeoutMs: 120_000 },
+    },
+    // Skip tools/list while the stored catalog is the one the server serves.
+    catalog: {
+      load: async () => JSON.parse(await readFile(catalogPath, 'utf8')),
+      store: (entry) => writeFile(catalogPath, JSON.stringify(entry)),
     },
   }),
 ])
@@ -1394,12 +1424,36 @@ limits. Each logical operation has one deadline, including initial transport
 negotiation and response-body reading. Legacy endpoint readiness has a discovery
 deadline; the lifetime of an established SSE stream does not.
 
-Omitted phase fields inherit the existing connection-level `timeoutMs` and
-`maxResponseBytes`, whose defaults are 30 seconds and 1 MiB. Values must be positive
-safe integers; `timeoutMs` must also fit the runtime timer range. The byte ceiling
+Inside that deadline an operation may have an idle one: `idleTimeoutMs` ends it when
+nothing has arrived for that long — the response headers and every body chunk restart
+it, so a slow link that keeps delivering a large catalog is never cut off, while a
+silent one still ends with `ConnectionTimeoutError` whose `deadline` is `'idle'`. On a
+shared legacy SSE stream any byte is progress for every pending operation.
+
+Omitted phase fields inherit the connection-level `timeoutMs` and `maxResponseBytes`.
+With neither set, discovery allows 300 seconds in total and 30 seconds of silence, and
+a call 30 seconds with no idle deadline — a tool may compute in silence before it
+answers, so a call's idle deadline is only what you declare. A declared `timeoutMs`
+keeps meaning exactly that deadline: discovery then has an idle deadline only when you
+declare one too. The byte default is 1 MiB.
+Values must be positive safe integers; deadlines must also fit the runtime timer range. The byte ceiling
 counts raw UTF-8 body bytes, including SSE framing, regardless of `Content-Length`.
 Pending legacy calls also count comments and wrong-id frames. `budget.maxTools`
 and `budget.maxSchemaBytes` remain separate mount limits.
+
+**A stored catalog is mounted while it is current.** A Stitchkit server sends its
+[catalog stamp](./mcp-and-agents.md#knowing-your-catalog-is-stale--the-catalog-stamp) with
+the `initialize` answer, as the `stitchkit-catalog` response header. Given a `catalog:
+{ load, store }`, the connection compares it with the stamp of the stored `tools/list`
+result and mounts the stored one when they match — every stored tool must carry the same
+stamp, and there must be as many — so a start costs no catalog transfer. A different
+stamp (the server's contract moved, or the credential sees another surface) lists and
+stores again. A listing is stored only when every tool in it carries the stamp the
+`initialize` answer announced, so a rolling deploy answering the two requests from
+different builds stores nothing. A server without a stamp, a surface with raw SDK tools
+and a failing `load` or `store` all cost one `tools/list`, never the mount. The stamp
+covers what `tools/list` publishes as Stitchkit builds it; the JSON Schema text the
+server's MCP SDK renders from the same schema is not hashed separately.
 
 Only the initial `initialize` can negotiate HTTP-to-legacy fallback on 400, 404
 or 405. A failed `tools/call` is not replayed. Caller cancellation preserves its

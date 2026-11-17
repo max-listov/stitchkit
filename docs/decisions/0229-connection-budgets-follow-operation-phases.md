@@ -17,7 +17,9 @@ budget. Shared timeout and byte options remain the baseline for both phases, wit
 per-phase overrides. Finite validation prevents an invalid value from creating unlimited
 waiting or reading. Tool mount and schema ceilings remain separate constraints.
 
-One operation deadline covers Streamable HTTP negotiation and its allowed legacy fallback.
+One operation deadline covers Streamable HTTP negotiation and its allowed legacy fallback
+(amended by ADR 0293: one total deadline, inside which an optional idle deadline ends the
+operation when nothing arrives for `idleTimeoutMs`).
 The discovery deadline does not bound the lifetime of an established SSE session. Each
 pending response has its own phase and byte ceiling, while unsolicited frames remain bounded.
 Only initial initialization may negotiate another transport. A failed side-effecting call is

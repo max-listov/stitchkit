@@ -1,5 +1,10 @@
 import { isRecord } from '../../internal/typed';
 import {
+  MCP_CATALOG_HEADER,
+  type McpCatalogStamp,
+  readMcpCatalogHeader,
+} from '../mcp/catalog-stamp';
+import {
   ConnectionAuthorizationRequiredError,
   ConnectionRequestError,
   ConnectionResponseTooLargeError,
@@ -39,8 +44,9 @@ export interface McpHttpClientOptions {
   transport: McpTransportConfig;
   /** The host fence built from the connection URL and its `allowHosts`. */
   allowedHosts: ReadonlySet<string>;
-  timeoutMs: number;
-  maxResponseBytes: number;
+  /** The connection's shared bounds as declared; phase defaults apply where they are unset. */
+  timeoutMs?: number;
+  maxResponseBytes?: number;
   limits?: McpConnectionLimits;
 }
 
@@ -59,6 +65,7 @@ export class McpHttpClient {
   private initialized = false;
   private initialInitializePending = true;
   private sse: SseSession | undefined;
+  private served: McpCatalogStamp | undefined;
   private readonly limits: McpPhaseLimits;
 
   constructor(
@@ -69,9 +76,18 @@ export class McpHttpClient {
     this.limits = resolveMcpLimits(options);
   }
 
+  /**
+   * The catalog stamp the server sent with its `initialize` answer, or `undefined` when it sent
+   * none — a server that does not stamp, or the legacy SSE transport.
+   */
+  servedCatalog(): McpCatalogStamp | undefined {
+    return this.served;
+  }
+
   /** Forget the session so the next call starts a fresh handshake. */
   teardown(): void {
     this.initialized = false;
+    this.served = undefined;
     this.initialInitializePending = true;
     this.sessionId = undefined;
     this.sse?.close();
@@ -169,6 +185,7 @@ export class McpHttpClient {
       this.options.allowedHosts,
       this.connectionName,
     );
+    context.touch?.();
     if (response.status === 401) {
       void response.body?.cancel().catch(() => undefined);
       throw new ConnectionAuthorizationRequiredError(
@@ -187,6 +204,10 @@ export class McpHttpClient {
     }
     const session = response.headers.get('mcp-session-id');
     if (session) this.sessionId = session;
+    if (message.method === 'initialize') {
+      this.served =
+        readMcpCatalogHeader(response.headers.get(MCP_CATALOG_HEADER)) ?? undefined;
+    }
     if (message.id === undefined) {
       await readBoundedText(response, context.maxResponseBytes, this.connectionName, context);
       return undefined;

@@ -68,6 +68,7 @@ const COVERED: Record<string, string> = {
   WatchHubConfig: 'entrypoints/application.ts',
   DirectoryInboxConfig: 'entrypoints/application.ts',
   CliPublicationOptions: 'entrypoints/cli/publish.ts',
+  CliUpdateApplyConfig: 'entrypoints/cli.ts',
   McpClientConnectionConfig: 'entrypoints/tools/connections.ts',
   McpConnectionLimits: 'entrypoints/tools/connections.ts',
   ConnectionOperationLimits: 'entrypoints/tools/connections.ts',

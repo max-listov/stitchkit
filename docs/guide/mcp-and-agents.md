@@ -298,9 +298,16 @@ same problem and `createMcpHandler` cannot send it: it is stateless by
 construction, so there is no retained session to push down.
 
 The digest covers each advertised tool's name, description, input schema, output
-schema and annotations, and nothing else — it moves when the contract moves and
-not when a handler does. Raw SDK registrations stay consumer-owned and are
-outside it.
+schema, annotations and MCP Apps `ui` resource, and nothing else — it moves when the
+contract moves and not when a handler does. Raw SDK registrations stay consumer-owned
+and are outside it, so a handler with `rawTools` sends no stamp header.
+
+`createMcpHandler` also sends the stamp of the surface each request was served from as
+the `stitchkit-catalog` response header (the same `{ digest, tools }` JSON), on the
+`initialize` answer included — the SDK assembles that result itself and leaves no
+`_meta` to fill. A client can therefore tell whether its stored catalog is current
+before it asks for `tools/list`; `defineMcpClientConnection({ catalog })` does exactly
+that ([CLI → commands discovered from a running server](./cli.md#commands-discovered-from-a-running-server)).
 
 ### Saying which tools only read — `readOnlyHint`
 

@@ -48,7 +48,7 @@
     "stitchkit/telegram/screens": 76,
     "stitchkit/testing": 81,
     "stitchkit/tools": 171,
-    "stitchkit/tools/connections": 26,
+    "stitchkit/tools/connections": 30,
     "stitchkit/tools/contract": 16,
     "stitchkit/tools/invoker": 4,
     "stitchkit/tracking": 51,

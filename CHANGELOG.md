@@ -15,6 +15,52 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/tools/connections` — **an idle deadline: a slow link that keeps delivering is not a
+  dead one.** `limits.discovery.idleTimeoutMs` and `limits.call.idleTimeoutMs` end an operation
+  when nothing has arrived for that long; the response headers and every body chunk restart it,
+  inside the operation's total `timeoutMs`. The failure is `ConnectionTimeoutError` with
+  `deadline: 'idle'` and `timeoutMs` the idle limit; its tool projection keeps
+  `reason: 'deadline-exceeded'` and adds `details.deadline`. New types `ConnectionDeadline` and
+  `ConnectionTimeoutContext` (the constructor's third argument). → ADR 0293
+- `stitchkit/tools/connections` — **a stored catalog is mounted while it is the server's.**
+  `defineMcpClientConnection({ catalog: { load, store } })` compares the catalog stamp a
+  Stitchkit server sends with its `initialize` answer against the stored `tools/list` result
+  and mounts the stored one when they match, so an unchanged catalog costs no transfer. A
+  changed catalog or another surface lists and stores again; a listing is stored only when every
+  tool in it carries the announced stamp, so a rolling deploy cannot store another build's
+  catalog; a failing store is a miss, never a mount failure. New types
+  `McpConnectionCatalogStore` and `McpConnectionCatalogEntry`. → ADR 0293
+- `stitchkit/tools/mcp` — **`createMcpHandler` sends the served surface's catalog stamp as the
+  `stitchkit-catalog` response header**, on `initialize` included; a handler with `rawTools`
+  sends none. → ADR 0293
+- `stitchkit/cli` — **`applyCliUpdate({ partialPath })` continues an interrupted download.** It
+  appends to the part, records the URL, the build's digest and the server's validator beside it,
+  and asks for the rest with `Range` and `If-Range`; a continued file that fails decoding, size
+  or digest is discarded and downloaded once more from zero, and a lock refuses a second update
+  into the same part. `idleTimeoutMs` (default 30 seconds) ends a silent download. → ADR 0293
+
+### Changed
+
+- `stitchkit/tools/connections` — **MCP discovery with no declared deadline allows 300 seconds
+  in total and 30 seconds of silence**, instead of 30 seconds in total: a catalog of a few hundred
+  tools takes minutes on a slow link, and a dead one still fails after 30 seconds of silence. A
+  declared connection-level or discovery `timeoutMs` keeps meaning exactly what it did, with no
+  idle deadline unless one is declared too; a call keeps 30 seconds and no idle deadline.
+  → ADR 0293
+  **Affects:** `stitchkit/tools/connections` behaviour
+- `stitchkit/cli` — **`applyCliUpdate` with no declared `timeoutMs` downloads within 30 minutes
+  and 30 seconds of silence**, instead of 120 seconds in total; a declared `timeoutMs` keeps
+  meaning what it did. → ADR 0293
+  **Affects:** `stitchkit/cli` behaviour
+
+### Fixed
+
+- `stitchkit/tools/mcp` — **the catalog stamp covers a tool's MCP Apps `ui` resource**, which
+  `tools/list` publishes; a changed resource left the digest unchanged. Every stamp moves once.
+  **Affects:** `stitchkit/tools/mcp` behaviour
+
 ## [0.124.0] - 2026-11-17
 
 ### ⚠️ Breaking changes

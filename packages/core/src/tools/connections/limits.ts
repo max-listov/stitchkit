@@ -1,6 +1,6 @@
 import { raceAbort } from '../../internal/abort-race';
 import { concatChunks, readBoundedChunks } from '../../internal/bounded-body';
-import { withSignalDeadline } from '../../internal/deadline';
+import { withIdleDeadline, withSignalDeadline } from '../../internal/deadline';
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
 import { MAX_TIMER_MS } from '../../internal/timers';
 import { ConnectionResponseTooLargeError, ConnectionTimeoutError } from './errors';
@@ -9,6 +9,13 @@ import type { ConnectionReadContext } from './operation-limits';
 /** Shared defaults for both connection kinds; phase overrides inherit these. */
 export const DEFAULT_CONNECTION_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
+/**
+ * MCP discovery's own defaults when nothing names a deadline: a catalog of a few hundred tools
+ * is hundreds of kilobytes, which a slow link delivers in minutes, so the bound that ends a dead
+ * discovery is silence, not length.
+ */
+export const DEFAULT_DISCOVERY_TIMEOUT_MS = 300_000;
+export const DEFAULT_DISCOVERY_IDLE_TIMEOUT_MS = 30_000;
 
 export function connectionTimeoutMs(value: number | undefined): number {
   if (value === undefined) return DEFAULT_CONNECTION_TIMEOUT_MS;
@@ -16,6 +23,22 @@ export function connectionTimeoutMs(value: number | undefined): number {
     throw new RangeError('Connection timeoutMs must be a positive integer within timer range');
   }
   return value;
+}
+
+export function connectionIdleTimeoutMs(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMER_MS) {
+    throw new RangeError(
+      'Connection idleTimeoutMs must be a positive integer within timer range',
+    );
+  }
+  return value;
+}
+
+/** Count bytes read for an operation; every chunk is progress for its idle deadline. */
+export function recordConnectionRead(context: ConnectionReadContext, bytes: number): void {
+  context.observedReadBytes += bytes;
+  context.touch?.();
 }
 
 export function connectionMaxResponseBytes(value: number | undefined): number {
@@ -33,11 +56,13 @@ export function awaitConnection<T>(
 }
 
 /**
- * One deadline spans negotiation, response waiting and all body reads.
+ * One deadline spans negotiation, response waiting and all body reads; an optional idle
+ * deadline inside it ends the operation when nothing arrives for `idleTimeoutMs` — response
+ * headers and every body chunk restart it.
  *
- * `body` receives a copy of `context` that carries the deadline signal, so the caller's
- * own context object is never changed and a context reused across operations never holds a
- * stale signal. The copy is the one whose read counters a timeout reports.
+ * `body` receives a copy of `context` that carries the deadline signal and the progress hook,
+ * so the caller's own context object is never changed and a context reused across operations
+ * never holds a stale signal. The copy is the one whose read counters a timeout reports.
  */
 export function withConnectionDeadline<T>(
   connectionName: string,
@@ -46,15 +71,26 @@ export function withConnectionDeadline<T>(
   body: (scoped: ConnectionReadContext) => Promise<T>,
 ): Promise<T> {
   const timeoutMs = connectionTimeoutMs(context.timeoutMs);
+  const idleTimeoutMs = connectionIdleTimeoutMs(context.idleTimeoutMs);
   let scoped = context;
   return withSignalDeadline(
     timeoutMs,
     callerSignal,
     () => new ConnectionTimeoutError(connectionName, timeoutMs, scoped),
-    (signal) => {
-      scoped = { ...context, signal };
-      return raceAbort(body(scoped), signal);
-    },
+    (signal) =>
+      withIdleDeadline(
+        idleTimeoutMs,
+        signal,
+        () =>
+          new ConnectionTimeoutError(connectionName, idleTimeoutMs ?? timeoutMs, {
+            ...scoped,
+            deadline: 'idle',
+          }),
+        (idle) => {
+          scoped = { ...context, signal: idle.signal, touch: idle.touch };
+          return raceAbort(body(scoped), idle.signal);
+        },
+      ),
   );
 }
 
@@ -69,7 +105,7 @@ export async function readBoundedText(
     maxBytes,
     ...(context?.signal && { signal: context.signal }),
     onChunk: (chunk) => {
-      if (context) context.observedReadBytes += chunk.byteLength;
+      if (context) recordConnectionRead(context, chunk.byteLength);
     },
   });
   if (result.kind === 'over-limit') {

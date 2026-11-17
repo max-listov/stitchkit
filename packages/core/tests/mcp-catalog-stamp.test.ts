@@ -4,11 +4,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { defineContract } from '../src/entrypoints/contract';
 import { createImplement } from '../src/server/implement';
-import {
-  MCP_CATALOG_META_KEY,
-  mcpCatalogStamp,
-  readMcpCatalogStamp,
-} from '../src/tools/mcp/catalog';
+import { mcpCatalogStamp } from '../src/tools/mcp/catalog';
+import { MCP_CATALOG_META_KEY, readMcpCatalogStamp } from '../src/tools/mcp/catalog-stamp';
 import { buildMcpServer } from '../src/tools/mcp/mount';
 import { prepareMcpServerSurface } from '../src/tools/mcp/prepare';
 
@@ -69,6 +66,32 @@ describe('the advertised MCP catalog carries a stamp a consumer can compare', ()
     const before = mcpCatalogStamp(prepareMcpServerSurface({ services: [service('by')] }));
     const after = mcpCatalogStamp(prepareMcpServerSurface({ services: [service('actor')] }));
     expect(after.digest).not.toBe(before.digest);
+  });
+
+  test('changing the UI resource a tool publishes moves the digest', () => {
+    // A client keeps a listed catalog by this digest, so a published field outside it would
+    // let a stored catalog outlive the change.
+    const withUi = (resourceUri: string) =>
+      createImplement()(
+        defineContract(
+          { prefix: 'journal', scope: 'public' },
+          {
+            record: {
+              method: 'POST',
+              path: '/record',
+              desc: 'Record one journal entry',
+              expose: ['MCP'],
+              tool: { ui: { resourceUri } },
+              input: z.object({ by: z.string() }),
+              output: z.object({ recorded: z.boolean() }),
+            },
+          },
+        ),
+        { record: () => ({ recorded: true }) },
+      );
+    const first = mcpCatalogStamp(prepareMcpServerSurface({ services: [withUi('ui://a')] }));
+    const second = mcpCatalogStamp(prepareMcpServerSurface({ services: [withUi('ui://b')] }));
+    expect(second.digest).not.toBe(first.digest);
   });
 
   test('a listed tool carries the stamp, so a consumer can store it', async () => {
