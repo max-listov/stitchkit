@@ -15,6 +15,46 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/cli` — **`--output-dir` saves the files a result carries inline and prints links
+  to them.** The blocks of a successful result's top-level `content` that hold a file — `image`
+  and `audio` of `McpMediaContentSchema`, and an embedded `resource` of any type with `blob` or
+  `text` (a PDF, a spreadsheet, a CSV) — are saved without a `download` callback, in the same
+  batch, pinned directory and atomic contained writer as URL downloads. This covers a
+  `defineViewFileTool` result and a tool mounted through MCP. A part of any other shape is left
+  alone. A media block's `name`, or the last path segment of a resource's `uri`, supplies the
+  file's basename; a block that names no file is `<type>-<sha256 of its bytes><extension>`.
+  Canonical base64 is validated and `maxDownloadBytes` is checked before the bytes are
+  allocated, one file at a time. On stdout each saved block becomes
+  `{ type: 'resource_link', uri: 'file://…', name, mimeType, size }`, so the bytes are not
+  printed again; a block that could not be saved keeps its bytes and the exit is `1`. A result
+  policy still receives the operation's own result. A result with no media prints and exits as
+  it does without the flag, and stderr says that nothing was saved — so `--output-dir` on a CLI
+  without a `download` callback runs the command instead of refusing it with exit `2`.
+  [guide](docs/guide/cli.md#saving-result-media). → ADR 0291
+
+- `stitchkit/tools`, `stitchkit/tools/contract` — **An image or audio block carries the file
+  name of its source.** `McpMediaContentSchema` gains an optional `name` on its `image` and
+  `audio` blocks. `defineViewFileTool`, `mountViewFile` and `resolveMedia` set it: a managed
+  file keeps its own name, a URL takes its download name — the path's base name with the body's
+  extension. The name travels inside the block, over MCP as well. A download whose body is
+  `audio/mp4` is named `.m4a`.
+
+### Fixed
+
+- `stitchkit/cli` — **Two `--output-dir` files with one name do not replace each other.** A
+  `download` callback that named two different files alike left the last one on disk while both
+  printed `saved`. A name is written once per batch: the same bytes again are one file,
+  different bytes fail that file with `another file of this batch is already saved as "<name>"`
+  and exit `1`, and the first file stays.
+  **Affects:** `stitchkit/cli` behaviour
+
+- `stitchkit/cli` — **A `maxDownloadBytes` that is not a positive safe integer is refused when
+  the CLI is created**, with the shared limit message that ends in the value received. A
+  fractional, zero, negative or non-finite cap used to reach the first download.
+  **Affects:** `stitchkit/cli` createCli(maxDownloadBytes)
+
 ## [0.123.6] - 2026-11-16
 
 ### Added

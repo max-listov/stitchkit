@@ -184,6 +184,10 @@ function prepareCliCommandEmission(
  * The single place a policy meets the terminal: a native command and a managed
  * one answer through it, so `present`, `exitCode` and a failed presentation
  * behave identically on both.
+ *
+ * The policy judges `result`, the operation's own answer. `shown` is what stdout
+ * prints when the policy brings no presenter: the same answer, unless the caller
+ * has already moved part of it elsewhere (a view, media saved to files).
  */
 export function emitCliCommandResult(
   policy: CliResultPolicy<unknown> | undefined,
@@ -191,22 +195,20 @@ export function emitCliCommandResult(
   options: Readonly<CliRunOptions>,
   writers: CliWriters,
   emit: EmitOptions & { repeatable: boolean },
+  shown?: Extract<ToolResult, { ok: true }>,
 ): number {
   const emission = prepareCliCommandEmission(policy, result, options);
-  if (emission.result.ok && emission.presentationFailure !== undefined) {
-    return emitPresentationFailure(
-      emission.result,
-      emission.presentationFailure,
-      writers,
-      emit,
-    );
-  }
-  if (emission.result.ok && emission.presentation !== undefined) {
+  if (!emission.result.ok) return emitResult(emission.result, writers, emit);
+  if (emission.presentation !== undefined) {
     writers.stdout(emission.presentation);
     return emission.successExitCode;
   }
-  const emitted = emitResult(emission.result, writers, emit);
-  return emission.result.ok ? emission.successExitCode : emitted;
+  const printed = shown ?? emission.result;
+  if (emission.presentationFailure !== undefined) {
+    return emitPresentationFailure(printed, emission.presentationFailure, writers, emit);
+  }
+  emitResult(printed, writers, emit);
+  return emission.successExitCode;
 }
 
 export function cliCommandPresentationSchema(

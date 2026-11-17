@@ -3,6 +3,7 @@
  * registered at startup (the session) and what argv asked for (the route).
  */
 import type { ZodObject, z } from 'zod';
+import { assertPositiveSafeInteger } from '../../internal/positive-integer';
 import {
   type JsonSchemaField,
   jsonSchemaFields,
@@ -61,6 +62,7 @@ export function createCliSession<
   if (config.auth !== undefined && config.resolveAuth !== undefined) {
     throw new Error('[stitchkit] createCli: use either auth or resolveAuth, not both');
   }
+  assertPositiveSafeInteger('createCli maxDownloadBytes', config.maxDownloadBytes);
 
   const applicationOptions = config.globalOptions
     ? jsonSchemaFields(

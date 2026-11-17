@@ -64,14 +64,17 @@ export interface CliConfig<
   passthrough?: Record<string, string>;
   /** Per-command `--wait` polling behaviour, keyed by command name. */
   wait?: Record<string, CliWaitConfig>;
-  /** Extract downloadable media URLs from a result for `--output-dir`. */
+  /** Name a result's URL files for `--output-dir`; files inline in `content` need no callback. */
   download?: (result: unknown) => Array<{ url: string; name: string }>;
   /**
    * Allow `--output-dir` downloads from private / internal / loopback hosts.
    * Default `false` — the SSRF guard, since the URLs come from handler output.
    */
   allowPrivateDownloadHosts?: boolean;
-  /** Max bytes per `--output-dir` download before aborting. Default 100 MB. */
+  /**
+   * Byte cap per URL or inline file of `--output-dir`. A positive safe
+   * integer, checked when the CLI is created. Default 100 MB.
+   */
   maxDownloadBytes?: number;
   /**
    * Deadline for producing response headers per `--output-dir` download (DNS,

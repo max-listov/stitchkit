@@ -13,7 +13,7 @@
  * sandboxed to a `baseDir`, and downloads are capped before they reach memory.
  */
 
-import { extname } from 'node:path';
+import { basename, extname } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { McpMediaContent, ViewFileOutput } from './view-file-contract';
@@ -36,6 +36,7 @@ import { mediaTypeEssence } from '../../internal/media-type';
 import { fetchGuarded, readCapped } from '../../internal/secure-fetch';
 import { formatZodError } from '../../internal/zod-issues';
 import { coerceJsonArgs } from '../schema/coerce';
+import { downloadFileName } from './download-core';
 import { normalizeFileToolError } from './managed-file-error';
 
 /** MCP inline cap — bytes above this are returned as a link, not embedded. */
@@ -80,6 +81,15 @@ interface ViewFileOperationOptions extends ViewFileOptions {
   signal?: AbortSignal;
 }
 
+function isHttpUrl(pathOrUrl: string): boolean {
+  return pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://');
+}
+
+/** The file name of a viewed source: a file keeps its own, a URL takes its download name. */
+function sourceName(pathOrUrl: string, mimeType: string): string {
+  return isHttpUrl(pathOrUrl) ? downloadFileName(pathOrUrl, mimeType) : basename(pathOrUrl);
+}
+
 type FetchedSource =
   | { buffer: Buffer; mimeType: string; bytesRead: number }
   | { tooLarge: true; mimeType: string; bytesRead: number }
@@ -93,7 +103,7 @@ async function fetchSource(
   const extension = extname(pathOrUrl);
   const extMime = EXT_MIME[extension.toLowerCase()];
 
-  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+  if (isHttpUrl(pathOrUrl)) {
     const url = new URL(pathOrUrl);
     const res = await fetchGuarded(url, options.allowPrivateHosts ?? false, {
       timeoutMs: options.timeoutMs,
@@ -215,6 +225,7 @@ async function resolveMediaWithinBudget(
           type: 'image',
           data: buffer.toString('base64'),
           mimeType,
+          name: sourceName(pathOrUrl, mimeType),
           annotations: { audience: ['user', 'assistant'], priority: 0.9 },
         },
         { type: 'text', text: `[image] ${mimeType}, ${sizeKb}KB` },
@@ -229,6 +240,7 @@ async function resolveMediaWithinBudget(
           type: 'audio',
           data: buffer.toString('base64'),
           mimeType,
+          name: sourceName(pathOrUrl, mimeType),
           annotations: { audience: ['user', 'assistant'], priority: 0.9 },
         },
         { type: 'text', text: `[audio] ${mimeType}, ${sizeKb}KB` },

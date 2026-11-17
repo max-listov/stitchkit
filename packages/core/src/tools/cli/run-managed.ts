@@ -6,7 +6,7 @@ import type { parseCliArgs } from './args';
 import { isReservedBoolWord } from './args-fields';
 import { CliArgumentError } from './argument-error';
 import { emitCliCommandResult } from './command';
-import { DEFAULT_DOWNLOAD_MAX_BYTES, downloadResults } from './download';
+import { DEFAULT_DOWNLOAD_MAX_BYTES, saveResultMedia } from './download';
 import { DEFAULT_EXIT_CODES, emitPresentationFailure, emitResult } from './format';
 import { filterCommands, renderCommandHelp, renderTopHelp } from './help';
 import { buildManagedSurface, type ManagedSurface } from './managed-surface';
@@ -170,11 +170,6 @@ async function runManagedCommand<
     stderr('--wait-timeout requires --wait\n');
     return exit(2);
   }
-  if (options.outputDir !== undefined && !config.download) {
-    stderr('--output-dir is not configured for this CLI\n');
-    return exit(2);
-  }
-
   if (options.help) {
     stdout(renderCommandHelp(config.name, command, descriptor, applicationOptions));
     return exit(0);
@@ -253,7 +248,7 @@ async function executeManagedTool<
   return result;
 }
 
-/** Downloads, the optional view, then the result and its exit code. */
+/** Saved media, the optional view, then the result and its exit code. */
 async function emitManagedResult<
   TAuth,
   TContext extends Record<string, unknown>,
@@ -261,33 +256,40 @@ async function emitManagedResult<
 >(
   session: CliSession<TAuth, TContext, TGlobals>,
   command: string,
-  initial: ToolResult,
+  result: ToolResult,
   options: CliRunOptions,
   repeatable: boolean,
 ): Promise<void> {
   const { config } = session;
   const { stdout, stderr, exit } = session.io;
-  let result = initial;
-  let downloadsOk = true;
-  if (options.outputDir && result.ok && config.download) {
-    downloadsOk = await downloadResults(
-      config.download(result.data),
-      options.outputDir,
+  const emit = { ...emitOptionsFor(config, options.json, command), repeatable };
+  // A failed call reports its own error and exit code: nothing of it is saved, and
+  // an aggregate over an error is not an answer to the question that was asked.
+  if (!result.ok) return exit(emitResult(result, { stdout, stderr }, emit));
+
+  // `result` stays the operation's answer, which a result policy judges. `shown` is
+  // what stdout prints: saved inline files become links to where they are, a view
+  // replaces the payload.
+  let shown = result;
+  let mediaExitCode = 0;
+  if (options.outputDir !== undefined) {
+    const saved = await saveResultMedia(result.data, {
+      dir: options.outputDir,
+      download: config.download,
+      allowPrivateHosts: config.allowPrivateDownloadHosts ?? false,
+      maxBytes: config.maxDownloadBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES,
+      timeoutMs: config.downloadTimeoutMs,
+      quiet: options.quiet,
       stderr,
-      options.quiet,
-      config.allowPrivateDownloadHosts ?? false,
-      config.maxDownloadBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES,
-      config.downloadTimeoutMs,
-    );
+    });
+    shown = { ...result, data: saved.data };
+    if (!saved.ok) mediaExitCode = 1;
   }
 
-  // A view replaces the payload, never the outcome: a failed call still reports
-  // its own error and exit code, because an aggregate over an error is not an
-  // answer to the question that was asked.
-  if (options.view && result.ok) {
+  if (options.view) {
     let viewed: ReturnType<typeof renderCliView>;
     try {
-      viewed = renderCliView(result.data, options.view);
+      viewed = renderCliView(shown.data, options.view);
     } catch (error) {
       const failure: ToolFailure =
         error instanceof CliArgumentError
@@ -297,24 +299,17 @@ async function emitManagedResult<
               details: { message: error.message },
             }
           : toolResultFromError(error);
-      return exit(
-        emitPresentationFailure(
-          result,
-          failure,
-          { stdout, stderr },
-          { ...emitOptionsFor(config, options.json, command), repeatable },
-        ),
-      );
+      return exit(emitPresentationFailure(shown, failure, { stdout, stderr }, emit));
     }
     if (viewed.kind === 'text') {
       stdout(viewed.text);
-      return exit(downloadsOk ? 0 : 1);
+      return exit(mediaExitCode);
     }
     if (viewed.order) {
       stdout(`${stringifyGroups(viewed.data, viewed.order, options.json === true)}\n`);
-      return exit(downloadsOk ? 0 : 1);
+      return exit(mediaExitCode);
     }
-    result = { ...result, data: viewed.data };
+    shown = { ...shown, data: viewed.data };
   }
 
   // The policy speaks only for the operation's own result: a view answers a
@@ -326,7 +321,8 @@ async function emitManagedResult<
     result,
     options,
     { stdout, stderr },
-    { ...emitOptionsFor(config, options.json, command), repeatable },
+    emit,
+    shown,
   );
-  return exit(downloadsOk ? exitCode : 1);
+  return exit(mediaExitCode || exitCode);
 }

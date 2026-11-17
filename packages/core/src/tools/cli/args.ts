@@ -45,7 +45,7 @@ export interface CliRunOptions {
   wait: boolean;
   /** `--wait-timeout <seconds>` — override the poll timeout. */
   waitTimeout?: number;
-  /** `--output-dir <dir>` — download result media into this directory. */
+  /** `--output-dir <dir>` — save the files a result names or carries into this directory. */
   outputDir?: string;
   /** `--quiet` — suppress non-essential stderr chatter. */
   quiet: boolean;

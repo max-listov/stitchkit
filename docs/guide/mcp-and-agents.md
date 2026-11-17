@@ -1424,6 +1424,11 @@ Ordinary file names containing brackets, such as `[preview].png`, remain valid.
 A local file with an unsupported extension is refused before reading; its
 per-item error identifies the caller's path and the extension it saw.
 
+Each inline `image` and `audio` block carries `name`, the file name of its
+source: a managed file keeps its own name, a URL takes its download name — the
+path's base name with the body's extension. A CLI saves the block under that
+name with [`--output-dir`](cli.md#saving-result-media).
+
 The older `mountWait`, `mountDownload`, `mountUpload` and `mountViewFile`
 functions remain
 intentional raw MCP adapters with their text-envelope behavior. Use them under

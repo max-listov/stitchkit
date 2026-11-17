@@ -443,7 +443,7 @@ same Zod schema an HTTP or MCP call does.
 | `--json`              | Compact success/error JSON records for scripts             |
 | `--wait`              | Block-poll an async result to a terminal state             |
 | `--wait-timeout <s>`  | Override the `--wait` timeout                              |
-| `--output-dir <dir>`  | Download result media into a directory                     |
+| `--output-dir <dir>`  | Save the files a result names or carries into a directory  |
 | `--quiet`             | Suppress non-essential stderr output                       |
 | `--dry-run`           | Print the resolved call without executing                  |
 | `--schema`            | One JSON line: the JSON Schema of a command's input and output |
@@ -665,15 +665,75 @@ myapp generate "a fox" --wait --output-dir ./out
 myapp generate "a fox" --wait --json > result.json &
 ```
 
+### Saving result media
+
+`--output-dir <dir>` saves the files a successful result carries, as one batch in one
+directory: the blocks of the result's top-level `content` array that hold a file inline, and
+the `{ url, name }` files the optional `download(result)` callback names. Inline files need
+no callback — a `defineViewFileTool` result, or a file returned through an MCP client
+connection, is saved as it arrives. URL files keep their SSRF checks, redirect checks and
+fetch deadlines.
+
+Three kinds of block hold a file, and the file may be of any type:
+
+| Block | Bytes | File name |
+| --- | --- | --- |
+| `image`, `audio` (`McpMediaContentSchema`) | standard base64 in `data` | `name` |
+| `resource` with `blob` — a PDF, a spreadsheet, an archive | standard base64 in `resource.blob` | last path segment of `resource.uri` |
+| `resource` with `text` — CSV, Markdown, JSON | `resource.text` as UTF-8 | last path segment of `resource.uri` |
+
+A part of `content` is saved only when it matches one of these shapes. Any other part — a
+rich-text node that also calls itself `image`, a `resource` without content — is the result's
+own data and is left alone.
+
+**Names.** A name is reduced to its basename, like a URL download name;
+`defineViewFileTool` sets `name` to the file name of the source. A block that names no file
+is `<type>-<sha256-of-its-bytes><extension>`: known media types supply the extension and
+the rest use `.bin`. A name is written once per batch. The same bytes under the same name
+are one file; different bytes under a name the batch already wrote fail that file, and the
+first one stays.
+
+**Bytes.** Padded and unpadded canonical base64 are accepted; anything else fails that file
+alone. `maxDownloadBytes` — a positive safe integer, checked when the CLI is created —
+limits each URL file and each inline file by its decoded or UTF-8 size (default 100 MB). The
+size is checked before the bytes are allocated, and inline files are decoded and written one
+at a time.
+
+**Output.** `saved <path> (<size>KB)` goes to stderr; `--quiet` suppresses those lines and
+keeps errors. On stdout each saved inline block is replaced by a link to its file, so the
+bytes are not printed a second time:
+
+```json
+{
+  "type": "resource_link",
+  "uri": "file:///work/out/shot.png",
+  "name": "shot.png",
+  "mimeType": "image/png",
+  "size": 48213
+}
+```
+
+The link carries `mimeType` when the block declared one. A block that could not be saved
+keeps its bytes, so nothing the operation returned is lost;
+the other files of the batch are still saved and the exit is `1`. A result policy
+(`results`) receives the operation's own result, not the linked one. Without `--output-dir`,
+an inline result is ordinary JSON.
+
+**Nothing to save.** A result that carries no files is not an error. The command prints and
+exits exactly as it does without the flag — views and result policies included — and stderr
+says `--output-dir: the result carries no files to save` unless `--quiet` is given. A failed
+operation keeps its own error and exit code. Help, schema inspection and dry-run do not
+execute the operation.
+
 ### Download filesystem boundary
 
-`--output-dir` resolves the explicitly configured root once before fetching and pins that
+`--output-dir` resolves the explicitly configured root once before fetching or decoding and pins that
 one directory for the whole batch. An initial root alias (including a symbolic link) selects
 its canonical directory; missing components are created through pinned parents. The root
 capability continues to name the same directory if another actor renames it or replaces its
 pathname. The original spelling printed in `saved` is a display path, not a re-open of the root.
 
-Each media name becomes a direct child. Downloads atomically replace an existing file,
+Each media name becomes a direct child. URL and inline files atomically replace an existing file,
 symbolic link (including a dangling link), or hard link without changing the inode a link
 points to. An existing directory refuses replacement. Ordinary files retain their permission
 bits; new files use `0666 & ~umask`. Replacing writes a new file beside the old one, so it needs

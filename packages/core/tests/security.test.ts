@@ -211,6 +211,32 @@ describe('resolveMedia — local-file sandbox', () => {
     expect(content[0]?.type).toBe('image');
   });
 
+  test('an inline block carries the file name of its source', async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } }),
+    });
+    try {
+      // A URL takes its download name: the path's base name and the body's extension.
+      const names: unknown[] = [];
+      for (const path of ['/files/photo?size=2', '/files/photo.jpeg', '/']) {
+        const [block] = await resolveMedia(`http://127.0.0.1:${server.port}${path}`, {
+          allowPrivateHosts: true,
+        });
+        names.push(block?.type === 'image' ? block.name : block);
+      }
+      expect(names).toEqual(['photo.png', 'photo.png', 'download.png']);
+      // A managed file keeps its own name, without the directories that lead to it.
+      await mkdir(join(root, 'nested'));
+      await writeFile(join(root, 'nested', 'shot.png'), Buffer.from([0x89, 0x50]));
+      const [local] = await resolveMedia('nested/shot.png', { files });
+      expect(local).toMatchObject({ type: 'image', name: 'shot.png' });
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test('refuses a non-media file even inside the sandbox', async () => {
     // The ggk_ key lives in a config.json — a media-only allowlist blocks it.
     await expect(resolveMedia('secret.json', { files })).rejects.toThrow(

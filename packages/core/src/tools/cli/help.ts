@@ -7,7 +7,7 @@ const GLOBAL_OPTIONS = [
   ['--json', 'Emit compact success/error JSON records (for scripts)'],
   ['--wait', 'Block-poll an async result to a terminal state'],
   ['--wait-timeout <s>', 'Override the --wait timeout in seconds'],
-  ['--output-dir <dir>', 'Download result media into a directory'],
+  ['--output-dir <dir>', 'Save the files a result names or carries into a directory'],
   ['--quiet', 'Suppress non-essential stderr output'],
   ['--dry-run', 'Print the resolved call without executing it'],
   ['--schema', 'Print the JSON Schema of a command input and output'],

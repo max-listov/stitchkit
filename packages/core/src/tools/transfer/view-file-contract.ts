@@ -28,21 +28,32 @@ export const McpAnnotationsSchema = z.object({
 
 export type McpAnnotations = z.infer<typeof McpAnnotationsSchema>;
 
+/**
+ * What an image and an audio block share: the bytes as standard base64, their media
+ * type, and the file name they came from when the source has one. A consumer that
+ * saves the bytes saves them under `name`, as a CLI's `--output-dir` does.
+ */
+const inlineMediaShape = {
+  data: z.string(),
+  mimeType: z.string(),
+  name: z.string().optional(),
+  annotations: McpAnnotationsSchema.optional(),
+};
+
+export const McpImageContentSchema = z.object({
+  type: z.literal('image'),
+  ...inlineMediaShape,
+});
+export const McpAudioContentSchema = z.object({
+  type: z.literal('audio'),
+  ...inlineMediaShape,
+});
+
 /** An MCP content block — text / image / audio (video cannot be inlined). */
 export const McpMediaContentSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }),
-  z.object({
-    type: z.literal('image'),
-    data: z.string(),
-    mimeType: z.string(),
-    annotations: McpAnnotationsSchema.optional(),
-  }),
-  z.object({
-    type: z.literal('audio'),
-    data: z.string(),
-    mimeType: z.string(),
-    annotations: McpAnnotationsSchema.optional(),
-  }),
+  McpImageContentSchema,
+  McpAudioContentSchema,
 ]);
 
 export type McpMediaContent = z.infer<typeof McpMediaContentSchema>;
