@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: media-block-file-name
+## Released migration: 0.124.0
+
+### media-block-file-name
 
 **Who must act:** code that builds or reads an `image` or `audio` block of
 `McpMediaContentSchema` with a `name` — a tool that returns such a block, or a reader of a

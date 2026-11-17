@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.124.0] - 2026-11-17
+
 ### ⚠️ Breaking changes
 
 **Who must act:** code that builds or reads an `image` or `audio` block of `McpMediaContentSchema` with a `name` — a tool that returns such a block, or a reader of a `defineViewFileTool`, `mountViewFile` or `resolveMedia` result. See the migration: [media-block-file-name](docs/guide/upgrading.md#media-block-file-name).
