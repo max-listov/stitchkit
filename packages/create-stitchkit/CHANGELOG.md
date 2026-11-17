@@ -14,6 +14,11 @@ step is overwritten by the next release.
 
 ### Changed
 
+- Generated projects resolve stitchkit 0.124.2: a streaming endpoint reads the response of
+  another runtime's fetch (`expo/fetch` in React Native). A project that builds or reads named
+  MCP media blocks, maps `NOT_FOUND` to a missing route or tool, or reads stdout after
+  `CLI_PRESENTATION_FAILED` follows the stitchkit 0.122.0, 0.123.0 and 0.124.0 migrations in
+  `docs/guide/upgrading.md`.
 - The generator, the starter and both templates check and format with Biome 2.6.8; the starter
   moves to Playwright 1.65.1, Next.js 16.4.6, TanStack Query 5.108, `next-intl` 4.15,
   `framer-motion` 14.14, Tailwind CSS 4.3.5, `@tabler/icons-react` 3.52, `ai` 7.0.173,
