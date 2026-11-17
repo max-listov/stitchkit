@@ -10,11 +10,13 @@ import { isRecord } from '../src/internal/typed';
 import { inlineFileBytes } from '../src/tools/cli/inline-files';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
 import { defineViewFileTool } from '../src/tools/transfer/define-view-file-tool';
+import { MCP_FILE_NAME_META_KEY } from '../src/tools/transfer/view-file-contract';
 import {
   AUDIO,
   AUDIO_BYTES,
   IMAGE,
   IMAGE_BYTES,
+  named,
   runMediaCli,
   savedLink,
 } from './support/cli-media';
@@ -98,7 +100,7 @@ test('two viewed sources with one file name keep the first file and refuse the s
   // The refused block keeps its bytes: nothing the operation returned is lost.
   expect(content[2]).toMatchObject({
     type: 'image',
-    name: 'shot.png',
+    _meta: { [MCP_FILE_NAME_META_KEY]: 'shot.png' },
     data: Buffer.from(AUDIO_BYTES).toString('base64'),
   });
 });
@@ -109,10 +111,10 @@ test('named image and audio are direct children and stdout links each saved file
   const data = {
     content: [
       text,
-      { ...IMAGE, name: '../../preview.png' },
+      named(IMAGE, '../../preview.png'),
       foreign,
-      { ...AUDIO, name: '/somewhere/voice.ogg' },
-      { ...IMAGE, name: 'empty.png', data: '' },
+      named(AUDIO, '/somewhere/voice.ogg'),
+      { ...named(IMAGE, 'empty.png'), data: '' },
     ],
     count: 3,
   };
@@ -241,7 +243,7 @@ test('without output-dir inline media stay JSON and create no files', async () =
 
 test('a media block with broken bytes fails alone and keeps its bytes on stdout', async () => {
   const broken = { ...IMAGE, data: '!!' };
-  const data = { content: [broken, { ...AUDIO, name: 'voice.ogg' }] };
+  const data = { content: [broken, named(AUDIO, 'voice.ogg')] };
   const result = await runMediaCli(data, ['media', '--output-dir', root, '--quiet', '--json']);
   expect(result.code).toBe(1);
   expect(result.err).toBe('failed to save content[0]: invalid base64\n');
@@ -267,7 +269,7 @@ test('base64 accepts canonical padded and unpadded bytes and rejects silent deco
     expect(await readdir(root)).toEqual([]);
   }
   for (const data of ['AAEC', 'AA==', 'AA', 'AAE=', 'AAE']) {
-    const result = await runMediaCli({ content: [{ ...IMAGE, name: 'bytes', data }] }, [
+    const result = await runMediaCli({ content: [{ ...named(IMAGE, 'bytes'), data }] }, [
       'media',
       '--output-dir',
       root,
@@ -279,7 +281,7 @@ test('base64 accepts canonical padded and unpadded bytes and rejects silent deco
 
 test('the decoded byte cap allows its exact boundary and refuses one more before decoding', async () => {
   const ok = await runMediaCli(
-    { content: [{ ...IMAGE, data: 'AAEC', name: 'exact' }] },
+    { content: [{ ...named(IMAGE, 'exact'), data: 'AAEC' }] },
     ['media', '--output-dir', root],
     { maxDownloadBytes: 3 },
   );
@@ -355,7 +357,7 @@ test('an operation failure retains its code and never saves media', async () => 
 
 test('wait saves media from the final poll rather than the initial pending response', async () => {
   let calls = 0;
-  const data = { content: [{ ...IMAGE, name: 'ready.png' }] };
+  const data = { content: [named(IMAGE, 'ready.png')] };
   const result = await runMediaCli(
     null,
     ['media', '--wait', '--output-dir', root, '--quiet'],

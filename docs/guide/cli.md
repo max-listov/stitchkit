@@ -678,7 +678,7 @@ Three kinds of block hold a file, and the file may be of any type:
 
 | Block | Bytes | File name |
 | --- | --- | --- |
-| `image`, `audio` (`McpMediaContentSchema`) | standard base64 in `data` | `name` |
+| `image`, `audio` (`McpMediaContentSchema`) | standard base64 in `data` | `_meta['stitchkit/fileName']` |
 | `resource` with `blob` — a PDF, a spreadsheet, an archive | standard base64 in `resource.blob` | last path segment of `resource.uri` |
 | `resource` with `text` — CSV, Markdown, JSON | `resource.text` as UTF-8 | last path segment of `resource.uri` |
 
@@ -687,7 +687,8 @@ rich-text node that also calls itself `image`, a `resource` without content — 
 own data and is left alone.
 
 **Names.** A name is reduced to its basename, like a URL download name;
-`defineViewFileTool` sets `name` to the file name of the source. A block that names no file
+`defineViewFileTool` and `mountViewFile` set a media block's `_meta['stitchkit/fileName']`
+(`MCP_FILE_NAME_META_KEY`) to the file name of the source. A block that names no file
 is `<type>-<sha256-of-its-bytes><extension>`: known media types supply the extension and
 the rest use `.bin`. A name is written once per batch. The same bytes under the same name
 are one file; different bytes under a name the batch already wrote fail that file, and the

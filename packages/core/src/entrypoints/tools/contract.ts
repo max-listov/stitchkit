@@ -33,6 +33,7 @@ export {
 } from '../../tools/operations/async-operation-contract';
 export { coerceJsonArgs } from '../../tools/schema/coerce';
 export {
+  MCP_FILE_NAME_META_KEY,
   type McpAnnotations,
   McpAnnotationsSchema,
   type McpMediaContent,

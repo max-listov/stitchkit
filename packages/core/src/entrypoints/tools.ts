@@ -201,6 +201,7 @@ export {
 export { type DownloadToolConfig, mountDownload } from '../tools/transfer/mount-download';
 export { mountUpload, type UploadToolConfig } from '../tools/transfer/mount-upload';
 export {
+  MCP_FILE_NAME_META_KEY,
   mountViewFile,
   resolveMedia,
   type ViewFileOptions,

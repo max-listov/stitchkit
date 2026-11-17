@@ -16,6 +16,7 @@ import { staticRoute } from '../src/server/file';
 import { parseCookies } from '../src/server/middleware/cookies';
 import { assertCorsConfig, corsHeaders } from '../src/server/middleware/cors';
 import { resolveMedia } from '../src/tools/transfer/view-file';
+import { MCP_FILE_NAME_META_KEY } from '../src/tools/transfer/view-file-contract';
 
 describe('safeJsonParse — prototype pollution', () => {
   test('drops __proto__ from a parsed object', () => {
@@ -224,14 +225,17 @@ describe('resolveMedia — local-file sandbox', () => {
         const [block] = await resolveMedia(`http://127.0.0.1:${server.port}${path}`, {
           allowPrivateHosts: true,
         });
-        names.push(block?.type === 'image' ? block.name : block);
+        names.push(block?.type === 'image' ? block._meta?.[MCP_FILE_NAME_META_KEY] : block);
       }
       expect(names).toEqual(['photo.png', 'photo.png', 'download.png']);
       // A managed file keeps its own name, without the directories that lead to it.
       await mkdir(join(root, 'nested'));
       await writeFile(join(root, 'nested', 'shot.png'), Buffer.from([0x89, 0x50]));
       const [local] = await resolveMedia('nested/shot.png', { files });
-      expect(local).toMatchObject({ type: 'image', name: 'shot.png' });
+      expect(local).toMatchObject({
+        type: 'image',
+        _meta: { [MCP_FILE_NAME_META_KEY]: 'shot.png' },
+      });
     } finally {
       server.stop(true);
     }

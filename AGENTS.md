@@ -85,8 +85,9 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 
 - A new architectural decision → a new ADR in `docs/decisions/` **and** a row in its `README.md` naming
   the invariant (or `P`, or superseded; `scripts/decisions-index.test.ts`). Never change an existing ADR's decision — supersede or
-  amend it; fixing its language, metadata or links, or pointing to its successor, is allowed.
-  → [docs/README](./docs/README.md)
+  amend it; fixing its language, metadata or links is allowed. The amending or superseding ADR marks the
+  sentence it changes in the old record — `(amended by ADR NNNN: …)` — in the same commit; an index row
+  alone is not enough. → [docs/README](./docs/README.md)
 - Write an ADR for any lesson a future reader would otherwise relearn the expensive way, a practice or
   incident included; a bug fix or small addition is a changelog line. → [engineering-rules](./docs/architecture/engineering-rules.md#the-bar-for-an-adr-is-lower-than-architecture)
 - Write public docs in English, without agent metadata (`participants`, `harness`, `model`).

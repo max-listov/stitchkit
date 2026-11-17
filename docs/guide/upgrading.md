@@ -1,5 +1,39 @@
 # Upgrading stitchkit
 
+## Unreleased migration: media-block-file-name
+
+**Who must act:** code that builds or reads an `image` or `audio` block of
+`McpMediaContentSchema` with a `name` — a tool that returns such a block, or a reader of a
+`defineViewFileTool`, `mountViewFile` or `resolveMedia` result. The field exists only in 0.123.7.
+
+The file name of a media block lives in the block's `_meta`, under the key
+`MCP_FILE_NAME_META_KEY` (`stitchkit/fileName`), and the block has no `name`. The block is now
+exactly what MCP declares, so the same block reaches a handler's caller, an Agent,
+`structuredContent` and MCP `content`; the `name` field never reached `content`.
+
+```ts
+import { MCP_FILE_NAME_META_KEY } from 'stitchkit/tools/contract'
+
+// before
+const block = { type: 'image', data, mimeType: 'image/png', name: 'shot.png' }
+const fileName = block.name
+
+// after
+const block = {
+  type: 'image',
+  data,
+  mimeType: 'image/png',
+  _meta: { [MCP_FILE_NAME_META_KEY]: 'shot.png' },
+}
+const fileName = block._meta?.[MCP_FILE_NAME_META_KEY]   // unknown: check it is a string
+```
+
+A block that still carries `name` is not refused: the schema drops the field, and a CLI's
+`--output-dir` then names the file `<type>-<sha256><extension>`. An object typed
+`McpMediaContent` does not compile with `name`, which is where TypeScript code finds every
+site; search untyped code for `name:` beside `type: 'image'` or `type: 'audio'`. A test that
+compared MCP `content` with `structuredContent` minus `name` compares them whole.
+
 ## Released migration: 0.123.0
 
 ### unknown-operation

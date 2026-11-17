@@ -29,15 +29,28 @@ export const McpAnnotationsSchema = z.object({
 export type McpAnnotations = z.infer<typeof McpAnnotationsSchema>;
 
 /**
- * What an image and an audio block share: the bytes as standard base64, their media
- * type, and the file name they came from when the source has one. A consumer that
- * saves the bytes saves them under `name`, as a CLI's `--output-dir` does.
+ * The `_meta` key under which an image or audio block carries the file name of its
+ * source. A consumer that saves the bytes saves them under it, as a CLI's
+ * `--output-dir` does.
+ *
+ * MCP's `ImageContent` and `AudioContent` have no field for a file name, and the
+ * official SDK drops a field the protocol does not declare from `content` before it
+ * is sent. `_meta` is the protocol's place for what a block carries beyond it, and
+ * the key is namespaced because that place is shared.
+ */
+export const MCP_FILE_NAME_META_KEY = 'stitchkit/fileName';
+
+/**
+ * What an image and an audio block share, field for field what MCP declares: the
+ * bytes as standard base64, their media type, annotations and `_meta`. Nothing else
+ * belongs here — a field of our own would reach `structuredContent` and never
+ * `content`.
  */
 const inlineMediaShape = {
   data: z.string(),
   mimeType: z.string(),
-  name: z.string().optional(),
   annotations: McpAnnotationsSchema.optional(),
+  _meta: z.record(z.string(), z.unknown()).optional(),
 };
 
 export const McpImageContentSchema = z.object({

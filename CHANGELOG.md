@@ -15,6 +15,33 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** code that builds or reads an `image` or `audio` block of `McpMediaContentSchema` with a `name` — a tool that returns such a block, or a reader of a `defineViewFileTool`, `mountViewFile` or `resolveMedia` result. See the migration: [media-block-file-name](docs/guide/upgrading.md#media-block-file-name).
+
+- `stitchkit/tools`, `stitchkit/tools/contract` — **the file name of an image or audio block
+  lives in its `_meta`, and the block has no `name`.** MCP's `ImageContent` and `AudioContent`
+  declare no file name, and the MCP server SDK drops a field they do not declare from `content`
+  before a result is sent: the `name` added in 0.123.7 reached `structuredContent` and an Agent,
+  and never a host reading `content` or a caller of the raw `mountViewFile`. A block of
+  `McpMediaContentSchema` is now the protocol's block field for field — `type`, `data`,
+  `mimeType`, `annotations`, `_meta` — and the name is `_meta['stitchkit/fileName']`, exported
+  as `MCP_FILE_NAME_META_KEY`. `defineViewFileTool`, `mountViewFile` and `resolveMedia` set it;
+  the handler output, the Agent result, `structuredContent` and MCP `content` carry the same
+  block. A `name` on a block is not read any more: the schema drops it, and a TypeScript object
+  typed `McpMediaContent` does not compile with it.
+  Before: `{ type: 'image', data, mimeType, name: 'shot.png' }`. After: `{ type: 'image', data, mimeType, _meta: { [MCP_FILE_NAME_META_KEY]: 'shot.png' } }`.
+  [migration](docs/guide/upgrading.md#media-block-file-name). → ADR 0292
+  **Affects:** `stitchkit/tools` McpMediaContentSchema, McpMediaContent, ViewFileOutputSchema, ViewFileOutput, defineViewFileTool, mountViewFile, resolveMedia; `stitchkit/tools/contract` McpMediaContentSchema, McpMediaContent, ViewFileOutputSchema, ViewFileOutput
+
+### Fixed
+
+- `stitchkit/cli` — **`--output-dir` saves the media of a raw `mountViewFile` under its source
+  name through an MCP connection.** That result has no `structuredContent`, so the name the
+  block lost on the wire left the file named `image-<sha256>.png`. The CLI reads the name where
+  the block now carries it, `_meta['stitchkit/fileName']`.
+  **Affects:** `stitchkit/cli` behaviour
+
 ## [0.123.7] - 2026-11-17
 
 ### Added

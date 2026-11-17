@@ -105,6 +105,10 @@ between alternatives, with lasting consequences.
 - **An ADR's decision is immutable** — a changed decision is a later ADR that
   supersedes or amends it. The old file may still be corrected where the decision
   stays the same: language, metadata, a broken link, or a pointer to its successor.
+- **The later ADR writes that pointer.** It marks the sentence it changes in the old
+  file — `(amended by ADR NNNN: what is true now)` — in the same commit. A reader
+  reaches the old record by a link from a changelog or a comment, and an index row
+  does not tell them the sentence in front of them stopped being true.
 - Every documentation file opens with frontmatter:
 
 ```yaml

@@ -11,11 +11,20 @@ const helper = new URL(
 ).href;
 const files = new URL('../src/entrypoints/files.ts', import.meta.url).href;
 
+/** What one fixture process may take; the holder controls alone wait 3 s for a refusal. */
+const FIXTURE_TIMEOUT_MS = 10_000;
+/**
+ * A fixture test outlives its process, so the process's own deadline is the one that
+ * fires and the failure carries its stderr. Under the runner's default 5 s a busy machine
+ * ended the test first, with a child killed mid-run and nothing to read.
+ */
+const FIXTURE_TEST_TIMEOUT_MS = FIXTURE_TIMEOUT_MS + 5_000;
+
 function fixture(name: string) {
   const program = fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
   const result = spawnSync(process.execPath, [program, helper, files], {
     encoding: 'utf8',
-    timeout: 10_000,
+    timeout: FIXTURE_TIMEOUT_MS,
     maxBuffer: 16 * 1024,
   });
   expect(result.error).toBeUndefined();
@@ -28,6 +37,7 @@ test.skipIf(!capable)(
   () => {
     expect(fixture('native-uid-mixed.mjs').trim()).toBe('native mixed UID: ok');
   },
+  FIXTURE_TEST_TIMEOUT_MS,
 );
 
 test.skipIf(!capable)(
@@ -37,6 +47,7 @@ test.skipIf(!capable)(
       'validated Node PATH controls: ok',
     );
   },
+  FIXTURE_TEST_TIMEOUT_MS,
 );
 
 test.skipIf(!capable)(
@@ -46,6 +57,7 @@ test.skipIf(!capable)(
       'UID owned holder controls: ok',
     );
   },
+  FIXTURE_TEST_TIMEOUT_MS,
 );
 
 test('UID proof capability is separate from generic ownership and mandatory qualification cannot skip', async () => {

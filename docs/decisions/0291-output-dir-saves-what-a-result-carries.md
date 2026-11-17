@@ -4,12 +4,13 @@ description: A CLI saves the files a result carries by their schema, whatever th
 type: decision
 status: accepted
 created: 2026-11-17 13:54 +07:00
-updated: 2026-11-17 13:54 +07:00
+updated: 2026-11-17 15:52 +07:00
 ---
 
 # ADR 0291 — `--output-dir` saves what a result carries
 
-Serves **I3**, **I8**, **I13**.
+Serves **I3**, **I8**, **I13**. The `name` field of a media block is amended by
+[ADR 0292](0292-a-media-block-is-the-block-mcp-declares.md).
 
 ## Context
 
@@ -37,9 +38,12 @@ rich-text node `{ type: 'image', attrs }` — is the result's own data: it is no
 reported and not a failure. The schema owns the shape, including the optional `name`
 a block is saved under; `defineViewFileTool` fills it from its source, so the name crosses an
 MCP connection inside the block.
+(amended by ADR 0292: the block is exactly the one MCP declares, and the file name is its
+`_meta['stitchkit/fileName']` — a `name` field never reached MCP `content`)
 
 **One batch, one writer.** URL files and inline blocks are sources of the same batch: one pinned
-root, one writer, one per-file outcome. A media block is named by its `name`, a resource by the
+root, one writer, one per-file outcome. A media block is named by its `name` (amended by ADR
+0292: by `_meta['stitchkit/fileName']`), a resource by the
 last path segment of its `uri`; a block that names no file is `<type>-<sha256><extension>`.
 
 **A name is written once per batch.** The same bytes under the same name are one file. Different

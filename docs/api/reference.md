@@ -1736,7 +1736,8 @@ server SDK), [`stitchkit/tools/agent`](#stitchkittoolsagent) (the `ai` peer) and
 | `ViewFileErrorSchema` | constant | Zod schema for one structured per-item view failure |
 | `McpAnnotations` | _type_ | MCP annotations on a media result |
 | `McpAnnotationsSchema` | constant | Zod schema for MCP media annotations |
-| `McpMediaContentSchema` | constant | Zod schema for text/image/audio media content |
+| `McpMediaContentSchema` | constant | Zod schema for text/image/audio media content — the blocks MCP declares, field for field |
+| `MCP_FILE_NAME_META_KEY` | constant | the namespaced `_meta` key (`stitchkit/fileName`) under which an `image` or `audio` block carries the file name of its source |
 | `CollectToolsConfig` | _type_ | options for `collectTools` |
 | `findUntypedProperties` | function | every property in a JSON Schema with no `type`/`enum`/`$ref` — what a model is shown and cannot obey ([guide](../guide/mcp-and-agents.md)) |
 | `UntypedProperty` | _type_ | one such property — `{ path, description? }` |

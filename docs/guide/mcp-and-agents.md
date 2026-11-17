@@ -1424,10 +1424,16 @@ Ordinary file names containing brackets, such as `[preview].png`, remain valid.
 A local file with an unsupported extension is refused before reading; its
 per-item error identifies the caller's path and the extension it saw.
 
-Each inline `image` and `audio` block carries `name`, the file name of its
-source: a managed file keeps its own name, a URL takes its download name — the
-path's base name with the body's extension. A CLI saves the block under that
-name with [`--output-dir`](cli.md#saving-result-media).
+Each inline `image` and `audio` block carries the file name of its source in
+`_meta['stitchkit/fileName']` (`MCP_FILE_NAME_META_KEY`): a managed file keeps
+its own name, a URL takes its download name — the path's base name with the
+body's extension. MCP declares no file name on `ImageContent` or `AudioContent`,
+and the MCP server SDK drops an undeclared field from `content`, so the name is
+in `_meta`, the protocol's place for what a block carries beyond it. The block
+is therefore the same in the handler's output, an Agent's result,
+`structuredContent` and MCP `content`, and a host reads the name from the block
+it renders. A CLI saves the block under that name with
+[`--output-dir`](cli.md#saving-result-media).
 
 The older `mountWait`, `mountDownload`, `mountUpload` and `mountViewFile`
 functions remain

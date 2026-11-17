@@ -91,6 +91,25 @@ function layoutHolds(frames: Record<string, number>[]): boolean {
 }
 
 const SCREEN = MONITOR_WIDTH * MONITOR_HEIGHT;
+const MB = 1024 * 1024;
+
+/**
+ * How far memory moved between three samples — early, middle, late — in bytes.
+ *
+ * The heap is read from the first sample: it is the screen's own state, and it is there at
+ * once. Resident memory is read from the middle one. A process is still committing its pages
+ * at the early sample, and the busier the machine the later it finishes: measured from there,
+ * the difference is how long start-up took, and it grows with the load, not with the screen.
+ */
+function memoryGrowth(heap: number[], rss: number[]) {
+  const [early = 0, middle = 0, late = 0] = heap;
+  const [, rssMiddle = 0, rssLate = 0] = rss;
+  return {
+    heap: late - early,
+    heapDrift: Math.abs(late - middle),
+    resident: rssLate - rssMiddle,
+  };
+}
 
 describe('live monitor fixture', () => {
   test('draws the tree table, sixteen meters, two charts and tabs', async () => {
@@ -123,14 +142,23 @@ describe('live monitor fixture', () => {
 
   test('memory stays flat over ten minutes of updates', async () => {
     const { heap, rss, historyLength } = await run(600, {}, [120, 360, 600]);
-    const [early = 0, middle = 0, late = 0] = heap;
     // Bounded state: the chart keeps one window, the table one generation of rows.
     expect(historyLength).toBe(61);
-    expect(late - early).toBeLessThan(8 * 1024 * 1024);
-    expect(Math.abs(late - middle)).toBeLessThan(8 * 1024 * 1024);
-    const [rssEarly = 0, , rssLate = 0] = rss;
-    expect(rssLate - rssEarly).toBeLessThan(64 * 1024 * 1024);
+    const growth = memoryGrowth(heap, rss);
+    expect(growth.heap).toBeLessThan(8 * MB);
+    expect(growth.heapDrift).toBeLessThan(8 * MB);
+    expect(growth.resident).toBeLessThan(64 * MB);
   }, 120_000);
+
+  test('the memory check reads resident growth, not a late start-up', () => {
+    const flat = [16 * MB, 16 * MB, 16 * MB];
+    // Measured on a busy machine: the first sample precedes the plateau by 47 MB.
+    expect(memoryGrowth(flat, [125 * MB, 158 * MB, 171 * MB]).resident).toBeLessThan(64 * MB);
+    // Native memory that keeps growing is over the bound from any sample.
+    expect(memoryGrowth(flat, [150 * MB, 250 * MB, 350 * MB]).resident).toBeGreaterThan(
+      64 * MB,
+    );
+  });
 
   test('the memory check sees history that is not bounded by its window', async () => {
     const { historyLength } = await run(120, { defect: 'unbounded' });

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { type CliConfig, defineCliResult } from '../src/entrypoints/cli';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
-import { AUDIO, IMAGE, IMAGE_BYTES, runMediaCli, savedLink } from './support/cli-media';
+import { AUDIO, IMAGE, IMAGE_BYTES, named, runMediaCli, savedLink } from './support/cli-media';
 
 const NOTHING_SAVED = '--output-dir: the result carries no files to save\n';
 const Output = z.unknown();
@@ -103,7 +103,7 @@ test('a part that only calls itself image stays the data of its result', async (
   }
   expect(await readdir(root)).toEqual([]);
   // The same node beside real media: the media is saved, the node is untouched.
-  const mixed = { content: [document.content[1], { ...IMAGE, name: 'real.png' }] };
+  const mixed = { content: [document.content[1], named(IMAGE, 'real.png')] };
   const result = await runMediaCli(mixed, [
     'media',
     '--output-dir',
@@ -124,7 +124,7 @@ test('a part that only calls itself image stays the data of its result', async (
 });
 
 test('a result policy judges the operation result while stdout links the saved file', async () => {
-  const data = { content: [{ ...IMAGE, name: 'shot.png' }] };
+  const data = { content: [named(IMAGE, 'shot.png')] };
   const link = { content: [savedLink(root, 'shot.png', 'image/png', IMAGE_BYTES.length)] };
   const judged: unknown[] = [];
   const exitOnly = await runMediaCli(
@@ -161,8 +161,8 @@ test('a result policy judges the operation result while stdout links the saved f
 });
 
 test('a name is written once per batch: the same file again is saved, another file is refused', async () => {
-  const first = { ...IMAGE, name: 'x.png' };
-  const other = { ...AUDIO, name: 'x.png' };
+  const first = named(IMAGE, 'x.png');
+  const other = named(AUDIO, 'x.png');
   const refused = await runMediaCli({ content: [first, other] }, [
     'media',
     '--output-dir',

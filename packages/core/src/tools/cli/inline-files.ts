@@ -3,7 +3,11 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { mediaExtension } from '../../internal/media-extension';
 import { isRecord } from '../../internal/typed';
-import { McpAudioContentSchema, McpImageContentSchema } from '../transfer/view-file-contract';
+import {
+  MCP_FILE_NAME_META_KEY,
+  McpAudioContentSchema,
+  McpImageContentSchema,
+} from '../transfer/view-file-contract';
 
 /** MCP's carrier for a file of any type: its bytes as base64 `blob`, or its `text`. */
 const EmbeddedResourceSchema = z.object({
@@ -93,16 +97,22 @@ export function inlineFileMimeType(file: InlineFile): string | undefined {
   return file.type === 'resource' ? file.resource.mimeType : file.mimeType;
 }
 
+/** The name a block gives its file; empty when it gives none. */
+function ownFileName(file: InlineFile): string | undefined {
+  if (file.type === 'resource') return uriFileName(file.resource.uri) || undefined;
+  const name = file._meta?.[MCP_FILE_NAME_META_KEY];
+  return typeof name === 'string' ? name : undefined;
+}
+
 /**
- * The file name of a block: a media block's `name` or the file name in a resource's URI.
- * A block that names no file is `<type>-<sha256 of its bytes><extension>`; a media block
- * that names an empty one is refused by the writer like any other unusable name.
+ * The file name of a block: a media block's `_meta` file name or the file name in a
+ * resource's URI. A block that names no file is `<type>-<sha256 of its bytes><extension>`;
+ * a media block that names an empty one is refused by the writer like any other unusable name.
  */
 export function inlineFileName(file: InlineFile, digest: string): string {
-  const own =
-    file.type === 'resource' ? uriFileName(file.resource.uri) || undefined : file.name;
   return (
-    own ?? `${file.type}-${digest}${mediaExtension(inlineFileMimeType(file) ?? '') ?? '.bin'}`
+    ownFileName(file) ??
+    `${file.type}-${digest}${mediaExtension(inlineFileMimeType(file) ?? '') ?? '.bin'}`
   );
 }
 

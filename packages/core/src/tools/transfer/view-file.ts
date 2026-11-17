@@ -17,9 +17,14 @@ import { basename, extname } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { McpMediaContent, ViewFileOutput } from './view-file-contract';
-import { ViewFileInputSchema, ViewFileOutputSchema } from './view-file-contract';
+import {
+  MCP_FILE_NAME_META_KEY,
+  ViewFileInputSchema,
+  ViewFileOutputSchema,
+} from './view-file-contract';
 
 export {
+  MCP_FILE_NAME_META_KEY,
   type McpAnnotations,
   McpAnnotationsSchema,
   type McpMediaContent,
@@ -88,6 +93,16 @@ function isHttpUrl(pathOrUrl: string): boolean {
 /** The file name of a viewed source: a file keeps its own, a URL takes its download name. */
 function sourceName(pathOrUrl: string, mimeType: string): string {
   return isHttpUrl(pathOrUrl) ? downloadFileName(pathOrUrl, mimeType) : basename(pathOrUrl);
+}
+
+/**
+ * The MCP block that carries a file of this media type as inline bytes. The protocol
+ * has two, and every other type is described in text.
+ */
+function inlineBlockType(mimeType: string): 'image' | 'audio' | undefined {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  return undefined;
 }
 
 type FetchedSource =
@@ -218,38 +233,24 @@ async function resolveMediaWithinBudget(
   const { buffer, mimeType } = result;
   const sizeKb = (buffer.length / 1024).toFixed(0);
 
-  if (mimeType.startsWith('image/')) {
+  const type = inlineBlockType(mimeType);
+  if (type === undefined) {
     return {
-      content: [
-        {
-          type: 'image',
-          data: buffer.toString('base64'),
-          mimeType,
-          name: sourceName(pathOrUrl, mimeType),
-          annotations: { audience: ['user', 'assistant'], priority: 0.9 },
-        },
-        { type: 'text', text: `[image] ${mimeType}, ${sizeKb}KB` },
-      ],
-      bytes: buffer.length,
-    };
-  }
-  if (mimeType.startsWith('audio/')) {
-    return {
-      content: [
-        {
-          type: 'audio',
-          data: buffer.toString('base64'),
-          mimeType,
-          name: sourceName(pathOrUrl, mimeType),
-          annotations: { audience: ['user', 'assistant'], priority: 0.9 },
-        },
-        { type: 'text', text: `[audio] ${mimeType}, ${sizeKb}KB` },
-      ],
+      content: [{ type: 'text', text: `[${mimeType}] ${sizeKb}KB — ${pathOrUrl}` }],
       bytes: buffer.length,
     };
   }
   return {
-    content: [{ type: 'text', text: `[${mimeType}] ${sizeKb}KB — ${pathOrUrl}` }],
+    content: [
+      {
+        type,
+        data: buffer.toString('base64'),
+        mimeType,
+        annotations: { audience: ['user', 'assistant'], priority: 0.9 },
+        _meta: { [MCP_FILE_NAME_META_KEY]: sourceName(pathOrUrl, mimeType) },
+      },
+      { type: 'text', text: `[${type}] ${mimeType}, ${sizeKb}KB` },
+    ],
     bytes: buffer.length,
   };
 }

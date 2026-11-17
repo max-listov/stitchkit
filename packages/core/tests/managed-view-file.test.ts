@@ -10,6 +10,7 @@ import {
   ManagedFileError,
 } from '../src/files/boundary';
 import * as pinnedHttp from '../src/internal/pinned-http';
+import { isRecord } from '../src/internal/typed';
 import { mountAgent } from '../src/tools/agent';
 import { buildMcpServer } from '../src/tools/mcp/mount';
 import { coerceJsonArgs } from '../src/tools/schema/coerce';
@@ -21,6 +22,38 @@ import {
   ViewFileInputSchema,
   ViewFileOutputSchema,
 } from '../src/tools/transfer/view-file';
+
+/**
+ * A connected client that also keeps every message as it arrived, before the client
+ * parsed it: what a host reads off the wire, not what the SDK's schema leaves of it.
+ */
+async function connectRecording(
+  server: McpServer,
+): Promise<{ client: Client; received: unknown[] }> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'managed-view-file-wire', version: '1' });
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  const received: unknown[] = [];
+  const deliver = clientTransport.onmessage;
+  clientTransport.onmessage = (message, extra) => {
+    received.push(structuredClone(message));
+    deliver?.(message, extra);
+  };
+  return { client, received };
+}
+
+/** The `result` of the one tool call a recording holds. */
+function wireResult(received: unknown[]): Record<string, unknown> {
+  const results = received.flatMap((message) =>
+    isRecord(message) && isRecord(message.result) && Array.isArray(message.result.content)
+      ? [message.result]
+      : [],
+  );
+  if (results.length !== 1) throw new Error(`expected one tool result, got ${results.length}`);
+  const [result] = results;
+  if (!result) throw new Error('expected a tool result');
+  return result;
+}
 
 async function connect(server: McpServer): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -132,6 +165,74 @@ describe('managed view_file definition', () => {
       ],
     });
     expect(phases).toEqual(['media:view', 'hook:true', 'media:view', 'hook:true']);
+    await client.close();
+  });
+
+  test('the file name reaches an MCP host inside the block, in content as in structuredContent', async () => {
+    const image = {
+      type: 'image',
+      data: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'),
+      mimeType: 'image/png',
+      annotations: { audience: ['user', 'assistant'], priority: 0.9 },
+      // The key is spelled out: it is the wire contract a host reads, and a test that
+      // took it from the constant would agree with any value the constant held.
+      _meta: { 'stitchkit/fileName': 'pic.png' },
+    };
+    const label = { type: 'text', text: '[image] image/png, 0KB' };
+    const definition = defineViewFileTool({
+      description: 'Inspect protected media',
+      identity: { serviceName: 'media', action: 'view' },
+      files,
+    });
+
+    const managed = await connectRecording(
+      buildMcpServer(
+        {
+          serverInfo: { name: 'managed-wire', version: '1' },
+          services: [],
+          runtimeTools: [definition],
+        },
+        undefined,
+      ),
+    );
+    await managed.client.callTool({
+      name: 'view_file',
+      arguments: { paths: 'nested/pic.png' },
+    });
+    const managedResult = wireResult(managed.received);
+    expect(managedResult.content).toEqual([image, label]);
+    // One block, one shape: what the output schema validated is what `content` carries.
+    expect(managedResult.structuredContent).toEqual({ content: [image, label], errors: [] });
+    await managed.client.close();
+
+    const server = new McpServer({ name: 'raw-wire', version: '1' });
+    mountViewFile(server, { files });
+    const raw = await connectRecording(server);
+    await raw.client.callTool({ name: 'view_file', arguments: { paths: 'nested/pic.png' } });
+    expect(wireResult(raw.received).content).toEqual([image, label]);
+    await raw.client.close();
+
+    // The Agent's result is the same output, not a second shape of it.
+    const execute = mountAgent([], { runtimeTools: [definition] }).view_file?.execute;
+    if (!execute) throw new Error('expected executable managed view_file');
+    expect(
+      await execute(
+        { paths: 'nested/pic.png' },
+        { toolCallId: 'view', messages: [], context: undefined },
+      ),
+    ).toEqual({ content: [image, label], errors: [] });
+  });
+
+  test('a field MCP does not declare never reaches content: the reason the name is in _meta', async () => {
+    const server = new McpServer({ name: 'undeclared-field', version: '1' });
+    server.registerTool('named', { description: 'A block with a field of its own' }, () => ({
+      content: [{ type: 'image', data: 'AAEC', mimeType: 'image/png', name: 'lost.png' }],
+    }));
+    const { client, received } = await connectRecording(server);
+    await client.callTool({ name: 'named', arguments: {} });
+    expect(wireResult(received).content).toEqual([
+      { type: 'image', data: 'AAEC', mimeType: 'image/png' },
+    ]);
     await client.close();
   });
 

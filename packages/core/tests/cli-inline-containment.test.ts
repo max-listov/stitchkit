@@ -15,11 +15,13 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { MCP_FILE_NAME_META_KEY } from '../src/tools/transfer/view-file-contract';
 import {
   AUDIO,
   AUDIO_BYTES,
   IMAGE,
   IMAGE_BYTES,
+  named,
   runMediaCli,
   savedLink,
 } from './support/cli-media';
@@ -54,7 +56,7 @@ test('one URL and inline batch pins one root before a URL fetch replaces its pat
     swapped = true;
     return new Response(IMAGE_BYTES);
   });
-  const data = { content: [{ ...IMAGE, name: 'inline.png' }] };
+  const data = { content: [named(IMAGE, 'inline.png')] };
   const result = await runMediaCli(data, ['media', '--output-dir', output], {
     download: () => [{ url, name: 'url.png' }],
     allowPrivateDownloadHosts: true,
@@ -89,7 +91,7 @@ test('URL and inline writes replace leaf symlinks, dangling links and hardlinks 
     const names = ['link', 'dangling', 'hard'];
     const result = await runMediaCli(
       {
-        content: source === 'inline' ? names.map((name) => ({ ...IMAGE, name })) : [],
+        content: source === 'inline' ? names.map((name) => named(IMAGE, name)) : [],
       },
       ['media', '--output-dir', output],
       {
@@ -122,7 +124,7 @@ test('URL and inline directory refusals preserve contents, clean staging and con
     await writeFile(join(output, 'occupied', 'inside'), 'kept');
     const names = ['occupied', 'valid.png'];
     const data = {
-      content: source === 'inline' ? names.map((name) => ({ ...IMAGE, name })) : [],
+      content: source === 'inline' ? names.map((name) => named(IMAGE, name)) : [],
     };
     const result = await runMediaCli(data, ['media', '--output-dir', output], {
       ...(source === 'url' && { download: () => names.map((name) => ({ url, name })) }),
@@ -141,7 +143,7 @@ test('URL and inline directory refusals preserve contents, clean staging and con
     // A refused inline block keeps its bytes on stdout; the saved one is a link.
     expect(JSON.parse(result.out)).toEqual({
       content: data.content.map((part) =>
-        part.name === 'valid.png'
+        part._meta[MCP_FILE_NAME_META_KEY] === 'valid.png'
           ? savedLink(output, 'valid.png', 'image/png', IMAGE_BYTES.length)
           : part,
       ),
@@ -152,8 +154,8 @@ test('URL and inline directory refusals preserve contents, clean staging and con
 test('invalid inline leaf names fail without saved while a neighbouring safe file survives', async () => {
   const data = {
     content: [
-      ...['', '.', '..', 'bad\0name'].map((name) => ({ ...IMAGE, name })),
-      { ...IMAGE, name: '../../safe.png' },
+      ...['', '.', '..', 'bad\0name'].map((name) => named(IMAGE, name)),
+      named(IMAGE, '../../safe.png'),
     ],
   };
   const result = await runMediaCli(data, ['media', '--output-dir', root]);
@@ -167,10 +169,7 @@ test('invalid inline leaf names fail without saved while a neighbouring safe fil
 test('a mixed URL, malformed image and valid audio batch keeps good files and exits nonzero', async () => {
   const url = mediaServer(() => new Response(IMAGE_BYTES));
   const data = {
-    content: [
-      { ...IMAGE, data: '!!' },
-      { ...AUDIO, name: 'voice.ogg' },
-    ],
+    content: [{ ...IMAGE, data: '!!' }, named(AUDIO, 'voice.ogg')],
   };
   const result = await runMediaCli(data, ['media', '--output-dir', root, '--json'], {
     download: () => [{ url, name: 'remote.png' }],
@@ -203,7 +202,7 @@ test('a URL and an inline block share the one-name rule of their batch', async (
   };
   // The same bytes under the same name are one file, saved once.
   const same = await runMediaCli(
-    { content: [{ ...IMAGE, name: 'shared.png' }] },
+    { content: [named(IMAGE, 'shared.png')] },
     ['media', '--output-dir', root, '--json'],
     config,
   );
@@ -215,7 +214,7 @@ test('a URL and an inline block share the one-name rule of their batch', async (
     code: 0,
   });
   // Other bytes under that name are refused: the downloaded file is not replaced.
-  const other = { ...AUDIO, name: 'shared.png' };
+  const other = named(AUDIO, 'shared.png');
   const refused = await runMediaCli(
     { content: [other] },
     ['media', '--output-dir', root, '--json'],
