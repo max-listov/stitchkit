@@ -23,6 +23,7 @@
  * same code paths as the public lock's.
  */
 import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
 import { lstat, open, readdir, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -78,6 +79,8 @@ function isCode(error: unknown, code: string): boolean {
 }
 
 interface LockFileState extends RecordedLock {
+  /** The record exactly as read: what a reclaimer judged, compared again before it removes the file. */
+  readonly record: string;
   readonly ownerless: boolean;
   readonly mtimeMs: number;
   /** The staging name still hard-linked to the lock: its holder stopped between link and unlink. */
@@ -138,6 +141,7 @@ async function readLockFile(
     }
     return {
       path,
+      record: record.text,
       ...readOwner(record.text),
       ino: record.info.ino,
       dev: record.info.dev,
@@ -286,6 +290,52 @@ async function createOwned(
   };
 }
 
+/**
+ * Remove the lock file a reclaimer judged, and only that file.
+ *
+ * The judgement reads a record; the removal acts on a name. Between the two the judged owner can
+ * release, and a new holder can create the lock on the inode that release freed, so an inode
+ * number alone can name a live lock. An open descriptor pins the judged inode — no new file can
+ * take its number while it is open — and the record read again under the pin proves the name
+ * still holds the judged file rather than a newer one that reused its number before the pin.
+ */
+async function removeJudgedLock(
+  state: LockFileState,
+): Promise<'removed' | 'absent' | 'changed'> {
+  const pin = await open(
+    state.path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  ).catch((error: unknown) => {
+    if (isCode(error, 'ENOENT')) return null;
+    throw error;
+  });
+  if (!pin) return 'absent';
+  try {
+    const pinned = await pin.stat();
+    if (pinned.ino !== state.ino || pinned.dev !== state.dev) return 'changed';
+    const current = await readLockRecord(state.path, {
+      singleLink: state.stagedName === undefined,
+    }).catch((error: unknown) => {
+      if (error instanceof LockRecordError || isCode(error, 'ENOENT')) return null;
+      throw error;
+    });
+    if (
+      current?.info.ino !== state.ino ||
+      current.info.dev !== state.dev ||
+      current.text !== state.record
+    )
+      return 'changed';
+    if (state.stagedName !== undefined)
+      await unlink(state.stagedName).catch((error: unknown) => {
+        if (!isCode(error, 'ENOENT')) throw error;
+      });
+    await unlinkIfSame(state.path, state.ino, state.dev);
+    return 'removed';
+  } finally {
+    await pin.close();
+  }
+}
+
 function reclaimable(
   state: LockFileState,
   diagnosis: ExclusiveLockDiagnosis,
@@ -356,11 +406,14 @@ async function reclaimUnderGuard(
       if (options.signal?.aborted) return { refused: true };
       if (!reclaimable(state, diagnosis, options.ownerlessGraceMs))
         return { refused: true, cause: diagnosis.cause };
-      if (state.stagedName !== undefined)
-        await unlink(state.stagedName).catch((error: unknown) => {
-          if (!isCode(error, 'ENOENT')) throw error;
-        });
-      await unlinkIfSame(path, state.ino, state.dev);
+      if ((await removeJudgedLock(state)) === 'changed')
+        return {
+          refused: true,
+          cause: new LockRecordError(
+            'LOCK_RECORD_CHANGED',
+            'The judged lock was replaced before it could be reclaimed',
+          ),
+        };
     }
     await sweepStagedLocks(dirname(path), options.machineIdentity, options.signal);
     // An ordinary acquirer never unlinks, but it may create the file between

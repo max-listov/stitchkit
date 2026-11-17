@@ -57,6 +57,15 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
   fractional, zero, negative or non-finite cap used to reach the first download.
   **Affects:** `stitchkit/cli` createCli(maxDownloadBytes)
 
+- `stitchkit/files` — **Reclaiming a dead owner's lock never removes a live one.** A reclaimer
+  judged the lock's record, then removed the file by its inode number. If the judged owner
+  released in between and a new holder created the lock on the freed inode, the live lock was
+  removed and two processes held it at once — seen under load when several processes recovered
+  a lock and its reclaim guard together. The reclaimer now keeps a descriptor open on the judged
+  file, so its inode cannot be reused, and removes it only while the name still holds that file
+  with the judged record; a lock replaced meanwhile refuses the reclaim and is waited for.
+  **Affects:** `stitchkit/files` withExclusiveLock(behaviour)
+
 ## [0.123.6] - 2026-11-16
 
 ### Added
