@@ -12,7 +12,20 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- The generator, the starter and both templates check and format with Biome 2.6.8; the starter
+  moves to Playwright 1.65.1, Next.js 16.4.6, TanStack Query 5.108, `next-intl` 4.15,
+  `framer-motion` 14.14, Tailwind CSS 4.3.5, `@tabler/icons-react` 3.52, `ai` 7.0.173,
+  `dotenv` 18.0.10 and `oxc-parser` 0.159, the agent template to `ai` 7.0.173.
+
 ### Fixed
+
+- A generated agent project installs the `stitchkit-tui` its code is written for: the template
+  declared `^0.1.1`, which resolves to 0.1.x only, while its code uses the 0.4 API. It now declares
+  `^0.4.4` and the TUI's peers — `@opentui/core` and `@opentui/react` `^0.9.2`, `react` `^19.3.1` —
+  as its own dependencies. An agent project generated earlier takes the same four lines into its
+  `package.json` and runs `bun install`.
 
 - A generated project keeps answering `not_found` for a request no route matches. Stitchkit
   answers such a request `UNKNOWN_OPERATION` where it used to answer `NOT_FOUND`, and the

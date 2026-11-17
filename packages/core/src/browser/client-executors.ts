@@ -62,13 +62,7 @@ function withOutput(
   if (endpoint.rawResponse) return result;
   if ('stream' in endpoint && endpoint.stream) {
     return result.then(
-      (value) => {
-        if (!(value instanceof Response)) {
-          abortStream?.();
-          throw new Error('Streaming endpoint did not return a Response');
-        }
-        return parseContractStream(value, endpoint.stream, abortStream ?? (() => undefined));
-      },
+      (value) => parseContractStream(value, endpoint.stream, abortStream ?? (() => undefined)),
       (error: unknown) => {
         abortStream?.();
         throw error;

@@ -4,11 +4,12 @@ import {
   ContractStreamFrameSchema,
   DEFAULT_CONTRACT_STREAM_FRAME_BYTES,
 } from '../contract/stream';
+import { isStreamResponse } from '../internal/stream-chunks';
 import { ApiError } from './api-error';
 import { parseNDJSON, parseSSE } from './stream';
 
 function sourceFor(
-  response: Response,
+  body: ReadableStream<Uint8Array>,
   descriptor: EndpointStreamDescriptor,
 ): AsyncGenerator<unknown> {
   const options = {
@@ -16,19 +17,19 @@ function sourceFor(
     finalLine: descriptor.finalLine,
   };
   return descriptor.format === 'sse'
-    ? parseSSE<unknown>(response, options)
-    : parseNDJSON<unknown>(response, options);
+    ? parseSSE<unknown>(body, options)
+    : parseNDJSON<unknown>(body, options);
 }
 
 /** Read protocol frames into schema-derived items. */
 async function* readContractStream<T>(
-  response: Response,
+  body: ReadableStream<Uint8Array>,
   descriptor: EndpointStreamDescriptor<ZodType<T>>,
   abort: () => void,
 ): AsyncGenerator<T> {
   let ended = false;
   let terminalSeen = descriptor.terminal === undefined;
-  const source = sourceFor(response, descriptor);
+  const source = sourceFor(body, descriptor);
   try {
     for (;;) {
       const next = await source.next();
@@ -131,11 +132,20 @@ class OwnedContractStream<T> implements AsyncIterableIterator<T> {
   }
 }
 
-/** Convert protocol frames into an immediately-owned schema-derived iterator. */
+/**
+ * Convert a streaming endpoint's response into an immediately-owned schema-derived iterator. The
+ * response is recognised by its shape — a `body` with `getReader()` — so the response class of
+ * another runtime's fetch (`expo/fetch` in React Native) streams like the global `Response`; one
+ * without a readable body is refused by name, and the request is aborted.
+ */
 export function parseContractStream<T>(
-  response: Response,
+  response: unknown,
   descriptor: EndpointStreamDescriptor<ZodType<T>>,
   abort: () => void,
 ): AsyncIterableIterator<T> {
-  return new OwnedContractStream(readContractStream(response, descriptor, abort), abort);
+  if (!isStreamResponse(response)) {
+    abort();
+    throw new Error('Streaming endpoint did not return a Response');
+  }
+  return new OwnedContractStream(readContractStream(response.body, descriptor, abort), abort);
 }

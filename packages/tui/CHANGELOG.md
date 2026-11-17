@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `stitchkit-tui` — accepts OpenTUI 0.9 as well as 0.8: the `@opentui/core` and `@opentui/react`
+  peers are `^0.8.2 || ^0.9.2`, and the package is tested against 0.9.2.
+
 ## [0.4.4] - 2026-11-17
 
 ### Changed

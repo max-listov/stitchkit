@@ -15,6 +15,19 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit`, `stitchkit/http` — **a streaming endpoint reads the response of another runtime's
+  fetch.** The typed client refused any response that was not the global `Response` class with
+  `Streaming endpoint did not return a Response`, so a `ClientFetch` built on `expo/fetch` in React
+  Native — whose `FetchResponse` is its own class — never read a stream, and the bare-fetch client
+  failed on it with a `TypeError`. Both client paths now take a response by its shape, a `body`
+  with `getReader()`, and both refuse one without a readable body with that same error.
+  `parseNDJSON`, `parseSSE` and `readBoundedBody` recognise a source by its shape as well: a
+  reader, then `Symbol.asyncIterator`, else the response's `body`; a response with no `body` at
+  all is a `TypeError` that says so.
+  **Affects:** `stitchkit` createClient(stream), createClients(stream), parseNDJSON, parseSSE, readBoundedBody; `stitchkit/http` createClient(stream), createClients(stream), readBoundedBody
+
 ## [0.124.1] - 2026-11-17
 
 ### Added

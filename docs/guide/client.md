@@ -992,6 +992,12 @@ body until it ends or is cancelled. This is the same for a Fetch-config client,
 Unix transport. Cancelling a quiet stream therefore releases its server source
 and transport connection instead of only settling the local iterator.
 
+A stream is read from any response whose `body` has `getReader()`, not only from
+the global `Response` class: a `fetch` of another runtime — `expo/fetch` in
+React Native, which answers with its own `FetchResponse` — streams the same way.
+A response without a readable body is refused with `Streaming endpoint did not
+return a Response`.
+
 An established NDJSON protocol may keep its item schema as the complete wire
 frame. This mode requires a terminal item because an unwrapped response has no
 separate safe error/end envelope:

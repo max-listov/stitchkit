@@ -53,12 +53,12 @@
     "prepublishOnly": "bun run check && bun run test && bun run build"
   },
   "dependencies": {
-    "ai": "^7.0.162",
+    "ai": "^7.0.173",
     "zod": "^4.6.7"
   },
   "peerDependencies": {
-    "@opentui/core": "^0.8.2",
-    "@opentui/react": "^0.8.2",
+    "@opentui/core": "^0.8.2 || ^0.9.2",
+    "@opentui/react": "^0.8.2 || ^0.9.2",
     "react": "^19.3.1",
     "stitchkit": "workspace:^"
   },
@@ -68,8 +68,8 @@
     }
   },
   "devDependencies": {
-    "@opentui/core": "^0.8.2",
-    "@opentui/react": "^0.8.2",
+    "@opentui/core": "^0.9.2",
+    "@opentui/react": "^0.9.2",
     "@types/bun": "^1.4.4",
     "@types/react": "^19.3.0",
     "react": "^19.3.1",
