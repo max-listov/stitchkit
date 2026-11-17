@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.124.1] - 2026-11-17
+
 ### Added
 
 - `stitchkit/tools/connections` — **an idle deadline: a slow link that keeps delivering is not a
