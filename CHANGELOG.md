@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.124.2] - 2026-11-17
+
 ### Fixed
 
 - `stitchkit`, `stitchkit/http` — **a streaming endpoint reads the response of another runtime's
