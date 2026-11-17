@@ -60,7 +60,9 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
-## Unreleased migration: unknown operation keeps the not_found wire code
+## Released migration: 0.6.22
+
+### unknown operation keeps the not_found wire code
 
 Take it together with the stitchkit release that answers an unmatched route
 `UNKNOWN_OPERATION`; on an earlier stitchkit the entry is inert.

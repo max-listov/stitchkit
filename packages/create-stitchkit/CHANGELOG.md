@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.22] - 2026-11-17
+
 ### Changed
 
 - Generated projects resolve stitchkit 0.124.2: a streaming endpoint reads the response of
