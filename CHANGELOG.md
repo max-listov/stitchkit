@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.124.3] - 2026-11-18
+
 ### Added
 
 - `stitchkit/telegram/screens` has a view content for rich messages with local files:
