@@ -501,9 +501,11 @@ describe('telegram update intake', () => {
     const store = sqliteTelegramUpdateStore({ database });
     const held = gate();
     const handled: string[] = [];
+    // The lease is wall-clock: it is long enough that a renewal delayed by a
+    // loaded host still lands inside it, and the wait outlasts it.
     const first = createTelegramUpdateIntake<Message>({
       store,
-      leaseMs: 40,
+      leaseMs: 300,
       handle: async () => {
         await held.opened;
         handled.push('first');
@@ -511,7 +513,7 @@ describe('telegram update intake', () => {
     });
     const second = createTelegramUpdateIntake<Message>({
       store,
-      leaseMs: 40,
+      leaseMs: 300,
       pendingGraceMs: 0,
       handle: () => {
         handled.push('second');
@@ -520,7 +522,7 @@ describe('telegram update intake', () => {
     await first.start();
     await second.start();
     await first.accept(body(1, 'long'));
-    await Bun.sleep(120);
+    await Bun.sleep(450);
     expect(await second.sweep()).toBe(0);
     held.open();
     await first.idle();

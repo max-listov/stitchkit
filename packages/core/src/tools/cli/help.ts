@@ -29,9 +29,43 @@ function typeLabel(schema: Record<string, unknown>): string {
   return 'value';
 }
 
+/** The string formats of the JSON Schema validation vocabulary (2020-12, §7.3). */
+const STANDARD_FORMATS: ReadonlySet<string> = new Set([
+  'date-time',
+  'date',
+  'time',
+  'duration',
+  'email',
+  'idn-email',
+  'hostname',
+  'idn-hostname',
+  'ipv4',
+  'ipv6',
+  'uri',
+  'uri-reference',
+  'iri',
+  'iri-reference',
+  'uuid',
+  'uri-template',
+  'json-pointer',
+  'relative-json-pointer',
+  'regex',
+]);
+
 /** Bounds belong to this value; item/property constraints describe a different value. */
 function constraintLabel(schema: Record<string, unknown>): string {
   const limits: string[] = [];
+  // A format JSON Schema defines says the shape by name; the expression sent
+  // beside it is hundreds of characters the name already says. Any other
+  // format is a producer's own word (`starts_with`, `nanoid`), and there the
+  // pattern is what tells the caller what to type.
+  const format = typeof schema.format === 'string' ? schema.format : undefined;
+  const pattern = typeof schema.pattern === 'string' ? schema.pattern : undefined;
+  if (format !== undefined && (STANDARD_FORMATS.has(format) || pattern === undefined)) {
+    limits.push(format);
+  } else if (pattern !== undefined) {
+    limits.push(`pattern /${pattern}/`);
+  }
   // Both emitted dialects (draft-07 and 2020-12) use numeric exclusive bounds,
   // not the boolean modifiers of draft-04. A zero bound is still a bound. An
   // integer schema always carries the safe-integer range; that is the type, not

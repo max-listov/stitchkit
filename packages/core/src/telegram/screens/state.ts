@@ -34,6 +34,10 @@ export const RECORD_LIMITS = {
   remarks: 100,
 };
 
+/** An interrupted transition can show both views and the message of a foreign press. */
+export const MAX_TRACKED_MESSAGES = 2 * RECORD_LIMITS.messages + 1;
+export const MAX_TRACKED_TOKENS = 2 * RECORD_LIMITS.tokens;
+
 const MessageFingerprintSchema = z
   .object({ content: z.string(), media: z.string(), markup: z.string() })
   .strict();
@@ -51,11 +55,11 @@ const ScreenViewStateSchema = z
   .object({
     screen: z.string().min(1).max(64),
     params: z.record(z.string(), z.union([z.string(), z.number()])),
-    messages: z.array(ShownMessageSchema).min(1).max(RECORD_LIMITS.messages),
+    messages: z.array(ShownMessageSchema).min(1).max(MAX_TRACKED_MESSAGES),
     // Twice a view's worth: a plan that stopped keeps the buttons of both renders.
     tokens: z
       .record(z.string(), z.string().max(RECORD_LIMITS.tokenBody))
-      .refine((tokens) => Object.keys(tokens).length <= 2 * RECORD_LIMITS.tokens),
+      .refine((tokens) => Object.keys(tokens).length <= MAX_TRACKED_TOKENS),
   })
   .strict();
 

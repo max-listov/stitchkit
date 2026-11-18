@@ -196,6 +196,21 @@ export function createFakeTelegram({
   const stored: StoredMessage[] = [];
   const answers: string[] = [];
   let lastMessageId = 0;
+  let lastFileId = 0;
+  const fileIds = new WeakMap<object, string>();
+
+  // A received rich message contains file ids. This transformer runs before
+  // grammY's multipart writer, so it must never serialize or consume an InputFile.
+  const receivedRich = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(receivedRich);
+    if (!isRecord(value)) return value;
+    if (typeof value.toRaw === 'function') {
+      const id = fileIds.get(value) ?? `test-file-${++lastFileId}`;
+      fileIds.set(value, id);
+      return id;
+    }
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, receivedRich(v)]));
+  };
 
   const refuse = (description: string, errorCode = 400): FakeTelegramRefusal => ({
     ok: false,
@@ -239,7 +254,7 @@ export function createFakeTelegram({
       kind,
       text: stringAt(payload, kind === 'text' ? 'text' : 'caption') ?? '',
       media: kind === 'text' || kind === 'rich' ? undefined : stringAt(payload, kind),
-      rich: payload.rich_message,
+      rich: receivedRich(payload.rich_message),
       markup: markupAt(payload),
       deleted: false,
     };
@@ -257,7 +272,13 @@ export function createFakeTelegram({
         : payloadRefusal(payload, method === 'editMessageCaption' ? 'caption' : 'text');
     if (refusal) return refuse(refusal);
     const markup = markupAt(payload);
-    const content = editContent(message, method, payload);
+    const content = editContent(
+      message,
+      method,
+      'rich_message' in payload
+        ? { ...payload, rich_message: receivedRich(payload.rich_message) }
+        : payload,
+    );
     if ('refused' in content) return refuse(content.refused);
     if (!content.changed && sameMarkup(message.markup, markup)) return refuse(NOT_MODIFIED);
     message.markup = markup;

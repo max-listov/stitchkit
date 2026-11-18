@@ -84,6 +84,7 @@ export {
   link,
   type PhotoViewMessage,
   type PlainKeyboardButton,
+  type RichUploadViewMessage,
   type RichViewMessage,
   ScreenButton,
   type ScreenMediaKind,

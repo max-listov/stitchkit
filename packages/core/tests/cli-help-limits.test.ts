@@ -193,6 +193,45 @@ describe('CLI help exposes the schema limits before execution', () => {
     }
   });
 
+  test('a string names its format, or its pattern when no format names it', async () => {
+    const shaped = defineCliCommand({
+      name: 'shaped',
+      description: 'Shaped strings',
+      input: z.object({
+        requestKey: z.uuid().describe('Idempotency key'),
+        contact: z.email().nullable(),
+        callback: z.url().optional(),
+        since: z.iso.datetime().optional(),
+        slug: z
+          .string()
+          .regex(/^[a-z]+$/)
+          .min(2),
+        prefixed: z.string().startsWith('sk-').optional(),
+        token: z.nanoid().optional(),
+        plain: z.string().optional(),
+      }),
+      handler: () => undefined,
+    });
+    const globalOptions = z.object({ tenant: z.uuid().optional() });
+    const { out } = await run(['shaped', '--help'], { commands: [shaped], globalOptions });
+    expect(argument(out, 'requestKey')).toContain(
+      '<string> [uuid] (required) — Idempotency key',
+    );
+    expect(argument(out, 'contact')).toContain('[any of: string [email] | null]');
+    expect(argument(out, 'callback')).toContain('<string> [uri]');
+    expect(argument(out, 'since')).toContain('<string> [date-time]');
+    expect(argument(out, 'slug')).toContain(
+      '<string> [pattern /^[a-z]+$/, length >=2] (required)',
+    );
+    expect(argument(out, 'tenant')).toContain('<string> [uuid]');
+    // A producer's own format word tells nothing; its pattern does.
+    expect(argument(out, 'prefixed')).toContain('<string> [pattern /^sk-.*/]');
+    expect(argument(out, 'token')).toContain('<string> [pattern /^[a-zA-Z0-9_-]{21}$/]');
+    expect(argument(out, 'plain').trimEnd().endsWith('<string>')).toBe(true);
+    // The expression behind a named format stays out of the line.
+    expect(out).not.toContain('0-9a-fA-F');
+  });
+
   test('union alternatives and nullable values do not promise a conjunction', async () => {
     const alternate = defineCliCommand({
       name: 'alternate',

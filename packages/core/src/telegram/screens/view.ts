@@ -2,8 +2,8 @@
  * What a screen shows: messages as plain objects.
  *
  * A view is data, so it can be compared. `{ text }` is a text message,
- * `{ rich }` a Bot API rich message (Markdown, HTML or blocks, without file
- * uploads) and `{ photo }` (or `video`, `animation`, `document`, `audio`) a
+ * `{ rich }` a Bot API rich message (Markdown, HTML or blocks), `{ richUpload }`
+ * a rich message whose files are uploaded, and `{ photo }` (or `video`, `animation`, `document`, `audio`) a
  * media message with an optional caption; exactly one of those keys is
  * present, and the type says so. A keyboard is rows of buttons where a row or a button may be `false`,
  * `null` or `undefined` — a conditional row is written in the literal, not
@@ -11,7 +11,11 @@
  * any Telegram inline button that carries no `callback_data`, as Telegram
  * spells it.
  */
-import type { InlineKeyboardButton, InputRichMessageWithoutUpload } from 'grammy/types';
+import type {
+  InlineKeyboardButton,
+  InputRichMessage,
+  InputRichMessageWithoutUpload,
+} from 'grammy/types';
 import type { ActionValue } from './callback-codec';
 import type { TelegramText } from './html';
 import type { AnyTelegramScreen, ScreenLinkArgs } from './screen-types';
@@ -73,7 +77,7 @@ interface ViewMessageCommon {
   readonly keyboard?: Keyboard;
 }
 
-type ContentKey = 'text' | 'rich' | ScreenMediaKind;
+type ContentKey = 'text' | 'rich' | 'richUpload' | ScreenMediaKind;
 type Without<TKeys extends string> = { readonly [K in TKeys]?: never };
 
 export interface TextViewMessage
@@ -91,6 +95,18 @@ export interface RichViewMessage
   readonly rich: InputRichMessageWithoutUpload;
 }
 
+export interface RichUploadViewMessage
+  extends ViewMessageCommon,
+    Without<Exclude<ContentKey, 'richUpload'> | 'caption' | 'linkPreview'> {
+  /** A rich message whose files grammY uploads, built when it is sent. */
+  readonly richUpload: {
+    /** Change this when any rich content changes, including text, file bytes or block order. */
+    readonly contentKey: string;
+    /** Called for each content send or edit. Return fresh input for one-shot streams. */
+    readonly build: () => InputRichMessage | Promise<InputRichMessage>;
+  };
+}
+
 type MediaViewMessageOf<TKind extends ScreenMediaKind> = ViewMessageCommon &
   Without<Exclude<ContentKey, TKind> | 'linkPreview'> & {
     /** A Telegram `file_id` or an HTTP URL Telegram can fetch. */
@@ -106,6 +122,7 @@ export type AudioViewMessage = MediaViewMessageOf<'audio'>;
 export type ViewMessage =
   | TextViewMessage
   | RichViewMessage
+  | RichUploadViewMessage
   | PhotoViewMessage
   | VideoViewMessage
   | AnimationViewMessage

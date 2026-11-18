@@ -98,7 +98,7 @@ export interface TelegramScreensConfig<C extends Context> {
   /** A press this bot no longer understands, or that no button carried. Default: answered silently. */
   readonly onStale?: (c: ScreenStaleContext<C>) => ScreenHandlerResult;
   /**
-   * A load, action or input that threw. Its outcome is shown instead; without
+   * A load, action, input or display that threw. Its outcome is shown instead; without
    * it the press is answered silently and the error reaches `bot.catch`.
    */
   readonly onError?: (error: unknown, c: ScreenErrorContext<C>) => ScreenHandlerResult;
@@ -146,8 +146,12 @@ export interface ScreensRuntime<C extends Context> {
   answers(ctx: C): boolean;
   /** Run `task` alone in the chat; a call from inside the chat's own task runs inline. */
   exclusive<T>(ctx: C, chat: string, task: () => Promise<T>): Promise<T>;
+  /** Whether this update already runs its chat's task — a call from one of its handlers. */
+  inside(ctx: C): boolean;
   readState(chat: string): Promise<ScreenChatState>;
   display(request: DisplayRequest<C>): Promise<void>;
+  /** Whether `error` is what a display threw: the chat's record already says what it shows. */
+  displayFailed(error: unknown): boolean;
   /** `open` showed a screen for this update. */
   markOpened(ctx: C): void;
   /** Whether `open` showed a screen for this update — from inside its handler, its navigation stands. */
@@ -171,7 +175,8 @@ export function createScreensRuntime<C extends Context>(
     );
   }
   const queue: ChatQueue = createChatQueue(MAX_PENDING_PER_CHAT);
-  const inside = new WeakSet<object>();
+  const running = new WeakSet<object>();
+  const failedDisplays = new WeakSet<object>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const opened = new WeakSet<object>();
   const runtime: OwnedScreensRuntime<C> = {
@@ -184,22 +189,33 @@ export function createScreensRuntime<C extends Context>(
       config.chatKey ? config.chatKey(ctx) : ctx.chat ? `screens:${ctx.chat.id}` : undefined,
     answers: (ctx) => (config.chats ?? 'private') === 'all' || ctx.chat?.type === 'private',
     exclusive: async (ctx, chat, task) => {
-      if (inside.has(ctx)) return task();
+      if (running.has(ctx)) return task();
       return queue(chat, async () => {
-        inside.add(ctx);
+        running.add(ctx);
         try {
           return await task();
         } finally {
-          inside.delete(ctx);
+          running.delete(ctx);
         }
       });
     },
+    inside: (ctx) => running.has(ctx),
     readState: async (chat) => {
       const read = await readChatState(config.storage, chat);
       if (read.discarded) runtime.emit({ type: 'state-discarded', chat });
       return read.state;
     },
-    display: (request) => displayScreen(runtime, request),
+    display: async (request) => {
+      try {
+        await displayScreen(runtime, request);
+      } catch (error) {
+        // Remembered by identity: the error reaches `onError` as it was thrown.
+        if (typeof error === 'object' && error !== null) failedDisplays.add(error);
+        throw error;
+      }
+    },
+    displayFailed: (error) =>
+      typeof error === 'object' && error !== null && failedDisplays.has(error),
     markOpened: (ctx) => {
       opened.add(ctx);
     },

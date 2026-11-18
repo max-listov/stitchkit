@@ -4,7 +4,7 @@ description: "A bot menu is a tree of declared screens whose views are reconcile
 type: decision
 status: accepted
 created: 2026-09-28
-updated: 2026-09-28
+updated: 2026-11-18
 ---
 
 # ADR 0211 — Telegram screens are declared views over grammY
@@ -99,7 +99,8 @@ last write wins.
   than conventions each screen reimplements.
 - Reply keyboards, inline mode, media uploads and a history stack are out of
   scope; a screen is shown only in answer to an update (a notification carries
-  `screens.button(link(…))` instead).
+  `screens.button(link(…))` instead). (Amended by [ADR 0294](0294-rich-screen-uploads-are-built-on-demand.md)
+  for file uploads inside rich messages.)
 - A chat served by two processes at once can see a stale record; the next
   update repairs it. Serialising across processes would need a lock the
   application does not otherwise have, and is not taken on here.

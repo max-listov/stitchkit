@@ -90,9 +90,11 @@ function outgoing(
     kind,
     html: content,
     rich: undefined,
+    richBuild: undefined,
     linkPreview: undefined,
     media: kind === 'text' || kind === 'rich' ? undefined : `file-${content}`,
     markup: undefined,
+    tokenIds: [],
     fingerprint: { content, media: kind === 'text' ? 'none' : `${kind}:${content}`, markup },
   };
 }

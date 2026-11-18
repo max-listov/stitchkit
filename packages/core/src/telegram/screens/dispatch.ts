@@ -203,6 +203,9 @@ function assertOpenStands(navigated: boolean, settled: SettledNavigation<Context
   }
 }
 
+/** How long a toast said in the chat stays there, when the press it answers is already answered. */
+const LATE_TOAST_MS = 30_000;
+
 /** Run one chat operation; a thrown error goes to `onError`, whose outcome is shown. */
 async function guarded<C extends Context>(
   runtime: ScreensRuntime<C>,
@@ -211,7 +214,7 @@ async function guarded<C extends Context>(
   chat: string,
   chatId: number,
   operation: () => Promise<void>,
-  answer?: (settled: SettledNavigation<C> | undefined) => Promise<void>,
+  answerError?: (settled: SettledNavigation<C>) => Promise<SettledNavigation<C>>,
 ): Promise<void> {
   try {
     await operation();
@@ -221,8 +224,16 @@ async function guarded<C extends Context>(
     const result = await onError(error, { ctx, trigger, ...outcomeBuilders() });
     if (!ScreenOutcome.is(result)) return;
     const state = await runtime.readState(chat);
-    const settled = await settleNavigation(runtime, ctx, originOf(runtime, state), result);
-    await answer?.(settled);
+    // A view that could not be drawn is not drawn again by the report of its
+    // failure: the chat stays as its record says, and `stay()` only delivers
+    // the toast and the notices. A handler that threw changed nothing in the
+    // chat, so its screen is loaded and drawn anew.
+    const outcome: SettledNavigation<C> =
+      runtime.displayFailed(error) && result.navigation.type === 'stay'
+        ? { target: undefined, toast: result.toastSpec, notices: result.notices }
+        : await settleNavigation(runtime, ctx, originOf(runtime, state), result);
+    const settled = answerError ? await answerError(outcome) : outcome;
+    if (!settled.target && settled.notices.length === 0) return;
     await runtime.display({
       ctx,
       chat,
@@ -252,8 +263,8 @@ export async function dispatchPress<C extends Context>(
   const press: Press = { id: query.id, data: query.data, message };
   const chatId = message.chat.id;
   let answered = false;
-  const answer = async (settled: SettledNavigation<C> | undefined): Promise<void> => {
-    if (answered) return;
+  const answer = async (settled?: SettledNavigation<C>): Promise<boolean> => {
+    if (answered) return false;
     answered = true;
     const toast = settled?.toast;
     try {
@@ -261,9 +272,11 @@ export async function dispatchPress<C extends Context>(
         press.id,
         toast ? { text: toast.text, show_alert: toast.alert } : undefined,
       );
+      return true;
     } catch (error) {
       // A press answered after Telegram stopped waiting is not a failure of the screen.
       if (classifyTelegramEditRefusal(error) !== 'query-expired') throw error;
+      return false;
     }
   };
   try {
@@ -313,11 +326,25 @@ export async function dispatchPress<C extends Context>(
             started,
           });
         },
-        answer,
+        async (settled) => {
+          if ((await answer(settled)) || !settled.toast) return settled;
+          // The press was answered before the failure, so its toast is said in
+          // the chat: as a remark of the screen, or — where others would read
+          // it — as an ephemeral message, which has no id to keep.
+          if (message.chat.type === 'private') {
+            const remark = { content: settled.toast.text, expiresInMs: LATE_TOAST_MS };
+            return { ...settled, notices: [...settled.notices, remark] };
+          }
+          await sendText(ctx.api, chatId, settled.toast.text, {
+            receiver_user_id: query.from.id,
+            callback_query_id: press.id,
+          });
+          return settled;
+        },
       ),
     );
   } finally {
-    await answer(undefined);
+    await answer();
   }
 }
 
@@ -422,28 +449,33 @@ export async function openScreen<C extends Context>(
   if (chat === undefined || chatId === undefined) {
     throw new Error('[stitchkit] telegram screens: open() needs an update from a chat.');
   }
-  await runtime.exclusive(ctx, chat, () =>
-    guarded(runtime, ctx, 'open', chat, chatId, async () => {
-      const started = runtime.clock();
-      const state = await sweepDue(runtime, ctx.api, chat, chatId);
-      const outcome = new ScreenOutcome({
-        type: 'go',
-        screen: origin.entry.screen,
-        params: origin.params,
-      });
-      const settled = await settleNavigation(runtime, ctx, undefined, outcome);
-      const base: DisplayBase = previous === 'delete' ? { mode: 'fresh' } : { mode: 'new' };
-      await runtime.display({
-        ctx,
-        chat,
-        chatId,
-        state,
-        settled: { ...settled, toast: undefined },
-        base,
-        trigger: 'open',
-        started,
-      });
-      runtime.markOpened(ctx);
-    }),
+  const open = async () => {
+    const started = runtime.clock();
+    const state = await sweepDue(runtime, ctx.api, chat, chatId);
+    const outcome = new ScreenOutcome({
+      type: 'go',
+      screen: origin.entry.screen,
+      params: origin.params,
+    });
+    const settled = await settleNavigation(runtime, ctx, undefined, outcome);
+    const base: DisplayBase = previous === 'delete' ? { mode: 'fresh' } : { mode: 'new' };
+    await runtime.display({
+      ctx,
+      chat,
+      chatId,
+      state,
+      settled: { ...settled, toast: undefined },
+      base,
+      trigger: 'open',
+      started,
+    });
+    runtime.markOpened(ctx);
+  };
+  // Called from a handler, an open is part of that handler's operation: its
+  // failure is the handler's, reported once, with the press it answers.
+  await runtime.exclusive(
+    ctx,
+    chat,
+    runtime.inside(ctx) ? open : () => guarded(runtime, ctx, 'open', chat, chatId, open),
   );
 }

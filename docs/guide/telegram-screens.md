@@ -127,6 +127,37 @@ bot.catch((error) => logger.error('update failed', { error }))
   message is sent with `parse_mode: 'HTML'` set explicitly, so an application's
   own `parse_mode` transformer changes nothing.
 
+### Uploading a rich preview
+
+For a local photo, a message is `richUpload`: a `contentKey` and a `build` function. The key
+identifies the complete rich payload. Change it when the file bytes, text or
+order of blocks changes. The outer message `key` identifies the Telegram
+message that can be edited in place.
+
+```ts
+import { InputFile } from 'grammy'
+import type { RichUploadViewMessage } from 'stitchkit/telegram/screens'
+
+function preview(path: string, revision: string): RichUploadViewMessage {
+  return {
+    richUpload: {
+      contentKey: revision,
+      build: () => ({
+        blocks: [{ type: 'photo', photo: { type: 'photo', media: new InputFile(path) } }],
+      }),
+    },
+  }
+}
+```
+
+`richUpload` is a content of its own, like `text` or `photo`: a message has it
+or `rich`, never both, and `rich` stays the Bot API's inline type. The runtime
+calls `build` for each send or content edit. It can return a
+promise. A resend needs a fresh file if its stream was consumed. A render
+with the same content key skips the upload, including when it edits the
+keyboard. Storage holds the fingerprint. For a URL or a Telegram `file_id`,
+pass the Bot API rich object as `rich`.
+
 ## Outcomes
 
 A load, an action and an input handler answer with an outcome, built by
@@ -183,6 +214,15 @@ When Telegram refuses a step:
   renders. The next update repairs the rest. A receipt or a remark Telegram
   refuses stops the update the same way, with the view already drawn recorded.
 
+If Telegram refuses the first send, the previous menu keeps its message IDs,
+buttons and input routing. When an edit has an uncertain result, the next
+render checks that message again. If repeated interrupted transitions would
+exceed the chat record's recovery limit, the runtime cleans up the latest
+failed attempt's new sends. A later press can retry the full transition.
+One case the record cannot hold: a send Telegram carried out but whose answer
+was lost has no id to record, so that message stays in the chat until the user
+removes it.
+
 A view is checked before anything is sent: at most 100 messages, keys of 1 to
 64 characters, at most 100 buttons whose address is kept in the record. A view
 past these fails in the handler's place, with the chat untouched.
@@ -236,7 +276,9 @@ Called from inside a handler of the same chat, it runs at once rather than
 waiting behind the update that called it, and the screen it opened stands: the
 handler may still answer the press with a toast, and returning a navigation or
 a notice as well is an error — drawn after it, the handler's own outcome would
-put the record back on the screen the chat left.
+put the record back on the screen the chat left. An open that fails inside a
+handler rejects there: the failure is the handler's, and `onError` hears it
+once, with the handler's trigger.
 
 ## State and concurrency
 
@@ -263,7 +305,7 @@ refused halfway too.
 | `callbackPrefix` | `~` | what every screen button's `callback_data` starts with |
 | `chats` | `'private'` | `'all'` answers in groups too, where any member can press or type |
 | `onStale(c)` | answered silently | a press nothing can answer, with its `reason`; its outcome is shown |
-| `onError(error, c)` | none | a load, action or input that threw; its outcome is shown |
+| `onError(error, c)` | none | a load, action, input or display that threw. Its outcome is shown. |
 | `onEvent(event)` | none | `transition`, `state-discarded`, `message-kept`, `sweep-failed` (a remark's timer could not delete it) — never message text |
 | `clock` | `Date.now` | the time expiring remarks are measured by |
 
@@ -271,6 +313,19 @@ Without `onError` the press is answered silently and the error reaches
 `bot.catch` — which a bot must set. `screens.close()` cancels pending expiry
 timers on the way down; a remark left behind is removed on the chat's next
 update.
+
+A view Telegram refused is not drawn again by the report of its refusal:
+after a failed display `stay()` leaves the chat as its record says and only
+delivers the toast and the notices, so the refused request is sent once and
+the next press retries it. `go()` and `back()` are followed as usual. A
+handler that threw changed nothing in the chat, so after it `stay()` loads
+and draws its screen anew.
+
+A press is answered before its view is drawn, so a toast for a failed display
+comes too late to be the answer. In a private chat it is said as a remark of
+the screen — escaped text under the menu that leaves with the next view sent,
+or after 30 seconds. In a group it is an ephemeral message only the user who
+pressed receives.
 
 ## Security
 
@@ -310,6 +365,6 @@ refuse a call, `deleteByUser`, `pressData` for a forged press and
 
 ## Not included
 
-Reply keyboards, inline mode, media uploads (`InputFile`) in a view, showing a
+Reply keyboards, inline mode, uploads for standalone media messages, showing a
 screen without an update (use `screens.button` in a notification), converting
 an incoming message to HTML, and a history stack.

@@ -8,9 +8,16 @@
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Context } from 'grammy';
+import type { Context, InputFile } from 'grammy';
 import { z } from 'zod';
-import { back, html, link, telegramScreens } from '../src/entrypoints/telegram/screens';
+import {
+  back,
+  html,
+  link,
+  type RichUploadViewMessage,
+  type RichViewMessage,
+  telegramScreens,
+} from '../src/entrypoints/telegram/screens';
 
 const tg = telegramScreens<Context>();
 const home = tg.screen('/').view(() => ({ text: 'home' }));
@@ -88,6 +95,36 @@ export const views = [
     .screen('/rows')
     .view(() => ({ text: 'a', keyboard: [false, null, [undefined, back('«')]] })),
 ];
+
+/** Type probes for a rich message with uploads: its own content, beside no other. */
+export function richUploads(file: InputFile): RichUploadViewMessage[] {
+  const build = () => ({ markdown: 'Photo' });
+  return [
+    {
+      richUpload: {
+        contentKey: 'preview-v1',
+        build: () => ({ blocks: [{ type: 'photo', photo: { type: 'photo', media: file } }] }),
+      },
+    },
+    // @ts-expect-error — the version is required to decide whether the file must be uploaded
+    { richUpload: { build } },
+    // @ts-expect-error — a version without a factory uploads nothing
+    { richUpload: { contentKey: 'preview-v1' } },
+    // @ts-expect-error — inline content beside a factory would never be sent
+    { richUpload: { contentKey: 'v1', build }, rich: { markdown: 'Photo' } },
+  ];
+}
+
+/** An inline rich message is the Bot API's own type, read and rewritten as one. */
+export function richInline(file: InputFile, message: RichViewMessage): RichViewMessage[] {
+  return [
+    { ...message, rich: { ...message.rich, markdown: message.rich.markdown ?? 'Photo' } },
+    // @ts-expect-error — an InputFile is sent by richUpload
+    { rich: { blocks: [{ type: 'photo', photo: { type: 'photo', media: file } }] } },
+    // @ts-expect-error — a factory belongs to richUpload
+    { rich: { contentKey: 'v1', build: () => ({ markdown: 'Photo' }) } },
+  ];
+}
 
 describe('telegram screens: the compiler', () => {
   test('the declarations above typecheck with exactly the refusals marked', () => {

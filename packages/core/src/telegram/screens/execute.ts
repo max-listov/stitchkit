@@ -22,8 +22,13 @@
  * written true and the next render repairs the rest.
  */
 import type { Api } from 'grammy';
-import type { InlineKeyboardMarkup, LinkPreviewOptions, ParseMode } from 'grammy/types';
-import { classifyTelegramEditRefusal } from '../send-failure';
+import type {
+  InlineKeyboardMarkup,
+  InputRichMessage,
+  LinkPreviewOptions,
+  ParseMode,
+} from 'grammy/types';
+import { classifyTelegramEditRefusal, classifyTelegramSendFailure } from '../send-failure';
 import type { PlanStep, ShownMessage, ViewPlan } from './reconcile';
 import type { OutgoingMessage } from './render';
 
@@ -61,10 +66,18 @@ export interface ExecutedView {
   readonly report: ExecutionReport;
 }
 
-/** A plan stopped by a refusal the chat cannot absorb; `shown` is what the chat shows now. */
+/**
+ * A plan stopped by a refusal the chat cannot absorb. `shown` is what the chat
+ * shows now, top to bottom — absent when no call changed what the record says,
+ * empty when nothing of the view is left. `redrawn` names the messages that
+ * now show the new view, each with the tokens its keyboard carries; `sentIds`
+ * are those of them this attempt sent.
+ */
 export class PlanInterrupted extends Error {
   constructor(
-    readonly shown: readonly ShownMessage[],
+    readonly shown: readonly ShownMessage[] | undefined,
+    readonly redrawn: ReadonlyMap<number, readonly string[]>,
+    readonly sentIds: readonly number[],
     override readonly cause: unknown,
   ) {
     super('[stitchkit] telegram screens: a view was left half-drawn by a Bot API failure.', {
@@ -88,6 +101,10 @@ function captionOption(message: OutgoingMessage) {
   return message.html === undefined ? {} : { caption: message.html, parse_mode: HTML };
 }
 
+function richPayload(message: OutgoingMessage): InputRichMessage | Promise<InputRichMessage> {
+  return message.richBuild ? message.richBuild() : (message.rich ?? {});
+}
+
 export async function sendOutgoing(
   api: ScreenApi,
   chatId: ChatId,
@@ -106,7 +123,11 @@ export async function sendOutgoing(
       ).message_id;
     case 'rich':
       return (
-        await api.sendRichMessage(chatId, message.rich ?? {}, markupOption(message.markup))
+        await api.sendRichMessage(
+          chatId,
+          await richPayload(message),
+          markupOption(message.markup),
+        )
       ).message_id;
     case 'photo':
       return (await api.sendPhoto(chatId, source, extra)).message_id;
@@ -125,14 +146,15 @@ async function editOutgoing(
   api: ScreenApi,
   chatId: ChatId,
   step: Extract<PlanStep, { op: 'edit' }>,
+  rich: InputRichMessage | undefined,
 ): Promise<void> {
   const { message, parts, id } = step;
   const markup = markupOption(message.markup);
   if (message.kind === 'text' || message.kind === 'rich') {
     if (!parts.content) {
       await api.editMessageReplyMarkup(chatId, id, markup);
-    } else if (message.kind === 'rich') {
-      await api.editMessageText(chatId, id, message.rich ?? {}, markup);
+    } else if (rich) {
+      await api.editMessageText(chatId, id, rich, markup);
     } else {
       await api.editMessageText(chatId, id, message.html ?? '', {
         parse_mode: HTML,
@@ -185,79 +207,89 @@ export async function deleteMessages(
   return undeleted;
 }
 
-/**
- * What the chat shows when a plan stops: what was done, the messages the
- * remaining steps would have kept or edited — untouched, content unknown — and
- * those still waiting to be deleted, so the next render deletes them. In the
- * chat's order: Telegram numbers a chat's messages as they are sent, so a
- * message sent anew sits below every message it replaced.
- */
-function interruptedView(
-  remaining: readonly PlanStep[],
-  deletions: readonly number[],
-  done: readonly ShownMessage[],
-): ShownMessage[] {
-  const untouched: ShownMessage[] = [];
-  for (const step of remaining) {
-    if (step.op !== 'send') untouched.push({ ...step.from, fingerprint: null });
-  }
-  const present = new Set([...done, ...untouched].map((message) => message.id));
-  const leftovers = deletions
-    .filter((id) => !present.has(id))
-    .map((id): ShownMessage => ({ key: `left-${id}`, id, kind: 'text', fingerprint: null }));
-  return [...done, ...untouched, ...leftovers].sort((left, right) => left.id - right.id);
-}
-
 export async function executePlan(
   api: ScreenApi,
   chatId: ChatId,
   plan: ViewPlan,
+  previous: readonly ShownMessage[],
 ): Promise<ExecutedView> {
   const shown: ShownMessage[] = [];
+  const visible = new Map(previous.map((message) => [message.id, message]));
   const deletions = [...plan.deletions];
+  const redrawn = new Map<number, readonly string[]>();
+  const sentIds: number[] = [];
+  let foundMissing = false;
   let resending = false;
-  let sent = 0;
   let edited = 0;
   let kept = 0;
-  for (const [index, step] of plan.steps.entries()) {
-    try {
-      if (step.op !== 'send' && resending) deletions.push(step.id);
-      if (step.op === 'send' || resending) {
-        shown.push(shownFrom(await sendOutgoing(api, chatId, step.message), step.message));
-        sent += 1;
-        continue;
-      }
-      if (step.op === 'keep') {
-        shown.push(shownFrom(step.id, step.message));
+  const record = (id: number, message: OutgoingMessage) => {
+    const entry = shownFrom(id, message);
+    shown.push(entry);
+    visible.set(id, entry);
+    redrawn.set(id, message.tokenIds);
+  };
+  try {
+    for (const step of plan.steps) {
+      if (step.op === 'keep' && !resending) {
+        shown.push(step.from);
         kept += 1;
         continue;
       }
-      try {
-        await editOutgoing(api, chatId, step);
-        edited += 1;
-      } catch (error) {
-        const refusal = classifyTelegramEditRefusal(error);
-        if (refusal === 'message-gone' || refusal === 'message-locked') {
-          resending = true;
-          deletions.push(step.id);
-          shown.push(shownFrom(await sendOutgoing(api, chatId, step.message), step.message));
-          sent += 1;
+      if (step.op === 'edit' && !resending) {
+        // A factory failure happens before the API call and cannot have changed the chat.
+        const rich =
+          step.message.kind === 'rich' && step.parts.content
+            ? await richPayload(step.message)
+            : undefined;
+        try {
+          await editOutgoing(api, chatId, step, rich);
+          edited += 1;
+        } catch (error) {
+          const refusal = classifyTelegramEditRefusal(error);
+          if (refusal === 'not-modified') {
+            kept += 1;
+          } else if (refusal === 'message-gone' || refusal === 'message-locked') {
+            if (refusal === 'message-gone') {
+              visible.delete(step.id);
+              foundMissing = true;
+            }
+            resending = true;
+          } else {
+            const failure = classifyTelegramSendFailure(error);
+            if (failure.reason !== 'not-dispatched' && (failure.status ?? 500) >= 500) {
+              // A lost reply may have followed a successful edit of this message.
+              visible.set(step.id, { ...step.from, fingerprint: null });
+              redrawn.set(step.id, step.message.tokenIds);
+            }
+            throw error;
+          }
+        }
+        if (!resending) {
+          record(step.id, step.message);
           continue;
         }
-        if (refusal !== 'not-modified') throw error;
-        kept += 1;
       }
-      shown.push(shownFrom(step.id, step.message));
-    } catch (error) {
-      throw new PlanInterrupted(
-        interruptedView(plan.steps.slice(index), deletions, shown),
-        error,
-      );
+      if (step.op !== 'send') deletions.push(step.id);
+      const id = await sendOutgoing(api, chatId, step.message);
+      sentIds.push(id);
+      record(id, step.message);
     }
+  } catch (error) {
+    const snapshot =
+      redrawn.size > 0 || foundMissing
+        ? [...visible.values()].sort((left, right) => left.id - right.id)
+        : undefined;
+    throw new PlanInterrupted(snapshot, redrawn, sentIds, error);
   }
   const undeleted = await deleteMessages(api, chatId, deletions);
   return {
     shown,
-    report: { sent, edited, kept, deleted: deletions.length - undeleted.length, undeleted },
+    report: {
+      sent: sentIds.length,
+      edited,
+      kept,
+      deleted: deletions.length - undeleted.length,
+      undeleted,
+    },
   };
 }

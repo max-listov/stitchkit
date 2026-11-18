@@ -2528,6 +2528,7 @@
     "ParamsSchemaFor",
     "PhotoViewMessage",
     "PlainKeyboardButton",
+    "RichUploadViewMessage",
     "RichViewMessage",
     "ScopeOptions",
     "ScreenActionButtons",

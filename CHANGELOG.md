@@ -15,6 +15,29 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/telegram/screens` has a view content for rich messages with local files:
+  `{ richUpload: { contentKey, build } }` (`RichUploadViewMessage`). grammY uploads the
+  files on send and on content edits, and an unchanged content key keeps them in place
+  across renders. `rich` keeps the Bot API's inline type.
+
+### Fixed
+
+- `stitchkit/telegram/screens` preserves the previous menu when Telegram refuses to
+  send its replacement, and its original buttons still work. After a failed display
+  `stay()` from `onError` delivers its toast and notices without drawing the refused
+  view again. A toast that comes after the press was answered is said in the chat: a
+  remark under the menu in a private chat, an ephemeral message to the user who
+  pressed in a group. `screens.open` that fails inside a handler rejects there, and
+  `onError` hears it once with the handler's trigger.
+  **Affects:** `stitchkit/telegram/screens` behaviour
+- `stitchkit/cli` help names the format of a string argument (`<string> [uuid]`,
+  `[email]`, `[uri]`, `[date-time]`) and prints the pattern of any other shaped string
+  (`[pattern /^[a-z]+$/]`). A formatted string used to print as a bare `<string>`, and
+  the caller learned the format from the server's refusal.
+  **Affects:** `stitchkit/cli` behaviour
+
 ## [0.124.2] - 2026-11-17
 
 ### Fixed

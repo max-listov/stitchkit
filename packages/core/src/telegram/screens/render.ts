@@ -11,6 +11,7 @@
 import type {
   InlineKeyboardButton,
   InlineKeyboardMarkup,
+  InputRichMessage,
   InputRichMessageWithoutUpload,
 } from 'grammy/types';
 import { argumentsDigest } from '../../internal/stable-digest';
@@ -54,9 +55,13 @@ export interface OutgoingMessage {
    */
   readonly html: string | undefined;
   readonly rich: InputRichMessageWithoutUpload | undefined;
+  /** Builds the content of a rich message with uploads; called when it is sent or edited. */
+  readonly richBuild: (() => InputRichMessage | Promise<InputRichMessage>) | undefined;
   readonly linkPreview: boolean | undefined;
   readonly media: string | undefined;
   readonly markup: InlineKeyboardMarkup | undefined;
+  /** The tokens this keyboard's buttons carry in place of an address kept in the record. */
+  readonly tokenIds: readonly string[];
   readonly fingerprint: MessageFingerprint;
 }
 
@@ -122,6 +127,12 @@ function labelled(
     : { ...label, callback_data: callbackData };
 }
 
+/** What a button carries, and the token standing for its address when that was too long. */
+interface ButtonAddress {
+  readonly data: string;
+  readonly token?: string;
+}
+
 /**
  * Addresses too long for a button, kept in the view's record. A token is a
  * digest of the address it stands for, not a counter: a counter would give an
@@ -137,9 +148,9 @@ class TokenBook {
     private readonly where: string,
   ) {}
 
-  data(body: string): string {
+  data(body: string): ButtonAddress {
     const direct = this.prefix + body;
-    if (utf8Length(direct) <= CALLBACK_DATA_LIMIT) return direct;
+    if (utf8Length(direct) <= CALLBACK_DATA_LIMIT) return { data: direct };
     if (body.length > RECORD_LIMITS.tokenBody) {
       throw new Error(
         `[stitchkit] telegram screens: a button of "${this.where}" carries ${body.length} characters; a kept address holds ${RECORD_LIMITS.tokenBody}.`,
@@ -164,11 +175,15 @@ class TokenBook {
         `[stitchkit] telegram screens: callback prefix "${this.prefix}" leaves no room for a button.`,
       );
     }
-    return spilled;
+    return { data: spilled, token };
   }
 }
 
-function buttonData(button: ScreenButton, context: RenderContext, book: TokenBook): string {
+function buttonData(
+  button: ScreenButton,
+  context: RenderContext,
+  book: TokenBook,
+): ButtonAddress {
   const { target } = button;
   const { resolver } = context;
   if (target.kind === 'back') {
@@ -203,23 +218,31 @@ function renderKeyboard(
   keyboard: Keyboard | undefined,
   context: RenderContext,
   book: TokenBook,
-): InlineKeyboardMarkup | undefined {
-  if (!keyboard) return undefined;
+): {
+  readonly markup: InlineKeyboardMarkup | undefined;
+  readonly tokenIds: readonly string[];
+} {
+  const tokenIds = new Set<string>();
   const rows: InlineKeyboardButton[][] = [];
-  for (const row of keyboard) {
+  for (const row of keyboard ?? []) {
     if (!row) continue;
     const buttons: InlineKeyboardButton[] = [];
     for (const button of row) {
       if (!button) continue;
-      buttons.push(
-        button instanceof ScreenButton
-          ? labelled(button.label, buttonData(button, context, book))
-          : button,
-      );
+      if (!(button instanceof ScreenButton)) {
+        buttons.push(button);
+        continue;
+      }
+      const address = buttonData(button, context, book);
+      if (address.token !== undefined) tokenIds.add(address.token);
+      buttons.push(labelled(button.label, address.data));
     }
     if (buttons.length > 0) rows.push(buttons);
   }
-  return rows.length > 0 ? { inline_keyboard: rows } : undefined;
+  return {
+    markup: rows.length > 0 ? { inline_keyboard: rows } : undefined,
+    tokenIds: [...tokenIds],
+  };
 }
 
 function renderMessage(
@@ -228,10 +251,26 @@ function renderMessage(
   context: RenderContext,
   book: TokenBook,
 ): OutgoingMessage {
-  const markup = renderKeyboard(message.keyboard, context, book);
+  const { markup, tokenIds } = renderKeyboard(message.keyboard, context, book);
   const media = mediaOf(message);
   const rich = message.rich;
-  const kind: RenderedKind = media ? media.kind : rich ? 'rich' : 'text';
+  const upload = message.richUpload;
+  if (
+    upload !== undefined &&
+    (typeof upload?.contentKey !== 'string' ||
+      !upload.contentKey ||
+      typeof upload.build !== 'function')
+  ) {
+    throw new Error(
+      '[stitchkit] telegram screens: richUpload needs a non-empty contentKey and a build function.',
+    );
+  }
+  if (upload && rich) {
+    throw new Error(
+      '[stitchkit] telegram screens: a message has rich or richUpload, not both — the inline content would never be sent.',
+    );
+  }
+  const kind: RenderedKind = media ? media.kind : rich || upload ? 'rich' : 'text';
   const bodyText = media ? message.caption : message.text;
   const html = bodyText === undefined ? undefined : htmlOf(bodyText);
   const linkPreview = message.linkPreview;
@@ -240,11 +279,15 @@ function renderMessage(
     kind,
     html,
     rich,
+    richBuild: upload?.build,
     linkPreview,
     media: media?.source,
     markup,
+    tokenIds,
     fingerprint: {
-      content: argumentsDigest({ html, rich, linkPreview }),
+      content: upload
+        ? argumentsDigest({ richContentKey: upload.contentKey })
+        : argumentsDigest({ html, rich, linkPreview }),
       media: argumentsDigest({ kind, source: media?.source }),
       markup: argumentsDigest({ markup }),
     },

@@ -623,6 +623,14 @@ type, not a bound, so a bare integer prints `<integer>`, `.min(1)` prints `>=1` 
 `.positive()` prints `>0`. Unbounded fields keep just their type and description. Bounds on an array's items are not bounds
 on the array itself.
 
+A string says what shape it must have, before its bounds. A format JSON Schema
+defines is said by name — `<string> [uuid]`, `[email]`, `[uri]`, `[date-time]` —
+and the expression it is checked with is not printed. Any other shape is said
+by its pattern between slashes, `<string> [pattern /^[a-z]+$/, length >=2]`, and
+by its format's name only when the schema carries no pattern. A schema that
+composes two patterns prints both under `all of:`, a named format among them
+included: there the schema no longer carries the name.
+
 Composed schemas retain their meaning: `any of:` and `one of:` separate
 alternative branches with `|`, while `all of:` joins constraints with `&`.
 For example, a nullable bounded string renders

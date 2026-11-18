@@ -9,6 +9,7 @@
  * call halfway, so the record never claims less or more than the chat shows.
  */
 import type { Context } from 'grammy';
+import type { EphemeralMessageParameters } from 'grammy/types';
 import type { ActionValue } from './callback-codec';
 import {
   deleteMessages,
@@ -25,6 +26,8 @@ import { htmlOf, renderView } from './render';
 import type { ScreensRuntime, ScreenTrigger } from './runtime';
 import type { ResolvedScreen } from './screen-types';
 import {
+  MAX_TRACKED_MESSAGES,
+  MAX_TRACKED_TOKENS,
   RECORD_LIMITS,
   type ScreenChatState,
   type ScreenViewState,
@@ -138,8 +141,14 @@ export async function sendText(
   api: ScreenApi,
   chatId: number,
   content: TelegramText,
+  ephemeral?: EphemeralMessageParameters,
 ): Promise<number> {
-  return (await api.sendMessage(chatId, htmlOf(content), { parse_mode: 'HTML' })).message_id;
+  return (
+    await api.sendMessage(chatId, htmlOf(content), {
+      parse_mode: 'HTML',
+      ...(ephemeral && { ephemeral_message_parameters: ephemeral }),
+    })
+  ).message_id;
 }
 
 function planFor(
@@ -216,21 +225,30 @@ const nothingDone: ExecutionReport = {
  */
 function interruptedRecord(
   previous: ScreenViewState | null,
-  base: DisplayBase,
   drawn: ScreenViewState,
-  shown: readonly ShownMessage[],
+  error: PlanInterrupted,
+  shown = error.shown,
 ): ScreenViewState | null {
-  // Sent below a view it was told to leave alone, the new view never covered
-  // the old one's messages: they are still the chat's menu, and above it.
-  const untouched = base.mode === 'new' ? (previous?.messages ?? []) : [];
-  const messages = [...untouched, ...shown];
-  if (messages.length === 0) return previous;
+  if (!shown) return previous;
+  if (shown.length === 0) return null;
   const identity = previous ?? drawn;
+  const oldMarkup = new Map(previous?.messages.map((m) => [m.id, m.fingerprint?.markup]));
+  const keepsOldButtons = shown.some(
+    (m) =>
+      oldMarkup.has(m.id) && (!m.fingerprint || m.fingerprint.markup === oldMarkup.get(m.id)),
+  );
+  const tokens = keepsOldButtons ? { ...previous?.tokens } : {};
+  for (const message of shown) {
+    for (const id of error.redrawn.get(message.id) ?? []) {
+      const body = drawn.tokens[id];
+      if (body !== undefined) tokens[id] = body;
+    }
+  }
   return {
     screen: identity.screen,
     params: identity.params,
-    messages,
-    tokens: { ...previous?.tokens, ...drawn.tokens },
+    messages: [...shown],
+    tokens,
   };
 }
 
@@ -273,7 +291,17 @@ export async function displayScreen<C extends Context>(
 
   try {
     if (target && rendered) {
-      const plan = planFor(base, state, rendered.messages, persistent.length > 0);
+      const current = state.view?.messages ?? [];
+      const canTrackForeign = current.length < MAX_TRACKED_MESSAGES;
+      const previous =
+        base.mode === 'foreign' && canTrackForeign ? [...current, base.message] : current;
+      // When another uncertain edit would overflow the token book, send before
+      // deleting. A failed send can then leave every existing keyboard intact.
+      const fresh =
+        persistent.length > 0 ||
+        (base.mode === 'foreign' && !canTrackForeign) ||
+        Object.keys({ ...state.view?.tokens, ...rendered.tokens }).length > MAX_TRACKED_TOKENS;
+      const plan = planFor(base, state, rendered.messages, fresh);
       // A remark below the screen would split it the moment anything is sent,
       // and it belongs to the screen it was said on.
       const leaving = target.entry.definition.id !== state.view?.screen;
@@ -294,12 +322,27 @@ export async function displayScreen<C extends Context>(
       });
       for (const notice of persistent) await sendText(api, chatId, notice.content);
       try {
-        const executed = await executePlan(api, chatId, plan);
+        const executed = await executePlan(api, chatId, plan, previous);
         report = executed.report;
         view = drawn(executed.shown);
       } catch (error) {
         if (!(error instanceof PlanInterrupted)) throw error;
-        view = interruptedRecord(state.view, base, drawn([]), error.shown);
+        const targetView = drawn([]);
+        view = interruptedRecord(state.view, targetView, error);
+        if (
+          view &&
+          (view.messages.length > MAX_TRACKED_MESSAGES ||
+            Object.keys(view.tokens).length > MAX_TRACKED_TOKENS)
+        ) {
+          // Consecutive partial transitions can leave more than two views in
+          // the chat. Reclaim only this failed attempt's new sends. Edits and
+          // the previously recorded menu survive, and the next attempt can run.
+          const sent = new Set(error.sentIds);
+          const retained = error.shown?.filter((m) => !sent.has(m.id));
+          const kept = await deleteMessages(api, chatId, error.sentIds);
+          if (kept.length) runtime.emit({ type: 'message-kept', chat, messageIds: kept });
+          view = interruptedRecord(state.view, targetView, error, retained);
+        }
         throw error.cause;
       }
       if (report.undeleted.length > 0) {
