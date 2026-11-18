@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/cli` help names the format of an argument discovered from a server:
+  `<string> [uuid]`. A served `"format": "uuid"` arrives with a `"pattern"`, and
+  the schema restored from the two was written back as a conjunction of patterns
+  with no `format`, so help printed `[all of: string [pattern /…/] & string
+  [pattern /…/]]`. A format the reader has no check for was lost outright:
+  `time`, `idn-email`, `iri`, `json-pointer`, and `uri-reference` came back as
+  `uri`. A discovered schema now keeps every `format` as its server spelled it,
+  and its patterns as they were served, in help, `--schema`, a re-served MCP tool
+  list, agent tools and manifests; the digest of a discovered surface with such
+  fields changes once.
+  **Affects:** `stitchkit/cli` behaviour; `stitchkit/tools/connections` behaviour
+- `stitchkit/tools` writes `"format"` for a string whose format is followed by a
+  pattern — `z.uuid().regex(…)`, `z.email().regex(…)` — in MCP tool lists, agent
+  tools, manifests and OpenAPI; before, the document carried the format's
+  expression and the pattern under `allOf` and no name. The name is written where
+  it says all the check does, and the expression it implies is left out; a check
+  narrower or wider than its name (`z.uuidv4()`, `z.guid()`) keeps the document
+  it had. A surface digest over such a field changes once.
+  **Affects:** `stitchkit/tools` behaviour; `stitchkit/server` behaviour
+
 ## [0.124.3] - 2026-11-18
 
 ### Added

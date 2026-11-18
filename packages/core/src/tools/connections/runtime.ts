@@ -1,6 +1,7 @@
 import { type ZodObject, z } from 'zod';
 import type { RuntimeContext } from '../../contract/runtime-context';
 import { declaresDraft07, withDraft2020Keywords } from '../../json-schema/dialect';
+import { withServedFormats } from '../../json-schema/string-format';
 import type { RuntimeToolDefinition } from '../runtime-tool';
 import {
   markJsonSchemaObjectGuards,
@@ -52,7 +53,7 @@ export function zodObjectFromJsonSchema(
   schema: Record<string, unknown> | undefined,
 ): ZodObject {
   if (!schema || Object.keys(schema).length === 0) return z.looseObject({});
-  const parsed = z.fromJSONSchema(reconcileDialect(schema));
+  const parsed = z.fromJSONSchema(withServedFormats(reconcileDialect(schema)));
   if (parsed instanceof z.ZodObject) {
     markJsonSchemaObjectGuards(parsed);
     markRemoteSchemaVerdict(parsed);

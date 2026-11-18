@@ -7,7 +7,7 @@ const DRAFT_07_KEYWORD = 'definitions';
 const DEFS_KEYWORD = '$defs';
 
 /** Keywords whose value is one subschema. */
-const SCHEMA_KEYWORDS = [
+export const SCHEMA_KEYWORDS = [
   'items',
   'additionalItems',
   'additionalProperties',
@@ -21,9 +21,9 @@ const SCHEMA_KEYWORDS = [
   'unevaluatedProperties',
 ];
 /** Keywords whose value is a list of subschemas. */
-const SCHEMA_LIST_KEYWORDS = ['allOf', 'anyOf', 'oneOf', 'prefixItems'];
+export const SCHEMA_LIST_KEYWORDS = ['allOf', 'anyOf', 'oneOf', 'prefixItems'];
 /** Keywords whose value maps a name to a subschema. */
-const SCHEMA_MAP_KEYWORDS = [
+export const SCHEMA_MAP_KEYWORDS = [
   'properties',
   'patternProperties',
   'dependentSchemas',

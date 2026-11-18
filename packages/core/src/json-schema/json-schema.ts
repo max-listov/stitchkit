@@ -7,6 +7,7 @@
  * SDK will later emit, not a divergent code path.
  */
 import { z } from 'zod';
+import { keepFormatName } from './string-format';
 
 /** Conversion direction — `input` for tool arguments, `output` for results. */
 export type JsonSchemaIo = 'input' | 'output';
@@ -34,6 +35,7 @@ export function toJsonSchema(
     target,
     unrepresentable,
     cycles: 'ref',
+    override: keepFormatName,
   });
 }
 

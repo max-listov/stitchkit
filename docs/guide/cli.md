@@ -627,9 +627,12 @@ A string says what shape it must have, before its bounds. A format JSON Schema
 defines is said by name — `<string> [uuid]`, `[email]`, `[uri]`, `[date-time]` —
 and the expression it is checked with is not printed. Any other shape is said
 by its pattern between slashes, `<string> [pattern /^[a-z]+$/, length >=2]`, and
-by its format's name only when the schema carries no pattern. A schema that
-composes two patterns prints both under `all of:`, a named format among them
-included: there the schema no longer carries the name.
+by its format's name only when the schema carries no pattern. A named format
+keeps its name with a pattern beside it — `z.uuid().regex(…)`, or a discovered
+server's `"format": "uuid"` with its own `"pattern"` — and prints `[uuid]`. A
+discovered argument prints the format its server declared, whichever it is:
+`[time]`, `[uri-reference]`, `[idn-email]`. A string that composes two patterns
+under no standard format prints both under `all of:`.
 
 Composed schemas retain their meaning: `any of:` and `one of:` separate
 alternative branches with `|`, while `all of:` joins constraints with `&`.

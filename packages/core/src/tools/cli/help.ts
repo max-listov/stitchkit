@@ -1,5 +1,6 @@
 import { isRecord } from '../../internal/typed';
 import { type JsonSchemaField, jsonSchemaFields } from '../../json-schema/json-schema';
+import { STANDARD_STRING_FORMATS } from '../../json-schema/string-format';
 import { describeSchemaFields } from './args-fields';
 import type { CliCommandPresentation } from './policy';
 
@@ -29,28 +30,13 @@ function typeLabel(schema: Record<string, unknown>): string {
   return 'value';
 }
 
-/** The string formats of the JSON Schema validation vocabulary (2020-12, §7.3). */
-const STANDARD_FORMATS: ReadonlySet<string> = new Set([
-  'date-time',
-  'date',
-  'time',
-  'duration',
-  'email',
-  'idn-email',
-  'hostname',
-  'idn-hostname',
-  'ipv4',
-  'ipv6',
-  'uri',
-  'uri-reference',
-  'iri',
-  'iri-reference',
-  'uuid',
-  'uri-template',
-  'json-pointer',
-  'relative-json-pointer',
-  'regex',
-]);
+function isPatternOnly(member: unknown): boolean {
+  return (
+    isRecord(member) &&
+    typeof member.pattern === 'string' &&
+    Object.keys(member).every((key) => key === 'pattern' || key === 'type')
+  );
+}
 
 /** Bounds belong to this value; item/property constraints describe a different value. */
 function constraintLabel(schema: Record<string, unknown>): string {
@@ -61,7 +47,8 @@ function constraintLabel(schema: Record<string, unknown>): string {
   // pattern is what tells the caller what to type.
   const format = typeof schema.format === 'string' ? schema.format : undefined;
   const pattern = typeof schema.pattern === 'string' ? schema.pattern : undefined;
-  if (format !== undefined && (STANDARD_FORMATS.has(format) || pattern === undefined)) {
+  const named = format !== undefined && STANDARD_STRING_FORMATS.has(format);
+  if (format !== undefined && (named || pattern === undefined)) {
     limits.push(format);
   } else if (pattern !== undefined) {
     limits.push(`pattern /${pattern}/`);
@@ -94,7 +81,13 @@ function constraintLabel(schema: Record<string, unknown>): string {
   for (const [keyword, label, separator] of compositions) {
     const members = schema[keyword];
     if (!Array.isArray(members)) continue;
-    const branches = members.map((member) => {
+    // Under a named format a member that only adds a pattern is the same shape
+    // said again, as an expression.
+    const stated =
+      named && keyword === 'allOf'
+        ? members.filter((member) => !isPatternOnly(member))
+        : members;
+    const branches = stated.map((member) => {
       const constraints = isRecord(member) ? constraintLabel(member) : '';
       const type = isRecord(member)
         ? typeLabel(member)

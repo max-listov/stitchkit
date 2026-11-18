@@ -9,6 +9,7 @@ import {
 import { defineCliCommand } from '../src/tools/cli/command';
 import { type CliConfig, createCli } from '../src/tools/cli/create-cli';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
+import { buildToolPresentationSchema } from '../src/tools/schema/presentation';
 
 const BoundedInput = z.object({
   limit: z.int().min(1).max(50).optional().describe('Page size'),
@@ -315,6 +316,104 @@ describe('CLI help exposes the schema limits before execution', () => {
       for (const value of ['0', '51']) {
         expect((await run(['discovered', '--limit', value], config)).code).not.toBe(0);
         expect(remoteCalls).toBe(1);
+      }
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test('a format a server declares reaches the help of the command discovered from it', async () => {
+    // The document a stitchkit server serves for these fields: each named
+    // format arrives with the expression Zod validates it by.
+    const served = buildToolPresentationSchema({
+      inputSchema: z.object({
+        requestKey: z.uuid().describe('Idempotency key'),
+        contact: z.email().nullable(),
+        since: z.iso.datetime().optional(),
+        callback: z.url().optional(),
+      }),
+    });
+    const foreign = {
+      type: 'object',
+      properties: {
+        own: { type: 'string', format: 'uuid', pattern: '^[0-9a-f-]{36}$' },
+        bare: { type: 'string', format: 'uuid' },
+        linked: { type: 'string', format: 'uri', pattern: '^https://' },
+        clock: { type: 'string', format: 'time' },
+        ticking: { type: 'string', format: 'time', pattern: '^1' },
+        relative: { type: 'string', format: 'uri-reference' },
+        mailbox: { type: ['string', 'null'], format: 'idn-email' },
+        pointer: { type: 'string', format: 'json-pointer', pattern: '^/' },
+        word: { type: 'string', format: 'ticket' },
+        coded: { type: 'string', format: 'ticket', pattern: '^T-' },
+        slug: { type: 'string', pattern: '^[a-z]+$', minLength: 2 },
+        plain: { type: 'string' },
+      },
+      required: ['own'],
+    };
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        if (request.method !== 'POST') return new Response('', { status: 404 });
+        const body: { id?: number; method: string } = await request.json();
+        if (body.id === undefined) return new Response(null, { status: 202 });
+        const result =
+          body.method === 'initialize'
+            ? {
+                protocolVersion: '2024-11-05',
+                capabilities: {},
+                serverInfo: { name: 'formats', version: '1' },
+              }
+            : {
+                tools: [
+                  { name: 'served', description: 'Served formats', inputSchema: served },
+                  { name: 'foreign', description: 'Foreign formats', inputSchema: foreign },
+                ],
+              };
+        return Response.json({ jsonrpc: '2.0', id: body.id, result });
+      },
+    });
+    try {
+      const runtimeTools = await mountConnections([
+        defineMcpClientConnection({
+          name: 'formats',
+          transport: { url: `http://127.0.0.1:${server.port}/mcp` },
+          transports: ['CLI'],
+        }),
+      ]);
+      const servedHelp = await run(['served', '--help'], { runtimeTools });
+      expect(servedHelp.code).toBe(0);
+      expect(argument(servedHelp.out, 'requestKey')).toContain(
+        '<string> [uuid] (required) — Idempotency key',
+      );
+      expect(argument(servedHelp.out, 'contact')).toContain('[any of: string [email] | null]');
+      expect(argument(servedHelp.out, 'since')).toContain('<string> [date-time]');
+      expect(argument(servedHelp.out, 'callback')).toContain('<string> [uri]');
+      const foreignHelp = await run(['foreign', '--help'], { runtimeTools });
+      expect(foreignHelp.code).toBe(0);
+      expect(argument(foreignHelp.out, 'own')).toContain('<string> [uuid] (required)');
+      expect(argument(foreignHelp.out, 'bare')).toContain('<string> [uuid]');
+      expect(argument(foreignHelp.out, 'linked')).toContain('<string> [uri]');
+      expect(argument(foreignHelp.out, 'clock')).toContain('<string> [time]');
+      expect(argument(foreignHelp.out, 'ticking')).toContain('<string> [time]');
+      expect(argument(foreignHelp.out, 'relative')).toContain('<string> [uri-reference]');
+      expect(argument(foreignHelp.out, 'mailbox')).toContain(
+        '[any of: string [idn-email] | null]',
+      );
+      expect(argument(foreignHelp.out, 'pointer')).toContain('<string> [json-pointer]');
+      // The server's own word says the shape only when no pattern does.
+      expect(argument(foreignHelp.out, 'word')).toContain('<string> [ticket]');
+      expect(argument(foreignHelp.out, 'coded')).toContain('<string> [pattern /^T-/]');
+      expect(argument(foreignHelp.out, 'slug')).toContain(
+        '<string> [pattern /^[a-z]+$/, length >=2]',
+      );
+      expect(argument(foreignHelp.out, 'plain').trimEnd().endsWith('<string>')).toBe(true);
+      // Neither the expression behind a named format nor a conjunction of
+      // patterns stands in for the name.
+      for (const out of [servedHelp.out, foreignHelp.out]) {
+        expect(out).not.toContain('all of:');
+        expect(out).not.toContain('0-9a-fA-F');
+        expect(out).not.toContain('x-stitchkit');
       }
     } finally {
       await server.stop(true);
