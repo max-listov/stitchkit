@@ -41,6 +41,10 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
   caller holds. → ADR 0142
 - **ALWAYS** register every process a test starts with `packages/core/tests/support/process-reaper.ts` before it can
   exist; `bun run test` fails the run, naming the survivor, when one is left. → ADR 0249
+- **ALWAYS** prove a rule about how a schema is shown (CLI help, `--schema`, a tool list, a manifest) on a
+  command discovered from a server too: its schema is restored from JSON Schema, not the one an author wrote.
+  A keyword lost between the served document and the written one is a defect of the read boundary or the one
+  conversion, never a caveat for the guide. → [engineering-rules](./docs/architecture/engineering-rules.md#a-discovered-schema-is-not-the-authored-one)
 - Keep functions ≤200 and files ≤500 lines (`packages/core/tests/code-size.test.ts`); an exception is a
   reasoned entry in `packages/core/tests/fixtures/code-size-exceptions.json`, and the list only shrinks. → ADR 0199
 - Put an endpoint's tool options in the one `tool` group (`tool: { name, view, ui, annotations, mcp }`);

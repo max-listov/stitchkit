@@ -52,6 +52,29 @@ by failure mode: a wrong `port` fails loudly on the first request, an unenforced
 exactly like success. The same defect one level out — a scanning gate — is
 [ADR 0146](../decisions/0146-a-scanning-gate-asserts-what-it-scanned.md). Invariant I9.
 
+## A discovered schema is not the authored one
+
+A command reaches a surface from three origins: a native definition, a contract, and a tool discovered
+from a server. The first two hand the framework the Zod schema an author wrote. The third hands it a
+served JSON Schema document, which `zodObjectFromJsonSchema` reads into Zod and `toJsonSchema` writes
+back for help, `--schema`, tool lists and manifests. Zod is not lossless on that trip: a `format` beside
+a `pattern` is restored as `z.uuid().regex(p)` and written as two patterns and no name, and a format its
+reader has no check for is dropped.
+
+A release taught CLI help to print a string's format and proved it on an authored `z.uuid()`. A project
+whose every command is discovered saw no change: by the time its schema reached help, the name was gone.
+The loss had been noticed during that work and written into the guide as a property of composed
+patterns. Two rules follow.
+
+- A rule about how a schema is shown is tested on a discovered command as well as an authored one —
+  `packages/core/tests/cli-help-limits.test.ts` serves a document over MCP, mounts it with
+  `defineMcpClientConnection` and reads the help. A test that hands the printer an authored schema
+  proves the printer, not the path a discovered schema takes to it.
+- A keyword that does not survive from the served document to the written one is fixed where it is lost:
+  at the read boundary (`withServedFormats`) or in the one conversion (`keepFormatName`).
+  `packages/core/tests/json-schema-string-format.test.ts` holds the invariant — a document a stitchkit
+  server serves reads back as it was served. A caveat in the guide is not a third option.
+
 ## A runtime internal is published only when it cannot be otherwise
 
 A primitive leaves `agent-runtime` for an application that drives the model itself only when it
