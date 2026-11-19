@@ -872,10 +872,11 @@ wrong way round, because the unsafe version reads as kindness:
 That is correct exactly while a single profile exists. The day a second appears
 it is a command run against the wrong deployment, with nothing in the output to
 say so. **A profile named explicitly and not found is a refusal, never a
-substitution.** Substitution survives only where it cannot be wrong: no name was
-given at all and exactly one profile exists — and even then it is announced on
-stderr. The distinction has to be drawn at resolution; one step later, "prod" and
-"prod by default" are the same string.
+substitution.** With no name given and exactly one profile configured, the CLI
+selects it and writes a notice to stderr by default. `--quiet` suppresses that
+notice, including when the app selects the profile before discovering its
+commands. Profile refusals still report their cause. An app that supplies
+`announce` controls its own notice.
 
 `createCliProfileStore` is that rule, plus the twenty lines every consumer of
 this shape writes:

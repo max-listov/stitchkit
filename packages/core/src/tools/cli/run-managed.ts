@@ -4,6 +4,7 @@ import { createToolRunner, type MountableTool } from '../mount';
 import { isRepeatableRead } from '../read-operation';
 import type { parseCliArgs } from './args';
 import { isReservedBoolWord } from './args-fields';
+import { readCliBooleanFlag } from './args-route';
 import { CliArgumentError } from './argument-error';
 import { emitCliCommandResult } from './command';
 import { DEFAULT_DOWNLOAD_MAX_BYTES, saveResultMedia } from './download';
@@ -19,7 +20,7 @@ import {
   emitOptionsFor,
   renderCommandSchema,
 } from './session';
-import { unavailableCommand, unavailableCommandJson } from './unavailable';
+import { unavailableCommand } from './unavailable';
 import { renderCliView, stringifyGroups } from './view';
 import { pollUntilDone } from './wait';
 
@@ -142,7 +143,7 @@ async function runManagedCommand<
       emitResult(
         unavailableCommand(descriptor.unavailableReason),
         { stdout, stderr },
-        emitOptionsFor(config, unavailableCommandJson(route.commandArgv), command),
+        emitOptionsFor(config, readCliBooleanFlag(route.commandArgv, 'json'), command),
       ),
     );
   }

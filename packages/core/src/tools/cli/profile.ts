@@ -14,7 +14,7 @@
  * "prod by default" are the same string.
  *
  * Substitution survives in the one case that cannot be wrong: no name was given
- * at all and exactly one profile exists — and even then it is announced.
+ * at all and exactly one profile exists. The default stderr notice respects --quiet.
  */
 import {
   chmodSync,
@@ -29,6 +29,7 @@ import { join } from 'node:path';
 import type { z } from 'zod';
 import { AppError } from '../../contract/errors';
 import { safeJsonParse } from '../../internal/safe-json';
+import { writeCliNotice } from './notices';
 
 const PROFILE_SUFFIX = '.json';
 const FILE_MODE = 0o600;
@@ -56,7 +57,7 @@ export interface CliProfileStoreConfig<TSchema extends z.ZodType> {
    * that creates it leaves the reader to guess the file format.
    */
   createHint?: (name: string, path: string) => string;
-  /** Where the substitution notice goes; default stderr. */
+  /** App-owned announcement. The default writes to stderr and honours `--quiet`. */
   announce?: (line: string) => void;
 }
 
@@ -92,7 +93,7 @@ function assertProfileName(name: string): void {
 export function createCliProfileStore<TSchema extends z.ZodType>(
   config: CliProfileStoreConfig<TSchema>,
 ): CliProfileStore<z.output<TSchema>> {
-  const announce = config.announce ?? ((line: string) => process.stderr.write(`${line}\n`));
+  const announce = config.announce ?? ((line: string) => writeCliNotice(`${line}\n`));
   const pathFor = (name: string): string => {
     assertProfileName(name);
     return join(config.directory, `${name}${PROFILE_SUFFIX}`);

@@ -15,6 +15,13 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/cli` honours `--quiet` for the default sole-profile notice, including
+  when profile selection happens before command discovery. Profile errors still
+  report their cause and exit code.
+  **Affects:** `stitchkit/cli` behaviour
+
 ## [0.124.4] - 2026-11-18
 
 ### Fixed

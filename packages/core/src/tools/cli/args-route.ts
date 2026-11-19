@@ -3,7 +3,7 @@
  * the framework rather than to a command, and which command an invocation
  * selects before any of its own arguments are read.
  */
-import { isReservedBoolWord, separateBoolValue } from './args-fields';
+import { isReservedBoolWord, parseReservedBool, separateBoolValue } from './args-fields';
 
 /**
  * Whether the token after an option that expects a value is another option
@@ -67,6 +67,20 @@ export function classifyLongOptionToken(token: string): CliLongOptionToken | und
         ? 'value'
         : undefined,
   };
+}
+
+/** Read a reserved boolean for presentation before command arguments can be validated. */
+export function readCliBooleanFlag(argv: readonly string[], name: string): boolean {
+  for (const [index, token] of argv.entries()) {
+    if (token === '--') break;
+    if (token === undefined) continue;
+    const option = classifyLongOptionToken(token);
+    if (option?.name !== name || option.globalKind !== 'boolean') continue;
+    return option.value === undefined
+      ? (separateBoolValue(argv[index + 1]) ?? true)
+      : isReservedBoolWord(option.value) && parseReservedBool(name, option.value);
+  }
+  return false;
 }
 
 export interface CliArgvRoute {

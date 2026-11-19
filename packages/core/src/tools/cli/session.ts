@@ -16,6 +16,7 @@ import {
   type CliArgvRoute,
   classifyLongOptionToken,
   RESERVED_CLI_OPTIONS,
+  readCliBooleanFlag,
   routeCliArgv,
 } from './args-route';
 import { CliArgumentError } from './argument-error';
@@ -117,6 +118,7 @@ export interface CliRoute<TGlobals extends ZodObject> {
   command: string | undefined;
   commandArgv: string[];
   beforeSeparator: string[];
+  quiet: boolean;
   helpRequested: boolean;
   /** `--schema` — answered like help: before identity, validation and the call. */
   schemaRequested: boolean;
@@ -194,6 +196,8 @@ export function resolveCliRoute<
     command,
     commandArgv,
     beforeSeparator,
+    // Follow the routed flag ordering. Dynamic top-level help drops the command arguments.
+    quiet: readCliBooleanFlag(route.topLevelHelp ? routableArgv : commandArgv, 'quiet'),
     helpRequested,
     schemaRequested,
   };

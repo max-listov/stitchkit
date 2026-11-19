@@ -31,6 +31,7 @@ import {
   createCliInvoker,
 } from './invoke';
 import { createCliIo } from './io';
+import { withCliNotices } from './notices';
 import { runManagedInvocation } from './run-managed';
 import { runNativeCommand } from './run-native';
 import { createCliSession, resolveCliRoute } from './session';
@@ -68,10 +69,12 @@ export async function createCli<
   const route = resolveCliRoute(session, argv);
   if (route === undefined) return;
 
-  const { command } = route;
-  const native = command === undefined ? undefined : session.nativeCommands.get(command);
-  if (native && command !== undefined) {
-    return runNativeCommand(session, route, command, native);
-  }
-  return runManagedInvocation(session, route);
+  return withCliNotices(route.quiet, io.stderr, () => {
+    const { command } = route;
+    const native = command === undefined ? undefined : session.nativeCommands.get(command);
+    if (native && command !== undefined) {
+      return runNativeCommand(session, route, command, native);
+    }
+    return runManagedInvocation(session, route);
+  });
 }

@@ -4,7 +4,7 @@ description: "Four things every consumer of createCli rebuilds — aggregate vie
 type: decision
 status: accepted
 created: 2026-09-16
-updated: 2026-09-16T14:14+07:00
+updated: 2026-11-20 00:37 +08:00
 ---
 
 # ADR 0186 — The CLI surface owns aggregates, profiles and its own distribution
@@ -37,7 +37,8 @@ while a single profile exists, and a wrong-environment command the day a second
 appears. A consumer hit it, asking for `prod` on a machine holding only `dev` and
 reading a plausible answer. So: **a name given and not found is a refusal.**
 Substitution survives only where it cannot be wrong — no name given, exactly one
-profile — and is announced. The distinction is drawn at resolution, because one
+profile — and is announced (amended by ADR 0295: the default stderr notice
+honours `--quiet`). The distinction is drawn at resolution, because one
 step later "prod" and "prod by default" are the same string.
 
 **Distribution and self-update.** `createCli` ships no executable and should not;
