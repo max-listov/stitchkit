@@ -52,10 +52,8 @@ export async function buildManagedSurface<
       config.resolveAuth ? await config.resolveAuth(typedGlobals) : await config.auth)();
     return authPromise;
   };
-  const dynamicSurface =
-    typeof config.services === 'function' || typeof config.runtimeTools === 'function';
   let auth: Awaited<TAuth> | undefined;
-  if (dynamicSurface || forExecution) {
+  if (session.hasManagedFactory || forExecution) {
     try {
       auth = await resolveIdentity();
     } catch (error) {

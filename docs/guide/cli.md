@@ -326,6 +326,14 @@ there stays a positional, and `--` makes a literal `false` one too. The same
 holds for a short alias, a framework flag such as `--json false` and an
 application option.
 
+Only the next token in the original invocation can supply a framework flag's
+boolean value. For example, `app --dry-run inspect false` previews `inspect`
+with the positional string `false`. If the app declares a `--profile` option,
+`app inspect --dry-run --profile demo false` does the same. To execute the
+command with dry-run explicitly disabled, use `app inspect --dry-run false`.
+On a named command, `--schema false` and `--help false` also allow execution.
+At the top level, `app --help false` searches the command list for `false`.
+
 Every declared non-array option is single-use, including framework and
 application globals. Bare, separate-value, inline, negative and short-alias
 forms of a command option count as the same name: `--active=false --active`,
@@ -437,6 +445,25 @@ The advertised schema is never mutated — a CLI call validates against the exac
 same Zod schema an HTTP or MCP call does.
 
 ## Global flags
+
+Framework options can precede an explicit command even when the CLI has no
+default command. With a static catalogue, `myapp --quiet item_list --json` and
+`myapp item_list --quiet --json` produce the same output. Keep an option's value
+next to it, as in `myapp --sort date item_list`. Place `--help` before the
+command name to filter the command list or after the name to show that command's help.
+
+Shell command names cannot use a framework option spelling such as `--quiet`,
+`--sort` or `--json=false`, the separator `--`, or a built-in help or version
+token. Static CLI declarations are checked before dispatch. Names supplied by
+a managed factory are checked when that factory is resolved.
+
+If a CLI has a managed factory and no default command, put a native command
+first, for example `myapp whoami --quiet`. A leading framework option before a
+native command exits with code 2: older catalogues could use that option as a
+command name. This refusal and the command-first invocation both work offline.
+To keep a positional `false` in a preview after moving the command first,
+use `myapp inspect --dry-run=true false`.
+Discovered managed commands accept framework flags in either position.
 
 | Flag                  | Effect                                                     |
 | --------------------- | ---------------------------------------------------------- |

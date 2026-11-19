@@ -15,6 +15,28 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+- `stitchkit/cli` reserves framework option spellings as shell command names.
+  A declared command such as `--quiet` could otherwise make an existing script
+  run a different handler. Rename it and update its callers:
+  `app --quiet inspect` → `app quiet-mode inspect`. In a CLI with a managed
+  factory and no default command, put a native command first:
+  `app --quiet whoami` → `app whoami --quiet`. The former order now reports
+  the ambiguity before a handler or factory runs. → ADR 0296
+  **Affects:** `stitchkit/cli` createCli, routeCliArgv
+
+### Fixed
+
+- `stitchkit/cli` accepts framework flags before an explicit command on CLIs
+  without a default command. For a static CLI, `app --quiet status --json`
+  and `app status --quiet --json` run the same command with the same settings.
+  A command name or application option between `--dry-run` and a positional
+  `false` keeps the preview active, including on CLIs with a default.
+  On a named command, `--schema false` and `--help false` now allow execution
+  just like their inline forms.
+  **Affects:** `stitchkit/cli` routeCliArgv, createCli
+
 ## [0.124.5] - 2026-11-19
 
 ### Fixed

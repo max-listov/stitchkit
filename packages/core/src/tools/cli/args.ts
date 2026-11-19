@@ -29,7 +29,11 @@ import {
   setNested,
 } from './args-fields';
 import { appendCliFieldValue, cliFieldOption, coerceCliFieldValue } from './args-json';
-import { classifyLongOptionToken, isOptionToken } from './args-route';
+import {
+  classifyLongOptionToken,
+  isOptionToken,
+  preserveCliBooleanBoundary,
+} from './args-route';
 import { type CliTokens, readCliTokens } from './args-tokens';
 import { type CliResultView, resolveCliView } from './args-view';
 
@@ -292,6 +296,7 @@ export function extractCliGlobalOptions(
       }
     }
     appendCliFieldValue(raw, jsonFields, field.name, value, info, field.json);
+    preserveCliBooleanBoundary(rest, argv[i + 1]);
   }
 
   const args: Record<string, unknown> = {};

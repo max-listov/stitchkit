@@ -25,15 +25,13 @@ function soleProfile(announce?: (line: string) => void) {
   return { store, file, notice: `[prod] using the only configured profile (${file})` };
 }
 
-async function runExecutable(directory: string, flags: string[]) {
+async function runExecutable(directory: string, argv: string[]) {
   const result = await runNativeCommand({
     executable: process.execPath,
     args: [
       '--no-env-file',
       join(import.meta.dir, 'fixtures/cli-profile-executable.ts'),
-      'endpoint',
-      '--json',
-      ...flags,
+      ...argv,
     ],
     env: { STITCHKIT_TEST_CLI_PROFILE_DIR: directory },
     capture: true,
@@ -94,7 +92,7 @@ test('--quiet suppresses sole-profile stderr before the managed CLI starts', asy
     { flags: ['--', '--quiet'], expected: `${notice}\n`, text: '--quiet' },
   ];
   for (const { flags, expected, text } of cases) {
-    const result = await runExecutable(store.directory, flags);
+    const result = await runExecutable(store.directory, ['endpoint', '--json', ...flags]);
     expect(result.code).toBe(0);
     expect(JSON.parse(result.out)).toEqual({
       profile: 'prod',
@@ -104,11 +102,27 @@ test('--quiet suppresses sole-profile stderr before the managed CLI starts', asy
   }
 }, 15_000);
 
+test('a leading --quiet runs the same discovered command with the same profile', async () => {
+  const { store, notice } = soleProfile();
+  const endpoint = (argv: string[]) => runExecutable(store.directory, argv);
+  const trailing = await endpoint(['endpoint', '--quiet', '--json']);
+  expect(trailing).toEqual({ code: 0, out: '{"profile":"prod","input":{}}\n', err: '' });
+  expect(await endpoint(['--quiet', 'endpoint', '--json'])).toEqual(trailing);
+  expect(await endpoint(['--quiet', 'false', 'endpoint', '--json'])).toEqual({
+    ...trailing,
+    err: `${notice}\n`,
+  });
+  expect(await endpoint(['--quiet', 'endpoint', 'false', '--json'])).toEqual({
+    ...trailing,
+    out: '{"profile":"prod","input":{"text":"false"}}\n',
+  });
+}, 15_000);
+
 test('profile notices follow each concurrent invocation including dynamic help', async () => {
   const { store, notice } = soleProfile();
   const [quiet, loud] = await Promise.all([
     runEmbedded(['--quiet', '--help'], store),
-    runEmbedded(['endpoint', '--quiet', '--label', 'fixture', 'false', '--json'], store),
+    runEmbedded(['endpoint', '--quiet', 'false', '--label', 'fixture', '--json'], store),
   ]);
   expect(quiet.code).toBe(0);
   expect(quiet.catalogBuilds).toBe(1);
@@ -122,10 +136,19 @@ test('profile notices follow each concurrent invocation including dynamic help',
   });
 });
 
-test('profile notices use the routed quiet value for leading flags', async () => {
+test('profile notices respect the original boundary of a quiet flag', async () => {
   const { store, notice } = soleProfile();
-  const result = await runEmbedded(['--quiet', 'endpoint', 'false', '--json'], store);
-  expect(result).toEqual({
+  const quiet = {
+    code: 0,
+    catalogBuilds: 1,
+    out: '{"profile":"prod","input":{"text":"false"}}\n',
+    err: '',
+  };
+  expect(await runEmbedded(['--quiet', 'endpoint', 'false', '--json'], store)).toEqual(quiet);
+  expect(
+    await runEmbedded(['endpoint', '--quiet', '--label', 'fixture', 'false', '--json'], store),
+  ).toEqual(quiet);
+  expect(await runEmbedded(['--quiet', 'false', 'endpoint', '--json'], store)).toEqual({
     code: 0,
     catalogBuilds: 1,
     out: '{"profile":"prod","input":{}}\n',

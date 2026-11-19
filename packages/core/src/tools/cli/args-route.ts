@@ -69,18 +69,33 @@ export function classifyLongOptionToken(token: string): CliLongOptionToken | und
   };
 }
 
-/** Read a reserved boolean for presentation before command arguments can be validated. */
+/** Read a setting before validation. Any enabled help or schema request takes precedence. */
 export function readCliBooleanFlag(argv: readonly string[], name: string): boolean {
+  const request = name === 'help' || name === 'schema';
   for (const [index, token] of argv.entries()) {
     if (token === '--') break;
     if (token === undefined) continue;
+    if (name === 'help' && token === '-h') return true;
     const option = classifyLongOptionToken(token);
     if (option?.name !== name || option.globalKind !== 'boolean') continue;
-    return option.value === undefined
-      ? (separateBoolValue(argv[index + 1]) ?? true)
-      : isReservedBoolWord(option.value) && parseReservedBool(name, option.value);
+    const enabled =
+      option.value === undefined
+        ? (separateBoolValue(argv[index + 1]) ?? true)
+        : isReservedBoolWord(option.value) && parseReservedBool(name, option.value);
+    if (enabled || !request) return enabled;
   }
   return false;
+}
+
+/** Removing an intervening token cannot make a positional true/false a flag's value. */
+export function preserveCliBooleanBoundary(prefix: string[], next: string | undefined): void {
+  if (separateBoolValue(next) === undefined) return;
+  const last = prefix.at(-1);
+  const option = last === undefined ? undefined : classifyLongOptionToken(last);
+  if (option?.globalKind === 'boolean' && !option.inline) {
+    // -h keeps both forms of bare help: a top-level filter or a command request.
+    prefix[prefix.length - 1] = last === '--help' ? '-h' : `${last}=true`;
+  }
 }
 
 export interface CliArgvRoute {
@@ -93,13 +108,21 @@ export interface CliArgvRoute {
   error?: string;
 }
 
-/**
- * Select a command without duplicating the framework-global option grammar.
- * With no default configured this returns the historical first-token routing
- * byte-for-byte. With a default, recognised leading globals may precede an
- * explicit command; a remaining option token belongs to the default command.
- */
 const HELP_TOKENS = new Set(['--help', '-h', 'help']);
+
+export function isCliVersionToken(token: string | undefined): boolean {
+  return token === '--version' || token === 'version';
+}
+
+/** Exact shell tokens owned by the framework, including inline option values. */
+export function isReservedCliCommandName(name: string): boolean {
+  return (
+    name === '--' ||
+    HELP_TOKENS.has(name) ||
+    isCliVersionToken(name) ||
+    classifyLongOptionToken(name)?.globalKind !== undefined
+  );
+}
 
 /**
  * The substring after a help token, in any of the forms a person types it.
@@ -122,37 +145,66 @@ function helpFilterFrom(
   return next !== undefined && !next.startsWith('-') ? next : undefined;
 }
 
-export function routeCliArgv(argv: string[], defaultCommand?: string): CliArgvRoute {
-  if (defaultCommand === undefined) {
-    const [command, ...commandArgv] = argv;
-    const helpFilter = helpFilterFrom(command, commandArgv);
-    return {
-      command,
-      commandArgv,
-      topLevelHelp: false,
-      version: false,
-      ...(helpFilter !== undefined && { helpFilter }),
-    };
-  }
+function isTopHelpOption(token: string): boolean {
+  return (
+    token === '--help' ||
+    token === '-h' ||
+    (token.startsWith('--help=') && !isReservedBoolWord(token.slice('--help='.length)))
+  );
+}
 
-  const globals: string[] = [];
+/** Find the end of the framework options without looking past a command or a separator. */
+function leadingGlobalCount(argv: readonly string[], hasDefault: boolean): number {
   let index = 0;
   while (index < argv.length) {
     const token = argv[index];
-    if (token === undefined) break;
-    if (token === '--') {
-      return {
-        commandArgv: [],
-        topLevelHelp: false,
-        version: false,
-        error: 'A command is required before "--"',
-      };
+    if (token === undefined || isTopHelpOption(token)) break;
+    const option = classifyLongOptionToken(token);
+    if (!option?.globalKind) break;
+    index++;
+    if (option.inline) continue;
+
+    const value = argv[index];
+    if (value === undefined) break;
+    if (option.globalKind === 'boolean') {
+      if (separateBoolValue(value) !== undefined) index++;
+    } else {
+      // A mistyped value still occupies its slot for routing. The argument
+      // parser reports the missing value, or the named command can show help.
+      if (
+        value === '--' ||
+        value === '--help' ||
+        value === '-h' ||
+        value === '--version' ||
+        (hasDefault && value === 'version')
+      ) {
+        break;
+      }
+      // Keep the default router's historical slot. Otherwise a framework
+      // option in that position still owns its own subsequent value.
+      if (hasDefault || !classifyLongOptionToken(value)?.globalKind) index++;
     }
-    // `--help=false` is the reserved boolean's negation and keeps that meaning;
-    // only a non-boolean inline value asks the narrower question.
-    const inlineHelpFilter =
-      token.startsWith('--help=') && !isReservedBoolWord(token.slice('--help='.length));
-    if (token === '--help' || token === '-h' || inlineHelpFilter) {
+  }
+  return index;
+}
+
+/**
+ * Route recognised leading globals to the explicit command. A CLI with a default
+ * also routes a global-only invocation and command-local leading flags to that default.
+ */
+export function routeCliArgv(argv: string[], defaultCommand?: string): CliArgvRoute {
+  const index = leadingGlobalCount(argv, defaultCommand !== undefined);
+  const token = argv[index];
+  if (token === '--' && (index > 0 || defaultCommand !== undefined)) {
+    return {
+      commandArgv: [],
+      topLevelHelp: false,
+      version: false,
+      error: 'A command is required before "--"',
+    };
+  }
+  if (defaultCommand !== undefined) {
+    if (token !== undefined && isTopHelpOption(token)) {
       const helpFilter = helpFilterFrom(token, argv.slice(index + 1));
       return {
         commandArgv: [],
@@ -161,84 +213,36 @@ export function routeCliArgv(argv: string[], defaultCommand?: string): CliArgvRo
         ...(helpFilter !== undefined && { helpFilter }),
       };
     }
-    if (token === '--version' || token === 'version') {
+    if (isCliVersionToken(token)) {
       return { commandArgv: [], topLevelHelp: false, version: true };
     }
-    if (!token.startsWith('-') || token === '-') {
-      return {
-        command: token,
-        commandArgv: [...globals, ...argv.slice(index + 1)],
-        topLevelHelp: false,
-        version: false,
-      };
-    }
-    if (!token.startsWith('--')) {
+    if (token === undefined || (token.startsWith('-') && token !== '-')) {
       return {
         command: defaultCommand,
-        commandArgv: [...globals, ...argv.slice(index)],
+        commandArgv: argv.slice(),
         topLevelHelp: false,
         version: false,
       };
     }
-
-    const option = classifyLongOptionToken(token);
-    if (!option) {
-      return {
-        command: defaultCommand,
-        commandArgv: [...globals, ...argv.slice(index)],
-        topLevelHelp: false,
-        version: false,
-      };
-    }
-    if (option.globalKind === 'boolean') {
-      globals.push(token);
-      index += 1;
-      // `--json false list`: the word is the flag's value, not the command.
-      const next = argv[index];
-      if (
-        option.value === undefined &&
-        next !== undefined &&
-        separateBoolValue(next) !== undefined
-      ) {
-        globals.push(next);
-        index += 1;
-      }
-      continue;
-    }
-    if (option.globalKind === 'value') {
-      globals.push(token);
-      if (!option.inline) {
-        const value = argv[index + 1];
-        if (value === '--help' || value === '-h') {
-          const helpFilter = helpFilterFrom(value, argv.slice(index + 2));
-          return {
-            commandArgv: [],
-            topLevelHelp: true,
-            version: false,
-            ...(helpFilter !== undefined && { helpFilter }),
-          };
-        }
-        if (value === '--version' || value === 'version') {
-          return { commandArgv: [], topLevelHelp: false, version: true };
-        }
-        if (value !== undefined) globals.push(value);
-        index += value === undefined ? 1 : 2;
-      } else {
-        index += 1;
-      }
-      continue;
-    }
-    return {
-      command: defaultCommand,
-      commandArgv: [...globals, ...argv.slice(index)],
-      topLevelHelp: false,
-      version: false,
-    };
   }
+
+  // With no command after the prefix, keep the first-token route and its diagnostic.
+  const commandIndex = token === undefined ? 0 : index;
+  const command = argv[commandIndex];
+  const rest = argv.slice(commandIndex + 1);
+  const prefix = argv.slice(0, commandIndex);
+  preserveCliBooleanBoundary(prefix, rest[0]);
+  // A default CLI historically reads plain `help <filter>` from commandArgv[0].
+  // With leading globals in that slot, expose the filter from the command's own tail.
+  const helpFilter =
+    commandIndex > 0 || defaultCommand === undefined
+      ? helpFilterFrom(command, rest)
+      : undefined;
   return {
-    command: defaultCommand,
-    commandArgv: globals,
+    command,
+    commandArgv: prefix.concat(rest),
     topLevelHelp: false,
     version: false,
+    ...(helpFilter !== undefined && { helpFilter }),
   };
 }

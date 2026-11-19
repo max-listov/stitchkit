@@ -11,17 +11,16 @@ import {
 } from '../../json-schema/json-schema';
 import { buildToolPresentationSchema } from '../schema/presentation';
 import { extractCliGlobalOptions } from './args';
-import { isReservedBoolWord, parseReservedBool } from './args-fields';
 import {
   type CliArgvRoute,
-  classifyLongOptionToken,
+  isCliVersionToken,
   RESERVED_CLI_OPTIONS,
   readCliBooleanFlag,
   routeCliArgv,
 } from './args-route';
 import { CliArgumentError } from './argument-error';
 import { type CliCommandDefinition, cliCommandPresentationSchema } from './command';
-import { commandShapeIssue } from './command-shape';
+import { assertStaticCliCommandNames, commandShapeIssue } from './command-shape';
 import type { CliConfig } from './config';
 import { DEFAULT_EXIT_CODES, type EmitOptions } from './format';
 import type { CliIo } from './io';
@@ -49,6 +48,7 @@ export interface CliSession<
   applicationGlobalNames: Set<string>;
   nativeCommands: Map<string, CliCommandDefinition>;
   nativeHelp: Map<string, CliCommandPresentation>;
+  hasManagedFactory: boolean;
 }
 
 /** Startup: everything that is a configuration fault throws here, before argv is read. */
@@ -84,6 +84,10 @@ export function createCliSession<
 
   const nativeCommands = new Map<string, CliCommandDefinition>();
   const nativeHelp = new Map<string, CliCommandPresentation>();
+  assertStaticCliCommandNames(
+    typeof config.services === 'function' ? [] : (config.services ?? []),
+    typeof config.runtimeTools === 'function' ? [] : (config.runtimeTools ?? []),
+  );
   for (const definition of config.commands ?? []) {
     const descriptor = applyCliPresentationPolicy(
       definition.name,
@@ -108,6 +112,8 @@ export function createCliSession<
     applicationGlobalNames,
     nativeCommands,
     nativeHelp,
+    hasManagedFactory:
+      typeof config.services === 'function' || typeof config.runtimeTools === 'function',
   };
 }
 
@@ -117,7 +123,6 @@ export interface CliRoute<TGlobals extends ZodObject> {
   route: CliArgvRoute;
   command: string | undefined;
   commandArgv: string[];
-  beforeSeparator: string[];
   quiet: boolean;
   helpRequested: boolean;
   /** `--schema` — answered like help: before identity, validation and the call. */
@@ -164,7 +169,23 @@ export function resolveCliRoute<
     return undefined;
   }
   const { command, commandArgv } = route;
-  if (route.version || command === '--version' || command === 'version') {
+  // Before leading flags were accepted, that first word could name a managed
+  // command. Its factory is deliberately unavailable on the offline native path.
+  if (
+    config.defaultCommand === undefined &&
+    session.hasManagedFactory &&
+    command !== undefined &&
+    command !== routableArgv[0] &&
+    session.nativeCommands.has(command)
+  ) {
+    stderr(
+      `Managed command names are unknown before native dispatch. Put "${config.name} ${command}" first and keep options with their values. ` +
+        'If moving a bare boolean flag next to positional true or false, spell the flag explicitly (for example, --dry-run=true).\n',
+    );
+    exit(2);
+    return undefined;
+  }
+  if (route.version || isCliVersionToken(command)) {
     stdout(`${config.name} ${config.version}\n`);
     exit(0);
     return undefined;
@@ -172,30 +193,14 @@ export function resolveCliRoute<
 
   // `--help` wins over every option validator — a user must be able to ask a
   // command about its flags even when the rest of the invocation is mistyped.
-  const beforeSeparator =
-    commandArgv.indexOf('--') === -1
-      ? commandArgv
-      : commandArgv.slice(0, commandArgv.indexOf('--'));
-  const asked = (name: 'help' | 'schema'): boolean =>
-    beforeSeparator.some((token) => {
-      if (token === `--${name}` || (name === 'help' && token === '-h')) return true;
-      const option = classifyLongOptionToken(token);
-      return (
-        option?.name === name &&
-        option.value !== undefined &&
-        isReservedBoolWord(option.value) &&
-        parseReservedBool(name, option.value)
-      );
-    });
-  const helpRequested = asked('help');
-  const schemaRequested = !helpRequested && asked('schema');
+  const helpRequested = readCliBooleanFlag(commandArgv, 'help');
+  const schemaRequested = !helpRequested && readCliBooleanFlag(commandArgv, 'schema');
   return {
     globals,
     typedGlobals,
     route,
     command,
     commandArgv,
-    beforeSeparator,
     // Follow the routed flag ordering. Dynamic top-level help drops the command arguments.
     quiet: readCliBooleanFlag(route.topLevelHelp ? routableArgv : commandArgv, 'quiet'),
     helpRequested,

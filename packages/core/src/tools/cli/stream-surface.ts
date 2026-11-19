@@ -1,5 +1,5 @@
 import type { EndpointStreamDescriptor } from '../../contract/define';
-import type { ServiceDef } from '../../server/types';
+import type { MethodDef, ServiceDef } from '../../server/types';
 import type { MountableTool } from '../mount';
 import { toToolName } from '../names';
 import { buildToolPresentationSchema } from '../schema/presentation';
@@ -9,6 +9,12 @@ import { mergeSchemas } from '../schema/schema';
 export interface CliStreamOperation {
   tool: MountableTool;
   descriptor: EndpointStreamDescriptor;
+}
+
+/** Read the shell name of a CLI stream without materialising its schemas. */
+export function cliStreamIdentity(serviceName: string, methodName: string, method: MethodDef) {
+  if (!method.stream || !method.expose?.includes('CLI')) return undefined;
+  return { name: toToolName(serviceName, methodName), descriptor: method.stream };
 }
 
 /**
@@ -24,10 +30,11 @@ export function collectCliStreams(
   const streams = new Map<string, CliStreamOperation>();
   for (const service of services) {
     for (const [methodName, method] of Object.entries(service.methods)) {
-      if (method.stream === undefined || !method.expose?.includes('CLI')) continue;
-      const name = toToolName(service.name, methodName);
+      const identity = cliStreamIdentity(service.name, methodName, method);
+      if (identity === undefined) continue;
+      const { name, descriptor } = identity;
       streams.set(name, {
-        descriptor: method.stream,
+        descriptor,
         tool: {
           method,
           name,

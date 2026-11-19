@@ -13,37 +13,58 @@ const require = createRequire(import.meta.url);
 for (const peer of ['ai', '@modelcontextprotocol/server'])
   assert.throws(() => require.resolve(peer), { code: 'MODULE_NOT_FOUND' });
 
+let measureCalls = 0;
 const command = defineCliCommand({
   name: 'measure',
   description: 'Measure repeated text',
   input: z.object({ text: z.string(), repeat: z.coerce.number().default(1) }),
   output: z.object({ size: z.number() }),
-  handler: ({ input }) => ({ size: input.text.length * input.repeat }),
+  handler: ({ input }) => {
+    measureCalls++;
+    return { size: input.text.length * input.repeat };
+  },
 });
 const route = routeCliArgv(['measure', '--text', 'hello', '--repeat', '2', '--json']);
 const parsed = parseCliArgs(route.commandArgv, command.input);
-let stdout = '';
-let stderr = '';
-let code;
-await createCli({
-  name: 'native-probe',
-  version: '1.0.0',
-  commands: [command],
-  argv: ['measure', '--text', 'hello', '--repeat', '2', '--json'],
-  stdout: (text) => {
-    stdout += text;
+async function runMeasure(argv) {
+  let stdout = '';
+  let stderr = '';
+  let code;
+  await createCli({
+    name: 'native-probe',
+    version: '1.0.0',
+    commands: [command],
+    argv,
+    stdout: (text) => {
+      stdout += text;
+    },
+    stderr: (text) => {
+      stderr += text;
+    },
+    exit: (value) => {
+      code = value;
+    },
+    stdin: async () => null,
+  });
+  assert.equal(code, 0, stderr);
+  assert.equal(stderr, '');
+  return JSON.parse(stdout);
+}
+for (const argv of [
+  ['measure', '--quiet', '--text', 'hello', '--repeat', '2', '--json'],
+  ['--quiet', 'measure', '--text', 'hello', '--repeat', '2', '--json'],
+]) {
+  assert.deepEqual(await runMeasure(argv), { size: 10 });
+}
+assert.equal(measureCalls, 2);
+assert.deepEqual(
+  await runMeasure(['--dry-run', 'measure', 'false', '--repeat', '2', '--json']),
+  {
+    command: 'measure',
+    args: { text: 'false', repeat: 2 },
   },
-  stderr: (text) => {
-    stderr += text;
-  },
-  exit: (value) => {
-    code = value;
-  },
-  stdin: async () => null,
-});
-assert.equal(code, 0);
-assert.equal(stderr, '');
-assert.deepEqual(JSON.parse(stdout), { size: 10 });
+);
+assert.equal(measureCalls, 2);
 
 // Consumer control: a catalog client rebuilds its CLI schema from JSON Schema rather than importing
 // the producer's Zod object. Numeric and boolean `const` values must retain their primitive type

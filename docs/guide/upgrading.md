@@ -1,5 +1,26 @@
 # Upgrading stitchkit
 
+## Unreleased migration: cli-framework-option-command-names
+
+**Who must act:** shell CLI authors who use framework option spellings as
+command names, and callers of native commands in a CLI with a managed factory
+and no default command.
+
+Rename matching native, contract or runtime CLI commands and update callers.
+For example, change `name: '--quiet'` to `name: 'quiet-mode'` and
+`app --quiet inspect` to `app quiet-mode inspect`. Include factory-supplied
+names in the check. Native and static CLI declarations are checked at startup.
+A factory reports the conflicting name when its managed catalogue is loaded.
+
+For a native command beside a managed factory, use `app whoami --quiet`
+in place of `app --quiet whoami` if the CLI has no default command. Putting
+the command first keeps it available without opening the catalogue.
+
+When moving a bare boolean flag next to a positional `true` or `false`, make
+the flag's value explicit. Migrate `app --dry-run inspect false` to
+`app inspect --dry-run=true false`. This previews the call with the string
+`false`. The separate form `app inspect --dry-run false` executes the command.
+
 ## Released migration: 0.124.0
 
 ### media-block-file-name

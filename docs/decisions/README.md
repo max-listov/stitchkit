@@ -112,7 +112,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0080](0080-mcp-call-metadata-is-typed-context.md) | MCP call metadata is typed context | Accepted — extends 0003, 0045 and 0068 | I3 |
 | [0081](0081-generic-native-operations-use-managed-definitions.md) | Generic native operations use managed definitions | Accepted — extends 0019, 0055 and 0057 | I8 |
 | [0082](0082-view-file-has-one-managed-batch-operation.md) | `view_file` has one managed batch operation | Accepted — supersedes the raw-only view-file clause of 0081 | I8 |
-| [0083](0083-cli-composes-managed-and-native-commands.md) | CLI composes managed and native commands | Accepted — extends 0016 and supersedes the CLI exclusion in 0059 | I1 |
+| [0083](0083-cli-composes-managed-and-native-commands.md) | CLI composes managed and native commands | Accepted — extends 0016 and supersedes the CLI exclusion in 0059. Shell routing amended by 0296. | I1 |
 | [0084](0084-stdio-signals-are-close-only.md) | Stdio process signals are close-only | Accepted — extends 0076 without fake force semantics | I13 |
 | [0085](0085-auth-rules-may-contribute-context.md) | Auth rules may contribute typed context | Accepted — extends 0078 | I12 |
 | [0086](0086-lifecycle-composition-is-explicit.md) | Lifecycle composition is explicit and ordered | Accepted — refines 0072 | I9 |
@@ -325,6 +325,7 @@ invariant — which is a change to that page, argued in the ADR itself.
 | [0293](0293-a-slow-link-is-bounded-by-silence-and-pays-each-byte-once.md) | A slow link is bounded by silence and pays for each byte once | Accepted — amends 0229: a connection phase's `idleTimeoutMs` ends an exchange only on silence (discovery defaults to 300 s total and 30 s idle), a stored MCP catalog is mounted while the server's `stitchkit-catalog` stamp is unchanged, and `applyCliUpdate({ partialPath })` continues an interrupted download and never trusts the part | I9, I10, I13 |
 | [0294](0294-rich-screen-uploads-are-built-on-demand.md) | Rich screen uploads are built on demand | Accepted — `richUpload` is a view content of its own: a content revision identifies the rich payload and a factory supplies fresh grammY input on each send or content edit; `rich` keeps the Bot API's inline type. Amends 0211. | I5, I7, I8 |
 | [0295](0295-quiet-suppresses-profile-selection-notices.md) | Quiet suppresses profile selection notices | Accepted — the default sole-profile notice follows `--quiet` before discovery and during `createCli`. Amends 0186. | I8, I9 |
+| [0296](0296-framework-options-reserve-their-cli-spellings.md) | Framework options reserve their CLI spellings | Accepted — option-shaped command names fail at the CLI boundary, and command-first native calls stay offline. Amends 0083. | I8, I9 |
 
 **Statuses:** _Accepted_ / _Active_ — in effect (the two are the same thing;
 `active` is what the later files happened to use) · _Superseded_ — replaced by a

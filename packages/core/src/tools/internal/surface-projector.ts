@@ -174,6 +174,18 @@ function assertProjectedName(
   assertToolName(name, serviceName, action);
 }
 
+/** The exposed name can be inspected before building its argument or presentation schema. */
+export function projectedContractToolName(
+  serviceName: string,
+  methodName: string,
+  method: MethodDef,
+  transport: ToolTransport,
+): string | undefined {
+  const exposed = method.expose?.includes(transport) ?? transport !== 'CLI';
+  if (!exposed || isHttpOnlyEndpoint(method)) return undefined;
+  return method.toolName ?? toToolName(serviceName, methodName);
+}
+
 /** Canonical name/exposure/presentation projection shared by mounts and manifests. */
 export function projectToolSurface<TRuntime extends SurfaceRuntimeToolDefinition>(
   surface: ToolSurfaceProjection<TRuntime>,
@@ -201,15 +213,8 @@ export function projectToolSurface<TRuntime extends SurfaceRuntimeToolDefinition
 
   for (const service of surface.services ?? []) {
     for (const [methodName, method] of Object.entries(service.methods)) {
-      if (transport === 'CLI') {
-        if (!method.expose?.includes('CLI')) continue;
-      } else if (method.expose && !method.expose.includes(transport)) {
-        continue;
-      }
-      if (isHttpOnlyEndpoint(method)) {
-        continue;
-      }
-      const name = method.toolName ?? toToolName(service.name, methodName);
+      const name = projectedContractToolName(service.name, methodName, method, transport);
+      if (name === undefined) continue;
       if (config.assertNames ?? true) {
         assertProjectedName(name, service.name, methodName, transport, !method.toolName);
       }

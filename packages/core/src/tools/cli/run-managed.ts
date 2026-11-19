@@ -35,7 +35,7 @@ export async function runManagedInvocation<
 >(session: CliSession<TAuth, TContext, TGlobals>, route: CliRoute<TGlobals>): Promise<void> {
   const { config } = session;
   const { stdout, stderr, exit } = session.io;
-  const { command, helpRequested, schemaRequested, beforeSeparator } = route;
+  const { command, helpRequested, schemaRequested } = route;
   const topLevelHelp =
     route.route.topLevelHelp ||
     command === undefined ||
@@ -61,7 +61,11 @@ export async function runManagedInvocation<
       emitResult(
         managed.failure,
         { stdout, stderr },
-        emitOptionsFor(config, beforeSeparator.includes('--json'), command ?? config.name),
+        emitOptionsFor(
+          config,
+          readCliBooleanFlag(route.commandArgv, 'json'),
+          command ?? config.name,
+        ),
       ),
     );
   }

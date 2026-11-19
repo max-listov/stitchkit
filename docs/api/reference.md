@@ -2554,7 +2554,7 @@ SDK nor the `ai` peer.
 | `defineCliCommand` | function | define one Zod-typed CLI-only executable command with optional validated-result presentation/exit policy |
 | `defineCliResult` | function | type a managed command's `present` / `exitCode` policy against its output schema, for `CliConfig.results` — [guide](../guide/cli.md#the-same-policy-for-a-managed-command) |
 | `parseCliArgs` | function | argv → typed tool args against a schema; inline `--field:=JSON` assigns a whole JSON value, including null, while ordinary string flags remain lexical; named array options together with bare positionals require an explicit `positionals` policy (advanced) |
-| `routeCliArgv` | function | select the command out of argv without duplicating the global-option grammar (advanced) |
+| `routeCliArgv` | function | select the command using the framework's option grammar before catalogue discovery. `createCli` also checks declared names and offline native dispatch — [guide](../guide/cli.md#global-flags) |
 | `extractCliGlobalOptions` | function | lift the application's own global options out of argv before routing (advanced) |
 | `coerceJsonArgs` | function | the second half of `parseCliArgs` — parse array/object values a consumer sends itself, including discovered MCP object guards restored from JSON Schema, without the `stitchkit/tools` barrel |
 | `CliArgumentError` | class | the refusal `parseCliArgs` and the view flags raise; a CLI reports it and exits `2` |
