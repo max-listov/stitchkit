@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: cli-framework-option-command-names
+## Released migration: 0.125.0
+
+### cli-framework-option-command-names
 
 **Who must act:** shell CLI authors who use framework option spellings as
 command names, and callers of native commands in a CLI with a managed factory

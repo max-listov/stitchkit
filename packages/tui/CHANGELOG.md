@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-11-19
+
 ### Changed
 
 - `stitchkit-tui` accepts `stitchkit@^0.125.0` as its peer, so applications can install both packages with one copy of the framework.

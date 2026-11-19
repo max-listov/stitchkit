@@ -15,7 +15,13 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.125.0] - 2026-11-19
+
 ### ⚠️ Breaking changes
+
+**Who must act:** CLI authors who named a command after a framework option, and callers who
+place framework flags before a native command in a CLI with a managed command factory and no
+default command. See the [migration](docs/guide/upgrading.md#cli-framework-option-command-names).
 
 - `stitchkit/cli` reserves framework option spellings as shell command names.
   A declared command such as `--quiet` could otherwise make an existing script
