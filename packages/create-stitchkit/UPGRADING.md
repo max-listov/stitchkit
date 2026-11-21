@@ -60,6 +60,17 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
+## Unreleased migration: watch hub reads one request
+
+Take it together with stitchkit 0.126.0, whose `createWatchHub` passes `read` one
+`{ operation, args, scope, signal }` request; on 0.125.0 and earlier the entry does not compile.
+
+1. In `packages/backend/src/lib/live.ts`, change `read: async (operation) =>` to
+   `read: async ({ operation }) =>`. A read of your own that calls the network or a slow query
+   takes `signal` from the same request and passes it on.
+2. Run `bun run check`, then open the board in two tabs, post a note in one and check it appears
+   in the other.
+
 ## Released migration: 0.6.22
 
 ### unknown operation keeps the not_found wire code

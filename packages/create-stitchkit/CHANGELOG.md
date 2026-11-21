@@ -14,10 +14,14 @@ step is overwritten by the next release.
 
 ### Changed
 
-- Generated projects resolve stitchkit 0.125.0: a CLI command named like a framework option
-  (`--quiet`) is refused, and a leading framework flag before a native command in a CLI with a
-  managed factory and no default command must move after it. Follow the stitchkit 0.125.0
-  migration `cli-framework-option-command-names` in `docs/guide/upgrading.md`.
+- Generated projects resolve stitchkit 0.126.0. The backend's watch hub reads with
+  `read({ operation })`: `createWatchHub` now passes one request carrying an `AbortSignal` that
+  aborts when the last watcher leaves. An existing project adopts it by
+  [`UPGRADING.md`](./UPGRADING.md#watch-hub-reads-one-request) and the stitchkit 0.126.0
+  migration `watch-read-request` in `docs/guide/upgrading.md`, and from 0.125.0 the migration
+  `cli-framework-option-command-names`: a CLI command named like a framework option (`--quiet`)
+  is refused, and a leading framework flag before a native command in a CLI with a managed
+  factory and no default command must move after it.
 - The generator, the starter and both templates run on Bun 1.4.5; the agent template moves to
   `ai` 7.0.179 and OpenTUI 0.9.7, the telegram-bot template to `@types/bun` 1.4.5.
 

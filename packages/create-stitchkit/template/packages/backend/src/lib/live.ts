@@ -25,7 +25,9 @@ export function bindLive(board: BoardRuntime, handle: RealtimeServerHandle): Liv
   const hub = createWatchHub({
     // The hub does not dispatch; it asks the application. One reader for the
     // watched answer and the plain `GET` alike, so the two cannot disagree.
-    read: async (operation) => {
+    // The request also carries a `signal` that aborts when the last watcher
+    // leaves; a read that calls the network or a slow query passes it on.
+    read: async ({ operation }) => {
       if (operation.action !== 'list') {
         throw new Error(`${operation.service}.${operation.action} is not readable here`);
       }
