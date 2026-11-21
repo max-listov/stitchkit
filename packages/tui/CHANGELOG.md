@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-11-21
+
+### Changed
+
+- `stitchkit-tui` accepts `stitchkit@^0.126.0` as its peer, so applications can install both packages with one copy of the framework, and is tested against OpenTUI 0.9.7.
+
 ## [0.4.6] - 2026-11-19
 
 ### Changed

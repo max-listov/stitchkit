@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: watch-read-request
+## Released migration: 0.126.0
+
+### watch-read-request
 
 **Who must act:** every server that passes `read` to `createWatchHub` from
 `stitchkit/application`.
@@ -24,7 +26,7 @@ read settles with after that is dropped, so a read that rejects on abort needs n
 special handling. A read that ignores the signal keeps working as before; it only
 cannot stop early.
 
-## Unreleased migration: branch-conformance-application-files
+### branch-conformance-application-files
 
 **Who must act:** authors of a hand-written `AgentRuntimeStore` that implements
 `branchConversation` itself and runs `runAgentStoreConformance` from
