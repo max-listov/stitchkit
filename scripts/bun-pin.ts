@@ -60,3 +60,38 @@ export function assertPinnedBun(root: string, running = Bun.version): void {
     );
   }
 }
+
+/**
+ * The starter container installs Bun from npm's `@oven/bun-linux-x64` tarball and checks it
+ * against `BUN_ARCHIVE_SHA512`. Moving the version without that digest is invisible to every
+ * local gate and fails four CI jobs (0.126.0 shipped a digest of another archive), so the digest
+ * is compared with npm's own `dist.integrity` for the pinned version.
+ */
+export async function assertBunArchiveDigest(
+  read: (path: string) => string,
+  integrityOf: (version: string) => Promise<string> = npmBunIntegrity,
+): Promise<void> {
+  const version = pinnedBun(read);
+  const digest = /BUN_ARCHIVE_SHA512: ([0-9a-f]{128})\b/.exec(
+    read('.github/workflows/ci.yml'),
+  )?.[1];
+  if (digest === undefined) throw new Error('.github/workflows/ci.yml: no BUN_ARCHIVE_SHA512');
+  const integrity = await integrityOf(version);
+  const expected = Buffer.from(integrity.replace(/^sha512-/, ''), 'base64').toString('hex');
+  if (digest !== expected) {
+    throw new Error(
+      `.github/workflows/ci.yml: BUN_ARCHIVE_SHA512 is not the digest of @oven/bun-linux-x64@${version} (npm: ${expected})`,
+    );
+  }
+}
+
+async function npmBunIntegrity(version: string): Promise<string> {
+  const response = await fetch(`https://registry.npmjs.org/@oven/bun-linux-x64/${version}`);
+  if (!response.ok)
+    throw new Error(`npm @oven/bun-linux-x64@${version}: HTTP ${response.status}`);
+  const body: { dist?: { integrity?: string } } = await response.json();
+  const integrity = body.dist?.integrity;
+  if (integrity === undefined)
+    throw new Error(`npm @oven/bun-linux-x64@${version}: no integrity`);
+  return integrity;
+}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assertPinnedBun, bunPins, pinnedBun } from './bun-pin';
+import { assertBunArchiveDigest, assertPinnedBun, bunPins, pinnedBun } from './bun-pin';
 
 const root = join(import.meta.dir, '..');
 const read = (path: string) => readFileSync(join(root, path), 'utf8');
@@ -24,5 +24,13 @@ describe('one Bun version for CI, the starter and every gate', () => {
     const pinned = pinnedBun(read);
     expect(() => assertPinnedBun(root, '0.0.1')).toThrow(`CI runs Bun ${pinned}`);
     assertPinnedBun(root);
+  });
+
+  test('the starter container checks the archive npm serves for the pinned version', async () => {
+    await assertBunArchiveDigest(read);
+    const other = Buffer.alloc(64, 1).toString('base64');
+    await expect(assertBunArchiveDigest(read, async () => `sha512-${other}`)).rejects.toThrow(
+      'BUN_ARCHIVE_SHA512 is not the digest of @oven/bun-linux-x64@',
+    );
   });
 });
