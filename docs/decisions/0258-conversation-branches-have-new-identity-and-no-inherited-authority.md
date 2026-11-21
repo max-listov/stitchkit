@@ -29,7 +29,9 @@ authority the destination owner never granted.
    complete settled tip, including later compaction. Every run in that prefix must be terminal.
    Hash-only drafts require a later full terminal message; missing content is refused.
 3. Rekey only schema-owned identities and references. Collect definitions before resolving
-   references, reject foreign IDs, and update content-addressed provider references with the
+   references, reject foreign IDs (amended by
+   [ADR 0298](0298-an-application-file-crosses-a-branch-by-declaration.md): a file part reference
+   the application stores crosses only under the destination reference its host declares), and update content-addressed provider references with the
    bodies they address. Arbitrary application JSON is not an undocumented reference codec.
 4. Preserve control facts under the inert `runtime/branch-observation` kind. No effect, schedule,
    child, projection, lease or signed approval capability is instantiated from them. Terminal

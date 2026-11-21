@@ -176,6 +176,12 @@ function parseTarget(text: string): UpgradeAffectsTarget[] {
   if (what === '*')
     return entrypoints.map((entrypoint) => ({ entrypoint, kind: 'any-import' }));
   const symbols = splitTopLevel(what, ', ').map((part): UpgradeAffectedSymbol => {
+    // Inside a list of exports `behaviour` and `*` would parse as export names
+    // and never match a project; each is a target of its own after `; `.
+    if (part.trim() === 'behaviour' || part.trim() === '*')
+      throw new UpgradeAffectsError(
+        `"${part.trim()}" is a target of its own: separate it from the exports with "; " and repeat the entrypoint`,
+      );
     const match = SYMBOL.exec(part.trim());
     const name = match?.[1];
     if (!match || name === undefined)

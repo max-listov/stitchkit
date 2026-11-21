@@ -7,7 +7,7 @@
 import { AppError } from '../contract/errors';
 import type { BackoffPolicy } from '../internal/backoff';
 import { serializeCanonicalJson } from '../internal/canonical-json';
-import { createCoalescedTask } from '../internal/coalesced-task';
+import { ABANDONED_PASS, createCoalescedTask } from '../internal/coalesced-task';
 import { type WatchKey, type WatchStateFrame, watchKeyString } from '../live/watch-contract';
 import type {
   AttachedWatcher,
@@ -126,9 +126,29 @@ export class WatchHubCore {
     for (const subscriber of source.subscribers) this.deliver(source, subscriber);
   }
 
-  async readSource(source: Source): Promise<void> {
+  async readSource(source: Source): Promise<typeof ABANDONED_PASS | undefined> {
     this.reads += 1;
-    const value = await this.config.read(source.operation, source.args, source.scope);
+    const reading = new AbortController();
+    source.reading = reading;
+    let value: unknown;
+    try {
+      value = await this.config.read({
+        operation: source.operation,
+        args: source.args,
+        ...(source.scope !== undefined && { scope: source.scope }),
+        signal: reading.signal,
+      });
+    } catch (error) {
+      if (!reading.signal.aborted) throw error;
+    } finally {
+      if (source.reading === reading) source.reading = undefined;
+    }
+    if (reading.signal.aborted) {
+      // Nobody was waiting for this answer when it arrived. It is dropped, and
+      // the key stays dirty: a subscriber that came back meanwhile is answered
+      // by the next pass of the same loop, never by the read it walked away from.
+      return ABANDONED_PASS;
+    }
     if (this.closed || this.sources.get(source.id) !== source) return;
     const signature = serializeCanonicalJson(value);
     const unchanged = source.signature !== undefined && this.same(source.value, value);
@@ -201,6 +221,9 @@ export class WatchHubCore {
 
   release(source: Source): void {
     if (source.subscribers.size > 0) return;
+    // The hold window keeps a known value warm; it does not keep work running
+    // that nobody is waiting for.
+    source.reading?.abort();
     source.task.pauseRetry();
     const drop = () => {
       // A read may still be in flight; dropping the source now would publish its
@@ -208,6 +231,15 @@ export class WatchHubCore {
       // the same question. Wait for it to finish, then let go.
       if (source.task.running) {
         source.release = setTimeout(drop, 10);
+        source.release.unref?.();
+        return;
+      }
+      // A failed key keeps its source until the pause ends: dropped earlier, a
+      // returning subscriber would get a new source that knows of no failure
+      // and would ask the failing read again at once.
+      const pause = source.task.retryInMs;
+      if (pause > 0) {
+        source.release = setTimeout(drop, pause);
         source.release.unref?.();
         return;
       }
@@ -371,6 +403,7 @@ export class WatchHubCore {
     this.sources.clear();
     this.held.clear();
     for (const source of teardown) {
+      source.reading?.abort();
       source.task.close();
       clearTimeout(source.release);
       // Told, not dropped.

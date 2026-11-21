@@ -82,6 +82,26 @@ export interface WatchAdmissionScope {
   readonly signal: AbortSignal;
 }
 
+/** One read the hub asks the application to perform. */
+export interface WatchReadRequest {
+  readonly operation: WatchOperation;
+  readonly args: unknown;
+  /** The server-verified admission scope the read is shared within (`WatchAdmissionScope.key`). */
+  readonly scope?: string;
+  /**
+   * Aborted when nobody waits for this read any more: the key's last
+   * subscriber left, or the hub closed. Each read gets its own signal, so a
+   * later read of the same key is never born cancelled.
+   *
+   * Cancellation is not a failure. Whatever the read settles with after the
+   * abort — a value or an error — is dropped: it is not published, not
+   * announced as `unavailable`, not logged and not retried with backoff. A read
+   * that ignores the signal is still the only read of its key until it
+   * settles; the hub starts the next one after it, never beside it.
+   */
+  readonly signal: AbortSignal;
+}
+
 export interface WatchHubConfig {
   readonly reconcileIntervalMs?: number;
   readonly maxSources?: number;
@@ -102,7 +122,7 @@ export interface WatchHubConfig {
    * user". Then every subscriber to that key receives whatever the first read
    * happened to resolve. Do not; put the identity in the arguments.
    */
-  read(operation: WatchOperation, args: unknown, scope?: string): Promise<unknown>;
+  read(request: WatchReadRequest): Promise<unknown>;
   /** Whether an operation may be watched at all. Refusal is answered in words. */
   watchable(operation: WatchOperation): boolean;
   /**

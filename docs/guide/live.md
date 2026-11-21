@@ -129,7 +129,7 @@ pushing the new answer to everyone watching it.
 import { createWatchHub } from 'stitchkit/application';
 
 const hub = createWatchHub({
-  read: (operation, args) => api[operation.action](args),
+  read: ({ operation, args, signal }) => api[operation.action].withOptions(args, { signal }),
   watchable: (operation) => operation.service === 'notes',
   invalidatedBy: () => ['notes.changed'],
   subscribe: (topic, listener) => bus.on(topic, listener),
@@ -199,6 +199,33 @@ The one way to defeat that is to resolve an identity from ambient state *inside*
 `read` — a request-scoped context, a module-level "current user". Then every
 subscriber on that key receives whatever the first read happened to resolve.
 Put the identity in the arguments instead.
+
+### A read stops when nobody waits for it
+
+`read` receives one request, `{ operation, args, scope, signal }`, and the
+`signal` belongs to that read alone. It stays live while anyone watches the key:
+one of three panels closing changes nothing. It aborts when the last subscriber
+leaves — its scope revoked included — or the hub closes. `holdMs` keeps the last
+value warm for a returning page; it does not keep work running that nobody waits
+for.
+
+Pass the signal to whatever performs the read. What the read settles with after
+the abort, an answer or an error, is dropped: it is not published, not announced
+as `unavailable`, not logged and does not move the retry backoff, because nobody
+asked for it any more. A subscriber that arrives meanwhile gets a fresh read,
+never the abandoned answer. A read that ignores the signal still finishes, and
+the next read of its key waits for it: one read per question holds even then.
+
+The hub sets no deadline of its own, so a read that never settles holds its key
+for good. Give the read one where it is performed —
+`AbortSignal.any([signal, AbortSignal.timeout(10_000)])` — and a timeout is then
+an ordinary failure: `unavailable`, then a retry.
+
+The pause after a failed read belongs to the key, not to whoever is watching. A
+subscriber that leaves and comes back while the source is down is told the known
+state at once and gets the next read when the pause ends, not on arrival; an
+abandoned read does not shorten the following pause either. A failed key is kept
+for the length of its pause even with no subscribers and no `holdMs`.
 
 ### Three states, not two
 

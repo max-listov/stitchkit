@@ -4,9 +4,19 @@ import { ShellOutputSchema } from './coding-tool-contract';
 import { AGENT_CODING_TOOL_NAMES } from './coding-tools';
 import type { AgentMessage, AgentMessagePart, AgentRun } from './schemas';
 
-/** Application JSON is data, never an undocumented runtime reference codec. */
-export function branchOpaqueJson(value: z.infer<ReturnType<typeof z.json>>): typeof value {
-  if (Array.isArray(value)) return value.map(branchOpaqueJson);
+/**
+ * Application JSON is data, never an undocumented runtime reference codec.
+ *
+ * A key named like a runtime reference refuses the branch: the value cannot be
+ * rekeyed, and carried as it is it would name the source. A host that uses such
+ * a name for data of its own declares the key in `applicationKeys`; even then a
+ * value that names an identity of the source conversation refuses.
+ */
+export function branchOpaqueJson(
+  ids: BranchIdentities,
+  value: z.infer<ReturnType<typeof z.json>>,
+): typeof value {
+  if (Array.isArray(value)) return value.map((entry) => branchOpaqueJson(ids, entry));
   if (value !== null && typeof value === 'object') {
     for (const key of [
       'reference',
@@ -19,10 +29,18 @@ export function branchOpaqueJson(value: z.infer<ReturnType<typeof z.json>>): typ
       'operationId',
       'artifactId',
     ]) {
-      if (key in value)
-        throw new TypeError(`Branch cannot rekey an opaque payload containing ${key}`);
+      if (!(key in value)) continue;
+      const entry = value[key];
+      if (!ids.isApplicationKey(key))
+        throw new TypeError(
+          `Branch cannot rekey an opaque payload containing ${key}; declare it in applicationKeys if it is application data`,
+        );
+      if (typeof entry === 'string' && ids.isSourceIdentity(entry))
+        throw new TypeError(
+          `Branch cannot carry a source identity under the application key ${key}`,
+        );
     }
-    for (const entry of Object.values(value)) branchOpaqueJson(entry);
+    for (const entry of Object.values(value)) branchOpaqueJson(ids, entry);
   }
   return value;
 }
@@ -88,15 +106,15 @@ export function branchToolJson(
       }),
     };
   }
-  return branchOpaqueJson(value);
+  return branchOpaqueJson(ids, value);
 }
 
 function branchPart(ids: BranchIdentities, part: AgentMessagePart): AgentMessagePart {
   switch (part.type) {
     case 'file':
-      return { ...part, reference: ids.reference('spill', part.reference) };
+      return { ...part, reference: ids.fileReference(part.reference) };
     case 'tool-call': {
-      if (part.provider) branchOpaqueJson(part.provider.data);
+      if (part.provider) branchOpaqueJson(ids, part.provider.data);
       return {
         ...part,
         callId: ids.reference('call', part.callId),
@@ -111,7 +129,7 @@ function branchPart(ids: BranchIdentities, part: AgentMessagePart): AgentMessage
           output:
             part.outcome === 'success'
               ? branchToolJson(ids, part.toolName, part.output, true)
-              : branchOpaqueJson(part.output),
+              : branchOpaqueJson(ids, part.output),
         }),
       };
     case 'tool-approval-request':
@@ -125,7 +143,7 @@ function branchPart(ids: BranchIdentities, part: AgentMessagePart): AgentMessage
     case 'provider':
       throw new TypeError('Branch cannot rekey an opaque provider part');
     case 'reasoning':
-      if (part.provider) branchOpaqueJson(part.provider.data);
+      if (part.provider) branchOpaqueJson(ids, part.provider.data);
       return part;
     default:
       return part;
@@ -146,7 +164,7 @@ export function branchMessage(
     ...(message.runId && { runId: ids.reference('run', message.runId) }),
     parts: message.parts.map((part) => branchPart(ids, part)),
     ...(message.metadata && {
-      metadata: z.record(z.string(), z.json()).parse(branchOpaqueJson(message.metadata)),
+      metadata: z.record(z.string(), z.json()).parse(branchOpaqueJson(ids, message.metadata)),
     }),
   };
 }

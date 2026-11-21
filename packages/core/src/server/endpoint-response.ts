@@ -36,18 +36,17 @@ export async function endpointResponse<TServer>(
   // body intact. Everything before this point ran normally, which is the
   // whole point: the auth gate, params and input validation are the same
   // as for any endpoint. → ADR 0038.
-  if (method.rawResponse) return rawEndpointResponse(state, request, outcome);
+  if (method.rawResponse) return rawEndpointResponse(request, outcome);
 
   // A contract stream owns validated protocol frames, not a data value.
   // Like a raw response it skips data transforms/serialization, while the
   // framework still owns schema validation, bounds and cancellation.
-  if (method.stream) return streamEndpointResponse(state, request, outcome);
+  if (method.stream) return streamEndpointResponse(request, outcome);
 
   return dataEndpointResponse(state, request, outcome);
 }
 
 function rawEndpointResponse<TServer>(
-  state: HandlerState<TServer>,
   request: RequestState<TServer>,
   { match: { method }, result }: EndpointOutcome,
 ): Response {
@@ -65,13 +64,12 @@ function rawEndpointResponse<TServer>(
           headers: result.headers,
         })
       : result;
-  const rawRes = applyCors(response, state.cors, request.req);
+  const rawRes = applyCors(response, request.cors);
   request.complete(rawRes.status);
   return rawRes;
 }
 
 async function streamEndpointResponse<TServer>(
-  state: HandlerState<TServer>,
   request: RequestState<TServer>,
   { match: { method, pathParams }, result, streamAbort }: EndpointOutcome,
 ): Promise<Response> {
@@ -90,7 +88,7 @@ async function streamEndpointResponse<TServer>(
     method.stream,
     streamAbort,
   );
-  const withCors = applyCors(response, state.cors, req);
+  const withCors = applyCors(response, request.cors);
   request.complete(withCors.status);
   return withCors;
 }
@@ -105,8 +103,7 @@ async function dataEndpointResponse<TServer>(
     responseMetadata,
   }: EndpointOutcome,
 ): Promise<Response> {
-  const { hooks, config, cors, warn } = state;
-  const { req } = request;
+  const { hooks, config, warn } = state;
   let result = handlerResult;
   if (groupHooks?.afterHandle) {
     const transformed = await groupHooks.afterHandle(ctx, result, method);
@@ -158,7 +155,7 @@ async function dataEndpointResponse<TServer>(
       status: 500,
     });
   }
-  const responseHeaders = new Headers(requestCorsHeaders(cors, req));
+  const responseHeaders = new Headers(requestCorsHeaders(request.cors));
   applyResponseMetadata(
     responseHeaders,
     responseMetadata,

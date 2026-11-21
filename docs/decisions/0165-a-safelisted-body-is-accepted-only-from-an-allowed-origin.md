@@ -15,7 +15,8 @@ An endpoint may declare `safelistedBody: true`. It then accepts its JSON body
 under `text/plain` as well as `application/json` — same parser, same `input`
 schema, same `maxJsonBodyBytes`. The server honours that declaration **only**
 for a request whose `Origin` header names a site on its explicit `cors.origin`
-allow-list. A wildcard is not an allow-list, `null` is not a site, and a
+allow-list (amended by [ADR 0299](0299-cors-is-decided-per-request-origin.md): under
+an origin policy, only an origin granted with credentials). A wildcard is not an allow-list, `null` is not a site, and a
 missing header is not an answer: each is refused with `403` before the text is
 parsed. `application/json` is untouched by the check. The flag is `POST`-only
 and transport-neutral.

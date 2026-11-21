@@ -17,7 +17,7 @@ export async function dispatchEndpoint<TServer>(
   request: RequestState<TServer>,
   match: RouteMatch,
 ): Promise<Response> {
-  const { hooks, config, cors } = state;
+  const { hooks, config } = state;
   const { req, url, traceId, clientIp } = request;
   const { method, pathParams, groupHooks } = match;
   // The base context is everything knowable from the URL alone — bound before
@@ -46,7 +46,7 @@ export async function dispatchEndpoint<TServer>(
       url,
       method,
       config.maxJsonBodyBytes,
-      cors,
+      request.cors,
     );
 
     if (hooks?.beforeHandle) {

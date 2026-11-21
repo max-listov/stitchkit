@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 export interface CorsConfig {
   origin?: string | string[];
   credentials?: boolean;
@@ -9,6 +11,114 @@ export interface CorsConfig {
    * {@link DEFAULT_CORS_EXPOSE_HEADERS}; pass `[]` to emit none.
    */
   exposeHeaders?: string | string[];
+}
+
+/**
+ * What an origin resolver answers for one exact origin: an allowance with or
+ * without credentials, or `false` for none.
+ */
+export type CorsOriginDecision = false | { credentials: boolean };
+
+/**
+ * A CORS policy decided per request: the application looks the origin up —
+ * in a database, a key's allowed origins — and answers for that origin alone.
+ *
+ * Credentials are part of the answer, never a flag beside it: one origin can be
+ * the application's own page with cookies while another holds a short bearer
+ * token and gets none. The grant names the requesting origin exactly; a resolver
+ * cannot answer with another origin or `*`. It is called only with a serialized
+ * origin (scheme and authority), never with `null` or a missing header, and a
+ * throw, a rejection or an answer of another shape grants nothing.
+ */
+export interface CorsOriginPolicy
+  extends Pick<CorsConfig, 'methods' | 'headers' | 'exposeHeaders'> {
+  origin: (origin: string) => CorsOriginDecision | Promise<CorsOriginDecision>;
+  /** Decided per origin by `origin`; a flag here would be a second answer. */
+  credentials?: never;
+}
+
+/**
+ * The CORS answer for one request, decided once before any work and read by
+ * every exit — preflight, `onRequest`, raw routes, every endpoint response and
+ * every error — so the same request never gets two answers.
+ */
+export interface RequestCors {
+  readonly headers: Readonly<Record<string, string>>;
+  /**
+   * Whether this request's origin may send a safelisted `text/plain` body
+   * (ADR 0165): there is no allow-list at all, the origin is allowed, or it is not.
+   */
+  readonly safelistedBody: 'no-allow-list' | 'allowed' | 'refused';
+}
+
+const CorsOriginDecisionSchema = z.union([
+  z.literal(false),
+  z.object({ credentials: z.boolean() }).strict(),
+]);
+
+function isOriginPolicy(config: CorsConfig | CorsOriginPolicy): config is CorsOriginPolicy {
+  return typeof config.origin === 'function';
+}
+
+/** Scheme and authority, as a browser serializes `Origin`; `null` and junk are not origins. */
+function isSerializedOrigin(origin: string): boolean {
+  if (!URL.canParse(origin)) return false;
+  const url = new URL(origin);
+  return url.host !== '' && origin === `${url.protocol}//${url.host}`;
+}
+
+/**
+ * Decide CORS for one request. A static config answers synchronously, so a
+ * handler without a policy keeps its timing; a policy asks the application. A
+ * failing policy throws or rejects, and the caller answers with
+ * {@link deniedRequestCors}.
+ */
+export function resolveRequestCors(
+  config: CorsConfig | CorsOriginPolicy,
+  origin: string | null,
+): RequestCors | Promise<RequestCors> {
+  if (!isOriginPolicy(config)) {
+    return {
+      headers: corsHeaders(config, origin),
+      safelistedBody:
+        config.origin === undefined || config.origin === '*'
+          ? 'no-allow-list'
+          : isOriginAllowed(config, origin)
+            ? 'allowed'
+            : 'refused',
+    };
+  }
+  if (!origin || !isSerializedOrigin(origin)) return deniedRequestCors(config);
+  return askPolicy(config, origin);
+}
+
+async function askPolicy(config: CorsOriginPolicy, origin: string): Promise<RequestCors> {
+  const parsed = CorsOriginDecisionSchema.safeParse(await config.origin(origin));
+  if (!parsed.success) {
+    throw new TypeError(
+      '[stitchkit] cors: an origin resolver must answer false or { credentials: boolean }',
+    );
+  }
+  if (parsed.data === false) return deniedRequestCors(config);
+  return {
+    headers: {
+      ...permissionHeaders(config, origin, parsed.data.credentials),
+      Vary: 'Origin',
+    },
+    // A simple request is sent with cookies before CORS is consulted; only an
+    // origin trusted with credentials may have its text body read.
+    safelistedBody: parsed.data.credentials ? 'allowed' : 'refused',
+  };
+}
+
+/** No allowance: the shared headers without an origin, varying by `Origin` for caches. */
+export function deniedRequestCors(
+  config: Pick<CorsConfig, 'methods' | 'headers' | 'exposeHeaders'>,
+): RequestCors {
+  return {
+    headers: { ...permissionHeaders(config, undefined, false), Vary: 'Origin' },
+    safelistedBody: 'refused',
+  };
 }
 
 /**
@@ -60,7 +170,15 @@ export const DEFAULT_CORS_EXPOSE_HEADERS =
  * `Allow-Credentials: true` — every site could make authenticated cross-origin
  * requests. Credentials require an explicit origin allow-list.
  */
-export function assertCorsConfig(config: CorsConfig): void {
+export function assertCorsConfig(config: CorsConfig | CorsOriginPolicy): void {
+  if (isOriginPolicy(config)) {
+    if (config.credentials !== undefined) {
+      throw new Error(
+        '[stitchkit] cors: an origin resolver decides credentials per origin; remove `credentials`.',
+      );
+    }
+    return;
+  }
   if (config.credentials && (config.origin === undefined || config.origin === '*')) {
     throw new Error(
       '[stitchkit] cors: `credentials: true` cannot be combined with a wildcard origin. ' +
@@ -129,8 +247,24 @@ export function corsHeaders(
   config: CorsConfig,
   requestOrigin?: string | null,
 ): Record<string, string> {
-  const allowOrigin = resolveOrigin(config, requestOrigin);
+  const headers = permissionHeaders(
+    config,
+    resolveOrigin(config, requestOrigin),
+    config.credentials === true,
+  );
+  // The chosen origin depends on the request whenever it is whitelisted from a
+  // list — tell shared caches the response varies by `Origin`.
+  if (Array.isArray(config.origin)) {
+    headers.Vary = 'Origin';
+  }
+  return headers;
+}
 
+function permissionHeaders(
+  config: Pick<CorsConfig, 'methods' | 'headers' | 'exposeHeaders'>,
+  allowOrigin: string | undefined,
+  credentials: boolean,
+): Record<string, string> {
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods':
       config.methods ?? 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS',
@@ -146,14 +280,9 @@ export function corsHeaders(
     headers['Access-Control-Allow-Origin'] = allowOrigin;
     // Credentials are emitted only alongside a resolved origin — never on a
     // request whose origin was rejected.
-    if (config.credentials) {
+    if (credentials) {
       headers['Access-Control-Allow-Credentials'] = 'true';
     }
-  }
-  // The chosen origin depends on the request whenever it is whitelisted from a
-  // list — tell shared caches the response varies by `Origin`.
-  if (Array.isArray(config.origin)) {
-    headers.Vary = 'Origin';
   }
   return headers;
 }
@@ -166,12 +295,8 @@ export function corsPreflightResponse(config: CorsConfig, req: Request): Respons
 }
 
 /** The CORS headers for one request — none when the handler has no CORS config. */
-export function requestCorsHeaders(
-  cors: CorsConfig | undefined,
-  req: Request,
-): Record<string, string> {
-  if (!cors) return {};
-  return corsHeaders(cors, req.headers.get('origin'));
+export function requestCorsHeaders(cors: RequestCors | undefined): Record<string, string> {
+  return cors ? { ...cors.headers } : {};
 }
 
 /**
@@ -188,12 +313,8 @@ export function requestCorsHeaders(
  * headers immutable (Node throws; Bun currently allows the set), and a redirect
  * has no body to corrupt.
  */
-export function applyCors(
-  res: Response,
-  cors: CorsConfig | undefined,
-  req: Request,
-): Response {
-  const extra = requestCorsHeaders(cors, req);
+export function applyCors(res: Response, cors: RequestCors | undefined): Response {
+  const extra = requestCorsHeaders(cors);
   if (Object.keys(extra).length === 0) return res;
   try {
     for (const [key, value] of Object.entries(extra)) setCorsHeader(res.headers, key, value);

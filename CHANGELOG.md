@@ -15,6 +15,74 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** every server that passes `read` to `createWatchHub`
+([migration](docs/guide/upgrading.md#watch-read-request)), and authors of a hand-written
+agent store that branches on its own and runs the conformance kit
+([migration](docs/guide/upgrading.md#branch-conformance-application-files)).
+
+- `stitchkit/application` `createWatchHub` passes `read` one request object
+  with a per-read `signal`. A shared read kept running after its last subscriber
+  left, and a subscriber arriving before it settled received its stale answer as
+  current. The signal aborts when the last subscriber leaves or the hub closes;
+  an aborted read's outcome is dropped without an `unavailable` state, a log line
+  or backoff, and the next read of the key starts after it settles.
+  `read: (operation, args, scope) => …` → `read: ({ operation, args, scope, signal }) => …`.
+  → ADR 0297
+  **Affects:** `stitchkit/application` createWatchHub(read), WatchHubConfig(read)
+- `stitchkit/agent-runtime/testing` `runAgentStoreConformance` checks
+  application-owned file parts when a store implements `branchConversation`: a
+  declared `applicationFiles` reference must reach the branch under its destination
+  reference, and an undeclared one must refuse before any write. A hand-written store
+  that branches on its own must accept the new field; stores built on the shipped
+  planner pass unchanged. See the
+  [migration](docs/guide/upgrading.md#branch-conformance-application-files). → ADR 0298
+  **Affects:** `stitchkit/agent-runtime/testing` runAgentStoreConformance
+
+### Added
+
+- `stitchkit/server` decides CORS per request origin. `cors.origin` may be a
+  function answering each exact origin with `{ credentials: true }`,
+  `{ credentials: false }` or `false`, sync or async, so a server can allow
+  partner pages without cookies beside its own pages with them. The answer is
+  reached once per request and used by every exit, every response varies by
+  `Origin`, and a failing or malformed answer grants nothing and runs nothing.
+  A `safelistedBody` text body is read only from an origin granted with
+  credentials. Types `CorsOriginPolicy` and `CorsOriginDecision`. → ADR 0299
+
+### Fixed
+
+- `stitchkit/application` `createWatchHub` keeps the pause after a failed read
+  across subscriber churn. A subscriber that left and returned while the source
+  was down got a new read at once, at the rate of its reconnects instead of the
+  backoff. The pause now belongs to the key: the returning subscriber is told the
+  known state and waits out the rest, an abandoned read does not reset the count,
+  and a failed key is kept until its pause ends. → ADR 0297
+  **Affects:** `stitchkit/application` behaviour
+- `stitchkit/agent-runtime` `branchConversation` takes `applicationKeys`. A
+  conversation whose tool output or message metadata held the application's own
+  `messageId`, `reference` or another name the runtime reserves for its
+  references could not be branched at all. Declared names cross as data; a
+  declared key whose value names a source identity still refuses, and the order
+  of `applicationKeys` and `applicationFiles` no longer changes the request
+  fingerprint. → ADR 0298
+  **Affects:** `stitchkit/agent-runtime` BranchAgentConversationInputSchema, BranchAgentConversationInput; `stitchkit/agent-runtime` behaviour
+- `stitchkit/process` confirms a stopped process group with the kernel before
+  taking a process-table snapshot. Every stop of a group spawned `ps` once, which
+  took about 30 ms on an idle host and outlasted a short cleanup budget on a busy
+  one, failing the command with `COMMAND_CLEANUP` after its work had succeeded.
+  **Affects:** `stitchkit/process` behaviour; `stitchkit/agent-runtime/coding-tools` behaviour
+- `stitchkit/agent-runtime` branches and restores conversations whose file parts
+  reference files the application stores. Every file part was read as a runtime
+  spill, so an uploaded image refused the whole branch with `Branch contains a
+  foreign or missing spill reference`. `branchConversation` takes
+  `applicationFiles`, each `{ reference, destinationReference }` naming the
+  reference the host already granted the destination; an undeclared file part
+  still refuses, now with `Branch contains a foreign or missing file reference`.
+  → ADR 0298
+  **Affects:** `stitchkit/agent-runtime` BranchAgentConversationInputSchema, BranchAgentConversationInput; `stitchkit/agent-runtime` behaviour
+
 ## [0.125.0] - 2026-11-19
 
 ### ⚠️ Breaking changes
@@ -548,7 +616,7 @@ default command. See the [migration](docs/guide/upgrading.md#cli-framework-optio
   Every filesystem tool pins root before either policy; an ordinary command enters its pinned
   cwd through the descriptor's `/proc` link on Linux and through an isolated fchdir guard on
   macOS. Symlink cwd descendants refuse; custom sandbox launchers own cwd capture.
-  **Affects:** `stitchkit/agent-runtime/coding-tools` createAgentCodingTools, AgentCodingToolLimitsSchema, AgentCodingToolLimits, behaviour
+  **Affects:** `stitchkit/agent-runtime/coding-tools` createAgentCodingTools, AgentCodingToolLimitsSchema, AgentCodingToolLimits; `stitchkit/agent-runtime/coding-tools` behaviour
 
 ### Fixed
 

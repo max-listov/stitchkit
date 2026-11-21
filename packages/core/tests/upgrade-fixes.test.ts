@@ -39,6 +39,26 @@ const CHANGELOG = `# Changelog
 `;
 
 describe('the fixes of an upgrade range', () => {
+  test('behaviour and * inside a list of exports are refused, not read as export names', () => {
+    for (const line of [
+      '`stitchkit/agent-runtime` branchConversation, behaviour',
+      '`stitchkit/agent-runtime` branchConversation, *',
+    ])
+      expect(() => parseAffectsLine(line)).toThrow('a target of its own');
+    expect(
+      parseAffectsLine(
+        '`stitchkit/agent-runtime` branchConversation; `stitchkit/agent-runtime` behaviour',
+      ),
+    ).toEqual([
+      {
+        entrypoint: 'stitchkit/agent-runtime',
+        kind: 'symbols',
+        symbols: [{ name: 'branchConversation' }],
+      },
+      { entrypoint: 'stitchkit/agent-runtime', kind: 'behaviour' },
+    ]);
+  });
+
   test('the fixes that name what they touch are listed oldest first, the others only counted', () => {
     const fixes = planFixes(CHANGELOG, '0.3.0', '0.4.0');
     expect(fixes.declared.map((item) => item.title.slice(0, 20))).toEqual([

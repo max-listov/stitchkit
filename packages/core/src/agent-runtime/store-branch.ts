@@ -47,8 +47,17 @@ export async function branchConversation<T>(
         ? { ...parsed.source, bytes: Uint8Array.from(parsed.source.bytes) }
         : parsed.source,
   };
+  // The declarations are sets: the order a host lists them in is not part of the request.
   const fingerprint = branchHash({
     ...input,
+    ...(input.applicationFiles && {
+      applicationFiles: input.applicationFiles.toSorted((left, right) =>
+        left.reference.localeCompare(right.reference),
+      ),
+    }),
+    ...(input.applicationKeys && {
+      applicationKeys: [...new Set(input.applicationKeys)].sort(),
+    }),
     source:
       input.source.kind === 'archive'
         ? {
@@ -96,7 +105,7 @@ export async function branchConversation<T>(
       input.source.kind === 'archive'
         ? input.source.bytes
         : await exportConversationIn(driver, tx, input.source.conversationId);
-    const source = prepareBranchSource(bytes, input.source);
+    const source = prepareBranchSource(bytes, input);
     if (source.conversationId === input.destinationConversationId)
       throw new TypeError('Branch requires a new conversation identity');
     if (source.spills.length > 0 && (!input.artifactAuthorization || !driver.archive))
@@ -109,6 +118,8 @@ export async function branchConversation<T>(
       source.conversationId,
     );
     for (const spill of source.spills) ids.define('spill', spill.reference);
+    ids.declareApplicationFiles(input.applicationFiles ?? []);
+    ids.declareApplicationKeys(input.applicationKeys ?? []);
     const events = rekeyBranchEvents(
       ids,
       source.conversationId,

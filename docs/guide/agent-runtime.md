@@ -648,6 +648,10 @@ const copy = await sqlite.store.branchConversation({
   source: { kind: 'conversation', conversationId: 'original', throughRunId: 'finished-run' },
   // Required when selected history has spills: an explicit policy for this destination.
   artifactAuthorization: { operation: 'read', path: 'approved-destination-workspace' },
+  // File parts your application stores: the reference you granted the destination.
+  applicationFiles: [
+    { reference: 'uploads/original/photo.png', destinationReference: 'uploads/new-conversation/photo.png' },
+  ],
 })
 
 const restored = await sqlite.store.branchConversation({
@@ -671,6 +675,32 @@ bytes. The source digest binds the selected canonical events, artifacts and reco
 Run update timestamps reconstructed from events use their recorded `occurredAt`. Abandon transitions
 retain the full failed assistant in the same event; a legacy archive must retain that exact assistant
 in its runtime snapshot, otherwise copying refuses instead of inventing historical content or time.
+
+A file part's `reference` belongs to whoever stored it. A spill of the archive is rekeyed with the
+spills. Any other file part — an upload your input carried, a file `persistGeneratedFile` saved —
+lives in your store, where the runtime can neither copy it nor grant access to it. Grant the
+destination conversation access in your store first, then declare each pair in `applicationFiles`:
+the branch writes your `destinationReference` and never the source address. A file part neither
+spilled nor declared refuses the whole branch with `Branch contains a foreign or missing file
+reference`, as does a declared reference that is also a spill or a repeated `reference` or
+`destinationReference`. Declare every attachment of the supplied history, including turns after
+`throughRunId`: the complete archive is validated before the prefix is chosen. The declaration is
+part of the request fingerprint, so a retry with the same pairs returns the receipt and different
+pairs conflict. If the branch refuses, remove the grants you made for it.
+
+Message metadata, the input and output of your own tools and provider options are your JSON, and
+the branch does not rewrite them. A key in them named like a runtime reference — `reference`,
+`conversationId`, `runId`, `messageId`, `callId`, `toolCallId`, `approvalId`, `operationId`,
+`artifactId` — refuses the branch, because a runtime reference there could be neither rekeyed nor
+safely carried. When such a name is simply your data — a Telegram `messageId`, a CRM `reference` —
+list it in `applicationKeys: ['messageId', 'reference']`. A declared key still refuses when its value
+names an identity of the source conversation, and the order of `applicationKeys` and
+`applicationFiles` is not part of the request.
+
+The provider journal is the record of what a model was actually sent, and a branch copies it as
+evidence, unrewritten. File bytes are recorded by hash; an address your `resolveFile` returned —
+a URL, a signed link — is recorded as that string and stays in the branch's journal. If such an
+address must not reach the destination, resolve files to bytes.
 
 No provider or tool runs during copying. The next ordinary runtime `submit` continues the copied
 history. All engine identities and typed references are new, including repeated references to one

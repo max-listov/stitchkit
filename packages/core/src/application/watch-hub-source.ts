@@ -56,6 +56,8 @@ export interface Source {
   readonly task: CoalescedTask;
   state: WatchStateFrame;
   release?: ReturnType<typeof setTimeout>;
+  /** The read in flight, aborted when nobody waits for it any more. */
+  reading?: AbortController;
 }
 
 /**

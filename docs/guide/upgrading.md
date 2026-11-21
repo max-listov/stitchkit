@@ -1,5 +1,42 @@
 # Upgrading stitchkit
 
+## Unreleased migration: watch-read-request
+
+**Who must act:** every server that passes `read` to `createWatchHub` from
+`stitchkit/application`.
+
+`read` receives one `WatchReadRequest` instead of three positions. Destructure
+what the old signature named and pass `signal` on to whatever performs the read:
+
+```ts
+// before
+createWatchHub({ read: (operation, args, scope) => dispatch(operation, args, scope), … })
+
+// after
+createWatchHub({
+  read: ({ operation, args, scope, signal }) => dispatch(operation, args, { scope, signal }),
+  …
+})
+```
+
+The signal aborts when the key's last subscriber leaves or the hub closes. What the
+read settles with after that is dropped, so a read that rejects on abort needs no
+special handling. A read that ignores the signal keeps working as before; it only
+cannot stop early.
+
+## Unreleased migration: branch-conformance-application-files
+
+**Who must act:** authors of a hand-written `AgentRuntimeStore` that implements
+`branchConversation` itself and runs `runAgentStoreConformance` from
+`stitchkit/agent-runtime/testing`. Stores built on the shipped memory, SQLite or
+driver-backed store need nothing.
+
+The conformance kit's branch case now carries a file part the application stores.
+The store must accept `applicationFiles` on `branchConversation`, write each declared
+`destinationReference` into the branch, refuse a file part that is neither a spill nor
+declared before any write, and fingerprint the declaration with the request.
+Delegating to the shipped branch planner does all four.
+
 ## Released migration: 0.125.0
 
 ### cli-framework-option-command-names

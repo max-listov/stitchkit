@@ -9,7 +9,7 @@ import { mediaTypeEssence } from '../internal/media-type';
 import { type ClientIpOptions, getClientInfo, parseQueryParams } from '../internal/request';
 import { isUnsafeKey, safeJsonParse } from '../internal/safe-json';
 import { RUNTIME_CONTEXT_RESERVED_KEYS } from './context-contribution';
-import { type CorsConfig, isOriginAllowed } from './middleware/cors';
+import type { RequestCors } from './middleware/cors';
 import { type MultipartLifecycle, parseMultipart } from './multipart';
 import { readRequestText } from './request-body';
 import type { AuthorizationContext, MethodDef } from './types';
@@ -31,7 +31,7 @@ function parseJsonBody(
   req: Request,
   text: string,
   method: MethodDef,
-  cors: CorsConfig | undefined,
+  cors: RequestCors | undefined,
 ): unknown {
   if (text.trim() === '') return {};
   const essence = mediaTypeEssence(req.headers.get('content-type'));
@@ -40,11 +40,11 @@ function parseJsonBody(
       badRequest('Request body must be application/json');
     }
     const origin = req.headers.get('origin');
-    if (!cors || cors.origin === undefined || cors.origin === '*') {
+    if (!cors || cors.safelistedBody === 'no-allow-list') {
       forbidden('A text/plain body requires an explicit cors.origin allow-list on the server');
     }
     if (!origin) forbidden('A text/plain body requires an Origin header');
-    if (!isOriginAllowed(cors, origin)) {
+    if (cors.safelistedBody !== 'allowed') {
       forbidden('A text/plain body is accepted only from an allowed origin');
     }
   }
@@ -112,7 +112,7 @@ export async function parseRequestPayloadInto(
   url: URL,
   method: MethodDef,
   maxJsonBodyBytes?: number,
-  cors?: CorsConfig,
+  cors?: RequestCors,
 ): Promise<MultipartLifecycle | undefined> {
   if (method.multipart) {
     const multipart = await parseMultipart(

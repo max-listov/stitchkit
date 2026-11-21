@@ -1,0 +1,5 @@
+{
+  "coreVersion": "0.126.0",
+  "outcome": "deferred",
+  "reason": "The starter's backend reads watched values with read(operation), and 0.126.0 passes read one WatchReadRequest; the template compiles against the published target ^0.125.0 and not against 0.126.0, so one source cannot satisfy both. The starter migrates to read({ operation }) after 0.126.0 is on npm, advances its catalog and removes this record."
+}

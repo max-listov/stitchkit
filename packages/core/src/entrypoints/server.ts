@@ -123,6 +123,8 @@ export {
 } from '../server/middleware/cookies';
 export {
   type CorsConfig,
+  type CorsOriginDecision,
+  type CorsOriginPolicy,
   corsHeaders,
   corsPreflightResponse,
   DEFAULT_CORS_ALLOW_HEADERS,

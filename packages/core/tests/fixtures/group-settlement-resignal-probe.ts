@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stopCommandGroup } from '../../src/process/group';
 import { GroupSettlementError } from '../../src/process/group-diagnostics';
+import { GROUP_EXIT_QUICK_LOOKS } from '../../src/process/group-settlement';
 
 const root = await mkdtemp(join(tmpdir(), 'group-resignal-'));
 const ps = join(root, 'ps');
@@ -17,6 +18,8 @@ const stop = {
   cleanupTimeoutMs: 2000,
   force: true,
 } satisfies Parameters<typeof stopCommandGroup>[0];
+// The first look, the quick looks before any snapshot, then the look after the snapshot.
+const afterSnapshot = 2 + GROUP_EXIT_QUICK_LOOKS;
 const absent = () => Object.assign(new Error('owned group gone'), { code: 'ESRCH' });
 const table = (rows: string) =>
   writeFile(ps, `#!/bin/sh\nprintf '%s\\n' '${rows}'\n`, { mode: 0o755 });
@@ -47,12 +50,25 @@ try {
   kills = probes = 0;
   process.kill = (target, signal) => {
     track(target, signal);
-    if (signal === 0 && probes === 2) throw absent();
+    if (signal === 0 && probes === afterSnapshot) throw absent();
     return true;
   };
   await stopCommandGroup(stop);
   assert.equal(kills, 1);
+  assert.equal(probes, afterSnapshot);
+
+  // Absence within the quick looks ends the stop before any snapshot is taken.
+  kills = probes = 0;
+  process.kill = (target, signal) => {
+    track(target, signal);
+    if (signal === 0 && probes === 2) throw absent();
+    return true;
+  };
+  await table('this table would refuse the stop if it were read');
+  await stopCommandGroup(stop);
+  assert.equal(kills, 1);
   assert.equal(probes, 2);
+  await table(`${group} S<`);
 
   // Absence at the repeated KILL is terminal too: no next probe or signal.
   kills = probes = 0;
@@ -63,7 +79,7 @@ try {
   };
   await stopCommandGroup(stop);
   assert.equal(kills, 2);
-  assert.equal(probes, 2);
+  assert.equal(probes, afterSnapshot);
 
   // Dead members, invalid tables and failed observations never cause a blind re-signal.
   for (const rows of [`${group} Z\n${group} X`, 'invalid table', 'exit 73']) {
@@ -107,7 +123,7 @@ try {
   kills = probes = 0;
   process.kill = (target, signal) => {
     track(target, signal);
-    if (signal === 0 && probes === 2) clock = 2000;
+    if (signal === 0 && probes === afterSnapshot) clock = 2000;
     return true;
   };
   await assert.rejects(stopCommandGroup(stop), /settlement was not confirmed/);

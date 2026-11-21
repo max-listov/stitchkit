@@ -13,10 +13,11 @@ function hash(value: unknown) {
   return createHash('sha256').update(canonicalAgentJson(value)).digest('hex');
 }
 
-function checkFileData(value: z.infer<ReturnType<typeof z.json>>) {
+function checkFileData(ids: BranchIdentities, value: z.infer<ReturnType<typeof z.json>>) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return;
-  if (value.type === 'reference' && 'reference' in value) branchOpaqueJson(value.reference);
-  else if (!('type' in value) && value.binary !== true) branchOpaqueJson(value);
+  if (value.type === 'reference' && 'reference' in value)
+    branchOpaqueJson(ids, value.reference);
+  else if (!('type' in value) && value.binary !== true) branchOpaqueJson(ids, value);
 }
 
 /** Provider IDs stay provider IDs; runtime call references and their content digests are rekeyed. */
@@ -28,7 +29,8 @@ export class BranchProvider {
       const value = ProviderJournalMessageSchema.parse(raw);
       if (hash(value.message) !== value.sha256)
         throw new TypeError('Branch provider message digest is inconsistent');
-      if (value.message.providerOptions) branchOpaqueJson(value.message.providerOptions);
+      if (value.message.providerOptions)
+        branchOpaqueJson(this.ids, value.message.providerOptions);
       const message = {
         ...value.message,
         content:
@@ -36,10 +38,10 @@ export class BranchProvider {
             ? value.message.content
             : value.message.content.map((part) => {
                 if ('providerOptions' in part && part.providerOptions)
-                  branchOpaqueJson(part.providerOptions);
+                  branchOpaqueJson(this.ids, part.providerOptions);
                 if (part.type === 'file' || part.type === 'reasoning-file')
-                  checkFileData(part.data);
-                if (part.type === 'image') checkFileData(part.image);
+                  checkFileData(this.ids, part.data);
+                if (part.type === 'image') checkFileData(this.ids, part.image);
                 if (part.type === 'tool-call')
                   return {
                     ...part,
@@ -48,16 +50,18 @@ export class BranchProvider {
                   };
                 if (part.type === 'tool-result') {
                   if ('providerOptions' in part.output && part.output.providerOptions)
-                    branchOpaqueJson(part.output.providerOptions);
-                  if (part.output.type === 'error-json') branchOpaqueJson(part.output.value);
+                    branchOpaqueJson(this.ids, part.output.providerOptions);
+                  if (part.output.type === 'error-json')
+                    branchOpaqueJson(this.ids, part.output.value);
                   if (part.output.type === 'content')
                     for (const item of part.output.value) {
-                      if (item.providerOptions) branchOpaqueJson(item.providerOptions);
-                      if (item.type === 'file') checkFileData(item.data);
+                      if (item.providerOptions)
+                        branchOpaqueJson(this.ids, item.providerOptions);
+                      if (item.type === 'file') checkFileData(this.ids, item.data);
                       if ('providerReference' in item)
-                        branchOpaqueJson(item.providerReference);
+                        branchOpaqueJson(this.ids, item.providerReference);
                       if ('fileId' in item && typeof item.fileId !== 'string')
-                        branchOpaqueJson(item.fileId);
+                        branchOpaqueJson(this.ids, item.fileId);
                     }
                   return {
                     ...part,

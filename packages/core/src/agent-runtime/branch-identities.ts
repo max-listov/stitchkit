@@ -19,6 +19,8 @@ type IdentityKind =
 export class BranchIdentities {
   private readonly definitions = new Map<IdentityKind, Map<string, string>>();
   private readonly references = new Map<IdentityKind, Set<string>>();
+  private readonly applicationFiles = new Map<string, string>();
+  private readonly applicationKeys = new Set<string>();
   constructor(
     readonly conversationId: string,
     private readonly requestKey: string,
@@ -41,6 +43,41 @@ export class BranchIdentities {
     const referenced = this.references.get(kind) ?? new Set<string>();
     referenced.add(source);
     this.references.set(kind, referenced);
+    return target;
+  }
+  /**
+   * Declare file part references the application owns, after the archive's
+   * spills: one reference has one owner, so a declared reference that is also a
+   * spill refuses rather than choosing between them.
+   */
+  declareApplicationFiles(
+    files: readonly { reference: string; destinationReference: string }[],
+  ): void {
+    for (const file of files) {
+      if (this.definitions.get('spill')?.has(file.reference))
+        throw new TypeError('Branch application file reference is also a spill reference');
+      this.applicationFiles.set(file.reference, file.destinationReference);
+    }
+  }
+  /** Keys the host declares as its own data inside application JSON. */
+  declareApplicationKeys(keys: readonly string[]): void {
+    for (const key of keys) this.applicationKeys.add(key);
+  }
+  isApplicationKey(key: string): boolean {
+    return this.applicationKeys.has(key);
+  }
+  /** Whether `value` names something of the source conversation: itself or any identity it defines. */
+  isSourceIdentity(value: string): boolean {
+    if (value === this.sourceConversationId) return true;
+    for (const values of this.definitions.values()) if (values.has(value)) return true;
+    return false;
+  }
+  /** A file part's reference in the destination: its spill's, or the declared application one. */
+  fileReference(source: string): string {
+    if (this.definitions.get('spill')?.has(source)) return this.reference('spill', source);
+    const target = this.applicationFiles.get(source);
+    if (target === undefined)
+      throw new TypeError('Branch contains a foreign or missing file reference');
     return target;
   }
   referenced(kind: IdentityKind): ReadonlySet<string> {

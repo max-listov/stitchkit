@@ -6,7 +6,7 @@ import { isRecord } from '../internal/typed';
 import { getRequestContext, setRequestError } from '../observability/context';
 import { buildErrorContext } from './context';
 import type { CompleteRequest, HandlerState, RespondError } from './handler-state';
-import { applyCors, requestCorsHeaders } from './middleware/cors';
+import { applyCors, type RequestCors, requestCorsHeaders } from './middleware/cors';
 import type { LifecycleHooks, MethodDef, StitchLogger } from './types';
 
 const MAX_REQUEST_ABORT_CAUSE_DEPTH = 8;
@@ -40,6 +40,7 @@ export interface ErrorRequest {
   traceId: string;
   clientIp: ClientIpOptions;
   complete: CompleteRequest;
+  cors: RequestCors | undefined;
 }
 
 /**
@@ -51,14 +52,13 @@ export function createErrorResponder<TServer>(
   state: HandlerState<TServer>,
   request: ErrorRequest,
 ): RespondError {
-  const { cors, hooks, customLogger } = state;
-  const { req, url, traceId, clientIp, complete } = request;
+  const { hooks, customLogger } = state;
+  const { req, url, traceId, clientIp, complete, cors } = request;
   return async (err, errCtx, endpoint, group) => {
     if (isClientClosedRequest(req, err)) {
       const response = applyCors(
         new Response(null, { status: 499, statusText: 'Client Closed Request' }),
         cors,
-        req,
       );
       complete(response.status, undefined, 'cancelled');
       return response;
@@ -94,7 +94,7 @@ export function createErrorResponder<TServer>(
       logger: customLogger,
       respond: (response) => {
         recordFailure();
-        const withCors = applyCors(response, cors, req);
+        const withCors = applyCors(response, cors);
         // Hook responses keep the original error code without normalizing/logging it again.
         complete(withCors.status, errorCode(err));
         return withCors;
@@ -106,7 +106,7 @@ export function createErrorResponder<TServer>(
     complete(appErr.status, appErr.code);
     return Response.json(appErr.toJSON(), {
       status: appErr.status,
-      headers: requestCorsHeaders(cors, req),
+      headers: requestCorsHeaders(cors),
     });
   };
 }

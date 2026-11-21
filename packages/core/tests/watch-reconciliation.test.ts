@@ -74,7 +74,7 @@ test('verified watch scopes isolate identical arguments and revocation fences pe
   const valuesA: unknown[] = [];
   const valuesB: unknown[] = [];
   const hub = createWatchHub({
-    async read(_, _args, scope) {
+    async read({ scope }) {
       reads++;
       started.resolve();
       await release.promise;

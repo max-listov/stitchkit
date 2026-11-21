@@ -94,7 +94,9 @@ per process", and it is written that way.
   microtask is not "before the network" in any sense a renderer can use.
 - A source is not dropped while a read is in flight, even with no subscribers
   left: dropping it would publish the result into nothing and let the next
-  subscriber start a second read for the same question.
+  subscriber start a second read for the same question (amended by
+  [ADR 0297](0297-a-watched-read-ends-with-its-last-subscriber.md): the read is
+  aborted when its last subscriber leaves, and its outcome is dropped).
 - Both limits are declared and observable: watches per connection, and the read
   counter the "two browsers, one read" claim is measured with. The counter is
   exercised in both directions, because one that could only ever reach one would

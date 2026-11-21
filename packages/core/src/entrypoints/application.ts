@@ -306,6 +306,7 @@ export {
   type WatchHub,
   type WatchHubConfig,
   type WatchOperation,
+  type WatchReadRequest,
   type WatchSubscriber,
   watchKey,
 } from '../application/watch-hub';

@@ -19,7 +19,12 @@ import { RELEASE_HEADER } from '../release/header';
 import { dispatchEndpoint } from './endpoint-dispatch';
 import { createErrorResponder } from './error-dispatch';
 import { createHandlerState, type HandlerState, type RequestState } from './handler-state';
-import { applyCors, corsPreflightResponse } from './middleware/cors';
+import {
+  applyCors,
+  deniedRequestCors,
+  type RequestCors,
+  resolveRequestCors,
+} from './middleware/cors';
 import { openRequestCompletion } from './request-completion';
 import { allowedMethods, matchRawRoute, matchRoute } from './router';
 import type { FetchHandler, HandlerConfig } from './types';
@@ -95,10 +100,38 @@ async function dispatch<TServer>(
   clientIp: ClientIpOptions,
   startedAt: bigint,
 ): Promise<Response> {
-  const { cors, hooks, config, routeMap } = state;
+  const { hooks, config, routeMap } = state;
   const ipAddress = extractIp(req, clientIp) || undefined;
   const complete = openRequestCompletion(state, { req, url, traceId, startedAt, ipAddress });
-  const respondError = createErrorResponder(state, { req, url, traceId, clientIp, complete });
+  // One CORS answer per request, decided before any work and read by every exit.
+  let cors: RequestCors | undefined;
+  let corsFailed = false;
+  let corsFailure: unknown;
+  if (state.cors) {
+    try {
+      const decided = resolveRequestCors(state.cors, req.headers.get('origin'));
+      cors = decided instanceof Promise ? await decided : decided;
+    } catch (error) {
+      // A flag, not the caught value: `throw undefined` and a bare
+      // `Promise.reject()` are failures too.
+      corsFailed = true;
+      corsFailure = error;
+      cors = deniedRequestCors(state.cors);
+    }
+  }
+  const respondError = createErrorResponder(state, {
+    req,
+    url,
+    traceId,
+    clientIp,
+    complete,
+    cors,
+  });
+  // A policy that cannot answer grants nothing and runs nothing: the request
+  // is refused through `onError` with the cause, and carries no allowance.
+  if (corsFailed) {
+    return respondError(new Error('The CORS origin resolver failed', { cause: corsFailure }));
+  }
   const request: RequestState<TServer> = {
     req,
     url,
@@ -108,12 +141,13 @@ async function dispatch<TServer>(
     ipAddress,
     complete,
     respondError,
+    cors,
   };
 
   if (cors && req.method === 'OPTIONS') {
     // No completion line: `shouldLog` drops `OPTIONS` before the timing
     // window opens, so a preflight has nothing to close.
-    const response = corsPreflightResponse(cors, req);
+    const response = new Response(null, { status: 204, headers: cors.headers });
     complete(response.status);
     return response;
   }
@@ -129,7 +163,7 @@ async function dispatch<TServer>(
         // auth wall, a maintenance page) answered to a browser must still
         // carry `Access-Control-Allow-Origin`, or the response is unreadable
         // cross-origin.
-        const withCors = applyCors(earlyResponse, cors, req);
+        const withCors = applyCors(earlyResponse, cors);
         complete(withCors.status);
         return withCors;
       }
@@ -154,7 +188,7 @@ async function dispatch<TServer>(
           server,
           ipAddress,
         });
-        const withCors = applyCors(res, cors, req);
+        const withCors = applyCors(res, cors);
         complete(withCors.status);
         return withCors;
       } catch (err) {

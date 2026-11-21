@@ -20,7 +20,7 @@ import type { PathParams } from '../internal/route-pattern';
 import type { HttpRequestObserver } from '../observability/audit';
 import type { ReleaseMarker } from '../release/marker';
 import type { LogFormat } from './logger';
-import type { CorsConfig } from './middleware/cors';
+import type { CorsConfig, CorsOriginPolicy } from './middleware/cors';
 
 type Prop<T, K extends string> = K extends keyof T ? T[K] : undefined;
 type InferParams<E> =
@@ -517,7 +517,13 @@ export interface HandlerConfig<TServer = unknown> {
    * unbounded JSON-body behaviour.
    */
   maxJsonBodyBytes?: number;
-  cors?: CorsConfig;
+  /**
+   * CORS for every HTTP response. A static `CorsConfig` names its origins and one
+   * credentials flag; a `CorsOriginPolicy` answers per request origin, with or
+   * without credentials, from the application's own data. Socket.IO keeps its
+   * own `cors`.
+   */
+  cors?: CorsConfig | CorsOriginPolicy;
   /**
    * The current frontend build, named on every response as `X-Build-Id` so a
    * browser can tell it is running a bundle the server no longer serves

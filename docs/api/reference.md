@@ -510,7 +510,9 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `CookieDef` | _type_ | the `defineCookie` handle |
 | `CookieOptions` | _type_ | cookie attributes, plus the `duplicates` read policy |
 | `CookieDuplicatesPolicy` | _type_ | `'last'` (default) / `'first'` / `'reject'` — `reject` yields `undefined` for two different values and the value when they agree |
-| `CorsConfig` | _type_ | CORS policy |
+| `CorsConfig` | _type_ | static CORS policy: origin (or list, or `'*'`) and one `credentials` flag |
+| `CorsOriginPolicy` | _type_ | CORS decided per request: `origin(origin)` answers each exact serialized origin, sync or async; no `credentials` beside it. Decided once per request for every exit, always `Vary: Origin`, a throw or malformed answer grants nothing and runs nothing; a safelisted `text/plain` body needs a grant with credentials |
+| `CorsOriginDecision` | _type_ | what the policy answers: `false` or `{ credentials: boolean }` |
 
 ### Realtime (server)
 
@@ -851,6 +853,7 @@ vocabulary with an event topic declared `mode: 'decision'`.
 | `SqliteDatabase` / `SqliteStatement` / `SqliteValue` | _types_ | the minimal synchronous SQLite boundary the framework types against |
 | `createWatchHub` / `watchKey` | function | one read per question however many are asking: single-flight per key, re-read on a declared topic, publish only what changed |
 | `WatchHub` / `WatchHubConfig` / `WatchOperation` / `WatchSubscriber` / `AttachedWatcher` | _types_ | the hub, its read/watchable/invalidation policy, the operation identity, and one connection's attachment |
+| `WatchReadRequest` | _type_ | what `read` receives: `{ operation, args, scope?, signal }`; `signal` belongs to that one read and aborts when the key's last subscriber leaves or the hub closes |
 
 → [ADR 0152](../decisions/0152-a-keyspace-is-memory-that-nothing-reaches-before-it-is-durable.md),
 [ADR 0153](../decisions/0153-a-watched-read-is-one-read-per-question.md).
@@ -872,9 +875,14 @@ periodically even when no notification arrives.
 `WatchHubConfig` adds `maxSources` (1024), `maxSubscribers` (1024), and optional
 `reconcileIntervalMs` (10 ms–1 h). `hub.attach(subscriber, scope?)` accepts a
 `WatchAdmissionScope` containing a **server-verified** `key` (1–512 characters) and
-revocation `signal`. The key separates sharing and is the optional third argument
-of `read(operation, args, scope)`; a key's `instance` routes frames and never
-separates sources. Attached over `maxSubscribers`, a subscriber gets a watcher whose
+revocation `signal`. The key separates sharing and reaches the application as
+`scope` in the one `WatchReadRequest` that `read({ operation, args, scope, signal })`
+receives; a key's `instance` routes frames and never separates sources. The request's
+`signal` belongs to that one read: it stays live while any subscriber watches the
+key and aborts when the last one leaves (its scope revoked included) or the hub
+closes. An aborted read's outcome, value or error, is dropped — not published,
+announced, logged or retried with backoff — and the next read of the key starts only
+after it settles. Attached over `maxSubscribers`, a subscriber gets a watcher whose
 `open` refuses with `Watch subscriber capacity exceeded`; `attach` does not throw
 for capacity. It must represent account, session and permissions;
 never trust a client-supplied owner ID as that scope.
@@ -1001,7 +1009,7 @@ Server-only optional application runtime. See the
 | `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |
 | `AgentRunQueuePrioritySchema` | schema | durable opt-in priority for queued `interrupt-next` runs |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
-| `BranchAgentConversationInputSchema` / `BranchAgentConversationInput` | schema / _type_ | strict branch request: stable request key, empty destination, settled conversation boundary or archive bytes, fresh artifact authorization |
+| `BranchAgentConversationInputSchema` / `BranchAgentConversationInput` | schema / _type_ | strict branch request: stable request key, empty destination, settled conversation boundary or archive bytes, fresh artifact authorization, and `applicationFiles` — `{ reference, destinationReference }` pairs for file parts the application stores; an undeclared non-spill file reference refuses the branch. `applicationKeys` names keys such as `messageId` or `reference` that are the application's own data inside its JSON; a declared key still refuses when its value names a source identity |
 | `AgentConversationBranchReceiptSchema` / `AgentConversationBranchReceipt` | schema / _type_ | durable lineage: request fingerprint, source/destination identities, source sequence/version/digest and creation time |
 | `AgentConversationBranchResultSchema` / `AgentConversationBranchResult` | schema / _type_ | `created` or `duplicate` with the same durable receipt; `AgentRuntimeStore.branchConversation` is optional for hand-written stores |
 | `createAgentRuntimeStore` | function | build the aggregate store from one coherent transaction driver; framework owns every state transition |

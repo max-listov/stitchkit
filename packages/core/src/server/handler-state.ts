@@ -9,7 +9,7 @@ import type { RuntimeContext } from '../contract/runtime-context';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { type ClientIpOptions, resolveTraceId } from '../internal/request';
 import { resolveLoggingConfig } from './logging';
-import { assertCorsConfig } from './middleware/cors';
+import { assertCorsConfig, type RequestCors } from './middleware/cors';
 import { compileRouteTable } from './route-table';
 import type { RouteMap } from './router';
 import type {
@@ -63,6 +63,8 @@ export interface RequestState<TServer> {
   ipAddress: string | undefined;
   complete: CompleteRequest;
   respondError: RespondError;
+  /** This request's CORS answer; absent when the handler has no CORS config. */
+  cors: RequestCors | undefined;
 }
 
 export function createHandlerState<TServer>(

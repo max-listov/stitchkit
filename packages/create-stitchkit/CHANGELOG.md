@@ -12,6 +12,15 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated projects resolve stitchkit 0.125.0: a CLI command named like a framework option
+  (`--quiet`) is refused, and a leading framework flag before a native command in a CLI with a
+  managed factory and no default command must move after it. Follow the stitchkit 0.125.0
+  migration `cli-framework-option-command-names` in `docs/guide/upgrading.md`.
+- The generator, the starter and both templates run on Bun 1.4.5; the agent template moves to
+  `ai` 7.0.179 and OpenTUI 0.9.7, the telegram-bot template to `@types/bun` 1.4.5.
+
 ## [0.6.22] - 2026-11-17
 
 ### Changed

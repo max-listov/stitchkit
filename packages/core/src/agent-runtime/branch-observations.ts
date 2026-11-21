@@ -89,7 +89,7 @@ export function branchObservation(
               : undefined;
     if (!value || canonicalAgentJson(value) !== canonicalAgentJson(raw))
       throw new TypeError('Branch cannot rekey opaque durability payload');
-    if ('encoded' in value) branchOpaqueJson(z.json().parse(JSON.parse(value.encoded)));
+    if ('encoded' in value) branchOpaqueJson(ids, z.json().parse(JSON.parse(value.encoded)));
     return {
       ...value,
       runId: ids.reference('run', value.runId),
@@ -107,7 +107,7 @@ export function branchObservation(
       .parse(raw);
   if (kind === 'state/set') {
     const value = State.parse(raw);
-    branchOpaqueJson(value.value);
+    branchOpaqueJson(ids, value.value);
     return value;
   }
   if (kind === 'retry/scheduled' || kind === 'retry/started') return Retry.parse(raw);
@@ -121,8 +121,8 @@ export function branchObservation(
   }
   if (kind.startsWith('child/')) {
     const value = Child.parse(raw);
-    if (value.budget) branchOpaqueJson(value.budget);
-    if (value.input) branchOpaqueJson(value.input);
+    if (value.budget) branchOpaqueJson(ids, value.budget);
+    if (value.input) branchOpaqueJson(ids, value.input);
     return {
       ...value,
       ...(value.childConversationId && {

@@ -79,11 +79,11 @@
   },
   "devDependencies": {
     "@openrouter/ai-sdk-provider": "^3.1.0",
-    "@opentui/core": "^0.9.2",
-    "@opentui/react": "^0.9.2",
-    "@types/bun": "^1.4.4",
+    "@opentui/core": "^0.9.7",
+    "@opentui/react": "^0.9.7",
+    "@types/bun": "^1.4.5",
     "@types/react": "^19.3.0",
-    "ai": "^7.0.173",
+    "ai": "^7.0.179",
     "react": "^19.3.1",
     "stitchkit": "workspace:*",
     "typescript": "^7.0.2"
@@ -91,5 +91,5 @@
   "engines": {
     "bun": ">=1.2.0"
   },
-  "packageManager": "bun@1.4.4"
+  "packageManager": "bun@1.4.5"
 }

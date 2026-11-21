@@ -205,7 +205,8 @@ await createSocketIOServer({
 })
 ```
 
-`cors` is **optional**. Omit it when the browser reaches this server on its
+`cors` is **optional**, and it is Socket.IO's own: the HTTP handler's `cors`,
+including an origin function, does not reach it. Omit it when the browser reaches this server on its
 own origin — Socket.IO then emits no CORS headers, which is same-origin only.
 Supply it only for a genuinely cross-origin browser: naming a foreign origin is
 naming where the code will run, and a repository that does not have to know

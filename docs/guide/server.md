@@ -285,7 +285,7 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 | `maxJsonBodyBytes` | optional JSON body cap (bytes); per-route value overrides; unset preserves existing behaviour |
 | `port` / `hostname` | listen address — port defaults to `3000` |
 | `unix` | listen on a unix domain socket instead of TCP — `'/run/app.sock'` or `{ path, mode }` (see below) |
-| `cors` | CORS policy — `{ origin, credentials, methods, headers, exposeHeaders }`. `origin` is **required** when `cors` is present: pass an explicit origin (or list), or `'*'` to deliberately allow every origin — an origin-less config is a construction error, never a silent wildcard. Omit `cors` entirely to emit no CORS headers. |
+| `cors` | CORS policy — `{ origin, credentials, methods, headers, exposeHeaders }`. `origin` is **required** when `cors` is present: pass an explicit origin (or list), or `'*'` to deliberately allow every origin — an origin-less config is a construction error, never a silent wildcard. `origin` may also be a function that answers each request origin with or without credentials ([below](#cors-decided-per-request)). Omit `cors` entirely to emit no CORS headers. |
 | `hooks` | lifecycle hooks (see below) |
 | `logging` | `true` for built-in request logs, or a `LoggingConfig` (see below) |
 | `traceId` | override per-request trace-id resolution — may return `undefined` to fall back |
@@ -298,6 +298,47 @@ server. See [Testing & deployment](./testing-and-deployment.md).
 Native Bun `routes` are intentionally not accepted: Bun matches them before
 `fetch`, so they could bypass shutdown admission. Use `rawRoutes`; they retain
 the Fetch `Request → Response` model and participate in lifecycle tracking.
+
+### CORS decided per request
+
+When the allowed origins live in your data — a key that lists the sites its
+browser tokens may be used from — pass a function as `cors.origin`. It gets the
+exact request origin and answers `{ credentials: true }`, `{ credentials: false }`
+or `false`, synchronously or as a promise:
+
+```ts
+createServer({
+  cors: {
+    origin: async (origin) => {
+      if (origin === 'https://app.example.com') return { credentials: true } // our pages, cookies
+      if (await keys.allowsOrigin(origin)) return { credentials: false } // a partner page, bearer only
+      return false
+    },
+  },
+  // …
+})
+```
+
+- The answer is reached **once per request** and used by every response it
+  produces: the preflight, an `onRequest` short-circuit, raw routes, every kind
+  of endpoint response and every error.
+- A grant names the requesting origin exactly; the function cannot answer with
+  another origin or `*`. It is never asked about a missing `Origin`, `null` or a
+  string that is not a scheme and authority.
+- Every response carries `Vary: Origin`, a refusal included, so a shared cache
+  never hands one origin's answer to another.
+- A throw, a rejection or an answer of another shape grants nothing: the request
+  is refused through `onError` with the cause, nothing runs and the response
+  carries no allowance.
+- `credentials` beside the function is a construction error: the function
+  decides it per origin.
+- It runs before `onRequest`, so before any rate limit there, on every request
+  that carries an origin a browser could send. Answer from memory or a cache
+  rather than a slow lookup per request.
+- Like a static list, a refusal only stops the page from reading the answer; it
+  does not stop the endpoint. Authorization still decides whether work runs.
+- A `safelistedBody` endpoint reads a `text/plain` body only from an origin
+  granted with credentials ([below](#safelisted-request-bodies-beacons)).
 
 ### External origin behind a trusted proxy
 
@@ -770,6 +811,8 @@ is read:
 | `Origin: null` — sandboxed iframe, cross-origin redirect, `file://` | `403` |
 | no `Origin` header | `403` |
 | server `cors.origin: '*'` | `403` — a wildcard is not an allow-list |
+| origin policy granted the origin `{ credentials: true }` | parsed |
+| origin policy granted `{ credentials: false }` or `false` | `403` — only an origin trusted with credentials may post text |
 | server without `cors` | `403` — there is no allow-list |
 | `application/json` from any origin | unchanged — never subject to the check |
 

@@ -74,7 +74,11 @@ export interface BranchSource {
 /** Validate the complete archive before selecting a prefix; a truncated tail never looks complete. */
 export function prepareBranchSource(
   bytes: Uint8Array,
-  source: BranchAgentConversationInput['source'],
+  {
+    source,
+    applicationFiles = [],
+    applicationKeys = [],
+  }: Pick<BranchAgentConversationInput, 'source' | 'applicationFiles' | 'applicationKeys'>,
 ): BranchSource {
   const archive = decodeAgentConversationArchive(bytes);
   if (source.kind === 'conversation' && source.conversationId !== archive.conversationId)
@@ -118,6 +122,8 @@ export function prepareBranchSource(
     archive.conversationId,
   );
   for (const spill of allSpills) validationIds.define('spill', spill.reference);
+  validationIds.declareApplicationFiles(applicationFiles);
+  validationIds.declareApplicationKeys(applicationKeys);
   // The complete supplied archive must be understood, including an unselected tail.
   // This is the same transfer planner used for the selected destination, without writes.
   rekeyBranchEvents(
@@ -154,6 +160,8 @@ export function prepareBranchSource(
     archive.conversationId,
   );
   for (const spill of allSpills) selectedIds.define('spill', spill.reference);
+  selectedIds.declareApplicationFiles(applicationFiles);
+  selectedIds.declareApplicationKeys(applicationKeys);
   rekeyBranchEvents(selectedIds, archive.conversationId, events, replay.retainedMessages);
   const references = selectedIds.referenced('spill');
   const spills = allSpills.filter((spill) => references.has(spill.reference));

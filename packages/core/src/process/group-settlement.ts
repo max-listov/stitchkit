@@ -37,6 +37,20 @@ export function observationFailureReason(cause: unknown): string {
   return (errnoOf(cause) ?? signal ?? cause.name).slice(0, 32);
 }
 
+/** How many times the kernel is asked, a millisecond apart, before the first process-table snapshot. */
+export const GROUP_EXIT_QUICK_LOOKS = 8;
+
+/** Whether the group is absent after a few one-millisecond looks at the kernel. */
+async function groupLeavesShortly(pid: number, deadline: number): Promise<boolean> {
+  for (let look = 0; look < GROUP_EXIT_QUICK_LOOKS; look += 1) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) return false;
+    await sleep(Math.min(1, remaining));
+    if (!processGroupExists(pid)) return true;
+  }
+  return false;
+}
+
 /** A delivered SIGKILL is asynchronous; do not report cleanup until every group member is dead. */
 export async function waitForProcessGroupExit(
   pid: number | undefined,
@@ -65,6 +79,10 @@ export async function waitForProcessGroupExit(
           { ...observation(), failure: 'deadline' },
         );
       if (!processGroupExists(pid)) return;
+      // A killed member is gone, and its zombie reaped, within a scheduler tick or
+      // two. Ask the kernel again before paying for a process-table snapshot: that
+      // is a spawned command, and on a busy host it alone can outlast the budget.
+      if (observations === 0 && (await groupLeavesShortly(pid, deadline))) return;
       const table = await processGroups(remaining);
       observations++;
       if (!hasLiveGroupMember(table, pid)) return;

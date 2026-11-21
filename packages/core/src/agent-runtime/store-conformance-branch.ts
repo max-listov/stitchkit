@@ -11,7 +11,15 @@ export async function branchConformance(
   restored: string,
 ) {
   if (!store.branchConversation) return;
-  const input = userMessage(source, `${source}-input`);
+  // An attachment the application stored itself: the branch carries it only by declaration.
+  const attachment = `attachments/${source}/image.png`;
+  const input = AgentMessageSchema.parse({
+    ...userMessage(source, `${source}-input`),
+    parts: [
+      { type: 'text', text: 'see the image' },
+      { type: 'file', mediaType: 'image/png', reference: attachment },
+    ],
+  });
   const run = queuedRun(source, input.id, `${source}-run`);
   requireOutcome(
     await store.acceptInputAndAssignRun({ idempotencyKey: 'branch-input', input, run }),
@@ -50,7 +58,20 @@ export async function branchConformance(
     requestKey: 'branch-conformance',
     destinationConversationId: destination,
     source: { kind: 'conversation', conversationId: source, throughRunId: run.id },
+    applicationFiles: [
+      { reference: attachment, destinationReference: `attachments/${destination}/image.png` },
+    ],
   } satisfies Parameters<NonNullable<AgentRuntimeStore['branchConversation']>>[0];
+  const undeclared = await store.branchConversation({ ...request, applicationFiles: [] }).then(
+    () => 'created',
+    () => 'refused',
+  );
+  if (undeclared !== 'refused')
+    throw new Error(
+      'Branch conformance: an undeclared application file reference was not refused',
+    );
+  if ((await store.loadSnapshot(destination)).version !== 0)
+    throw new Error('Branch conformance: a refused branch wrote its destination');
   const created = await store.branchConversation(request);
   requireOutcome(created, 'created');
   const duplicate = await store.branchConversation(request);
@@ -66,6 +87,14 @@ export async function branchConformance(
     snapshot.runs[0]?.fencingToken !== undefined
   )
     throw new Error('Branch conformance: identity or authority was inherited');
+  const copiedFile = snapshot.messages
+    .flatMap((message) => message.parts)
+    .find((part) => part.type === 'file');
+  if (
+    copiedFile?.type !== 'file' ||
+    copiedFile.reference !== `attachments/${destination}/image.png`
+  )
+    throw new Error('Branch conformance: a declared application file kept the source address');
   if (Buffer.compare(before, await store.exportConversation(source)) !== 0)
     throw new Error('Branch conformance: source changed');
   const archived = await store.exportConversation(destination);
@@ -77,6 +106,12 @@ export async function branchConformance(
       requestKey: 'restore-conformance',
       destinationConversationId: restored,
       source: { kind: 'archive', bytes: archived },
+      applicationFiles: [
+        {
+          reference: `attachments/${destination}/image.png`,
+          destinationReference: `attachments/${restored}/image.png`,
+        },
+      ],
     }),
     'created',
   );

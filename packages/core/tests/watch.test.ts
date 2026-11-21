@@ -182,7 +182,7 @@ describe('what causes a re-read', () => {
     let reads = 0;
     const bus = topics();
     const hub = createWatchHub({
-      read: async (_operation, args) => ({ address: (args as { address: string }).address }),
+      read: async ({ args }) => ({ address: (args as { address: string }).address }),
       watchable: () => true,
       invalidatedBy: (_operation, args) => [
         `chat.transcript:${(args as { address: string }).address}`,
