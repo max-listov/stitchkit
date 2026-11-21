@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.6.23] - 2026-11-21
+
 ### Changed
 
 - Generated projects resolve stitchkit 0.126.0. The backend's watch hub reads with

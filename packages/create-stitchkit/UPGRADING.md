@@ -60,7 +60,9 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
-## Unreleased migration: watch hub reads one request
+## Released migration: 0.6.23
+
+### watch hub reads one request
 
 Take it together with stitchkit 0.126.0, whose `createWatchHub` passes `read` one
 `{ operation, args, scope, signal }` request; on 0.125.0 and earlier the entry does not compile.
