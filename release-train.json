@@ -2,8 +2,12 @@
   "schemaVersion": 1,
   "releases": [
     {
-      "target": "create-stitchkit",
-      "version": "0.8.0"
+      "target": "core",
+      "version": "0.129.0"
+    },
+    {
+      "target": "tui",
+      "version": "0.5.2"
     }
   ]
 }

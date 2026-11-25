@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: codex-plan-window-keys
+## Released migration: 0.129.0
 
 ### codex-plan-window-keys
 

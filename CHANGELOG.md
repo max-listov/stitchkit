@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.129.0] - 2026-11-25
+
 ### ⚠️ Breaking changes
 
 **Who must act:** every caller of `codexPlanWindows` or `createCodexDriver` (`status()`) from
