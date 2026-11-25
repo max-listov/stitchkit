@@ -1,5 +1,15 @@
 import { findProjectRole, parseProjectDeclaration } from 'stitchkit/declaration';
+import { z } from 'zod';
+import rootManifest from '../../../package.json' with { type: 'json' };
 import source from '../../../project.json' with { type: 'json' };
+
+/**
+ * Single version of the application, read from the root `package.json` so
+ * OpenAPI, MCP and the CLI never drift from the release version.
+ */
+export const appVersion = z
+  .looseObject({ version: z.string().min(1) })
+  .parse(rootManifest).version;
 
 /**
  * What this repository says about itself — the one machine-readable statement

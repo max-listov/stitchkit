@@ -4,7 +4,6 @@
   "identity": {
     "slug": "stitchkit-agent-starter",
     "name": "Stitchkit Agent Starter",
-    "version": "0.1.0",
     "description": {
       "en": "A durable terminal coding agent built with Stitchkit."
     }

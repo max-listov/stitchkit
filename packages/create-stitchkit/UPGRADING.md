@@ -61,6 +61,27 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
+## Unreleased migration: single-root-version
+
+### single-root-version
+
+**Required.** Adopt these edits together with upgrading `stitchkit` to `0.128.0`
+(see [`docs/guide/upgrading.md`](../../docs/guide/upgrading.md#declaration-single-version) for the
+framework change).
+
+1. Remove `"version"` from `project.json` under `identity` and regenerate
+   `packages/config/src/app-identity.generated.ts` (`bun run gen:declaration`).
+2. Remove duplicate `"version"` fields from private internal workspace manifests
+   (`packages/*/package.json` where `"private": true`), keeping `"version"` only in the root
+   `package.json` (unless a subpackage is released independently).
+3. Export `appVersion` from `packages/config/src/declaration.ts` by reading `../../../package.json`
+   and pass `appVersion` instead of `appDeclaration.identity.version` in
+   `packages/backend/src/cli.ts` (`createCli`) and `packages/backend/src/index.ts`
+   (`createMcpHandler` `serverInfo.version` and `generateOpenApiDocument` `info.version`).
+4. Update the root `package.json` catalog to `"stitchkit": "^0.128.0"` (and in agent-template
+   projects, `"stitchkit-tui": "^0.5.1"`), run `bun install`, and verify with `bun run check` and
+   `bun run test`.
+
 ## Released migration: 0.7.0
 
 ### starter uses stitchkit/testing and mandatory tool access

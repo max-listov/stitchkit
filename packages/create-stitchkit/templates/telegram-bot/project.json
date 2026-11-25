@@ -4,7 +4,6 @@
   "identity": {
     "slug": "stitchkit-telegram-bot-starter",
     "name": "Stitchkit Telegram Bot Starter",
-    "version": "0.1.0",
     "description": {
       "en": "A long-polling Telegram bot assembled from Stitchkit primitives."
     }

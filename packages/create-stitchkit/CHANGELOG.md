@@ -12,6 +12,13 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** every project scaffolded from an earlier `create-stitchkit` release that upgrades to `stitchkit@^0.128.0`, still carries `identity.version` in `project.json` or duplicate `"version"` fields in private workspace `packages/*/package.json`, or reads `appDeclaration.identity.version` in `packages/backend/src/{cli,index}.ts` ([migration](./UPGRADING.md#single-root-version)).
+
+- Removed `identity.version` from all template `project.json` files (`template/`, `examples/repository/`, `templates/agent/`, `templates/telegram-bot/`), `packages/config/src/app-identity.generated.ts`, and `createApplicationIdentity()`, and removed duplicate `"version": "0.1.0"` fields from all private workspace subpackages (`template/packages/{backend,config,db,frontend,shared}/package.json`). The root `package.json` is now the single version source, exported as `appVersion` from `packages/config/src/declaration.ts` and passed to `createCli`, `createMcpHandler` (`serverInfo.version`), and `generateOpenApiDocument` (`info.version`). Before: `version: appDeclaration.identity.version`. After: `version: appVersion`. Existing projects adopt it by [`UPGRADING.md`](./UPGRADING.md#single-root-version).
+- Updated the starter catalog to `stitchkit@^0.128.0` and the agent template catalog to `stitchkit-tui@^0.5.1`.
+
 ## [0.7.0] - 2026-11-25
 
 ### ⚠️ Breaking changes

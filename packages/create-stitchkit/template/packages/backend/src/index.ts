@@ -1,5 +1,5 @@
 import { env } from '@app/config';
-import { apiRole, appDeclaration } from '@app/config/declaration';
+import { apiRole, appDeclaration, appVersion } from '@app/config/declaration';
 import { serviceSurfacesAreOpen } from '@app/config/variables';
 import { wrapInRequestContext } from 'stitchkit/observability';
 import {
@@ -20,7 +20,7 @@ async function main(): Promise<void> {
   const mcp = createMcpHandler({
     serverInfo: {
       name: appDeclaration.identity.slug,
-      version: appDeclaration.identity.version,
+      version: appVersion,
     },
     auth: () => ({ scope: 'public' }),
     // Every starter contract is public; replace with `{ gate: { beforeHandle } }`
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   const openApi = generateOpenApiDocument({
     info: {
       title: `${appDeclaration.identity.name} API`,
-      version: appDeclaration.identity.version,
+      version: appVersion,
     },
     groups: [{ pathPrefix: '/api', services }],
   });

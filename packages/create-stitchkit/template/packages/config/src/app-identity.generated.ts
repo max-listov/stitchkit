@@ -12,7 +12,6 @@
 export const appIdentity = {
   "slug": "stitchkit-starter",
   "name": "Stitchkit Starter",
-  "version": "0.1.0",
   "description": {
     "en": "Stitchkit Starter is a production application built with Stitchkit.",
     "ru": "Stitchkit Starter — production-приложение на Stitchkit."

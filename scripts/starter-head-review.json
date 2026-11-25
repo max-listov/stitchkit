@@ -1,6 +1,0 @@
-{
-  "coreVersion": "0.128.0",
-  "outcome": "deferred",
-  "reason": "The starter template targeting ^0.127.0 still carries identity.version in project.json for published stitchkit 0.127.0, while 0.128.0 removes identity.version from ProjectIdentitySchema. After 0.128.0 is published on npm, Train 2 updates the starter to ^0.128.0, drops duplicate versions from project.json and private subpackages, removes this record, and ships create-stitchkit@0.8.0.",
-  "followUp": "create-stitchkit@0.8.0"
-}

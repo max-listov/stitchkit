@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "catalog": {
-    "stitchkit-tui": "^0.5.0"
+    "stitchkit-tui": "^0.5.1"
   },
   "overrides": {
     "zod": "4.6.7"

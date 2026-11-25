@@ -43,7 +43,6 @@ const MINIMAL_DECLARATION = {
   identity: {
     slug: 'stitchkit-starter',
     name: 'Stitchkit Starter',
-    version: '0.1.0',
     description: { en: 'A starter.' },
   },
   roles: [
@@ -147,7 +146,6 @@ describe('scaffoldProject', () => {
     expect(declaration.identity).toEqual({
       slug: 'talk-control',
       name: 'Talk Control Console',
-      version: '0.1.0',
       description: {
         en: 'Talk Control Console is a production application built with Stitchkit.',
         ru: 'Talk Control Console — production-приложение на Stitchkit.',
@@ -583,7 +581,7 @@ describe('scaffoldProject', () => {
     // No workspace, so no catalog: Bun reads one only in a workspace root.
     expect(manifest).toMatchObject({
       name: 'terminal-agent',
-      dependencies: { stitchkit: '^0.68.6', 'stitchkit-tui': '^0.5.0' },
+      dependencies: { stitchkit: '^0.68.6', 'stitchkit-tui': '^0.5.1' },
     });
     expect(manifest.catalog).toBeUndefined();
     expect(await Bun.file(join(destination, 'bun.lock')).exists()).toBeFalse();
@@ -785,6 +783,97 @@ describe('scaffoldProject', () => {
         'utf8',
       );
       expect(backendTools).toContain('tool.expose');
+    }
+  });
+
+  test('ships a single version field in the root package.json across every template', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-single-version-'));
+    created.push(parent);
+    const templateRoot = join(import.meta.dir, '..', 'template');
+    const repositoryOverlay = join(import.meta.dir, '..', 'examples/repository');
+    const agentRoot = join(import.meta.dir, '..', 'templates/agent');
+    const telegramRoot = join(import.meta.dir, '..', 'templates/telegram-bot');
+
+    const cases: Array<{
+      name: string;
+      source: string;
+      options: Parameters<typeof scaffoldProject>[2];
+      subpackages: string[];
+    }> = [
+      {
+        name: 'blank-single-version',
+        source: templateRoot,
+        options: {},
+        subpackages: ['backend', 'config', 'db', 'frontend', 'shared'],
+      },
+      {
+        name: 'repo-single-version',
+        source: templateRoot,
+        options: { overlayDirectory: repositoryOverlay },
+        subpackages: ['backend', 'config', 'db', 'frontend', 'shared'],
+      },
+      {
+        name: 'agent-single-version',
+        source: agentRoot,
+        options: {
+          identityModule: false,
+          lockfile: false,
+          stitchkitCatalogTarget: '^0.128.0',
+        },
+        subpackages: [],
+      },
+      {
+        name: 'telegram-single-version',
+        source: telegramRoot,
+        options: {
+          identityModule: false,
+          lockfile: false,
+          stitchkitCatalogTarget: '^0.128.0',
+        },
+        subpackages: [],
+      },
+    ];
+
+    for (const entry of cases) {
+      const destination = join(parent, entry.name);
+      await scaffoldProject(entry.source, destination, entry.options);
+
+      const rootManifest = JSON.parse(
+        await readFile(join(destination, 'package.json'), 'utf8'),
+      );
+      expect(typeof rootManifest.version).toBe('string');
+      expect(rootManifest.version.length).toBeGreaterThan(0);
+
+      const declarationRaw = JSON.parse(
+        await readFile(join(destination, 'project.json'), 'utf8'),
+      );
+      expect('version' in declarationRaw.identity).toBe(false);
+      parseProjectDeclaration(declarationRaw);
+
+      for (const pkg of entry.subpackages) {
+        const subManifest = JSON.parse(
+          await readFile(join(destination, 'packages', pkg, 'package.json'), 'utf8'),
+        );
+        expect(subManifest.private).toBe(true);
+        expect('version' in subManifest).toBe(false);
+      }
+
+      if (entry.subpackages.length > 0) {
+        const appIdentitySource = await readFile(join(destination, APP_IDENTITY_PATH), 'utf8');
+        expect(appIdentitySource).not.toContain('"version"');
+        const cliSource = await readFile(
+          join(destination, 'packages/backend/src/cli.ts'),
+          'utf8',
+        );
+        const indexSource = await readFile(
+          join(destination, 'packages/backend/src/index.ts'),
+          'utf8',
+        );
+        expect(cliSource).toContain('appVersion');
+        expect(cliSource).not.toContain('identity.version');
+        expect(indexSource).toContain('appVersion');
+        expect(indexSource).not.toContain('identity.version');
+      }
     }
   });
 });
