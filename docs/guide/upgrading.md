@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: invocation-payload-lifecycle
+## Released migration: 0.128.0
 
 ### invocation-payload-lifecycle
 
@@ -61,8 +61,6 @@ authorize: (input) => {
 }
 ```
 
-## Unreleased migration: cli-option-projections-error-field
-
 ### cli-option-projections-error-field
 
 **Who must act:** every caller of `extractCliGlobalOptions` or `scanCliInvocation` from
@@ -92,8 +90,6 @@ if (parsed.error) {
   // handle parsed.error, or pass raw argv to createCli(...) for exit-code-2 reporting
 }
 ```
-
-## Unreleased migration: declaration-single-version
 
 ### declaration-single-version
 
@@ -128,8 +124,6 @@ Read your application version from the root `package.json` for a single-version 
 from the package's own `package.json` if that package is released independently — instead of
 `identity.version` (for example, in OpenAPI `info.version`, MCP `serverInfo.version`, and
 `createCli({ version })`).
-
-## Unreleased migration: read-only-surface-inspection
 
 ### read-only-surface-inspection
 
