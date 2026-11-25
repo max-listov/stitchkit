@@ -7,7 +7,7 @@ import {
 } from 'node:crypto';
 import { z } from 'zod';
 import { serializeCanonicalJson } from '../internal/canonical-json';
-import { InvocationPayloadSchema } from './invocation-schema';
+import { InvocationPayloadSchema } from './schemas-invocation-payload';
 import type { AgentRuntimeStore } from './store';
 
 /** Serialize SDK payloads at the typed external boundary, retaining binary bytes privately. */
@@ -37,6 +37,26 @@ export function invocationHash(value: unknown): string {
     .digest('hex');
 }
 
+/**
+ * Raised when a serialized invocation payload exceeds `maxPayloadBytes`.
+ * Carries the measured byte length, configured ceiling, and SHA-256 of the
+ * canonical serialized payload so callers can record omission evidence without
+ * re-serializing or re-hashing.
+ */
+export class InvocationPayloadTooLargeError extends RangeError {
+  readonly bytes: number;
+  readonly maxBytes: number;
+  readonly sha256: string;
+
+  constructor(bytes: number, maxBytes: number, sha256: string) {
+    super(`Invocation payload (${bytes} bytes) exceeds maxPayloadBytes (${maxBytes})`);
+    this.name = 'InvocationPayloadTooLargeError';
+    this.bytes = bytes;
+    this.maxBytes = maxBytes;
+    this.sha256 = sha256;
+  }
+}
+
 export function createInvocationPayloads(
   store: AgentRuntimeStore,
   key: Uint8Array,
@@ -58,10 +78,11 @@ export function createInvocationPayloads(
       value: unknown,
     ) {
       const data = Buffer.from(serializeCanonicalJson(invocationJson(value)));
-      if (data.byteLength > maxBytes)
-        throw new RangeError('Invocation payload exceeds maxPayloadBytes');
-      const artifactId = randomUUID();
       const sha256 = createHash('sha256').update(data).digest('hex');
+      if (data.byteLength > maxBytes) {
+        throw new InvocationPayloadTooLargeError(data.byteLength, maxBytes, sha256);
+      }
+      const artifactId = randomUUID();
       const iv = randomBytes(12);
       const cipher = createCipheriv('aes-256-gcm', encryptionKey, iv);
       cipher.setAAD(

@@ -5,7 +5,6 @@
 import { writeFileSync } from 'node:fs';
 import { z } from 'zod';
 import {
-  CliArgumentError,
   createCli,
   createCliProfileStore,
   defineCliCommand,
@@ -192,46 +191,37 @@ export async function runFixtureProfile(
     // Managed array with profile resolution BEFORE createCli (uses real process.argv when argv is omitted).
     const rawArgv = argv ?? process.argv.slice(2);
     let selectedProfile: string | undefined;
-    try {
-      const lifted = extractCliGlobalOptions(rawArgv, APP_GLOBALS);
-      const requested =
-        typeof lifted.globals.profile === 'string' ? lifted.globals.profile : undefined;
-      if (options.profileDir !== undefined) {
-        const store = createFixtureProfileStore(options.profileDir);
-        if (options.capture === false) {
-          // Subprocess path: exercises notices.ts reading real process.argv via scanCliInvocation.
-          selectedProfile = store.resolve(requested).name;
-        } else {
-          // In-process path: mirrors notices.ts (suppresses notice on invalid framework flags).
-          let suppress = false;
-          try {
-            suppress = scanCliInvocation(rawArgv, { appGlobals: APP_GLOBALS }).framework.quiet;
-          } catch (error) {
-            if (error instanceof CliArgumentError) suppress = true;
-            else throw error;
-          }
-          selectedProfile = withCliNotices(
-            suppress,
-            writeErr,
-            () => store.resolve(requested).name,
-          );
-        }
+    const lifted = extractCliGlobalOptions(rawArgv, APP_GLOBALS);
+    if (lifted.error !== undefined) {
+      writeErr(`${lifted.error.message}\n`);
+      setExit(2);
+      return {
+        code,
+        stdout,
+        stderr,
+        handlerCalls,
+        resolveAuthCalls,
+        factoryCalls,
+        lastInput,
+      };
+    }
+    const requested =
+      typeof lifted.globals.profile === 'string' ? lifted.globals.profile : undefined;
+    if (options.profileDir !== undefined) {
+      const store = createFixtureProfileStore(options.profileDir);
+      if (options.capture === false) {
+        // Subprocess path: exercises notices.ts reading real process.argv via scanCliInvocation.
+        selectedProfile = store.resolve(requested).name;
+      } else {
+        // In-process path: mirrors notices.ts (suppresses notice on invalid framework flags).
+        const scan = scanCliInvocation(rawArgv, { appGlobals: APP_GLOBALS });
+        const suppress = scan.error !== undefined || scan.framework.quiet;
+        selectedProfile = withCliNotices(
+          suppress,
+          writeErr,
+          () => store.resolve(requested).name,
+        );
       }
-    } catch (error) {
-      if (error instanceof CliArgumentError) {
-        writeErr(`${error.message}\n`);
-        setExit(2);
-        return {
-          code,
-          stdout,
-          stderr,
-          handlerCalls,
-          resolveAuthCalls,
-          factoryCalls,
-          lastInput,
-        };
-      }
-      throw error;
     }
     await createCli({
       ...common,

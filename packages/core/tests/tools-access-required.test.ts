@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
@@ -580,5 +581,297 @@ describe('tool access runtime behaviour', () => {
     expect(() =>
       callUntyped(buildMcpServerFromPrepared, undefined, undefined, preparedServer),
     ).toThrow(/buildMcpServerFromPrepared: access is required/);
+  });
+
+  test('access: { inspect: true } allows read-only surface inspection and refuses execution fail-closed before extension, hooks, durability, multi-round, and auth', async () => {
+    let handlerCalls = 0;
+    let extendResolveCalls = 0;
+    let beforeHookCalls = 0;
+    let durabilityCalls = 0;
+    let authResolveCalls = 0;
+    let inputRequiredCalls = 0;
+
+    const trackedContract = defineContract(
+      { prefix: '/insp' },
+      {
+        read: {
+          method: 'GET',
+          path: '/read',
+          desc: 'Inspectable endpoint',
+          expose: ['MCP', 'AGENT', 'CLI'],
+          tool: {
+            name: 'inspect_read',
+            mcp: {
+              inputRequired: () => {
+                inputRequiredCalls += 1;
+                return [
+                  { key: 'confirm', message: 'enter', schema: z.object({ ok: z.boolean() }) },
+                ];
+              },
+            },
+          },
+          input: z.object({ id: z.string().min(1) }),
+          output: z.object({ id: z.string() }),
+        },
+      },
+    );
+    const trackedService = implement(trackedContract, {
+      read: async ({ input }) => {
+        handlerCalls += 1;
+        return { id: input.id };
+      },
+    });
+    const extend = {
+      schema: { tenantId: z.string().min(1) },
+      resolve: async () => {
+        extendResolveCalls += 1;
+        return { tenantId: 't1' };
+      },
+    };
+    const hooks = {
+      beforeToolCall: () => {
+        beforeHookCalls += 1;
+      },
+    };
+
+    // Rejects invalid inspect shapes and combinations
+    for (const badAccess of [
+      { inspect: false },
+      { inspect: 1 },
+      { inspect: 'true' },
+      { inspect: true, open: 'public' },
+      { inspect: true, gate: { beforeHandle: () => undefined } },
+      { inspect: true, afterHandle: () => undefined },
+    ]) {
+      expect(() => callUntyped(mountAgent, trackedService, { access: badAccess })).toThrow(
+        /mountAgent: access is required/,
+      );
+    }
+
+    // 1. mountAgent: keys/schemas readable, execution fails closed BEFORE durability, extend.resolve, hooks, and arg parsing
+    const agentTools = mountAgent(trackedService, {
+      access: { inspect: true },
+      extend,
+      hooks,
+      durability: () => {
+        durabilityCalls += 1;
+        throw new Error('durability must not be called');
+      },
+    });
+    expect(Object.keys(agentTools)).toEqual(['inspect_read']);
+    const exec = agentTools.inspect_read?.execute;
+    if (!exec) throw new Error('missing execute');
+    await expect(
+      // Invalid args ({}) must STILL fail with FORBIDDEN, not VALIDATION_ERROR!
+      callUntyped(exec, {}, { toolCallId: 'c1', messages: [] }),
+    ).rejects.toThrow(/FORBIDDEN|inspect: true/);
+
+    // 2. createToolInvoker: fails closed with FORBIDDEN before extend.resolve and arg parsing
+    const invoker = createToolInvoker(trackedService, {
+      transport: 'AGENT',
+      access: { inspect: true },
+      extend,
+    });
+    const invRes = await invoker.invoke('inspect_read', {}, { hooks });
+    expect(invRes).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+
+    const plainTrackedContract = defineContract(
+      { prefix: '/plain-insp' },
+      {
+        read: {
+          method: 'GET',
+          path: '/read',
+          desc: 'Plain inspectable endpoint',
+          expose: ['MCP', 'AGENT', 'CLI'],
+          tool: { name: 'plain_inspect_read' },
+          input: z.object({ id: z.string().min(1) }),
+          output: z.object({ id: z.string() }),
+        },
+      },
+    );
+    const plainTrackedService = implement(plainTrackedContract, {
+      read: async ({ input }) => {
+        handlerCalls += 1;
+        return { id: input.id };
+      },
+    });
+
+    // 3. buildMcpServer (with multiRound + runtimeTools) + mountMcp: tools/list succeeds, tools/call refuses FORBIDDEN before resolveMcpRound/inputRequired/handler
+    let runtimeToolCalls = 0;
+    const trackedRuntimeTool = defineRuntimeTool({
+      name: 'inspect_runtime_ping',
+      description: 'Tracked inspect runtime tool',
+      identity: { serviceName: 'ping', action: 'run', method: 'GET' },
+      input: z.object({}),
+      output: z.object({ ok: z.boolean() }),
+      expose: ['MCP', 'AGENT', 'CLI'],
+      handler: async () => {
+        runtimeToolCalls += 1;
+        return { ok: true };
+      },
+    });
+    const mcpServer = buildMcpServer({
+      serverInfo,
+      services: [trackedService],
+      runtimeTools: [trackedRuntimeTool],
+      access: { inspect: true },
+      extend,
+      hooks,
+      multiRound: {
+        state: {
+          key: '0123456789abcdef0123456789abcdef',
+          principal: () => 'principal',
+        },
+      },
+    });
+    const [mcpClientTransport, mcpServerTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: 'inspect-mcp-client', version: '1' });
+    try {
+      await Promise.all([
+        mcpServer.connect(mcpServerTransport),
+        mcpClient.connect(mcpClientTransport),
+      ]);
+      const listed = (await mcpClient.listTools()).tools.map((t) => t.name).sort();
+      expect(listed).toEqual(['inspect_read', 'inspect_runtime_ping']);
+      const contractCall = await mcpClient.callTool({ name: 'inspect_read', arguments: {} });
+      expect(contractCall.isError).toBe(true);
+      expect(JSON.stringify(contractCall.content)).toMatch(/FORBIDDEN|inspect: true/);
+      const runtimeCall = await mcpClient.callTool({
+        name: 'inspect_runtime_ping',
+        arguments: {},
+      });
+      expect(runtimeCall.isError).toBe(true);
+      expect(JSON.stringify(runtimeCall.content)).toMatch(/FORBIDDEN|inspect: true/);
+    } finally {
+      await mcpClient.close();
+      await mcpServer.close();
+    }
+
+    const bareServer = new McpServer(serverInfo);
+    mountMcp(bareServer, plainTrackedService, {
+      access: { inspect: true },
+      extend,
+      hooks,
+    });
+    const [bareClientTransport, bareServerTransport] = InMemoryTransport.createLinkedPair();
+    const bareClient = new Client({ name: 'inspect-bare-client', version: '1' });
+    try {
+      await Promise.all([
+        bareServer.connect(bareServerTransport),
+        bareClient.connect(bareClientTransport),
+      ]);
+      expect((await bareClient.listTools()).tools.map((t) => t.name)).toEqual([
+        'plain_inspect_read',
+      ]);
+      const bareCall = await bareClient.callTool({
+        name: 'plain_inspect_read',
+        arguments: {},
+      });
+      expect(bareCall.isError).toBe(true);
+      expect(JSON.stringify(bareCall.content)).toMatch(/FORBIDDEN|inspect: true/);
+    } finally {
+      await bareClient.close();
+      await bareServer.close();
+    }
+
+    // 4. createCli: --help and --schema succeed without calling resolveAuth; running the command (including invalid args and --dry-run) fails FORBIDDEN before prepareInvocation, validation, stdin, or resolveAuth
+    let helpOut = '';
+    let helpCode = -1;
+    let stdinCalls = 0;
+    const forbiddenStdin = async () => {
+      stdinCalls += 1;
+      throw new Error('stdin must not be read under inspect: true');
+    };
+    await createCli({
+      name: 'inspect-cli',
+      version: '1.0.0',
+      services: [trackedService],
+      access: { inspect: true },
+      resolveAuth: () => {
+        authResolveCalls += 1;
+        return { user: 'u1' };
+      },
+      argv: ['inspect_read', '--schema'],
+      stdout: (s) => {
+        helpOut += s;
+      },
+      stderr: () => undefined,
+      exit: (c) => {
+        helpCode = c;
+      },
+    });
+    expect(helpCode).toBe(0);
+    expect(JSON.parse(helpOut)).toMatchObject({ command: 'inspect_read' });
+
+    for (const cliArgv of [
+      ['inspect_read', '--id', 'abc'],
+      ['inspect_read'],
+      ['inspect_read', '--dry-run'],
+    ]) {
+      let execErr = '';
+      let execCode = -1;
+      await createCli({
+        name: 'inspect-cli',
+        version: '1.0.0',
+        services: [trackedService],
+        access: { inspect: true },
+        resolveAuth: () => {
+          authResolveCalls += 1;
+          return { user: 'u1' };
+        },
+        stdin: forbiddenStdin,
+        argv: cliArgv,
+        stdout: () => undefined,
+        stderr: (s) => {
+          execErr += s;
+        },
+        exit: (c) => {
+          execCode = c;
+        },
+      });
+      expect(execCode).not.toBe(0);
+      expect(execErr).toMatch(/FORBIDDEN|inspect: true/);
+    }
+
+    // 5. createCliInvoker: commands readable without resolveAuth or context; invoke fails FORBIDDEN
+    let contextCalls = 0;
+    const cliInv = await createCliInvoker({
+      name: 'inspect-cli',
+      services: [trackedService],
+      access: { inspect: true },
+      context: () => {
+        contextCalls += 1;
+        return {};
+      },
+      resolveAuth: () => {
+        authResolveCalls += 1;
+        return { user: 'u1' };
+      },
+    });
+    expect(cliInv.commands.map((c) => c.name)).toContain('inspect_read');
+    const cliInvRes = await cliInv.invoke('inspect_read', {});
+    expect(cliInvRes.ok).toBe(false);
+    expect(cliInvRes.error?.code).toBe('FORBIDDEN');
+
+    // 6. createDeferredAgentToolSurface.mount accepts { inspect: true } and refuses execution
+    const deferredMounted = deferredSurface.mount(makeRunContext(), {
+      access: { inspect: true },
+    });
+    expect(Object.keys(deferredMounted)).toContain('find_tools');
+    const findTools = deferredMounted.find_tools;
+    if (!findTools?.execute) throw new Error('missing find_tools.execute');
+    await expect(
+      callUntyped(findTools.execute, { query: 'read' }, { toolCallId: 'c3', messages: [] }),
+    ).rejects.toThrow(/FORBIDDEN/);
+
+    expect(handlerCalls).toBe(0);
+    expect(runtimeToolCalls).toBe(0);
+    expect(extendResolveCalls).toBe(0);
+    expect(beforeHookCalls).toBe(0);
+    expect(durabilityCalls).toBe(0);
+    expect(authResolveCalls).toBe(0);
+    expect(contextCalls).toBe(0);
+    expect(stdinCalls).toBe(0);
+    expect(inputRequiredCalls).toBe(0);
   });
 });

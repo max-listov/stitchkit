@@ -21,7 +21,15 @@ export interface AcpDriverConfig {
   model?: string;
   /** Set at open through the option of category `thought_level`, after the model, which may narrow it. */
   thoughtLevel?: string;
-  /** Set at open through the option of category `mode`: whether the agent asks before a tool is its mode. */
+  /**
+   * Set at open through the option of category `mode`. Negotiates the agent's advertised mode
+   * value only; it does not enforce host-side pre-execution tool approval (`approvalEnforcement`
+   * is `'agent-initiated'`). Whether an agent sends `session/request_permission` before a tool
+   * runs depends on the agent's own permission policy (for example, `agy` requires an isolated
+   * `--cli_dir_name <subdir>` with `{"toolPermission":"strict","agentMode":""}` in
+   * `~/.gemini/antigravity-cli/<subdir>/settings.json`, which prompts before every tool action
+   * including reads).
+   */
   mode?: string;
   /** MCP servers the agent connects to, passed on `session/new`, `session/load` and `session/resume`. */
   mcpServers?: readonly AcpMcpServer[];

@@ -68,14 +68,21 @@ describe('Claude transcript', () => {
         path,
         [
           JSON.stringify({
+            type: 'user',
             uuid: 'other-id',
             message: { text: 'contains target-uuid in text' },
           }),
-          JSON.stringify({ uuid: 'target-uuid', message: { text: 'real' } }),
+          JSON.stringify({
+            type: 'assistant',
+            uuid: 'assistant-only-uuid',
+            message: { text: 'assistant reply' },
+          }),
+          JSON.stringify({ type: 'user', uuid: 'target-uuid', message: { text: 'real' } }),
         ].join('\n'),
       );
       expect(await claudeTranscriptHasUuid(path, 'target-uuid')).toBe(true);
       expect(await claudeTranscriptHasUuid(path, 'contains target-uuid')).toBe(false);
+      expect(await claudeTranscriptHasUuid(path, 'assistant-only-uuid')).toBe(false);
     }));
 });
 

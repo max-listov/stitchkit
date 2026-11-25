@@ -1,5 +1,6 @@
 export { acpFakeScenarios } from '../../agent-executor/acp/scenarios';
 export {
+  type AcpApprovalEnforcement,
   type AcpDriver,
   type AcpDriverConfig,
   type AcpSession,

@@ -1,6 +1,6 @@
 import { basename, join } from 'node:path';
 import type { SystemdHostAdapter } from './systemd-inspect';
-import { SystemdUnitError } from './systemd-render';
+import { SystemdUnitError } from './systemd-render-shared';
 
 /** Directories `enable` links a unit into, under each directory of `UnitPath`. */
 const LINK_DIR_SUFFIXES = ['.wants', '.requires', '.upholds'];

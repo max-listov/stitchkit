@@ -8,7 +8,11 @@ import {
   type ServiceHostPathState,
   sameHostPath,
 } from './host-adapter';
-import { type SystemdScope, SystemdScopeSchema, SystemdUnitError } from './systemd-render';
+import {
+  type SystemdScope,
+  SystemdScopeSchema,
+  SystemdUnitError,
+} from './systemd-render-shared';
 
 export const DEFAULT_SYSTEMD_UNIT_MODE = 0o644;
 /**
@@ -18,7 +22,7 @@ export const DEFAULT_SYSTEMD_UNIT_MODE = 0o644;
  */
 export const SYSTEMCTL_PATH = '/usr/bin/systemctl';
 const SHOW_PROPERTIES =
-  'LoadState,FragmentPath,DropInPaths,ActiveState,SubState,MainPID,UnitFileState';
+  'LoadState,FragmentPath,DropInPaths,ActiveState,SubState,MainPID,UnitFileState,NeedDaemonReload';
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 
 /** Result of running a host supervision command such as `systemctl`. */
@@ -105,6 +109,8 @@ export interface SystemdUnitCheckResult {
   mainPid: number | null;
   /** `UnitFileState` as systemd reports it (`enabled`, `disabled`, `static`, …); `null` when empty. */
   unitFileState: string | null;
+  /** Whether systemd reports `NeedDaemonReload=yes` because the unit file changed on disk since last reload. */
+  needsReload: boolean;
 }
 
 /** Options for {@link systemdUnitActive} and {@link systemdMainPid}. */
@@ -396,6 +402,7 @@ export async function checkSystemdUnit(
   const activeState = props.get('ActiveState') || null;
   const mainPid = parseMainPid(props.get('MainPID'));
   const unitFileState = props.get('UnitFileState') || null;
+  const needsReload = props.get('NeedDaemonReload') === 'yes';
 
   const foreignDropIns = await collectForeignDropIns(
     options.unitName,
@@ -432,6 +439,7 @@ export async function checkSystemdUnit(
     activeState,
     mainPid,
     unitFileState,
+    needsReload,
   };
 }
 

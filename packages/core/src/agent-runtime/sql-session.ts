@@ -81,6 +81,20 @@ export interface AgentSqlDialect {
    * makes the second writer fail with a serialization error and retry.
    */
   nextEventSeq(session: AgentSqlSession, conversationId: string): Promise<number>;
+  /**
+   * Synchronize the search index after an in-place redaction of an existing event
+   * row (such as purging expired encrypted `provider/payload` bodies).
+   */
+  syncUpdatedEventSearch(
+    session: AgentSqlSession,
+    event: {
+      rowId?: number;
+      conversationId: string;
+      seq: number;
+      occurredAt: string;
+      payload: string;
+    },
+  ): Promise<void>;
 }
 
 /**

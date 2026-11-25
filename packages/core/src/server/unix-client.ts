@@ -10,6 +10,7 @@ import {
   unixTransportError,
 } from '../internal/unix-client-error';
 import {
+  assertExpectedOwnerUid,
   assertUnixSocketClientTarget,
   assertUnixSocketPathLength,
 } from '../internal/unix-socket';
@@ -38,6 +39,13 @@ export type UnixResponseBodyMode = 'bounded' | 'streaming';
 export type UnixClientTransportConfig = {
   /** Absolute local socket path selected by deployment configuration. */
   socketPath: string;
+  /**
+   * Expected POSIX UID owning both the socket directory and the socket inode.
+   * Defaults to the calling process UID (`process.getuid()`). Set explicitly (for example `0`
+   * for a root-owned service socket accessed via group permissions) to connect across UIDs
+   * without weakening symlink, socket-type, or group/other-write directory checks.
+   */
+  expectedOwnerUid?: number;
   maxRequestBytes?: number;
   headersTimeoutMs?: number;
   maxHeaderBytes?: number;
@@ -109,6 +117,7 @@ function redirectedRequest(
 }
 
 interface UnixClientLimits {
+  expectedOwnerUid: number | undefined;
   maxRequestBytes: number;
   maxResponseBytes: number | undefined;
   headersTimeoutMs: number;
@@ -123,12 +132,14 @@ function resolveUnixClientLimits(config: UnixClientTransportConfig): UnixClientL
     throw new TypeError('socketPath must be an absolute Unix socket path');
   }
   assertUnixSocketPathLength(config.socketPath, 'createUnixClientTransport');
+  assertExpectedOwnerUid(config.expectedOwnerUid, 'createUnixClientTransport');
   if (config.responseBodyMode === 'streaming' && config.maxResponseBytes !== undefined) {
     throw new TypeError('maxResponseBytes cannot be combined with responseBodyMode streaming');
   }
   const pos = positiveInteger;
   assertTimerMs('headersTimeoutMs', config.headersTimeoutMs);
   return {
+    expectedOwnerUid: config.expectedOwnerUid,
     maxRequestBytes: pos(config.maxRequestBytes, DEFAULT_MAX_BODY_BYTES, 'maxRequestBytes'),
     maxResponseBytes:
       config.responseBodyMode === 'streaming'
@@ -308,6 +319,7 @@ export function createUnixClientTransport(
   config: UnixClientTransportConfig,
 ): UnixClientTransport {
   const {
+    expectedOwnerUid,
     maxRequestBytes,
     maxResponseBytes,
     headersTimeoutMs,
@@ -336,7 +348,11 @@ export function createUnixClientTransport(
     if (url.protocol !== 'http:') {
       throw new TypeError('Unix client transport accepts only http: request URLs');
     }
-    assertUnixSocketClientTarget(config.socketPath);
+    assertUnixSocketClientTarget(
+      config.socketPath,
+      'createUnixClientTransport',
+      expectedOwnerUid,
+    );
     const body = await readBoundedRequestBody(
       request,
       maxRequestBytes,

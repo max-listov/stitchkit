@@ -12,6 +12,7 @@ import {
   type AgentRun,
   AgentRunSchema,
 } from './schemas';
+import type { PurgeInvocationPayloadsResult } from './schemas-invocation-payload';
 import type { AgentRecoverablePage } from './store';
 import type { AgentConversationArchive, AgentStoreEventDraft } from './store-events';
 import type { AgentConversationPurgeDriver } from './store-purge';
@@ -209,6 +210,20 @@ export interface AgentRuntimeStoreDriver<TRANSACTION> {
       transaction: TRANSACTION,
       input: { conversationId: string; eventId: string },
     ): Promise<AgentStoreEventEnvelope | undefined>;
+    /**
+     * Redact encrypted `provider/payload` bodies older than `before` in place,
+     * preserving identity, hash, byte count, and `expiredAt`, and syncing any
+     * full-text search index in the same transaction.
+     */
+    redactExpiredPayloads?(
+      transaction: TRANSACTION,
+      input: {
+        before: string;
+        expiredAt: string;
+        conversationId?: string;
+        limit: number;
+      },
+    ): Promise<PurgeInvocationPayloadsResult>;
   };
   /** Optional driver-owned durable payloads included in the canonical archive. */
   archive?: {

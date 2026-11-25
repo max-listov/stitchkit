@@ -2,13 +2,17 @@ import { expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { observeProcessInstance, probeProcessOwner } from '../src/entrypoints/process';
 import { probeLiveness, probeLivenessSync } from '../src/internal/process-identity';
 import {
   linuxProcessStart,
   type ProcessInstance,
+  probeProcessOwnerSync,
+  probeProcessOwnerSyncWith,
   probeProcessOwnerWith,
   readProcessInstance,
 } from '../src/internal/process-instance';
+import { trackProcess } from './support/process-reaper';
 import { withZombie } from './support/zombie';
 
 const identity: ProcessInstance = {
@@ -161,4 +165,130 @@ test('a zombie is gone to the asynchronous and the synchronous liveness probe al
   // The negative control: this process is running.
   expect(await probeLiveness(process.pid)).toBe('alive');
   expect(probeLivenessSync(process.pid)).toBe('alive');
+});
+
+test('probeProcessOwner reports pid-gone when a PID exits between liveness and observe while keeping real unavailable failures', async () => {
+  const enoent = Object.assign(new Error('ENOENT: /proc/42/stat'), { code: 'ENOENT' });
+  const eperm = Object.assign(new Error('EPERM: /proc/42/stat'), { code: 'EPERM' });
+  const selfFailure = new Error('unreadable /proc/self');
+
+  // Positive control (async): first liveness sees alive, observe hits ENOENT as PID exits, second liveness confirms gone.
+  let asyncCalls = 0;
+  expect(
+    await probeProcessOwnerWith(42, identity, {
+      read: async () => null,
+      liveness: async () => (++asyncCalls === 1 ? 'alive' : 'gone'),
+      observe: async (pid) =>
+        pid === process.pid
+          ? { state: 'observed', instance: identity }
+          : { state: 'unavailable', cause: enoent },
+    }),
+  ).toEqual({ liveness: 'gone', identity: 'pid-gone' });
+  expect(asyncCalls).toBe(2);
+
+  // Positive control (sync): identical TOCTOU window in probeProcessOwnerSyncWith.
+  let syncCalls = 0;
+  expect(
+    probeProcessOwnerSyncWith(42, identity, {
+      liveness: () => (++syncCalls === 1 ? 'alive' : 'gone'),
+      observe: (pid) =>
+        pid === process.pid
+          ? { state: 'observed', instance: identity }
+          : { state: 'unavailable', cause: enoent },
+    }),
+  ).toEqual({ liveness: 'gone', identity: 'pid-gone' });
+  expect(syncCalls).toBe(2);
+
+  // Negative control (async + sync): PID remains alive while observe fails (EPERM / broken /proc) -> unavailable with exact cause.
+  let asyncDeniedCalls = 0;
+  expect(
+    await probeProcessOwnerWith(42, identity, {
+      read: async () => null,
+      liveness: async () => {
+        asyncDeniedCalls++;
+        return 'alive';
+      },
+      observe: async (pid) =>
+        pid === process.pid
+          ? { state: 'observed', instance: identity }
+          : { state: 'unavailable', cause: eperm },
+    }),
+  ).toEqual({ liveness: 'not-probed', identity: 'unavailable', cause: eperm });
+  expect(asyncDeniedCalls).toBe(2);
+
+  let syncDeniedCalls = 0;
+  expect(
+    probeProcessOwnerSyncWith(42, identity, {
+      liveness: () => {
+        syncDeniedCalls++;
+        return 'alive';
+      },
+      observe: (pid) =>
+        pid === process.pid
+          ? { state: 'observed', instance: identity }
+          : { state: 'unavailable', cause: eperm },
+    }),
+  ).toEqual({ liveness: 'not-probed', identity: 'unavailable', cause: eperm });
+  expect(syncDeniedCalls).toBe(2);
+
+  // Negative control: unreadable /proc/self fails before liveness is ever queried and is never masked as pid-gone.
+  let selfCheckLiveness = 0;
+  expect(
+    await probeProcessOwnerWith(42, identity, {
+      read: async () => null,
+      liveness: async () => {
+        selfCheckLiveness++;
+        return 'gone';
+      },
+      observe: async () => ({ state: 'unavailable', cause: selfFailure }),
+    }),
+  ).toEqual({ liveness: 'not-probed', identity: 'unavailable', cause: selfFailure });
+  expect(
+    probeProcessOwnerSyncWith(42, identity, {
+      liveness: () => {
+        selfCheckLiveness++;
+        return 'gone';
+      },
+      observe: () => ({ state: 'unavailable', cause: selfFailure }),
+    }),
+  ).toEqual({ liveness: 'not-probed', identity: 'unavailable', cause: selfFailure });
+  expect(selfCheckLiveness).toBe(0);
+});
+
+test('public probeProcessOwner and probeProcessOwnerSync transition from matched to pid-gone on a real exiting child', async () => {
+  const child = Bun.spawn([process.execPath, '-e', 'setInterval(() => {}, 1000)'], {
+    stdout: 'ignore',
+    stderr: 'ignore',
+  });
+  trackProcess(child.pid);
+  try {
+    const observed = await observeProcessInstance(child.pid);
+    expect(observed.state).toBe('observed');
+    if (observed.state !== 'observed') throw observed.cause;
+    expect(await probeProcessOwner(child.pid, observed.instance)).toEqual({
+      liveness: 'alive',
+      identity: 'matched',
+    });
+    expect(probeProcessOwnerSync(child.pid, observed.instance)).toEqual({
+      liveness: 'alive',
+      identity: 'matched',
+    });
+    child.kill('SIGKILL');
+    await child.exited;
+    expect(await probeProcessOwner(child.pid, observed.instance)).toEqual({
+      liveness: 'gone',
+      identity: 'pid-gone',
+    });
+    expect(probeProcessOwnerSync(child.pid, observed.instance)).toEqual({
+      liveness: 'gone',
+      identity: 'pid-gone',
+    });
+  } finally {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // Child already exited.
+    }
+    await child.exited;
+  }
 });

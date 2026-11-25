@@ -39,7 +39,8 @@ const Retry = z
     reason: z.string().optional(),
   })
   .strict();
-const Spill = z
+/** Shared payload schema for `spill/created` and `spill/deleted` events. */
+export const SpillEventPayloadSchema = z
   .object({ reference: Id, bytes: z.int().nonnegative(), sha256: Hash.optional() })
   .strict();
 const Schedule = z
@@ -89,16 +90,20 @@ function durability(ids: BranchIdentities, raw: Json, kind: ObservedKind) {
           : EffectEventPayloadSchema.parse(raw);
   if (canonicalAgentJson(value) !== canonicalAgentJson(raw))
     throw new TypeError('Branch cannot rekey opaque durability payload');
-  if ('encoded' in value) branchOpaqueJson(ids, z.json().parse(JSON.parse(value.encoded)));
+  const encoded =
+    'encoded' in value
+      ? JSON.stringify(branchOpaqueJson(ids, z.json().parse(JSON.parse(value.encoded))))
+      : undefined;
   return {
     ...value,
+    ...(encoded !== undefined && { encoded }),
     runId: ids.reference('run', value.runId),
     ...('id' in value && { id: ids.define('key', value.id) }),
   };
 }
 
 function spill(ids: BranchIdentities, raw: Json) {
-  const value = Spill.parse(raw);
+  const value = SpillEventPayloadSchema.parse(raw);
   return { ...value, reference: ids.reference('spill', value.reference) };
 }
 
@@ -125,9 +130,9 @@ function childState(ids: BranchIdentities, raw: Json): Json {
   const value = ChildStateEventPayloadSchema.parse(raw);
   if ('action' in value) {
     if (value.action === 'blocking-presented') {
-      branchOpaqueJson(ids, value.input);
       return {
         ...value,
+        input: branchOpaqueJson(ids, value.input),
         childConversationId: rekeyChildConversation(ids, value.childConversationId),
         approvalId: ids.define('approval', value.approvalId),
         childApprovalId: ids.define('approval', value.childApprovalId),
@@ -216,8 +221,7 @@ const OBSERVATION_RULES = {
       .parse(raw),
   'state/set': (ids, raw) => {
     const value = State.parse(raw);
-    branchOpaqueJson(ids, value.value);
-    return value;
+    return { ...value, value: branchOpaqueJson(ids, value.value) };
   },
   'retry/scheduled': retry,
   'retry/started': retry,

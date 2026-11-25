@@ -53,7 +53,6 @@ const valid: ProjectDeclaration = {
   identity: {
     slug: 'talk-control',
     name: 'Talk Control',
-    version: '0.1.0',
     description: { en: 'A production application.', ru: 'Production-приложение.' },
   },
   roles: [apiRole, workerRole],
@@ -156,6 +155,14 @@ const REFUSED: Array<[string, unknown]> = [
   [
     'an unknown key inside identity',
     { ...valid, identity: { ...valid.identity, homepage: 'example.com' } },
+  ],
+  [
+    'a duplicate semantic version inside identity',
+    { ...valid, identity: { ...valid.identity, version: '0.1.0' } },
+  ],
+  [
+    'a duplicate CalVer version inside identity',
+    { ...valid, identity: { ...valid.identity, version: '2026.11.13.1' } },
   ],
 
   // ─── a command is argv, and carries no value of the deployment ────────────

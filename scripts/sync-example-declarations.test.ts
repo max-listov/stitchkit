@@ -52,7 +52,7 @@ test('actual declaration CLI preserves no-op generation, repairs stale/missing f
       JSON.stringify({ schemaVersion: 1, name: 'fixture' }),
     );
     await writeFile(
-      join(scaffolder, 'template/scripts/declaration.ts'),
+      join(scaffolder, 'template/scripts/env-variables.ts'),
       'export function renderEnvVariables(input) { return input; }\n',
     );
     await writeFile(

@@ -2,6 +2,7 @@ import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { findTranscriptInput } from '../claude/transcript';
 import type { AgentEngineDriver } from '../engine';
 import type { PlanLimits } from '../hello';
+import { validateImageOptions } from '../image-input';
 import { engineProfile } from '../profile';
 import { openClaudeSdkSession } from './session';
 
@@ -26,6 +27,10 @@ export interface ClaudeSdkDriverConfig {
   model?: string;
   /** Default `default`: every tool the profile does not allow is asked of `canUseTool`. */
   permissionMode?: NonNullable<Options['permissionMode']>;
+  /** Read the bytes behind a `file` part's `reference`; without it a file part is refused. */
+  resolveFile?: (reference: string) => Promise<Uint8Array>;
+  /** Maximum decoded size of one image attachment in bytes. Default 5 MiB. */
+  maxImageBytes?: number;
   ambient?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -36,6 +41,7 @@ export interface ClaudeSdkDriverConfig {
  * the next turn opens a new query that resumes the session.
  */
 export function createClaudeSdkDriver(config: ClaudeSdkDriverConfig): AgentEngineDriver {
+  validateImageOptions(config);
   const limits = new Map<string, PlanLimits>();
   return {
     engine: 'claude-sdk',

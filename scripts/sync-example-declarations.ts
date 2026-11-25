@@ -28,7 +28,9 @@ export function declarationPath(example: string): string {
 
 /** The exact bytes an example's declaration must contain right now. */
 export async function renderExampleDeclaration(example: string): Promise<string> {
-  const { renderEnvVariables } = await import(`${scaffolder}/template/scripts/declaration.ts`);
+  const { renderEnvVariables } = await import(
+    `${scaffolder}/template/scripts/env-variables.ts`
+  );
   const { applicationVariables } = await import(
     `${scaffolder}/template/packages/config/src/variables.ts`
   );

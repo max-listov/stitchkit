@@ -116,10 +116,26 @@ test('timeout and pre-abort end truthfully and do not try a fallback', async () 
 
 test('payload limits, missing atomic admission and wrong stores fail closed', async () => {
   const limited = setup(undefined, { maxPayloadBytes: 1_024 });
-  expect(
-    (await limited.ledger.complete({ ...input, prompt: 'x'.repeat(10_000) }, {})).outcome,
-  ).toBe('failed');
-  expect(limited.model.doGenerateCalls).toHaveLength(0);
+  const oversized = await limited.ledger.complete(
+    { ...input, prompt: 'x'.repeat(10_000) },
+    {},
+  );
+  expect(oversized.outcome).toBe('succeeded');
+  expect(oversized.receiptError).toBeInstanceOf(RangeError);
+  expect(limited.model.doGenerateCalls).toHaveLength(1);
+  const limitedRecords = (
+    await limited.ledger.read({ conversationId: 'conv', limit: 100 }, {})
+  ).items;
+  const limitedRequest = limitedRecords.find(
+    ({ record }) => record.type === 'provider/request',
+  )?.record;
+  expect(limitedRequest).toMatchObject({
+    type: 'provider/request',
+    sent: { payloadOmitted: 'max-payload-bytes' },
+  });
+  if (limitedRequest?.type === 'provider/request') {
+    expect(limitedRequest.sent.artifactId).toBeUndefined();
+  }
   const { appendEventOnce: _once, ...unsupported } = createMemoryAgentRuntimeStore();
   expect(() => setup(undefined, { store: unsupported })).toThrow('atomic');
   expect(() => setup(undefined, { payloadKey: new Uint8Array(31) })).toThrow('32 bytes');

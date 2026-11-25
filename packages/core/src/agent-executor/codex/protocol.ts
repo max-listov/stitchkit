@@ -69,7 +69,18 @@ export const CodexStartedThreadSchema = z.looseObject({
 export const CodexStartedTurnSchema = z.looseObject({
   turn: z.looseObject({ id: z.string().min(1) }),
 });
-export const CodexTurnsPageSchema = z.looseObject({ data: z.array(CodexTurnSchema) });
+export const CodexListedTurnItemSchema = z.looseObject({
+  type: z.string(),
+  clientId: z.string().nullable().optional(),
+});
+export const CodexListedTurnSchema = CodexTurnSchema.extend({
+  items: z.array(CodexListedTurnItemSchema),
+  itemsView: z.literal('full').optional(),
+});
+export const CodexTurnsPageSchema = z.looseObject({
+  data: z.array(CodexListedTurnSchema),
+  nextCursor: z.string().nullable().optional(),
+});
 
 /** Notifications the driver asks the server not to send: noise for a turn. */
 export const CODEX_OPTED_OUT_NOTIFICATIONS = [

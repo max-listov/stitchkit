@@ -21,7 +21,7 @@ import {
   type JsonValueSchema,
   type RegularFileAccept,
   type RegularFileReadOptions,
-  readRegularFileFromOpen,
+  readRegularFileWithMeta,
   readRegularFileWithMetaSync,
 } from './regular-file';
 
@@ -313,14 +313,23 @@ export class PolledJsonFiles<T> {
     const existing = this.entries.get(path);
     const readStartedNs = clockNs();
     const found = await pathStatOfAsync(path, options.noFollow, readStartedNs);
+    signal?.throwIfAborted();
     const shortcut = this.fromStat(existing, options, found, true);
     if (shortcut !== undefined) return shortcut;
     let outcome: ReadOutcome;
     try {
-      const bytes = await readRegularFileFromOpen(path, { ...options, signal });
-      // The identity taken before the read is never newer than the bytes read after it:
-      // a change in between costs one more read on the next poll, never a missed one.
-      outcome = { bytes, ...(found.kind === 'file' && { stamp: found.stamp }) };
+      const { bytes, after } = await readRegularFileWithMeta(path, { ...options, signal });
+      // Stamp the exact post-read descriptor stat (just like `observeSync`) so a
+      // retry after a concurrent symlink swap never caches new bytes under a stale
+      // pre-read identity.
+      outcome = {
+        bytes,
+        ...(after !== undefined
+          ? { stamp: stampOf(after, readStartedNs) }
+          : found.kind === 'file'
+            ? { stamp: found.stamp }
+            : {}),
+      };
     } catch (error) {
       if (signal?.aborted) throw error;
       outcome = { error };

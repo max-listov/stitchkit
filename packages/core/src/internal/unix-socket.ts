@@ -1,6 +1,7 @@
 import { linkSync, lstatSync, type Stats, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { errnoOf } from './errno';
+import { assertNonNegativeSafeInteger } from './positive-integer';
 import { randomHex } from './random-hex';
 import { UnixClientTransportError } from './unix-client-error';
 import { withUnixSocketLockSync } from './unix-socket-lock';
@@ -102,10 +103,24 @@ export function assertUnixSocketPathLength(socketPath: string, caller: string): 
   }
 }
 
+const MAX_POSIX_UID = 0xffff_ffff;
+
+/** Validate an explicit expected Unix owner UID (`0`..`4294967295`). */
+export function assertExpectedOwnerUid(uid: number | undefined, caller: string): void {
+  if (uid === undefined) return;
+  assertNonNegativeSafeInteger(`[stitchkit] ${caller}: expectedOwnerUid`, uid);
+  if (uid > MAX_POSIX_UID) {
+    throw new TypeError(
+      `[stitchkit] ${caller}: expectedOwnerUid must be a 32-bit unsigned integer (0..${MAX_POSIX_UID}), got ${String(uid)}`,
+    );
+  }
+}
+
 function directoryPrivacyViolation(
   dir: string,
   stats: Stats,
   caller: string,
+  expectedUid?: number,
 ): string | undefined {
   if (stats.isSymbolicLink()) {
     return `[stitchkit] ${caller}: unix socket directory "${dir}" must not be a symlink`;
@@ -113,8 +128,14 @@ function directoryPrivacyViolation(
   if (!stats.isDirectory()) {
     return `[stitchkit] ${caller}: unix socket parent "${dir}" is not a directory`;
   }
-  if (typeof process.getuid === 'function' && stats.uid !== process.getuid()) {
-    return `[stitchkit] ${caller}: unix socket directory "${dir}" is owned by uid ${stats.uid}, expected ${process.getuid()}`;
+  const requiredUid =
+    expectedUid !== undefined
+      ? expectedUid
+      : typeof process.getuid === 'function'
+        ? process.getuid()
+        : undefined;
+  if (requiredUid !== undefined && stats.uid !== requiredUid) {
+    return `[stitchkit] ${caller}: unix socket directory "${dir}" is owned by uid ${stats.uid}, expected ${requiredUid}`;
   }
   const mode = stats.mode & PERMISSION_BITS;
   if ((mode & GROUP_OR_OTHER_WRITE_BITS) !== 0) {
@@ -168,7 +189,15 @@ function statForClientTarget(
 export function assertUnixSocketClientTarget(
   socketPath: string,
   caller = 'createUnixClientTransport',
+  expectedOwnerUid?: number,
 ): void {
+  assertExpectedOwnerUid(expectedOwnerUid, caller);
+  const requiredUid =
+    expectedOwnerUid !== undefined
+      ? expectedOwnerUid
+      : typeof process.getuid === 'function'
+        ? process.getuid()
+        : undefined;
   const dir = dirname(socketPath);
   const refuse = (message: string): never => {
     throw new UnixClientTransportError('UNIX_TARGET_REFUSED', message, 'not-dispatched', {
@@ -177,7 +206,7 @@ export function assertUnixSocketClientTarget(
   };
   const dirStats = statForClientTarget(dir, 'directory', caller, socketPath);
   if (dirStats === undefined) return;
-  const dirViolation = directoryPrivacyViolation(dir, dirStats, caller);
+  const dirViolation = directoryPrivacyViolation(dir, dirStats, caller, requiredUid);
   if (dirViolation !== undefined) refuse(dirViolation);
   const socketStats = statForClientTarget(socketPath, 'path', caller, socketPath);
   if (socketStats === undefined) return;
@@ -187,9 +216,9 @@ export function assertUnixSocketClientTarget(
   if (!socketStats.isSocket()) {
     refuse(`[stitchkit] ${caller}: "${socketPath}" is not a unix socket`);
   }
-  if (typeof process.getuid === 'function' && socketStats.uid !== process.getuid()) {
+  if (requiredUid !== undefined && socketStats.uid !== requiredUid) {
     refuse(
-      `[stitchkit] ${caller}: unix socket "${socketPath}" is owned by uid ${socketStats.uid}, expected ${process.getuid()}`,
+      `[stitchkit] ${caller}: unix socket "${socketPath}" is owned by uid ${socketStats.uid}, expected ${requiredUid}`,
     );
   }
 }

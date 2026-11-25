@@ -24,7 +24,7 @@ export interface FileReadStat extends FileObservation {
 }
 
 export interface FileReadDescriptor<S extends FileReadStat = FileReadStat> {
-  stat(): Promise<S>;
+  stat(options?: { bigint?: boolean }): Promise<S | NanosecondFileStats>;
   read(buffer: Uint8Array, offset: number, length: number): Promise<{ bytesRead: number }>;
   close(): Promise<void>;
 }
@@ -62,4 +62,6 @@ export interface NanosecondFileStats extends FileIdentityStats {
   gid: bigint;
   nlink: bigint;
   isFile(): boolean;
+  isDirectory?(): boolean;
+  isSymbolicLink?(): boolean;
 }

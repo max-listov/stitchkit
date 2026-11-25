@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { AgentUsageSchema } from './schemas';
+import { AgentTimestampSchema, AgentUsageSchema } from './schemas';
+import {
+  InvocationExpiredPayloadSchema,
+  InvocationPayloadSchema,
+} from './schemas-invocation-payload';
 
 const Id = z.string().min(1).max(512);
 const Hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -74,6 +78,13 @@ export const InvocationAttemptContextSchema = Base.extend({
   step: z.int().nonnegative(),
 }).strict();
 export type ModelInvocationAttemptContext = z.infer<typeof InvocationAttemptContextSchema>;
+
+/** Structured reason why a request or response payload artifact was intentionally omitted. */
+export const InvocationPayloadOmissionReasonSchema = z.enum(['max-payload-bytes']);
+export type InvocationPayloadOmissionReason = z.infer<
+  typeof InvocationPayloadOmissionReasonSchema
+>;
+
 const Attempt = Base.extend({ attemptId: Id, step: z.int().nonnegative() });
 export const InvocationRequestSchema = Attempt.extend({
   type: z.literal('provider/request'),
@@ -84,19 +95,43 @@ export const InvocationRequestSchema = Attempt.extend({
       modelId: Id,
       provider: Id,
       payloadSha256: Hash,
-      artifactId: Id,
+      artifactId: Id.optional(),
+      payloadOmitted: InvocationPayloadOmissionReasonSchema.optional(),
       tools: z.int().nonnegative(),
     })
-    .strict(),
+    .strict()
+    .superRefine((sent, ctx) => {
+      const hasArtifact = sent.artifactId !== undefined;
+      const hasOmitted = sent.payloadOmitted !== undefined;
+      if (hasArtifact === hasOmitted) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'provider/request sent requires exactly one of artifactId or payloadOmitted',
+        });
+      }
+    }),
 }).strict();
 export const InvocationResponseSchema = Attempt.extend({
   type: z.literal('provider/response'),
   status: z.enum(['succeeded', 'failed', 'cancelled']),
   effective: Identity,
   usage: AgentUsageSchema,
-  artifactId: Id,
+  artifactId: Id.optional(),
+  payloadOmitted: InvocationPayloadOmissionReasonSchema.optional(),
   payloadSha256: Hash,
-}).strict();
+})
+  .strict()
+  .superRefine((response, ctx) => {
+    const hasArtifact = response.artifactId !== undefined;
+    const hasOmitted = response.payloadOmitted !== undefined;
+    if (hasArtifact === hasOmitted) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'provider/response requires exactly one of artifactId or payloadOmitted',
+      });
+    }
+  });
 export const InvocationFinishedSchema = Base.extend({
   type: z.literal('invocation/finished'),
   failure: z.object({ artifactId: Id, payloadSha256: Hash }).strict().optional(),
@@ -109,25 +144,67 @@ export const ModelInvocationRecordSchema = z.discriminatedUnion('type', [
   InvocationFinishedSchema,
 ]);
 export type ModelInvocationRecord = z.infer<typeof ModelInvocationRecordSchema>;
-export const InvocationPayloadSchema = Base.extend({
-  artifactId: Id,
-  sha256: Hash,
-  bytes: z.int().nonnegative(),
-  iv: z.string(),
-  tag: z.string(),
-  ciphertext: z.string(),
-}).strict();
+
+export const InvocationStoredPayloadSchema = z.union([
+  InvocationPayloadSchema,
+  InvocationExpiredPayloadSchema,
+]);
 
 /**
  * What remains of a payload artifact outside the conversation that made the
- * call: its identity, size and hash. The encrypted body is bound to that
- * conversation and its invocation, and stays with them.
+ * call: its identity, size, hash, and optional expiry timestamp. Rejects
+ * malformed partial cipher records or records carrying both ciphertext and `expiredAt`.
  */
-export const InvocationPayloadReceiptSchema = InvocationPayloadSchema.partial({
-  iv: true,
-  tag: true,
-  ciphertext: true,
-});
+export const InvocationPayloadReceiptSchema = Base.extend({
+  artifactId: Id,
+  sha256: Hash,
+  bytes: z.int().nonnegative(),
+  iv: z.string().optional(),
+  tag: z.string().optional(),
+  ciphertext: z.string().optional(),
+  expiredAt: AgentTimestampSchema.optional(),
+})
+  .strict()
+  .superRefine((value, ctx) => {
+    const cipherParts = [value.iv, value.tag, value.ciphertext].filter(
+      (p) => p !== undefined,
+    ).length;
+    if (cipherParts > 0 && cipherParts < 3) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Invocation payload receipt has incomplete encryption fields',
+      });
+    }
+    if (cipherParts > 0 && value.expiredAt !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Invocation payload receipt cannot carry both ciphertext and expiredAt',
+      });
+    }
+  });
+
+/** Discriminated read result returned by `ModelInvocationLedger.readPayload`. */
+export const ModelInvocationPayloadReadSchema = z.discriminatedUnion('status', [
+  z
+    .object({
+      status: z.literal('available'),
+      artifactId: Id,
+      sha256: Hash,
+      bytes: z.int().nonnegative(),
+      payload: z.json(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal('expired'),
+      artifactId: Id,
+      sha256: Hash,
+      bytes: z.int().nonnegative(),
+      expiredAt: AgentTimestampSchema,
+    })
+    .strict(),
+]);
+export type ModelInvocationPayloadRead = z.infer<typeof ModelInvocationPayloadReadSchema>;
 
 /**
  * Whether a `provider/request` or `provider/response` payload is a record of

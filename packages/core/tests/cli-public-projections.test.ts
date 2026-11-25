@@ -121,6 +121,7 @@ async function viaPublicChain(argv: string[]): Promise<Answer> {
   });
   try {
     const lifted = extractCliGlobalOptions(argv, appGlobals);
+    if (lifted.error !== undefined) return answer(2, '', `${lifted.error.message}\n`);
     const route = routeCliArgv(lifted.argv, { separatedBefore: lifted.separatedBefore });
     if (route.error !== undefined) return answer(2, '', `${route.error}\n`);
     if (route.topLevelHelp || route.command === undefined || isHelpToken(route.command)) {
@@ -494,5 +495,33 @@ describe('every public CLI projection answers like createCli', () => {
     ).toThrow('--wait-timeout requires a value');
     // Adjacent, the word is the value.
     expect(parseCliArgs(['--dry-run', 'false'], input).options.dryRun).toBe(false);
+  });
+
+  test('non-throwing error field lets a dynamic-catalog entry point defer invalid argv to createCli (exit 2) without try/catch', async () => {
+    for (const argv of [['--json', '--profile', 'prod', 'false'], ['--profile']]) {
+      const lifted = extractCliGlobalOptions(argv, appGlobals);
+      expect(lifted.error).toBeInstanceOf(CliArgumentError);
+      expect(lifted.argv).toEqual([]);
+
+      const scan = scanCliInvocation(argv, { appGlobals });
+      expect(scan.error).toBeInstanceOf(CliArgumentError);
+      expect(scan.command).toBeUndefined();
+      expect(scan.commandTokens).toEqual([]);
+
+      // Consumer checks `if (lifted.error) ...` without catching and skips remote discovery,
+      // handing the raw argv to `createCli` which renders the unified exit-2 error.
+      let remoteDiscoveryCalls = 0;
+      if (!lifted.error) {
+        const route = routeCliArgv(lifted.argv, { separatedBefore: lifted.separatedBefore });
+        if (!route.error && route.command) remoteDiscoveryCalls += 1;
+      }
+      expect(remoteDiscoveryCalls).toBe(0);
+
+      const printed = await viaCreateCli(argv);
+      expect(printed.code).toBe(2);
+      expect(printed.calls).toBe(0);
+      expect(printed.stdout).toBe('');
+      expect(printed.stderr.trim().length).toBeGreaterThan(0);
+    }
   });
 });

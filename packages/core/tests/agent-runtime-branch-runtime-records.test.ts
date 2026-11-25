@@ -192,7 +192,7 @@ for (const [adapter, open] of adapters)
         const { artifactId } = z.object({ artifactId: z.string() }).parse(artifact?.payload);
         expect(
           await ledger.readPayload({ conversationId: 'source', artifactId }, {}),
-        ).toBeDefined();
+        ).toMatchObject({ status: 'available', artifactId });
         await expect(
           ledger.readPayload({ conversationId: 'copy', artifactId }, {}),
         ).rejects.toThrow();

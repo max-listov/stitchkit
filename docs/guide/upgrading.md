@@ -1,5 +1,148 @@
 # Upgrading stitchkit
 
+## Unreleased migration: invocation-payload-lifecycle
+
+### invocation-payload-lifecycle
+
+**Who must act:** every caller of `createModelInvocationLedger` from `stitchkit/agent-runtime`
+that reads `readPayload`, reads `sent.artifactId` on `provider/request` or top-level `artifactId`
+on `provider/response` (`ModelInvocationRecord`), passes `authorize` to `ModelInvocationConfig`,
+or relies on `maxPayloadBytes` aborting the provider call.
+
+1. **`readPayload` returns a discriminated status:** encrypted payloads redacted by
+   `purgePayloads` / `store.purgeExpiredPayloads` stay readable as `{ status: 'expired', expiredAt }`
+   while live payloads return `{ status: 'available', payload }`:
+
+```ts
+// before
+const payload = await ledger.readPayload({ conversationId, artifactId }, ctx)
+console.log(payload.payload)
+
+// after
+const result = await ledger.readPayload({ conversationId, artifactId }, ctx)
+if (result.status === 'available') {
+  console.log(result.payload)
+} else {
+  console.log('expired at', result.expiredAt)
+}
+```
+
+2. **`sent.artifactId` (`provider/request`) and top-level `artifactId` (`provider/response`) are optional when oversized:** exceeding
+   `maxPayloadBytes` no longer aborts or prevents the provider call. Instead, the ledger omits the
+   encrypted body, records `payloadOmitted: 'max-payload-bytes'` (with `artifactId` absent and
+   `payloadSha256` preserved), and reports `InvocationPayloadTooLargeError` via `complete().receiptError`:
+
+```ts
+// before
+const id: string = record.sent.artifactId
+
+// after
+if (record.sent.artifactId !== undefined) {
+  await ledger.readPayload({ conversationId, artifactId: record.sent.artifactId }, ctx)
+} else if (record.sent.payloadOmitted === 'max-payload-bytes') {
+  // body was intentionally omitted past maxPayloadBytes
+}
+```
+
+3. **`ModelInvocationConfig.authorize` handles `'purge-payloads'`:** if your `authorize` callback
+   switches exhaustively on `input.action`, handle the new `'purge-payloads'` variant alongside
+   `'complete'`, `'agent'`, `'read'`, and `'read-payload'` (single-argument `input: ModelInvocationAuthorizationInput` carrying `input.context`):
+
+```ts
+authorize: (input) => {
+  switch (input.action) {
+    case 'complete':
+    case 'agent':
+    case 'read':
+    case 'read-payload':
+    case 'purge-payloads':
+      return allow(input.context, input)
+  }
+}
+```
+
+## Unreleased migration: cli-option-projections-error-field
+
+### cli-option-projections-error-field
+
+**Who must act:** every caller of `extractCliGlobalOptions` or `scanCliInvocation` from
+`stitchkit/cli` that caught a thrown `CliArgumentError` on call or on `.argv` access (→ ADR 0327).
+
+Both projections now return malformed CLI syntax on an explicit `error?: CliArgumentError` field
+with fail-closed empty routing fields (`argv: []` on `extractCliGlobalOptions`; `command: undefined`
+and `commandTokens: []` on `scanCliInvocation`) instead of throwing on call or via a getter on `.argv`:
+
+```ts
+// before
+let parsed
+try {
+  parsed = extractCliGlobalOptions(argv, globals)
+  void parsed.argv
+} catch (err) {
+  if (err instanceof CliArgumentError) {
+    parsed = { globals: {}, argv: [] }
+  } else {
+    throw err
+  }
+}
+
+// after
+const parsed = extractCliGlobalOptions(argv, globals)
+if (parsed.error) {
+  // handle parsed.error, or pass raw argv to createCli(...) for exit-code-2 reporting
+}
+```
+
+## Unreleased migration: declaration-single-version
+
+### declaration-single-version
+
+**Who must act:** every repository whose `project.json` is validated by `stitchkit/declaration`
+and still carries `identity.version`, or whose server/CLI code reads `declaration.identity.version`.
+
+The root `package.json` is the single source of truth for the repository version (whether SemVer or
+CalVer). `ProjectIdentitySchema` no longer accepts `identity.version`:
+
+```jsonc
+// before (project.json)
+{
+  "identity": {
+    "slug": "my-app",
+    "name": "My App",
+    "version": "0.1.0",
+    "description": { "en": "My App." }
+  }
+}
+
+// after (project.json)
+{
+  "identity": {
+    "slug": "my-app",
+    "name": "My App",
+    "description": { "en": "My App." }
+  }
+}
+```
+
+Read your application version from the root `package.json` for a single-version application — or
+from the package's own `package.json` if that package is released independently — instead of
+`identity.version` (for example, in OpenAPI `info.version`, MCP `serverInfo.version`, and
+`createCli({ version })`).
+
+## Unreleased migration: read-only-surface-inspection
+
+### read-only-surface-inspection
+
+**Who must act:** optional — hosts and test suites that currently mount a tool surface with
+`access: { open: 'local-operator' }` solely for read-only surface inspection.
+
+Pass `access: { inspect: true }` to `mountAgent`, `mountMcp`, `buildMcpServer`, `createToolInvoker`,
+`createCli`, `createCliInvoker`, or `createDeferredAgentToolSurface().mount` whenever a caller only
+needs catalogs, schemas, `--help`, `--schema`, or `commands`. Every tool execution fails closed with
+`FORBIDDEN` before extensions, hooks, durability, multi-round resolvers, or auth run. Keep
+`access: { gate }` for authenticated execution surfaces and `access: { open: 'local-operator' }` for
+tests or local tools that genuinely execute handlers.
+
 ## Released migration: 0.127.0
 
 ### branch-application-key-modes

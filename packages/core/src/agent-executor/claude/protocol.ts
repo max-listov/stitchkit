@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  type InlinedPart,
+  isSupportedImageMediaType,
+  type SupportedImageMediaType,
+} from '../image-input';
 
 /**
  * The slice of Claude Code's `stream-json` dialect the driver reads, as
@@ -117,15 +122,49 @@ export type ClaudeRecord = z.infer<typeof ClaudeRecordSchema>;
 /** A record whose `type` this driver does not know: carried as `unhandled`, never dropped. */
 export const ClaudeUnknownRecordSchema = z.looseObject({ type: z.string() });
 
+/** One content block in a Claude CLI / Agent SDK user message. */
+export type ClaudeUserContentBlock =
+  | { readonly type: 'text'; readonly text: string }
+  | {
+      readonly type: 'image';
+      readonly source: {
+        readonly type: 'base64';
+        readonly media_type: SupportedImageMediaType;
+        readonly data: string;
+      };
+    };
+
+/**
+ * Encode validated turn parts into Claude's user `message.content`: plain text joins into a
+ * string (preserving wire compatibility), while inputs with images produce ordered blocks.
+ */
+export function claudeUserContent(
+  parts: readonly InlinedPart[],
+): string | ClaudeUserContentBlock[] {
+  if (parts.every((part) => part.type === 'text')) {
+    return parts.map((part) => part.text).join('\n');
+  }
+  return parts.map((part): ClaudeUserContentBlock => {
+    if (part.type === 'text') return { type: 'text', text: part.text };
+    if (!isSupportedImageMediaType(part.mediaType)) {
+      throw new TypeError(`Unsupported Claude image media type: ${part.mediaType}`);
+    }
+    return {
+      type: 'image',
+      source: { type: 'base64', media_type: part.mediaType, data: part.base64 },
+    };
+  });
+}
+
 /** What the executor writes: one user message under the id it chose. */
 export function claudeUserMessage(input: {
   clientId: string;
-  text: string;
+  content: string | readonly ClaudeUserContentBlock[];
   sessionId: string;
 }) {
   return {
     type: 'user',
-    message: { role: 'user', content: input.text },
+    message: { role: 'user', content: input.content },
     uuid: input.clientId,
     parent_tool_use_id: null,
     session_id: input.sessionId,

@@ -11,6 +11,7 @@ import {
   newClaudeTurnState,
 } from '../claude/classify';
 import { claudePlanWindows } from '../claude/limits';
+import { claudeUserContent } from '../claude/protocol';
 import { claudeTranscriptExists, claudeTranscriptPath } from '../claude/transcript';
 import type { AgentEngineDriver, AgentEngineSession, AgentEngineTurn } from '../engine';
 import {
@@ -23,11 +24,11 @@ import {
 } from '../engine-requests';
 import { InteractionReplySchema } from '../executor-contract';
 import type { PlanLimits } from '../hello';
+import { imageTurnStarter } from '../image-input';
 import { mergeRateLimitEvent } from '../plan-limits';
 import { engineEnvironment, engineProfile } from '../profile';
 import {
   createTurnDeltaChannel,
-  extractTextOnlyInput,
   nonEmptyString,
   offerTurnDelta,
   safeJsonValue,
@@ -208,6 +209,7 @@ export async function openClaudeSdkSession(
     | { query: ClaudeSdkRun; send(message: SDKUserMessage): void; close(): void }
     | undefined;
   const shutdown = (reason: unknown) => {
+    if (closed) return;
     closed = true;
     const turn = current;
     current = undefined;
@@ -289,13 +291,22 @@ export async function openClaudeSdkSession(
     })();
     return handle;
   };
-  return {
-    nativeThreadId: sessionId,
-    async startTurn(turnInput): Promise<AgentEngineTurn> {
+  const startTurn = imageTurnStarter<
+    Parameters<AgentEngineSession['startTurn']>[0],
+    AgentEngineTurn
+  >({
+    driverLabel: 'The Agent SDK driver',
+    busyMessage: 'A turn is already running in this Claude session',
+    imageOptions: config,
+    signal: linked.signal,
+    check(turnInput) {
       if (closed) throw new Error('The Claude SDK session is closed');
       if (current !== undefined)
         throw new Error('A turn is already running in this Claude session');
-      const text = extractTextOnlyInput(turnInput.input, 'The Agent SDK driver');
+      if (!isUuid(turnInput.clientId))
+        throw new TypeError('The Agent SDK driver needs a UUID client id');
+    },
+    dispatch(turnInput, parts) {
       const clientId = turnInput.clientId;
       if (!isUuid(clientId))
         throw new TypeError('The Agent SDK driver needs a UUID client id');
@@ -310,7 +321,7 @@ export async function openClaudeSdkSession(
         const active = running ?? start();
         active.send({
           type: 'user',
-          message: { role: 'user', content: text },
+          message: { role: 'user', content: claudeUserContent(parts) },
           parent_tool_use_id: null,
           uuid: clientId,
           session_id: sessionId,
@@ -321,9 +332,14 @@ export async function openClaudeSdkSession(
         throw error;
       }
     },
+  });
+  return {
+    nativeThreadId: sessionId,
+    startTurn,
     async close() {
-      linked.release();
       shutdown(new Error('The Claude SDK session closed'));
+      linked.abort();
+      linked.release();
     },
   };
 }

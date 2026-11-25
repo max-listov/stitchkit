@@ -104,19 +104,20 @@ test('a long audited stream answers in full; its evidence is truncated and finge
     expect(snapshot).toContain(delta.repeat(200));
     const { items } = await ledger.read({ conversationId: 'conv', limit: 10_000 }, {});
     const response = items.find(({ record }) => record.type === 'provider/response')?.record;
-    if (response?.type !== 'provider/response') throw new Error('no provider response');
+    if (response?.type !== 'provider/response' || !response.artifactId)
+      throw new Error('no provider response');
     expect(response.status).toBe('succeeded');
+    const stored = await ledger.readPayload(
+      { conversationId: 'conv', artifactId: response.artifactId },
+      {},
+    );
+    if (stored.status !== 'available') throw new Error('expected available payload');
     const evidence = z
       .object({
         output: z.array(z.unknown()),
         truncated: z.object({ parts: z.number(), sha256: z.string().length(64) }),
       })
-      .parse(
-        await ledger.readPayload(
-          { conversationId: 'conv', artifactId: response.artifactId },
-          {},
-        ),
-      );
+      .parse(stored.payload);
     expect(evidence.truncated.parts).toBe(202);
     expect(evidence.output.length).toBeLessThan(202);
   } finally {

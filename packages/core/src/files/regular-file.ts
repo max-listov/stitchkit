@@ -1,13 +1,15 @@
 import { constants, openSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { z } from 'zod';
+import type {
+  BoundedFileSnapshotHooks,
+  BoundedFileSnapshotSyncHooks,
+} from '../internal/bounded-file-confirm';
 import {
   BoundedFileReadError,
-  isNonRegularOpenErrno,
   readBoundedFileFrom,
   readBoundedFileSync,
 } from '../internal/bounded-file-read';
-import { errnoOf } from '../internal/errno';
 import { messageOf } from '../internal/error-message';
 import type {
   FileIdentityStats,
@@ -183,19 +185,14 @@ function refusalOf(error: unknown, path: string, limit: number): RegularFileErro
         return new RegularFileError('not-regular', `Not a regular file: ${path}`, options);
     }
   }
-  if (isNonRegularOpenErrno(errnoOf(error))) {
-    return new RegularFileError('not-regular', `Not a regular file: ${path}`, {
-      cause: error,
-    });
-  }
   return undefined;
 }
 
-/** The refusal to retry on (`changed`), after rethrowing every other failure. */
+/** The refusal to retry on (only a reader `FILE_CHANGED`), after rethrowing every other failure. */
 function retryOn(error: unknown, path: string, limit: number): RegularFileError {
   const refusal = refusalOf(error, path, limit);
   if (refusal === undefined) throw error;
-  if (refusal.reason !== 'changed') throw refusal;
+  if (!(error instanceof BoundedFileReadError) || error.code !== 'FILE_CHANGED') throw refusal;
   return refusal;
 }
 
@@ -216,12 +213,13 @@ function withOneRetry<T>(path: string, limit: number, attempt: () => T): T {
 /**
  * Synchronous regular-file read returning both bytes and the descriptor's exact
  * post-read `fstat`, so callers like `PolledJsonFile` can cache without a second
- * `stat` race. `openFd` lets a test act between the open and the checks.
+ * `stat` race. `openFd` and `snapshot` let tests act between the open and checks.
  */
 export function readRegularFileWithMetaSync(
   path: string,
   options: RegularFileReadOptions = {},
   openFd: (target: string, flags: number) => number = openSync,
+  snapshot?: BoundedFileSnapshotSyncHooks,
 ): { bytes: Uint8Array; after: NanosecondFileStats } {
   const { limit = DEFAULT_JSON_FILE_BYTES, noFollow, accept } = options;
   assertPositiveSafeInteger('limit', limit);
@@ -233,6 +231,7 @@ export function readRegularFileWithMetaSync(
       limit,
       { stable: true, rejectSymlinks: noFollow, inspect },
       openFd,
+      snapshot,
     );
     return { bytes, after };
   });
@@ -241,7 +240,7 @@ export function readRegularFileWithMetaSync(
 /**
  * Synchronously read a regular file opened with `O_RDONLY | O_NONBLOCK` (never
  * hangs on a FIFO), enforcing `limit`, `noFollow`, the descriptor `accept`
- * check, and before/after identity stability with one retry.
+ * check, and before/after identity stability (including current-path confirmation) with one retry.
  */
 export function readRegularFileSync(
   path: string,
@@ -253,21 +252,23 @@ export function readRegularFileSync(
 type RegularFileStat = FileReadStat & FileStatsView;
 
 /**
- * Async regular-file reader backed by the bounded descriptor reader, with an
- * injectable opener for deterministic concurrency and abort tests.
+ * Async regular-file reader returning both bytes and the descriptor's exact
+ * post-read `fstat` (when the descriptor supports `{ bigint: true }`), so callers
+ * like `PolledJsonFiles` never stamp post-retry bytes with a stale pre-read stat.
  */
-export async function readRegularFileFromOpen(
+export async function readRegularFileWithMeta(
   path: string,
   options: RegularFileAsyncReadOptions = {},
   openDescriptor: (
     target: string,
     flags: number,
   ) => Promise<FileReadDescriptor<RegularFileStat>> = open,
-): Promise<Uint8Array> {
+  snapshot?: BoundedFileSnapshotHooks,
+): Promise<{ bytes: Uint8Array; after?: NanosecondFileStats }> {
   const { limit = DEFAULT_JSON_FILE_BYTES, noFollow, accept, signal } = options;
   assertPositiveSafeInteger('limit', limit);
   assertNoFollowAvailable(path, noFollow);
-  const inspect = acceptCheck<RegularFileStat>(accept, path);
+  const inspect = acceptCheck<RegularFileStat | FileStatsView>(accept, path);
   const attempt = async () => {
     signal?.throwIfAborted();
     const read = await readBoundedFileFrom(
@@ -275,8 +276,9 @@ export async function readRegularFileFromOpen(
       limit,
       { stable: true, signal, rejectSymlinks: noFollow, inspect },
       openDescriptor,
+      snapshot,
     );
-    return read.bytes;
+    return { bytes: read.bytes, ...(read.after !== undefined && { after: read.after }) };
   };
   try {
     return await attempt();
@@ -288,6 +290,23 @@ export async function readRegularFileFromOpen(
   } catch (error) {
     throw retryOn(error, path, limit);
   }
+}
+
+/**
+ * Async regular-file reader backed by the bounded descriptor reader, with an
+ * injectable opener and snapshot hook for deterministic concurrency and abort tests.
+ */
+export async function readRegularFileFromOpen(
+  path: string,
+  options: RegularFileAsyncReadOptions = {},
+  openDescriptor: (
+    target: string,
+    flags: number,
+  ) => Promise<FileReadDescriptor<RegularFileStat>> = open,
+  snapshot?: BoundedFileSnapshotHooks,
+): Promise<Uint8Array> {
+  const { bytes } = await readRegularFileWithMeta(path, options, openDescriptor, snapshot);
+  return bytes;
 }
 
 /**

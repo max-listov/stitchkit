@@ -441,31 +441,66 @@ describe('noFollow and descriptor accept', () => {
     expect((await readRegularFile(target, { noFollow: true })).byteLength).toBe(11);
   });
 
-  test('async accept sees the opened descriptor, so a swap at the path after open changes nothing', async () => {
+  test('async accept sees the opened descriptor and a path swap after open retries once to return the current file', async () => {
     const file = join(root, 'decl.json');
     const swap = join(root, 'swap.json');
     writeFileSync(file, 'original');
     writeFileSync(swap, 'replacement-bytes');
     const originalIno = statSync(file).ino;
+    const swapIno = statSync(swap).ino;
 
-    let acceptedIno = -1;
+    const seenInos: number[] = [];
+    let opens = 0;
     const bytes = await readRegularFileFromOpen(
       file,
       {
         accept: (info) => {
-          acceptedIno = info.ino;
-          return info.ino === originalIno;
+          seenInos.push(info.ino);
+          return true;
         },
       },
       async (target, flags) => {
+        opens += 1;
         const handle = await open(target, flags);
-        // The path now names another file; the descriptor still holds the first.
-        renameSync(swap, target);
+        if (opens === 1) renameSync(swap, target);
         return handle;
       },
     );
-    expect(acceptedIno).toBe(originalIno);
-    expect(new TextDecoder().decode(bytes)).toBe('original');
+    expect(seenInos).toEqual([originalIno, swapIno]);
+    expect(new TextDecoder().decode(bytes)).toBe('replacement-bytes');
+
+    // When accept refuses the swapped replacement on attempt 2, no replacement bytes are read.
+    const file2 = join(root, 'decl2.json');
+    const swap2 = join(root, 'swap2.json');
+    writeFileSync(file2, 'original');
+    writeFileSync(swap2, 'replacement-bytes');
+    const original2Ino = statSync(file2).ino;
+    let opens2 = 0;
+    let attempt2Reads = 0;
+    await expectRegularFileErrorAsync(
+      () =>
+        readRegularFileFromOpen(
+          file2,
+          { accept: (info) => info.ino === original2Ino },
+          async (target, flags) => {
+            opens2 += 1;
+            const attempt = opens2;
+            const handle = await open(target, flags);
+            if (attempt === 1) renameSync(swap2, target);
+            return {
+              stat: () => handle.stat(),
+              read: (buffer: Uint8Array, offset: number, length: number) => {
+                if (attempt === 2) attempt2Reads += 1;
+                return handle.read(buffer, offset, length);
+              },
+              close: () => handle.close(),
+            };
+          },
+        ),
+      'rejected',
+    );
+    expect(opens2).toBe(2);
+    expect(attempt2Reads).toBe(0);
   });
 
   test('async accept refuses before any byte is read, and runs on each attempt', async () => {
@@ -527,29 +562,55 @@ describe('noFollow and descriptor accept', () => {
     );
   });
 
-  test('sync accept sees the opened descriptor, so a swap at the path after open changes nothing', () => {
+  test('sync accept sees the opened descriptor and a path swap after open retries once to return the current file', () => {
     const file = join(root, 'decl.json');
     const swap = join(root, 'swap.json');
     writeFileSync(file, 'original');
     writeFileSync(swap, 'replacement-bytes');
     const originalIno = statSync(file).ino;
-    let acceptedIno = -1;
+    const swapIno = statSync(swap).ino;
+    const seenInos: number[] = [];
+    let opens = 0;
     const { bytes } = readRegularFileWithMetaSync(
       file,
       {
         accept: (info) => {
-          acceptedIno = info.ino;
-          return info.ino === originalIno;
+          seenInos.push(info.ino);
+          return true;
         },
       },
       (target, flags) => {
+        opens += 1;
         const fd = openSync(target, flags);
-        renameSync(swap, target);
+        if (opens === 1) renameSync(swap, target);
         return fd;
       },
     );
-    expect(acceptedIno).toBe(originalIno);
-    expect(new TextDecoder().decode(bytes)).toBe('original');
+    expect(seenInos).toEqual([originalIno, swapIno]);
+    expect(new TextDecoder().decode(bytes)).toBe('replacement-bytes');
+
+    // Refusing the swapped replacement on retry fails as rejected.
+    const file2 = join(root, 'decl2.json');
+    const swap2 = join(root, 'swap2.json');
+    writeFileSync(file2, 'original');
+    writeFileSync(swap2, 'replacement-bytes');
+    const original2Ino = statSync(file2).ino;
+    let opens2 = 0;
+    expectRegularFileError(
+      () =>
+        readRegularFileWithMetaSync(
+          file2,
+          { accept: (info) => info.ino === original2Ino },
+          (target, flags) => {
+            opens2 += 1;
+            const fd = openSync(target, flags);
+            if (opens2 === 1) renameSync(swap2, target);
+            return fd;
+          },
+        ),
+      'rejected',
+    );
+    expect(opens2).toBe(2);
   });
 });
 

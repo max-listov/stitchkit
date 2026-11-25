@@ -1,10 +1,16 @@
 import { z } from 'zod';
 import type { createInvocationPayloads } from './invocation-payload';
 import {
-  InvocationPayloadSchema,
+  InvocationStoredPayloadSchema,
   isModelInvocationRecord,
+  type ModelInvocationPayloadRead,
+  ModelInvocationPayloadReadSchema,
   ModelInvocationRecordSchema,
 } from './invocation-schema';
+import {
+  InvocationExpiredPayloadSchema,
+  InvocationPayloadSchema,
+} from './schemas-invocation-payload';
 import type { AgentRuntimeStore } from './store';
 
 export const InvocationReadInputSchema = z
@@ -45,17 +51,43 @@ export async function readInvocationRecords(
   };
 }
 
+function decodeStoredPayload(
+  payloads: ReturnType<typeof createInvocationPayloads>,
+  conversationId: string,
+  raw: unknown,
+): ModelInvocationPayloadRead {
+  const expired = InvocationExpiredPayloadSchema.safeParse(raw);
+  if (expired.success) {
+    return ModelInvocationPayloadReadSchema.parse({
+      status: 'expired',
+      artifactId: expired.data.artifactId,
+      sha256: expired.data.sha256,
+      bytes: expired.data.bytes,
+      expiredAt: expired.data.expiredAt,
+    });
+  }
+  const live = InvocationPayloadSchema.parse(raw);
+  const payload = payloads.decrypt(conversationId, live);
+  return ModelInvocationPayloadReadSchema.parse({
+    status: 'available',
+    artifactId: live.artifactId,
+    sha256: live.sha256,
+    bytes: live.bytes,
+    payload,
+  });
+}
+
 export async function readInvocationPayload(
   store: AgentRuntimeStore,
   payloads: ReturnType<typeof createInvocationPayloads>,
   input: { conversationId: string; artifactId: string },
-) {
+): Promise<ModelInvocationPayloadRead> {
   const keyed = await store.findEventOnce?.({
     conversationId: input.conversationId,
     kind: 'provider/payload',
     key: input.artifactId,
   });
-  if (keyed) return payloads.decrypt(input.conversationId, keyed.payload);
+  if (keyed) return decodeStoredPayload(payloads, input.conversationId, keyed.payload);
   // An artifact written by 0.100.0 carries a random event id: only a scan finds it.
   let fromSeq: number | undefined;
   do {
@@ -66,9 +98,10 @@ export async function readInvocationPayload(
     });
     for (const event of page.items) {
       if (event.kind !== 'provider/payload') continue;
-      const payload = InvocationPayloadSchema.parse(event.payload);
-      if (payload.artifactId === input.artifactId)
-        return payloads.decrypt(input.conversationId, payload);
+      const stored = InvocationStoredPayloadSchema.parse(event.payload);
+      if (stored.artifactId === input.artifactId) {
+        return decodeStoredPayload(payloads, input.conversationId, stored);
+      }
     }
     fromSeq = page.nextSeq;
   } while (fromSeq !== undefined);

@@ -3,7 +3,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { PUBLIC_SURFACE_PATH, previousCoreSurface } from './release-affects-names';
+import {
+  PUBLIC_SURFACE_PATH,
+  PUBLIC_SURFACE_PRODUCERS_PATH,
+  previousCoreSurface,
+} from './release-affects-names';
 import { CADENCE_GUIDE } from './release-derived';
 import { breakingMarkers, extractReleaseNotes } from './release-notes';
 import { prepareTrain } from './release-prepare';
@@ -40,7 +44,12 @@ afterAll(async () => {
 
 /** Every file `prepare` derives a train from and the release checks read, from the one target table. */
 function metadataPaths(): string[] {
-  const paths = new Set([CADENCE_GUIDE, MATURITY_TABLE_PATH, PUBLIC_SURFACE_PATH]);
+  const paths = new Set([
+    CADENCE_GUIDE,
+    MATURITY_TABLE_PATH,
+    PUBLIC_SURFACE_PATH,
+    PUBLIC_SURFACE_PRODUCERS_PATH,
+  ]);
   for (const info of Object.values(RELEASE_TARGETS)) {
     paths.add(`${info.directory}/package.json`);
     paths.add(info.changelog);

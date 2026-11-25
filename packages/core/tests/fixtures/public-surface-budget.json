@@ -3,12 +3,12 @@
   "limits": {
     "stitchkit": 258,
     "stitchkit/agent-executor": 80,
-    "stitchkit/agent-executor/acp": 10,
+    "stitchkit/agent-executor/acp": 11,
     "stitchkit/agent-executor/claude": 5,
     "stitchkit/agent-executor/claude-sdk": 4,
     "stitchkit/agent-executor/codex": 4,
     "stitchkit/agent-executor/testing": 8,
-    "stitchkit/agent-runtime": 398,
+    "stitchkit/agent-runtime": 413,
     "stitchkit/agent-runtime/browser": 96,
     "stitchkit/agent-runtime/coding-tools": 10,
     "stitchkit/agent-runtime/harness": 31,
@@ -55,7 +55,7 @@
     "stitchkit/telegram/voice": 9,
     "stitchkit/telegram/screens": 77,
     "stitchkit/testing": 81,
-    "stitchkit/tools": 174,
+    "stitchkit/tools": 175,
     "stitchkit/tools/connections": 30,
     "stitchkit/tools/contract": 16,
     "stitchkit/tools/invoker": 4,
@@ -73,7 +73,7 @@
     "stitchkit/realtime": 18,
     "stitchkit/sync": 51,
     "stitchkit/sync/postgres": 25,
-    "stitchkit/service-host": 94,
+    "stitchkit/service-host": 104,
     "stitchkit/service-host/macos": 103
   },
   "overlaps": [
@@ -592,6 +592,11 @@
       "entrypoints": ["stitchkit/testing", "stitchkit/tools/mcp"],
       "reason": "Schema validation policy is the same contract used by MCP executable mounts and their surface tests; the MCP-only leaf re-exports that owner (ADR 0231).",
       "names": ["IncompatibleSchemaPolicy", "McpSchemaValidationConfig"]
+    },
+    {
+      "entrypoints": ["stitchkit/testing", "stitchkit/tools"],
+      "reason": "SurfaceRuntimeToolDefinition is the one peer-free non-executable descriptor shape accepted by both test surface manifests and catalog/name introspection (listToolNames, buildToolManifest, describeToolCatalog).",
+      "names": ["SurfaceRuntimeToolDefinition"]
     },
     {
       "entrypoints": ["stitchkit", "stitchkit/http"],
@@ -1175,6 +1180,53 @@
         "splitTelegramMarkdown"
       ],
       "reason": "Zero-dependency GitHub-Markdown to Telegram HTML converter and fence-aware splitter extend the existing stitchkit/telegram/html owner (I7, I8, I10, I13)."
+    },
+    {
+      "entrypoint": "stitchkit/agent-executor/acp",
+      "names": ["AcpApprovalEnforcement"],
+      "reason": "Literal type ('agent-initiated') exposing on AcpDriver and AcpSession that ACP tool approvals are agent-initiated rather than host-intercepted."
+    },
+    {
+      "entrypoint": "stitchkit/agent-runtime",
+      "names": [
+        "AgentToolDescriptor",
+        "AGENT_STATE_TOOL_DESCRIPTORS",
+        "AGENT_SCHEDULE_TOOL_DESCRIPTORS",
+        "AGENT_CHILD_TOOL_DESCRIPTORS",
+        "AGENT_EVENT_SEARCH_TOOL_DESCRIPTORS",
+        "InvocationPayloadTooLargeError",
+        "InvocationPayloadOmissionReason",
+        "InvocationPayloadOmissionReasonSchema",
+        "ModelInvocationPayloadRead",
+        "ModelInvocationPayloadReadSchema",
+        "PurgeInvocationPayloadsInput",
+        "PurgeInvocationPayloadsInputSchema",
+        "PurgeInvocationPayloadsResult",
+        "PurgeInvocationPayloadsResultSchema",
+        "ModelInvocationAuthorizationInput"
+      ],
+      "reason": "Static non-executable descriptors for the four run-bound runtime tool factories (catalog/manifest inspection without an active run) and typed contracts for non-fatal maxPayloadBytes omission and payload expiry purge on the existing model invocation ledger."
+    },
+    {
+      "entrypoint": "stitchkit/tools",
+      "names": ["SurfaceRuntimeToolDefinition"],
+      "reason": "Peer-free non-executable runtime-tool descriptor type accepted by listToolNames, buildToolManifest and describeToolCatalog so static descriptors compose with executable tools."
+    },
+    {
+      "entrypoint": "stitchkit/service-host",
+      "names": [
+        "SystemdBindReadOnlyPath",
+        "SystemdTimerUnitConfig",
+        "SystemdTimerUnitConfigSchema",
+        "renderSystemdTimerUnit",
+        "CheckSystemdTimerPairOptions",
+        "SystemdTimerPairCheckResult",
+        "checkSystemdTimerPair",
+        "InstallSystemdTimerPairOptions",
+        "SystemdTimerPairInstallResult",
+        "installSystemdTimerPair"
+      ],
+      "reason": "Systemd .timer rendering, BindReadOnlyPaths typing and rollback-guarded .service + .timer pair inspection/installation extend the existing stitchkit/service-host owner without a second supervision entrypoint."
     }
   ]
 }

@@ -26,6 +26,8 @@ type BranchAddress = Pick<AgentBranchRefusal, 'seq' | 'eventKind' | 'messageId' 
 /** The address a thrown error was raised at, read by the event loop that reports it. */
 const raisedAt = new WeakMap<object, BranchAddress>();
 
+export type BranchApplicationKeyMode = 'refuse' | 'retain' | 'rekey-spill';
+
 /** Definitions are collected before references are resolved; foreign references never mint IDs. */
 export class BranchIdentities {
   private readonly definitions = new Map<IdentityKind, Map<string, string>>();
@@ -35,7 +37,7 @@ export class BranchIdentities {
   private readonly files = new Set<string>();
   private readonly references = new Map<IdentityKind, Set<string>>();
   private readonly applicationFiles = new Map<string, string>();
-  private readonly applicationKeys = new Map<string, 'refuse' | 'retain'>();
+  private readonly applicationKeys = new Map<string, BranchApplicationKeyMode>();
   constructor(
     readonly conversationId: string,
     private readonly requestKey: string,
@@ -51,6 +53,10 @@ export class BranchIdentities {
     values.set(source, target);
     this.definitions.set(kind, values);
     return target;
+  }
+  /** Register a spill that legitimately expired via `spill/deleted` in the source log. */
+  defineExpiredSpill(source: string): string {
+    return this.define('spill', source);
   }
   /** Run `work` with `address` added to where the branch is reading. */
   within<T>(address: BranchAddress, work: () => T): T {
@@ -125,11 +131,11 @@ export class BranchIdentities {
   }
   /** Keys the host declares as its own data inside application JSON, with what a source identity under them does. */
   declareApplicationKeys(
-    keys: readonly { key: string; sourceIdentity: 'refuse' | 'retain' }[],
+    keys: readonly { key: string; sourceIdentity: BranchApplicationKeyMode }[],
   ): void {
     for (const { key, sourceIdentity } of keys) this.applicationKeys.set(key, sourceIdentity);
   }
-  applicationKey(key: string): 'refuse' | 'retain' | undefined {
+  applicationKey(key: string): BranchApplicationKeyMode | undefined {
     return this.applicationKeys.get(key);
   }
   /**

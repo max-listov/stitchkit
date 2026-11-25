@@ -44,7 +44,7 @@ const FIELDS: Record<string, string[]> = {
   ItemStartedNotification: ['item'],
   ItemCompletedNotification: ['item'],
   TurnCompletedNotification: ['turn'],
-  Turn: ['id', 'status', 'error', 'items'],
+  Turn: ['id', 'status', 'error', 'items', 'itemsView'],
   TurnError: ['message', 'codexErrorInfo'],
   ThreadTokenUsageUpdatedNotification: ['tokenUsage'],
   ThreadTokenUsage: ['last'],
@@ -56,8 +56,8 @@ const FIELDS: Record<string, string[]> = {
   ThreadStartParams: ['cwd', 'approvalPolicy', 'sandbox', 'model'],
   ThreadStartResponse: ['thread'],
   ThreadResumeParams: ['threadId', 'excludeTurns'],
-  ThreadTurnsListParams: ['threadId', 'limit'],
-  ThreadTurnsListResponse: ['data'],
+  ThreadTurnsListParams: ['threadId', 'limit', 'cursor', 'itemsView'],
+  ThreadTurnsListResponse: ['data', 'nextCursor'],
   GetAccountRateLimitsResponse: ['rateLimits'],
 };
 

@@ -89,6 +89,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       break;
     case 'turn/start':
       buffered.length = 0;
+      appendFileSync(`${home}/turn-start.jsonl`, `${JSON.stringify(message.params)}\n`);
       appendFileSync(ledger, `${message.params.clientUserMessageId}\n`);
       reply({ turn: { id: 'fake-turn', status: 'inProgress', items: [] } });
       void play();

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEngineSession, AgentEngineTurn } from '../engine';
-import { type EngineProcess, spawnEngineProcess } from '../engine-process';
+import { ENGINE_LINE_BYTES, type EngineProcess, spawnEngineProcess } from '../engine-process';
 import {
   answerEngineRequest,
   drainEngineRequests,
@@ -11,11 +11,16 @@ import {
 } from '../engine-requests';
 import { InteractionReplySchema } from '../executor-contract';
 import type { PlanLimits } from '../hello';
+import {
+  assertImageFrameBytes,
+  CLAUDE_CLI_MAX_LINE_BYTES,
+  type DriverImageOptions,
+  imageTurnStarter,
+} from '../image-input';
 import { mergeRateLimitEvent } from '../plan-limits';
 import { type ExecutorProfileConfig, engineEnvironment, engineProfile } from '../profile';
 import {
   createTurnDeltaChannel,
-  extractTextOnlyInput,
   offerTurnDelta,
   sessionAbort,
   stopConnection,
@@ -26,6 +31,7 @@ import {
   claudeControlError,
   claudeInterrupt,
   claudePermissionResponse,
+  claudeUserContent,
   claudeUserMessage,
 } from './protocol';
 import { claudeTranscriptExists, claudeTranscriptPath } from './transcript';
@@ -80,7 +86,7 @@ function claudeTurnHandle(
  * the turn running at the time.
  */
 export async function openClaudeSession(
-  config: {
+  config: DriverImageOptions & {
     executable: string;
     prefix: readonly string[];
     model?: string;
@@ -129,6 +135,7 @@ export async function openClaudeSession(
       cwd: input.cwd,
       env: engineEnvironment(profile, ambient),
       signal: linked.signal,
+      maxLineBytes: CLAUDE_CLI_MAX_LINE_BYTES,
     });
   } catch (error) {
     linked.release();
@@ -220,13 +227,30 @@ export async function openClaudeSession(
       await engine.stop().catch(() => undefined);
     }
   })();
-  return {
-    nativeThreadId: sessionId,
-    async startTurn(turnInput): Promise<AgentEngineTurn> {
+  const startTurn = imageTurnStarter<
+    Parameters<AgentEngineSession['startTurn']>[0],
+    AgentEngineTurn
+  >({
+    driverLabel: 'The Claude CLI driver',
+    busyMessage: 'A turn is already running in this Claude session',
+    imageOptions: config,
+    signal: linked.signal,
+    check() {
       if (dead !== undefined) throw dead;
       if (current !== undefined)
         throw new Error('A turn is already running in this Claude session');
-      const text = extractTextOnlyInput(turnInput.input, 'The Claude CLI driver');
+    },
+    dispatch(turnInput, parts) {
+      // Total outgoing JSON frame is capped at ENGINE_LINE_BYTES (8 MiB), even if maxImageBytes is higher;
+      // stdout uses CLAUDE_CLI_MAX_LINE_BYTES (16 MiB) for `--replay-user-messages` echo headroom.
+      const serialized = JSON.stringify(
+        claudeUserMessage({
+          clientId: turnInput.clientId,
+          content: claudeUserContent(parts),
+          sessionId,
+        }),
+      );
+      assertImageFrameBytes(serialized, ENGINE_LINE_BYTES);
       const turn: ClaudeTurnSlot = {
         state: newClaudeTurnState(turnInput.turnId),
         channel: createTurnDeltaChannel(),
@@ -234,21 +258,17 @@ export async function openClaudeSession(
       };
       current = turn;
       try {
-        engine.send(
-          JSON.stringify(
-            claudeUserMessage({
-              clientId: turnInput.clientId,
-              text,
-              sessionId,
-            }),
-          ),
-        );
+        engine.send(serialized);
       } catch (error) {
         if (current === turn) current = undefined;
         throw error;
       }
       return claudeTurnHandle(turn, (line) => engine.send(line));
     },
+  });
+  return {
+    nativeThreadId: sessionId,
+    startTurn,
     async close() {
       linked.abort();
       await stopConnection({ engine, reading });

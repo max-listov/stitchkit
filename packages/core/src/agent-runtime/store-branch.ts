@@ -227,6 +227,7 @@ export async function branchConversation<T>(
       source.conversationId,
     );
     for (const spill of source.spills) ids.define('spill', spill.reference);
+    for (const expired of source.expiredSpills) ids.defineExpiredSpill(expired);
     ids.declareApplicationFiles(input.applicationFiles ?? []);
     ids.declareApplicationKeys(input.applicationKeys ?? []);
     const events = rekeyBranchEvents(
@@ -285,6 +286,23 @@ export async function branchConversation<T>(
     for (const event of events) {
       const appended = await driver.events.append(tx, event);
       if (appended.seq !== event.seq) throw new TypeError('Branch event sequence changed');
+    }
+    for (const tail of source.tailDeletedSpills) {
+      await driver.events.append(
+        tx,
+        agentStoreEventDraft({
+          conversationId: input.destinationConversationId,
+          kind: 'runtime/branch-observation',
+          payload: {
+            sourceKind: 'spill/deleted',
+            payload: {
+              reference: ids.reference('spill', tail.reference),
+              bytes: tail.bytes,
+              ...(tail.sha256 !== undefined && { sha256: tail.sha256 }),
+            },
+          },
+        }),
+      );
     }
     await driver.archive?.import(tx, {
       format: 'stitchkit.agent-conversation',

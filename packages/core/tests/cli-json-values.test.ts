@@ -82,9 +82,9 @@ test('application globals use the same explicit JSON grammar', () => {
   expect(extractCliGlobalOptions(['inspect', '--tenant=null'], schema).globals).toEqual({
     tenant: 'null',
   });
-  expect(() => extractCliGlobalOptions(['--tenant:=null', '--tenant=x'], schema)).toThrow(
-    'passed 2 times',
-  );
+  const dup = extractCliGlobalOptions(['--tenant:=null', '--tenant=x'], schema);
+  expect(dup.argv).toEqual([]);
+  expect(dup.error?.message).toContain('passed 2 times');
   expect(extractCliGlobalOptions(['--json:=null'], schema).argv).toEqual(['--json:=null']);
 });
 

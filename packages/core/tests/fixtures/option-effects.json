@@ -2015,6 +2015,12 @@
     },
     "ambient": {
       "test": "the Claude CLI driver passes the engine conformance kit"
+    },
+    "resolveFile": {
+      "test": "Claude CLI encodes ordered text+image blocks, preserves plain-text string, and refuses before send"
+    },
+    "maxImageBytes": {
+      "test": "Claude CLI encodes ordered text+image blocks, preserves plain-text string, and refuses before send"
     }
   },
   "CodexDriverConfig": {
@@ -2035,6 +2041,12 @@
     },
     "ambient": {
       "test": "the Codex driver passes the engine conformance kit"
+    },
+    "resolveFile": {
+      "test": "Codex encodes ordered text+image UserInput with data URL and refuses invalid parts before turn/start"
+    },
+    "maxImageBytes": {
+      "test": "Codex encodes ordered text+image UserInput with data URL and refuses invalid parts before turn/start"
     }
   },
   "ClaudeSdkDriverConfig": {
@@ -2052,6 +2064,12 @@
     },
     "ambient": {
       "test": "the leaf passes its model, permission mode and the profile environment to the query, and reports its SDK version"
+    },
+    "resolveFile": {
+      "test": "Claude SDK validates UUID before resolveFile, encodes image blocks, and releases caller signal on close"
+    },
+    "maxImageBytes": {
+      "test": "Claude SDK validates UUID before resolveFile, encodes image blocks, and releases caller signal on close"
     }
   },
   "AcpDriverConfig": {
@@ -2347,6 +2365,51 @@
     },
     "allowHomeSpecifier": {
       "test": "supports explicit %h preservation when allowHomeSpecifier is true while treating %% as an atomic literal pair"
+    },
+    "startLimitIntervalSec": {
+      "test": "renders StartLimitIntervalSec=0 and SuccessExitStatus= with validation and omission defaults"
+    },
+    "successExitStatus": {
+      "test": "renders StartLimitIntervalSec=0 and SuccessExitStatus= with validation and omission defaults"
+    },
+    "bindReadOnlyPaths": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "dynamicUser": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "ioSchedulingClass": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "nice": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "privateNetwork": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "privateTmp": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "protectHome": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "protectSystem": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "restrictAddressFamilies": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "runtimeDirectoryMode": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "stateDirectory": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "stateDirectoryMode": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "timeoutStartSec": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
     }
   },
   "CheckSystemdUnitOptions": {
@@ -2799,7 +2862,7 @@
   },
   "RegularFileReadOptions": {
     "accept": {
-      "test": "sync accept sees the opened descriptor, so a swap at the path after open changes nothing"
+      "test": "sync accept sees the opened descriptor and a path swap after open retries once to return the current file"
     },
     "limit": {
       "test": "refuses files exceeding limit and invalid limit values"
@@ -2845,6 +2908,9 @@
     },
     "signal": {
       "test": "abort rejects with the reason and closes every watcher"
+    },
+    "match": {
+      "test": "wakes on regular file, broken symlink, cyclic symlink, directory, and trailing slash"
     }
   },
   "AgentStoreConformanceCapabilities": {
@@ -3348,6 +3414,169 @@
     },
     "timeoutMs": {
       "test": "createDefaultMacosCommandRunner enforces maxOutputBytes and timeoutMs via NativeCommandError COMMAND_LIMIT"
+    }
+  },
+  "SystemdTimerUnitConfig": {
+    "description": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "scope": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "after": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "wants": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "unit": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "onCalendar": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "onBootSec": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "onStartupSec": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "onActiveSec": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "onUnitActiveSec": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "onUnitInactiveSec": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "accuracySec": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "randomizedDelaySec": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "persistent": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "wantedBy": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    },
+    "allowHomeSpecifier": {
+      "test": "renders hardened system daemon, dynamic-user collector, isolated backup/prune oneshots, and timer units"
+    }
+  },
+  "CheckSystemdTimerPairOptions": {
+    "serviceUnitName": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    },
+    "serviceUnitPath": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    },
+    "expectedServiceContent": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    },
+    "expectedServiceDigest": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    },
+    "timerUnitName": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    },
+    "timerUnitPath": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    },
+    "expectedTimerContent": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    },
+    "expectedTimerDigest": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    },
+    "scope": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    },
+    "unitSearchDirs": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    },
+    "adapter": {
+      "test": "installSystemdTimerPair is idempotent, respects NeedDaemonReload, restarts active timer on schedule change, and never starts the service"
+    }
+  },
+  "InstallSystemdTimerPairOptions": {
+    "serviceUnitName": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "serviceUnitPath": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "serviceContent": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "timerUnitName": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "timerUnitPath": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "timerContent": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "scope": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "mode": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "enable": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "start": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "unitSearchDirs": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    },
+    "adapter": {
+      "test": "installSystemdTimerPair validates Unit= linkage, all (enable, start) combos, foreign refusals, and rolls back both files on failure"
+    }
+  },
+  "UnixClientTransportConfig": {
+    "socketPath": {
+      "test": "the selected socket is the only transport, including an absolute redirect"
+    },
+    "expectedOwnerUid": {
+      "test": "accepts matching caller UID and refuses mismatched expectedOwnerUid on both Bun and Node paths"
+    },
+    "maxRequestBytes": {
+      "test": "bounds request and response bytes before retained memory can grow"
+    },
+    "maxResponseBytes": {
+      "test": "bounds request and response bytes before retained memory can grow"
+    },
+    "headersTimeoutMs": {
+      "test": "missing sockets, pre-abort, header timeout and close settle explicitly"
+    },
+    "maxHeaderBytes": {
+      "test": "bounds request and response bytes before retained memory can grow"
+    },
+    "maxConnections": {
+      "test": "close interrupts an active body once and the finite connection cap refuses without queueing"
+    },
+    "maxRedirects": {
+      "test": "the selected socket is the only transport, including an absolute redirect"
+    },
+    "responseBodyMode": {
+      "test": "streaming response mode removes only the cumulative response ceiling"
+    }
+  },
+  "PurgeInvocationPayloadsInput": {
+    "before": {
+      "test": "purgePayloads redacts expired bodies in SQLite + FTS5, preserves fresh rows, paginates without starvation, is idempotent, and branches cleanly"
+    },
+    "conversationId": {
+      "test": "purgePayloads redacts expired bodies in SQLite + FTS5, preserves fresh rows, paginates without starvation, is idempotent, and branches cleanly"
+    },
+    "limit": {
+      "test": "purgePayloads redacts expired bodies in SQLite + FTS5, preserves fresh rows, paginates without starvation, is idempotent, and branches cleanly"
     }
   }
 }

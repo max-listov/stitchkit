@@ -1,4 +1,4 @@
-import { statSync, watch } from 'node:fs';
+import { lstatSync, statSync, watch } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { abortReason } from '../internal/abort-race';
 import { assertTimerMs } from '../internal/deadline';
@@ -7,10 +7,18 @@ import { errnoOf } from '../internal/errno';
 /** Default delay of the one deferred rescan after each watch start (milliseconds). */
 const DEFAULT_DIRECTORY_SETTLE_MS = 250;
 
-/** Cancellation, the deferred-rescan delay and process holding of `waitForDirectory`. */
+/** Cancellation, readiness mode, deferred-rescan delay and process holding of `waitForDirectory`. */
 export interface WaitForDirectoryOptions {
   /** Stops waiting: the promise rejects with the signal's reason and every watcher closes. */
   signal?: AbortSignal;
+  /**
+   * What appearance at the target name resolves the wait:
+   * - `'directory'` (default): wait until the path resolves to a directory (`stat`).
+   * - `'entry'`: wake as soon as any directory entry exists at the final path component
+   *   (`lstat`), including a regular file or broken symlink, so the caller can run its own
+   *   policy check without polling.
+   */
+  match?: 'directory' | 'entry';
   /**
    * Delay of the single deferred rescan after a watch starts. A watcher can miss a
    * directory created right after it starts (Bun on macOS measurably does); the
@@ -34,6 +42,8 @@ interface DirectoryWatcher {
 /** The filesystem the wait uses; tests replace it to count calls or drop events. */
 export interface DirectoryAppearanceIo {
   isDirectory(path: string): boolean;
+  /** Whether any entry exists at `path` without following a final symlink (`lstat`). Required for `match: 'entry'`. */
+  hasEntry?(path: string): boolean;
   watch(path: string, onEvent: () => void, options: { persistent: boolean }): DirectoryWatcher;
 }
 
@@ -43,6 +53,15 @@ const nodeIo: DirectoryAppearanceIo = {
   isDirectory(path) {
     try {
       return statSync(path).isDirectory();
+    } catch (error) {
+      if (ABSENT.has(errnoOf(error) ?? '')) return false;
+      throw error;
+    }
+  },
+  hasEntry(path) {
+    try {
+      lstatSync(path);
+      return true;
     } catch (error) {
       if (ABSENT.has(errnoOf(error) ?? '')) return false;
       throw error;
@@ -64,14 +83,15 @@ function nearestDirectory(target: string, io: DirectoryAppearanceIo): string {
 }
 
 /**
- * Resolve once `path` exists as a directory, without a polling timer. The
- * nearest existing ancestor is watched; when a component appears the watch moves
- * down to it, and when the watched directory goes away it moves back up. Each
- * watch start is followed by one immediate rescan and one deferred rescan after
- * `settleMs`, so a directory created between the check and the watch is still seen.
- * Each event re-arms the watch, so a directory removed and made again at once is
- * followed too. A symbolic link at the path counts once it resolves to a directory;
- * the appearance of its target elsewhere is not watched.
+ * Resolve once `path` satisfies `options.match` (`'directory'`, the default, waits for a
+ * directory; `'entry'` resolves as soon as any entry — directory, regular file, symlink, or
+ * FIFO — exists at `path`), without a polling timer. The nearest existing ancestor is watched;
+ * when a component appears the watch moves down to it, and when the watched directory goes away
+ * it moves back up. Each watch start is followed by one immediate rescan and one deferred rescan
+ * after `settleMs`, so an entry created between the check and the watch is still seen. Each
+ * event re-arms the watch, so a path removed and made again at once is followed too. Under
+ * `match: 'directory'`, a symbolic link at the path counts once it resolves to a directory; the
+ * appearance of its target elsewhere is not watched.
  */
 export function waitForDirectory(
   path: string,
@@ -87,8 +107,24 @@ export function waitForDirectoryWith(
   options: WaitForDirectoryOptions = {},
 ): Promise<void> {
   const target = resolve(path);
-  const { signal, settleMs = DEFAULT_DIRECTORY_SETTLE_MS, keepAlive = true } = options;
+  const {
+    signal,
+    match = 'directory',
+    settleMs = DEFAULT_DIRECTORY_SETTLE_MS,
+    keepAlive = true,
+  } = options;
+  if (match !== 'directory' && match !== 'entry') {
+    throw new TypeError(`match must be 'directory' or 'entry', got ${String(match)}`);
+  }
+  const hasEntry = io.hasEntry;
+  if (match === 'entry' && typeof hasEntry !== 'function') {
+    throw new TypeError("DirectoryAppearanceIo.hasEntry is required when match is 'entry'");
+  }
   assertTimerMs('settleMs', settleMs);
+  const isSatisfied =
+    match === 'entry' && hasEntry !== undefined
+      ? (candidate: string) => hasEntry(candidate)
+      : (candidate: string) => io.isDirectory(candidate);
   return new Promise<void>((resolveWait, rejectWait) => {
     if (signal?.aborted) {
       rejectWait(abortReason(signal));
@@ -121,13 +157,13 @@ export function waitForDirectoryWith(
       if (done) return;
       let present: string;
       try {
-        present = nearestDirectory(target, io);
+        if (isSatisfied(target)) {
+          finish();
+          return;
+        }
+        present = nearestDirectory(dirname(target), io);
       } catch (error) {
         finish(error, true);
-        return;
-      }
-      if (present === target) {
-        finish();
         return;
       }
       if (present === watched) return;

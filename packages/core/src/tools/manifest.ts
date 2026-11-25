@@ -1,8 +1,10 @@
 import type { ToolTransport } from '../contract/define';
-import type { ToolSurfaceProjection } from './internal/surface-projector';
+import {
+  projectToolSurface,
+  type SurfaceRuntimeToolDefinition,
+  type ToolSurfaceProjection,
+} from './internal/surface-projector';
 import type { CollectToolsConfig } from './mount';
-import type { RuntimeToolDefinition } from './runtime-tool-declaration';
-import { collectToolSurface } from './surface';
 
 export interface ToolManifestEntry {
   name: string;
@@ -10,7 +12,8 @@ export interface ToolManifestEntry {
   inputSchema: Record<string, unknown>;
 }
 
-export interface ToolManifestConfig extends ToolSurfaceProjection<RuntimeToolDefinition> {
+export interface ToolManifestConfig
+  extends ToolSurfaceProjection<SurfaceRuntimeToolDefinition> {
   /** Model-facing surface whose exposure rules the manifest must mirror. */
   transport: ToolTransport;
   extend?: CollectToolsConfig['extend'];
@@ -38,21 +41,25 @@ function utf8Length(value: unknown): number {
 /** Inspect the exact model-facing catalog using the same projection as the live mount. */
 export function describeToolCatalog(config: ToolCatalogConfig): ToolCatalogEntry[] {
   const deferred = new Set(config.deferredNames ?? []);
-  const entries = collectToolSurface({
-    surface: config,
-    transport: config.transport,
+  const entries = projectToolSurface(config, config.transport, {
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
-  }).map(({ kind, service, action, mountable }) => {
-    const schemaBytes = utf8Length(mountable.presentationSchema);
+  }).map((projected) => {
+    const schemaBytes = utf8Length(projected.presentationSchema);
+    const description =
+      projected.kind === 'contract' ? projected.source.desc : projected.source.description;
     return {
-      name: mountable.name,
-      description: mountable.method.desc,
-      inputSchema: mountable.presentationSchema,
-      source: { kind, service, action },
+      name: projected.name,
+      description,
+      inputSchema: projected.presentationSchema,
+      source: {
+        kind: projected.kind,
+        service: projected.serviceName,
+        action: projected.action,
+      },
       schemaBytes,
-      deferred: deferred.has(mountable.name),
+      deferred: deferred.has(projected.name),
     } satisfies ToolCatalogEntry;
   });
   if (config.maxSchemaBytes !== undefined) {
@@ -76,15 +83,14 @@ export function describeToolCatalog(config: ToolCatalogConfig): ToolCatalogEntry
  * rather than crashing the whole manifest.
  */
 export function buildToolManifest(config: ToolManifestConfig): ToolManifestEntry[] {
-  return collectToolSurface({
-    surface: config,
-    transport: config.transport,
+  return projectToolSurface(config, config.transport, {
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
-  }).map(({ mountable }) => ({
-    name: mountable.name,
-    description: mountable.method.desc,
-    inputSchema: mountable.presentationSchema,
+  }).map((projected) => ({
+    name: projected.name,
+    description:
+      projected.kind === 'contract' ? projected.source.desc : projected.source.description,
+    inputSchema: projected.presentationSchema,
   }));
 }

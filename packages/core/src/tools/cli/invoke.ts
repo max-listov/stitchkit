@@ -32,7 +32,12 @@
  */
 import type { ZodObject, z } from 'zod';
 import type { ServiceDef, StitchLogger } from '../../server/types';
-import { resolveOptionalCliToolAccess, type ToolAccess } from '../access';
+import {
+  inspectOnlyError,
+  isInspectOnlyLifecycle,
+  resolveOptionalCliToolAccess,
+  type ToolAccess,
+} from '../access';
 import type { ErrorHintFn, ToolCallHooks } from '../execute-hooks';
 import { type ToolResult, toolResultFromError } from '../execute-result';
 import { toolSurfaceOutputSchema } from '../internal/tool-view';
@@ -158,7 +163,8 @@ type CliSurfaceAccessConfig<
       runtimeTools?: TRuntime | CliRuntimeToolsFactory<TAuth, TGlobals>;
       /**
        * Required access policy for every managed CLI command — pass `{ gate }` with
-       * `beforeHandle` or explicitly mark the surface `{ open: 'public' | 'local-operator' | 'remote' }`.
+       * `beforeHandle` (for example from `createAuthHook`), `{ open: 'public' | 'local-operator' | 'remote' }`,
+       * or `{ inspect: true }` for read-only surface inspection that refuses every execution.
        */
       access: ToolAccess;
     };
@@ -261,7 +267,12 @@ export async function createCliInvoker<
   assertNoLegacyCliPolicyKeys(config);
   assertCliAuthConfig(config);
   const typedGlobals = parseCliGlobalValues(config.globalOptions, globals);
-  const auth = await resolveCliIdentity(config, typedGlobals)();
+  const hasManagedFactory =
+    typeof config.services === 'function' || typeof config.runtimeTools === 'function';
+  const auth =
+    hasManagedFactory || !isInspectOnlyLifecycle(lifecycle)
+      ? await resolveCliIdentity(config, typedGlobals)()
+      : undefined;
   // Only the half that returns a value is invocable in process. Every native
   // command is still validated and passed to `buildCliSurface` so duplicates
   // and invalid `commandSettings` fail at startup while `result` on native stays refused.
@@ -290,7 +301,9 @@ export async function createCliInvoker<
     new Set(),
     invokerCommandShapeIssue,
   );
-  const runTool = createCliToolRunner(config, lifecycle, auth, typedGlobals);
+  const runTool = isInspectOnlyLifecycle(lifecycle)
+    ? undefined
+    : createCliToolRunner(config, lifecycle, auth, typedGlobals);
   return {
     commands: [
       ...[...natives].map(([name, definition]) => ({
@@ -325,6 +338,17 @@ export async function createCliInvoker<
       const tool = tools.get(command);
       if (!tool) {
         return cliInvocationResult(unknownCliCommand(command), command, config);
+      }
+      const inspectErr = inspectOnlyError(lifecycle);
+      if (inspectErr || !runTool) {
+        return shapeCliInvocationResult(
+          toolResultFromError(
+            inspectErr ?? new Error('Inspect-only surface refuses execution'),
+          ),
+          command,
+          config,
+          cliResultPolicy(config, command),
+        );
       }
       let result: ToolResult;
       try {

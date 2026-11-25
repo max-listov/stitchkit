@@ -1,0 +1,484 @@
+{
+  "stitchkit": {
+    "Backoff": ["createBackoff"],
+    "BoundRealtimeClient": ["bindRealtimeClient"],
+    "ConfiguredHttpClient": ["createHttpClient"],
+    "ContractDef": ["defineContract"],
+    "ContractIdentity": ["readContractIdentity"],
+    "DefinedErrors": ["defineErrors"],
+    "LiveStateController": ["createLiveStateController"],
+    "NDJSONDecoder": ["createNDJSONDecoder"],
+    "RealtimeClient": ["createRealtimeClient"],
+    "RealtimeContract": ["defineRealtimeContract"],
+    "RealtimeRejectionReport": ["asRealtimeRejection"],
+    "RetainedTopics": ["createRetainedTopics"],
+    "ScopedClientRegistry": ["createScopedClients"],
+    "ScopedHttpClient": ["createClient"],
+    "ScopedUrlBuilder": ["createUrlBuilder"],
+    "ScopedUrlBuilderRegistry": ["createScopedUrlBuilders"],
+    "SessionCredentials": ["createSessionCredentials"],
+    "SessionRefreshFailure": ["defaultClassifyRefreshFailure"],
+    "SessionScope": ["createSessionScope"],
+    "SocketIOClient": ["createSocketIOClient"],
+    "StitchLogger": ["repeatLimited"],
+    "TraceContext": ["childSpan", "createTraceContext", "parseTraceparent"],
+    "UnauthorizedMatcher": ["contractEndpointMatchers"],
+    "WithToolView": ["withToolView"]
+  },
+  "stitchkit/http": {
+    "BridgeFetch": ["createBridgeFetch"],
+    "ClientFetch": ["createBridgeFetch"],
+    "ConfiguredHttpClient": ["createHttpClient"],
+    "ScopedClientRegistry": ["createScopedClients"],
+    "ScopedUrlBuilderRegistry": ["createScopedUrlBuilders"],
+    "UnauthorizedMatcher": ["contractEndpointMatchers"]
+  },
+  "stitchkit/realtime": {
+    "BoundRealtimeClient": ["bindRealtimeClient"],
+    "RealtimeClient": ["createRealtimeClient"],
+    "RealtimeContract": ["defineRealtimeContract"],
+    "RetainedTopics": ["createRetainedTopics"],
+    "SocketIOClient": ["createSocketIOClient"]
+  },
+  "stitchkit/live": {
+    "EventsDeclaration": ["defineEvents"],
+    "TypedWatchClient": ["createWatchClient"],
+    "WatchTransport": ["watchTransport"]
+  },
+  "stitchkit/react": {
+    "CacheBridge": ["createCacheBridge", "createRealtimeCacheBridge"],
+    "EntityCacheHandlers": ["createEntityCacheHandlers"]
+  },
+  "stitchkit/react/keyboard": {
+    "NavZone": ["useNavZone"]
+  },
+  "stitchkit/react/keyboard/testing": {
+    "KeyboardTestBed": ["createKeyboardTestBed"],
+    "KeyLayerStack": ["createKeyLayerStack"],
+    "NavZoneController": ["createNavZone"]
+  },
+  "stitchkit/tools": {
+    "AgentToolRegistryBuilder": ["defineToolRegistry"],
+    "AsyncOperationSnapshotSchema": ["createAsyncOperationSnapshotSchema"],
+    "AsyncOperationSnapshotSchemaWithProgress": ["createAsyncOperationSnapshotSchema"],
+    "BoundAdaptedContractAsyncOperation": ["bindContractAsyncOperation"],
+    "CimdClientMetadataFetcher": ["createSecureClientMetadataFetcher"],
+    "DefinedAsyncOperationContract": ["defineAsyncOperationContract"],
+    "LocalStepDurability": ["createLocalStepDurability"],
+    "MountableTool": ["collectTools"],
+    "NonPortableFormat": ["findNonPortableFormats"],
+    "RuntimeAsyncOperation": ["defineAsyncOperation"],
+    "RuntimeToolDefinitionWithoutOutput": ["createRuntimeToolFactory", "defineRuntimeTool"],
+    "RuntimeToolDefinitionWithOutput": [
+      "createRuntimeToolFactory",
+      "defineDownloadTool",
+      "defineRuntimeTool",
+      "defineUploadTool",
+      "defineViewFileTool",
+      "defineWaitTool"
+    ],
+    "RuntimeToolFactory": ["createRuntimeToolFactory"],
+    "ToolCallHooks": ["createToolLogger"],
+    "ToolCatalogEntry": ["describeToolCatalog"],
+    "ToolGate": ["composeToolLifecycle"],
+    "ToolInvoker": ["createToolInvoker"],
+    "ToolManifestEntry": ["buildToolManifest"],
+    "ToolNameEntry": ["listContractToolNames", "listToolNames"],
+    "ToolPresentationSchema": ["flattenToolJsonSchema"],
+    "TransportSummary": ["summarizeTransports"],
+    "UntypedProperty": ["findUntypedProperties"]
+  },
+  "stitchkit/tools/mcp": {
+    "McpCatalogStamp": ["readMcpCatalogStamp"],
+    "McpHttpHandler": ["createMcpHandler"],
+    "McpStdioHandle": ["createStdioMcpServer"],
+    "StdioProcessSignalsBinding": ["bindStdioProcessSignals"]
+  },
+  "stitchkit/tools/toolkit": {
+    "Toolkit": ["createToolkit"]
+  },
+  "stitchkit/tools/contract": {
+    "AsyncOperationSnapshotSchema": ["createAsyncOperationSnapshotSchema"],
+    "AsyncOperationSnapshotSchemaWithProgress": ["createAsyncOperationSnapshotSchema"]
+  },
+  "stitchkit/tools/invoker": {
+    "ToolInvoker": ["createToolInvoker"]
+  },
+  "stitchkit/tools/connections": {
+    "McpClientConnection": ["defineMcpClientConnection"],
+    "OpenApiConnection": ["defineOpenApiConnection"]
+  },
+  "stitchkit/cli": {
+    "AppliedCliUpdate": ["applyCliUpdate"],
+    "CliArgvRoute": ["routeCliArgv"],
+    "CliCheckpoint": ["readCliCheckpoint"],
+    "CliCommandDefinitionWithoutOutput": [
+      "defineCliBatchCommand",
+      "defineCliCommand",
+      "defineCliStreamCommand"
+    ],
+    "CliCommandDefinitionWithOutput": ["defineCliCommand"],
+    "CliGlobalOptionsParse": ["extractCliGlobalOptions"],
+    "CliInvocationResult": ["cliInvocationResult"],
+    "CliInvocationScan": ["scanCliInvocation"],
+    "CliInvoker": ["createCliInvoker"],
+    "CliProfileStore": ["createCliProfileStore"],
+    "CliResultPolicy": ["defineCliResult"],
+    "CliSignatureVerdict": ["verifyCliManifest"],
+    "CliUpdateCheck": ["checkCliUpdate"],
+    "CliViewOutput": ["renderCliView"],
+    "ParsedCliArgs": ["parseCliArgs"],
+    "RolledBackCliUpdate": ["rollbackCliUpdate"]
+  },
+  "stitchkit/contract": {
+    "ContractDef": ["defineContract"],
+    "DefinedErrors": ["defineErrors"],
+    "WithToolView": ["withToolView"]
+  },
+  "stitchkit/primitives": {
+    "Money": [
+      "addMoney",
+      "moneyFromDecimal",
+      "multiplyMoney",
+      "multiplyMoneyByDecimal",
+      "roundMoney",
+      "subtractMoney"
+    ],
+    "MoneyShare": ["shareMoney"],
+    "MoneySplit": ["splitMoney"],
+    "Quantity": ["addQuantity"],
+    "SourceRisk": ["scanMoneyNumberRisks", "scanOwnerFilterRisks"]
+  },
+  "stitchkit/handler": {
+    "BridgeHostHandle": ["serveBridge"],
+    "FetchHandler": ["createHandler"],
+    "ServiceDef": ["implement"]
+  },
+  "stitchkit/server": {
+    "BunServerHandle": ["createServer"],
+    "ByteRange": ["parseByteRange"],
+    "ComposedLane": ["socketIoLane", "webSocketLane"],
+    "CookieDef": ["defineCookie"],
+    "EventBus": ["createEventBus"],
+    "FetchHandler": ["createHandler"],
+    "JwtPayload": ["verifyJwt"],
+    "KeyedServices": ["implementRegistry"],
+    "LifecycleHooks": ["composeLifecycleHooks"],
+    "LocalHostGuard": ["createLocalHostGuard"],
+    "ManagedServerHandle": ["createServer"],
+    "MultipartResult": ["parseMultipart"],
+    "OpenApiDocument": ["generateOpenApiDocument"],
+    "ProcessSignalsBinding": ["bindProcessSignals"],
+    "RawRoute": ["ndjsonRoute", "openApiRoute", "sseRoute", "staticRoute", "streamingRoute"],
+    "RealtimeServer": ["bindRealtimeServer"],
+    "RequestIngress": ["defineRequestIngress"],
+    "ScopedAuthHook": ["composeAuthHooks", "createAuthHook"],
+    "ServiceDef": ["implement", "implementRegistry", "withContractIdentity"],
+    "SignedLinkVerdict": ["verifySignedLink"],
+    "SocketIOServerHandle": ["createSocketIOServer"],
+    "SocketRegistry": ["bindSocketRegistry"],
+    "StreamingMultipartImplementation": ["defineMultipartStream"],
+    "TrustFence": ["createTrustFence"],
+    "UnixClientTransport": ["createUnixClientTransport"]
+  },
+  "stitchkit/observability": {
+    "DimensionsProjector": ["createDimensionsProjector"],
+    "EventLoopDelayMonitor": ["createEventLoopDelayMonitor"],
+    "JsonValue": ["redact", "sanitizePayload", "truncatePreview"],
+    "Observability": ["createObservability"],
+    "RequestContext": ["getRequestContext"],
+    "SizeMeasure": ["measureSize"],
+    "SpooledSink": ["createSpooledSink"],
+    "TraceContext": [
+      "childSpan",
+      "createTraceContext",
+      "parseTraceparent",
+      "resolvePropagationContext",
+      "resolveTraceContext"
+    ]
+  },
+  "stitchkit/agent-runtime": {
+    "AgentChildManager": ["createAgentChildManager"],
+    "AgentHistoryBudgetResult": ["selectAgentHistory"],
+    "AgentHistoryProjectionResult": ["projectAgentHistoryDetailed"],
+    "AgentModelRegistry": ["defineModelRegistry"],
+    "AgentModelSelectionStore": ["createMemoryAgentModelSelectionStore"],
+    "AgentObservability": ["createAgentObservability"],
+    "AgentProjectionDefinition": ["defineAgentProjection"],
+    "AgentProtocol": ["defineAgentProtocol"],
+    "AgentProviderFailure": ["classifyProviderFailure"],
+    "AgentRuntime": ["createAgentRuntime"],
+    "AgentRuntimeCursorAdvance": ["advanceAgentRuntimeEventCursor"],
+    "AgentRuntimeEventSink": ["createAgentRuntimeEventSink"],
+    "AgentRuntimeStopPolicy": ["agentChildBudgetStopPolicy"],
+    "AgentRuntimeStore": ["createAgentRuntimeStore", "createMemoryAgentRuntimeStore"],
+    "AgentScheduleService": ["createAgentScheduleService"],
+    "AgentSessionCoordinator": ["createAgentSessionCoordinator"],
+    "AgentStateSlotDefinition": ["defineStateSlot"],
+    "AgentStateSlotStore": ["createAgentStateSlotStore"],
+    "AgentStoreEventDecodeAccepted": ["decodeAgentStoreEvent"],
+    "AgentStoreEventDecodeIgnored": ["decodeAgentStoreEvent"],
+    "AgentStoreEventDecodeResult": ["decodeAgentStoreEvent"],
+    "AgentToolDefinition": [
+      "createAgentChildTools",
+      "createAgentEventSearchTools",
+      "createAgentScheduleTools",
+      "createAgentStateTools"
+    ],
+    "CompactableHistory": ["selectCompactableHistory"],
+    "DeferredAgentToolController": ["createDeferredAgentToolSurface"],
+    "ModelInvocationLedger": ["createModelInvocationLedger"]
+  },
+  "stitchkit/agent-runtime/sandbox": {
+    "SandboxBackend": ["createBubblewrapSandboxBackend"],
+    "SandboxSession": ["createSandboxSession"]
+  },
+  "stitchkit/agent-runtime/testing": {
+    "AgentRaceBarrier": ["createAgentRaceBarrier"],
+    "AgentRaceDriver": ["createAgentRaceDriver"],
+    "AgentRaceTrace": ["createAgentRaceTrace"]
+  },
+  "stitchkit/agent-runtime/harness": {
+    "AgentHarnessControlServer": ["createAgentHarnessControlServer"],
+    "AgentHarnessFileResources": ["createAgentHarnessFileResources"],
+    "HeadlessAgentHarness": ["createHeadlessAgentHarness"]
+  },
+  "stitchkit/agent-runtime/coding-tools": {
+    "AgentCodingToolDefinition": ["createAgentCodingTools"]
+  },
+  "stitchkit/agent-runtime/browser": {
+    "AgentController": ["createAgentController"],
+    "AgentControlView": [
+      "createAgentControlView",
+      "reduceAgentControlEvent",
+      "reduceAgentControlSnapshot"
+    ],
+    "AgentRuntimeCursorAdvance": ["advanceAgentRuntimeEventCursor"]
+  },
+  "stitchkit/agent-runtime/realtime": {
+    "AgentHarnessRealtimeBinding": ["bindAgentHarnessRealtime"]
+  },
+  "stitchkit/agent-runtime/openrouter": {
+    "OpenRouterRouteResolver": ["createOpenRouterRouteResolver"],
+    "OpenRouterRouteStore": ["createMemoryOpenRouterRouteStore"]
+  },
+  "stitchkit/agent-executor": {
+    "DispatchOutcome": ["dispatchTurn"],
+    "EngineProcess": ["spawnEngineProcess"],
+    "ExecutorConnectionState": ["advanceExecutorConnection"],
+    "ExecutorLeaseStateStore": ["memoryExecutorLeaseStore"]
+  },
+  "stitchkit/agent-executor/acp": {
+    "AcpDriver": ["createAcpDriver"]
+  },
+  "stitchkit/agent-runtime/postgres": {
+    "PostgresAgentRuntimeStore": ["createPostgresAgentRuntimeStore"]
+  },
+  "stitchkit/agent-runtime/sqlite/bun": {
+    "SqliteAgentRuntimeStore": [
+      "createBunSqliteAgentRuntimeStore",
+      "createSqliteAgentRuntimeStore"
+    ]
+  },
+  "stitchkit/agent-runtime/sqlite/node": {
+    "SqliteAgentRuntimeStore": [
+      "createNodeSqliteAgentRuntimeStore",
+      "createSqliteAgentRuntimeStore"
+    ]
+  },
+  "stitchkit/application": {
+    "ActivityProjection": ["createActivityProjection"],
+    "ApplicationEventSink": ["createApplicationEventSink"],
+    "ApplicationHandle": ["createApplication"],
+    "ApplicationOperationalHandlers": ["createApplicationOperationalHandlers"],
+    "ApplicationSnapshotSink": ["createApplicationSnapshotSink"],
+    "BoundedAdmission": ["createBoundedAdmission"],
+    "BoundedChannel": ["createBoundedChannel"],
+    "CreditWindow": ["createCreditWindow"],
+    "DecisionPipeline": ["createDecisionPipeline"],
+    "DiagnosticJournalLockDiagnosis": ["readDiagnosticJournalLockDiagnosis"],
+    "KeyspaceBackend": ["memoryKeyspaceBackend", "sqliteKeyspaceBackend"],
+    "KeyspaceDeclaration": ["defineKeyspace"],
+    "LifecycleLedgerResource": ["lifecycleLedgerResource"],
+    "LifecycleTransition": [
+      "transitionProcessDraining",
+      "transitionProcessReady",
+      "transitionProcessShutdown",
+      "transitionProcessStart"
+    ],
+    "ManagedResource": ["keyspaceResource"],
+    "ManagedSchedule": ["createManagedSchedule"],
+    "ManagedServerResource": ["managedServerResource"],
+    "NotificationOutbox": ["createNotificationOutbox"],
+    "NotificationOutboxResource": ["notificationOutboxResource"],
+    "OpenedKeyspace": ["openKeyspace"],
+    "ProcessLifecycleLedger": ["createProcessLifecycleLedger"],
+    "RevisionSignal": ["createRevisionSignal"],
+    "SqliteMigration": ["defineSqliteMigrations", "planSqliteMigrations"],
+    "WatchHub": ["createWatchHub"]
+  },
+  "stitchkit/application/grammy": {
+    "GrammyBotResources": ["grammyBotResources"],
+    "GrammyWebhookResource": ["createGrammyWebhookResource"]
+  },
+  "stitchkit/application/opentelemetry": {
+    "ApplicationOpenTelemetryBinding": ["createApplicationOpenTelemetry"]
+  },
+  "stitchkit/testing": {
+    "ManualClock": ["createManualClock"],
+    "SurfaceProbe": ["defineRealtimeProbe"],
+    "SurfaceProbeDriver": ["createRealtimeProbeDriver"]
+  },
+  "stitchkit/process": {
+    "NativeCommandStream": ["streamNativeCommand"],
+    "OperationProcesses": ["createOperationProcesses"]
+  },
+  "stitchkit/files/packaging": {
+    "ClientArtifact": ["buildClientArtifact"],
+    "NativeArtifactLoader": ["inspectNativeArtifact"],
+    "NativePackagingEmbeddedResult": ["createNativePackaging"],
+    "NativePackagingResult": ["createNativePackaging"]
+  },
+  "stitchkit/files": {
+    "ChunkSpool": ["createChunkSpool"],
+    "JsonFileReading": ["readJsonOnce"],
+    "ManagedFileBoundary": ["createManagedFileBoundary"]
+  },
+  "stitchkit/spend": {
+    "SpendGateway": ["createSpendGateway"],
+    "SpendReconcileResult": ["reconcilePendingSpend"],
+    "SpooledSpendStore": ["createSpooledSpendStore"]
+  },
+  "stitchkit/spend/testing": {
+    "SpendCoverageFinding": ["scanSpendCoverageSource"],
+    "SpendCoverageReport": ["assertSpendCoverage", "checkSpendCoverage"]
+  },
+  "stitchkit/service-host": {
+    "ActivatedArtifactResult": ["activateVersionedArtifact"],
+    "ConfigReloader": ["startConfigReloader"],
+    "ConfigSource": ["createPolledJsonConfigSource"],
+    "LaunchdHostAdapter": ["createDefaultLaunchdHostAdapter"],
+    "LaunchdJobInspection": ["inspectLaunchdJob", "parseLaunchctlPrint"],
+    "LaunchdReloadResult": ["reloadLaunchdJob"],
+    "ProcessIdentityAdapter": ["createDefaultProcessIdentityAdapter"],
+    "ProcNetUnixSocket": ["parseProcNetUnixListeningSockets"],
+    "RollbackArtifactResult": ["rollbackVersionedArtifact"],
+    "SupervisedProcessVerification": ["verifySupervisedProcess"],
+    "SystemdApplyResult": ["installAndStartSystemdUnit", "reloadSystemdUnit"],
+    "SystemdHostAdapter": ["createDefaultSystemdHostAdapter"],
+    "SystemdTimerPairCheckResult": ["checkSystemdTimerPair"],
+    "SystemdTimerPairInstallResult": ["installSystemdTimerPair"],
+    "SystemdUnitCheckResult": ["checkSystemdUnit"],
+    "VerifiedArtifact": ["verifyArtifactDirectory"]
+  },
+  "stitchkit/service-host/macos": {
+    "CompileMacosLauncherResult": ["compileMacosLauncher"],
+    "DeveloperIdIdentity": ["findDeveloperIds", "parseDeveloperIdsOutput"],
+    "EnsureSignedBundleResult": ["ensureSignedBundle"],
+    "ForgetRegistrationResult": ["forgetRegistration"],
+    "ForgetStaleRegistrationsResult": ["forgetBuildTree", "forgetStaleRegistrations"],
+    "GenerateAppIconIcnsResult": ["generateAppIconIcns"],
+    "LsregisterBundleRecord": ["parseLsregisterDump"],
+    "MacosBundleHostAdapter": ["createDefaultMacosBundleHostAdapter"],
+    "MacosCommandRunner": ["createDefaultMacosCommandRunner"],
+    "MacosResponsibilityAdapter": ["createDefaultMacosResponsibilityAdapter"],
+    "ParsedCodesignDetails": ["parseCodesignDetails"],
+    "PsProcessEntry": ["parsePsPidPpidTable"],
+    "ResponsibleProcessInspection": ["inspectResponsibleProcess"],
+    "SubtreeResponsibilityVerification": ["verifyProcessSubtreeResponsibility"],
+    "VerifiedBundleSignature": ["verifySignedBundle"]
+  },
+  "stitchkit/telegram": {
+    "TelegramBroadcastReport": ["runTelegramBroadcast"],
+    "TelegramFetch": ["createTelegramBotTransport"],
+    "TelegramInitDataVerification": ["verifyTelegramInitData"],
+    "TelegramLocalFiles": ["createTelegramLocalFiles"],
+    "TelegramOperatorChannel": ["createTelegramOperatorChannel"],
+    "TelegramOutboundBudget": ["telegramOutboundBudget"],
+    "TelegramSendFailure": ["classifyTelegramSendFailure"],
+    "TelegramUpdateDurableStore": [
+      "memoryTelegramUpdateStore",
+      "postgresTelegramUpdateStore",
+      "sqliteTelegramUpdateStore"
+    ],
+    "TelegramUpdateIntake": ["createTelegramUpdateIntake"],
+    "TelegramWebhookClaim": ["claimTelegramWebhook"],
+    "TelegramWebhookState": ["checkTelegramWebhook"]
+  },
+  "stitchkit/telegram/grammy": {
+    "TelegramWidgetApi": ["telegramWidgetApi"]
+  },
+  "stitchkit/telegram/html": {
+    "TelegramHtmlCheck": ["checkTelegramHtml"],
+    "TelegramHtmlNode": ["parseTelegramHtml"],
+    "TelegramHtmlTextNode": ["parseTelegramHtml"]
+  },
+  "stitchkit/telegram/voice": {
+    "TelegramVoiceWaveformSupport": ["readTelegramVoiceWaveformSupport"]
+  },
+  "stitchkit/telegram/screens": {
+    "ScreenTestChat": ["createScreenTestChat"]
+  },
+  "stitchkit/tracking": {
+    "OncePerPage": ["createOncePerPage"],
+    "ResolvedAttribution": ["resolveAttribution"],
+    "ScrollMilestones": ["createScrollMilestones"],
+    "SequenceReserve": ["createSequenceReserve"],
+    "TrackedClick": ["resolveTrackedClick"],
+    "TrackingClient": ["createTrackingClient"],
+    "TrackingDeliveryOutcome": ["deliverTrackingBatch"],
+    "TrackingHost": ["browserTrackingHost"],
+    "TrackingOutbox": ["createTrackingOutbox"],
+    "TrackingOutboxStorage": ["indexedDbOutboxStorage", "memoryOutboxStorage"],
+    "VisibleTimeMeter": ["createVisibleTimeMeter"]
+  },
+  "stitchkit/tracking/contract": {
+    "PerformanceMetricSummary": ["summarizePerformanceMetric"],
+    "TrackingSchemas": ["createTrackingSchemas"]
+  },
+  "stitchkit/tracking/performance": {
+    "PerformanceCollector": ["createPerformanceCollector"]
+  },
+  "stitchkit/release": {
+    "ReleaseMarker": ["createReleaseMarker"],
+    "ReleaseWatcher": ["createReleaseWatcher"],
+    "ReleaseWatcherHost": ["browserReleaseHost"]
+  },
+  "stitchkit/tracking/server": {
+    "ActiveTimeInterval": ["activeIntervalOf"],
+    "DispositionResult": ["dispositionTrackingBatch"],
+    "IssuedVisitLease": ["issueVisitLease"],
+    "PresenceRegistry": ["createPresenceRegistry"],
+    "TrackingTelemetryHealth": ["trackingTelemetryHealth"]
+  },
+  "stitchkit/geo": {
+    "GeoIpReaderLoader": ["createMaxMindGeoIpLoader"],
+    "GeoIpResolver": ["createGeoIpResolver"]
+  },
+  "stitchkit/oauth": {
+    "AuthorizationCodeClient": ["createAuthorizationCodeClient"]
+  },
+  "stitchkit/sync": {
+    "OutboxBatchDecision": ["decideOutboxBatch"],
+    "RemoteRowDecision": ["decideRemoteRow"],
+    "SyncSession": ["createSyncSession"]
+  },
+  "stitchkit/sync/postgres": {
+    "SyncServerStore": ["createSyncServerStore", "memorySyncStore", "postgresSyncStore"]
+  },
+  "stitchkit/google": {
+    "GoogleOidcClient": ["createGoogleOidcClient"]
+  },
+  "stitchkit/node": {
+    "FetchHandler": ["createHandler"],
+    "KeyedServices": ["implementRegistry"],
+    "LocalHostGuard": ["createLocalHostGuard"],
+    "ManagedServerHandle": ["serveNode"],
+    "NodeServerHandle": ["serveNode"],
+    "ProcessSignalsBinding": ["bindProcessSignals"],
+    "RealtimeServer": ["bindRealtimeServer"],
+    "RequestIngress": ["defineRequestIngress"],
+    "ServiceDef": ["implement", "implementRegistry"],
+    "UnixClientTransport": ["createUnixClientTransport"]
+  }
+}

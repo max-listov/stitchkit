@@ -87,10 +87,14 @@ adapter structurally owns dispatch: relative and absolute redirects use the same
 socket, and a missing socket cannot fall through to that host over TCP. Before
 connecting, `createUnixClientTransport` checks that `socketPath` is at most
 **103 UTF-8 bytes**, that its parent directory is a real directory (not a
-symlink) owned by the current OS user with `(mode & 0o022) === 0`, and that the
-target is a non-symlink socket owned by the current user — refusing violations
+symlink) owned by the expected OS user with `(mode & 0o022) === 0`, and that the
+target is a non-symlink socket owned by that same user — refusing violations
 with a non-retryable `UnixClientTransportError` (`code: 'UNIX_TARGET_REFUSED'`,
-`delivery: 'not-dispatched'`). Defaults are 16 MiB request/response bodies,
+`delivery: 'not-dispatched'`). By default the expected owner is the current
+process UID (`process.getuid()`); pass `expectedOwnerUid` (for example `0` for a
+root-owned system daemon socket accessed via group permissions) to pin a
+different POSIX owner UID explicitly while keeping every symlink, socket-type
+and directory-write check intact. Defaults are 16 MiB request/response bodies,
 64 KiB headers, 30 s to response headers, eight connections and five redirects.
 
 `maxHeaderBytes` is enforced before exposing a response. Bun's owned parser

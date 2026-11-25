@@ -122,6 +122,38 @@ describe('stitchkit upgrade', () => {
     expect(unknown.code).toBe(1);
     expect(unknown.output).toContain('Unknown command "plan"');
   });
+
+  test('0.126.0 -> 0.127.0 flags consumers importing listToolNames, listContractToolNames, createRuntimeToolFactory, or RuntimeToolDefinition without ToolNameEntry', () => {
+    const dir = consumer('0.126.0');
+    writeFileSync(
+      join(dir, 'names.ts'),
+      "import { listToolNames } from 'stitchkit/tools';\nexport const n = listToolNames({ services: [] });\n",
+    );
+    writeFileSync(
+      join(dir, 'contract-names.ts'),
+      "import { listContractToolNames } from 'stitchkit/tools';\nexport const c = listContractToolNames([]);\n",
+    );
+    writeFileSync(
+      join(dir, 'factory.ts'),
+      "import { createRuntimeToolFactory, type RuntimeToolDefinition } from 'stitchkit/tools';\nexport type D = RuntimeToolDefinition;\nexport const f = createRuntimeToolFactory;\n",
+    );
+    const realChangelog = join(import.meta.dir, '..', '..', '..', 'CHANGELOG.md');
+    const { output, code } = runUpgradeCli([
+      'upgrade',
+      '--cwd',
+      dir,
+      '--from',
+      '0.126.0',
+      '--to',
+      '0.127.0',
+      '--changelog',
+      realChangelog,
+    ]);
+    expect(code).toBe(0);
+    expect(output).toContain('names.ts');
+    expect(output).toContain('contract-names.ts');
+    expect(output).toContain('factory.ts');
+  });
 });
 
 describe('the binary runs when it is launched the way an install launches it', () => {

@@ -1,4 +1,5 @@
 import type { ZodObject } from 'zod';
+import { inspectOnlyError, isInspectOnlyLifecycle } from '../access';
 import { type ToolResult, toolResultFromError } from '../execute-result';
 import type { MountableTool } from '../mount';
 import { isRepeatableRead } from '../read-operation';
@@ -38,7 +39,10 @@ export async function runManagedInvocation<
   const managed = await buildManagedSurface(
     session,
     route.typedGlobals,
-    !topLevelHelp && !helpRequested && !schemaRequested,
+    !topLevelHelp &&
+      !helpRequested &&
+      !schemaRequested &&
+      !isInspectOnlyLifecycle(session.lifecycle),
   );
   if (topLevelHelp || command === undefined)
     return respondTopLevelHelp(session, route, managed);
@@ -123,6 +127,16 @@ async function runManagedCommand<
   if (route.schemaRequested) {
     stdout(renderCommandSchema(command, descriptor));
     return exit(0);
+  }
+  const inspectErr = inspectOnlyError(session.lifecycle);
+  if (inspectErr) {
+    return exit(
+      emitResult(
+        toolResultFromError(inspectErr),
+        { stdout, stderr },
+        emitOptionsFor(config, route.framework.json, command),
+      ),
+    );
   }
   if (descriptor.unavailableReason !== undefined) {
     return exit(

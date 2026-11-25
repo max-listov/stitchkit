@@ -612,4 +612,72 @@ describe.skipIf(!sql)('the Postgres agent store', () => {
     });
     expect(event.seq).toBe(1);
   });
+
+  test('purgeExpiredPayloads redacts encrypted payloads and updates Postgres event_search in the same transaction', async () => {
+    const config = bunConfig(database);
+    const { store } = createPostgresAgentRuntimeStore(config);
+    const secretCiphertext = 'pg_secret_ciphertext_token_9876543210';
+    const sha = 'a'.repeat(64);
+    await store.appendEvent({
+      conversationId: 'pg-purge-a',
+      kind: 'provider/payload',
+      payload: {
+        conversationId: 'pg-purge-a',
+        invocationId: 'inv-1',
+        operationId: 'ciphertext',
+        artifactId: 'art-1',
+        sha256: sha,
+        bytes: 128,
+        iv: 'iv-1',
+        tag: 'tag-1',
+        ciphertext: secretCiphertext,
+      },
+    });
+    await store.appendEvent({
+      conversationId: 'pg-purge-b',
+      kind: 'provider/payload',
+      payload: {
+        conversationId: 'pg-purge-b',
+        invocationId: 'inv-2',
+        operationId: 'op-2',
+        artifactId: 'art-2',
+        sha256: sha,
+        bytes: 128,
+        iv: 'iv-2',
+        tag: 'tag-2',
+        ciphertext: 'pg_other_ciphertext_token',
+      },
+    });
+    const futureCutoff = new Date(Date.now() + 60_000).toISOString();
+    const scoped = await store.purgeExpiredPayloads?.({
+      before: futureCutoff,
+      conversationId: 'pg-purge-a',
+      limit: 10,
+    });
+    expect(scoped?.purged).toBe(1);
+    expect(scoped?.freedBytes).toBeGreaterThan(0);
+    expect(scoped?.hasMore).toBe(false);
+
+    // Verify both events and event_search no longer contain the redacted ciphertext,
+    // while pg-purge-b stays untouched and re-running purge is idempotent even with operationId='ciphertext'.
+    const eventRows = await database.unsafe(
+      `SELECT payload FROM ${config.prefix}_events WHERE conversation_id = 'pg-purge-a'`,
+    );
+    const searchRows = await database.unsafe(
+      `SELECT document::text AS doc FROM ${config.prefix}_event_search WHERE conversation_id = 'pg-purge-a'`,
+    );
+    expect(JSON.stringify(eventRows)).not.toContain(secretCiphertext);
+    expect(JSON.stringify(eventRows)).toContain('expiredAt');
+    expect(JSON.stringify(searchRows)).not.toContain(secretCiphertext);
+
+    const repeat = await store.purgeExpiredPayloads?.({
+      before: futureCutoff,
+      conversationId: 'pg-purge-a',
+      limit: 10,
+    });
+    expect(repeat).toEqual({ purged: 0, freedBytes: 0, hasMore: false });
+
+    const remaining = await store.purgeExpiredPayloads?.({ before: futureCutoff, limit: 10 });
+    expect(remaining?.purged).toBe(1);
+  }, 30_000);
 });

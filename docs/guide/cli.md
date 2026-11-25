@@ -608,6 +608,7 @@ import { CliArgumentError, extractCliGlobalOptions, parseCliArgs, routeCliArgv }
 
 try {
   const lifted = extractCliGlobalOptions(argv, GlobalsSchema)
+  if (lifted.error !== undefined) return refuse(lifted.error.message) // exit 2, nothing ran
   const route = routeCliArgv(lifted.argv, { separatedBefore: lifted.separatedBefore })
   if (route.error !== undefined) return refuse(route.error) // exit 2, nothing ran
   if (route.command === undefined || route.topLevelHelp) return showHelp()

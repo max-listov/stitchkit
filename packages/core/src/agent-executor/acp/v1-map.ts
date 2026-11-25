@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { AgentMessagePart } from '../../agent-parts/parts';
-import { assertPositiveSafeInteger } from '../../internal/positive-integer';
+import { bytesToBase64, resolveImageBytes, validateImageOptions } from '../image-input';
 import { JsonRpcError } from '../json-rpc-peer';
 import { nonEmptyString } from '../session-primitives';
 import type { ExecutorDelta, ExecutorErrorKind } from '../vocabulary';
@@ -194,13 +194,10 @@ export async function acpPromptBlocks(
   parts: readonly AgentMessagePart[],
   limits: AcpPromptLimits,
 ): Promise<{ type: string; [key: string]: string }[]> {
-  assertPositiveSafeInteger('maxImageBytes', limits.maxImageBytes);
-  const blocks: { type: string; [key: string]: string }[] = [];
+  validateImageOptions(limits);
+  // Pre-validate every part synchronously before calling `resolveFile` on any image.
   for (const part of parts) {
-    if (part.type === 'text') {
-      blocks.push({ type: 'text', text: part.text });
-      continue;
-    }
+    if (part.type === 'text') continue;
     if (part.type !== 'file')
       throw new TypeError(`The ACP driver sends text and images, received ${part.type}`);
     if (!part.mediaType.startsWith('image/')) {
@@ -211,16 +208,22 @@ export async function acpPromptBlocks(
     if (!limits.images) throw new TypeError('The ACP agent did not declare image input');
     if (limits.resolveFile === undefined)
       throw new TypeError('An image needs resolveFile to read its bytes');
-    const bytes = await limits.resolveFile(part.reference);
-    if (bytes.byteLength > limits.maxImageBytes) {
-      throw new RangeError(
-        `The image is ${bytes.byteLength} bytes, over maxImageBytes ${limits.maxImageBytes}`,
-      );
+  }
+  const blocks: { type: string; [key: string]: string }[] = [];
+  for (const part of parts) {
+    if (part.type === 'text') {
+      blocks.push({ type: 'text', text: part.text });
+      continue;
     }
+    if (part.type !== 'file' || limits.resolveFile === undefined) continue;
+    const bytes = await resolveImageBytes(part.reference, {
+      resolveFile: limits.resolveFile,
+      maxImageBytes: limits.maxImageBytes,
+    });
     blocks.push({
       type: 'image',
       mimeType: part.mediaType,
-      data: Buffer.from(bytes).toString('base64'),
+      data: bytesToBase64(bytes),
     });
   }
   return blocks;

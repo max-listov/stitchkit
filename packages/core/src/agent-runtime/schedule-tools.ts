@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineAgentTool } from './agent-tool';
+import { bindAgentTool, defineAgentToolDescriptor } from './agent-tool';
 import { conversationOfRun } from './context-issue';
 import type { AgentRuntimeRunContext } from './runtime';
 import type { AgentScheduleService } from './schedule-contract';
@@ -7,6 +7,74 @@ import type { AgentScheduleService } from './schedule-contract';
 const ScheduledOutputSchema = z
   .object({ scheduleId: z.string(), nextAt: z.string() })
   .strict();
+
+const SCHEDULE_AFTER_DESCRIPTOR = defineAgentToolDescriptor({
+  name: 'schedule_after',
+  description: 'Schedule durable input after a relative delay.',
+  identity: { serviceName: 'agent-schedules', action: 'after', method: 'POST' },
+  input: z
+    .object({
+      input: z.json(),
+      afterMs: z.int().positive(),
+    })
+    .strict(),
+  output: ScheduledOutputSchema,
+  expose: ['AGENT'],
+});
+
+const SCHEDULE_AT_DESCRIPTOR = defineAgentToolDescriptor({
+  name: 'schedule_at',
+  description: 'Schedule durable input at an absolute timestamp with an explicit offset.',
+  identity: { serviceName: 'agent-schedules', action: 'at', method: 'POST' },
+  input: z.object({ input: z.json(), at: z.string().min(1) }).strict(),
+  output: ScheduledOutputSchema,
+  expose: ['AGENT'],
+});
+
+const SCHEDULE_EVERY_DESCRIPTOR = defineAgentToolDescriptor({
+  name: 'schedule_every',
+  description: 'Schedule recurring durable input in an explicit conversation timezone.',
+  identity: { serviceName: 'agent-schedules', action: 'every', method: 'POST' },
+  input: z
+    .object({
+      input: z.json(),
+      everyMs: z.int().positive(),
+      timeZone: z.string().min(1),
+    })
+    .strict(),
+  output: ScheduledOutputSchema,
+  expose: ['AGENT'],
+});
+
+const SCHEDULE_LIST_DESCRIPTOR = defineAgentToolDescriptor({
+  name: 'schedule_list',
+  description: 'List the durable schedules of this conversation.',
+  identity: { serviceName: 'agent-schedules', action: 'list', method: 'GET' },
+  input: z.object({}).strict(),
+  output: z.object({ schedules: z.array(z.json()) }).strict(),
+  expose: ['AGENT'],
+});
+
+const SCHEDULE_CANCEL_DESCRIPTOR = defineAgentToolDescriptor({
+  name: 'schedule_cancel',
+  description: 'Cancel one durable deferred-input schedule.',
+  identity: { serviceName: 'agent-schedules', action: 'cancel', method: 'POST' },
+  input: z.object({ scheduleId: z.string().min(1) }).strict(),
+  output: z.object({ cancelled: z.boolean() }).strict(),
+  expose: ['AGENT'],
+});
+
+/**
+ * Static non-executable descriptors for the built-in schedule tools (`createAgentScheduleTools`).
+ * Single source of truth for catalog generation, preset validation, and live run-bound tools.
+ */
+export const AGENT_SCHEDULE_TOOL_DESCRIPTORS = Object.freeze([
+  SCHEDULE_AFTER_DESCRIPTOR,
+  SCHEDULE_AT_DESCRIPTOR,
+  SCHEDULE_EVERY_DESCRIPTOR,
+  SCHEDULE_LIST_DESCRIPTOR,
+  SCHEDULE_CANCEL_DESCRIPTOR,
+] as const);
 
 /** Configuration binding durable scheduling agent tools to a schedule service and run context. */
 export interface AgentScheduleToolsConfig {
@@ -35,63 +103,14 @@ export function createAgentScheduleTools({ service, run }: AgentScheduleToolsCon
   };
 
   return [
-    defineAgentTool({
-      name: 'schedule_after',
-      description: 'Schedule durable input after a relative delay.',
-      identity: { serviceName: 'agent-schedules', action: 'after', method: 'POST' },
-      input: z
-        .object({
-          input: z.json(),
-          afterMs: z.int().positive(),
-        })
-        .strict(),
-      output: ScheduledOutputSchema,
-      expose: ['AGENT'],
-      handler: ({ input }) => schedule(input),
-    }),
-    defineAgentTool({
-      name: 'schedule_at',
-      description: 'Schedule durable input at an absolute timestamp with an explicit offset.',
-      identity: { serviceName: 'agent-schedules', action: 'at', method: 'POST' },
-      input: z.object({ input: z.json(), at: z.string().min(1) }).strict(),
-      output: ScheduledOutputSchema,
-      expose: ['AGENT'],
-      handler: ({ input }) => schedule(input),
-    }),
-    defineAgentTool({
-      name: 'schedule_every',
-      description: 'Schedule recurring durable input in an explicit conversation timezone.',
-      identity: { serviceName: 'agent-schedules', action: 'every', method: 'POST' },
-      input: z
-        .object({
-          input: z.json(),
-          everyMs: z.int().positive(),
-          timeZone: z.string().min(1),
-        })
-        .strict(),
-      output: ScheduledOutputSchema,
-      expose: ['AGENT'],
-      handler: ({ input }) => schedule(input),
-    }),
-    defineAgentTool({
-      name: 'schedule_list',
-      description: 'List the durable schedules of this conversation.',
-      identity: { serviceName: 'agent-schedules', action: 'list', method: 'GET' },
-      input: z.object({}).strict(),
-      output: z.object({ schedules: z.array(z.json()) }).strict(),
-      expose: ['AGENT'],
-      handler: async () => ({ schedules: [...(await service.listSchedules(conversationId))] }),
-    }),
-    defineAgentTool({
-      name: 'schedule_cancel',
-      description: 'Cancel one durable deferred-input schedule.',
-      identity: { serviceName: 'agent-schedules', action: 'cancel', method: 'POST' },
-      input: z.object({ scheduleId: z.string().min(1) }).strict(),
-      output: z.object({ cancelled: z.boolean() }).strict(),
-      expose: ['AGENT'],
-      handler: async ({ input }) => ({
-        cancelled: await service.cancelSchedule(conversationId, input.scheduleId),
-      }),
-    }),
+    bindAgentTool(SCHEDULE_AFTER_DESCRIPTOR, ({ input }) => schedule(input)),
+    bindAgentTool(SCHEDULE_AT_DESCRIPTOR, ({ input }) => schedule(input)),
+    bindAgentTool(SCHEDULE_EVERY_DESCRIPTOR, ({ input }) => schedule(input)),
+    bindAgentTool(SCHEDULE_LIST_DESCRIPTOR, async () => ({
+      schedules: [...(await service.listSchedules(conversationId))],
+    })),
+    bindAgentTool(SCHEDULE_CANCEL_DESCRIPTOR, async ({ input }) => ({
+      cancelled: await service.cancelSchedule(conversationId, input.scheduleId),
+    })),
   ] as const;
 }

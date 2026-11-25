@@ -107,12 +107,16 @@ const SemanticVersionSchema = z
   .string()
   .regex(/^\d+\.\d+\.\d+$/, 'Use a semantic version such as 0.1.0');
 
-/** Who the project is. True of the code with no machine in existence. */
+/**
+ * Who the project is. True of the code with no machine in existence.
+ *
+ * The application's own version lives solely in the root `package.json` (which
+ * supports both SemVer and CalVer without a second copy to drift).
+ */
 export const ProjectIdentitySchema = z
   .object({
     slug: ProjectSlugSchema,
     name: refuseMachineNames('A project name')(z.string().trim().min(1).max(80)),
-    version: SemanticVersionSchema,
     description: ProjectDescriptionSchema,
   })
   .strict();

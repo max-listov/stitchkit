@@ -185,10 +185,11 @@ describe('boolean word policy, broken boundaries and passthrough coercion', () =
       const extracted = extractCliGlobalOptions(argv, globals);
       expect(extracted.globals).toEqual({ profile: 'demo' });
       // ...but `['inspect', '--dry-run', 'false']` would say the opposite of the line, so
-      // reading the argv is the refusal, wherever the caller copies the array to afterwards.
-      expect(() => extracted.argv).toThrow(CliArgumentError);
-      expect(() => extracted.argv).toThrow(`${flag}=true`);
-      expect(() => extracted.argv).toThrow(`-- ${word}`);
+      // `error` carries the refusal and `argv` is empty (never throwing on property read).
+      expect(extracted.argv).toEqual([]);
+      expect(extracted.error).toBeInstanceOf(CliArgumentError);
+      expect(extracted.error?.message).toContain(`${flag}=true`);
+      expect(extracted.error?.message).toContain(`-- ${word}`);
       const result = await runInspect(argv);
       expect(result.code).toBe(2);
       expect(result.calls).toBe(0);
@@ -264,9 +265,11 @@ describe('boolean word policy, broken boundaries and passthrough coercion', () =
   test('a line with nothing before the separator names no command', () => {
     expect(routeCliArgv(['--', 'inspect']).error).toBe('A command is required before "--"');
     expect(routeCliArgv(['--', 'inspect']).command).toBeUndefined();
-    expect(() => scanCliInvocation(['--', 'inspect'])).toThrow(
-      'A command is required before "--"',
-    );
+    const scan = scanCliInvocation(['--', 'inspect']);
+    expect(scan.command).toBeUndefined();
+    expect(scan.commandTokens).toEqual([]);
+    expect(scan.error).toBeInstanceOf(CliArgumentError);
+    expect(scan.error?.message).toBe('A command is required before "--"');
   });
 
   test('explicit inline or separator disambiguates the broken boundary', async () => {

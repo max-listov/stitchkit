@@ -16,10 +16,10 @@ import {
   AcpSessionListResultSchema,
   acpOptionValues,
 } from './v1-protocol';
-import { type AcpSession, openAcpSession } from './v1-session';
+import { type AcpApprovalEnforcement, type AcpSession, openAcpSession } from './v1-session';
 
 export type { AcpDriverConfig } from './v1-connect';
-export type { AcpSession } from './v1-session';
+export type { AcpApprovalEnforcement, AcpSession } from './v1-session';
 
 /** A session the agent keeps, as `session/list` answers. */
 export interface AcpSessionSummary {
@@ -31,6 +31,12 @@ export interface AcpSessionSummary {
 
 /** An {@link AgentEngineDriver} speaking ACP v1, adding session listing and session config options. */
 export interface AcpDriver extends AgentEngineDriver {
+  /**
+   * How tool approvals are enforced over ACP: always `'agent-initiated'`. The host answers
+   * `session/request_permission` requests only when the agent chooses to send them and never
+   * synthesizes approvals for unprompted tool calls.
+   */
+  readonly approvalEnforcement: AcpApprovalEnforcement;
   open(input: Parameters<AgentEngineDriver['open']>[0]): Promise<AcpSession>;
   /** The sessions the agent keeps for a working directory; refused if it does not declare `list`. */
   sessions(input: {
@@ -88,6 +94,7 @@ export function createAcpDriver(config: AcpDriverConfig): AcpDriver {
   return {
     engine: 'acp',
     reconcile: 'none',
+    approvalEnforcement: 'agent-initiated',
     async info() {
       const profile = { profileId: 'probe', engine: 'acp' as const, home: ambientHome() };
       const cwd = process.cwd();

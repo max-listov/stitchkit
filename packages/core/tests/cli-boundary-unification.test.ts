@@ -163,7 +163,11 @@ describe('CLI boundary unification across all 6 exported helpers', () => {
       appGlobals,
     );
     expect(fwExtracted.globals).toEqual({ profile: 'demo' });
-    expect(() => fwExtracted.argv).toThrow('Bare --dry-run cannot be separated from "false"');
+    expect(fwExtracted.argv).toEqual([]);
+    expect(fwExtracted.error).toBeInstanceOf(CliArgumentError);
+    expect(fwExtracted.error?.message).toContain(
+      'Bare --dry-run cannot be separated from "false"',
+    );
   });
 
   test('framework-only flags without a command and without defaultCommand never become command names', async () => {
@@ -192,7 +196,10 @@ describe('CLI boundary unification across all 6 exported helpers', () => {
 
     // Invalid framework-only invocations without a command still refuse with exit 2 (not help)
     for (const bad of [['--json=maybe'], ['--sort'], ['--json', '--json']]) {
-      expect(() => scanCliInvocation(bad, { appGlobals })).toThrow(CliArgumentError);
+      const badScan = scanCliInvocation(bad, { appGlobals });
+      expect(badScan.error).toBeInstanceOf(CliArgumentError);
+      expect(badScan.command).toBeUndefined();
+      expect(badScan.commandTokens).toEqual([]);
       const res = await runCli(bad);
       expect(res.code).toBe(2);
       expect(res.out).toBe('');
@@ -217,7 +224,10 @@ describe('CLI boundary unification across all 6 exported helpers', () => {
       ['--schema:=true', 'inspect', '--schema'],
       ['inspect', '--schema=maybe', '--schema'],
     ]) {
-      expect(() => scanCliInvocation(argv, { appGlobals })).toThrow(CliArgumentError);
+      const scan = scanCliInvocation(argv, { appGlobals });
+      expect(scan.error).toBeInstanceOf(CliArgumentError);
+      expect(scan.command).toBeUndefined();
+      expect(scan.commandTokens).toEqual([]);
       const res = await runCli(argv);
       expect(res.code).toBe(2);
       expect(res.out).toBe('');
@@ -287,13 +297,18 @@ describe('CLI boundary unification across all 6 exported helpers', () => {
         argv: ['--help'],
         globals: {},
       });
-      expect(() => extractCliGlobalOptions([...badTokens, 'inspect'], appGlobals)).toThrow(
-        errorPattern,
-      );
+      const badExtract = extractCliGlobalOptions([...badTokens, 'inspect'], appGlobals);
+      expect(badExtract.argv).toEqual([]);
+      expect(badExtract.error).toBeInstanceOf(CliArgumentError);
+      expect(badExtract.error?.message).toMatch(errorPattern);
 
       // Non-early invocations (both with command and commandless) still refuse with exit 2
       for (const nonEarlyArgv of [[...badTokens, 'inspect'], badTokens]) {
-        expect(() => scanCliInvocation(nonEarlyArgv, { appGlobals })).toThrow(errorPattern);
+        const badScan = scanCliInvocation(nonEarlyArgv, { appGlobals });
+        expect(badScan.error).toBeInstanceOf(CliArgumentError);
+        expect(badScan.error?.message).toMatch(errorPattern);
+        expect(badScan.command).toBeUndefined();
+        expect(badScan.commandTokens).toEqual([]);
         const failed = await runCli(nonEarlyArgv);
         expect(failed.code).toBe(2);
         expect(failed.calls).toBe(0);
@@ -303,12 +318,13 @@ describe('CLI boundary unification across all 6 exported helpers', () => {
 
     // Application global repetition refuses eagerly even when --help is requested
     const dupHelpArgv = ['--profile', 'a', '--profile', 'b', '--help'];
-    expect(() => scanCliInvocation(dupHelpArgv, { appGlobals })).toThrow(
-      /--profile was passed 2 times/,
-    );
-    expect(() => extractCliGlobalOptions(dupHelpArgv, appGlobals)).toThrow(
-      /--profile was passed 2 times/,
-    );
+    const dupScan = scanCliInvocation(dupHelpArgv, { appGlobals });
+    expect(dupScan.error).toBeInstanceOf(CliArgumentError);
+    expect(dupScan.error?.message).toMatch(/--profile was passed 2 times/);
+    const dupExtract = extractCliGlobalOptions(dupHelpArgv, appGlobals);
+    expect(dupExtract.argv).toEqual([]);
+    expect(dupExtract.error).toBeInstanceOf(CliArgumentError);
+    expect(dupExtract.error?.message).toMatch(/--profile was passed 2 times/);
     const dupHelpCli = await runCli(dupHelpArgv);
     expect(dupHelpCli.code).toBe(2);
     expect(dupHelpCli.out).toBe('');
@@ -339,9 +355,13 @@ describe('CLI boundary unification across all 6 exported helpers', () => {
       argv: ['--help'],
       globals: {},
     });
-    expect(() =>
-      extractCliGlobalOptions(['--profile', '--json', 'inspect'], appGlobals),
-    ).toThrow('--profile requires a value');
+    const missingExtract = extractCliGlobalOptions(
+      ['--profile', '--json', 'inspect'],
+      appGlobals,
+    );
+    expect(missingExtract.argv).toEqual([]);
+    expect(missingExtract.error).toBeInstanceOf(CliArgumentError);
+    expect(missingExtract.error?.message).toContain('--profile requires a value');
 
     // Without --help, missing app global value still exits 2
     const missingCli = await runCli(['--profile', '--json', 'inspect']);

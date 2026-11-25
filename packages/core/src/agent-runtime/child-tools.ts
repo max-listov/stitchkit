@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineAgentTool } from './agent-tool';
+import { bindAgentTool, defineAgentToolDescriptor } from './agent-tool';
 import {
   AgentChildBudgetSchema,
   type AgentChildManager,
@@ -7,6 +7,83 @@ import {
 } from './children';
 import { conversationOfRun } from './context-issue';
 import type { AgentRuntimeRunContext } from './runtime';
+
+const ChildSpawnInputSchema = z
+  .object({
+    childInput: z.json(),
+    budget: AgentChildBudgetSchema,
+    seedUptoSeq: z.int().positive().optional(),
+  })
+  .strict();
+
+const ChildSpawnOutputSchema = z.object({
+  childConversationId: z.string(),
+  state: z.string(),
+  resultReference: z.string().optional(),
+});
+
+const SUBAGENT_DESCRIPTOR = defineAgentToolDescriptor({
+  name: 'subagent',
+  description: 'Run a child conversation seeded from the current durable parent history.',
+  identity: { serviceName: 'agent-children', action: 'spawn', method: 'POST' },
+  input: ChildSpawnInputSchema,
+  output: ChildSpawnOutputSchema,
+  expose: ['AGENT'],
+});
+
+const SUBAGENT_FORK_DESCRIPTOR = defineAgentToolDescriptor({
+  name: 'subagent_fork',
+  description:
+    'Run a child conversation seeded from the parent through one exact event sequence.',
+  identity: { serviceName: 'agent-children', action: 'fork', method: 'POST' },
+  input: ChildSpawnInputSchema,
+  output: ChildSpawnOutputSchema,
+  expose: ['AGENT'],
+});
+
+const LIST_AGENTS_DESCRIPTOR = defineAgentToolDescriptor({
+  name: 'list_agents',
+  description: 'List the durable child graph of this conversation.',
+  identity: { serviceName: 'agent-children', action: 'list', method: 'GET' },
+  input: z.object({}).strict(),
+  output: z.object({ children: z.array(AgentChildRecordSchema) }),
+  expose: ['AGENT'],
+});
+
+const SEND_MESSAGE_DESCRIPTOR = defineAgentToolDescriptor({
+  name: 'send_message',
+  description: 'Send one follow-up input to an active child conversation.',
+  identity: { serviceName: 'agent-children', action: 'message', method: 'POST' },
+  input: z
+    .object({
+      childConversationId: z.string().min(1),
+      input: z.json(),
+    })
+    .strict(),
+  output: z.object({ sent: z.literal(true) }),
+  expose: ['AGENT'],
+});
+
+const INTERRUPT_AGENT_DESCRIPTOR = defineAgentToolDescriptor({
+  name: 'interrupt_agent',
+  description: 'Stop one active child conversation at a durable policy boundary.',
+  identity: { serviceName: 'agent-children', action: 'interrupt', method: 'POST' },
+  input: z.object({ childConversationId: z.string().min(1) }).strict(),
+  output: z.object({ interrupted: z.literal(true) }),
+  expose: ['AGENT'],
+});
+
+/**
+ * Static non-executable descriptors for the built-in child tools (`createAgentChildTools`).
+ * Single source of truth for catalog generation, preset validation, and live run-bound tools.
+ */
+export const AGENT_CHILD_TOOL_DESCRIPTORS = Object.freeze([
+  SUBAGENT_DESCRIPTOR,
+  SUBAGENT_FORK_DESCRIPTOR,
+  LIST_AGENTS_DESCRIPTOR,
+  SEND_MESSAGE_DESCRIPTOR,
+  INTERRUPT_AGENT_DESCRIPTOR,
+] as const);
 
 /** Configuration binding child-management agent tools to a manager and active run context. */
 export interface AgentChildToolsConfig {
@@ -28,30 +105,9 @@ function childTool(
   conversationId: string,
   fork: boolean,
 ) {
-  return defineAgentTool({
-    name: fork ? 'subagent_fork' : 'subagent',
-    description: fork
-      ? 'Run a child conversation seeded from the parent through one exact event sequence.'
-      : 'Run a child conversation seeded from the current durable parent history.',
-    identity: {
-      serviceName: 'agent-children',
-      action: fork ? 'fork' : 'spawn',
-      method: 'POST',
-    },
-    input: z
-      .object({
-        childInput: z.json(),
-        budget: AgentChildBudgetSchema,
-        seedUptoSeq: z.int().positive().optional(),
-      })
-      .strict(),
-    output: z.object({
-      childConversationId: z.string(),
-      state: z.string(),
-      resultReference: z.string().optional(),
-    }),
-    expose: ['AGENT'],
-    handler: async ({ input }) => {
+  return bindAgentTool(
+    fork ? SUBAGENT_FORK_DESCRIPTOR : SUBAGENT_DESCRIPTOR,
+    async ({ input }) => {
       if (fork && input.seedUptoSeq === undefined) {
         throw new TypeError('subagent_fork requires seedUptoSeq');
       }
@@ -76,7 +132,7 @@ function childTool(
         ...(finished.resultReference && { resultReference: finished.resultReference }),
       };
     },
-  });
+  );
 }
 
 /**
@@ -90,43 +146,16 @@ export function createAgentChildTools(config: AgentChildToolsConfig) {
   return [
     childTool(config, conversationId, false),
     childTool(config, conversationId, true),
-    defineAgentTool({
-      name: 'list_agents',
-      description: 'List the durable child graph of this conversation.',
-      identity: { serviceName: 'agent-children', action: 'list', method: 'GET' },
-      input: z.object({}).strict(),
-      output: z.object({ children: z.array(AgentChildRecordSchema) }),
-      expose: ['AGENT'],
-      handler: async () => ({ children: [...(await manager.listChildren(conversationId))] }),
+    bindAgentTool(LIST_AGENTS_DESCRIPTOR, async () => ({
+      children: [...(await manager.listChildren(conversationId))],
+    })),
+    bindAgentTool(SEND_MESSAGE_DESCRIPTOR, async ({ input }) => {
+      await manager.sendMessage(conversationId, input.childConversationId, input.input);
+      return { sent: true as const };
     }),
-    defineAgentTool({
-      name: 'send_message',
-      description: 'Send one follow-up input to an active child conversation.',
-      identity: { serviceName: 'agent-children', action: 'message', method: 'POST' },
-      input: z
-        .object({
-          childConversationId: z.string().min(1),
-          input: z.json(),
-        })
-        .strict(),
-      output: z.object({ sent: z.literal(true) }),
-      expose: ['AGENT'],
-      handler: async ({ input }) => {
-        await manager.sendMessage(conversationId, input.childConversationId, input.input);
-        return { sent: true as const };
-      },
-    }),
-    defineAgentTool({
-      name: 'interrupt_agent',
-      description: 'Stop one active child conversation at a durable policy boundary.',
-      identity: { serviceName: 'agent-children', action: 'interrupt', method: 'POST' },
-      input: z.object({ childConversationId: z.string().min(1) }).strict(),
-      output: z.object({ interrupted: z.literal(true) }),
-      expose: ['AGENT'],
-      handler: async ({ input }) => {
-        await manager.interruptChild(conversationId, input.childConversationId);
-        return { interrupted: true as const };
-      },
+    bindAgentTool(INTERRUPT_AGENT_DESCRIPTOR, async ({ input }) => {
+      await manager.interruptChild(conversationId, input.childConversationId);
+      return { interrupted: true as const };
     }),
   ] as const;
 }

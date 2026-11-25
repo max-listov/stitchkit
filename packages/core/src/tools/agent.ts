@@ -2,7 +2,7 @@ import type { ToolExecutionOptions, ToolSet } from 'ai';
 import { jsonSchema, tool } from 'ai';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
-import { resolveToolAccess, type ToolAccess } from './access';
+import { inspectOnlyError, resolveToolAccess, type ToolAccess } from './access';
 import { AgentToolError } from './agent-tool-error';
 import type { ToolDurability, ToolDurabilityFactory } from './durability-port';
 import { isToolExecutionControlError } from './execute';
@@ -26,8 +26,8 @@ export interface AgentMountConfig {
   hooks?: ToolCallHooks;
   /**
    * Required access policy for every mounted tool call — pass `{ gate }` with
-   * `beforeHandle` (for example from `createAuthHook`) or explicitly mark the
-   * surface `{ open: 'public' | 'local-operator' | 'remote' }`.
+   * `beforeHandle` (for example from `createAuthHook`), `{ open: 'public' | 'local-operator' | 'remote' }`,
+   * or `{ inspect: true }` for read-only surface inspection that refuses every execution.
    */
   access: ToolAccess;
   extend?: ToolExtend;
@@ -103,6 +103,14 @@ export function mountAgent(
           : { success: false, error: new Error('Tool arguments must be an object') },
     });
     const execute = async (rawArgs: unknown, options: ToolExecutionOptions<unknown>) => {
+      const inspectErr = inspectOnlyError(lifecycle);
+      if (inspectErr) {
+        const result = toolResultFromError(inspectErr);
+        throw new AgentToolError(
+          formatToolError(result, mountable.name, config.errorHint),
+          toolCauseFromResult(result),
+        );
+      }
       const args = isRecord(rawArgs) ? rawArgs : {};
       // The runtime's own durability and progress travel in the SDK call
       // context; an application that runs its own loop declares a durability

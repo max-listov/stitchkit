@@ -434,3 +434,43 @@ describe('ACP close', () => {
       expect(Date.now() - startedAt).toBeLessThan(1_800);
     }));
 });
+
+describe('ACP approval enforcement contract', () => {
+  test('declares approvalEnforcement as agent-initiated and never synthesizes a request for unprompted tool_call', () =>
+    inScratch('acp-approval-enforcement', async (root) => {
+      const scenario = await writeScenario(root, [
+        update({
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-unprompted',
+          name: 'write_file',
+          status: 'in_progress',
+          rawInput: { path: 'hello.txt', content: 'hi' },
+        }),
+        update({
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-unprompted',
+          status: 'completed',
+          rawOutput: { written: true },
+        }),
+        { do: 'emit', record: { answerPrompt: { stopReason: 'end_turn' } } },
+      ]);
+      const driver = acpDriver(root, { mode: 'default' });
+      expect(driver.approvalEnforcement).toBe('agent-initiated');
+      const session = await driver.open({
+        profile: acpProfile(root, 'acp-approval-enforcement', {
+          FAKE_ENGINE_SCENARIO: scenario,
+        }),
+        cwd: root,
+      });
+      try {
+        expect(session.approvalEnforcement).toBe('agent-initiated');
+        const deltas = await drain(await startText(session));
+        expect(deltas.some((delta) => delta.type === 'tool-call')).toBe(true);
+        expect(deltas.some((delta) => delta.type === 'tool-result')).toBe(true);
+        expect(deltas.some((delta) => delta.type === 'request')).toBe(false);
+        expect(deltas.at(-1)).toMatchObject({ type: 'turn-end', outcome: 'completed' });
+      } finally {
+        await session.close();
+      }
+    }));
+});

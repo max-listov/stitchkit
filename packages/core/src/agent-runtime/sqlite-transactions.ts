@@ -15,6 +15,15 @@ export const sqliteDialect: AgentSqlDialect = {
   contains: (column) => `instr(${column}, ?) > 0`,
   nextEventSeq: (session, conversationId) =>
     nextEventSeqByMaximum(sqliteDialect, session, conversationId),
+  async syncUpdatedEventSearch(session, event) {
+    if (event.rowId === undefined) return;
+    await session.run(`DELETE FROM ${TABLES.events}_fts WHERE rowid = ?`, [event.rowId]);
+    await session.run(
+      `INSERT INTO ${TABLES.events}_fts (rowid, conversation_id, event_seq, occurred_at, body)
+       VALUES (?, ?, ?, ?, ?)`,
+      [event.rowId, event.conversationId, event.seq, event.occurredAt, event.payload],
+    );
+  },
 };
 
 /** The synchronous connection as an `AgentSqlSession`; `null` rows read as `undefined`. */

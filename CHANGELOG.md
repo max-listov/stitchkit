@@ -15,6 +15,135 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** every caller of `createModelInvocationLedger` from `stitchkit/agent-runtime` that
+reads `readPayload`, assumes `sent.artifactId` or a `provider/response` record's `artifactId` is
+always present, switches exhaustively on `ModelInvocationConfig.authorize` actions, or relies on
+`maxPayloadBytes` aborting the provider call
+([migration](docs/guide/upgrading.md#invocation-payload-lifecycle)); every caller of
+`extractCliGlobalOptions` or `scanCliInvocation` from `stitchkit/cli` that caught `CliArgumentError`
+on call or on `.argv` access ([migration](docs/guide/upgrading.md#cli-option-projections-error-field));
+and every repository with a `project.json` validated by `stitchkit/declaration` that still declares
+`identity.version` ([migration](docs/guide/upgrading.md#declaration-single-version)).
+
+- `stitchkit/agent-runtime` `createModelInvocationLedger` makes `maxPayloadBytes` non-fatal and adds
+  encrypted payload expiry redaction (`purgePayloads` / `store.purgeExpiredPayloads`). Exceeding
+  `maxPayloadBytes` previously failed the call before or after provider execution, and encrypted
+  payload artifacts had no retention purge path. Oversized request/response bodies now omit the
+  encrypted artifact with `payloadOmitted: 'max-payload-bytes'` (making `sent.artifactId` on
+  `provider/request` and top-level `artifactId` on `provider/response` optional while preserving
+  `payloadSha256`) and report `InvocationPayloadTooLargeError` via `complete().receiptError`;
+  `readPayload` now returns a discriminated `ModelInvocationPayloadRead`
+  (`{ status: 'available', payload, ... }` or `{ status: 'expired', expiredAt, ... }`); and
+  `ModelInvocationConfig.authorize` receives a fifth action `'purge-payloads'` alongside
+  `'complete'`, `'agent'`, `'read'`, and `'read-payload'` (`ModelInvocationAuthorizationInput`).
+  `const body = (await ledger.readPayload(in, ctx)).payload` →
+  `const res = await ledger.readPayload(in, ctx); if (res.status === 'available') { … }`.
+  **Affects:** `stitchkit/agent-runtime` createModelInvocationLedger, ModelInvocationLedger(readPayload, purgePayloads), ModelInvocationConfig(maxPayloadBytes, authorize), ModelInvocationRecordSchema, ModelInvocationRecord, ModelInvocationPayloadReadSchema, ModelInvocationPayloadRead, ModelInvocationAuthorizationInput, InvocationPayloadTooLargeError, createAgentRuntimeStore, createMemoryAgentRuntimeStore, AgentRuntimeStore(purgeExpiredPayloads)
+- `stitchkit/cli` `extractCliGlobalOptions` and `scanCliInvocation` return malformed CLI flag
+  errors on an `error?: CliArgumentError` field instead of throwing on call or via a throwing
+  `.argv` getter. Dynamic-catalog entrypoints calling `extractCliGlobalOptions` before `createCli`
+  had to wrap the helper in `try/catch` and avoid spreading the returned object whenever a user
+  passed malformed flags. On error, `extractCliGlobalOptions` returns `argv: []` and
+  `scanCliInvocation` returns `command: undefined` and `commandTokens: []` alongside `error`, while
+  early notices suppress when `scan.error !== undefined || scan.framework.quiet`. `routeCliArgv`
+  preserves its `error?: string` field.
+  `try { const p = extractCliGlobalOptions(argv, g); void p.argv } catch (e) { … }` →
+  `const p = extractCliGlobalOptions(argv, g); if (p.error) { … }`. → ADR 0327
+  **Affects:** `stitchkit/cli` extractCliGlobalOptions, scanCliInvocation, CliGlobalOptionsParse(argv, error), CliInvocationScan(command, commandTokens, error)
+- `stitchkit/declaration` `ProjectIdentitySchema` removes `identity.version` so the root
+  `package.json` is the single source of truth for a project's version (supporting both SemVer and
+  CalVer without a second copy in `project.json`). Because `ProjectIdentitySchema` is strict, a
+  `project.json` carrying `identity.version` is now refused. `starter.version` (the scaffolder
+  package version) is unchanged.
+  `{ "identity": { "slug": "app", "name": "App", "version": "0.1.0", "description": { "en": "…" } } }` →
+  `{ "identity": { "slug": "app", "name": "App", "description": { "en": "…" } } }`.
+  **Affects:** `stitchkit/declaration` ProjectIdentitySchema, ProjectIdentity, ProjectDeclarationSchema, ProjectDeclaration, parseProjectDeclaration, findProjectRole
+
+### Added
+
+- `stitchkit/agent-executor/claude`, `stitchkit/agent-executor/claude-sdk`, and
+  `stitchkit/agent-executor/codex`: turn-input image attachments via optional `resolveFile` and
+  `maxImageBytes` (default 5 MiB) on `ClaudeCliDriverConfig`, `ClaudeSdkDriverConfig`, and
+  `CodexDriverConfig`, encoding ordered text and base64 image blocks/data URLs and failing closed
+  before dispatch on unsupported media types, oversize payloads, or unresolved references.
+- `stitchkit/agent-executor/acp`: `AcpApprovalEnforcement` (`'agent-initiated'`) on
+  `AcpDriver.approvalEnforcement` and `AcpSession.approvalEnforcement`, advertising that ACP
+  tool approvals are initiated by the agent and answered by the host without fabricating approval
+  prompts for unprompted tool calls.
+- `stitchkit/files`: `match?: 'directory' | 'entry'` on `waitForDirectory` (`WaitForDirectoryOptions`),
+  allowing callers to wake when any filesystem entry (regular file, broken or cyclic symlink, or
+  directory) appears at the target path while still refusing intermediate non-directory components.
+- `stitchkit/service-host`: extended `SystemdServiceUnitConfig` with `startLimitIntervalSec`,
+  `successExitStatus`, `timeoutStartSec`, `dynamicUser`, `nice`, `ioSchedulingClass`,
+  `privateNetwork`, `privateTmp`, `protectSystem`, `protectHome`, `restrictAddressFamilies`,
+  `bindReadOnlyPaths` (`SystemdBindReadOnlyPath`), `runtimeDirectoryMode`, `stateDirectory`, and
+  `stateDirectoryMode`, plus `.timer` rendering (`renderSystemdTimerUnit`, `SystemdTimerUnitConfig`,
+  `SystemdTimerUnitConfigSchema`) and rollback-guarded `.service` + `.timer` pair inspection and
+  installation (per-file atomic writes with rollback: `checkSystemdTimerPair`,
+  `installSystemdTimerPair`, `CheckSystemdTimerPairOptions`, `SystemdTimerPairCheckResult`,
+  `InstallSystemdTimerPairOptions`, `SystemdTimerPairInstallResult`).
+- `stitchkit/agent-runtime`: `sourceIdentity: 'rekey-spill'` on `BranchAgentConversationInput.applicationKeys`,
+  rekeying declared application tool JSON fields that carry source spill references (live or
+  legitimately expired) while refusing foreign spills and all other source identities (→ ADR 0328).
+- `stitchkit/agent-runtime`: `ModelInvocationLedger.purgePayloads` and
+  `AgentRuntimeStore.purgeExpiredPayloads` (`PurgeInvocationPayloadsInput`,
+  `PurgeInvocationPayloadsResult`) to redact expired encrypted invocation payloads in-place across
+  memory, SQLite (including `events_fts`), and Postgres (including `event_search`) in bounded pages
+  without losing receipt metadata or digests.
+- `stitchkit/agent-runtime` and `stitchkit/tools`: deeply frozen non-executable static catalog
+  descriptors (`AgentToolDescriptor`, `AGENT_STATE_TOOL_DESCRIPTORS`,
+  `AGENT_SCHEDULE_TOOL_DESCRIPTORS`, `AGENT_CHILD_TOOL_DESCRIPTORS`,
+  `AGENT_EVENT_SEARCH_TOOL_DESCRIPTORS`) and widened `listToolNames`, `buildToolManifest`, and
+  `describeToolCatalog` to accept `SurfaceRuntimeToolDefinition` (exported from `stitchkit/tools`)
+  so hosts can inspect full tool catalogs without an active run.
+- `stitchkit/tools`, `stitchkit/tools/agent`, `stitchkit/tools/mcp`, `stitchkit/tools/invoker`,
+  `stitchkit/cli`, and `stitchkit/agent-runtime`: `access: { inspect: true }` on `ToolAccess` for
+  read-only surface inspection (catalogs, schemas, `--help`, `--schema`, `commands`) that refuses
+  every tool invocation fail-closed with `FORBIDDEN` before extensions, hooks, durability,
+  multi-round handlers, or auth run.
+
+### Fixed
+
+- `stitchkit/agent-executor/claude` and `stitchkit/agent-executor/claude-sdk`: stream Claude Code
+  transcripts line-by-line during `findInput` instead of reading the whole file into a 64 MiB string
+  buffer, matching only `type === 'user'` records (never mistaking assistant UUIDs for accepted user
+  input) and failing closed on corrupt or overlong records while enforcing a 16 MiB per-record memory
+  ceiling.
+  **Affects:** `stitchkit/agent-executor/claude` createClaudeCliDriver; `stitchkit/agent-executor/claude-sdk` createClaudeSdkDriver
+- `stitchkit/agent-executor/codex`: paginate `thread/turns/list` across all pages (up to 256 pages)
+  in `findInput` with cycle/cursor guards instead of stopping after the first page.
+  **Affects:** `stitchkit/agent-executor/codex` createCodexDriver
+- `stitchkit/files`: confirm the current named path after `readRegularFile` / `readRegularFileSync`
+  accepts an opened descriptor, retrying once when the path was swapped concurrently (including to
+  a symlink under `noFollow`) instead of returning bytes from an unlinked or replaced target.
+  **Affects:** `stitchkit/files` readRegularFile, readRegularFileSync, readJsonFileSync, readJsonOnce, PolledJsonFile, PolledJsonFiles
+- `stitchkit/server` and `stitchkit/node`: allow `createUnixClientTransport` to pin an explicit
+  POSIX owner UID (`expectedOwnerUid`) for cross-UID group-accessible local daemon sockets while
+  preserving parent-directory, symlink, and non-group/world-writable checks on both Bun and Node.
+  **Affects:** `stitchkit/server` createUnixClientTransport, UnixClientTransportConfig(expectedOwnerUid); `stitchkit/node` createUnixClientTransport, UnixClientTransportConfig(expectedOwnerUid)
+- `stitchkit/agent-runtime`: allow `branchConversation` and `planConversationBranch` to branch
+  conversations whose spills legitimately expired via `spill/deleted` (including across
+  `throughRunId` cutoffs and multi-hop branches via inert `runtime/branch-observation` records),
+  while continuing to refuse corrupt, orphan, or unexplained missing spills with `integrity`
+  (→ ADR 0328).
+  **Affects:** `stitchkit/agent-runtime` createAgentRuntimeStore, createMemoryAgentRuntimeStore, AgentRuntimeStore(branchConversation, planConversationBranch)
+- `stitchkit/process`: re-check PID liveness in `probeProcessOwner` and `probeProcessOwnerSync`
+  when process identity observation becomes unavailable after an initial `'alive'` liveness check,
+  reporting `{ liveness: 'gone', identity: 'pid-gone' }` when the process exited in the TOCTOU
+  window instead of `unavailable / not-probed`, while keeping live-process observation failures
+  (`EPERM`, foreign namespace, unreadable `/proc/self`) as `unavailable` with their original
+  `cause`.
+  **Affects:** `stitchkit/process` probeProcessOwner
+- Upgrade scanner (`stitchkit upgrade`): backfilled missing producer exports (`listToolNames`,
+  `listContractToolNames`, `createRuntimeToolFactory`, `defineAsyncOperation`,
+  `RuntimeToolDefinition*`, `createAgentCodingTools`, and 10 other omitted producer functions) in
+  the `0.127.0` changelog `**Affects:**` lines and added a checked-in
+  `public-surface-producers.json` release gate (`assertAffectsProducersNamed`) that refuses any
+  future breaking, `Fixed`, or `Security` `**Affects:**` line naming a type-only export without its
+  producer functions.
+
 ## [0.127.0] - 2026-11-25
 
 ### ⚠️ Breaking changes
@@ -174,7 +303,7 @@ branches on the class of a SQLite store's transaction failure or of a failed
   `createSqliteAgentEventSearch({ database: sqlite.database })` →
   `createAgentEventSearch({ host: sqlite.host })`;
   `manager.listChildren(parent)` → `await manager.listChildren(parent)`. → ADR 0314
-  **Affects:** `stitchkit/agent-runtime` createSqliteAgentChildManager, createSqliteAgentSpillStore, createSqliteAgentProjectionStore, createSqliteAgentEventSearch, SqliteAgentChildManagerConfig, AgentChildManager(listChildren), AgentScheduleService(start); `stitchkit/agent-runtime/sqlite/bun` SqliteAgentRuntimeStore(database, transaction), SqliteStoreTransaction; `stitchkit/agent-runtime/sqlite/node` SqliteAgentRuntimeStore(database, transaction), SqliteStoreTransaction
+  **Affects:** `stitchkit/agent-runtime` createSqliteAgentChildManager, createSqliteAgentSpillStore, createSqliteAgentProjectionStore, createSqliteAgentEventSearch, SqliteAgentChildManagerConfig, AgentChildManager(listChildren), createAgentChildManager(listChildren), AgentScheduleService(start), createAgentScheduleService(start); `stitchkit/agent-runtime/sqlite/bun` SqliteAgentRuntimeStore(database, transaction), createBunSqliteAgentRuntimeStore(database, transaction), createSqliteAgentRuntimeStore(database, transaction), SqliteStoreTransaction; `stitchkit/agent-runtime/sqlite/node` SqliteAgentRuntimeStore(database, transaction), createNodeSqliteAgentRuntimeStore(database, transaction), createSqliteAgentRuntimeStore(database, transaction), SqliteStoreTransaction
 - `stitchkit/agent-runtime` `AgentChildManager.listChildBlocking` returns
   `{ pending, unavailable }` instead of the bare pending list. Each live child is
   asked for its blocking events within the stop bound; a child that did not answer
@@ -246,7 +375,7 @@ branches on the class of a SQLite store's transaction failure or of a failed
   Bun, browsers and React Native / Hermes without `process.hrtime`.
   `Number(process.hrtime.bigint() - ctx.startedAt) / 1e6` →
   `performance.now() - ctx.startedAt`. → ADR 0307
-  **Affects:** `stitchkit/observability` RequestContext(startedAt); `stitchkit/server` behaviour; `stitchkit/node` behaviour
+  **Affects:** `stitchkit/observability` RequestContext(startedAt), getRequestContext(startedAt); `stitchkit/server` behaviour; `stitchkit/node` behaviour
 - `stitchkit` Minimum supported runtimes rise from `node >=22` / `bun >=1.2.0`
   to `node >=22.3.0` / `bun >=1.4.0` because `RequestContext` loads
   `AsyncLocalStorage` lazily through `process.getBuiltinModule('async_hooks')`
@@ -466,7 +595,7 @@ branches on the class of a SQLite store's transaction failure or of a failed
   `catch (error) { if (error instanceof X) … }`
   → `catch (error) { const first = error instanceof AggregateError ? error.cause : error; if (first instanceof X) … }`.
   [migration](docs/guide/upgrading.md#double-failure-aggregate-error). → ADR 0326
-  **Affects:** `stitchkit` SessionCredentials(login); `stitchkit/agent-runtime/sqlite/bun` behaviour; `stitchkit/agent-runtime/sqlite/node` behaviour
+  **Affects:** `stitchkit` SessionCredentials(login), createSessionCredentials(login); `stitchkit/agent-runtime/sqlite/bun` behaviour; `stitchkit/agent-runtime/sqlite/node` behaviour
 - `stitchkit/telegram` the operator channel waits Telegram's `retry_after` only up to
   `maxRetryAfterMs` (new option, default 60 000 ms — the minute over which Telegram
   counts a group's messages). A longer flood wait would hold every queued message
@@ -493,7 +622,7 @@ branches on the class of a SQLite store's transaction failure or of a failed
   (`Promise<readonly AgentSchedule[]>`); `AgentStoreConformanceConfig` now requires
   explicit `capabilities: { branch, planBranch }` and
   `commitConflict: { arm() } | { impossible: 'single-writer' }`. → ADR 0311
-  **Affects:** `stitchkit/agent-runtime` AgentScheduleService(listSchedules), AgentRuntimeStoreDriver; `stitchkit/agent-runtime/testing` runAgentStoreConformance, AgentStoreConformanceConfig
+  **Affects:** `stitchkit/agent-runtime` AgentScheduleService(listSchedules), createAgentScheduleService(listSchedules), AgentRuntimeStoreDriver; `stitchkit/agent-runtime/testing` runAgentStoreConformance, AgentStoreConformanceConfig
 - `stitchkit/agent-runtime` and `stitchkit/agent-runtime/testing` store driver
   contract step 2: a store built by `createAgentRuntimeStore` reports
   `store.capabilities` (`{ archive, historyRestore, purge }`, frozen) for its
@@ -523,7 +652,7 @@ branches on the class of a SQLite store's transaction failure or of a failed
   factories, async-operation capability maps, `ToolNameEntry.expose`, coding tool
   definitions, and MCP/OpenAPI client connection configs; passing the removed
   `transports` key now throws a `TypeError` at definition/mount time. → ADR 0311
-  **Affects:** `stitchkit/tools` defineRuntimeTool, defineDownloadTool, defineUploadTool, defineWaitTool, defineViewFileTool, ToolNameEntry; `stitchkit/tools/connections` defineMcpClientConnection, defineOpenApiConnection, McpClientConnectionConfig, OpenApiConnectionConfig; `stitchkit/agent-runtime/coding-tools` AgentCodingToolDefinition
+  **Affects:** `stitchkit/tools` defineRuntimeTool, createRuntimeToolFactory, defineAsyncOperation, defineDownloadTool, defineUploadTool, defineWaitTool, defineViewFileTool, listToolNames, listContractToolNames, ToolNameEntry, RuntimeToolDefinition, RuntimeToolDefinitionWithOutput, RuntimeToolDefinitionWithoutOutput, RuntimeToolFactory, RuntimeAsyncOperationConfig; `stitchkit/cli` RuntimeToolDefinition, RuntimeToolDefinitionWithOutput, RuntimeToolDefinitionWithoutOutput; `stitchkit/tools/mcp` RuntimeToolDefinition, RuntimeToolDefinitionWithOutput, RuntimeToolDefinitionWithoutOutput; `stitchkit/tools/connections` defineMcpClientConnection, defineOpenApiConnection, McpClientConnectionConfig, OpenApiConnectionConfig; `stitchkit/agent-runtime/coding-tools` createAgentCodingTools, AgentCodingToolDefinition
 - `stitchkit/cli` consolidated top-level `optionAliases`, `positionals`,
   `results`, `passthrough`, and `wait` (and duplicate `lifecycle`) into one typed
   `CliConfig.commandSettings` map (`CliCommandName`, `CliCommandSettings`),
@@ -1472,7 +1601,7 @@ branches on the class of a SQLite store's transaction failure or of a failed
   the one archive spill schema instead of a looser copy, so a malformed stored
   spill (an `authorization` of `false`) is refused instead of travelling into an
   archive.
-  **Affects:** `stitchkit/agent-runtime` AgentRuntimeStore(branchConversation), AgentRuntimeStore(planConversationBranch), createAgentSpillStore
+  **Affects:** `stitchkit/agent-runtime` AgentRuntimeStore(branchConversation), AgentRuntimeStore(planConversationBranch), createAgentRuntimeStore(branchConversation), createMemoryAgentRuntimeStore(branchConversation), createAgentSpillStore
 - `stitchkit/agent-runtime` `createAgentChildManager` no longer writes `stopped`
   over a child that finished while it was being stopped. A host that answers a
   stop by finishing the child resolved its result before the stop returned, and

@@ -6,6 +6,12 @@ import {
 import { ArchiveProjectionSchema, isRuntimeSnapshotEntry } from './archive-projection';
 import { ArchiveSpillSchema } from './archive-spill';
 import {
+  InvocationExpiredPayloadSchema,
+  type PurgeInvocationPayloadsResult,
+  parsePayloadPurgeCutoff,
+  redactLiveInvocationPayload,
+} from './schemas-invocation-payload';
+import {
   EVENT_COLUMNS,
   encodeJson,
   parseEventRow,
@@ -35,6 +41,102 @@ const ArchiveSpillRowSchema = z.object({
   authorization_payload: z.string().nullable(),
   payload: z.instanceof(Uint8Array),
 });
+
+const RedactCandidateRowSchema = z.object({
+  row_id: SqlIntegerSchema,
+  conversation_id: z.string(),
+  seq: SqlIntegerSchema.pipe(z.int().positive()),
+  occurred_at: z.string(),
+  payload: z.string(),
+});
+
+/** Max valid ISO-8601 timezone offset padding (24h) so lexical pre-filtering never misses non-UTC rows. */
+const MAX_ISO_OFFSET_MS = 24 * 60 * 60 * 1000;
+
+async function redactExpiredSqlPayloads(
+  dialect: AgentSqlDialect,
+  transaction: Parameters<SqlStoreDriver['events']['append']>[0],
+  input: { before: string; expiredAt: string; conversationId?: string; limit: number },
+): Promise<PurgeInvocationPayloadsResult> {
+  const cutoffEpoch = parsePayloadPurgeCutoff(input.before);
+  const upperBoundIso = new Date(cutoffEpoch + MAX_ISO_OFFSET_MS).toISOString();
+  const events = dialect.tables.events;
+  const batchSize = Math.max(input.limit + 1, 256);
+  const matched: Array<{
+    row: z.infer<typeof RedactCandidateRowSchema>;
+    parsed: unknown;
+  }> = [];
+  let cursor: { occurredAt: string; conversationId: string; seq: number } | undefined;
+
+  while (matched.length <= input.limit) {
+    const clauses = [
+      "kind = 'provider/payload'",
+      dialect.contains('payload'),
+      'occurred_at <= ?',
+    ];
+    const values: AgentSqlValue[] = ['"ciphertext":', upperBoundIso];
+    if (input.conversationId !== undefined) {
+      clauses.push('conversation_id = ?');
+      values.push(input.conversationId);
+    }
+    if (cursor !== undefined) {
+      clauses.push(
+        '(occurred_at > ? OR (occurred_at = ? AND (conversation_id > ? OR (conversation_id = ? AND seq > ?))))',
+      );
+      values.push(
+        cursor.occurredAt,
+        cursor.occurredAt,
+        cursor.conversationId,
+        cursor.conversationId,
+        cursor.seq,
+      );
+    }
+    const batch = (
+      await transaction.all(
+        `SELECT row_id, conversation_id, seq, occurred_at, payload FROM ${events}
+         WHERE ${clauses.join(' AND ')}
+         ORDER BY occurred_at ASC, conversation_id ASC, seq ASC LIMIT ?`,
+        [...values, batchSize],
+      )
+    ).map((raw) => RedactCandidateRowSchema.parse(raw));
+    for (const row of batch) {
+      if (Date.parse(row.occurred_at) >= cutoffEpoch) continue;
+      const parsed = parseJson(row.payload);
+      if (InvocationExpiredPayloadSchema.safeParse(parsed).success) continue;
+      matched.push({ row, parsed });
+      if (matched.length > input.limit) break;
+    }
+    const last = batch.at(-1);
+    if (batch.length < batchSize || last === undefined) break;
+    cursor = {
+      occurredAt: last.occurred_at,
+      conversationId: last.conversation_id,
+      seq: last.seq,
+    };
+  }
+
+  const hasMore = matched.length > input.limit;
+  const toPurge = matched.slice(0, input.limit);
+  let freedBytes = 0;
+  for (const { row, parsed } of toPurge) {
+    const expired = redactLiveInvocationPayload(parsed, input.expiredAt);
+    if (expired === undefined) continue;
+    const encoded = encodeJson(expired);
+    freedBytes += Math.max(0, Buffer.byteLength(row.payload) - Buffer.byteLength(encoded));
+    await transaction.run(
+      `UPDATE ${events} SET payload = ? WHERE conversation_id = ? AND seq = ?`,
+      [encoded, row.conversation_id, row.seq],
+    );
+    await dialect.syncUpdatedEventSearch(transaction, {
+      rowId: row.row_id,
+      conversationId: row.conversation_id,
+      seq: row.seq,
+      occurredAt: row.occurred_at,
+      payload: encoded,
+    });
+  }
+  return { purged: toPurge.length, freedBytes, hasMore };
+}
 
 export function sqlEvents(dialect: AgentSqlDialect): SqlStoreDriver['events'] {
   const events = dialect.tables.events;
@@ -93,6 +195,8 @@ export function sqlEvents(dialect: AgentSqlDialect): SqlStoreDriver['events'] {
       );
       return row === undefined ? undefined : parseEventRow(row);
     },
+    redactExpiredPayloads: (transaction, input) =>
+      redactExpiredSqlPayloads(dialect, transaction, input),
   };
 }
 

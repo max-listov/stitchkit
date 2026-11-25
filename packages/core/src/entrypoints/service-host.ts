@@ -118,10 +118,26 @@ export {
 } from '../service-host/systemd-inspect';
 export {
   renderSystemdServiceUnit,
-  type SystemdScope,
-  SystemdScopeSchema,
   type SystemdServiceUnitConfig,
   SystemdServiceUnitConfigSchema,
+} from '../service-host/systemd-render';
+export {
+  type SystemdBindReadOnlyPath,
+  type SystemdScope,
+  SystemdScopeSchema,
   SystemdUnitError,
   type SystemdUnitErrorCode,
-} from '../service-host/systemd-render';
+} from '../service-host/systemd-render-shared';
+export {
+  type CheckSystemdTimerPairOptions,
+  checkSystemdTimerPair,
+  type InstallSystemdTimerPairOptions,
+  installSystemdTimerPair,
+  type SystemdTimerPairCheckResult,
+  type SystemdTimerPairInstallResult,
+} from '../service-host/systemd-timer';
+export {
+  renderSystemdTimerUnit,
+  type SystemdTimerUnitConfig,
+  SystemdTimerUnitConfigSchema,
+} from '../service-host/systemd-timer-render';

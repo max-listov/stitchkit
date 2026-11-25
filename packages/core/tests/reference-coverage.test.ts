@@ -26,6 +26,7 @@ const MANIFEST = RAW_MANIFEST as readonly ManifestEntry[];
 const SRC = `${import.meta.dir}/../src`;
 const REFERENCE = `${import.meta.dir}/../../../docs/api/reference.md`;
 const SURFACE_SNAPSHOT = `${import.meta.dir}/fixtures/public-surface.json`;
+const PRODUCERS_SNAPSHOT = `${import.meta.dir}/fixtures/public-surface-producers.json`;
 
 /**
  * The public entrypoints, mapped to their source module — from the manifest.
@@ -130,6 +131,95 @@ function exportsOf(file: string): string[] {
   return checker.getExportsOfModule(moduleSymbol).map((symbol) => symbol.getName());
 }
 
+function isTypeOnlyExport(symbol: ts.Symbol): boolean {
+  const target =
+    symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+  return (target.flags & ts.SymbolFlags.Value) === 0;
+}
+
+function collectReturnedTypeExports(
+  type: ts.Type | undefined,
+  typeOnlyExports: ReadonlySet<string>,
+  out: Set<string>,
+  seen: Set<ts.Type>,
+  depth: number,
+): void {
+  if (!type || seen.has(type)) return;
+  seen.add(type);
+  const aliasName = type.aliasSymbol?.getName();
+  if (aliasName && typeOnlyExports.has(aliasName) && !aliasName.startsWith('Zod')) {
+    out.add(aliasName);
+  }
+  const symName = type.getSymbol()?.getName();
+  if (symName && typeOnlyExports.has(symName) && !symName.startsWith('Zod')) {
+    out.add(symName);
+  }
+  if (type.isUnionOrIntersection()) {
+    for (const part of type.types) {
+      collectReturnedTypeExports(part, typeOnlyExports, out, seen, depth);
+    }
+    return;
+  }
+  if (checker.isArrayType(type) || checker.isTupleType(type)) {
+    for (const arg of checker.getTypeArguments(type as ts.TypeReference)) {
+      collectReturnedTypeExports(arg, typeOnlyExports, out, seen, depth);
+    }
+    return;
+  }
+  if (
+    symName === 'Promise' ||
+    symName === 'PromiseLike' ||
+    symName === 'AsyncIterable' ||
+    symName === 'AsyncGenerator'
+  ) {
+    for (const arg of checker.getTypeArguments(type as ts.TypeReference)) {
+      collectReturnedTypeExports(arg, typeOnlyExports, out, seen, depth);
+    }
+    return;
+  }
+  if (depth === 0) {
+    const defineProp = type.getProperty('define');
+    if (defineProp) {
+      const defType = checker.getTypeOfSymbol(defineProp);
+      for (const sig of defType.getCallSignatures()) {
+        collectReturnedTypeExports(sig.getReturnType(), typeOnlyExports, out, seen, depth + 1);
+      }
+    }
+  }
+}
+
+/** Type-only exports of `file` paired with same-entrypoint functions whose return type produces them. */
+function producersOf(file: string): Record<string, string[]> {
+  const source = program.getSourceFile(join(SRC, file));
+  const moduleSymbol = source && checker.getSymbolAtLocation(source);
+  if (!moduleSymbol || !source) throw new Error(`cannot resolve public entrypoint ${file}`);
+  const exported = checker.getExportsOfModule(moduleSymbol);
+  const typeOnlyExports = new Set(exported.filter(isTypeOnlyExport).map((s) => s.getName()));
+  const byType: Record<string, string[]> = {};
+  for (const sym of exported) {
+    const fnName = sym.getName();
+    if (typeOnlyExports.has(fnName) || /^[A-Z]/.test(fnName)) continue;
+    const type = checker.getTypeOfSymbolAtLocation(sym, source);
+    const sigs = type.getCallSignatures();
+    if (sigs.length === 0) continue;
+    const produced = new Set<string>();
+    for (const sig of sigs) {
+      collectReturnedTypeExports(sig.getReturnType(), typeOnlyExports, produced, new Set(), 0);
+    }
+    for (const typeName of produced) {
+      if (typeName === fnName) continue;
+      const list = byType[typeName] ?? [];
+      list.push(fnName);
+      byType[typeName] = list;
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(byType)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => [k, [...new Set(v)].sort()]),
+  );
+}
+
 /** Export table cells belong to the exact entrypoint section, including its subsections. */
 function claimedExportNames(reference: string, entry: string): string[] {
   const heading = `## \`${entry}\``;
@@ -193,6 +283,18 @@ describe('reference.md coverage', () => {
       expect(exportsOf(file).sort()).toEqual(expected);
     });
   }
+
+  test('public-surface-producers.json matches the real TypeScript return-type producer map', () => {
+    const expectedProducers = z
+      .record(z.string(), z.record(z.string(), z.array(z.string())))
+      .parse(JSON.parse(readFileSync(PRODUCERS_SNAPSHOT, 'utf8')));
+    const actual: Record<string, Record<string, string[]>> = {};
+    for (const [entry, file] of Object.entries(ENTRYPOINTS)) {
+      const map = producersOf(file);
+      if (Object.keys(map).length > 0) actual[entry] = map;
+    }
+    expect(actual).toEqual(expectedProducers);
+  });
 });
 
 /**

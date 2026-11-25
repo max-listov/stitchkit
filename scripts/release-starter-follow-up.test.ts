@@ -37,6 +37,7 @@ function tree(core: string, tui: string, starter: string, target: string, revisi
     'packages/core/src/index.ts': `export const v = ${revision};\n`,
     // The export snapshot `release:check` reads the names of an `**Affects:**` line from.
     'packages/core/tests/fixtures/public-surface.json': '{"stitchkit":["v"]}\n',
+    'packages/core/tests/fixtures/public-surface-producers.json': '{}\n',
     'packages/tui/package.json': `{"name":"stitchkit-tui","version":"${tui}","dependencies":{"stitchkit":"workspace:^"}}`,
     'packages/tui/src/index.ts': `export const t = ${revision};\n`,
     'packages/create-stitchkit/package.json': `{"name":"create-stitchkit","version":"${starter}"}`,

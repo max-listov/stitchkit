@@ -1,6 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { scanCliInvocation } from './args-scan';
-import { CliArgumentError } from './argument-error';
 import type { CliIo } from './io';
 
 const invocationNotices = new AsyncLocalStorage<{
@@ -19,14 +18,9 @@ export function writeCliNotice(text: string): void {
     if (!invocation.quiet) invocation.stderr(text);
     return;
   }
-  let quiet: boolean;
-  try {
-    quiet = scanCliInvocation(process.argv.slice(2)).framework.quiet;
-  } catch (error) {
-    // Invalid framework flags are reported by `createCli` with exit code 2;
-    // suppress the pre-invocation notice instead of crashing with an unhandled error.
-    if (error instanceof CliArgumentError) return;
-    throw error;
-  }
-  if (!quiet) process.stderr.write(text);
+  const scan = scanCliInvocation(process.argv.slice(2));
+  // Invalid framework flags are reported by `createCli` with exit code 2;
+  // suppress the pre-invocation notice instead of emitting chatter on a refused line.
+  if (scan.error !== undefined || scan.framework.quiet) return;
+  process.stderr.write(text);
 }

@@ -14,7 +14,6 @@ import type { ToolLifecycle } from '../execute-hooks';
 import { buildToolPresentationSchema } from '../schema/presentation';
 import { RESERVED_CLI_OPTIONS } from './args-classify';
 import { type CliFrameworkOptions, scanCliInvocation } from './args-scan';
-import { CliArgumentError } from './argument-error';
 import type { CliCommandDefinition } from './command';
 import {
   assertStaticCliCommandNames,
@@ -154,15 +153,12 @@ export function resolveCliRoute<
 ): CliRoute<TGlobals> | undefined {
   const { config } = session;
   const { stdout, stderr, exit } = session.io;
-  let scan: ReturnType<typeof scanCliInvocation<TGlobals>>;
-  try {
-    scan = scanCliInvocation(argv, {
-      appGlobals: config.globalOptions,
-      defaultCommand: config.defaultCommand,
-    });
-  } catch (error) {
-    if (!(error instanceof CliArgumentError)) throw error;
-    stderr(`${error.message}\n`);
+  const scan = scanCliInvocation(argv, {
+    appGlobals: config.globalOptions,
+    defaultCommand: config.defaultCommand,
+  });
+  if (scan.error !== undefined) {
+    stderr(`${scan.error.message}\n`);
     exit(2);
     return undefined;
   }

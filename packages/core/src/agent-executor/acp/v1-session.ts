@@ -1,5 +1,6 @@
 import type { AgentEngineSession, AgentEngineTurn } from '../engine';
 import { holdEngineRequest, loseEngineTurn } from '../engine-requests';
+import { DEFAULT_MAX_IMAGE_BYTES } from '../image-input';
 import {
   JSON_RPC_METHOD_NOT_FOUND,
   JsonRpcError,
@@ -39,10 +40,17 @@ import {
   runAcpPrompt,
 } from './v1-turn';
 
-const DEFAULT_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+/**
+ * How tool approvals are enforced over ACP: `'agent-initiated'` means the driver answers
+ * `session/request_permission` requests when the agent sends them, but cannot compel an agent
+ * to ask before running tools and never synthesizes fake requests after `tool_call` updates.
+ */
+export type AcpApprovalEnforcement = 'agent-initiated';
 
 /** A session with what ACP says about it besides turns: its settings, title and commands. */
 export interface AcpSession extends AgentEngineSession {
+  /** Always `'agent-initiated'`: whether a tool pauses for host approval is decided by the agent. */
+  readonly approvalEnforcement: AcpApprovalEnforcement;
   /** The agent's settings as last reported: on open, on a change, and on `config_option_update`. */
   readonly configOptions: readonly AcpConfigOption[];
   /** The title the agent gave the session, once it did. */
@@ -276,6 +284,7 @@ export async function openAcpSession(
     };
     return {
       nativeThreadId: sessionId,
+      approvalEnforcement: 'agent-initiated',
       get configOptions() {
         return configOptions;
       },

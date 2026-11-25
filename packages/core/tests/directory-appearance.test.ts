@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  watch,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { waitForDirectory } from '../src/entrypoints/files';
@@ -36,6 +45,15 @@ function countingIo(options: { dropEvents?: boolean; onWatch?: (path: string) =>
       counts.checks += 1;
       try {
         return statSync(path).isDirectory();
+      } catch {
+        return false;
+      }
+    },
+    hasEntry(path) {
+      counts.checks += 1;
+      try {
+        lstatSync(path);
+        return true;
       } catch {
         return false;
       }
@@ -296,5 +314,132 @@ describe('waitForDirectory keepAlive', () => {
     expect(await childExit(false, 5_000)).toBe(0);
     expect(await childExit(undefined, 1_500)).toBe('alive');
     expect(await childExit(true, 1_500)).toBe('alive');
+  });
+});
+
+describe('waitForDirectory match: entry', () => {
+  test('wakes on regular file, broken symlink, cyclic symlink, directory, and trailing slash', async () => {
+    // 1. Regular file appears
+    const fileTarget = join(root, 'conf.d');
+    const waitFile = waitForDirectory(fileTarget, { match: 'entry', settleMs: 20 });
+    await sleep(30);
+    writeFileSync(fileTarget, 'not a dir');
+    expect(await within(waitFile, 2_000)).toBeUndefined();
+
+    // 2. Broken symlink appears
+    const brokenTarget = join(root, 'broken.d');
+    const waitBroken = waitForDirectory(brokenTarget, { match: 'entry', settleMs: 20 });
+    await sleep(30);
+    symlinkSync(join(root, 'does-not-exist'), brokenTarget);
+    expect(await within(waitBroken, 2_000)).toBeUndefined();
+
+    // 3. Cyclic symlink (c -> c) appears
+    const cyclicTarget = join(root, 'cyclic.d');
+    const waitCyclic = waitForDirectory(cyclicTarget, { match: 'entry', settleMs: 20 });
+    await sleep(30);
+    symlinkSync(cyclicTarget, cyclicTarget);
+    expect(await within(waitCyclic, 2_000)).toBeUndefined();
+
+    // 4. Trailing slash resolves the normalized entry name
+    const slashTarget = join(root, 'slash.d');
+    const waitSlash = waitForDirectory(`${slashTarget}/`, { match: 'entry', settleMs: 20 });
+    await sleep(30);
+    writeFileSync(slashTarget, 'file');
+    expect(await within(waitSlash, 2_000)).toBeUndefined();
+
+    // 5. Real directory also wakes match: entry
+    const dirTarget = join(root, 'real.d');
+    const waitDir = waitForDirectory(dirTarget, { match: 'entry', settleMs: 20 });
+    await sleep(30);
+    mkdirSync(dirTarget);
+    expect(await within(waitDir, 2_000)).toBeUndefined();
+  });
+
+  test('intermediate file or broken symlink does not wake match: entry; parent deletion and abort clean up', async () => {
+    const intermediate = join(root, 'mid');
+    const target = join(intermediate, 'conf.d');
+    const waitNested = waitForDirectory(target, { match: 'entry', settleMs: 20 });
+    await sleep(30);
+    writeFileSync(intermediate, 'blocks path');
+    expect(await within(waitNested, 150)).toBe('timeout');
+    rmSync(intermediate);
+    symlinkSync(join(root, 'nowhere'), intermediate);
+    expect(await within(waitNested, 150)).toBe('timeout');
+    rmSync(intermediate);
+    mkdirSync(intermediate);
+    await sleep(30);
+    writeFileSync(target, 'leaf file');
+    expect(await within(waitNested, 2_000)).toBeUndefined();
+
+    // Parent deletion while watching under match: entry re-parents watch and still wakes on recreation
+    const removableParent = join(root, 'rem-parent');
+    mkdirSync(removableParent);
+    const childEntry = join(removableParent, 'sock');
+    const waitAfterDelete = waitForDirectory(childEntry, { match: 'entry', settleMs: 20 });
+    await sleep(30);
+    rmSync(removableParent, { recursive: true });
+    await sleep(40);
+    mkdirSync(removableParent);
+    await sleep(30);
+    writeFileSync(childEntry, 'recreated');
+    expect(await within(waitAfterDelete, 2_000)).toBeUndefined();
+
+    // Idle stability under match: entry — neither checks nor watches grow after settleMs
+    const { io, counts } = countingIo();
+    const controller = new AbortController();
+    const idleWait = waitForDirectoryWith(io, join(root, 'idle-missing', 'conf.d'), {
+      match: 'entry',
+      settleMs: 20,
+      signal: controller.signal,
+    });
+    await sleep(100);
+    const settledChecks = counts.checks;
+    const settledWatches = counts.watches;
+    await sleep(300);
+    expect(counts.checks).toBe(settledChecks);
+    expect(counts.watches).toBe(settledWatches);
+    controller.abort(new Error('cancel-entry'));
+    await expect(idleWait).rejects.toThrow('cancel-entry');
+    expect(counts.open).toBe(0);
+  });
+
+  test('validates match and io.hasEntry synchronously and propagates EACCES from hasEntry', async () => {
+    expect(() =>
+      waitForDirectoryWith(countingIo().io, join(root, 'x'), {
+        match: 'other' as unknown as 'entry',
+      }),
+    ).toThrow(TypeError);
+    const noEntryIo: DirectoryAppearanceIo = {
+      isDirectory: () => false,
+      watch: () => ({
+        close() {
+          // no-op
+        },
+        on() {
+          return this;
+        },
+      }),
+    };
+    expect(() => waitForDirectoryWith(noEntryIo, join(root, 'x'), { match: 'entry' })).toThrow(
+      TypeError,
+    );
+    const eacces = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    const failingIo: DirectoryAppearanceIo = {
+      isDirectory: () => false,
+      hasEntry: () => {
+        throw eacces;
+      },
+      watch: () => ({
+        close() {
+          // no-op
+        },
+        on() {
+          return this;
+        },
+      }),
+    };
+    await expect(
+      waitForDirectoryWith(failingIo, join(root, 'x'), { match: 'entry' }),
+    ).rejects.toBe(eacces);
   });
 });

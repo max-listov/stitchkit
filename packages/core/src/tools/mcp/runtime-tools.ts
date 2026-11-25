@@ -73,6 +73,7 @@ export function mountPreparedRuntimeMcp(
         catalog: config.catalog,
         multiRoundRuntime: config.multiRoundRuntime,
         hooks: config.hooks,
+        lifecycle: config.lifecycle,
         context: config.context,
       },
     );

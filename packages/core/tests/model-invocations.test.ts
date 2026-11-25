@@ -163,11 +163,13 @@ describe('public completion and agent invocation receipts', () => {
     expect(journal).not.toContain('private-fixture-key');
     expect(journal).not.toContain('wire answer');
     const request = page.items.find((item) => item.record.type === 'provider/request')?.record;
-    if (request?.type !== 'provider/request') throw new Error('Missing request receipt');
+    if (request?.type !== 'provider/request' || !request.sent.artifactId)
+      throw new Error('Missing request receipt');
     const payload = await ledger.readPayload(
       { conversationId: input.conversationId, artifactId: request.sent.artifactId },
       'trusted',
     );
+    expect(payload.status).toBe('available');
     expect(JSON.stringify(payload)).toContain(input.prompt);
     expect(JSON.stringify(payload)).not.toContain('private-fixture-key');
     await expect(

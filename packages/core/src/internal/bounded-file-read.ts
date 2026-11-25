@@ -5,12 +5,32 @@ import {
   fstatSync,
   openSync,
   readSync,
-  type Stats,
 } from 'node:fs';
 import { type FileHandle, open } from 'node:fs/promises';
+import {
+  type BoundedFileSnapshotHooks,
+  type BoundedFileSnapshotSyncHooks,
+  bigObservation,
+  defaultNamedStat,
+  defaultNamedStatSync,
+  type FilePathStat,
+  isNanosecondStats,
+  isPathSwapErrno,
+  matchesNamedPath,
+  sameBigStat,
+  sameReadStat,
+  statsViewOf,
+  toObservation,
+} from './bounded-file-confirm';
 import { closeAfter, closeAfterSync } from './close-after';
 import { errnoOf } from './errno';
-import type { FileObservation, FileReadDescriptor, FileReadStat } from './file-observation';
+import type {
+  FileObservation,
+  FileReadDescriptor,
+  FileReadStat,
+  FileStatsView,
+  NanosecondFileStats,
+} from './file-observation';
 
 export class BoundedFileReadError extends Error {
   constructor(
@@ -29,15 +49,6 @@ export class BoundedFileReadError extends Error {
   }
 }
 
-const observationOf = (info: FileObservation): FileObservation => ({
-  dev: info.dev,
-  ino: info.ino,
-  size: info.size,
-  nlink: info.nlink,
-  mtimeMs: info.mtimeMs,
-  ctimeMs: info.ctimeMs,
-});
-
 export interface FileOpenOptions {
   /** Refuse a symlink at the leaf: the open itself does not follow it. Without it a symlink is followed. */
   rejectSymlinks?: boolean;
@@ -50,7 +61,7 @@ export interface BoundedFileReadOptions<S extends FileReadStat = FileReadStat>
   stable?: boolean;
   signal?: AbortSignal;
   /** Runs on the open descriptor's `stat()` before any byte is read; throwing refuses the file. */
-  inspect?: (before: S) => void;
+  inspect?: (before: S | FileStatsView) => void;
 }
 
 export function isNonRegularOpenErrno(code: string | undefined): boolean {
@@ -76,7 +87,7 @@ async function openChecked<S extends FileReadStat, D extends FileReadDescriptor<
   target: string,
   options: FileOpenOptions,
   openDescriptor: (path: string, flags: number) => Promise<D>,
-): Promise<{ handle: D; before: S }> {
+): Promise<{ handle: D; before: S | NanosecondFileStats }> {
   const flags = openReadFlags(options);
   let handle: D;
   try {
@@ -100,14 +111,15 @@ async function openChecked<S extends FileReadStat, D extends FileReadDescriptor<
     throw error;
   }
   try {
-    const before = await handle.stat();
+    const before = await handle.stat({ bigint: true });
     if (!before.isFile())
       throw new BoundedFileReadError('FILE_NOT_REGULAR', 'managed path is not a regular file');
-    if (options.singleLink && before.nlink !== 1)
+    const nlink = typeof before.nlink === 'bigint' ? Number(before.nlink) : before.nlink;
+    if (options.singleLink && nlink !== 1)
       throw new BoundedFileReadError(
         'FILE_UNSAFE_LINK',
         'managed file has multiple links',
-        observationOf(before),
+        toObservation(before),
       );
     return { handle, before };
   } catch (error) {
@@ -120,11 +132,12 @@ async function openChecked<S extends FileReadStat, D extends FileReadDescriptor<
  * Open a regular file by descriptor for a caller that streams it; the caller closes the
  * handle.
  */
-export function openRegularFile(
+export async function openRegularFile(
   target: string,
   options: FileOpenOptions = {},
 ): Promise<{ handle: FileHandle; before: FileObservation }> {
-  return openChecked(target, options, open);
+  const { handle, before } = await openChecked(target, options, open);
+  return { handle, before: toObservation(before) };
 }
 
 const tooLarge = (maxBytes: number, observation?: FileObservation): BoundedFileReadError =>
@@ -150,6 +163,17 @@ export interface BoundedFileRead {
   bytes: Uint8Array;
   observation: FileObservation;
   mode: number | undefined;
+  /** Exact nanosecond post-read stat when the open descriptor supports `{ bigint: true }`. */
+  after?: NanosecondFileStats;
+}
+
+function confirmNamedPath(
+  after: { dev: number | bigint; ino: number | bigint },
+  named: FilePathStat,
+): void {
+  if (!matchesNamedPath(after, named)) {
+    throw new BoundedFileReadError('FILE_CHANGED', 'managed file path changed during read');
+  }
 }
 
 /** {@link readBoundedFile} over a caller's opener, whose stat type `inspect` receives. */
@@ -158,6 +182,7 @@ export async function readBoundedFileFrom<S extends FileReadStat>(
   maxBytes: number,
   options: BoundedFileReadOptions<S>,
   openDescriptor: (path: string, flags: number) => Promise<FileReadDescriptor<S>>,
+  snapshot: BoundedFileSnapshotHooks = {},
 ): Promise<BoundedFileRead> {
   options.signal?.throwIfAborted();
   const { handle, before } = await openChecked<S, FileReadDescriptor<S>>(
@@ -168,33 +193,53 @@ export async function readBoundedFileFrom<S extends FileReadStat>(
   return closeAfter(handle, async () => {
     try {
       options.signal?.throwIfAborted();
-      if (before.size > maxBytes) throw tooLarge(maxBytes);
-      options.inspect?.(before);
+      const beforeSize = typeof before.size === 'bigint' ? before.size : BigInt(before.size);
+      if (beforeSize > BigInt(maxBytes)) throw tooLarge(maxBytes);
+      options.inspect?.(isNanosecondStats(before) ? statsViewOf(before) : before);
       const bytes = await readHandle(handle, maxBytes, options.signal);
-      const after = await handle.stat();
-      if (
-        options.stable &&
-        (before.dev !== after.dev ||
-          before.ino !== after.ino ||
-          before.size !== after.size ||
-          before.mtimeMs !== after.mtimeMs ||
-          before.ctimeMs !== after.ctimeMs ||
-          before.nlink !== after.nlink ||
-          before.mode !== after.mode ||
-          before.uid !== after.uid ||
-          before.gid !== after.gid ||
-          bytes.length !== after.size)
-      )
+      const after = await handle.stat({ bigint: true });
+      if (options.stable && !sameReadStat(before, after, bytes.length))
         throw new BoundedFileReadError('FILE_CHANGED', 'managed file changed during read');
+      if (options.stable) {
+        options.signal?.throwIfAborted();
+        let named: FilePathStat;
+        try {
+          named = snapshot.namedStat
+            ? await snapshot.namedStat(target)
+            : await defaultNamedStat(target, options.rejectSymlinks);
+        } catch (error) {
+          if (isPathSwapErrno(errnoOf(error), options.rejectSymlinks)) {
+            throw new BoundedFileReadError(
+              'FILE_CHANGED',
+              'managed file path changed during read',
+              undefined,
+              {
+                cause: error,
+              },
+            );
+          }
+          throw error;
+        }
+        confirmNamedPath(after, named);
+      }
       options.signal?.throwIfAborted();
-      return { bytes, observation: observationOf(after), mode: after.mode };
+      return {
+        bytes,
+        observation: toObservation(after),
+        mode: after.mode === undefined ? undefined : Number(after.mode),
+        ...(isNanosecondStats(after) && { after }),
+      };
     } catch (error) {
       // An oversized file carries the descriptor's observation so a caller can
       // set that exact file aside instead of failing the whole read.
       if (error instanceof BoundedFileReadError && error.code === 'FILE_TOO_LARGE') {
-        const current = await handle.stat().catch(() => undefined);
-        if (current?.isFile() && current.dev === before.dev && current.ino === before.ino)
-          throw tooLarge(maxBytes, observationOf(current));
+        const current = await handle.stat({ bigint: true }).catch(() => undefined);
+        if (current?.isFile()) {
+          const curObs = toObservation(current);
+          const beforeObs = toObservation(before);
+          if (curObs.dev === beforeObs.dev && curObs.ino === beforeObs.ino)
+            throw tooLarge(maxBytes, curObs);
+        }
       }
       throw error;
     }
@@ -231,37 +276,13 @@ function readFdSync(fd: number, maxBytes: number): Uint8Array {
   return bytes;
 }
 
-/** What the sync reader hands `inspect`: the descriptor's `fstat`, `fs.Stats` in practice. */
-export type SyncFileStat = Stats;
+/** What the sync reader hands `inspect`: a descriptor `fstat` view derived from `before`. */
+export type SyncFileStat = FileStatsView;
 
 export interface BoundedFileReadSyncOptions extends FileOpenOptions {
   stable?: boolean;
   /** Runs on the open descriptor's `fstat` before any byte is read; throwing refuses the file. */
   inspect?: (before: SyncFileStat) => void;
-}
-
-const bigObservation = (info: BigIntStats): FileObservation => ({
-  dev: Number(info.dev),
-  ino: Number(info.ino),
-  size: Number(info.size),
-  nlink: Number(info.nlink),
-  mtimeMs: Number(info.mtimeMs),
-  ctimeMs: Number(info.ctimeMs),
-});
-
-function sameBigStat(before: BigIntStats, after: BigIntStats, length: number): boolean {
-  return (
-    before.dev === after.dev &&
-    before.ino === after.ino &&
-    before.size === after.size &&
-    before.mtimeNs === after.mtimeNs &&
-    before.ctimeNs === after.ctimeNs &&
-    before.nlink === after.nlink &&
-    before.mode === after.mode &&
-    before.uid === after.uid &&
-    before.gid === after.gid &&
-    BigInt(length) === after.size
-  );
 }
 
 /**
@@ -275,6 +296,7 @@ export function readBoundedFileSync(
   maxBytes: number,
   options: BoundedFileReadSyncOptions = {},
   openFd: (path: string, flags: number) => number = openSync,
+  snapshot: BoundedFileSnapshotSyncHooks = {},
 ): { bytes: Uint8Array; observation: FileObservation; mode: number; after: BigIntStats } {
   const flags = openReadFlags(options);
   let fd: number;
@@ -315,11 +337,30 @@ export function readBoundedFileSync(
         );
       try {
         if (before.size > BigInt(maxBytes)) throw tooLarge(maxBytes);
-        options.inspect?.(fstatSync(fd));
+        options.inspect?.(statsViewOf(before));
         const bytes = readFdSync(fd, maxBytes);
         const after = fstatSync(fd, { bigint: true });
         if (options.stable && !sameBigStat(before, after, bytes.length))
           throw new BoundedFileReadError('FILE_CHANGED', 'managed file changed during read');
+        if (options.stable) {
+          let named: FilePathStat;
+          try {
+            named = snapshot.namedStatSync
+              ? snapshot.namedStatSync(target)
+              : defaultNamedStatSync(target, options.rejectSymlinks);
+          } catch (error) {
+            if (isPathSwapErrno(errnoOf(error), options.rejectSymlinks)) {
+              throw new BoundedFileReadError(
+                'FILE_CHANGED',
+                'managed file path changed during read',
+                undefined,
+                { cause: error },
+              );
+            }
+            throw error;
+          }
+          confirmNamedPath(after, named);
+        }
         return { bytes, observation: bigObservation(after), mode: Number(after.mode), after };
       } catch (error) {
         if (error instanceof BoundedFileReadError && error.code === 'FILE_TOO_LARGE') {

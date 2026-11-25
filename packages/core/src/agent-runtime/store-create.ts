@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import {
+  PurgeInvocationPayloadsInputSchema,
+  PurgeInvocationPayloadsResultSchema,
+} from './schemas-invocation-payload';
+import {
   AcceptInputAndAssignRunSchema,
   AcquireAgentRunSchema,
   AgentRecoverablePageSchema,
@@ -57,6 +61,26 @@ export function createAgentRuntimeStore<TRANSACTION>(
     importConversation: (bytes) => importConversation(driver, bytes),
     ...(driver.conversations && {
       purgeConversation: createStoreConversationPurge(driver, driver.conversations),
+    }),
+    ...(driver.events.redactExpiredPayloads && {
+      async purgeExpiredPayloads(rawInput) {
+        const parsed = PurgeInvocationPayloadsInputSchema.parse(rawInput);
+        const redact = driver.events.redactExpiredPayloads;
+        if (!redact) throw new TypeError('Agent runtime store does not support payload purge');
+        const before = new Date(Date.parse(parsed.before)).toISOString();
+        const expiredAt = new Date().toISOString();
+        const result = await driver.transaction((tx) =>
+          redact(tx, {
+            before,
+            expiredAt,
+            ...(parsed.conversationId !== undefined && {
+              conversationId: parsed.conversationId,
+            }),
+            limit: parsed.limit ?? 1_000,
+          }),
+        );
+        return PurgeInvocationPayloadsResultSchema.parse(result);
+      },
     }),
     acceptInputAndAssignRun: (input) =>
       mutate({

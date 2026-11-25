@@ -5,13 +5,20 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
   AFFECTS_NAMES_SINCE,
+  AFFECTS_PRODUCERS_SINCE,
   affectsNameViolations,
+  affectsProducerViolations,
   assertAffectsNamesExist,
+  assertAffectsProducersNamed,
   PUBLIC_SURFACE_PATH,
+  PUBLIC_SURFACE_PRODUCERS_PATH,
   type PublicSurface,
+  type PublicSurfaceProducers,
   parsePublicSurface,
+  parsePublicSurfaceProducers,
   previousCoreSurface,
 } from './release-affects-names';
+import { extractReleaseNotes } from './release-notes';
 
 const root = resolve(import.meta.dir, '..');
 
@@ -226,5 +233,53 @@ describe('the surfaces come from the tree and the previous release tag', () => {
     expect(
       (await previousCoreSurface(clone, '0.127.0')).get('stitchkit/agent-runtime')?.size,
     ).toBe(1);
+  });
+});
+
+describe('every returned type in "**Affects:**" also names the function(s) that produce it', () => {
+  const sampleProducers: PublicSurfaceProducers = new Map([
+    [
+      'stitchkit/tools',
+      new Map([
+        ['ToolNameEntry', ['listContractToolNames', 'listToolNames']],
+        ['RuntimeToolFactory', ['createRuntimeToolFactory']],
+      ]),
+    ],
+  ]);
+
+  test('flags a returned type when its producer functions are omitted, and passes when named or covered by behaviour', () => {
+    expect(AFFECTS_PRODUCERS_SINCE).toBe('0.127.0');
+    const bad = breaking('`stitchkit/tools` defineRuntimeTool, ToolNameEntry');
+    expect(affectsProducerViolations(bad, sampleProducers)).toEqual([
+      {
+        section: 'breaking',
+        item: '- `stitchkit/agent-runtime` a change.',
+        entrypoint: 'stitchkit/tools',
+        typeName: 'ToolNameEntry',
+        missingProducers: ['listContractToolNames', 'listToolNames'],
+      },
+    ]);
+    expect(() => assertAffectsProducersNamed(bad, '0.128.0', sampleProducers)).toThrow(
+      /listContractToolNames, listToolNames/,
+    );
+
+    const good = breaking(
+      '`stitchkit/tools` defineRuntimeTool, ToolNameEntry, listToolNames, listContractToolNames',
+    );
+    expect(affectsProducerViolations(good, sampleProducers)).toEqual([]);
+
+    const behaviourCovered = breaking(
+      '`stitchkit/tools` ToolNameEntry; `stitchkit/tools` behaviour',
+    );
+    expect(affectsProducerViolations(behaviourCovered, sampleProducers)).toEqual([]);
+  });
+
+  test('the real 0.127.0 changelog passes the producer gate against public-surface-producers.json', () => {
+    const producers = parsePublicSurfaceProducers(
+      readFileSync(join(root, PUBLIC_SURFACE_PRODUCERS_PATH), 'utf8'),
+    );
+    const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
+    const notes = extractReleaseNotes(changelog, '0.127.0');
+    expect(affectsProducerViolations(notes, producers)).toEqual([]);
   });
 });

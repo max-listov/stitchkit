@@ -267,9 +267,8 @@ function parseCommandArgv(
 export interface CliGlobalOptionsParse {
   /**
    * argv with the application-global tokens removed, ready for routing; a `--` before the
-   * command stays, so the router refuses the line as `createCli` does. Reading it throws
-   * `CliArgumentError` when a lifted global stood between a bare framework boolean and `true`
-   * or `false`: the remaining tokens would read as `--flag false`, which the line did not say.
+   * command stays, so the router refuses the line as `createCli` does. Empty (`[]`) when
+   * `error` is set.
    */
   argv: string[];
   /** The validated values, as the application's own schema types them. */
@@ -279,6 +278,12 @@ export interface CliGlobalOptionsParse {
    * a value-shaped token; omitted when empty. Hand it to `routeCliArgv` with `argv`.
    */
   separatedBefore?: ReadonlySet<number>;
+  /**
+   * Refusal when an application global option is malformed or when lifting a global broke
+   * the boundary between a bare framework boolean and `true`/`false`. Returned as a field
+   * instead of thrown so callers can inspect globals and hand refusal rendering to `createCli`.
+   */
+  error?: CliArgumentError;
 }
 
 /**
@@ -286,33 +291,37 @@ export interface CliGlobalOptionsParse {
  *
  * Thin projection over the single-pass invocation scanner (`scanCliInvocation`),
  * preserving the `argv`/`globals` shape for consumers that lift globals before
- * routing. It refuses what `createCli` refuses: a line answered before its
- * arguments are read (help, `--version`, `--schema`) reports no global's error.
+ * routing. Reports parse refusals in `error` (never via a throwing getter), and
+ * suppresses errors when help, `--version`, or `--schema` answers the line first.
  */
 export function extractCliGlobalOptions(
   argv: readonly string[],
   schema: z.ZodObject | undefined,
 ): CliGlobalOptionsParse {
   if (schema === undefined) return { argv: [...argv], globals: {} };
-  const result = scanCliArgv(argv, { appGlobals: schema });
+  let result: ReturnType<typeof scanCliArgv>;
+  try {
+    result = scanCliArgv(argv, { appGlobals: schema });
+  } catch (error) {
+    if (error instanceof CliArgumentError) {
+      return { argv: [], globals: {}, error };
+    }
+    throw error;
+  }
   const early = answersBeforeArguments(result);
-  if (!early && result.appGlobalError !== undefined) throw result.appGlobalError;
-  const refusal = early ? undefined : result.liftedBoundaryError;
-  if (refusal === undefined) {
+  const error = early ? undefined : (result.appGlobalError ?? result.liftedBoundaryError);
+  if (error !== undefined) {
     return {
-      argv: result.withoutGlobals,
+      argv: [],
       globals: result.globals,
-      ...(result.separatedBeforeGlobals.size > 0 && {
-        separatedBefore: result.separatedBeforeGlobals,
-      }),
+      error,
     };
   }
-  // Lifting a global from between a bare framework boolean and a boolean word leaves an argv that
-  // reads as `--flag false`. The globals are still what the line says; no argv is.
   return {
+    argv: result.withoutGlobals,
     globals: result.globals,
-    get argv(): string[] {
-      throw refusal;
-    },
+    ...(result.separatedBeforeGlobals.size > 0 && {
+      separatedBefore: result.separatedBeforeGlobals,
+    }),
   };
 }

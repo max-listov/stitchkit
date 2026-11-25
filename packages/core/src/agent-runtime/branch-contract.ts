@@ -52,7 +52,7 @@ export const BRANCH_RUNTIME_REFERENCE_KEYS = [
 const BranchApplicationKeySchema = z
   .object({
     key: z.enum(BRANCH_RUNTIME_REFERENCE_KEYS),
-    sourceIdentity: z.enum(['refuse', 'retain']).default('refuse'),
+    sourceIdentity: z.enum(['refuse', 'retain', 'rekey-spill']).default('refuse'),
   })
   .strict();
 
@@ -107,6 +107,11 @@ export const BranchAgentConversationInputSchema = z
      *   source conversation, its runs and its messages may be named so; a value
      *   that names a spill, an application file or any other runtime identity
      *   still refuses, because what it grants crosses by its own contract.
+     * - `'rekey-spill'`: the string value names a spill (live or expired) owned
+     *   by the source conversation and is rekeyed to the destination spill
+     *   identity; live referenced spills are copied into the destination under
+     *   `artifactAuthorization`. `null` and non-string values pass through; any
+     *   string that does not name exclusively a source spill refuses.
      */
     applicationKeys: BranchApplicationKeysSchema.optional(),
   })

@@ -127,5 +127,5 @@ test('an invocation artifact written by 0.100.0, under a random event id, is sti
   ).toBeUndefined();
   expect(
     await readInvocationPayload(store, payloads, { conversationId: 'c', artifactId }),
-  ).toEqual({ prompt: 'kept' });
+  ).toMatchObject({ status: 'available', payload: { prompt: 'kept' } });
 });

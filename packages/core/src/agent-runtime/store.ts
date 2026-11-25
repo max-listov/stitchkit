@@ -23,6 +23,10 @@ import {
   AgentTerminalReasonSchema,
   AgentUsageSchema,
 } from './schemas';
+import type {
+  PurgeInvocationPayloadsInput,
+  PurgeInvocationPayloadsResult,
+} from './schemas-invocation-payload';
 import type { AgentRuntimeStoreCapabilities } from './store-capabilities';
 
 export const AgentStoreConflictSchema = z.object({
@@ -240,6 +244,14 @@ export interface AgentRuntimeStore {
   purgeConversation?(
     input: AgentConversationPurgeInput,
   ): Promise<AgentConversationPurgeResult>;
+  /**
+   * Redact encrypted `provider/payload` bodies older than `input.before`, keeping
+   * invocation receipts (`artifactId`, `sha256`, `bytes`, `expiredAt`) intact and
+   * updating full-text search indexes in the same transaction.
+   */
+  purgeExpiredPayloads?(
+    input: PurgeInvocationPayloadsInput,
+  ): Promise<PurgeInvocationPayloadsResult>;
   /**
    * The whole conversation — every message and every run.
    *

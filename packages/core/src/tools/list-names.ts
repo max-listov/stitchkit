@@ -13,9 +13,11 @@
 import type { ContractDef, Transport } from '../contract/define';
 import { TOOL_TRANSPORTS } from '../contract/define';
 import { contractOnlyService } from '../server/implement';
-import type { ToolSurfaceProjection } from './internal/surface-projector';
-import type { RuntimeToolDefinition } from './runtime-tool-declaration';
-import { collectToolSurface } from './surface';
+import {
+  projectToolSurface,
+  type SurfaceRuntimeToolDefinition,
+  type ToolSurfaceProjection,
+} from './internal/surface-projector';
 
 /** One mounted tool name and where it comes from. */
 export interface ToolNameEntry {
@@ -39,27 +41,25 @@ export interface ToolNameEntry {
  * mirroring the real mounts.
  */
 export function listToolNames(
-  surface: ToolSurfaceProjection<RuntimeToolDefinition>,
+  surface: ToolSurfaceProjection<SurfaceRuntimeToolDefinition>,
 ): ToolNameEntry[] {
   const entries = new Map<string, ToolNameEntry>();
   for (const transport of TOOL_TRANSPORTS) {
     // Diagnostics deliberately keep invalid and duplicate names visible.
-    for (const entry of collectToolSurface({
-      surface,
-      transport,
+    for (const entry of projectToolSurface(surface, transport, {
       assertNames: false,
       assertUniqueNames: false,
     })) {
       // NUL-joined so the composite key can never collide with real names.
-      const id = `${entry.kind}\u0000${entry.service}\u0000${entry.action}`;
+      const id = `${entry.kind}\u0000${entry.serviceName}\u0000${entry.action}`;
       const existing = entries.get(id);
       if (existing) {
         existing.expose.push(transport);
       } else {
         entries.set(id, {
           kind: entry.kind,
-          name: entry.mountable.name,
-          service: entry.service,
+          name: entry.name,
+          service: entry.serviceName,
           method: entry.action,
           expose: [transport],
         });

@@ -7,6 +7,7 @@ import { isRecord } from '../internal/typed';
 import { formatZodError } from '../internal/zod-issues';
 import { getRequestContext, runWithRequestContext } from '../observability/context';
 import type { OperationIdentity } from '../server/types';
+import { inspectOnlyError } from './access';
 import { parseToolCallArguments } from './execute-args';
 import type { ToolCallContext, ToolCallHooks, ToolLifecycle } from './execute-hooks';
 import { type ToolResult, toolResultFromError } from './execute-result';
@@ -101,6 +102,8 @@ export async function executeToolMethod(
   call: ToolCall,
   options: ToolExecutionOptions = {},
 ): Promise<ToolResult> {
+  const inspectErr = inspectOnlyError(options.lifecycle);
+  if (inspectErr) return toolResultFromError(inspectErr);
   const { toolName, context } = call;
   // Each call gets its own request context, forked from the ambient one.
   //

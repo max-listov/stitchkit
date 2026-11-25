@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineAgentTool } from './agent-tool';
+import { bindAgentTool, defineAgentToolDescriptor } from './agent-tool';
 import { conversationOfRun } from './context-issue';
 import { AgentEventSearchResultSchema } from './event-search';
 import type { AgentRuntimeRunContext } from './runtime';
@@ -45,22 +45,59 @@ const TraceOutputSchema = z
   .object({ events: z.array(EventOutputSchema), nextSeq: z.number().optional() })
   .strict();
 
+const SEARCH_DESCRIPTOR = defineAgentToolDescriptor({
+  name: AGENT_EVENT_SEARCH_TOOL_NAMES.search,
+  description: 'Search authorized durable conversation events and return exact addresses.',
+  identity: { serviceName: 'agent-events', action: 'search', method: 'POST' },
+  input: SearchInputSchema,
+  output: SearchOutputSchema,
+  expose: ['AGENT'],
+});
+
+const TRACE_DESCRIPTOR = defineAgentToolDescriptor({
+  name: AGENT_EVENT_SEARCH_TOOL_NAMES.trace,
+  description: 'Read a bounded contiguous slice of this conversation event trace.',
+  identity: { serviceName: 'agent-events', action: 'trace', method: 'GET' },
+  input: TraceInputSchema,
+  output: TraceOutputSchema,
+  expose: ['AGENT'],
+});
+
+const EVENT_DESCRIPTOR = defineAgentToolDescriptor({
+  name: AGENT_EVENT_SEARCH_TOOL_NAMES.event,
+  description: 'Read one durable event by exact conversation and sequence address.',
+  identity: { serviceName: 'agent-events', action: 'read', method: 'GET' },
+  input: EventAddressSchema,
+  output: EventOutputSchema,
+  expose: ['AGENT'],
+});
+
 /**
- * What each event search tool takes and answers, by tool name. A branch reads
- * these to recognise the tools' records in a conversation's history.
+ * Static non-executable descriptors for the built-in event-search tools (`createAgentEventSearchTools`).
+ * Single source of truth for catalog generation, preset validation, branch schemas, and live tools.
+ */
+export const AGENT_EVENT_SEARCH_TOOL_DESCRIPTORS = Object.freeze([
+  SEARCH_DESCRIPTOR,
+  TRACE_DESCRIPTOR,
+  EVENT_DESCRIPTOR,
+] as const);
+
+/**
+ * What each event search tool takes and answers, by tool name. Derived from the
+ * static descriptors so branch recognition and live tool definitions share one source.
  */
 export const AGENT_EVENT_SEARCH_TOOL_SCHEMAS = {
-  [AGENT_EVENT_SEARCH_TOOL_NAMES.search]: {
-    input: SearchInputSchema,
-    output: SearchOutputSchema,
+  [SEARCH_DESCRIPTOR.name]: {
+    input: SEARCH_DESCRIPTOR.input,
+    output: SEARCH_DESCRIPTOR.output,
   },
-  [AGENT_EVENT_SEARCH_TOOL_NAMES.trace]: {
-    input: TraceInputSchema,
-    output: TraceOutputSchema,
+  [TRACE_DESCRIPTOR.name]: {
+    input: TRACE_DESCRIPTOR.input,
+    output: TRACE_DESCRIPTOR.output,
   },
-  [AGENT_EVENT_SEARCH_TOOL_NAMES.event]: {
-    input: EventAddressSchema,
-    output: EventOutputSchema,
+  [EVENT_DESCRIPTOR.name]: {
+    input: EVENT_DESCRIPTOR.input,
+    output: EVENT_DESCRIPTOR.output,
   },
 } as const;
 
@@ -118,54 +155,30 @@ export function createAgentEventSearchTools(config: AgentEventSearchToolsConfig)
   };
 
   return [
-    defineAgentTool({
-      name: AGENT_EVENT_SEARCH_TOOL_NAMES.search,
-      description: 'Search authorized durable conversation events and return exact addresses.',
-      identity: { serviceName: 'agent-events', action: 'search', method: 'POST' },
-      input: SearchInputSchema,
-      output: SearchOutputSchema,
-      expose: ['AGENT'],
-      handler: async ({ input: request }) => ({
-        results: [
-          ...(await input.search({
-            requestingConversationId: input.conversationId,
-            ...request,
-          })),
-        ],
-      }),
-    }),
-    defineAgentTool({
-      name: AGENT_EVENT_SEARCH_TOOL_NAMES.trace,
-      description: 'Read a bounded contiguous slice of this conversation event trace.',
-      identity: { serviceName: 'agent-events', action: 'trace', method: 'GET' },
-      input: TraceInputSchema,
-      output: TraceOutputSchema,
-      expose: ['AGENT'],
-      handler: async ({ input: request }) => {
-        const page = await input.store.readEvents({
-          conversationId: input.conversationId,
+    bindAgentTool(SEARCH_DESCRIPTOR, async ({ input: request }) => ({
+      results: [
+        ...(await input.search({
+          requestingConversationId: input.conversationId,
           ...request,
-        });
-        return {
-          events: page.items.map((event) => ({
-            conversationId: event.conversationId,
-            seq: event.seq,
-            kind: event.kind,
-            occurredAt: event.occurredAt,
-            payload: event.payload,
-          })),
-          ...(page.nextSeq !== undefined && { nextSeq: page.nextSeq }),
-        };
-      },
+        })),
+      ],
+    })),
+    bindAgentTool(TRACE_DESCRIPTOR, async ({ input: request }) => {
+      const page = await input.store.readEvents({
+        conversationId: input.conversationId,
+        ...request,
+      });
+      return {
+        events: page.items.map((event) => ({
+          conversationId: event.conversationId,
+          seq: event.seq,
+          kind: event.kind,
+          occurredAt: event.occurredAt,
+          payload: event.payload,
+        })),
+        ...(page.nextSeq !== undefined && { nextSeq: page.nextSeq }),
+      };
     }),
-    defineAgentTool({
-      name: AGENT_EVENT_SEARCH_TOOL_NAMES.event,
-      description: 'Read one durable event by exact conversation and sequence address.',
-      identity: { serviceName: 'agent-events', action: 'read', method: 'GET' },
-      input: EventAddressSchema,
-      output: EventOutputSchema,
-      expose: ['AGENT'],
-      handler: ({ input: request }) => readExact(request),
-    }),
+    bindAgentTool(EVENT_DESCRIPTOR, ({ input: request }) => readExact(request)),
   ] as const;
 }

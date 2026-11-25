@@ -14,7 +14,8 @@ export interface ToolInvokerConfig {
   transport: ToolTransport;
   /**
    * Required access policy applied to every call through this invoker: pass
-   * `{ gate }` with `beforeHandle` or explicitly mark `{ open }`.
+   * `{ gate }` with `beforeHandle`, `{ open }`, or `{ inspect: true }` for
+   * read-only surface inspection that refuses every execution.
    */
   access: ToolAccess;
   extend?: ToolExtend;

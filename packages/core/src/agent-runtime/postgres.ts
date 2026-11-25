@@ -84,6 +84,14 @@ function postgresDialect(prefix: string): AgentSqlDialect {
       );
       return CountRowSchema.parse(row).count;
     },
+    async syncUpdatedEventSearch(session, event) {
+      await session.run(
+        `UPDATE ${tables.eventSearch}
+         SET body = ?, document = to_tsvector('simple', ?)
+         WHERE conversation_id = ? AND seq = ?`,
+        [event.payload, event.payload, event.conversationId, event.seq],
+      );
+    },
   };
 }
 

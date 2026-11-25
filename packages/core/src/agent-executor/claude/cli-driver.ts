@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { AgentEngineDriver } from '../engine';
 import type { PlanLimits } from '../hello';
+import { validateImageOptions } from '../image-input';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
 import { runEngineCli } from '../session-primitives';
 import { openClaudeSession } from './session';
@@ -49,6 +50,10 @@ export interface ClaudeCliDriverConfig {
    * profile's own setting (`auto`, `acceptEdits`) is not inherited by accident.
    */
   permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'auto';
+  /** Read the bytes behind a `file` part's `reference`; without it a file part is refused. */
+  resolveFile?: (reference: string) => Promise<Uint8Array>;
+  /** Maximum decoded size of one image attachment in bytes. Default 5 MiB. */
+  maxImageBytes?: number;
   /** The executor's own environment, read for the allowlist. Default `process.env`. */
   ambient?: Readonly<Record<string, string | undefined>>;
 }
@@ -61,6 +66,7 @@ export interface ClaudeCliDriverConfig {
  * session's transcript in the profile.
  */
 export function createClaudeCliDriver(config: ClaudeCliDriverConfig = {}): AgentEngineDriver {
+  validateImageOptions(config);
   const executable = config.executable ?? 'claude';
   const prefix = config.prefixArgs ?? [];
   const ambient = config.ambient ?? process.env;
@@ -143,6 +149,8 @@ export function createClaudeCliDriver(config: ClaudeCliDriverConfig = {}): Agent
           permissionMode: config.permissionMode ?? 'default',
           ambient,
           limits,
+          ...(config.resolveFile !== undefined && { resolveFile: config.resolveFile }),
+          ...(config.maxImageBytes !== undefined && { maxImageBytes: config.maxImageBytes }),
         },
         input,
       ),

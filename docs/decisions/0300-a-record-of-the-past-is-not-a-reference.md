@@ -4,8 +4,9 @@ description: A declared application key may retain a value naming the source con
 type: decision
 status: accepted
 amends: ["0298"]
+amendedBy: ["0328"]
 created: 2026-11-21 22:51 +08:00
-updated: 2026-11-22 06:54 +08:00
+updated: 2026-11-25 13:41 +08:00
 ---
 
 # ADR 0300 — A record of the past is not a reference, and a conversation address is not the model's to give
@@ -49,7 +50,7 @@ of lists:
   are defined before any value is judged, so the answer does not depend on event
   order. A value naming a spill, an application file, a tool call, an approval,
   an operation, an idempotency key, a schedule, a child or an owner still
-  refuses: what such a value grants crosses only by its own contract.
+  refuses: what such a value grants crosses only by its own contract. (amended by ADR 0328: `applicationKeys` adds `sourceIdentity: 'rekey-spill'` to rekey source spill references — live or legitimately expired — while still refusing foreign spills and all other source identities.)
 
 A key is one of the runtime reference names the branch reads; a misspelt name
 would declare nothing, so the schema refuses it. A refusal names the key's path

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { PUBLIC_SURFACE_PATH } from './release-affects-names';
+import { PUBLIC_SURFACE_PATH, PUBLIC_SURFACE_PRODUCERS_PATH } from './release-affects-names';
 import { comparePreOneVersions } from './release-notes';
 import {
   assertFixedAffects,
@@ -88,6 +88,7 @@ describe('the release gate applies the rule to a core release', () => {
       'CHANGELOG.md': `## [9.9.0] - x\n\n${changelogBody}\n`,
       'docs/guide/upgrading.md': '# Upgrading\n',
       [PUBLIC_SURFACE_PATH]: JSON.stringify({ 'stitchkit/process': ['runNativeCommand'] }),
+      [PUBLIC_SURFACE_PRODUCERS_PATH]: JSON.stringify({}),
       'bun.lock': WORKSPACES.map(
         (dir) =>
           `    "${dir}": {\n      "name": "x",\n      "version": "${dir === 'packages/core' ? '9.9.0' : '0.0.0'}",\n    },`,

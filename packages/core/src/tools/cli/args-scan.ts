@@ -58,6 +58,11 @@ export interface CliInvocationScan<TGlobals extends z.ZodObject = z.ZodObject> {
   helpFilter?: string;
   /** True when `--version` or `version` was requested before any command. */
   version: boolean;
+  /**
+   * Argument refusal when the invocation cannot be scanned cleanly (returned as a field
+   * rather than thrown; `command` is omitted and `commandTokens` is `[]` when set).
+   */
+  error?: CliArgumentError;
 }
 
 /** What the projections pass to the shared scan beyond the public options. */
@@ -335,8 +340,42 @@ export function scanCliInvocation<TGlobals extends z.ZodObject = z.ZodObject>(
   argv: readonly string[],
   options?: CliInvocationScanOptions<TGlobals>,
 ): CliInvocationScan<TGlobals> {
-  const res = scanCliArgv(argv, options);
-  if (!answersBeforeArguments(res) && res.deferredError !== undefined) throw res.deferredError;
+  let res: InternalCliScan<TGlobals>;
+  try {
+    res = scanCliArgv(argv, options);
+  } catch (error) {
+    if (error instanceof CliArgumentError) {
+      return {
+        framework: {
+          json: false,
+          wait: false,
+          quiet: false,
+          dryRun: false,
+          help: false,
+          schema: false,
+        },
+        globals: parseCliGlobalValues<TGlobals>(undefined, {}),
+        commandTokens: [],
+        separatedBefore: new Set(),
+        topLevelHelp: false,
+        version: false,
+        error,
+      };
+    }
+    throw error;
+  }
+  const error = answersBeforeArguments(res) ? undefined : res.deferredError;
+  if (error !== undefined) {
+    return {
+      framework: res.framework,
+      globals: res.globals,
+      commandTokens: [],
+      separatedBefore: new Set(),
+      topLevelHelp: false,
+      version: false,
+      error,
+    };
+  }
   return {
     framework: res.framework,
     globals: res.globals,

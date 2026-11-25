@@ -13,11 +13,15 @@ import {
 import { git } from './local-git';
 import {
   AFFECTS_NAMES_SINCE,
+  AFFECTS_PRODUCERS_SINCE,
   assertAffectsNamesExist,
+  assertAffectsProducersNamed,
   breakingSectionBody,
   PUBLIC_SURFACE_PATH,
+  PUBLIC_SURFACE_PRODUCERS_PATH,
   type PublicSurface,
   parsePublicSurface,
+  parsePublicSurfaceProducers,
   previousCoreSurface,
 } from './release-affects-names';
 import { assertTrainCarriesItsCompanions, readFromReleaseTags } from './release-companions';
@@ -316,6 +320,12 @@ export async function assertReleaseNotesMetadata(
         tree: parsePublicSurface(await read(PUBLIC_SURFACE_PATH)),
         previous: await previousSurface(),
       });
+    if (comparePreOneVersions(plan.version, AFFECTS_PRODUCERS_SINCE) >= 0)
+      assertAffectsProducersNamed(
+        notes,
+        plan.version,
+        parsePublicSurfaceProducers(await read(PUBLIC_SURFACE_PRODUCERS_PATH)),
+      );
   }
   // Each package has its own migration channel: the scaffolder's guide is for
   // the operator of a GENERATED project, a different reader from the framework's.

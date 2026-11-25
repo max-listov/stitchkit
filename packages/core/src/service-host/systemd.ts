@@ -5,22 +5,19 @@ import {
   checkSystemdUnit,
   createDefaultSystemdHostAdapter,
   DEFAULT_SYSTEMD_UNIT_MODE,
-  foreignUnitSource,
   resolveUnitSearchDirs,
-  SYSTEMCTL_PATH,
   type SystemdHostAdapter,
   systemdMainPid,
-  systemdScopeArgs,
   systemdUnitActive,
 } from './systemd-inspect';
+import { type EnablementLinks, enablementNamesOf, readEnablementLinks } from './systemd-links';
+import { type SystemdScope, SystemdUnitError } from './systemd-render-shared';
 import {
-  differentLinks,
-  type EnablementLinks,
-  enablementNamesOf,
-  readEnablementLinks,
-  restoreEnablementLinks,
-} from './systemd-links';
-import { type SystemdScope, SystemdUnitError } from './systemd-render';
+  assertNoForeignUnit,
+  assertOwnedRegularPath,
+  restoreUnitEnablement,
+  runSystemctlChecked,
+} from './systemd-unit-ops';
 
 const DEFAULT_STABILITY_MS = 5_000;
 const DEFAULT_POLL_INTERVAL_MS = 250;
@@ -72,20 +69,6 @@ function assertSystemdWaitMs(name: string, value: number, allowZero: boolean): v
     throw new SystemdUnitError(
       'INVALID_CONFIG',
       `Invalid ${name}: expected integer in [${min}, ${MAX_WAIT_MS}], got ${value}`,
-    );
-  }
-}
-
-async function runSystemctlChecked(
-  adapter: SystemdHostAdapter,
-  scope: SystemdScope,
-  args: readonly string[],
-): Promise<void> {
-  const result = await adapter.runCommand(SYSTEMCTL_PATH, systemdScopeArgs(scope, args));
-  if (result.exitCode !== 0) {
-    throw new SystemdUnitError(
-      'COMMAND_FAILED',
-      `systemctl ${args.join(' ')} failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
     );
   }
 }
@@ -151,48 +134,6 @@ interface SystemdRollbackPoint {
 }
 
 /**
- * Put back the enablement an apply's `enable` changed and check it on disk: every link
- * `enable` added is removed, the unit's links must then be the ones found before the apply,
- * and `is-enabled` must read the `UnitFileState` found then.
- */
-async function restoreEnablement(
-  adapter: SystemdHostAdapter,
-  options: ApplySystemdUnitOptions,
-  point: SystemdRollbackPoint,
-): Promise<void> {
-  const { scope, unitName } = options;
-  const read = () => readEnablementLinks(adapter, point.linkDirs, point.linkNames);
-  if (await restoreEnablementLinks(adapter, unitName, point.linksBefore, await read()))
-    await runSystemctlChecked(adapter, scope, ['daemon-reload']);
-  const differ = differentLinks(point.linksBefore, await read());
-  if (differ.length > 0) {
-    throw new SystemdUnitError(
-      'COMMAND_FAILED',
-      `the enable links of ${unitName} differ from before the apply: ${differ.join(', ')}`,
-    );
-  }
-  if (point.previousBytes === null) return;
-  const expected = point.previousUnitFileState;
-  if (expected === null) {
-    throw new SystemdUnitError(
-      'COMMAND_FAILED',
-      `UnitFileState of ${unitName} was unknown before the apply: its enablement cannot be checked`,
-    );
-  }
-  const result = await adapter.runCommand(
-    SYSTEMCTL_PATH,
-    systemdScopeArgs(scope, ['is-enabled', '--', unitName]),
-  );
-  const state = result.stdout.trim();
-  if (state !== expected) {
-    throw new SystemdUnitError(
-      'COMMAND_FAILED',
-      `UnitFileState of ${unitName} is ${state || 'unknown'} after rollback, not ${expected}${result.stderr.trim() ? ` (${result.stderr.trim()})` : ''}`,
-    );
-  }
-}
-
-/**
  * Put back the unit file and the state an apply changed. Every step is a checked command, so
  * a step that fails throws and the caller does not answer `rolledBack: true`.
  */
@@ -202,9 +143,18 @@ async function restorePreviousUnit(
   point: SystemdRollbackPoint,
 ): Promise<void> {
   const { scope, unitName, unitPath } = options;
+  const enablementPoint = {
+    scope,
+    unitName,
+    previousBytes: point.previousBytes,
+    previousUnitFileState: point.previousUnitFileState,
+    linkDirs: point.linkDirs,
+    linkNames: point.linkNames,
+    linksBefore: point.linksBefore,
+  };
   if (point.previousBytes === null) {
     if (point.didRestart) await runSystemctlChecked(adapter, scope, ['stop', '--', unitName]);
-    if (point.didEnable) await restoreEnablement(adapter, options, point);
+    if (point.didEnable) await restoreUnitEnablement(adapter, enablementPoint);
     await adapter.removeFile(unitPath);
     await runSystemctlChecked(adapter, scope, ['daemon-reload']);
     return;
@@ -219,7 +169,7 @@ async function restorePreviousUnit(
       unitName,
     ]);
   }
-  if (point.didEnable) await restoreEnablement(adapter, options, point);
+  if (point.didEnable) await restoreUnitEnablement(adapter, enablementPoint);
 }
 
 async function applySystemdUnit(
@@ -243,23 +193,7 @@ async function applySystemdUnit(
     ...(options.unitSearchDirs ? { unitSearchDirs: options.unitSearchDirs } : {}),
     adapter,
   });
-  if (preCheck.foreignDropIns.length > 0) {
-    throw new SystemdUnitError(
-      'FOREIGN_DROP_IN',
-      `Refusing to manage ${options.unitName}: foreign drop-ins present (${preCheck.foreignDropIns.join(', ')})`,
-      { rolledBack: false, foreignDropIns: preCheck.foreignDropIns },
-    );
-  }
-  // The manager already answers for this name from somewhere else: writing our file would
-  // restart that unit and report the digest of a file systemd never reads.
-  const foreign = foreignUnitSource(preCheck, options.unitPath);
-  if (foreign !== undefined) {
-    throw new SystemdUnitError(
-      'FOREIGN_FRAGMENT',
-      `Refusing to manage ${options.unitName}: ${foreign}`,
-      { rolledBack: false },
-    );
-  }
+  assertNoForeignUnit(options.unitName, options.unitPath, preCheck);
   // The stability wait needs a main process that stays; a oneshot unit exits by design.
   if (ONESHOT_TYPE.test(options.content)) {
     throw new SystemdUnitError(
@@ -271,13 +205,7 @@ async function applySystemdUnit(
 
   // A link at the path names a file somebody else owns: we write our own file or none.
   const standing = await adapter.inspectPath(options.unitPath);
-  if (standing.kind === 'symlink' || standing.kind === 'other') {
-    throw new SystemdUnitError(
-      'FOREIGN_FRAGMENT',
-      `Refusing to manage ${options.unitName}: ${options.unitPath} is ${standing.kind === 'symlink' ? `a symbolic link to ${standing.target}` : 'not a regular file'}, not a unit file of ours to replace`,
-      { rolledBack: false },
-    );
-  }
+  assertOwnedRegularPath(options.unitName, options.unitPath, standing);
   const previousBytes = await adapter.readFile(options.unitPath);
   const wasActive = preCheck.activeState === 'active';
   const mode = options.mode ?? DEFAULT_SYSTEMD_UNIT_MODE;

@@ -285,7 +285,40 @@ export async function probeProcessOwnerWith(
   if (!('current' in self)) return self;
   const liveness = await probes.liveness(pid);
   if (liveness === 'gone') return { liveness, identity: 'pid-gone' };
-  return judgeObserved(recorded, self.current, await observe(pid));
+  const observation = await observe(pid);
+  if (observation.state === 'unavailable' && (await probes.liveness(pid)) === 'gone') {
+    return { liveness: 'gone', identity: 'pid-gone' };
+  }
+  return judgeObserved(recorded, self.current, observation);
+}
+
+interface ProcessOwnerSyncProbes {
+  liveness(pid: number): 'alive' | 'gone';
+  observe(pid: number): ProcessInstanceObservation;
+}
+
+/**
+ * @internal Injection is for synchronous kernel-format controls, not a public ownership assertion.
+ */
+export function probeProcessOwnerSyncWith(
+  pid: number,
+  recorded: ProcessInstance | null | undefined,
+  probes: ProcessOwnerSyncProbes = {
+    liveness: probeLivenessSync,
+    observe: (target) => observeProcessInstanceAtSync(target, '/proc'),
+  },
+): ProcessOwnerEvidence {
+  if (recorded === undefined) return { liveness: probes.liveness(pid), identity: 'legacy' };
+  if (recorded === null) return unrecordedLifetime();
+  const self = judgeAgainstSelf(recorded, probes.observe(process.pid));
+  if (!('current' in self)) return self;
+  const liveness = probes.liveness(pid);
+  if (liveness === 'gone') return { liveness, identity: 'pid-gone' };
+  const observation = probes.observe(pid);
+  if (observation.state === 'unavailable' && probes.liveness(pid) === 'gone') {
+    return { liveness: 'gone', identity: 'pid-gone' };
+  }
+  return judgeObserved(recorded, self.current, observation);
 }
 
 /** {@link probeProcessOwner} for a caller that cannot wait: the same steps on synchronous probes. */
@@ -294,12 +327,6 @@ export function probeProcessOwnerSync(
   recorded: ProcessInstance | null | undefined,
 ): ProcessOwnerEvidence {
   z.number().int().positive().max(MAX_PID).parse(pid);
-  if (recorded === undefined) return { liveness: probeLivenessSync(pid), identity: 'legacy' };
-  if (recorded === null) return unrecordedLifetime();
-  ProcessInstanceSchema.parse(recorded);
-  const self = judgeAgainstSelf(recorded, observeProcessInstanceAtSync(process.pid, '/proc'));
-  if (!('current' in self)) return self;
-  const liveness = probeLivenessSync(pid);
-  if (liveness === 'gone') return { liveness, identity: 'pid-gone' };
-  return judgeObserved(recorded, self.current, observeProcessInstanceAtSync(pid, '/proc'));
+  if (recorded != null) ProcessInstanceSchema.parse(recorded);
+  return probeProcessOwnerSyncWith(pid, recorded);
 }

@@ -281,14 +281,14 @@ describe('framework and application global occurrences', () => {
     });
     for (const first of [['--verbose'], ['--verbose', 'false'], ['--verbose=true']]) {
       for (const second of [['--verbose'], ['--verbose', 'false'], ['--verbose=true']]) {
-        expect(() => extractCliGlobalOptions([...first, 'run', ...second], Globals)).toThrow(
-          '--verbose was passed 2 times',
-        );
+        const res = extractCliGlobalOptions([...first, 'run', ...second], Globals);
+        expect(res.argv).toEqual([]);
+        expect(res.error?.message).toContain('--verbose was passed 2 times');
       }
     }
-    expect(() =>
-      extractCliGlobalOptions(['--issuer=a', 'run', '--issuer', 'b'], Globals),
-    ).toThrow('--issuer was passed 2 times');
+    const dupIssuer = extractCliGlobalOptions(['--issuer=a', 'run', '--issuer', 'b'], Globals);
+    expect(dupIssuer.argv).toEqual([]);
+    expect(dupIssuer.error?.message).toContain('--issuer was passed 2 times');
   });
 
   test('application arrays, defaults, singles and separator preserve routing', () => {

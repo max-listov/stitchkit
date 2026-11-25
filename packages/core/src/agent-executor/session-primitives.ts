@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { AgentMessagePart } from '../agent-parts/parts';
 import { abortReason, linkAbortSignals } from '../internal/abort-race';
 import { type BoundedChannel, createBoundedChannel } from '../internal/channel';
 import { jsonDataRefusal } from '../internal/json-data';
@@ -71,21 +70,6 @@ export function offerTurnDelta(
   if (result.outcome === 'refused' && result.reason !== 'not-open') {
     channel.fail(new Error(`The turn's delta queue refused a delta (${result.reason})`));
   }
-}
-
-/** Extract text parts from a turn's input, refusing any non-text part. */
-export function extractTextOnlyInput(
-  parts: readonly AgentMessagePart[],
-  driverLabel: string,
-): string {
-  return parts
-    .map((part) => {
-      if (part.type !== 'text') {
-        throw new TypeError(`${driverLabel} sends text input only, received ${part.type}`);
-      }
-      return part.text;
-    })
-    .join('\n');
 }
 
 /** A session's own abort, following the caller's signal until the session ends. */

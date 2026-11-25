@@ -8,8 +8,9 @@ import { AppError } from '../../contract/errors';
 import type { EndpointToolAnnotations, EndpointUiMeta } from '../../contract/tool-options';
 import { isRecord } from '../../internal/typed';
 import { toJsonSchema } from '../../json-schema/json-schema';
+import { inspectOnlyError } from '../access';
 import type { ToolExecutionOptions } from '../execute';
-import type { ToolCallContext, ToolCallHooks } from '../execute-hooks';
+import type { ToolCallContext, ToolCallHooks, ToolLifecycle } from '../execute-hooks';
 import { type ToolResult, toolResultFromError } from '../execute-result';
 import { observed } from '../internal/observe-hook';
 import type { MountableTool } from '../mount';
@@ -50,6 +51,7 @@ export interface McpToolRegistrationConfig {
   catalog?: McpCatalogStamp;
   multiRoundRuntime?: McpRoundRuntime;
   hooks?: ToolCallHooks;
+  lifecycle?: ToolLifecycle;
   context?: Record<string, unknown>;
 }
 
@@ -129,6 +131,8 @@ export function registerMcpTool(
     async (rawArgs, mcpContext) =>
       stampToolResult(
         await runInMcpRequestContext(mcpContext, name, async () => {
+          const inspectErr = inspectOnlyError(config.lifecycle);
+          if (inspectErr) return format(toolResultFromError(inspectErr), 'none', name);
           const args = isRecord(rawArgs) ? rawArgs : {};
           const startedAt = Date.now();
           try {

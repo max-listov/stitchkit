@@ -1,4 +1,4 @@
-export type { AgentToolDefinition } from '../agent-runtime/agent-tool';
+export type { AgentToolDefinition, AgentToolDescriptor } from '../agent-runtime/agent-tool';
 export {
   type AgentConversationBranchPlan,
   AgentConversationBranchPlanSchema,
@@ -17,6 +17,7 @@ export {
   AgentConversationBranchRefusedError,
 } from '../agent-runtime/branch-refusal';
 export {
+  AGENT_CHILD_TOOL_DESCRIPTORS,
   type AgentChildToolsConfig,
   createAgentChildTools,
 } from '../agent-runtime/child-tools';
@@ -95,6 +96,7 @@ export {
 } from '../agent-runtime/event-search';
 export type { PostgresAgentEventSearchConfig } from '../agent-runtime/event-search-postgres';
 export {
+  AGENT_EVENT_SEARCH_TOOL_DESCRIPTORS,
   type AgentEventSearchToolsConfig,
   createAgentEventSearchTools,
 } from '../agent-runtime/event-search-tools';
@@ -131,10 +133,15 @@ export {
   projectAgentHistoryDetailed,
 } from '../agent-runtime/history';
 export { currentModelInvocationAttempt } from '../agent-runtime/invocation-attempt';
+export { InvocationPayloadTooLargeError } from '../agent-runtime/invocation-payload';
 export {
   type CompletionInvocationInput,
   CompletionInvocationInputSchema,
+  type InvocationPayloadOmissionReason,
+  InvocationPayloadOmissionReasonSchema,
   type ModelInvocationAttemptContext,
+  type ModelInvocationPayloadRead,
+  ModelInvocationPayloadReadSchema,
   type ModelInvocationRecord,
   ModelInvocationRecordSchema,
   type ModelInvocationTrace,
@@ -143,6 +150,7 @@ export {
 export { modelInvocationSpendAttribution } from '../agent-runtime/invocation-spend';
 export {
   createModelInvocationLedger,
+  type ModelInvocationAuthorizationInput,
   type ModelInvocationConfig,
   type ModelInvocationLedger,
 } from '../agent-runtime/invocations';
@@ -300,6 +308,7 @@ export {
   type AgentScheduleService,
 } from '../agent-runtime/schedule-contract';
 export {
+  AGENT_SCHEDULE_TOOL_DESCRIPTORS,
   type AgentScheduleToolsConfig,
   createAgentScheduleTools,
 } from '../agent-runtime/schedule-tools';
@@ -308,6 +317,12 @@ export {
   createAgentScheduleService,
 } from '../agent-runtime/schedules';
 export * from '../agent-runtime/schemas';
+export {
+  type PurgeInvocationPayloadsInput,
+  PurgeInvocationPayloadsInputSchema,
+  type PurgeInvocationPayloadsResult,
+  PurgeInvocationPayloadsResultSchema,
+} from '../agent-runtime/schemas-invocation-payload';
 export { createAgentSpillStore } from '../agent-runtime/spill';
 export type {
   AgentSqlSession,
@@ -326,6 +341,7 @@ export {
   renderAgentStateSlots,
 } from '../agent-runtime/state-slots';
 export {
+  AGENT_STATE_TOOL_DESCRIPTORS,
   type AgentStateToolsConfig,
   createAgentStateTools,
 } from '../agent-runtime/state-tools';

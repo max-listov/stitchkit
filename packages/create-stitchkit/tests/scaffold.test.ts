@@ -11,10 +11,11 @@ import {
 } from 'stitchkit/testing';
 import { z } from 'zod';
 import {
+  APP_IDENTITY_PATH,
   PROJECT_DECLARATION_SCHEMA_VERSION,
   parseProjectDeclaration,
-} from '../../core/src/entrypoints/declaration';
-import { APP_IDENTITY_PATH, renderAppIdentityModule } from '../src/identity';
+  renderAppIdentityModule,
+} from '../src/identity';
 import {
   IGNORED_DIRECTORIES,
   IGNORED_FILE_NAMES,

@@ -4,8 +4,11 @@ import type { LanguageModelUsage } from 'ai';
 import { type LanguageModel, type LanguageModelMiddleware, wrapLanguageModel } from 'ai';
 import type { z } from 'zod';
 import { invocationAudit } from './invocation-failure';
-import type { createInvocationPayloads } from './invocation-payload';
-import { invocationJson } from './invocation-payload';
+import {
+  type createInvocationPayloads,
+  InvocationPayloadTooLargeError,
+  invocationJson,
+} from './invocation-payload';
 import type {
   InvocationProcessSchema,
   ModelInvocationAttemptContext,
@@ -17,6 +20,9 @@ import { normalizeStepUsage } from './run-step-spend';
 
 type ProviderResult = Awaited<
   ReturnType<NonNullable<LanguageModelMiddleware['wrapGenerate']>>
+>;
+type ProviderStreamResult = Awaited<
+  ReturnType<NonNullable<LanguageModelMiddleware['wrapStream']>>
 >;
 type ProviderUsage = ProviderResult['usage'];
 const currentAttempt = new AsyncLocalStorage<ModelInvocationAttemptContext>();
@@ -61,7 +67,16 @@ export function wrapInvocationModel(
       const context = { ...writer.identity, step, attemptId: randomUUID() };
       // Headers and AbortSignal are transport controls, never payload artifacts.
       const { headers: _headers, abortSignal: _signal, ...payload } = params;
-      const artifact = await writer.payloads.write(writer.identity, payload);
+      let artifact: { artifactId: string; sha256: string } | undefined;
+      let omittedSha256: string | undefined;
+      try {
+        artifact = await writer.payloads.write(writer.identity, payload);
+      } catch (error) {
+        if (!(error instanceof InvocationPayloadTooLargeError)) throw error;
+        // Oversized request payloads are recorded as omitted rather than aborting a live model call.
+        writer.receiptErrors.push(error);
+        omittedSha256 = error.sha256;
+      }
       await writer.append({
         ...writer.identity,
         type: 'provider/request',
@@ -75,8 +90,10 @@ export function wrapInvocationModel(
         sent: {
           modelId: model.modelId,
           provider: model.provider,
-          payloadSha256: artifact.sha256,
-          artifactId: artifact.artifactId,
+          payloadSha256: artifact ? artifact.sha256 : (omittedSha256 ?? ''),
+          ...(artifact
+            ? { artifactId: artifact.artifactId }
+            : { payloadOmitted: 'max-payload-bytes' as const }),
           tools: params.tools?.length ?? 0,
         },
       });
@@ -101,10 +118,18 @@ export function wrapInvocationModel(
     providerMetadata?: unknown,
   ) =>
     invocationAudit(async () => {
-      const artifact = await writer.payloads.write(
-        writer.identity,
-        boundedEvidence(payload, Math.floor(writer.payloads.maxBytes / 2)),
-      );
+      let artifact: { artifactId: string; sha256: string } | undefined;
+      let omittedSha256: string | undefined;
+      try {
+        artifact = await writer.payloads.write(
+          writer.identity,
+          boundedEvidence(payload, Math.floor(writer.payloads.maxBytes / 2)),
+        );
+      } catch (error) {
+        if (!(error instanceof InvocationPayloadTooLargeError)) throw error;
+        writer.receiptErrors.push(error);
+        omittedSha256 = error.sha256;
+      }
       await writer.append({
         ...writer.identity,
         type: 'provider/response',
@@ -117,8 +142,10 @@ export function wrapInvocationModel(
           responseId: response?.id ?? null,
         },
         usage: reportedUsage(selected, usage, providerMetadata),
-        artifactId: artifact.artifactId,
-        payloadSha256: artifact.sha256,
+        ...(artifact
+          ? { artifactId: artifact.artifactId }
+          : { payloadOmitted: 'max-payload-bytes' as const }),
+        payloadSha256: artifact ? artifact.sha256 : (omittedSha256 ?? ''),
       });
     });
   return wrapLanguageModel({
@@ -165,66 +192,90 @@ export function wrapInvocationModel(
           });
           throw markProviderOrigin(error);
         }
-        const reader = result.stream.getReader();
-        let ended = false;
-        let failed = false;
-        let response: { id?: string; modelId?: string } | undefined;
-        // Up to half the artifact limit, so the terminal part always fits beside it.
-        const evidence = streamEvidence(Math.floor(writer.payloads.maxBytes / 2));
-        const end = async (
-          status: 'succeeded' | 'failed' | 'cancelled',
-          value: unknown,
-          usage?: ProviderUsage,
-          metadata?: unknown,
-        ) => {
-          if (ended) return;
-          ended = true;
-          await finish(context, status, evidence.payload(value), usage, response, metadata);
-        };
-        return {
-          ...result,
-          stream: new ReadableStream({
-            async pull(controller) {
-              let next: Awaited<ReturnType<typeof reader.read>>;
-              try {
-                next = await currentAttempt.run(context, () => reader.read());
-              } catch (error) {
-                await end(params.abortSignal?.aborted ? 'cancelled' : 'failed', { error });
-                controller.error(markProviderOrigin(error));
-                return;
-              }
-              if (next.done) {
-                await end('failed', { reason: 'stream-ended-without-finish' });
-                controller.close();
-                return;
-              }
-              const part = next.value;
-              if (part.type === 'response-metadata') response = part;
-              if (part.type === 'finish') {
-                await end(
-                  failed || part.finishReason.unified === 'error' ? 'failed' : 'succeeded',
-                  part,
-                  part.usage,
-                  part.providerMetadata,
-                );
-              } else {
-                if (part.type === 'error') failed = true;
-                evidence.record(part);
-              }
-              controller.enqueue(part);
-            },
-            async cancel(reason) {
-              try {
-                await currentAttempt.run(context, () => reader.cancel(reason));
-              } finally {
-                await end('cancelled', { reason: 'consumer-cancelled' });
-              }
-            },
-          }),
-        };
+        return wrapInvocationStreamResult(result, {
+          context,
+          abortSignal: params.abortSignal,
+          maxEvidenceBytes: Math.floor(writer.payloads.maxBytes / 2),
+          finish,
+        });
       },
     },
   });
+}
+
+function wrapInvocationStreamResult(
+  result: ProviderStreamResult,
+  options: {
+    context: ModelInvocationAttemptContext;
+    abortSignal: AbortSignal | undefined;
+    maxEvidenceBytes: number;
+    finish: (
+      context: ModelInvocationAttemptContext,
+      status: 'succeeded' | 'failed' | 'cancelled',
+      payload: unknown,
+      usage?: ProviderUsage,
+      response?: { id?: string; modelId?: string },
+      providerMetadata?: unknown,
+    ) => Promise<void>;
+  },
+): ProviderStreamResult {
+  const { context, abortSignal, maxEvidenceBytes, finish } = options;
+  const reader = result.stream.getReader();
+  let ended = false;
+  let failed = false;
+  let response: { id?: string; modelId?: string } | undefined;
+  const evidence = streamEvidence(maxEvidenceBytes);
+  const end = async (
+    status: 'succeeded' | 'failed' | 'cancelled',
+    value: unknown,
+    usage?: ProviderUsage,
+    metadata?: unknown,
+  ) => {
+    if (ended) return;
+    ended = true;
+    await finish(context, status, evidence.payload(value), usage, response, metadata);
+  };
+  return {
+    ...result,
+    stream: new ReadableStream({
+      async pull(controller) {
+        let next: Awaited<ReturnType<typeof reader.read>>;
+        try {
+          next = await currentAttempt.run(context, () => reader.read());
+        } catch (error) {
+          await end(abortSignal?.aborted ? 'cancelled' : 'failed', { error });
+          controller.error(markProviderOrigin(error));
+          return;
+        }
+        if (next.done) {
+          await end('failed', { reason: 'stream-ended-without-finish' });
+          controller.close();
+          return;
+        }
+        const part = next.value;
+        if (part.type === 'response-metadata') response = part;
+        if (part.type === 'finish') {
+          await end(
+            failed || part.finishReason.unified === 'error' ? 'failed' : 'succeeded',
+            part,
+            part.usage,
+            part.providerMetadata,
+          );
+        } else {
+          if (part.type === 'error') failed = true;
+          evidence.record(part);
+        }
+        controller.enqueue(part);
+      },
+      async cancel(reason) {
+        try {
+          await currentAttempt.run(context, () => reader.cancel(reason));
+        } finally {
+          await end('cancelled', { reason: 'consumer-cancelled' });
+        }
+      },
+    }),
+  };
 }
 
 /**

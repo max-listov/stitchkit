@@ -6,47 +6,78 @@ import type { AgentMessage, AgentMessagePart, AgentRun } from './schemas';
 
 /** Source identities a `'retain'` key may carry as a record of the past. */
 const RETAINABLE = new Set(['conversation', 'run', 'message']);
+const RUNTIME_REFERENCE_KEYS: ReadonlySet<string> = new Set(BRANCH_RUNTIME_REFERENCE_KEYS);
+
+type JsonValue = z.infer<ReturnType<typeof z.json>>;
 
 /**
  * Application JSON is data, never an undocumented runtime reference codec.
  *
  * A key named like a runtime reference refuses the branch unless the host
- * declares it in `applicationKeys`: the value cannot be rekeyed, and carried as
- * it is it could name the source. Under a `'refuse'` key a value that names
- * anything of the source still refuses. Under a `'retain'` key a value naming
- * the source conversation, a run or a message crosses unchanged as a record of
- * the past; one naming a spill, an application file or another runtime
- * identity refuses, because what it grants crosses by its own contract.
- * Refusals name the key's path inside the payload, never its value, and are
- * collected: the branch goes on reading and answers them all at once.
+ * declares it in `applicationKeys`: under `'refuse'` a value naming anything
+ * of the source refuses; under `'retain'` the source conversation, its runs
+ * and its messages cross unchanged as a record of the past; under `'rekey-spill'`
+ * a string value must name exclusively a source spill (live or expired) and is
+ * rekeyed to the destination spill identity while `null`/non-strings pass
+ * through. Pure: never mutates its input.
  */
 export function branchOpaqueJson(
   ids: BranchIdentities,
-  value: z.infer<ReturnType<typeof z.json>>,
+  value: JsonValue,
   path = '',
-): typeof value {
+): JsonValue {
   if (Array.isArray(value)) {
-    value.forEach((entry, index) => {
-      branchOpaqueJson(ids, entry, `${path}[${index}]`);
-    });
-    return value;
+    return value.map((entry, index) => branchOpaqueJson(ids, entry, `${path}[${index}]`));
   }
   if (value !== null && typeof value === 'object') {
-    for (const key of BRANCH_RUNTIME_REFERENCE_KEYS) {
-      if (!(key in value)) continue;
-      const at = path ? `${path}.${key}` : key;
-      const mode = ids.applicationKey(key);
-      if (mode === undefined) {
-        ids.refuse({
-          code: 'application-key-undeclared',
-          message: `Branch cannot rekey an opaque payload containing ${key} at ${at}; declare it in applicationKeys if it is application data`,
-          key,
-          path: at,
-        });
-        continue;
+    return branchOpaqueRecord(ids, value, path);
+  }
+  return value;
+}
+
+function branchOpaqueRecord(
+  ids: BranchIdentities,
+  value: Record<string, JsonValue>,
+  path = '',
+): Record<string, JsonValue> {
+  const out: Record<string, JsonValue> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const at = path ? `${path}.${key}` : key;
+    if (!RUNTIME_REFERENCE_KEYS.has(key)) {
+      out[key] = branchOpaqueJson(ids, entry, at);
+      continue;
+    }
+    const mode = ids.applicationKey(key);
+    if (mode === undefined) {
+      ids.refuse({
+        code: 'application-key-undeclared',
+        message: `Branch cannot rekey an opaque payload containing ${key} at ${at}; declare it in applicationKeys if it is application data`,
+        key,
+        path: at,
+      });
+      out[key] = branchOpaqueJson(ids, entry, at);
+      continue;
+    }
+    if (mode === 'rekey-spill') {
+      if (typeof entry === 'string') {
+        const kinds = ids.sourceIdentitiesOf(entry);
+        if (kinds.size === 1 && kinds.has('spill')) {
+          out[key] = ids.reference('spill', entry);
+        } else {
+          ids.refuse({
+            code: 'application-key-source-identity',
+            message: `Branch cannot rekey non-spill or foreign value under the application key ${key} at ${at}`,
+            key,
+            path: at,
+          });
+          out[key] = entry;
+        }
+      } else {
+        out[key] = branchOpaqueJson(ids, entry, at);
       }
-      const entry = value[key];
-      if (typeof entry !== 'string') continue;
+      continue;
+    }
+    if (typeof entry === 'string') {
       for (const kind of ids.sourceIdentitiesOf(entry)) {
         if (mode === 'retain' && RETAINABLE.has(kind)) continue;
         ids.refuse({
@@ -61,10 +92,9 @@ export function branchOpaqueJson(
         break;
       }
     }
-    for (const [key, entry] of Object.entries(value))
-      branchOpaqueJson(ids, entry, path ? `${path}.${key}` : key);
+    out[key] = branchOpaqueJson(ids, entry, at);
   }
-  return value;
+  return out;
 }
 
 export function branchToolJson(
@@ -86,14 +116,15 @@ function branchPartAt(ids: BranchIdentities, part: AgentMessagePart): AgentMessa
   switch (part.type) {
     case 'file':
       return { ...part, reference: ids.fileReference(part.reference) };
-    case 'tool-call': {
-      if (part.provider) branchOpaqueJson(ids, part.provider.data);
+    case 'tool-call':
       return {
         ...part,
+        ...(part.provider && {
+          provider: { ...part.provider, data: branchOpaqueRecord(ids, part.provider.data) },
+        }),
         callId: ids.reference('call', part.callId),
         input: branchToolJson(ids, part.toolName, part.input, false),
       };
-    }
     case 'tool-result':
       return {
         ...part,
@@ -116,8 +147,12 @@ function branchPartAt(ids: BranchIdentities, part: AgentMessagePart): AgentMessa
     case 'provider':
       throw new TypeError('Branch cannot rekey an opaque provider part');
     case 'reasoning':
-      if (part.provider) branchOpaqueJson(ids, part.provider.data);
-      return part;
+      return part.provider
+        ? {
+            ...part,
+            provider: { ...part.provider, data: branchOpaqueRecord(ids, part.provider.data) },
+          }
+        : part;
     default:
       return part;
   }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
-import { PUBLIC_SURFACE_PATH } from './release-affects-names';
+import { PUBLIC_SURFACE_PATH, PUBLIC_SURFACE_PRODUCERS_PATH } from './release-affects-names';
 import { isReleaseCommitSubject } from './release-subject';
 import {
   RELEASE_TARGETS,
@@ -46,6 +46,7 @@ const treeOf = (given: Record<string, string>) => (relativePath: string) => {
     'stitchkit/live': ['createLiveState', 'LiveStateSnapshot'],
     'stitchkit/tools': ['mountAgent'],
   });
+  files[PUBLIC_SURFACE_PRODUCERS_PATH] ??= JSON.stringify({});
   const contents = files[relativePath];
   if (contents === undefined) {
     return Promise.reject(new Error(`no ${relativePath} in this tree`));
@@ -380,7 +381,47 @@ describe('a release commit: its breaking metadata', () => {
   });
 });
 
-describe("a release commit: the starter's migrations and the last real release", () => {
+describe("a release commit: the starter's migrations, producers and the last real release", () => {
+  test('end-to-end validateReleaseCommit enforces public-surface-producers.json when a type lacks its producer', async () => {
+    const commit = { sha: SHA, subject: 'release(train): a thing in 9.9.0' };
+    const entry = '- `stitchkit/live` — **a read moved**, because a reason.';
+    const producerTree = (affects: string) =>
+      treeOf({
+        'packages/core/package.json': JSON.stringify({
+          version: '9.9.0',
+          exports: { '.': {}, './live': {} },
+        }),
+        'packages/core/tests/fixtures/public-surface-producers.json': JSON.stringify({
+          'stitchkit/live': {
+            LiveStateSnapshot: ['createLiveState'],
+          },
+        }),
+        'CHANGELOG.md': [
+          '## [9.9.0] — 2026-10-20',
+          '',
+          BREAKING,
+          '',
+          '**Who must act:** callers of LiveStateSnapshot.',
+          '',
+          `${entry}\n  **Affects:** ${affects}`,
+        ].join('\n'),
+        'docs/guide/upgrading.md': ['## Released migration: 9.9.0', '', 'Do it.'].join('\n'),
+        'docs/guide/getting-started.md':
+          '| `stitchkit/live` | browser **and** server | evolving | watched reads |',
+      });
+
+    await expect(
+      validateReleaseCommit(root, commit, {
+        read: producerTree('`stitchkit/live` LiveStateSnapshot'),
+      }),
+    ).rejects.toThrow(/createLiveState/);
+
+    await expect(
+      validateReleaseCommit(root, commit, {
+        read: producerTree('`stitchkit/live` LiveStateSnapshot, createLiveState'),
+      }),
+    ).resolves.toMatchObject({ version: '9.9.0' });
+  });
   test('a starter release refuses unmarked migrations and unknown core versions in UPGRADING.md', async () => {
     const starterCommit = { sha: SHA, subject: 'release(train): update starter in 0.6.24' };
     const starterTree = (upgrading: string) =>

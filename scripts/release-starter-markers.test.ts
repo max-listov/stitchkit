@@ -201,6 +201,7 @@ describe('starter migration markers on the real guide and across trains', () => 
         'packages/core/package.json': `{"name":"stitchkit","version":"${c}"}`,
         'packages/core/src/index.ts': `export const v = ${rev};\n`,
         'packages/core/tests/fixtures/public-surface.json': '{"stitchkit":["v"]}\n',
+        'packages/core/tests/fixtures/public-surface-producers.json': '{}\n',
         'packages/tui/package.json': `{"name":"stitchkit-tui","version":"${t}","dependencies":{"stitchkit":"workspace:^"}}`,
         'packages/tui/src/index.ts': `export const t = ${rev};\n`,
         'packages/create-stitchkit/package.json': `{"name":"create-stitchkit","version":"${s}"}`,

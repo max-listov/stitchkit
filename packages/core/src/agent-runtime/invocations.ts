@@ -22,9 +22,28 @@ import {
 import type { AgentModelRegistry, AgentResolvedModel } from './models';
 import { hasProviderOrigin } from './provider-origin';
 import type { AgentRun } from './schemas';
+import {
+  type PurgeInvocationPayloadsInput,
+  PurgeInvocationPayloadsInputSchema,
+  type PurgeInvocationPayloadsResult,
+} from './schemas-invocation-payload';
 import type { AgentRuntimeStore } from './store';
 
 const executingProcess = { instanceId: randomUUID(), pid: process.pid, hostname: hostname() };
+
+export type ModelInvocationAuthorizationInput =
+  | {
+      context: unknown;
+      conversationId: string;
+      action: 'complete' | 'agent' | 'read' | 'read-payload';
+      trace?: ModelInvocationTrace;
+    }
+  | {
+      context: unknown;
+      conversationId?: string;
+      action: 'purge-payloads';
+      trace?: undefined;
+    };
 
 export interface ModelInvocationConfig {
   store: AgentRuntimeStore;
@@ -33,12 +52,9 @@ export interface ModelInvocationConfig {
   payloadKey: Uint8Array;
   maxPayloadBytes?: number;
   /** Host authentication/authorization; never return identity copied from untrusted request fields. */
-  authorize(input: {
-    context: unknown;
-    conversationId: string;
-    action: 'complete' | 'agent' | 'read' | 'read-payload';
-    trace?: ModelInvocationTrace;
-  }): z.infer<typeof InvocationCallerSchema> | Promise<z.infer<typeof InvocationCallerSchema>>;
+  authorize(
+    input: ModelInvocationAuthorizationInput,
+  ): z.infer<typeof InvocationCallerSchema> | Promise<z.infer<typeof InvocationCallerSchema>>;
   onAttempt?: InvocationAttemptWriter['onAttempt'];
 }
 
@@ -57,9 +73,8 @@ export interface ModelInvocationLedger {
     outcome: 'succeeded' | 'failed' | 'cancelled' | 'duplicate';
     text?: string;
     /**
-     * The outcome stands, but its `invocation/finished` record (or failure
-     * artifact) could not be written: why. The provider's own attempt records
-     * were written before it.
+     * The outcome stands, but a payload artifact (e.g. exceeding `maxPayloadBytes`)
+     * or terminal receipt record could not be written: why.
      */
     receiptError?: unknown;
   }>;
@@ -71,6 +86,14 @@ export interface ModelInvocationLedger {
     input: { conversationId: string; artifactId: string },
     context: unknown,
   ): ReturnType<typeof readInvocationPayload>;
+  /**
+   * Purge encrypted `provider/payload` bodies older than `input.before` while keeping
+   * receipts intact (`readPayload` returns `{ status: 'expired', ... }` afterwards).
+   */
+  purgePayloads(
+    input: PurgeInvocationPayloadsInput,
+    context: unknown,
+  ): Promise<PurgeInvocationPayloadsResult>;
 }
 
 interface AgentBinding {
@@ -129,6 +152,58 @@ async function generateWithFallback(
   throw new Error('No completion model attempt available');
 }
 
+function finishInvocation(
+  writer: InvocationAttemptWriter,
+  status: 'succeeded' | 'failed' | 'cancelled',
+  failure?: { artifactId: string; payloadSha256: string },
+) {
+  return writer.append({
+    ...writer.identity,
+    type: 'invocation/finished',
+    status,
+    ...(failure && { failure }),
+  });
+}
+
+async function runCompletion(
+  config: ModelInvocationConfig,
+  payloads: ReturnType<typeof createInvocationPayloads>,
+  writer: InvocationAttemptWriter,
+  input: CompletionInvocationInput,
+  signal: AbortSignal | undefined,
+) {
+  const invocationId = writer.identity.invocationId;
+  const deadline = AbortSignal.timeout(input.timeoutMs);
+  const { signal: abortSignal, release } = linkAbortSignals(signal, deadline);
+  let text: string;
+  try {
+    text = await generateWithFallback(config.models, writer, input, abortSignal);
+  } catch (error) {
+    const status: 'cancelled' | 'failed' = abortSignal.aborted ? 'cancelled' : 'failed';
+    release();
+    try {
+      const artifact = await payloads.write(writer.identity, { error });
+      await finishInvocation(writer, status, {
+        artifactId: artifact.artifactId,
+        payloadSha256: artifact.sha256,
+      });
+    } catch (receiptError) {
+      writer.receiptErrors.push(receiptError);
+      await finishInvocation(writer, status).catch((appendError: unknown) => {
+        writer.receiptErrors.push(appendError);
+      });
+    }
+    return withReceipt({ invocationId, outcome: status }, writer);
+  }
+  release();
+  try {
+    await finishInvocation(writer, 'succeeded');
+  } catch (receiptError) {
+    writer.receiptErrors.push(receiptError);
+  }
+  return withReceipt({ invocationId, outcome: 'succeeded' as const, text }, writer);
+}
+
 /** One canonical provider ledger for plain completions and agent tool loops. */
 export function createModelInvocationLedger(
   config: ModelInvocationConfig,
@@ -143,7 +218,7 @@ export function createModelInvocationLedger(
     .max(64 * 1024 * 1024)
     .parse(config.maxPayloadBytes ?? 4 * 1024 * 1024);
   const payloads = createInvocationPayloads(store, config.payloadKey, maxPayloadBytes);
-  const authorize = async (input: Parameters<ModelInvocationConfig['authorize']>[0]) =>
+  const authorize = async (input: ModelInvocationAuthorizationInput) =>
     InvocationCallerSchema.parse(await config.authorize(input));
 
   const start = async (input: {
@@ -210,18 +285,6 @@ export function createModelInvocationLedger(
     return { writer, duplicate: admission.outcome === 'duplicate' };
   };
 
-  const finish = (
-    writer: InvocationAttemptWriter,
-    status: 'succeeded' | 'failed' | 'cancelled',
-    failure?: { artifactId: string; payloadSha256: string },
-  ) =>
-    writer.append({
-      ...writer.identity,
-      type: 'invocation/finished',
-      status,
-      ...(failure && { failure }),
-    });
-
   const ledger: ModelInvocationLedger = {
     async complete(rawInput, context, signal) {
       const input = CompletionInvocationInputSchema.parse(rawInput);
@@ -234,42 +297,9 @@ export function createModelInvocationLedger(
         requested: input,
         models: input.models,
       });
-      const invocationId = writer.identity.invocationId;
-      if (duplicate) return { invocationId, outcome: 'duplicate' };
-      const deadline = AbortSignal.timeout(input.timeoutMs);
-      const { signal: abortSignal, release } = linkAbortSignals(signal, deadline);
-      let text: string;
-      try {
-        text = await generateWithFallback(config.models, writer, input, abortSignal);
-      } catch (error) {
-        const status = abortSignal.aborted ? 'cancelled' : 'failed';
-        release();
-        // Recording the failure must not replace it: a failure payload that
-        // cannot be written is recorded without its artifact, and a record
-        // that cannot be written is returned beside the outcome.
-        try {
-          const artifact = await payloads.write(writer.identity, { error });
-          await finish(writer, status, {
-            artifactId: artifact.artifactId,
-            payloadSha256: artifact.sha256,
-          });
-        } catch (receiptError) {
-          writer.receiptErrors.push(receiptError);
-          await finish(writer, status).catch((error: unknown) => {
-            writer.receiptErrors.push(error);
-          });
-        }
-        return withReceipt({ invocationId, outcome: status }, writer);
-      }
-      release();
-      // The provider answered and was paid; a receipt that cannot be written
-      // does not turn that into a failure or lose the text.
-      try {
-        await finish(writer, 'succeeded');
-      } catch (receiptError) {
-        writer.receiptErrors.push(receiptError);
-      }
-      return withReceipt({ invocationId, outcome: 'succeeded', text }, writer);
+      if (duplicate)
+        return { invocationId: writer.identity.invocationId, outcome: 'duplicate' };
+      return runCompletion(config, payloads, writer, input, signal);
     },
     async read(rawInput, context) {
       const input = InvocationReadInputSchema.parse(rawInput);
@@ -283,6 +313,20 @@ export function createModelInvocationLedger(
         action: 'read-payload',
       });
       return readInvocationPayload(store, payloads, input);
+    },
+    async purgePayloads(rawInput, context) {
+      const input = PurgeInvocationPayloadsInputSchema.parse(rawInput);
+      await authorize({
+        context,
+        ...(input.conversationId !== undefined && { conversationId: input.conversationId }),
+        action: 'purge-payloads',
+      });
+      if (!store.purgeExpiredPayloads) {
+        throw new TypeError(
+          'Model invocation payload purge requires store.purgeExpiredPayloads',
+        );
+      }
+      return store.purgeExpiredPayloads(input);
     },
   };
   agentBindings.set(ledger, {
@@ -310,7 +354,7 @@ export function createModelInvocationLedger(
       return {
         wrap: (selected, step, override) =>
           wrapInvocationModel(writer, selected, step, override),
-        finish: (status) => finish(writer, status),
+        finish: (status) => finishInvocation(writer, status),
       };
     },
   });

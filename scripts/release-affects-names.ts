@@ -20,17 +20,45 @@ import { RELEASE_TARGETS } from './release-train';
  */
 export const PUBLIC_SURFACE_PATH = 'packages/core/tests/fixtures/public-surface.json';
 
+/**
+ * Type-only exports paired with the exported functions in the same entrypoint whose return type
+ * (or `.define()` factory method) produces them. Verified by `reference-coverage.test.ts` via the
+ * real TypeScript type checker and read here as plain JSON without compiling source.
+ */
+export const PUBLIC_SURFACE_PRODUCERS_PATH =
+  'packages/core/tests/fixtures/public-surface-producers.json';
+
 /** The first core release whose `**Affects:**` export names must each exist. */
 export const AFFECTS_NAMES_SINCE = '0.127.0';
+
+/** The first core release whose `**Affects:**` return-type targets must also name their producers. */
+export const AFFECTS_PRODUCERS_SINCE = '0.127.0';
 
 /** Entrypoint → the names it exports. */
 export type PublicSurface = ReadonlyMap<string, ReadonlySet<string>>;
 
+/** Entrypoint → type-only export name → sorted producer function names in the same entrypoint. */
+export type PublicSurfaceProducers = ReadonlyMap<
+  string,
+  ReadonlyMap<string, readonly string[]>
+>;
+
 const PublicSurfaceSchema = z.record(z.string(), z.array(z.string()));
+const PublicSurfaceProducersSchema = z.record(
+  z.string(),
+  z.record(z.string(), z.array(z.string())),
+);
 
 export function parsePublicSurface(json: string): PublicSurface {
   const parsed = PublicSurfaceSchema.parse(JSON.parse(json));
   return new Map(Object.entries(parsed).map(([entry, names]) => [entry, new Set(names)]));
+}
+
+export function parsePublicSurfaceProducers(json: string): PublicSurfaceProducers {
+  const parsed = PublicSurfaceProducersSchema.parse(JSON.parse(json));
+  return new Map(
+    Object.entries(parsed).map(([entry, map]) => [entry, new Map(Object.entries(map))]),
+  );
 }
 
 /** The body of a release's `### ⚠️ Breaking changes` section, or `undefined` without one. */
@@ -111,6 +139,88 @@ function readableTargets(markdown: string): UpgradeAffectsTarget[] {
     if (error instanceof UpgradeAffectsError) return [];
     throw error;
   }
+}
+
+/** A type-only export in `**Affects:**` missing one or more same-entrypoint producer functions. */
+export interface AffectsProducerViolation {
+  readonly section: 'breaking' | 'fixed' | 'security';
+  readonly item: string;
+  readonly entrypoint: string;
+  readonly typeName: string;
+  readonly missingProducers: readonly string[];
+}
+
+function missingProducersIn(
+  section: AffectsProducerViolation['section'],
+  markdown: string,
+  producers: PublicSurfaceProducers,
+): AffectsProducerViolation[] {
+  const item = markdown.split('\n')[0] ?? '';
+  const targets = readableTargets(markdown);
+  const wholeEntrypoints = new Set(
+    targets.filter((target) => target.kind !== 'symbols').map((target) => target.entrypoint),
+  );
+  const namedByEntry = new Map<string, Set<string>>();
+  for (const target of targets) {
+    if (target.kind !== 'symbols') continue;
+    const set = namedByEntry.get(target.entrypoint) ?? new Set<string>();
+    for (const symbol of target.symbols) set.add(symbol.name);
+    namedByEntry.set(target.entrypoint, set);
+  }
+  const violations: AffectsProducerViolation[] = [];
+  for (const [entrypoint, named] of namedByEntry) {
+    if (wholeEntrypoints.has(entrypoint)) continue;
+    const entryProducers = producers.get(entrypoint);
+    if (!entryProducers) continue;
+    for (const typeName of named) {
+      const fns = entryProducers.get(typeName);
+      if (!fns || fns.length === 0) continue;
+      const missingProducers = fns.filter((fn) => !named.has(fn));
+      if (missingProducers.length > 0) {
+        violations.push({ section, item, entrypoint, typeName, missingProducers });
+      }
+    }
+  }
+  return violations;
+}
+
+/**
+ * Every type-only export named in an `**Affects:**` line whose same-entrypoint producer functions
+ * are not also named (unless the entrypoint is already covered by `behaviour` or `*`). Consumers
+ * frequently call a producer without importing its return type; omitting the producer makes
+ * `stitchkit upgrade` miss those files.
+ */
+export function affectsProducerViolations(
+  notes: string,
+  producers: PublicSurfaceProducers,
+): AffectsProducerViolation[] {
+  const body = breakingSectionBody(notes);
+  const check =
+    (section: AffectsProducerViolation['section']) =>
+    ({ markdown }: { readonly markdown: string }): AffectsProducerViolation[] =>
+      missingProducersIn(section, markdown, producers);
+  return [
+    ...(body === undefined ? [] : breakingItems(body)).flatMap(check('breaking')),
+    ...releaseSectionItems(notes, 'Fixed').flatMap(check('fixed')),
+    ...releaseSectionItems(notes, 'Security').flatMap(check('security')),
+  ];
+}
+
+/** Refuse a release whose `**Affects:**` names a returned type without its producer functions. */
+export function assertAffectsProducersNamed(
+  notes: string,
+  version: string,
+  producers: PublicSurfaceProducers,
+): void {
+  const violations = affectsProducerViolations(notes, producers);
+  if (violations.length === 0) return;
+  const lines = violations.map(
+    ({ section, item, entrypoint, typeName, missingProducers }) =>
+      `  ${section} item ${JSON.stringify(item.slice(0, 120))}: \`${entrypoint}\` ${typeName} — also name producer(s): ${missingProducers.join(', ')}`,
+  );
+  throw new Error(
+    `${version}: an "**Affects:**" line names a returned type without naming the function(s) that produce it (${PUBLIC_SURFACE_PRODUCERS_PATH}):\n${lines.join('\n')}\nConsumers who call a producer without importing the return type are invisible to \`stitchkit upgrade\` unless the producer is listed too.`,
+  );
 }
 
 /** Refuse a release whose `**Affects:**` lines name an export that does not exist. */

@@ -155,7 +155,7 @@ invisible: it succeeds on the machine that happens to have the database.
 | --- | --- |
 | `schemaVersion` | which format this is; checked before anything else |
 | `kind` | `application` or `library` |
-| `identity` | `slug`, `name`, `version`, `description` per locale |
+| `identity` | `slug`, `name`, `description` per locale (the project's own version lives solely in the root `package.json`) |
 | `roles` | each with its own working directory, per-mode argv commands, optional listener and `drainFloorMs` |
 | `build` | the build command and the artifact paths it produces |
 | `requires` | what the code needs and does not provide, per phase (`release`, `start`) |

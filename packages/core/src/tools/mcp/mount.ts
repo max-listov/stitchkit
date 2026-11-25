@@ -30,7 +30,7 @@ import { mountPreparedRuntimeMcp } from './runtime-tools';
 
 /**
  * Options for `mountMcp`; `access` is required — pass `{ gate }` with your auth
- * `beforeHandle` hook or explicitly declare `{ open }`.
+ * `beforeHandle` hook, `{ open }`, or `{ inspect: true }` for read-only surface inspection.
  */
 export interface McpMountConfig {
   context?: Record<string, unknown>;
@@ -38,8 +38,8 @@ export interface McpMountConfig {
   hooks?: ToolCallHooks;
   /**
    * Required access policy for every mounted tool call — pass `{ gate }` with
-   * `beforeHandle` (for example from `createAuthHook`) or explicitly mark the
-   * surface `{ open: 'public' | 'local-operator' | 'remote' }`.
+   * `beforeHandle` (for example from `createAuthHook`), `{ open: 'public' | 'local-operator' | 'remote' }`,
+   * or `{ inspect: true }` for read-only surface inspection that refuses every execution.
    */
   access: ToolAccess;
   extend?: ToolExtend;
@@ -144,6 +144,7 @@ export function mountPreparedMcp(
         catalog: config.catalog,
         multiRoundRuntime: config.multiRoundRuntime,
         hooks: config.hooks,
+        lifecycle,
         context: config.context,
       },
     );
@@ -166,8 +167,8 @@ export interface McpServerSharedConfig<TAuth> {
    *  `onToolError` adds the raw thrown value behind a failed one. */
   hooks?: ToolCallHooks;
   /** Required access policy for every tool call — pass `{ gate }` with
-   *  `beforeHandle` (for example from `createAuthHook`) or explicitly mark the
-   *  surface `{ open: 'public' | 'local-operator' | 'remote' }`. */
+   *  `beforeHandle` (for example from `createAuthHook`), `{ open: 'public' | 'local-operator' | 'remote' }`,
+   *  or `{ inspect: true }` for read-only surface inspection that refuses every execution. */
   access: ToolAccess;
   /** Add extra tool arguments resolved into handler context (e.g. a `tenantId`
    *  for one API key serving many tenants). Same `ToolExtend` accepted by

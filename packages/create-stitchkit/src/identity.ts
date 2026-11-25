@@ -1,11 +1,10 @@
 import { basename } from 'node:path';
+import { z } from 'zod';
 import {
+  ProjectDeclarationSchema as CoreProjectDeclarationSchema,
+  ProjectIdentitySchema as CoreProjectIdentitySchema,
   PROJECT_DECLARATION_SCHEMA_VERSION,
-  type ProjectDeclaration,
-  ProjectDeclarationSchema,
-  ProjectIdentitySchema,
   ProjectSlugSchema,
-  parseProjectDeclaration,
 } from '../../core/src/entrypoints/declaration';
 
 // The declaration schema is NOT redeclared here. It is imported from the
@@ -14,6 +13,36 @@ import {
 // read without carrying `stitchkit` as a runtime dependency — and without a
 // second copy that drifts the first time the declaration grows a field.
 // → ADR 0104
+//
+// While the template still targets published `stitchkit@^0.127.0` during Train 1
+// (`0.128.0`, deferred to `create-stitchkit@0.8.0` via `starter-head-review.json`),
+// extend identity with `version` so `0.127.0` starter/supervised lanes parse clean.
+// Removed immediately in Train 2 (`create-stitchkit@0.8.0`) once `0.128.0` is live.
+const TargetProjectIdentitySchema = z
+  .object({
+    slug: CoreProjectIdentitySchema.shape.slug,
+    name: CoreProjectIdentitySchema.shape.name,
+    version: z.string().regex(/^\d+\.\d+\.\d+$/, 'Use a semantic version such as 0.1.0'),
+    description: CoreProjectIdentitySchema.shape.description,
+  })
+  .strict();
+const ProjectDeclarationSchema = CoreProjectDeclarationSchema.safeExtend({
+  identity: TargetProjectIdentitySchema,
+});
+type ProjectDeclaration = z.infer<typeof ProjectDeclarationSchema>;
+const VersionProbeSchema = z.object({ schemaVersion: z.unknown() }).loose();
+
+function parseProjectDeclaration(source: unknown): ProjectDeclaration {
+  const probe = VersionProbeSchema.safeParse(source);
+  const declared = probe.success ? probe.data.schemaVersion : undefined;
+  if (declared !== undefined && declared !== PROJECT_DECLARATION_SCHEMA_VERSION) {
+    throw new Error(
+      `Project declaration schema version ${JSON.stringify(declared)} is not supported — ` +
+        `this build understands version ${PROJECT_DECLARATION_SCHEMA_VERSION}.`,
+    );
+  }
+  return ProjectDeclarationSchema.parse(source);
+}
 
 export type { ProjectDeclaration };
 export {
@@ -65,7 +94,7 @@ export function createApplicationIdentity(
 ): ApplicationIdentity {
   const slug = ProjectSlugSchema.parse(basename(destination));
   const name = displayName?.trim() || displayNameFromSlug(slug);
-  return ProjectIdentitySchema.parse({
+  return TargetProjectIdentitySchema.parse({
     slug,
     name,
     version: '0.1.0',

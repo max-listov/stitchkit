@@ -10,6 +10,7 @@ import {
 } from '../engine-requests';
 import { InteractionReplySchema } from '../executor-contract';
 import type { PlanLimits } from '../hello';
+import { type DriverImageOptions, type InlinedPart, imageTurnStarter } from '../image-input';
 import {
   createJsonRpcPeer,
   JSON_RPC_METHOD_NOT_FOUND,
@@ -21,7 +22,6 @@ import { mergeRateLimitEvent } from '../plan-limits';
 import { type ExecutorProfileConfig, engineEnvironment, engineProfile } from '../profile';
 import {
   createTurnDeltaChannel,
-  extractTextOnlyInput,
   nonEmptyString,
   offerTurnDelta,
   sessionAbort,
@@ -45,7 +45,7 @@ import {
 const BOOTSTRAP_MS = 45_000;
 const REQUEST_MS = 60_000;
 
-export interface CodexSessionConfig {
+export interface CodexSessionConfig extends DriverImageOptions {
   executable: string;
   prefix: readonly string[];
   model?: string;
@@ -54,6 +54,7 @@ export interface CodexSessionConfig {
   ambient: Readonly<Record<string, string | undefined>>;
   limits: Map<string, PlanLimits>;
   version: string;
+  maxLineBytes?: number;
 }
 
 /** Spawn `codex app-server`, initialize it, and return the peer; the caller owns the process. */
@@ -82,6 +83,7 @@ export async function connectCodex(
     cwd,
     env,
     signal,
+    ...(config.maxLineBytes !== undefined && { maxLineBytes: config.maxLineBytes }),
   });
   const reading = (async () => {
     try {
@@ -272,6 +274,23 @@ function createCodexHandlers(state: {
   };
 }
 
+function codexTurnInput(parts: readonly InlinedPart[]): JsonRpcValue[] {
+  if (parts.every((part) => part.type === 'text')) {
+    return [
+      { type: 'text', text: parts.map((part) => part.text).join('\n'), text_elements: [] },
+    ];
+  }
+  const out: JsonRpcValue[] = [];
+  for (const part of parts) {
+    if (part.type === 'text') {
+      out.push({ type: 'text', text: part.text, text_elements: [] });
+    } else {
+      out.push({ type: 'image', url: `data:${part.mediaType};base64,${part.base64}` });
+    }
+  }
+  return out;
+}
+
 /**
  * One app-server for one connection, holding one thread. Server requests
  * the driver knows become `request` deltas answered by `respond`; any other
@@ -343,13 +362,20 @@ export async function openCodexSession(
     await stop({ error });
     throw error;
   }
-  return {
-    nativeThreadId: threadId,
-    async startTurn(turnInput): Promise<AgentEngineTurn> {
+  const startTurn = imageTurnStarter<
+    Parameters<AgentEngineSession['startTurn']>[0],
+    AgentEngineTurn
+  >({
+    driverLabel: 'The Codex driver',
+    busyMessage: 'A turn is already running in this Codex thread',
+    imageOptions: config,
+    signal: linked.signal,
+    check() {
       if (dead !== undefined) throw dead;
       if (current !== undefined)
         throw new Error('A turn is already running in this Codex thread');
-      const text = extractTextOnlyInput(turnInput.input, 'The Codex driver');
+    },
+    async dispatch(turnInput, parts) {
       const turn: CodexTurnSlot = {
         state: { turnId: turnInput.turnId, interruptRequested: false },
         channel: createTurnDeltaChannel(),
@@ -359,7 +385,7 @@ export async function openCodexSession(
       try {
         const started = await peer.request('turn/start', {
           threadId,
-          input: [{ type: 'text', text, text_elements: [] }],
+          input: codexTurnInput(parts),
           clientUserMessageId: turnInput.clientId,
         });
         turn.codexTurnId = CodexStartedTurnSchema.parse(started).turn.id;
@@ -402,6 +428,10 @@ export async function openCodexSession(
         },
       };
     },
+  });
+  return {
+    nativeThreadId: threadId,
+    startTurn,
     async close() {
       await stop();
     },
