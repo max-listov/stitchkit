@@ -13,7 +13,7 @@ test('a neutral managed definition validates before handler side effects', async
     name: 'measure',
     description: 'Measure repeated text',
     identity: { serviceName: 'text', action: 'measure', method: 'POST' },
-    transports: ['CLI'],
+    expose: ['CLI'],
     input,
     output,
     handler: ({ input }) => {
@@ -21,7 +21,11 @@ test('a neutral managed definition validates before handler side effects', async
       return { size: input.text.length * input.repeat };
     },
   } satisfies RuntimeToolDefinitionWithOutput<typeof input, typeof output>;
-  const invoker = await createCliInvoker({ name: 'neutral', runtimeTools: [measure] });
+  const invoker = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'neutral',
+    runtimeTools: [measure],
+  });
 
   expect(await invoker.invoke('measure', { text: 'hello', repeat: '2' })).toEqual({
     ok: true,

@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import * as runtimeRecords from 'stitchkit/agent-runtime';
 import {
   agentSummaryProjection,
+  createAgentProjectionStore,
   createAgentStateSlotStore,
   createMemoryAgentRuntimeStore,
-  createSqliteAgentProjectionStore,
   decodeAgentConversationArchive,
   defineStateSlot,
 } from 'stitchkit/agent-runtime';
@@ -96,8 +96,11 @@ try {
           .flatMap((message) => message.parts)
           .some((part) => part.type === 'tool-result'),
       );
-      const projections = createSqliteAgentProjectionStore({ sqlite });
-      assert.equal(projections.load('exact', agentSummaryProjection), undefined);
+      const projections = createAgentProjectionStore({
+        store: sqlite.store,
+        host: sqlite.host,
+      });
+      assert.equal(await projections.load('exact', agentSummaryProjection), undefined);
       assert.ok(
         (await projections.advance('exact', agentSummaryProjection)).value.eventCount > 0,
       );

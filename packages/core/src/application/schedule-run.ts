@@ -1,3 +1,4 @@
+import { scheduleAt } from '../internal/timers';
 import type { ManagedResourceContext } from './resource';
 import {
   type ManagedScheduleClock,
@@ -116,7 +117,12 @@ export async function waitForSettled(
     };
     context.signal.addEventListener('abort', finish, { once: true });
     if (deadlineAt !== undefined) {
-      deadlineTimer = clock.schedule(finish, Math.max(0, deadlineAt - context.now()));
+      // The deadline is on the resource context's clock, the timer on the schedule's.
+      const onContext = {
+        now: () => context.now(),
+        schedule: (callback: () => void, delayMs: number) => clock.schedule(callback, delayMs),
+      };
+      deadlineTimer = scheduleAt(onContext, deadlineAt, finish);
     }
     void Promise.allSettled([...active]).then(finish);
   });

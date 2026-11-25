@@ -1,5 +1,33 @@
 # Upgrading stitchkit-tui
 
+## Unreleased migration: bun-1-4-runtime-floor
+
+### Bun 1.4 runtime floor
+
+**Who must act:** hosts running `stitchkit-tui` on Bun 1.3.
+
+`stitchkit-tui` now declares `"engines": { "bun": ">=1.4.0" }`, matching the framework runtime floor. Upgrade Bun to `1.4.0` or newer before updating `stitchkit-tui`:
+
+```bash
+bun upgrade
+bun --version
+```
+
+## Unreleased migration: stitchkit-0-127-peer
+
+### stitchkit 0.127 peer
+
+**Who must act:** hosts that install `stitchkit-tui` beside `stitchkit` 0.126 or older.
+
+`stitchkit-tui` accepts the `stitchkit` 0.127 line as its peer. Upgrade `stitchkit` first, following
+its own [upgrade guide](../../docs/guide/upgrading.md), then `stitchkit-tui`, so the project keeps one
+copy of the framework:
+
+```bash
+bun add stitchkit@^0.127.0
+bun add stitchkit-tui@^0.5.0
+```
+
 ## Released migration: 0.4.0
 
 ### Two more labels

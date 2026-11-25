@@ -2,7 +2,7 @@
 title: A gate that recognises one error is blind to every other
 description: The consumer lane ran the strict declaration check that would have named five TS2344 errors in a packed .d.ts, printed them, and dropped them because its parser knew only "Cannot find" — the filter is now inverted.
 type: decision
-status: active
+status: accepted
 created: 2026-09-03
 updated: 2026-09-03
 ---

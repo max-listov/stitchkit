@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { MAX_TIMER_MS } from '../internal/timers';
-import type { SandboxCodingBinding } from './sandbox-coding';
+import type { SandboxCodingBinding } from './sandbox-binding';
 
 export const SandboxNetworkPolicySchema = z.union([
   z.literal('allow-all'),

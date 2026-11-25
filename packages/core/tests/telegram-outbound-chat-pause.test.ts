@@ -181,6 +181,11 @@ describe('Telegram outbound budget, chat scope', () => {
     await clock.advance(2_000);
     expect(called).toBe(1);
     await expect(budget.acquire(1, undefined, { maxWaitMs: 0 })).rejects.toThrow(RangeError);
+    for (const bad of [0, 1.5, 2_147_483_648]) {
+      await expect(budget.acquire(1, undefined, { maxWaitMs: bad })).rejects.toThrow(
+        `maxWaitMs must be an integer from 1 to 2147483647 milliseconds, received ${bad}`,
+      );
+    }
   });
 
   test('refusal: call keeps a 429 to itself, and both lanes go on', async () => {
@@ -299,5 +304,79 @@ describe('a group on its limit over a real socket', () => {
     const othersMs = performance.now() - started;
     expect(othersMs).toBeLessThan(500);
     expect((await group) - started).toBeGreaterThanOrEqual(RETRY_AFTER_SECONDS * 1_000 - 100);
+  });
+});
+
+describe('a pause longer than a timer can wait', () => {
+  // 2 ** 31 ms and more fire a timer at once: each wait is taken in steps the sleeper can hold.
+  const LONG = 2 ** 31 + 5_000;
+
+  for (const [name, pause] of [
+    ['the token', (budget: ReturnType<typeof manualBudget>['budget']) => budget.pause(LONG)],
+    [
+      'one chat',
+      (budget: ReturnType<typeof manualBudget>['budget']) =>
+        budget.pauseAfter(limited(LONG / 1_000), { chatId: 7 }),
+    ],
+  ] as const) {
+    test(`${name}: every step fits the timer, and the call goes only once the whole pause is over`, async () => {
+      const clock = createManualClock();
+      const steps: number[] = [];
+      const { budget: stepped } = manualBudget(clock, {
+        sleep: (milliseconds, signal) => {
+          steps.push(milliseconds);
+          return new Promise<void>((resolve, reject) => {
+            const timer = clock.schedule(resolve, milliseconds);
+            signal?.addEventListener(
+              'abort',
+              () => {
+                timer.cancel();
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          });
+        },
+      });
+      pause(stepped);
+      const sentAt: number[] = [];
+      const sent = stepped.run('sendMessage', { chat_id: 7 }, undefined, async () => {
+        sentAt.push(clock.now());
+      });
+      await clock.advance(LONG - 1);
+      expect(sentAt).toEqual([]);
+      await clock.advance(1);
+      await sent;
+      expect(sentAt).toEqual([LONG]);
+      expect(Math.max(...steps)).toBeLessThanOrEqual(2 ** 31 - 1);
+    });
+  }
+
+  test('a pause lengthened while it is waited for is waited out to its new end', async () => {
+    const clock = createManualClock();
+    const { budget } = manualBudget(clock);
+    budget.pause(1_000);
+    let resumedAt: number | undefined;
+    const resumed = budget.waitUntilResumed().then(() => {
+      resumedAt = clock.now();
+    });
+    await clock.advance(500);
+    budget.pause(2_000);
+    await clock.advance(1_000);
+    expect(resumedAt).toBeUndefined();
+    await clock.advance(1_500);
+    await resumed;
+    expect(resumedAt).toBe(2_500);
+  });
+
+  test('a sleeper that fails for a reason of its own fails the waiting call with it', async () => {
+    const clock = createManualClock();
+    const broken = new Error('the sleeper broke');
+    const { budget } = manualBudget(clock, { sleep: () => Promise.reject(broken) });
+    budget.pause(1_000);
+    await expect(budget.run('sendMessage', {}, undefined, async () => 'sent')).rejects.toBe(
+      broken,
+    );
+    await expect(budget.waitUntilResumed()).rejects.toBe(broken);
   });
 });

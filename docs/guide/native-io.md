@@ -23,7 +23,7 @@ const { exitCode, stdout } = await runNativeCommand({
 console.log(exitCode, new TextDecoder().decode(stdout))
 ```
 
-The examples use public imports and run the same in Bun and Node >= 22.
+The examples use public imports and run the same in Bun >= 1.4 and Node >= 22.3.
 
 ## Writing a file
 
@@ -218,10 +218,10 @@ executable and never creates a shell.
 
 `NativeCommandError.reason` classifies a limit error by machine: `deadline` when the command's own
 `timeoutMs` expires, `output-budget` when the combined stdout and stderr bytes exceed the limit, in
-capture or streaming. Both keep `code: 'COMMAND_LIMIT'`; `message` is for diagnosis, not for
-protocols. `COMMAND_UNAVAILABLE` and `COMMAND_CLEANUP` have no reason. A caller abort and a sink
-failure keep the original error. When cleanup fails, the original limit and its reason stay inside the
-`AggregateError` cause.
+capture or streaming, and `stdin-budget` when a streamed `stdin` exceeds `maxStdinBytes`. All three
+keep `code: 'COMMAND_LIMIT'`; `message` is for diagnosis, not for protocols. `COMMAND_UNAVAILABLE`
+and `COMMAND_CLEANUP` have no reason. A caller abort and a sink failure keep the original error.
+When cleanup fails, the original limit and its reason stay inside the `AggregateError` cause.
 
 ```ts
 import { NativeCommandError } from 'stitchkit/process'
@@ -232,15 +232,16 @@ try {
   if (error instanceof NativeCommandError && error.code === 'COMMAND_LIMIT') {
     if (error.reason === 'deadline') console.error('Command timed out')
     if (error.reason === 'output-budget') console.error('Command produced too many bytes')
+    if (error.reason === 'stdin-budget') console.error('Streamed stdin exceeded maxStdinBytes')
   }
   throw error
 }
 ```
 
 The constructor is `new NativeCommandError(code, message, { cause })`; it accepts
-`{ cause, reason: 'deadline' | 'output-budget' }` only for `COMMAND_LIMIT`. The owner always sets the
-reason for its own limits. An error a caller constructs without a reason gets none inferred from the
-text; its `reason` is `undefined`.
+`{ cause, reason: 'deadline' | 'output-budget' | 'stdin-budget' }` only for `COMMAND_LIMIT`. The
+owner always sets the reason for its own limits. An error a caller constructs without a reason gets
+none inferred from the text; its `reason` is `undefined`.
 
 Output is read with backpressure, stdout and stderr separately: one running sink per channel plus a
 bounded native Readable buffer, with no accumulation of the whole history while streaming. The
@@ -615,7 +616,7 @@ a static loader enters a bundle.
 
 Only these calls load the addon, and only on macOS: process identity (`observeProcessInstance`
 and `probeProcessOwner`), every exclusive lock (`withExclusiveLock` and what is built on it, such
-as the file state store and the diagnostic journal), the contained file operations of the Agent
+as the file state store and the diagnostic journal, and the startup lock of `createServer({ unix })`), the contained file operations of the Agent
 coding tools and `--output-dir` downloads of `stitchkit/cli`. Without the addon a download refuses, and a lock still works, but it cannot record or check its owner's
 identity, so a lock held by a crashed owner is not reclaimed. The managed file boundary
 (`createManagedFileBoundary` and the transfer tools built on it), atomic writes and the chunk

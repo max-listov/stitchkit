@@ -1,12 +1,17 @@
 import type { IncomingMessage } from 'node:http';
+import { abortReason, withLinkedAbortSignals } from '../internal/abort-race';
 import { readBoundedBody } from '../internal/bounded-body';
-import { UnixClientTransportError } from './unix-client-error';
+import { UnixClientTransportError } from '../internal/unix-client-error';
 
 export async function readBoundedRequestBody(
   request: Request,
   maxBytes: number,
+  closeSignal?: AbortSignal,
 ): Promise<Uint8Array | undefined> {
-  if (!request.body) return undefined;
+  if (closeSignal?.aborted) throw abortReason(closeSignal);
+  if (request.signal.aborted) throw abortReason(request.signal);
+  const body = request.body;
+  if (!body) return undefined;
   const tooLarge = () =>
     new UnixClientTransportError(
       'UNIX_REQUEST_TOO_LARGE',
@@ -15,11 +20,40 @@ export async function readBoundedRequestBody(
     );
   const declared = request.headers.get('content-length');
   if (declared !== null && Number(declared) > maxBytes) throw tooLarge();
-  return readBoundedBody(request.body, {
-    maxBytes,
-    signal: request.signal,
-    limitError: tooLarge,
-  });
+  return withLinkedAbortSignals(closeSignal, request.signal, (signal) =>
+    readBoundedBody(body, {
+      maxBytes,
+      signal,
+      limitError: tooLarge,
+      abortError: (reason) => reason,
+    }),
+  );
+}
+
+export function exceedsDeclaredResponseBytes(
+  headers: Headers,
+  maxResponseBytes: number | undefined,
+): boolean {
+  if (maxResponseBytes === undefined) return false;
+  const declared = headers.get('content-length');
+  return declared !== null && /^\d+$/.test(declared) && Number(declared) > maxResponseBytes;
+}
+
+export function cloneRequestBodyBuffer(body: Uint8Array | undefined): ArrayBuffer | undefined {
+  if (body === undefined) return undefined;
+  const copy = new ArrayBuffer(body.byteLength);
+  new Uint8Array(copy).set(body);
+  return copy;
+}
+
+export function incomingResponseHeaders(response: IncomingMessage): Headers {
+  const headers = new Headers();
+  for (let index = 0; index < response.rawHeaders.length; index += 2) {
+    const name = response.rawHeaders[index];
+    const value = response.rawHeaders[index + 1];
+    if (name !== undefined && value !== undefined) headers.append(name, value);
+  }
+  return headers;
 }
 
 export function incomingResponseBody(

@@ -10,8 +10,8 @@ architecture, breaking-change and release flow live in
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) `>= 1.2` — development and tests use `Bun.serve` and
-  `bun:test`. Node ≥ 22 is supported at runtime via `stitchkit/node`.
+- [Bun](https://bun.sh) `>= 1.4` — development and tests use `Bun.serve` and
+  `bun:test`. Node ≥ 22.3 is supported at runtime via `stitchkit/node`.
 
 ## Setup
 
@@ -38,7 +38,7 @@ bun run starter-lane       # both scaffold variants against the published Stitch
 bun run starter-head-lane  # both scaffold variants against packed framework HEAD
 bun run starter:dev   # run the canonical starter directly under PM2 with HMR
 bun run verify    # every portable CI gate, including the supervised PM2 lane
-bun run verify:fast    # lockfile + lint + check + test, the part that is faster to learn locally
+bun run verify:fast    # lockfile + lint + build + check + test, the part that is faster to learn locally
 bun scripts/verify.ts --release # package-aware release train gate, max two heavy lanes
 bun run update:starter # move the template's framework range and lockfile together
 bun run release:check # release metadata of the WORKING TREE, before the gate — one second
@@ -165,7 +165,10 @@ the export honest.
   starter source and target together. Exact-SHA CI always runs target cells and
   runs HEAD by default. If one source genuinely cannot satisfy both sides, add
   `scripts/starter-head-review.json` for that exact core version with outcome
-  `deferred` and a non-empty reason; only then may HEAD skip. After npm
+  `deferred` and a non-empty reason; only then may HEAD skip. A release with a
+  `### Security` section may defer only a starter on another minor, and the
+  review names the next starter release in `followUp`
+  (`"create-stitchkit@X.Y.Z"`), which must be the next train (ADR 0322). After npm
   publication, migrate the starter, advance its catalog and remove the review;
   both lanes are mandatory before any scaffolder release.
 

@@ -71,6 +71,11 @@ export interface CollectToolsConfig {
   /** Flatten discriminated union inputs into a single object for MCP. Default: false. */
   flattenUnionInput?: boolean;
   /**
+   * Advertise inputs with no `$ref`: references written out in place, each
+   * recursive definition unrolled this many levels. Absent: references stay.
+   */
+  inputRecursionDepth?: number;
+  /**
    * Throw on a tool name no provider will accept. Default: true — every mount
    * wants it. The read-only listers pass `false`: `listToolNames` is the
    * documented way to *find* an offending name before an upgrade, so it must
@@ -108,7 +113,12 @@ export function collectTools(
   transport: Transport,
   config: CollectToolsConfig = {},
 ): MountableTool[] {
-  const { extend, flattenUnionInput = false, assertNames = true } = config;
+  const {
+    extend,
+    flattenUnionInput = false,
+    inputRecursionDepth,
+    assertNames = true,
+  } = config;
   const tools: MountableTool[] = [];
   for (const projected of projectToolSurface(
     { services: [service] },
@@ -116,6 +126,7 @@ export function collectTools(
     {
       extend,
       flattenUnionInput,
+      inputRecursionDepth,
       assertNames,
       assertUniqueNames: false,
     },
@@ -136,8 +147,8 @@ export interface ToolRunnerConfig {
   context?: Record<string, unknown>;
   /** Tool-call observability hooks. */
   hooks?: ToolCallHooks;
-  /** Auth / scope gate and result transform — runs for every tool call. */
-  lifecycle?: ToolLifecycle;
+  /** Normalized access lifecycle produced by `resolveToolAccess` — runs for every tool call. */
+  lifecycle: ToolLifecycle;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
   /**

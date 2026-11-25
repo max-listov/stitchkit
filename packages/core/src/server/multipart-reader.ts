@@ -4,9 +4,29 @@ import { isUnsafeKey } from '../internal/safe-json';
 export const DEFAULT_MAX_HEADER_BYTES = 64 * 1024;
 const CRLF = new Uint8Array([13, 10]);
 const HEADER_END = new Uint8Array([13, 10, 13, 10]);
-export const decoder = new TextDecoder();
-const headerDecoder = new TextDecoder('utf-8', { fatal: true });
-const encoder = new TextEncoder();
+let cachedDecoder: TextDecoder | undefined;
+let cachedHeaderDecoder: TextDecoder | undefined;
+let cachedEncoder: TextEncoder | undefined;
+
+function getDecoder(): TextDecoder {
+  cachedDecoder ??= new TextDecoder();
+  return cachedDecoder;
+}
+
+function getHeaderDecoder(): TextDecoder {
+  cachedHeaderDecoder ??= new TextDecoder('utf-8', { fatal: true });
+  return cachedHeaderDecoder;
+}
+
+function getEncoder(): TextEncoder {
+  cachedEncoder ??= new TextEncoder();
+  return cachedEncoder;
+}
+
+export const decoder = {
+  decode: (input?: BufferSource, options?: TextDecodeOptions): string =>
+    getDecoder().decode(input, options),
+};
 const TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 function hasControl(value: string, allowTab = false): boolean {
@@ -120,7 +140,7 @@ function parseDisposition(value: string | undefined): { name: string; filename?:
 function parsePartHeaders(bytes: Uint8Array): ParsedHeaders {
   let text: string;
   try {
-    text = headerDecoder.decode(bytes);
+    text = getHeaderDecoder().decode(bytes);
   } catch {
     badRequest('Invalid multipart headers');
   }
@@ -169,8 +189,9 @@ export class MultipartStreamReader {
   constructor(req: Request, boundary: string, maxRequestBytes: number) {
     if (!req.body) badRequest('Multipart request body is empty');
     this.#reader = req.body.getReader();
-    this.#delimiter = encoder.encode(`\r\n--${boundary}`);
-    this.#initialBoundary = encoder.encode(`--${boundary}`);
+    const enc = getEncoder();
+    this.#delimiter = enc.encode(`\r\n--${boundary}`);
+    this.#initialBoundary = enc.encode(`--${boundary}`);
     this.#maxRequestBytes = maxRequestBytes;
   }
 

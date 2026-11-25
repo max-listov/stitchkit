@@ -7,11 +7,19 @@
  * "unattributable", never "this machine", and an unknown liveness is "alive",
  * never "gone" — so the residual error of either is a refusal to reclaim.
  */
-import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+
+import { execFile, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { platform } from 'node:os';
-import { type CommandLauncher, type LaunchedCommand, launchWithBun } from './bun-command';
-import { isRecord } from './typed';
+import { abortReason } from './abort-race';
+import {
+  type CommandLauncher,
+  type LaunchedCommand,
+  launchWithBun,
+  runWithBunSync,
+  type SyncCommandRunner,
+} from './bun-command';
+import { errnoOf } from './errno';
 
 /**
  * This machine's identity, or `null` when the platform offers none.
@@ -30,10 +38,13 @@ import { isRecord } from './typed';
  */
 let detectedIdentity: string | null | undefined;
 
-async function firstReadableLine(paths: readonly string[]): Promise<string | null> {
+/** The machine-id files are a few bytes the kernel or the init system keeps; reading them never waits. */
+const MACHINE_ID_FILES = ['/etc/machine-id', '/var/lib/dbus/machine-id'];
+
+function firstReadableLine(paths: readonly string[]): string | null {
   for (const path of paths) {
     try {
-      const text = (await readFile(path, 'utf8')).trim();
+      const text = readFileSync(path, 'utf8').trim();
       if (text.length > 0) return text;
     } catch {
       // Absent or unreadable is not an error here: the next source answers, or nothing does.
@@ -78,7 +89,7 @@ function run(file: string, args: readonly string[], limits: CommandLimits): Prom
   const launch = limits.launch ?? launchWithBun ?? launchWithNode;
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(signal.reason);
+      reject(abortReason(signal));
       return;
     }
     let command: LaunchedCommand;
@@ -94,7 +105,8 @@ function run(file: string, args: readonly string[], limits: CommandLimits): Prom
       command.stop();
       reject(reason);
     };
-    const onAbort = (): void => abandon(signal?.reason);
+    const onAbort = (): void =>
+      abandon(signal === undefined ? undefined : abortReason(signal));
     const timer = setTimeout(
       () => abandon(new Error(`${file} did not answer within ${timeout} ms`)),
       timeout,
@@ -114,6 +126,36 @@ function run(file: string, args: readonly string[], limits: CommandLimits): Prom
     );
   });
 }
+
+/**
+ * Off Bun the synchronous command goes through `spawnSync`, whose timeout kills the child.
+ */
+const runWithNodeSync: SyncCommandRunner = (file, args, { timeout, maxBuffer }) => {
+  const result = spawnSync(file, args, {
+    timeout,
+    maxBuffer,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${file} ended with ${String(result.status)}`);
+  return result.stdout;
+};
+
+/**
+ * The same bounded command for a caller that cannot wait: the unix socket startup lock runs inside
+ * a synchronous `createServer`. It has no signal; the deadline alone ends it.
+ */
+function runSync(
+  file: string,
+  args: readonly string[],
+  limits: { readonly timeout: number; readonly maxBuffer: number },
+): string {
+  return (runWithBunSync ?? runWithNodeSync)(file, args, limits);
+}
+
+const IOREG_ARGS = ['-rd1', '-c', 'IOPlatformExpertDevice'];
+const IOREG_LIMITS = { timeout: 2_000, maxBuffer: 1 << 20 };
 
 /** @internal What the tests replace in a command: who starts it and how long it may take. */
 export interface CommandSeam {
@@ -145,9 +187,9 @@ export async function readDarwinPlatformUuid(
   // Spawned at most once per process and only on darwin, and bounded: a lock acquisition must not
   // hang on a registry read.
   try {
-    const stdout = await run(command, ['-rd1', '-c', 'IOPlatformExpertDevice'], {
-      timeout: seam.timeoutMs ?? 2_000,
-      maxBuffer: 1 << 20,
+    const stdout = await run(command, IOREG_ARGS, {
+      timeout: seam.timeoutMs ?? IOREG_LIMITS.timeout,
+      maxBuffer: IOREG_LIMITS.maxBuffer,
       ...(signal !== undefined && { signal }),
       ...(seam.launch !== undefined && { launch: seam.launch }),
     });
@@ -160,6 +202,15 @@ export async function readDarwinPlatformUuid(
   }
 }
 
+/** The same registry read for a caller that cannot wait; `null` on every failure, as above. */
+function readDarwinPlatformUuidSync(): string | null {
+  try {
+    return parsePlatformUuid(runSync('ioreg', IOREG_ARGS, IOREG_LIMITS));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * @internal What an undeclared identity is read from. The tests replace `detect` with a read whose
  * command never reports its end, and `forget` drops the memoized answer between cases.
@@ -168,7 +219,13 @@ export const identitySource = {
   detect(signal?: AbortSignal): Promise<string | null> {
     return platform() === 'darwin'
       ? readDarwinPlatformUuid('ioreg', signal)
-      : firstReadableLine(['/etc/machine-id', '/var/lib/dbus/machine-id']);
+      : Promise.resolve(firstReadableLine(MACHINE_ID_FILES));
+  },
+  /** The same sources for a caller that cannot wait. */
+  detectSync(): string | null {
+    return platform() === 'darwin'
+      ? readDarwinPlatformUuidSync()
+      : firstReadableLine(MACHINE_ID_FILES);
   },
   forget(): void {
     detectedIdentity = undefined;
@@ -194,6 +251,28 @@ export async function machineIdentity(
   return detected;
 }
 
+/** {@link machineIdentity} for a caller that cannot wait; it shares the memoized answer. */
+export function machineIdentitySync(declared: string | undefined): string | null {
+  if (declared !== undefined) return declared;
+  if (detectedIdentity !== undefined) return detectedIdentity;
+  detectedIdentity = identitySource.detectSync();
+  return detectedIdentity;
+}
+
+type Reachability = 'absent' | 'present' | 'reached';
+
+/** `kill(pid, 0)`: only `ESRCH` is absence; `EPERM` and every other refusal are presence. */
+function reachability(pid: number, reach: (target: number) => unknown): Reachability {
+  try {
+    reach(pid);
+  } catch (error) {
+    return errnoOf(error) === 'ESRCH' ? 'absent' : 'present';
+  }
+  return 'reached';
+}
+
+const killZero = (target: number) => process.kill(target, 0);
+
 /**
  * Whether the recorded owner is provably gone.
  *
@@ -213,13 +292,10 @@ export async function machineIdentity(
  */
 export async function probeLiveness(
   pid: number,
-  reach = (target: number) => process.kill(target, 0),
+  reach: (target: number) => unknown = killZero,
 ): Promise<'alive' | 'gone'> {
-  try {
-    reach(pid);
-  } catch (error) {
-    return isRecord(error) && error.code === 'ESRCH' ? 'gone' : 'alive';
-  }
+  const reached = reachability(pid, reach);
+  if (reached !== 'reached') return reached === 'absent' ? 'gone' : 'alive';
   // The signal proves an ENTRY in the process table, not a running process. A child that has
   // exited and whose parent has not reaped it keeps its entry, and `kill(pid, 0)` succeeds for it —
   // so the probe that exists to prove absence reported the clearest possible absence as presence.
@@ -227,6 +303,32 @@ export async function probeLiveness(
   // that does not reap.
   return (await isZombieProcess(pid)) ? 'gone' : 'alive';
 }
+
+/** {@link probeLiveness} for a caller that cannot wait. */
+export function probeLivenessSync(
+  pid: number,
+  reach: (target: number) => unknown = killZero,
+): 'alive' | 'gone' {
+  const reached = reachability(pid, reach);
+  if (reached !== 'reached') return reached === 'absent' ? 'gone' : 'alive';
+  return isZombieProcessSync(pid) ? 'gone' : 'alive';
+}
+
+/** The state letter from `/proc/<pid>/stat`, or `null` where there is no `/proc` to ask. */
+function procIsZombie(pid: number, procRoot: string): boolean | null {
+  try {
+    const stat = readFileSync(`${procRoot}/${pid}/stat`, 'utf8');
+    return stat
+      .slice(stat.lastIndexOf(')') + 1)
+      .trimStart()
+      .startsWith('Z');
+  } catch {
+    return null;
+  }
+}
+
+const psStateArgs = (pid: number): string[] => ['-o', 'state=', '-p', String(pid)];
+const PS_LIMITS = { timeout: 2_000, maxBuffer: 1 << 16 };
 
 /**
  * The state letter of a pid, or `null` where this platform will not say.
@@ -243,25 +345,34 @@ export async function isZombieProcess(
   seam: { procRoot?: string; psCommand?: string } & CommandSeam = {},
 ): Promise<boolean> {
   const { procRoot = '/proc', psCommand = 'ps' } = seam;
+  const fromProc = procIsZombie(pid, procRoot);
+  if (fromProc !== null) return fromProc;
+  // No `/proc` — ask `ps`, which answers on darwin and the BSDs.
   try {
-    const stat = await readFile(`${procRoot}/${pid}/stat`, 'utf8');
-    return stat
-      .slice(stat.lastIndexOf(')') + 1)
-      .trimStart()
-      .startsWith('Z');
-  } catch {
-    // No `/proc` — ask `ps`, which answers on darwin and the BSDs.
-  }
-  try {
-    const stdout = await run(psCommand, ['-o', 'state=', '-p', String(pid)], {
-      timeout: seam.timeoutMs ?? 2_000,
-      maxBuffer: 1 << 16,
+    const stdout = await run(psCommand, psStateArgs(pid), {
+      timeout: seam.timeoutMs ?? PS_LIMITS.timeout,
+      maxBuffer: PS_LIMITS.maxBuffer,
       ...(seam.launch !== undefined && { launch: seam.launch }),
     });
     return stdout.trim().startsWith('Z');
   } catch {
     // Nothing answered. Treat the owner as present: a refusal to reclaim is the safe outcome, and
     // it is the same outcome this probe had before it could see a zombie at all.
+    return false;
+  }
+}
+
+/** {@link isZombieProcess} for a caller that cannot wait; the same fallback and the same refusal. */
+export function isZombieProcessSync(
+  pid: number,
+  seam: { procRoot?: string; psCommand?: string } = {},
+): boolean {
+  const { procRoot = '/proc', psCommand = 'ps' } = seam;
+  const fromProc = procIsZombie(pid, procRoot);
+  if (fromProc !== null) return fromProc;
+  try {
+    return runSync(psCommand, psStateArgs(pid), PS_LIMITS).trim().startsWith('Z');
+  } catch {
     return false;
   }
 }

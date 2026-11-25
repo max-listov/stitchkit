@@ -1,0 +1,6 @@
+{"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "d824e01f-8622-424e-94af-50154bd814b0", "update": {"sessionUpdate": "usage_update", "used": 0, "size": 1048576}}}
+{"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "d824e01f-8622-424e-94af-50154bd814b0", "update": {"sessionUpdate": "session_info_update", "title": "Testing Rule Compliance and Exact Matching"}}}
+{"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "d824e01f-8622-424e-94af-50154bd814b0", "update": {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "The instruction is explicit; I must reply with \"ok\". There are no other constraints relevant to this task.\n\n\n"}}}}
+{"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "d824e01f-8622-424e-94af-50154bd814b0", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "ok"}}}}
+{"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "d824e01f-8622-424e-94af-50154bd814b0", "update": {"sessionUpdate": "usage_update", "used": 14629, "size": 1048576}}}
+{"answerPrompt": {"stopReason": "end_turn", "usage": {"inputTokens": 14451, "outputTokens": 178, "cachedReadTokens": 0, "cachedWriteTokens": 0, "thoughtTokens": 177, "totalTokens": 14629}}}

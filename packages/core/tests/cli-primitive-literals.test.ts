@@ -226,6 +226,7 @@ describe('CLI primitive literal coercion', () => {
     ]) {
       let code = -1;
       await createCli({
+        access: { open: 'local-operator' },
         name: 'literal-proof',
         version: '1.0.0',
         services: [service],
@@ -274,6 +275,7 @@ describe('CLI primitive literal coercion', () => {
     ]) {
       let code = -1;
       await createCli({
+        access: { open: 'local-operator' },
         name: 'dotted-proof',
         version: '1.0.0',
         services: [service],

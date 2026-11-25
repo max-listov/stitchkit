@@ -1,6 +1,16 @@
 /** Bun-owned server adapter and its concrete public types. */
-import { statSync, unlinkSync } from 'node:fs';
-import { bindUnixSocket } from '../internal/unix-socket';
+import { lstatSync } from 'node:fs';
+import {
+  assertPrivateUnixSocketDirectory,
+  assertUnixSocketMode,
+  assertUnixSocketPathLength,
+  bindUnixSocket,
+  type OwnedUnixSocket,
+  publishStagedUnixSocket,
+  unlinkUnixSocketIfMatching,
+  unlinkUnixSocketIfOwned,
+} from '../internal/unix-socket';
+import { withUnixSocketLockSync } from '../internal/unix-socket-lock';
 import { createHandler } from './create';
 import { createProxyOrigin, type ProxyOriginConfig } from './proxy-origin';
 import {
@@ -58,10 +68,10 @@ export interface BunServerConfig extends BunHandlerConfig, BunFetchComposition {
   /**
    * Listen on a unix domain socket instead of a TCP port. Mutually exclusive
    * with `port`/`hostname`. A stale socket file left by a killed process is
-   * reclaimed (probe-then-unlink, best-effort against concurrent starts); a
-   * path answered by a live listener — or one this process may not probe —
-   * fails loudly. Not compatible with the Socket.IO lifecycle (`socket`):
-   * socket.io clients cannot dial a unix socket.
+   * reclaimed under a per-socket startup lock (only on `ECONNREFUSED`/`ENOENT`);
+   * a path answered by a live listener — or any ambiguous probe failure — fails
+   * loudly without removing the file. Not compatible with the Socket.IO
+   * lifecycle (`socket`): socket.io clients cannot dial a unix socket.
    */
   unix?: UnixListenConfig;
   websocket?: BunWebSocketHandlers;
@@ -73,17 +83,41 @@ export interface BunServerConfig extends BunHandlerConfig, BunFetchComposition {
 
 export type BunServerHandle = ManagedServerHandle<BunServer>;
 
+const UNIX_PROBE_SCRIPT = [
+  'try {',
+  '  const socket = await Bun.connect({',
+  '    unix: Bun.env.STITCHKIT_UNIX_PROBE ?? "",',
+  '    socket: { data() { return undefined; } },',
+  '  });',
+  '  socket.end();',
+  '  process.stdout.write("alive");',
+  '  process.exit(0);',
+  '} catch (error) {',
+  '  const code =',
+  '    error && typeof error === "object" && "code" in error && typeof error.code === "string"',
+  '      ? error.code',
+  '      : "UNKNOWN";',
+  '  if (code === "ECONNREFUSED" || code === "ENOENT") {',
+  '    process.stdout.write("stale:" + code);',
+  '    process.exit(10);',
+  '  }',
+  '  process.stdout.write("error:" + code);',
+  '  process.exit(20);',
+  '}',
+].join('\n');
+
 /**
  * Reclaim a stale socket file left behind by a killed process, refusing every
  * ambiguous case: a non-socket at the path, a socket owned by another user, a
- * path a live listener still answers, and a probe that timed out. The
- * liveness probe is a short subprocess connect (the only synchronous way to
- * dial a unix socket), run only when the file already exists.
- * Probe-then-unlink is best-effort — two processes racing the same path can
- * interleave between probe and bind; a local daemon accepts that window.
+ * path a live listener still answers, a probe timeout, and any connect failure
+ * other than `ECONNREFUSED` or `ENOENT`.
+ *
+ * Called under `withUnixSocketLockSync`, and unlinks only the exact `(dev, ino)`
+ * observed before the probe. Spawns `process.execPath` with `BUN_BE_BUN=1` so
+ * the probe works in compiled standalone binaries without `bun` on `PATH`.
  */
 function reclaimStaleUnixSocket(path: string): void {
-  const stats = statSync(path, { throwIfNoEntry: false });
+  const stats = lstatSync(path, { throwIfNoEntry: false });
   if (stats === undefined) return;
   if (!stats.isSocket()) {
     throw new Error(
@@ -95,23 +129,10 @@ function reclaimStaleUnixSocket(path: string): void {
       `[stitchkit] createServer: unix socket "${path}" is owned by another user — refusing to reclaim it`,
     );
   }
-  // In a `bun build --compile` binary, execPath IS the application — spawning
-  // it would rerun the whole daemon instead of the probe. Use the real
-  // interpreter, or refuse loudly rather than guess.
-  const standalone = Bun.main.startsWith('/$bunfs/');
-  const interpreter = standalone ? Bun.which('bun') : process.execPath;
-  if (!interpreter) {
-    throw new Error(
-      `[stitchkit] createServer: unix socket "${path}" already exists and no \`bun\` binary is on PATH to probe it from this compiled executable — remove the file manually if the previous process is dead`,
-    );
-  }
   const probe = Bun.spawnSync({
-    cmd: [
-      interpreter,
-      '-e',
-      'try { const socket = await Bun.connect({ unix: Bun.env.STITCHKIT_UNIX_PROBE ?? "", socket: { data() { return undefined; } } }); socket.end(); process.exit(0); } catch (error) { process.exit(error && typeof error === "object" && "code" in error && error.code === "EACCES" ? 2 : 1); }',
-    ],
-    env: { ...process.env, STITCHKIT_UNIX_PROBE: path },
+    cmd: [process.execPath, '--config=/dev/null', '-e', UNIX_PROBE_SCRIPT],
+    env: { BUN_BE_BUN: '1', STITCHKIT_UNIX_PROBE: path },
+    stdin: 'ignore',
     timeout: 2_000,
   });
   if (probe.exitedDueToTimeout) {
@@ -120,22 +141,47 @@ function reclaimStaleUnixSocket(path: string): void {
       `[stitchkit] createServer: liveness probe for unix socket "${path}" timed out — refusing to reclaim; remove the file manually if the previous process is dead`,
     );
   }
-  if (probe.exitCode === 0 || probe.exitCode === 2) {
+  const outcome = probe.stdout.toString('utf8').trim();
+  if (probe.exitCode === 0 && outcome === 'alive') {
     throw new Error(
-      `[stitchkit] createServer: unix socket "${path}" is already in use${probe.exitCode === 2 ? ' (connect permission denied)' : ' by a live listener'}`,
+      `[stitchkit] createServer: unix socket "${path}" is already in use by a live listener`,
     );
   }
-  unlinkSync(path);
+  if (probe.exitCode === 10 && outcome === 'stale:ENOENT') return;
+  if (probe.exitCode === 10 && outcome === 'stale:ECONNREFUSED') {
+    unlinkUnixSocketIfMatching(path, { dev: stats.dev, ino: stats.ino });
+    return;
+  }
+  if (probe.exitCode === 20 && outcome.startsWith('error:')) {
+    const code = outcome.slice('error:'.length);
+    if (code === 'EACCES') {
+      throw new Error(
+        `[stitchkit] createServer: unix socket "${path}" is already in use (connect permission denied)`,
+      );
+    }
+    throw new Error(
+      `[stitchkit] createServer: failed to probe unix socket "${path}" (${code}) — refusing to remove it`,
+    );
+  }
+  throw new Error(
+    `[stitchkit] createServer: liveness probe for unix socket "${path}" failed unexpectedly (exit ${String(probe.exitCode)}, signal ${String(probe.signalCode)}) — refusing to remove it`,
+  );
 }
 
 /** Start the contract router through `Bun.serve`. */
 /** A unix listener is refused with every option that would silently turn it into TCP. */
-function assertUnixListenConfig(config: BunServerConfig, unixPath: string): void {
+function assertUnixListenConfig(
+  config: BunServerConfig,
+  unixPath: string,
+  unixMode: number | undefined,
+): void {
   // Bun silently starts a TCP server on the default port for `unix: ''` —
   // the exact inversion of what a socket-as-credential daemon intends.
   if (unixPath.length === 0) {
     throw new Error('[stitchkit] createServer: `unix` must be a non-empty socket path');
   }
+  assertUnixSocketPathLength(unixPath, 'createServer');
+  if (unixMode !== undefined) assertUnixSocketMode(unixMode, 'createServer');
   // Checked on the raw config: `port` has a default further down, and Bun
   // itself silently ignores `port` next to `unix` instead of erroring.
   if (config.port !== undefined || config.hostname !== undefined) {
@@ -148,6 +194,7 @@ function assertUnixListenConfig(config: BunServerConfig, unixPath: string): void
       '[stitchkit] createServer: the Socket.IO lifecycle cannot listen on a unix socket — socket.io clients dial TCP only',
     );
   }
+  assertPrivateUnixSocketDirectory(unixPath, 'createServer');
 }
 
 interface UnixServeOptions {
@@ -161,43 +208,50 @@ interface UnixServeOptions {
 function listenOnUnixSocket(
   unix: { path: string; mode: number | undefined },
   { bunExtra, development, websocket, fetch }: UnixServeOptions,
-): BunServer {
-  // The probe child runs before any umask is narrowed, so it inherits the normal one.
-  reclaimStaleUnixSocket(unix.path);
-  // The unix branch carries no `port`/`hostname` keys at all — Bun accepts
-  // and silently ignores `port` beside `unix`, which would mask config bugs.
-  // TCP-only passthrough keys are stripped the same way: Bun's unix options
-  // variant types them out, and they are meaningless on a socket file.
-  const { reusePort, ipv6Only, http3, http2, http1, idleTimeout, ...unixExtra } =
-    bunExtra ?? {};
-  void reusePort;
-  void ipv6Only;
-  void http3;
-  void http2;
-  void http1;
-  void idleTimeout;
-  const listen = (path: string): BunServer =>
-    websocket
-      ? Bun.serve({
-          ...unixExtra,
-          ...(development && { development }),
-          unix: path,
-          websocket,
-          fetch,
-        })
-      : Bun.serve({ ...unixExtra, ...(development && { development }), unix: path, fetch });
-  if (unix.mode === undefined) return listen(unix.path);
-  let started: BunServer | undefined;
-  try {
-    return bindUnixSocket({ path: unix.path, mode: unix.mode }, (path) => {
-      started = listen(path);
-      return started;
-    });
-  } catch (error) {
-    // A refused birth leaves a started listener behind; it must not outlive the refusal.
-    void started?.stop(true).catch(() => undefined);
-    throw error;
-  }
+): { readonly server: BunServer; readonly owned: OwnedUnixSocket } {
+  return withUnixSocketLockSync(unix.path, () => {
+    // The probe child runs before any umask is narrowed, so it inherits the normal one.
+    reclaimStaleUnixSocket(unix.path);
+    // The unix branch carries no `port`/`hostname` keys at all — Bun accepts
+    // and silently ignores `port` beside `unix`, which would mask config bugs.
+    // TCP-only passthrough keys are stripped the same way: Bun's unix options
+    // variant types them out, and they are meaningless on a socket file.
+    const { reusePort, ipv6Only, http3, http2, http1, idleTimeout, ...unixExtra } =
+      bunExtra ?? {};
+    void reusePort;
+    void ipv6Only;
+    void http3;
+    void http2;
+    void http1;
+    void idleTimeout;
+    const listen = (path: string): BunServer =>
+      websocket
+        ? Bun.serve({
+            ...unixExtra,
+            ...(development && { development }),
+            unix: path,
+            websocket,
+            fetch,
+          })
+        : Bun.serve({ ...unixExtra, ...(development && { development }), unix: path, fetch });
+    const stopServer = (server: BunServer): void => {
+      void server.stop(true).catch(() => undefined);
+    };
+    const bindStaged = (targetPath: string) =>
+      publishStagedUnixSocket(targetPath, listen, stopServer);
+    if (unix.mode === undefined) return bindStaged(unix.path);
+    let started: { readonly server: BunServer; readonly owned: OwnedUnixSocket } | undefined;
+    try {
+      return bindUnixSocket({ path: unix.path, mode: unix.mode }, (path) => {
+        started = bindStaged(path);
+        return started;
+      });
+    } catch (error) {
+      // A refused birth leaves a started listener behind; it must not outlive the refusal.
+      if (started) stopServer(started.server);
+      throw error;
+    }
+  });
 }
 
 /**
@@ -216,6 +270,44 @@ async function waitForRequestDrain(server: BunServer): Promise<void> {
   }
 }
 
+function createUnixSocketCleanup(): {
+  track(owned: OwnedUnixSocket): void;
+  clean(): void;
+} {
+  let owned: OwnedUnixSocket | undefined;
+  let cleaned = false;
+  return {
+    track(next) {
+      owned = next;
+    },
+    clean() {
+      if (!owned || cleaned) return;
+      unlinkUnixSocketIfOwned(owned);
+      cleaned = true;
+    },
+  };
+}
+
+function listenOnTcpPort({
+  port,
+  hostname,
+  bunExtra,
+  development,
+  websocket,
+  fetch,
+}: UnixServeOptions & { port: number; hostname: string | undefined }): BunServer {
+  return websocket
+    ? Bun.serve({
+        ...bunExtra,
+        ...(development && { development }),
+        port,
+        hostname,
+        websocket,
+        fetch,
+      })
+    : Bun.serve({ ...bunExtra, ...(development && { development }), port, hostname, fetch });
+}
+
 export function createServer(config: BunServerConfig): BunServerHandle {
   const {
     websocket: configuredWebSocket,
@@ -227,7 +319,7 @@ export function createServer(config: BunServerConfig): BunServerHandle {
   } = config;
   const unixPath = typeof config.unix === 'string' ? config.unix : config.unix?.path;
   const unixMode = typeof config.unix === 'string' ? undefined : config.unix?.mode;
-  if (unixPath !== undefined) assertUnixListenConfig(config, unixPath);
+  if (unixPath !== undefined) assertUnixListenConfig(config, unixPath, unixMode);
   const socketRoutePrefix = socket?.route.path.replace(/\*socketPath$/, '');
   // Boundary cast: Bun's handler data is opaque to the lifecycle wrapper. The
   // wrapper preserves the same socket object and only observes open/close;
@@ -264,6 +356,7 @@ export function createServer(config: BunServerConfig): BunServerHandle {
     : undefined;
 
   let runtime: BunServer | undefined;
+  const unixCleanup = createUnixSocketCleanup();
   const requireRuntime = (): BunServer => {
     if (!runtime) throw new Error('[stitchkit] Bun server lifecycle started before Bun.serve');
     return runtime;
@@ -296,38 +389,50 @@ export function createServer(config: BunServerConfig): BunServerHandle {
       await new Promise((resolve) => setTimeout(resolve, 0));
       const server = requireRuntime();
       if (server.pendingRequests === 0 && openSockets.size === 0) {
-        const stopping = server.stop(true);
-        if (!hadWebSockets) await stopping;
-        else void stopping.catch(() => undefined);
+        try {
+          const stopping = server.stop(true);
+          if (!hadWebSockets) await stopping;
+          else void stopping.catch(() => undefined);
+        } finally {
+          unixCleanup.clean();
+        }
         return;
       }
       // Pending work at entry. `stop(false)` still performs the graceful stop — it refuses new
       // connections and lets in-flight requests finish — but its Promise cannot be the
       // completion signal here for the same reason the branch above refuses to await
-      // `stop(true)`: one upgrade in this server's lifetime leaves it pending for good. That
-      // guard existed on one branch and not on the other, so a finite response in flight beside
-      // a WebSocket turned every clean shutdown into a deadline force.
-      const stopping = server.stop(false);
-      if (!hadWebSockets) {
-        await stopping;
-        return;
+      // `stop(true)`: one upgrade in this server's lifetime leaves it pending for good, and a
+      // finite response in flight beside a WebSocket would turn a clean shutdown into a
+      // deadline force.
+      try {
+        const stopping = server.stop(false);
+        if (!hadWebSockets) {
+          await stopping;
+          return;
+        }
+        void stopping.catch(() => undefined);
+        await waitForRequestDrain(server);
+      } finally {
+        unixCleanup.clean();
       }
-      void stopping.catch(() => undefined);
-      await waitForRequestDrain(server);
     },
     async forceStop() {
-      const logicalClose = socket?.close();
-      const physicalClose = waitForSocketDrain();
-      for (const ws of [...openSockets]) ws.terminate();
-      const stopping = requireRuntime().stop(true);
-      // Bun 1.3.14 closes the listener synchronously and emits the physical
-      // server-side WebSocket close callback, but its stop Promise remains
-      // pending after an upgraded connection. The tracker callback is therefore
-      // the physical completion boundary; awaiting `stopping` would deadlock an
-      // otherwise closed server.
-      if (!hadWebSockets) await stopping;
-      else void stopping.catch(() => undefined);
-      await Promise.all([logicalClose, physicalClose]);
+      try {
+        const logicalClose = socket?.close();
+        const physicalClose = waitForSocketDrain();
+        for (const ws of [...openSockets]) ws.terminate();
+        const stopping = requireRuntime().stop(true);
+        // Bun 1.3.14 closes the listener synchronously and emits the physical
+        // server-side WebSocket close callback, but its stop Promise remains
+        // pending after an upgraded connection. The tracker callback is therefore
+        // the physical completion boundary; awaiting `stopping` would deadlock an
+        // otherwise closed server.
+        if (!hadWebSockets) await stopping;
+        else void stopping.catch(() => undefined);
+        await Promise.all([logicalClose, physicalClose]);
+      } finally {
+        unixCleanup.clean();
+      }
     },
   };
   const lifecycle = createServerLifecycle(() => adapter);
@@ -353,35 +458,30 @@ export function createServer(config: BunServerConfig): BunServerHandle {
   };
 
   if (unixPath !== undefined) {
-    runtime = listenOnUnixSocket(
+    const bound = listenOnUnixSocket(
       { path: unixPath, mode: unixMode },
       { bunExtra, development, websocket: trackedWebSocket, fetch },
     );
+    runtime = bound.server;
+    unixCleanup.track(bound.owned);
   } else {
-    runtime = trackedWebSocket
-      ? Bun.serve({
-          ...bunExtra,
-          ...(development && { development }),
-          port,
-          hostname,
-          websocket: trackedWebSocket,
-          fetch,
-        })
-      : Bun.serve({
-          ...bunExtra,
-          ...(development && { development }),
-          port,
-          hostname,
-          fetch,
-        });
+    runtime = listenOnTcpPort({
+      port,
+      hostname,
+      bunExtra,
+      development,
+      websocket: trackedWebSocket,
+      fetch,
+    });
   }
 
   const server = runtime;
   proxyOrigin?.bind(server);
   return {
     // In unix mode this is `unix://<path>` — an identifier, not a fetchable
-    // address (clients dial the path via `createHttpClient({ unix })`).
-    url: server.url.toString().replace(/\/$/, ''),
+    // address (clients dial the path via `createUnixClientTransport`).
+    url:
+      unixPath !== undefined ? `unix://${unixPath}` : server.url.toString().replace(/\/$/, ''),
     port: server.port ?? (unixPath !== undefined ? 0 : port),
     runtime: server,
     get status() {

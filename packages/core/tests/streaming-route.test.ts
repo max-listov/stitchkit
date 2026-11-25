@@ -3,6 +3,7 @@ import { parseNDJSON, parseSSE } from '../src/browser/stream';
 import { createServer } from '../src/server/bun';
 import { ndjsonRoute, sseRoute, streamingRoute } from '../src/server/streaming-route';
 import type { RawRoute } from '../src/server/types';
+import { expectTimerRefusal } from './support/timer-refusal';
 
 /**
  * The test that was missing where this defect lived.
@@ -298,10 +299,14 @@ describe('a long-lived streaming route takes the checklist off the author', () =
 
   test('an unusable heartbeat is refused at construction, not at the first pulse', () => {
     const { source } = silentSource();
-    expect(() => streamingRoute({ path: '/x', heartbeatMs: 0, source })).toThrow(TypeError);
-    expect(() => streamingRoute({ path: '/x', heartbeatMs: Number.NaN, source })).toThrow(
-      TypeError,
-    );
+    // The timer rule: 2 ** 31 is past the ceiling, where a heartbeat would fire at once.
+    for (const heartbeatMs of [0, Number.NaN, 1.5, 2 ** 31]) {
+      expectTimerRefusal(
+        () => streamingRoute({ path: '/x', heartbeatMs, source }),
+        'heartbeatMs',
+        heartbeatMs,
+      );
+    }
     expect(() => streamingRoute({ path: '/x', idleTimeoutSeconds: -1, source })).toThrow(
       TypeError,
     );

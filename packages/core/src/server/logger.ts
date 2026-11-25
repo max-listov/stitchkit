@@ -27,15 +27,13 @@ const METHOD_COLOR: Record<string, string> = {
 };
 
 /**
- * The environment table, reached through a variable **on purpose**. A bundler
- * folds a literal `process.env.NODE_ENV` into its value at build time — and for
- * a library that is *our* build, not the consumer's, so the decision would be
- * frozen for everyone who installs the package. Read the bag instead, and read
- * it per call: a library cannot know the environment it will be run in.
+ * Read `NODE_ENV` from `globalThis.process?.env` per call **on purpose**. A
+ * bundler folds a literal `process.env.NODE_ENV` into its value at build time —
+ * and for a library that is *our* build, not the consumer's. Reading through
+ * `globalThis.process?.env` via a local variable both defeats build-time
+ * folding and avoids a `ReferenceError` on runtimes without a global `process`
+ * (bare Hermes, browsers).
  */
-const runtimeEnv: Record<string, string | undefined> = process.env;
-
-/** How a completed request is written. */
 export type LogFormat = 'pretty' | 'json';
 
 /**
@@ -44,7 +42,8 @@ export type LogFormat = 'pretty' | 'json';
  */
 export function resolveLogFormat(preference?: LogFormat): LogFormat {
   if (preference) return preference;
-  return runtimeEnv.NODE_ENV === 'production' ? 'json' : 'pretty';
+  const env = globalThis.process?.env ?? {};
+  return env.NODE_ENV === 'production' ? 'json' : 'pretty';
 }
 
 function timestamp(): string {
@@ -81,10 +80,19 @@ function safePath(pathname: string): string {
   return out;
 }
 
-/** Map an HTTP status to a log level. */
-export function levelForStatus(status: number): 'error' | 'warn' | 'info' {
-  if (status === 499) return 'info';
+/** The level of a completed request's line. */
+export type RequestLogLevel = 'error' | 'warn' | 'info';
+
+/**
+ * Map an HTTP status to a log level. A `4xx` is a warning unless nothing went
+ * wrong: a client that closed the connection (`499`) or an answer the protocol
+ * itself prescribes (`outcome: 'protocol'`, see `markProtocolOutcome`) is `info`,
+ * like every other ordinary request — the line still names the status. A `5xx`
+ * is an error whatever the mark says.
+ */
+export function levelForStatus(status: number, outcome?: 'protocol'): RequestLogLevel {
   if (status >= 500) return 'error';
+  if (status === 499 || (status >= 400 && outcome === 'protocol')) return 'info';
   if (status >= 400) return 'warn';
   return 'info';
 }
@@ -193,6 +201,8 @@ export interface CompletedRequest {
   req: Request;
   pathname: string;
   status: number;
+  /** The level the caller chose for both sinks — one decision per request. */
+  level: RequestLogLevel;
   log: RequestLog;
   ipAddress?: string;
   errorCode?: string;
@@ -214,8 +224,18 @@ export interface CompletedRequest {
  * sized for a terminal is not a record to query.
  */
 export function logOutgoing(entry: CompletedRequest): void {
-  const { req, pathname, status, log, ipAddress, errorCode, durationMs, format, extra } =
-    entry;
+  const {
+    req,
+    pathname,
+    status,
+    level,
+    log,
+    ipAddress,
+    errorCode,
+    durationMs,
+    format,
+    extra,
+  } = entry;
   const ms = durationMs;
 
   if (format === 'json') {
@@ -224,7 +244,7 @@ export function logOutgoing(entry: CompletedRequest): void {
     // must cost the extra fields, never the whole line.
     const own = {
       ts: new Date().toISOString(),
-      level: levelForStatus(status),
+      level,
       msg: `${req.method} ${pathname} ${status}`,
       ...buildLogFields(req.method, pathname, status, durationMs, log.traceId, errorCode),
       ip: ipAddress,

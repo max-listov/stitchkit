@@ -4,6 +4,9 @@ import {
   type NativeCommandOptions,
   runNativeCommand,
 } from '../src/entrypoints/process';
+import { reapAfterEachTest, trackGroupLeader } from './support/process-reaper';
+
+reapAfterEachTest();
 
 async function failure(input: NativeCommandOptions): Promise<NativeCommandError> {
   try {
@@ -99,6 +102,12 @@ test('command error constructor preserves existing calls and validates supplied 
   });
   expect(limit.cause).toBe(cause);
   expect(limit.reason).toBe('deadline');
+  const stdinLimit = new NativeCommandError('COMMAND_LIMIT', 'caller wording', {
+    cause,
+    reason: 'stdin-budget',
+  });
+  expect(stdinLimit.cause).toBe(cause);
+  expect(stdinLimit.reason).toBe('stdin-budget');
   expect(() =>
     Reflect.construct(NativeCommandError, [
       'COMMAND_LIMIT',
@@ -113,6 +122,32 @@ test('command error constructor preserves existing calls and validates supplied 
       { reason: 'deadline' },
     ]),
   ).toThrow('Only COMMAND_LIMIT');
+  expect(() =>
+    Reflect.construct(NativeCommandError, [
+      'COMMAND_UNAVAILABLE',
+      'bad evidence',
+      { reason: 'stdin-budget' },
+    ]),
+  ).toThrow('Only COMMAND_LIMIT');
+});
+
+test('streamed stdin overflow classifies as COMMAND_LIMIT with reason stdin-budget', async () => {
+  const stdin = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('0123456789'));
+      controller.close();
+    },
+  });
+  const error = await failure({
+    ...command("process.stdin.on('data', () => {})"),
+    stdin,
+    maxStdinBytes: 8,
+    timeoutMs: 2_000,
+    stop: { target: 'group', graceMs: 0 },
+    onLeaderStarted: trackGroupLeader,
+  });
+  error.message = 'same wording';
+  expect(error).toMatchObject({ code: 'COMMAND_LIMIT', reason: 'stdin-budget' });
 });
 
 test('cleanup aggregate and exactly-once settlement preserve the initial structured deadline', async () => {

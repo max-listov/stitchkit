@@ -2,7 +2,7 @@
 title: Generic application primitives declare facts, not infrastructure
 description: Reusable values and policies share one browser-safe leaf while persistence, transactions and background execution remain application-owned.
 type: decision
-status: active
+status: accepted
 created: 2026-09-01
 updated: 2026-09-01
 ---

@@ -19,9 +19,10 @@
  * path may itself be a secret.
  */
 
+import { secretsEqual } from '../internal/secret-equal';
 import { isRecord } from '../internal/typed';
 import { callTelegramBotApi } from './bot-api';
-import { digestsEqual, hmacSha256, toHex } from './crypto';
+import { hmacSha256, toHex } from './crypto';
 import type { TelegramFetch } from './transport';
 
 const OWNER_PARAMETER = 'owner';
@@ -239,7 +240,7 @@ export async function receiveTelegramWebhook(
     return new Response(null, { status: 405, headers: { allow: 'POST' } });
   }
   const secret = request.headers.get(SECRET_HEADER);
-  if (secret === null || !digestsEqual(secret, options.secret)) {
+  if (secret === null || !secretsEqual(secret, options.secret)) {
     return new Response(null, { status: 403 });
   }
   const acceptance = await options.accept(await request.text());

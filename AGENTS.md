@@ -25,6 +25,10 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 - Transport and hooks use `RuntimeContext` (loose), handlers `HandlerContext` (typed); never cast between them. → ADR 0003
 - **ALWAYS** keep the core Web Fetch-clean: `createHandler` takes `HandlerConfig` (no Bun types); Bun
   APIs live only in `createServer` and `stitchkit/server`. → ADR 0013
+- **ALWAYS** verify target-runtime globals (React Native, Hermes, Node, browser) and realm proofs against
+  real installed packages and runtime binaries on disk — never invent synthetic polyfills (`DOMException`,
+  `Buffer`, `URL`) from memory to make a harness pass.
+  → [engineering-rules](./docs/architecture/engineering-rules.md#verify-target-runtime-globals-against-real-packages)
 - **ALWAYS** keep the core generic — no domain model; scopes are free strings, no billing, `source` is
   transport-only. → ADR 0002
 - **NEVER** make the project declaration a condition of a build, test, start path or check;
@@ -45,10 +49,15 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
   command discovered from a server too: its schema is restored from JSON Schema, not the one an author wrote.
   A keyword lost between the served document and the written one is a defect of the read boundary or the one
   conversion, never a caveat for the guide. → [engineering-rules](./docs/architecture/engineering-rules.md#a-discovered-schema-is-not-the-authored-one)
-- Keep functions ≤200 and files ≤500 lines (`packages/core/tests/code-size.test.ts`); an exception is a
-  reasoned entry in `packages/core/tests/fixtures/code-size-exceptions.json`, and the list only shrinks. → ADR 0199
-- Put an endpoint's tool options in the one `tool` group (`tool: { name, view, ui, annotations, mcp }`);
-  `expose` stays outside it. → ADR 0196
+- **ALWAYS** cover every exported CLI helper (`extractCliGlobalOptions`, `scanCliInvocation`, `routeCliArgv`,
+  `parseCliArgs`, `createCli`, `createCliInvoker`) and sibling schema projection with regression tests when
+  changing CLI flags, argv parsing, or schema rendering — not only `createCli`.
+  → [engineering-rules](./docs/architecture/engineering-rules.md#a-discovered-schema-is-not-the-authored-one)
+- Keep functions ≤200 and files ≤500 lines (`packages/core/tests/code-size.test.ts`); an exception is an
+  entry `{ maxLines, reason }` in `packages/core/tests/fixtures/code-size-exceptions.json`: the list only
+  shrinks, and no exception grows past its `maxLines`. → ADR 0199
+- Put an endpoint's tool options in the one `tool` group (`tool: { name, view, ui, annotations, mcp,
+  inputRecursionDepth }`); `expose` stays outside it. → ADR 0196, ADR 0319
 
 ## When you change the public API
 
@@ -57,6 +66,10 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
   reviewed edit, with a reason, to `packages/core/tests/fixtures/public-surface-budget.json`. → ADR 0199
 - Start a new entrypoint **evolving**; promotion to stable needs two independent consumers and an ADR.
   The maturity table in `docs/guide/getting-started.md` is the one place a level is declared. → ADR 0103, ADR 0198
+- Run full `bun run check` across every workspace package (`stitchkit`, `stitchkit-tui`, `create-stitchkit`,
+  `scripts`) as the final type check after editing `packages/core/src/contract/errors.ts`, public option
+  schemas, or any shared public registry; a single-package typecheck misses exhaustive switches and callers
+  across companion packages. → [gates](./docs/architecture/gates.md#verify-is-every-portable-gate-ci-runs)
 
 ## Breaking changes
 
@@ -117,10 +130,13 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 
 ### What runs where
 
-- An ordinary push runs the fast half (`lockfile`, `lint`, `check`, `test`); a `release(...)` commit
+- An ordinary push runs the fast half (`lockfile`, `lint`, `build`, `check`, `test`); a `release(...)` commit
   earns metadata plus the gate a red run there would justify; a tag, metadata only. → [gates](./docs/architecture/gates.md#what-runs-where), ADR 0136
 - Keep `verify` running every portable gate CI runs — only real-Darwin work is CI-only
   (`scripts/gate-parity.test.ts`). → [gates](./docs/architecture/gates.md#verify-is-every-portable-gate-ci-runs), ADR 0135
+- **NEVER** skip or remove a lane build in `verify` or a release profile on the presence of an existing `dist`
+  without a mechanical freshness guarantee (`STITCHKIT_VERIFY_BUILT`, `scripts/lane-build.ts`) that `dist`
+  matches the current working tree. → [gates](./docs/architecture/gates.md#verify-is-every-portable-gate-ci-runs)
 - Never memoise the publication-privacy scan; it runs on every push. → ADR 0164
 - Check release metadata before any machinery. → [gates](./docs/architecture/gates.md#metadata-before-machinery)
 - Key the green memo (`scripts/gate-memo.ts`) on what was checked — tree and toolchain, the fast subset only —
@@ -132,8 +148,9 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 - Bump only the released package's `package.json`, roll its `CHANGELOG.md`, list every target in
   `release-train.json`. → ADR 0136, [release-process](./docs/architecture/release-process.md#two-packages-one-train)
 - Run `bun run release:check` before any gate. → [release-process](./docs/architecture/release-process.md#order-inside-a-release)
-- Rolling the core changelog moves the maturity-table cadence sentences: update the table and
-  `scripts/surface-cadence.test.ts` in the same commit. → [release-process](./docs/architecture/release-process.md#two-packages-one-train)
+- Prepare a train with `bun scripts/release-plan.ts prepare <target>@X.Y.Z…`: it writes every derived file
+  (versions, changelog rolls, the companion `tui`, promoted migrations, cadence sentences) and prints the paths;
+  never derive one by hand. → [release-process](./docs/architecture/release-process.md#two-packages-one-train)
 - Make the metadata-only `release(train)` commit LAST: push it to `release/X.Y.Z`, wait for its exact-SHA
   push run, fast-forward master, `bun run release:train`. The five steps: [how a release happens](./docs/architecture/release-process.md#how-a-release-happens).
 - Repair a red release commit with a commit of its own type on top; the tagged head still needs its own
@@ -147,10 +164,11 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 
 ## Stack
 
-**Bun** — runtime, HTTP server, test runner; **Node ≥ 22** via `stitchkit/node` (ADR 0013). **Zod** —
+**Bun ≥ 1.4** — runtime, HTTP server, test runner; **Node ≥ 22.3** via `stitchkit/node` (ADR 0013). **Zod** —
 validation; **`ky`** — HTTP client, the only runtime dependency. Optional peers: `@modelcontextprotocol/server`,
 `@modelcontextprotocol/ext-apps`, `ai`, `@openrouter/ai-sdk-provider`, `srvx`, `socket.io` / `socket.io-client`
-/ `@socket.io/bun-engine`, `@tanstack/react-query`, `react-query-kit`, `grammy`, `@opentelemetry/api`, `web-vitals`.
+/ `@socket.io/bun-engine`, `@tanstack/react-query`, `react-query-kit`, `grammy`, `@opentelemetry/api`, `web-vitals`,
+`@anthropic-ai/claude-agent-sdk`.
 
 ## Commands
 

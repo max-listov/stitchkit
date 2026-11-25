@@ -1,7 +1,8 @@
 ---
 title: Native packaging verifies published digests
 description: The package publishes the size and SHA256 of each Darwin addon at build time; createNativePackaging checks the installed bytes against them once and hands out those verified bytes.
-status: active
+status: accepted
+amends: ["0233"]
 created: 2026-10-05 20:12 +07:00
 updated: 2026-10-05 20:59 +07:00
 type: decision

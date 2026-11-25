@@ -68,7 +68,10 @@ async function callTool(
   name: string,
   input: Record<string, unknown>,
 ): Promise<unknown> {
-  const tools = mountAgent([], { runtimeTools: definitions });
+  const tools = mountAgent([], {
+    access: { open: 'local-operator' },
+    runtimeTools: definitions,
+  });
   const entry = tools[name];
   if (!entry?.execute) throw new Error(`tool ${name} was not mounted`);
   const execute = entry.execute as unknown as (
@@ -519,12 +522,14 @@ describe('MCP connections over Streamable HTTP', () => {
     ]);
     const tools = mountAgent([], {
       runtimeTools: definitions,
-      lifecycle: {
-        beforeHandle: (context, endpoint) => {
-          seen.push(`before:${endpoint.toolName}`);
-          expect(context.source).toBe('agent');
+      access: {
+        gate: {
+          beforeHandle: (context, endpoint) => {
+            seen.push(`before:${endpoint.toolName}`);
+            expect(context.source).toBe('agent');
+          },
+          afterHandle: (_context, result) => ({ wrapped: result }),
         },
-        afterHandle: (_context, result) => ({ wrapped: result }),
       },
     });
     const result = await executable(tools, 'echo')(

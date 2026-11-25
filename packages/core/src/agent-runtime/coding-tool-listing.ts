@@ -91,7 +91,7 @@ export function createListingCodingTools(
     identity: { serviceName: 'coding', action: 'list-directory', method: 'POST' },
     input: ListInputSchema,
     output: ListOutputSchema,
-    transports: ['AGENT'],
+    expose: ['AGENT'],
     handler: async ({ input, signal }) => {
       const relative = relativePath(input.path);
       const run = discoveryRun(config, limits, relative, '*', 'list');
@@ -182,7 +182,7 @@ export function createListingCodingTools(
     identity: { serviceName: 'coding', action: 'glob', method: 'POST' },
     input: GlobInputSchema,
     output: GlobOutputSchema,
-    transports: ['AGENT'],
+    expose: ['AGENT'],
     handler: async ({ input, signal }) => {
       const relative = relativePath(input.path);
       const run = discoveryRun(config, limits, relative, input.pattern, 'skip');

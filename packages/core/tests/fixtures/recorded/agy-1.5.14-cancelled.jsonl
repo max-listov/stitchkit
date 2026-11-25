@@ -1,0 +1,3 @@
+{"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "d824e01f-8622-424e-94af-50154bd814b0", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "1\n2\n3\n4\n5\n6\n"}}}}
+{"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "d824e01f-8622-424e-94af-50154bd814b0", "update": {"sessionUpdate": "usage_update", "used": 14978, "size": 1048576}}}
+{"answerPrompt": {"stopReason": "cancelled", "usage": {"inputTokens": 14879, "outputTokens": 99, "cachedReadTokens": 0, "cachedWriteTokens": 0, "thoughtTokens": 87, "totalTokens": 14978}}}

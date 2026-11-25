@@ -28,7 +28,7 @@ const runtime = defineRuntimeTool({
   identity: { serviceName: 'fixture', action: 'resolve', method: 'POST' },
   input: Input,
   output: Input,
-  transports: ['CLI'],
+  expose: ['CLI'],
   handler,
 });
 const native = defineCliCommand({
@@ -51,6 +51,7 @@ async function run(argv, config = {}) {
     commands: [native],
     runtimeTools: () => [runtime],
     ...config,
+    access: config.access ?? { open: 'local-operator' },
     argv,
     stdin: async () => {
       reads++;
@@ -112,7 +113,7 @@ for (const argv of [['--help'], ['resolve', '--help']]) {
   assert.equal(help.calls, 0);
 }
 const scalar = await run(['resolve', 'one', '--references=alpha.md', '--json'], {
-  positionals: { resolve: ['projectId'] },
+  commandSettings: { resolve: { positionals: ['projectId'] } },
 });
 assert.equal(scalar.code, 0);
 assert.deepEqual(JSON.parse(scalar.out), {
@@ -121,12 +122,12 @@ assert.deepEqual(JSON.parse(scalar.out), {
   references: ['alpha.md'],
 });
 const variadic = await run(['resolve', 'alpha.md', 'beta.md', 'gamma.md', '--json'], {
-  positionals: { resolve: ['references'] },
+  commandSettings: { resolve: { positionals: ['references'] } },
 });
 assert.equal(variadic.code, 0);
 assert.deepEqual(JSON.parse(variadic.out), expected);
 const conflict = await run(['resolve', '--references=alpha.md', 'beta.md'], {
-  positionals: { resolve: ['references'] },
+  commandSettings: { resolve: { positionals: ['references'] } },
 });
 assert.equal(conflict.code, 2);
 assert.equal(conflict.calls, 0);
@@ -138,7 +139,7 @@ assert.throws(
 assert.throws(
   () =>
     parseCliArgs(['-r', 'alpha.md', 'beta.md'], Input, {
-      optionAliases: new Map([['r', 'references']]),
+      aliases: new Map([['r', 'references']]),
     }),
   /--references cannot be combined/,
 );
@@ -175,7 +176,7 @@ const offlineCall = await run(['resolve', '--references=alpha.md'], unavailable)
 assert.equal(offlineCall.code, 69);
 assert.equal(offlineCall.calls, 0);
 await assert.rejects(
-  run(['--help'], { positionals: { absent: ['references'] } }),
+  run(['--help'], { commandSettings: { absent: { positionals: ['references'] } } }),
   /targets unavailable command/,
 );
 

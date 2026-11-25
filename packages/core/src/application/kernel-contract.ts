@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AppError } from '../contract/errors';
+import { MAX_TIMER_MS } from '../internal/timers';
 import { ShutdownOptionsSchema } from '../server/shutdown';
 import type { ManagedResource } from './resource';
 import type {
@@ -108,8 +109,8 @@ export const ApplicationRestartInputSchema = z
      * Naming one here is for the case a caller knows this subtree drains faster
      * than the process is allowed to.
      */
-    gracePeriodMs: z.number().int().nonnegative().optional(),
-    forceTimeoutMs: z.number().int().nonnegative().optional(),
+    gracePeriodMs: z.number().int().nonnegative().max(MAX_TIMER_MS).optional(),
+    forceTimeoutMs: z.number().int().nonnegative().max(MAX_TIMER_MS).optional(),
   })
   .strict()
   .readonly();

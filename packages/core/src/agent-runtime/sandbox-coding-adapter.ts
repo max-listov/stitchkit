@@ -4,8 +4,8 @@ import {
   missingSandboxRestrictions,
   probeAgentProcessSandbox,
 } from './sandbox';
+import { sandboxCommandCwd } from './sandbox-binding';
 import { bubblewrapArgs } from './sandbox-bubblewrap-args';
-import { sandboxCommandCwd } from './sandbox-coding';
 import { SandboxError, type SandboxNetworkPolicy } from './sandbox-contract';
 import type { sandboxProcessOwner } from './sandbox-process-owner';
 

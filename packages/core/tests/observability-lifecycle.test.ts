@@ -12,7 +12,7 @@ function context(path: string): RequestContext {
     source: 'http',
     method: 'GET',
     path,
-    startedAt: process.hrtime.bigint(),
+    startedAt: performance.now(),
   };
 }
 
@@ -518,7 +518,10 @@ describe('bounded observability drain', () => {
       try {
         return { threw: false, returned: invoke() };
       } catch (error) {
-        expect(String(error)).toMatch(/non-negative finite/);
+        expect(error).toBeInstanceOf(RangeError);
+        expect(String(error)).toMatch(
+          /Observability drain timeoutMs must be an integer from 0 to 2147483647 milliseconds/,
+        );
         return { threw: true, returned: undefined };
       }
     };
@@ -527,6 +530,11 @@ describe('bounded observability drain', () => {
       returned: undefined,
     });
     expect(call(() => observability.flush({ timeoutMs: Number.NaN }))).toEqual({
+      threw: true,
+      returned: undefined,
+    });
+    // Past the timer ceiling a drain bound would fire at once.
+    expect(call(() => observability.flush({ timeoutMs: 2 ** 31 }))).toEqual({
       threw: true,
       returned: undefined,
     });

@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { type Dirent, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 /**
  * `stitchkit upgrade` — the migration plan, from the package itself.
  *
@@ -11,9 +14,7 @@
  *
  * Node built-ins only, and a `node` shebang: `npx` must work as well as `bunx`.
  */
-import { type Dirent, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { errnoOf } from '../../internal/errno';
 import { planFixes, planUpgrade, renderUpgradePlan } from '../../internal/upgrade-plan';
 import {
   type ProjectSource,
@@ -69,9 +70,8 @@ const DENIED = new Set(['EACCES', 'EPERM']);
 
 /** The code of a permission refusal, or undefined for any other error. */
 function deniedCode(error: unknown): string | undefined {
-  const code =
-    typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined;
-  return typeof code === 'string' && DENIED.has(code) ? code : undefined;
+  const code = errnoOf(error);
+  return code !== undefined && DENIED.has(code) ? code : undefined;
 }
 
 /**

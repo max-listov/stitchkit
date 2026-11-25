@@ -1,4 +1,9 @@
-import { createSessionCredentials, createSessionScope, SessionExpiredError } from 'stitchkit';
+import {
+  createSessionCredentials,
+  createSessionScope,
+  type SessionClock,
+  SessionExpiredError,
+} from 'stitchkit';
 import {
   changeSubscriptionResource,
   createNotificationOutbox,
@@ -10,26 +15,75 @@ import { createWatchClient, WatchKeySchema } from 'stitchkit/live';
 import { createCacheBridge, type WatchCacheBinding } from 'stitchkit/react';
 import { z } from 'zod';
 
+let wall = 0;
+let mono = 0;
+let timerSeq = 0;
+const scheduled = new Map<number, { at: number; run: () => void }>();
+const clock: SessionClock = {
+  now: () => wall,
+  monotonic: () => mono,
+  schedule(run, delayMs) {
+    const id = timerSeq++;
+    scheduled.set(id, { at: mono + delayMs, run });
+    return {
+      cancel() {
+        scheduled.delete(id);
+      },
+    };
+  },
+};
+const advanceClock = async (ms: number) => {
+  mono += ms;
+  wall += ms;
+  for (const [id, timer] of [...scheduled]) {
+    if (timer.at > mono) continue;
+    scheduled.delete(id);
+    timer.run();
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  }
+};
+
+interface SessionToken {
+  readonly value: string;
+  readonly expiresAt: number | null;
+}
+
 const scope = createSessionScope<string>();
-let stored: string | undefined;
-const credentials = createSessionCredentials<string, string>({
+let stored: { session: string; credentials: SessionToken } | null = null;
+const credentials = createSessionCredentials<string, SessionToken>({
   scope,
-  refresh: async (value) => `${value}-refreshed`,
+  clock,
+  refreshAhead: { expiresAt: (token) => token.expiresAt, leadMs: 60_000 },
+  refresh: async (token) => ({
+    value: `${token.value}-refreshed`,
+    expiresAt: wall + 600_000,
+  }),
   storage: {
-    async write(_, value) {
-      stored = value;
+    async read() {
+      return stored;
+    },
+    async write(session, value) {
+      stored = { session, credentials: value };
     },
     async clear() {
-      stored = undefined;
+      stored = null;
     },
   },
 });
-const first = await credentials.login('A', 'token');
-if ((await credentials.refresh(first)) !== 'token-refreshed')
-  throw new Error('Refresh failed');
+const first = await credentials.login('A', { value: 'token', expiresAt: 120_000 });
+await advanceClock(60_000);
+if (credentials.read(first).value !== 'token-refreshed')
+  throw new Error('Proactive refresh failed');
+const restored = await credentials.restore();
+if (
+  restored.status !== 'present' ||
+  credentials.read(restored.operation).value !== 'token-refreshed'
+)
+  throw new Error('Restore failed');
 await credentials.logout();
 if (
-  stored !== undefined ||
+  stored !== null ||
+  scheduled.size !== 0 ||
   first.deliver(() => {
     throw new Error('Stale delivery');
   })

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { AgentRuntimeStore } from './store';
 
+/** Individual process-isolation restriction enforced by a sandbox backend. */
 export const AgentSandboxRestrictionSchema = z.enum([
   'network-denied',
   'write-contained',
@@ -8,6 +9,7 @@ export const AgentSandboxRestrictionSchema = z.enum([
   'process-contained',
 ]);
 
+/** Discriminated probe result grading a sandbox as `full`, `partial`, or `unavailable`. */
 export const AgentSandboxGradeSchema = z.discriminatedUnion('grade', [
   z
     .object({ grade: z.literal('full'), restrictions: z.array(AgentSandboxRestrictionSchema) })
@@ -22,7 +24,9 @@ export const AgentSandboxGradeSchema = z.discriminatedUnion('grade', [
   z.object({ grade: z.literal('unavailable'), reason: z.string().min(1) }).strict(),
 ]);
 
+/** Process-isolation restriction name inferred from `AgentSandboxRestrictionSchema`. */
 export type AgentSandboxRestriction = z.infer<typeof AgentSandboxRestrictionSchema>;
+/** Graded sandbox capability summary inferred from `AgentSandboxGradeSchema`. */
 export type AgentSandboxGrade = z.infer<typeof AgentSandboxGradeSchema>;
 
 /** Structural process surface keeps optional launchers independent of Node ambient types. */
@@ -146,6 +150,7 @@ export async function probeAgentProcessSandbox(
   return outcome.grade;
 }
 
+/** Return every required sandbox restriction absent from the probed `grade`. */
 export function missingSandboxRestrictions(
   grade: AgentSandboxGrade,
   required: readonly AgentSandboxRestriction[],

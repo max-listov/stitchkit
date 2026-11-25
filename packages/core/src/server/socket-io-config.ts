@@ -100,7 +100,7 @@ export interface SocketIOServerConfig<TParsed = any, TData = TParsed> {
    * default, and one a repository can hold without knowing where it will run.
    * A cross-origin browser needs the allow-list and must pass it.
    */
-  cors?: { origin: string | string[]; credentials?: boolean };
+  cors?: { origin: string | string[]; credentials?: boolean } | undefined;
   /** Socket.IO endpoint path. Default `/socket.io/`. */
   path?: string;
   /** Admitted transports. Bun defaults to both; Node defaults to websocket only. */

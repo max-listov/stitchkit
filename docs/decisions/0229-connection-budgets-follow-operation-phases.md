@@ -1,7 +1,8 @@
 ---
 title: Connection budgets follow operation phases
 description: Discovery and calls keep independent bounded policy and expected transport failures preserve safe public diagnostics.
-status: active
+status: accepted
+amendedBy: ["0293"]
 created: 2026-10-04 12:49 +07:00
 updated: 2026-10-04 12:49 +07:00
 type: decision

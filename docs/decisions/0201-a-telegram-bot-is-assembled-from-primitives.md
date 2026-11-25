@@ -3,6 +3,7 @@ title: "ADR 0201: A Telegram bot is assembled from primitives"
 description: "Updates are admitted by batch at getUpdates; the bot journal is a pino-shaped JSON line through the bounded logger; the operator channel is apart from it; a broadcast is a resumable function that records intent before each send; the telegram leaf still imports only internal."
 type: decision
 status: accepted
+amendedBy: ["0274"]
 created: 2026-09-24
 updated: 2026-09-24
 ---

@@ -33,7 +33,7 @@ async function viewFileTool() {
   return defineViewFileTool({
     description: 'Inspect synthetic media',
     identity: { serviceName: 'media', action: 'view' },
-    transports: ['CLI'],
+    expose: ['CLI'],
     files: await createManagedFileBoundary({ root }),
   });
 }
@@ -340,7 +340,7 @@ test('an operation failure retains its code and never saves media', async () => 
         name: 'media',
         description: 'Refuse a missing synthetic file',
         identity: { serviceName: 'media', action: 'view', method: 'GET' },
-        transports: ['CLI'],
+        expose: ['CLI'],
         input: z.object({}),
         output: z.unknown(),
         handler: () => {
@@ -367,18 +367,20 @@ test('wait saves media from the final poll rather than the initial pending respo
           name: 'media',
           description: 'Poll synthetic media',
           identity: { serviceName: 'media', action: 'get', method: 'GET' },
-          transports: ['CLI'],
+          expose: ['CLI'],
           input: z.object({}),
           output: z.unknown(),
           handler: () => (++calls === 1 ? { status: 'pending' } : data),
         }),
       ],
-      wait: {
+      commandSettings: {
         media: {
-          tool: 'media',
-          poll: () => ({}),
-          done: (value) => isRecord(value) && Array.isArray(value.content),
-          backoff: [0],
+          wait: {
+            tool: 'media',
+            poll: () => ({}),
+            done: (value) => isRecord(value) && Array.isArray(value.content),
+            backoff: [0],
+          },
         },
       },
     },

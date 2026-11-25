@@ -2,13 +2,15 @@
 title: "ADR 0023 — Range-capable file serving (serveFile)"
 type: decision
 status: accepted
+amendedBy: ["0281"]
 created: 2026-06-05
 updated: 2026-06-05
 ---
 
 # ADR 0023 — Range-capable file serving (`serveFile`)
 
-- **Status:** Accepted — extends [ADR 0013](0013-runtime-agnostic-core.md)
+**Relations:** extends [ADR 0013](0013-runtime-agnostic-core.md)
+
 - **Date:** 2026-06-05
 
 ## Context

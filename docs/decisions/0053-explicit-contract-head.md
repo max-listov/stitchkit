@@ -9,9 +9,9 @@ updated: 2026-08-07
 
 # ADR 0053 — HEAD is an explicit contract operation
 
-- **Status:** Accepted — extends the raw-response boundary in
-  [ADR 0038](0038-raw-response-endpoints.md) and file semantics in
-  [ADR 0023](0023-range-file-serving.md)
+**Relations:** extends the raw-response boundary in [ADR 0038](0038-raw-response-endpoints.md) and
+file semantics in [ADR 0023](0023-range-file-serving.md)
+
 - **Date:** 2026-08-07
 
 ## Context

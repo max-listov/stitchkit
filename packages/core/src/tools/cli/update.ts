@@ -12,6 +12,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { writeFileAtomicSync } from '../../internal/atomic-file';
+import { assertTimerMs } from '../../internal/deadline';
 import { fetchGuarded, PrivateAddressRefusal, readCapped } from '../../internal/secure-fetch';
 import {
   type CliBuildAsset,
@@ -288,6 +289,10 @@ export interface AppliedCliUpdate {
  */
 export async function applyCliUpdate(config: CliUpdateApplyConfig): Promise<AppliedCliUpdate> {
   const target = config.targetPath ?? process.execPath;
+  // Before the download: a deadline refused after the bytes arrived refuses nothing.
+  assertTimerMs('[stitchkit] update: timeoutMs', config.timeoutMs);
+  assertTimerMs('[stitchkit] update: idleTimeoutMs', config.idleTimeoutMs);
+  assertTimerMs('[stitchkit] update: verifyTimeoutMs', config.verifyTimeoutMs);
   if (config.trust) {
     // Before the fetch, deliberately. A signature checked after the download is
     // a signature checked after the bytes were already on the machine, and the
@@ -358,9 +363,6 @@ async function verifyCandidate(
   verify: NonNullable<CliUpdateApplyConfig['verify']>,
   timeoutMs = DEFAULT_VERIFY_TIMEOUT_MS,
 ): Promise<void> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new RangeError('[stitchkit] update: verifyTimeoutMs must be a positive number');
-  }
   // The extension is kept: a runtime picks its loader by it.
   const candidate = join(
     dirname(target),

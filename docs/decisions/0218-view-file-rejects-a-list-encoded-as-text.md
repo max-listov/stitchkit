@@ -1,7 +1,8 @@
 ---
 title: "ADR 0218: view_file rejects a list encoded as text"
 description: "The semantic check of paths belongs to the shared view_file schema; a mistaken list is rejected before IO with a hint, without changing the shared string-union coercion."
-status: active
+status: accepted
+amendedBy: ["0239"]
 created: 2026-09-30 15:26 +07:00
 updated: 2026-09-30 15:26 +07:00
 type: decision

@@ -197,7 +197,7 @@ export function createSearchAndPatchCodingTools(
     identity: { serviceName: 'coding', action: 'edit-file', method: 'POST' },
     input: EditInputSchema,
     output: EditOutputSchema,
-    transports: ['AGENT'],
+    expose: ['AGENT'],
     handler: ({ input }) => editFile(config, limits, input),
   });
   return [createSearchCodingTool(config, limits), edit];

@@ -39,12 +39,12 @@ const config: McpClientConnectionConfig = {
   maxResponseBytes: 1024,
   limits,
   catalog,
-  transports: ['CLI'],
+  expose: ['CLI'],
 };
 const definition = defineMcpClientConnection(config);
 const mounted = mountConnections([definition]);
 const compiled = mounted.then((runtimeTools) =>
-  createCliInvoker({ name: 'packed', runtimeTools }),
+  createCliInvoker({ access: { open: 'local-operator' }, name: 'packed', runtimeTools }),
 );
 const phase: ConnectionPhase = 'discovery';
 const operation: ConnectionOperation = 'initialize';

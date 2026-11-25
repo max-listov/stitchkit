@@ -12,11 +12,21 @@
  * of the gate, other than the command itself, was left behind by it. The gate names those
  * processes, kills them, and fails.
  *
- * Usage: `bun scripts/test-leak-gate.ts <command> [args...]`. Linux only; elsewhere the command runs
- * unchecked and the line says the leak check could not be measured.
+ * With `--tmpdir` the gate also gives the command a fresh, empty `TMPDIR` and fails the run when
+ * anything is left in it once the command has exited (`scripts/test-temp-residue.ts`); that half is
+ * portable.
+ *
+ * Usage: `bun scripts/test-leak-gate.ts [--tmpdir --] <command> [args...]`. The process check is
+ * Linux only; elsewhere the command runs without it and the line says it could not be measured.
  */
 import { dlopen, FFIType } from 'bun:ffi';
 import { readdirSync, readFileSync } from 'node:fs';
+import {
+  createRunTempDir,
+  describeTempResidue,
+  removeRunTempDir,
+  tempResidue,
+} from './test-temp-residue';
 
 const PR_SET_CHILD_SUBREAPER = 36;
 
@@ -96,10 +106,10 @@ export interface LeakCheckedRun {
 /** Runs `argv`, then reports and kills what it left behind. Requires `becomeSubreaper()` to have succeeded. */
 export async function runWithLeakCheck(
   argv: readonly string[],
-  options: { settleMs?: number; proc?: string } = {},
+  options: { settleMs?: number; proc?: string; env?: Record<string, string | undefined> } = {},
 ): Promise<LeakCheckedRun> {
-  const { settleMs = SETTLE_MS, proc = '/proc' } = options;
-  const child = Bun.spawn([...argv], { stdio: ['inherit', 'inherit', 'inherit'] });
+  const { settleMs = SETTLE_MS, proc = '/proc', env = process.env } = options;
+  const child = Bun.spawn([...argv], { stdio: ['inherit', 'inherit', 'inherit'], env });
   // A terminal delivers SIGINT to the command itself; the gate must outlive it to do its check.
   const forward = (name: NodeJS.Signals) => () => child.kill(name);
   const handlers = [
@@ -136,23 +146,70 @@ export async function runWithLeakCheck(
   return { exitCode, leaked: [...leaked.values()] };
 }
 
+export interface GateArguments {
+  /** Give the command its own empty `TMPDIR` and fail on what it leaves there. */
+  tmpdir: boolean;
+  /**
+   * Skip the subreaper half: for a suite whose tests prove what happens to an orphan once its
+   * parent is killed, which they can only observe when init, not the gate, adopts it.
+   */
+  noProcessCheck: boolean;
+  command: string[];
+}
+
+const USAGE =
+  'Usage: test-leak-gate.ts [--tmpdir] [--no-process-check] [--] <command> [args...]';
+
+/** Options, then `--` and the command; Bun has already consumed a `--` that came first. */
+export function parseGateArguments(argv: readonly string[]): GateArguments {
+  const rest = [...argv];
+  const options = new Set<string>();
+  while (rest[0] === '--tmpdir' || rest[0] === '--no-process-check')
+    options.add(rest.shift() ?? '');
+  if (options.size > 0 && rest[0] === '--') rest.shift();
+  if (rest.length === 0) throw new Error(USAGE);
+  return {
+    tmpdir: options.has('--tmpdir'),
+    noProcessCheck: options.has('--no-process-check'),
+    command: rest,
+  };
+}
+
 if (import.meta.main) {
-  // Bun consumes a leading `--`, so the command is everything after the script.
-  const argv = process.argv.slice(2);
-  if (argv.length === 0) throw new Error('Usage: test-leak-gate.ts <command> [args...]');
-  if (!becomeSubreaper()) {
-    process.stderr.write(
-      `[test-gate] leak check not measurable on ${process.platform}: cannot become a subreaper; running the command unchecked\n`,
-    );
-    process.exit(await Bun.spawn(argv, { stdio: ['inherit', 'inherit', 'inherit'] }).exited);
+  const { tmpdir, noProcessCheck, command } = parseGateArguments(process.argv.slice(2));
+  const temp = tmpdir ? createRunTempDir() : undefined;
+  const env = temp === undefined ? process.env : { ...process.env, TMPDIR: temp };
+  let exitCode: number;
+  let leaked: ProcessInfo[] = [];
+  try {
+    if (noProcessCheck)
+      exitCode = await Bun.spawn(command, { stdio: ['inherit', 'inherit', 'inherit'], env })
+        .exited;
+    else if (becomeSubreaper())
+      ({ exitCode, leaked } = await runWithLeakCheck(command, { env }));
+    else {
+      process.stderr.write(
+        `[test-gate] process leak check not measurable on ${process.platform}: cannot become a subreaper; running the command without it\n`,
+      );
+      exitCode = await Bun.spawn(command, { stdio: ['inherit', 'inherit', 'inherit'], env })
+        .exited;
+    }
+  } catch (error) {
+    if (temp !== undefined) removeRunTempDir(temp);
+    throw error;
   }
-  const { exitCode, leaked } = await runWithLeakCheck(argv);
   if (leaked.length > 0) {
     process.stderr.write(
-      `[test-gate] ${leaked.length} process(es) outlived \`${argv.join(' ')}\`; they were killed, and the run fails because a test left them behind:\n`,
+      `[test-gate] ${leaked.length} process(es) outlived \`${command.join(' ')}\`; they were killed, and the run fails because a test left them behind:\n`,
     );
     for (const { pid, args } of leaked)
       process.stderr.write(`  pid ${pid}: ${args.slice(0, 200)}\n`);
   }
-  process.exit(exitCode !== 0 ? exitCode : leaked.length > 0 ? 1 : 0);
+  // Read after the leaked processes are dead: one of them could still be writing.
+  const residue = temp === undefined ? [] : tempResidue(temp);
+  if (temp !== undefined) removeRunTempDir(temp);
+  if (residue.length > 0)
+    process.stderr.write(describeTempResidue(residue, command.join(' ')));
+  const left = leaked.length > 0 || residue.length > 0;
+  process.exit(exitCode !== 0 ? exitCode : left ? 1 : 0);
 }

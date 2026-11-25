@@ -14,6 +14,7 @@ import { z } from 'zod';
 import type { McpReportProgress } from '../src/contract/runtime-context';
 import {
   type AgentRuntimeEvent,
+  advanceAgentRuntimeEventCursor,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
@@ -158,7 +159,9 @@ function viewAfter(events: readonly AgentRuntimeEvent[]): AgentControlView {
 describe('tool progress under the agent runtime', () => {
   test('each report is a transient event of the call, and the model reads only the result', async () => {
     const stages = ['waiting: queued', 'waiting: rendering', 'finished: done'];
-    const { events, model } = await run(mountAgent([generationService(stages)]));
+    const { events, model } = await run(
+      mountAgent([generationService(stages)], { access: { open: 'local-operator' } }),
+    );
 
     expect(progressEvents(events)).toEqual(
       stages.map((message, index) =>
@@ -179,7 +182,9 @@ describe('tool progress under the agent runtime', () => {
 
   test('the control view shows the last report while the call runs and drops it when it settles', async () => {
     const stages = ['waiting: queued', 'waiting: rendering'];
-    const { events } = await run(mountAgent([generationService(stages)]));
+    const { events } = await run(
+      mountAgent([generationService(stages)], { access: { open: 'local-operator' } }),
+    );
     const lastProgress = events.findLastIndex((event) => event.type === 'tool-progress');
     const running = viewAfter(events.slice(0, lastProgress + 1)).conversations.progress;
     const runId = events[lastProgress]?.runId ?? '';
@@ -202,7 +207,9 @@ describe('tool progress under the agent runtime', () => {
   test('a report after the call settled is dropped', async () => {
     let report: McpReportProgress | undefined;
     const { events } = await run(
-      mountAgent([generationService([], (kept) => (report = kept))]),
+      mountAgent([generationService([], (kept) => (report = kept))], {
+        access: { open: 'local-operator' },
+      }),
     );
     expect(report).toBeDefined();
     await report?.({ message: 'late' });
@@ -212,9 +219,14 @@ describe('tool progress under the agent runtime', () => {
   test('reports inside the rate window are dropped, and a long message is cut to the limit', async () => {
     const at = new Date(Date.UTC(2026, 10, 10));
     const long = 'x'.repeat(AGENT_TOOL_PROGRESS_MESSAGE_MAX + 200);
-    const { events } = await run(mountAgent([generationService([long, 'second', 'third'])]), {
-      now: () => at,
-    });
+    const { events } = await run(
+      mountAgent([generationService([long, 'second', 'third'])], {
+        access: { open: 'local-operator' },
+      }),
+      {
+        now: () => at,
+      },
+    );
     const published = progressEvents(events);
     expect(published).toHaveLength(1);
     expect(published[0]?.message).toHaveLength(AGENT_TOOL_PROGRESS_MESSAGE_MAX);
@@ -277,9 +289,12 @@ describe('the control view keeps each call to itself', () => {
         message: 'b working',
       },
       {
-        ...head,
+        conversationId: 'c',
+        runId: 'r',
+        emittedAt: '2026-11-10T06:00:00.000Z',
         type: 'tool-status',
-        sequence: 3,
+        eventId: 'r:tool-status:b:failed:1',
+        snapshotVersion: 1,
         callId: 'b',
         toolName: 'two',
         status: 'failed',
@@ -307,5 +322,59 @@ describe('the control view keeps each call to itself', () => {
       reasoning: '',
       tools: {},
     });
+  });
+});
+
+describe('tool status is durable', () => {
+  test('each status follows the checkpoint that holds its call, at that snapshot version', async () => {
+    const plain = tool({
+      description: 'Wait',
+      inputSchema: jsonSchema<Record<string, never>>({ type: 'object' }),
+      execute: async () => ({ status: 'finished' }),
+    });
+    const { events } = await run({ generation_wait: plain });
+    const statuses = events.flatMap((event, index) =>
+      event.type === 'tool-status' ? [{ event, index }] : [],
+    );
+    expect(statuses.map(({ event }) => event.type === 'tool-status' && event.status)).toEqual([
+      'started',
+      'completed',
+    ]);
+    for (const { event, index } of statuses) {
+      if (event.type !== 'tool-status') continue;
+      const before = events[index - 1];
+      expect(before?.type).toBe('assistant-checkpoint');
+      if (before?.type !== 'assistant-checkpoint') continue;
+      expect(event.snapshotVersion).toBe(before.snapshotVersion);
+      expect(event.eventId).toBe(
+        `${event.runId}:tool-status:${event.callId}:${event.status}:${event.snapshotVersion}`,
+      );
+      const holds = before.message.parts.some(
+        (part) =>
+          (part.type === 'tool-call' || part.type === 'tool-result') &&
+          part.callId === event.callId &&
+          (event.status === 'started'
+            ? part.type === 'tool-call'
+            : part.type === 'tool-result'),
+      );
+      expect(holds).toBe(true);
+    }
+  });
+
+  test('the cursor accepts a tool status once and drops its repeat', () => {
+    const status: AgentRuntimeEvent = {
+      type: 'tool-status',
+      conversationId: 'c',
+      runId: 'r',
+      eventId: 'r:tool-status:call:completed:3',
+      snapshotVersion: 3,
+      callId: 'call',
+      toolName: 'one',
+      status: 'completed',
+      emittedAt: '2026-11-24T00:00:00.000Z',
+    };
+    const first = advanceAgentRuntimeEventCursor({}, status);
+    expect(first.status).toBe('accepted');
+    expect(advanceAgentRuntimeEventCursor(first.cursor, status).status).toBe('duplicate');
   });
 });

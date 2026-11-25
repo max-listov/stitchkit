@@ -9,9 +9,9 @@ updated: 2026-08-14
 
 # ADR 0071 — Streaming multipart uses a Fetch-clean sequential parser
 
-- **Status:** Accepted — preserves the runtime-neutral boundary of
-  [ADR 0013](0013-runtime-agnostic-core.md) and the typed HTTP surface of
-  [ADR 0005](0005-typed-client.md).
+**Relations:** preserves the runtime-neutral boundary of [ADR 0013](0013-runtime-agnostic-core.md)
+and the typed HTTP surface of [ADR 0005](0005-typed-client.md).
+
 - **Date:** 2026-08-14
 
 ## Context

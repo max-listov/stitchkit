@@ -39,7 +39,6 @@ export {
 } from '../contract/define';
 export {
   AppError,
-  appError,
   badRequest,
   conflict,
   type ErrorEnvelope,
@@ -90,6 +89,12 @@ export {
   contractFingerprint,
 } from '../contract/fingerprint';
 export { contractIdentityContract } from '../contract/identity';
+export {
+  contractOperationEffects,
+  type OperationEffect,
+  OperationEffectSchema,
+  requireContractOperationEffects,
+} from '../contract/operation-effect';
 export {
   decodeCursor,
   encodeCursor,

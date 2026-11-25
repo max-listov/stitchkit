@@ -2,7 +2,7 @@
 title: Machine identity, not host name, decides whose pid this is
 description: The journal lock's liveness guard attributes an owner by a stable machine identity, because a host name is mutable state and a renamed machine was classified as foreign to itself.
 type: decision
-status: active
+status: accepted
 created: 2026-09-02
 updated: 2026-09-02
 ---

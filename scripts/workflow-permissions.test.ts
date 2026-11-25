@@ -7,6 +7,7 @@ const root = join(import.meta.dir, '..');
 const ci = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 const release = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
 const retry = readFileSync(join(root, '.github/workflows/ci-retry.yml'), 'utf8');
+const load = readFileSync(join(root, '.github/workflows/load.yml'), 'utf8');
 
 function section(name: string, next?: string): string {
   const start = ci.indexOf(`\n  ${name}:\n`);
@@ -22,24 +23,40 @@ describe('workflow trust boundary', () => {
   });
 
   test('every third-party action is pinned to a full commit SHA', () => {
-    for (const source of [ci, release, retry]) {
+    for (const source of [ci, release, retry, load]) {
       for (const match of source.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)) {
         expect(match[1]).toMatch(/@[0-9a-f]{40}\b/);
       }
     }
   });
 
+  test('every job declares its own time limit', () => {
+    // The release conveyor waits for a workflow as long as its heaviest chain of job limits;
+    // a job without one would make that GitHub's six-hour default.
+    for (const source of [ci, release, retry, load]) {
+      const { jobs } = Bun.YAML.parse(source) as {
+        jobs: Record<string, Record<string, unknown>>;
+      };
+      const unbounded = Object.entries(jobs)
+        .filter(([, job]) => typeof job['timeout-minutes'] !== 'number')
+        .map(([name]) => name);
+      expect(unbounded).toEqual([]);
+    }
+  });
+
   test('workflow permissions default to read-only', () => {
-    for (const source of [ci, release, retry]) {
+    for (const source of [ci, release, retry, load]) {
       expect(source.slice(0, source.indexOf('jobs:'))).toMatch(
         /permissions:\s*\n\s+contents:\s*read/,
       );
     }
   });
 
-  test('the retry repeats only a first failed scheduled attempt, and only the retry job may write', () => {
+  test('the retry repeats only a first failed scheduled or push attempt, and only the retry job may write', () => {
     expect(retry).toContain('workflows: [CI]');
     expect(retry).toContain("github.event.workflow_run.event == 'schedule'");
+    expect(retry).toContain("github.event.workflow_run.event == 'push'");
+    expect(retry).not.toContain('pull_request');
     expect(retry).toContain("github.event.workflow_run.conclusion == 'failure'");
     expect(retry).toContain('github.event.workflow_run.run_attempt == 1');
     expect(retry.match(/actions:\s*write/g)).toHaveLength(1);
@@ -64,9 +81,9 @@ describe('target-aware CI graph', () => {
     expect(repository.indexOf('bun --filter stitchkit build')).toBeGreaterThan(
       repository.indexOf('bun run check:scripts'),
     );
-    expect(repository.indexOf('bun test scripts/*.test.ts')).toBeGreaterThan(
-      repository.indexOf('bun --filter stitchkit build'),
-    );
+    expect(
+      repository.indexOf("bun scripts/test-suites.ts scripts 'scripts orphans'"),
+    ).toBeGreaterThan(repository.indexOf('bun --filter stitchkit build'));
   });
 
   test('generated starter matrices replace source-template duplication while Agent stays explicit', () => {

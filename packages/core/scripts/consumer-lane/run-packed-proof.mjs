@@ -11,12 +11,12 @@ import {
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { placeFixtureSupport } from './fixture-support/place.mjs';
-import { runInstalledConsumerProofs } from './installed-proof-runner.ts';
 import {
   declarationProofArguments,
   declarationProofVariants,
-  installedConsumerProofs,
-} from './installed-proofs.ts';
+} from './installed-proof-contract.ts';
+import { runInstalledConsumerProofs } from './installed-proof-runner.ts';
+import { installedConsumerProofs } from './installed-proofs.ts';
 
 const here = import.meta.dirname;
 const packageRoot = join(here, '..', '..');

@@ -1,7 +1,8 @@
 ---
 title: MCP server leaf has no AI SDK peer
 description: A supported server entrypoint preserves the canonical MCP implementation while isolating runtime and declaration peers.
-status: active
+status: accepted
+amendedBy: ["0284"]
 created: 2026-10-04 13:11 +07:00
 updated: 2026-11-05 08:58 +07:00
 type: decision

@@ -1,6 +1,14 @@
+---
+title: "ADR 0192 — Running a parsed call, without owning the application's namespace"
+type: decision
+status: accepted
+amendedBy: ["0194"]
+created: 2026-09-22
+updated: 2026-09-22
+---
+
 # 0192 — Running a parsed call, without owning the application's namespace
 
-**Status:** Accepted
 **Date:** 2026-09-22
 
 ## Context

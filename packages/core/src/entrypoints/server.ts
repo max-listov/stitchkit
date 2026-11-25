@@ -93,6 +93,12 @@ export {
   type ScopedRegistryHandlers,
 } from '../server/implement-registry';
 export { composeLifecycleHooks } from '../server/lifecycle';
+export {
+  createLocalHostGuard,
+  type LocalHostGuard,
+  type LocalHostGuardConfig,
+  type LocalHostRefusal,
+} from '../server/local-host';
 export type { LogFormat } from '../server/logger';
 export {
   type AuthHook,
@@ -138,6 +144,15 @@ export {
   verifyJwt,
 } from '../server/middleware/jwt';
 export { deriveCodeChallenge, type PkceMethod, verifyPkce } from '../server/middleware/pkce';
+export {
+  MAX_SIGNED_LINK_SECONDS,
+  type SignedLinkRefusal,
+  type SignedLinkVerdict,
+  type SignLinkOptions,
+  signLink,
+  type VerifySignedLinkOptions,
+  verifySignedLink,
+} from '../server/middleware/signed-link';
 export {
   createTrustFence,
   isLoopbackAddress,
@@ -258,7 +273,6 @@ export {
 } from '../server/websocket';
 export {
   AppError,
-  appError,
   badRequest,
   conflict,
   forbidden,

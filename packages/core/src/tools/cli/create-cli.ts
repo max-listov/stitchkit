@@ -6,7 +6,7 @@
  *
  * It is a peer of `mountMcp` / `mountAgent`, not a wrapper around the HTTP
  * client: a command runs through the very same `executeToolMethod` pipeline —
- * the same validation, the same `lifecycle.beforeHandle` auth gate, the same
+ * the same validation, the same `access` auth gate, the same
  * error model — so a CLI call accepts and rejects exactly as the other
  * transports do (ADR 0014 parity). The CLI-unique parts live around that core:
  * argv parsing (`cli-args`), stdout/exit formatting (`cli-format`) and `--wait`
@@ -20,6 +20,10 @@
  * `bin` entry in its own `package.json`.
  */
 import type { ZodObject } from 'zod';
+import type { ServiceDef } from '../../server/types';
+import { resolveOptionalCliToolAccess } from '../access';
+import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
+import type { CliCommandDefinition } from './command';
 import type { CliConfig } from './config';
 import {
   type CliInvocationResult,
@@ -32,11 +36,18 @@ import {
 } from './invoke';
 import { createCliIo } from './io';
 import { withCliNotices } from './notices';
+import {
+  assertNoLegacyCliPolicyKeys,
+  type CliCommandName,
+  type CliCommandSettings,
+} from './policy';
 import { runManagedInvocation } from './run-managed';
 import { runNativeCommand } from './run-native';
 import { createCliSession, resolveCliRoute } from './session';
 
 export type {
+  CliCommandName,
+  CliCommandSettings,
   CliConfig,
   CliInvocationResult,
   CliInvoker,
@@ -58,12 +69,16 @@ export async function createCli<
   TAuth = unknown,
   TContext extends Record<string, unknown> = Record<string, unknown>,
   TGlobals extends ZodObject = ZodObject,
->(config: CliConfig<TAuth, TContext, TGlobals>): Promise<void> {
+  TServices extends readonly ServiceDef[] = never,
+  TRuntime extends readonly RuntimeToolDefinition[] = never,
+  TCommands extends readonly CliCommandDefinition[] = never,
+>(
+  config: CliConfig<TAuth, TContext, TGlobals, TServices, TRuntime, TCommands>,
+): Promise<void> {
+  resolveOptionalCliToolAccess('createCli', config);
+  assertNoLegacyCliPolicyKeys(config);
   const io = createCliIo(config);
   const argv = config.argv ?? process.argv.slice(2);
-  if (config.auth !== undefined && config.resolveAuth !== undefined) {
-    throw new Error('[stitchkit] createCli: use either auth or resolveAuth, not both');
-  }
   const session = createCliSession(config, io);
 
   const route = resolveCliRoute(session, argv);

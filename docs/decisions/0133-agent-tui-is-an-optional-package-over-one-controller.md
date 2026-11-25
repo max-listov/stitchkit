@@ -3,6 +3,7 @@ title: "ADR 0133: Agent TUI is an optional package over one controller"
 description: "Terminal product mechanics live in stitchkit-tui while the headless runtime remains provider-neutral and owns the only execution loop."
 type: decision
 status: accepted
+supersedes: ["0132"]
 created: 2026-08-30
 updated: 2026-11-09 22:13 +07:00
 ---

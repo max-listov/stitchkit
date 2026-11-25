@@ -97,6 +97,7 @@ export {
   DiagnosticJournalWaitResultSchema,
   readDiagnosticJournalLockDiagnosis,
 } from '../application/diagnostic-journal-contract';
+export { formatDiagnosticJournalLockDiagnosis } from '../application/diagnostic-journal-lock-format';
 export {
   createDiagnosticJournalReadResultSchema,
   type DiagnosticJournalAnomaly,
@@ -196,6 +197,7 @@ export {
 } from '../application/notification-delivery';
 export {
   createNotificationOutbox,
+  createNotificationOutboxStateSchema,
   type DroppedNotification,
   type EnqueueNotification,
   type NotificationFailureClassification,
@@ -208,7 +210,6 @@ export {
   type NotificationOutboxState,
   type NotificationSend,
   notificationOutboxResource,
-  notificationOutboxStateSchema,
 } from '../application/notification-outbox';
 export {
   createProcessLifecycleLedger,
@@ -290,10 +291,50 @@ export {
   type ManagedScheduleTrigger,
 } from '../application/schedule-contract';
 export {
+  type ApplicationAdmissionSnapshot,
+  ApplicationAdmissionSnapshotSchema,
+  type ApplicationHealth,
+  ApplicationHealthSchema,
+  type ApplicationId,
+  ApplicationIdSchema,
+  type ApplicationLifecycle,
+  ApplicationLifecycleSchema,
+  type ApplicationResourceShutdown,
+  ApplicationResourceShutdownSchema,
+  type ApplicationShutdownResult,
+  ApplicationShutdownResultSchema,
+  type ApplicationSnapshot,
+  ApplicationSnapshotSchema,
+  type ApplicationStatusProjection,
+  ApplicationStatusProjectionSchema,
+  type ManagedResourceSnapshot,
+  ManagedResourceSnapshotSchema,
+  type ManagedResourceState,
+  ManagedResourceStateSchema,
+  projectApplicationStatus,
+} from '../application/schemas';
+export {
   type ManagedServerResource,
   type ManagedServerResourceConfig,
   managedServerResource,
 } from '../application/server-resource';
+export {
+  type AppliedSqliteMigration,
+  type AsyncSqliteConnection,
+  defineSqliteMigrations,
+  planSqliteMigrations,
+  runSqliteMigrations,
+  runSqliteMigrationsAsync,
+  SQLITE_MIGRATION_LEDGER_SQL,
+  type SqliteMigration,
+  type SqliteMigrationBegin,
+  type SqliteMigrationDefinition,
+  SqliteMigrationFailedError,
+  SqliteMigrationLedgerMismatchError,
+  SqliteMigrationLedgerUnreadableError,
+  type SqliteMigrationPlanInput,
+  type SqliteMigrationRun,
+} from '../application/sqlite-migrations';
 export type {
   StateStore,
   StateStoreUpdate,
@@ -334,4 +375,3 @@ export {
   createCreditWindow,
 } from '../internal/channel';
 export type { SqliteDatabase, SqliteStatement, SqliteValue } from '../internal/sqlite';
-export * from './application/schemas';

@@ -13,11 +13,27 @@ const fixture = connectionString
 
 describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
   beforeEach(async () => {
-    await fixture?.prisma.agentRuntimeMessage.deleteMany();
-    await fixture?.prisma.agentRuntimeAdmission.deleteMany();
-    await fixture?.prisma.agentRuntimeSeed.deleteMany();
-    await fixture?.prisma.agentRuntimeRun.deleteMany();
-    await fixture?.prisma.agentRuntimeState.deleteMany();
+    if (!fixture) return;
+    // The store's own tables, emptied between cases; the schema stays.
+    await fixture.store.readEvents({ conversationId: 'warm-up', limit: 1 });
+    await fixture.prisma.$executeRawUnsafe(
+      `TRUNCATE ${[
+        'heads',
+        'runs',
+        'admissions',
+        'messages',
+        'seeds',
+        'events',
+        'event_seq',
+        'projections',
+        'spills',
+        'schedules',
+        'children',
+        'purged',
+      ]
+        .map((table) => `${fixture.prefix}_${table}`)
+        .join(', ')}`,
+    );
   });
 
   afterAll(async () => {
@@ -28,7 +44,8 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
     if (!fixture) return;
     await runAgentStoreConformance({
       createStore: () => fixture.store,
-      armCommitConflict: fixture.armCommitConflict,
+      capabilities: { branch: true, planBranch: true, archive: true, historyRestore: true },
+      commitConflict: { arm: fixture.armCommitConflict },
     });
   });
 
@@ -237,10 +254,10 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
 
   test('reconstructs bounded recovery after a fresh adapter process', async () => {
     if (!connectionString || !fixture) return;
-    const conversationId = 'restart\u0000conversation';
+    const conversationId = 'restart\u00e9conversation';
     const input = AgentMessageSchema.parse({
       schemaVersion: 1,
-      id: 'restart\u0000input',
+      id: 'restart\u00e9input',
       conversationId,
       role: 'user',
       status: 'committed',
@@ -253,10 +270,10 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
       input,
       run: AgentRunSchema.parse({
         schemaVersion: 1,
-        id: 'restart\u0000run',
+        id: 'restart\u00e9run',
         conversationId,
         inputMessageIds: [input.id],
-        assistantMessageId: 'restart\u0000assistant',
+        assistantMessageId: 'restart\u00e9assistant',
         state: 'queued',
         revision: 0,
         createdAt: input.createdAt,
@@ -266,11 +283,11 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
     const restarted = createPrismaAgentStoreFixture({ connectionString });
     const page = await restarted.store.scanRecoverable({ limit: 1 });
     expect(page).toMatchObject({
-      items: [{ conversationId, run: { id: 'restart\u0000run', state: 'queued' } }],
+      items: [{ conversationId, run: { id: 'restart\u00e9run', state: 'queued' } }],
     });
     expect(await restarted.store.loadSnapshot(conversationId)).toMatchObject({
-      messages: [{ id: 'restart\u0000input' }],
-      runs: [{ id: 'restart\u0000run' }],
+      messages: [{ id: 'restart\u00e9input' }],
+      runs: [{ id: 'restart\u00e9run' }],
     });
     await restarted.prisma.$disconnect();
   });
@@ -369,29 +386,22 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
       previousSummaryId = summaryId;
     }
 
-    const conversationStorageId = Buffer.from(conversationId, 'utf8').toString('base64url');
     const [head, runCount, admissionCount, activeHistoryCount, recoverableCount] =
       await Promise.all([
-        fixture.prisma.agentRuntimeState.findUnique({
-          where: { conversationId: conversationStorageId },
-        }),
-        fixture.prisma.agentRuntimeRun.count({
-          where: { conversationId: conversationStorageId },
-        }),
-        fixture.prisma.agentRuntimeAdmission.count({
-          where: { conversationId: conversationStorageId },
-        }),
-        fixture.prisma.agentRuntimeMessage.count({
-          where: { conversationId: conversationStorageId, active: true },
-        }),
-        fixture.prisma.agentRuntimeRun.count({
-          where: {
-            conversationId: conversationStorageId,
-            state: { in: ['queued', 'running', 'interrupt_requested'] },
-          },
-        }),
+        fixture.prisma.$queryRawUnsafe<{ version: number }[]>(
+          `SELECT version FROM ${fixture.prefix}_heads WHERE conversation_id = $1`,
+          conversationId,
+        ),
+        fixture.count('runs', conversationId),
+        fixture.count('admissions', conversationId),
+        fixture.count('messages', conversationId, 'AND active = 1'),
+        fixture.count(
+          'runs',
+          conversationId,
+          "AND state IN ('queued', 'running', 'interrupt_requested')",
+        ),
       ]);
-    expect(head).toEqual({ conversationId: conversationStorageId, version: 256 });
+    expect(head).toEqual([{ version: 256 }]);
     expect({ runCount, admissionCount, activeHistoryCount, recoverableCount }).toEqual({
       runCount: 64,
       admissionCount: 64,
@@ -412,7 +422,7 @@ describe.skipIf(!fixture)('Prisma/PostgreSQL agent store reference', () => {
     const startedAt = performance.now();
     await expect(
       fixture.store.importConversation(new TextEncoder().encode(copied)),
-    ).rejects.toThrow(/eventId|Unique constraint/);
+    ).rejects.toThrow(/event_id|unique constraint/i);
     // One transaction, not thirty-two serializable attempts.
     expect(performance.now() - startedAt).toBeLessThan(2_000);
   });

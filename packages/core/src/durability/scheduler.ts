@@ -1,9 +1,10 @@
-import { MAX_TIMER_MS } from '../internal/timers';
+import { scheduleAt } from '../internal/timers';
 import { type DurabilityClock, ParkAbortedError, type StepDurabilityLedger } from './contract';
+/** The wall clock and an unreferenced timer; a wait past the timer ceiling steps through `scheduleAt`. */
 export const systemClock: DurabilityClock = {
   now: () => Date.now(),
   schedule(callback, delayMs) {
-    const timer = setTimeout(callback, Math.min(delayMs, MAX_TIMER_MS));
+    const timer = setTimeout(callback, delayMs);
     timer.unref();
     return { cancel: () => clearTimeout(timer) };
   },
@@ -33,44 +34,35 @@ export function notifyWaiters(parkWaiters: InFlightDurability['waiters'], key: s
   for (const wake of [...waiters]) wake();
 }
 
-/** Resolve `'elapsed'` when the timer fires, `'aborted'` if the signal fires first. */
-function waitForTimer(
-  clock: DurabilityClock,
-  delayMs: number,
-  signal?: AbortSignal,
-): Promise<'elapsed' | 'aborted'> {
-  return new Promise((resolve) => {
-    let timer: { cancel(): void } | undefined;
-    let settled = false;
-    const finish = (outcome: 'elapsed' | 'aborted') => {
-      if (settled) return;
-      settled = true;
-      timer?.cancel();
-      signal?.removeEventListener('abort', onAbort);
-      resolve(outcome);
-    };
-    const onAbort = () => finish('aborted');
-    timer = clock.schedule(() => finish('elapsed'), delayMs);
-    if (signal) {
-      if (signal.aborted) onAbort();
-      else signal.addEventListener('abort', onAbort, { once: true });
-    }
-  });
-}
-
-export async function waitForDeadline(
+/**
+ * Wait until `deadline` on `clock`, through `scheduleAt`, or fail with `ParkAbortedError` as
+ * soon as `signal` aborts. A deadline already passed returns at once.
+ */
+export function waitForDeadline(
   clock: DurabilityClock,
   deadline: number,
   park: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  for (;;) {
-    if (signal?.aborted) throw new ParkAbortedError(park);
-    const remaining = deadline - clock.now();
-    if (remaining <= 0) return;
-    const outcome = await waitForTimer(clock, remaining, signal);
-    if (outcome === 'aborted') throw new ParkAbortedError(park);
-  }
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new ParkAbortedError(park));
+      return;
+    }
+    if (deadline - clock.now() <= 0) {
+      resolve();
+      return;
+    }
+    const onAbort = () => {
+      timer.cancel();
+      reject(new ParkAbortedError(park));
+    };
+    const timer = scheduleAt(clock, deadline, () => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    });
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 interface ParkWaiter {

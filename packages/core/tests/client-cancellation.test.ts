@@ -327,6 +327,92 @@ describe.each([
   });
 });
 
+function abortListeners(signal: AbortSignal): () => number {
+  let attached = 0;
+  const add = signal.addEventListener.bind(signal);
+  const remove = signal.removeEventListener.bind(signal);
+  signal.addEventListener = (type: string, ...rest: [never, never?]) => {
+    if (type === 'abort') attached += 1;
+    add(type, ...rest);
+  };
+  signal.removeEventListener = (type: string, ...rest: [never, never?]) => {
+    if (type === 'abort') attached -= 1;
+    remove(type, ...rest);
+  };
+  return () => attached;
+}
+
+const encoder = new TextEncoder();
+const streamTransport: ClientFetch = async (input, init) => {
+  const request = input instanceof Request ? input : new Request(input, init);
+  const signal = init?.signal ?? request.signal;
+  if (!new URL(request.url).pathname.endsWith('/stream')) return Response.json({ ok: true });
+  const ends = request.headers.get('x-end') === 'yes';
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('{"type":"data","data":{"ok":true}}\n'));
+      if (ends) controller.enqueue(encoder.encode('{"type":"end"}\n'));
+      if (ends) controller.close();
+      else
+        signal.addEventListener('abort', () => controller.error(signal.reason), {
+          once: true,
+        });
+    },
+  });
+  return new Response(body, { headers: { 'content-type': 'application/x-ndjson' } });
+};
+
+describe.each([
+  [
+    'bare fetch',
+    (end: boolean) =>
+      createClient(contract, {
+        baseUrl,
+        fetch: streamTransport,
+        headers: { 'x-end': end ? 'yes' : 'no' },
+      }),
+  ],
+  [
+    'Ky adapter',
+    (end: boolean) =>
+      createClient(
+        contract,
+        createHttpClient({
+          baseUrl,
+          fetch: streamTransport,
+          headers: { 'x-end': end ? 'yes' : 'no' },
+          retry: { limit: 0 },
+        }),
+      ),
+  ],
+])('caller signal links — %s', (_name, makeClient) => {
+  test('a long-lived caller signal keeps no link after read calls or a finished stream', async () => {
+    const caller = new AbortController();
+    const attached = abortListeners(caller.signal);
+    const api = makeClient(true);
+    for (let call = 0; call < 3; call += 1) {
+      await expect(api.ping.withOptions({ signal: caller.signal })).resolves.toEqual({
+        ok: true,
+      });
+    }
+    expect(attached()).toBe(0);
+    const finished = await api.stream.withOptions({ signal: caller.signal });
+    expect(await Array.fromAsync(finished)).toEqual([{ ok: true }]);
+    expect(attached()).toBe(0);
+  });
+
+  test('the caller still ends a stream that outlived its open, and the link goes with it', async () => {
+    const caller = new AbortController();
+    const attached = abortListeners(caller.signal);
+    const open = await makeClient(false).stream.withOptions({ signal: caller.signal });
+    expect(await open.next()).toEqual({ done: false, value: { ok: true } });
+    const pending = open.next();
+    caller.abort(new Error('caller left the screen'));
+    await expect(pending).rejects.toBeDefined();
+    expect(attached()).toBe(0);
+  });
+});
+
 // Compile-time surface: ordinary calls carry only contract arguments; transport
 // options live exclusively on the callable's explicit method.
 function compileTimeCancellationChecks(): void {

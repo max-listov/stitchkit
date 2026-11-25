@@ -1,4 +1,5 @@
 import type { ToolCallRepairFunction, ToolSet } from 'ai';
+import { resolveToolAccess } from '../tools/access';
 import { mountAgent } from '../tools/agent';
 import { buildToolManifest } from '../tools/manifest';
 import { executableAgentRuntimeTools } from '../tools/runtime-tool';
@@ -44,16 +45,53 @@ function resolveSurface<CONTEXT>(
   return surface;
 }
 
+/** How the surface advertises every input: the one projection its manifest and its mount use. */
+type SurfaceProjection = Pick<
+  DeferredAgentToolSurfaceConfig<unknown>,
+  'extend' | 'flattenUnionInput' | 'inputRecursionDepth'
+>;
+
+const PROJECTION_KEYS = ['extend', 'flattenUnionInput', 'inputRecursionDepth'] as const;
+
+function surfaceProjection<CONTEXT>(
+  config: DeferredAgentToolSurfaceConfig<CONTEXT>,
+): SurfaceProjection {
+  return {
+    ...(config.extend !== undefined && { extend: config.extend }),
+    ...(config.flattenUnionInput !== undefined && {
+      flattenUnionInput: config.flattenUnionInput,
+    }),
+    ...(config.inputRecursionDepth !== undefined && {
+      inputRecursionDepth: config.inputRecursionDepth,
+    }),
+  };
+}
+
+/**
+ * A mount that names a projection option would advertise schemas the ceilings never
+ * measured; it is the surface's, set where the ceilings are checked.
+ */
+function refuseMountProjection(mountConfig: object): void {
+  for (const key of PROJECTION_KEYS) {
+    if (key in mountConfig)
+      throw new TypeError(
+        `createDeferredAgentToolSurface.mount: ${key} belongs to createDeferredAgentToolSurface, where maxSchemaBytes measures the schemas it shapes`,
+      );
+  }
+}
+
 function resolveAllSurfaces<CONTEXT>(
   config: DeferredAgentToolSurfaceConfig<CONTEXT>,
+  projection: SurfaceProjection,
 ): Map<string, DeferredResolvedSurface> {
   const placeholderSearch = placeholderDeferredSearch(config.search.name);
   const surfaces = new Map<string, DeferredResolvedSurface>();
   for (const [key, definition] of Object.entries(configuredSurfaces(config))) {
     const runtimeTools = executableAgentRuntimeTools(definition.runtimeTools ?? []);
     const fullManifest = buildToolManifest({
-      ...definition,
+      ...(definition.services && { services: definition.services }),
       runtimeTools: [...runtimeTools, placeholderSearch],
+      ...projection,
       transport: 'AGENT',
     });
     const searchEntry = fullManifest.find((entry) => entry.name === config.search.name);
@@ -131,11 +169,14 @@ export function createDeferredAgentToolSurface<CONTEXT>(
   positive('activation.maxSelectedTools', config.activation.maxSelectedTools);
   positive('activation.maxActiveTools', config.activation.maxActiveTools);
   positive('activation.maxSchemaBytes', config.activation.maxSchemaBytes);
-  const surfaces = resolveAllSurfaces(config);
+  const projection = surfaceProjection(config);
+  const surfaces = resolveAllSurfaces(config, projection);
   assertConstructionBudgets(config, surfaces);
 
   return {
-    mount(runContext, mountConfig = {}) {
+    mount(runContext, mountConfig) {
+      resolveToolAccess('createDeferredAgentToolSurface.mount', mountConfig);
+      refuseMountProjection(mountConfig);
       const surface = resolveSurface(config, surfaces, runContext);
       const runtimeTools = [
         ...executableAgentRuntimeTools(surface.definition.runtimeTools ?? []),
@@ -143,6 +184,7 @@ export function createDeferredAgentToolSurface<CONTEXT>(
       ];
       const tools = mountAgent([...(surface.definition.services ?? [])], {
         ...mountConfig,
+        ...projection,
         runtimeTools,
       });
       registerDeferredToolCatalog(tools, config.search.name, new Set(surface.byName.keys()));

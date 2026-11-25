@@ -1,14 +1,26 @@
-import {
-  Agent,
-  type ClientRequest,
-  request as httpRequest,
-  type IncomingMessage,
-} from 'node:http';
+import { Agent, request as httpRequest, type IncomingMessage } from 'node:http';
 import type { ClientFetch } from '../browser/transport';
+import { abortReason } from '../internal/abort-race';
+import { assertTimerMs } from '../internal/deadline';
+import { errnoOf } from '../internal/errno';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
-import { incomingResponseBody, readBoundedRequestBody } from './unix-client-body';
+import {
+  type UnixClientDeliveryState,
+  UnixClientTransportError,
+  unixTransportError,
+} from '../internal/unix-client-error';
+import {
+  assertUnixSocketClientTarget,
+  assertUnixSocketPathLength,
+} from '../internal/unix-socket';
+import {
+  cloneRequestBodyBuffer,
+  exceedsDeclaredResponseBytes,
+  incomingResponseBody,
+  incomingResponseHeaders,
+  readBoundedRequestBody,
+} from './unix-client-body';
 import { bunUnixRequest, hasBunUnixRuntime } from './unix-client-bun';
-import { UnixClientTransportError } from './unix-client-error';
 
 const DEFAULT_MAX_BODY_BYTES = 16 * 1024 * 1024;
 const DEFAULT_HEADERS_TIMEOUT_MS = 30_000;
@@ -73,31 +85,6 @@ function isRedirect(status: number): boolean {
   );
 }
 
-function requestBody(body: Uint8Array | undefined): ArrayBuffer | undefined {
-  if (body === undefined) return undefined;
-  const copy = new ArrayBuffer(body.byteLength);
-  new Uint8Array(copy).set(body);
-  return copy;
-}
-
-function responseHeaders(response: IncomingMessage): Headers {
-  const headers = new Headers();
-  for (let index = 0; index < response.rawHeaders.length; index += 2) {
-    const name = response.rawHeaders[index];
-    const value = response.rawHeaders[index + 1];
-    if (name !== undefined && value !== undefined) headers.append(name, value);
-  }
-  return headers;
-}
-
-function isNodeHeaderOverflow(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    Reflect.get(error, 'code') === 'HPE_HEADER_OVERFLOW'
-  );
-}
-
 function redirectedRequest(
   request: Request,
   location: string,
@@ -115,7 +102,7 @@ function redirectedRequest(
   return new Request(url, {
     method: changesToGet ? 'GET' : request.method,
     headers,
-    ...(!changesToGet && body !== undefined && { body: requestBody(body) }),
+    ...(!changesToGet && body !== undefined && { body: cloneRequestBodyBuffer(body) }),
     redirect: request.redirect,
     signal: request.signal,
   });
@@ -135,45 +122,26 @@ function resolveUnixClientLimits(config: UnixClientTransportConfig): UnixClientL
   if (!config.socketPath.startsWith('/') || config.socketPath.includes('\0')) {
     throw new TypeError('socketPath must be an absolute Unix socket path');
   }
-  const maxRequestBytes = positiveInteger(
-    config.maxRequestBytes,
-    DEFAULT_MAX_BODY_BYTES,
-    'maxRequestBytes',
-  );
+  assertUnixSocketPathLength(config.socketPath, 'createUnixClientTransport');
   if (config.responseBodyMode === 'streaming' && config.maxResponseBytes !== undefined) {
     throw new TypeError('maxResponseBytes cannot be combined with responseBodyMode streaming');
   }
-  const maxResponseBytes =
-    config.responseBodyMode === 'streaming'
-      ? undefined
-      : positiveInteger(config.maxResponseBytes, DEFAULT_MAX_BODY_BYTES, 'maxResponseBytes');
-  const headersTimeoutMs = positiveInteger(
-    config.headersTimeoutMs,
-    DEFAULT_HEADERS_TIMEOUT_MS,
-    'headersTimeoutMs',
-  );
-  const maxConnections = positiveInteger(
-    config.maxConnections,
-    DEFAULT_MAX_CONNECTIONS,
-    'maxConnections',
-  );
-  const maxHeaderBytes = positiveInteger(
-    config.maxHeaderBytes,
-    DEFAULT_MAX_HEADER_BYTES,
-    'maxHeaderBytes',
-  );
-  const maxRedirects = nonNegativeInteger(
-    config.maxRedirects,
-    DEFAULT_MAX_REDIRECTS,
-    'maxRedirects',
-  );
+  const pos = positiveInteger;
+  assertTimerMs('headersTimeoutMs', config.headersTimeoutMs);
   return {
-    maxRequestBytes,
-    maxResponseBytes,
-    headersTimeoutMs,
-    maxConnections,
-    maxHeaderBytes,
-    maxRedirects,
+    maxRequestBytes: pos(config.maxRequestBytes, DEFAULT_MAX_BODY_BYTES, 'maxRequestBytes'),
+    maxResponseBytes:
+      config.responseBodyMode === 'streaming'
+        ? undefined
+        : pos(config.maxResponseBytes, DEFAULT_MAX_BODY_BYTES, 'maxResponseBytes'),
+    headersTimeoutMs: config.headersTimeoutMs ?? DEFAULT_HEADERS_TIMEOUT_MS,
+    maxConnections: pos(config.maxConnections, DEFAULT_MAX_CONNECTIONS, 'maxConnections'),
+    maxHeaderBytes: pos(config.maxHeaderBytes, DEFAULT_MAX_HEADER_BYTES, 'maxHeaderBytes'),
+    maxRedirects: nonNegativeInteger(
+      config.maxRedirects,
+      DEFAULT_MAX_REDIRECTS,
+      'maxRedirects',
+    ),
   };
 }
 
@@ -210,7 +178,7 @@ interface NodeUnixRequestInput {
   agent: Agent;
   maxHeaderBytes: number;
   headersTimeoutMs: number;
-  activeRequests: Set<ClientRequest>;
+  activeRequests: Set<() => void>;
 }
 
 /**
@@ -256,11 +224,27 @@ function nodeUnixRequest(input: NodeUnixRequestInput): Promise<IncomingMessage> 
         });
       }
     });
-    activeRequests.add(outgoing);
+    const isDispatched = (): boolean =>
+      connected && (outgoing.socket?.bytesWritten ?? requestStartBytes) > requestStartBytes;
+    const { socketPath } = input;
+    const abortOnClose = (): void => {
+      const delivery = isDispatched() ? 'possibly-dispatched' : 'not-dispatched';
+      const error = unixTransportError(
+        socketPath,
+        'UNIX_CLIENT_CLOSED',
+        'Unix client transport is closed',
+        delivery,
+      );
+      rejectOnce(error);
+      outgoing.destroy(error);
+    };
+    activeRequests.add(abortOnClose);
     const timer = setTimeout(() => {
-      const error = new UnixClientTransportError(
+      const error = unixTransportError(
+        socketPath,
         'UNIX_HEADERS_TIMEOUT',
         `Unix response headers did not arrive within ${headersTimeoutMs}ms`,
+        'possibly-dispatched',
       );
       rejectOnce(error);
       outgoing.destroy(error);
@@ -268,36 +252,48 @@ function nodeUnixRequest(input: NodeUnixRequestInput): Promise<IncomingMessage> 
     timer.unref();
     outgoing.once('response', () => clearTimeout(timer));
     outgoing.once('error', (error) => {
-      if (isNodeHeaderOverflow(error)) {
-        rejectOnce(
-          new UnixClientTransportError(
+      if (error instanceof UnixClientTransportError) return rejectOnce(error);
+      const code = errnoOf(error);
+      if (code === 'HPE_HEADER_OVERFLOW') {
+        return rejectOnce(
+          unixTransportError(
+            socketPath,
             'UNIX_HEADERS_TOO_LARGE',
             `Unix response headers exceed the ${maxHeaderBytes} byte limit`,
             'response-received',
-            { cause: error },
+            error,
           ),
         );
-        return;
       }
-      // `bytesWritten` includes data buffered before a failed connect on
-      // Node, and is cumulative on a pooled socket. Delivery is ambiguous
-      // only after this socket really connected and this request advanced it.
-      const dispatched =
-        connected && (outgoing.socket?.bytesWritten ?? requestStartBytes) > requestStartBytes;
+      if (code?.startsWith('HPE_')) {
+        return rejectOnce(
+          unixTransportError(
+            socketPath,
+            'UNIX_RESPONSE_ABORTED',
+            'Unix response failed before completion',
+            'response-received',
+            error,
+          ),
+        );
+      }
+      // `bytesWritten` includes data buffered before a failed connect on Node, and is
+      // cumulative on a pooled socket. Delivery is ambiguous only after connect + writes.
+      const dispatched = isDispatched();
       rejectOnce(
-        new UnixClientTransportError(
+        unixTransportError(
+          socketPath,
           dispatched ? 'UNIX_DELIVERY_UNCERTAIN' : 'UNIX_CONNECT_FAILED',
           dispatched
             ? 'Unix request transport failed after dispatch may have begun'
             : 'Unix socket connection failed before request dispatch',
           dispatched ? 'possibly-dispatched' : 'not-dispatched',
-          { cause: error },
+          error,
         ),
       );
     });
     outgoing.once('close', () => {
       clearTimeout(timer);
-      activeRequests.delete(outgoing);
+      activeRequests.delete(abortOnClose);
     });
     outgoing.end(input.body);
   });
@@ -320,28 +316,37 @@ export function createUnixClientTransport(
     maxRedirects,
   } = resolveUnixClientLimits(config);
   const agent = new Agent({ keepAlive: true, maxSockets: maxConnections });
-  const activeRequests = new Set<ClientRequest>();
+  const activeRequests = new Set<() => void>();
   const activeResponses = new Set<IncomingMessage>();
   const bunAborters = new Set<() => void>();
+  const closeController = new AbortController();
   let closed = false;
+  const closedError = (delivery: UnixClientDeliveryState): UnixClientTransportError =>
+    unixTransportError(
+      config.socketPath,
+      'UNIX_CLIENT_CLOSED',
+      'Unix client transport is closed',
+      delivery,
+    );
 
   const dispatch = async (request: Request, redirectCount: number): Promise<Response> => {
-    if (closed) {
-      throw new UnixClientTransportError(
-        'UNIX_CLIENT_CLOSED',
-        'Unix client transport is closed',
-        'not-dispatched',
-      );
-    }
-    if (request.signal.aborted) throw request.signal.reason;
+    if (closed) throw closedError('not-dispatched');
+    if (request.signal.aborted) throw abortReason(request.signal);
     const url = new URL(request.url);
     if (url.protocol !== 'http:') {
       throw new TypeError('Unix client transport accepts only http: request URLs');
     }
-    const body = await readBoundedRequestBody(request, maxRequestBytes);
+    assertUnixSocketClientTarget(config.socketPath);
+    const body = await readBoundedRequestBody(
+      request,
+      maxRequestBytes,
+      closeController.signal,
+    );
+    if (closed) throw closedError('not-dispatched');
     if (hasBunUnixRuntime()) {
       if (bunAborters.size >= maxConnections) {
-        throw new UnixClientTransportError(
+        throw unixTransportError(
+          config.socketPath,
           'UNIX_CONNECTION_LIMIT',
           `Unix client connection limit ${maxConnections} reached`,
           'not-dispatched',
@@ -359,6 +364,10 @@ export function createUnixClientTransport(
           return () => void bunAborters.delete(abort);
         },
       });
+      if (closed) {
+        await response.body?.cancel().catch(() => undefined);
+        throw closedError('response-received');
+      }
       const location = response.headers.get('location');
       let step: 'return' | 'follow';
       try {
@@ -392,17 +401,15 @@ export function createUnixClientTransport(
       headersTimeoutMs,
       activeRequests,
     });
+    if (closed) {
+      incoming.destroy();
+      throw closedError('response-received');
+    }
     activeResponses.add(incoming);
     const releaseResponse = (): void => void activeResponses.delete(incoming);
     const status = incoming.statusCode ?? 0;
-    const responseHeadersValue = responseHeaders(incoming);
-    const declaredResponseBytes = responseHeadersValue.get('content-length');
-    if (
-      declaredResponseBytes !== null &&
-      /^\d+$/.test(declaredResponseBytes) &&
-      maxResponseBytes !== undefined &&
-      Number(declaredResponseBytes) > maxResponseBytes
-    ) {
+    const responseHeadersValue = incomingResponseHeaders(incoming);
+    if (exceedsDeclaredResponseBytes(responseHeadersValue, maxResponseBytes)) {
       incoming.destroy();
       releaseResponse();
       throw new UnixClientTransportError(
@@ -455,7 +462,8 @@ export function createUnixClientTransport(
     async close() {
       if (closed) return;
       closed = true;
-      for (const request of activeRequests) request.destroy();
+      closeController.abort(closedError('not-dispatched'));
+      for (const abort of [...activeRequests]) abort();
       for (const response of activeResponses) response.destroy();
       for (const abort of [...bunAborters]) abort();
       activeRequests.clear();
@@ -470,4 +478,4 @@ export {
   type UnixClientDeliveryState,
   UnixClientTransportError,
   type UnixClientTransportErrorCode,
-} from './unix-client-error';
+} from '../internal/unix-client-error';

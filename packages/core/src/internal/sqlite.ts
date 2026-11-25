@@ -37,3 +37,53 @@ export interface SqliteDatabase {
   prepare(sql: string): SqliteStatement;
   close(): void;
 }
+
+/** SQLite's own text when `ROLLBACK` finds no transaction: `bun:sqlite` and `node:sqlite` alike. */
+const NO_ACTIVE_TRANSACTION = /no transaction is active/;
+
+/**
+ * What a failed transaction ends with once `ROLLBACK` has run. A failing statement may already
+ * have ended the transaction (a constraint under `OR ROLLBACK`, a trigger's `RAISE(ROLLBACK)`),
+ * and then `ROLLBACK` reports that none is active: the failure alone stands. A rollback that
+ * fails for any other reason may leave the connection inside the transaction, and the next
+ * `BEGIN` is refused for a reason nobody saw — so both are returned, the failure first and as
+ * the cause.
+ */
+function failureAfterRollback(error: unknown, rollbackError: unknown): unknown {
+  if (rollbackError instanceof Error && NO_ACTIVE_TRANSACTION.test(rollbackError.message)) {
+    return error;
+  }
+  return new AggregateError(
+    [error, rollbackError],
+    'The SQLite transaction failed, and so did its rollback',
+    {
+      cause: error,
+    },
+  );
+}
+
+/** Roll back after `error` and return what the transaction failed with (see `failureAfterRollback`). */
+export function rollbackSqliteFailure(
+  database: { exec(sql: string): void },
+  error: unknown,
+): unknown {
+  try {
+    database.exec('ROLLBACK');
+  } catch (rollbackError) {
+    return failureAfterRollback(error, rollbackError);
+  }
+  return error;
+}
+
+/** The same settlement on a connection that only speaks promises. */
+export async function rollbackSqliteFailureAsync(
+  connection: { exec(sql: string): Promise<void> },
+  error: unknown,
+): Promise<unknown> {
+  try {
+    await connection.exec('ROLLBACK');
+  } catch (rollbackError) {
+    return failureAfterRollback(error, rollbackError);
+  }
+  return error;
+}

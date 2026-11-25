@@ -250,7 +250,7 @@ try {
     tools: (run) =>
       mountAgent([], {
         runtimeTools: [...codingTools, guardedOperation, ...fileResources.runtimeTools],
-        lifecycle: composeToolLifecycle(undefined, run.toolFenceLifecycle),
+        access: { gate: composeToolLifecycle(run.toolFenceLifecycle) },
       }),
     loop: {
       toolApproval: { edit_file: 'user-approval' },

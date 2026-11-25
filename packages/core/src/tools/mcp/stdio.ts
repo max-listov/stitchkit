@@ -1,4 +1,5 @@
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
+import { resolveToolAccess } from '../access';
 import type { McpLegacyPolicy } from './handler';
 import { buildMcpServer, type McpServerBuildConfig } from './mount';
 import type { McpSurfaceRegistry } from './prepare';
@@ -34,6 +35,7 @@ export interface McpStdioHandle {
 export async function createStdioMcpServer<TAuth>(
   config: StdioMcpServerConfig<TAuth>,
 ): Promise<McpStdioHandle> {
+  resolveToolAccess('createStdioMcpServer', config);
   const auth = await config.auth;
   return serveStdio(() => buildMcpServer(config, auth), {
     legacy: config.legacy ?? 'serve',

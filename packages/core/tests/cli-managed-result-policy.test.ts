@@ -64,18 +64,20 @@ function fixture() {
         }
       })(),
   });
-  const results = {
-    lookup: defineCliResult(LookupOutput, {
-      present: ({ result, options }) =>
-        options.json
-          ? `${JSON.stringify(result)}\n`
-          : result.found
-            ? `FOUND ${result.address}\n`
-            : 'NOT FOUND\n',
-      exitCode: (result) => (result.found ? 0 : result.machine === 'unreachable' ? 2 : 1),
-    }),
+  const commandSettings = {
+    lookup: {
+      result: defineCliResult(LookupOutput, {
+        present: ({ result, options }) =>
+          options.json
+            ? `${JSON.stringify(result)}\n`
+            : result.found
+              ? `FOUND ${result.address}\n`
+              : 'NOT FOUND\n',
+        exitCode: (result) => (result.found ? 0 : result.machine === 'unreachable' ? 2 : 1),
+      }),
+    },
   };
-  return { state, service, results };
+  return { state, service, commandSettings };
 }
 
 /** The JSON Schema Zod itself derives, as it reads after one trip through JSON. */
@@ -83,7 +85,10 @@ function jsonSchema(schema: z.ZodType, io: 'input' | 'output') {
   return JSON.parse(JSON.stringify(z.toJSONSchema(schema, { io, target: 'draft-7' })));
 }
 
-type RunConfig = Pick<CliConfig, 'services' | 'results' | 'commands' | 'signal' | 'stdout'>;
+type RunConfig = Pick<
+  CliConfig,
+  'services' | 'commandSettings' | 'commands' | 'signal' | 'stdout'
+>;
 
 async function run(argv: string[], config: RunConfig) {
   let out = '';
@@ -96,6 +101,7 @@ async function run(argv: string[], config: RunConfig) {
       out += text;
     },
     ...config,
+    access: { open: 'local-operator' },
     argv,
     stderr: (text) => {
       err += text;
@@ -110,10 +116,13 @@ async function run(argv: string[], config: RunConfig) {
 
 describe('a managed command prints and exit-codes its own result', () => {
   test('present writes text without --json and JSON with it', async () => {
-    const { service, results } = fixture();
-    const text = await run(['lookup', 'main'], { services: [service], results });
+    const { service, commandSettings } = fixture();
+    const text = await run(['lookup', 'main'], { services: [service], commandSettings });
     expect(text).toEqual({ out: 'FOUND node-a/main\n', err: '', code: 0 });
-    const json = await run(['lookup', 'main', '--json'], { services: [service], results });
+    const json = await run(['lookup', 'main', '--json'], {
+      services: [service],
+      commandSettings,
+    });
     expect(JSON.parse(json.out)).toEqual({
       found: true,
       machine: 'reachable',
@@ -135,16 +144,18 @@ describe('a managed command prints and exit-codes its own result', () => {
   test('present receives the run options, so --json is for the presenter to honour', async () => {
     const { service } = fixture();
     const seen: boolean[] = [];
-    const results = {
-      lookup: defineCliResult(LookupOutput, {
-        present: ({ options }) => {
-          seen.push(options.json);
-          return 'x\n';
-        },
-      }),
+    const commandSettings = {
+      lookup: {
+        result: defineCliResult(LookupOutput, {
+          present: ({ options }) => {
+            seen.push(options.json);
+            return 'x\n';
+          },
+        }),
+      },
     };
-    await run(['lookup', 'main'], { services: [service], results });
-    await run(['lookup', 'main', '--json'], { services: [service], results });
+    await run(['lookup', 'main'], { services: [service], commandSettings });
+    await run(['lookup', 'main', '--json'], { services: [service], commandSettings });
     expect(seen).toEqual([false, true]);
   });
 
@@ -153,7 +164,9 @@ describe('a managed command prints and exit-codes its own result', () => {
     await expect(
       run(['lookup', 'main'], {
         services: [service],
-        results: { lookup: defineCliResult(z.object({ other: z.string() }), {}) },
+        commandSettings: {
+          lookup: { result: defineCliResult(z.object({ other: z.string() }), {}) },
+        },
       }),
     ).rejects.toThrow(
       'is typed against a schema that is not the one the command answers with',
@@ -161,12 +174,16 @@ describe('a managed command prints and exit-codes its own result', () => {
   });
 
   test('exitCode classifies a successful result, on the command line and in process', async () => {
-    const { service, results } = fixture();
-    const config = { services: [service], results };
+    const { service, commandSettings } = fixture();
+    const config = { services: [service], commandSettings };
     expect((await run(['lookup', 'nobody'], config)).code).toBe(1);
     expect((await run(['lookup', 'far'], config)).code).toBe(2);
     expect((await run(['lookup', 'main'], config)).code).toBe(0);
-    const invoker = await createCliInvoker({ name: 'app', ...config });
+    const invoker = await createCliInvoker({
+      name: 'app',
+      ...config,
+      access: { open: 'local-operator' },
+    });
     const missing = await invoker.invoke('lookup', { name: 'far' });
     expect(missing).toMatchObject({ ok: true, exitCode: 2, data: { found: false } });
   });
@@ -175,12 +192,14 @@ describe('a managed command prints and exit-codes its own result', () => {
     const { service } = fixture();
     const result = await run(['lookup', 'main'], {
       services: [service],
-      results: {
-        lookup: defineCliResult(LookupOutput, {
-          present: () => {
-            throw new Error('broken presenter');
-          },
-        }),
+      commandSettings: {
+        lookup: {
+          result: defineCliResult(LookupOutput, {
+            present: () => {
+              throw new Error('broken presenter');
+            },
+          }),
+        },
       },
     });
     expect(result.code).toBe(8);
@@ -192,7 +211,9 @@ describe('a managed command prints and exit-codes its own result', () => {
     const { service } = fixture();
     const result = await run(['lookup', 'main'], {
       services: [service],
-      results: { lookup: defineCliResult(LookupOutput, { exitCode: () => 999 }) },
+      commandSettings: {
+        lookup: { result: defineCliResult(LookupOutput, { exitCode: () => 999 }) },
+      },
     });
     expect(result.code).toBe(1);
     expect(JSON.parse(result.err)).toMatchObject({ error: 'INTERNAL_SERVER_ERROR' });
@@ -209,13 +230,16 @@ describe('a managed command prints and exit-codes its own result', () => {
     });
     const policy = defineCliResult(z.object({ ok: z.boolean() }), { present: () => 'x\n' });
     await expect(
-      run(['lookup', 'main'], { services: [service], results: { missing: policy } }),
+      run(['lookup', 'main'], {
+        services: [service],
+        commandSettings: { missing: { result: policy } },
+      }),
     ).rejects.toThrow('unavailable command "missing"');
     await expect(
       run(['lookup', 'main'], {
         services: [service],
         commands: [native],
-        results: { doctor: policy },
+        commandSettings: { doctor: { result: policy } },
       }),
     ).rejects.toThrow('not managed');
   });
@@ -307,10 +331,12 @@ describe('a contract stream runs as a command', () => {
     const { service } = fixture();
     const result = await run(['watch_record', '--count', '2'], {
       services: [service],
-      results: {
-        watch_record: defineCliResult(Tick, {
-          present: ({ result }) => `tick ${result.n}\n`,
-        }),
+      commandSettings: {
+        watch_record: {
+          result: defineCliResult(Tick, {
+            present: ({ result }) => `tick ${result.n}\n`,
+          }),
+        },
       },
     });
     expect(result.out).toBe('tick 1\ntick 2\n');
@@ -345,7 +371,9 @@ describe('a contract stream runs as a command', () => {
     await expect(
       run(['watch_record'], {
         services: [service],
-        results: { watch_record: defineCliResult(Tick, { exitCode: () => 1 }) },
+        commandSettings: {
+          watch_record: { result: defineCliResult(Tick, { exitCode: () => 1 }) },
+        },
       }),
     ).rejects.toThrow('stream command');
   });
@@ -370,7 +398,7 @@ const service = implement(contract, {
     for (let n = 1; ; n += 1) { yield { n }; await new Promise((r) => setTimeout(r, 5)); }
   })(),
 });
-await createCli({ name: 'feed', version: '1.0.0', services: [service] });
+await createCli({ name: 'feed', version: '1.0.0', services: [service], access: { open: 'public' } });
 `,
       );
       // The producer's own status, not the pipeline's: `head` exits 0 whatever

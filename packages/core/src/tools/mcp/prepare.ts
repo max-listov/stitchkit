@@ -1,9 +1,9 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { z } from 'zod';
-import { redact } from '../../observability/sanitize';
 import type { ServiceDef, StitchLogger } from '../../server/types';
 import type { ErrorHintFn } from '../execute-hooks';
 import type { ToolResult } from '../execute-result';
+import { projectJsonSafe } from '../internal/json-projection';
 import {
   type McpProjectionPreparationConfig,
   type McpSchemaValidationConfig,
@@ -37,6 +37,8 @@ export interface ValidateMcpSchemasConfig extends McpSchemaValidationConfig {
   logger?: StitchLogger;
   extend?: ToolExtend;
   flattenUnionInput?: boolean;
+  /** Validate the reference-free documents the live mount advertises. */
+  inputRecursionDepth?: number;
 }
 
 /** A single-element MCP text content block list. */
@@ -64,20 +66,8 @@ export function formatMcpResult(
     // A successful call must never be reported as `isError` because its data
     // cannot be serialised (a cycle, a bigint behind `z.unknown()`) — the
     // operation already ran and applied its side effects.
-    let serialized: string | undefined;
-    try {
-      serialized = JSON.stringify(result.data, null, 2);
-    } catch {
-      serialized = undefined;
-    }
-    if (serialized === undefined) {
-      // Project the value into a JSON-safe shape instead: cycles collapse to a
-      // marker, bigints stringify. The never-matching pattern disables secret
-      // masking — this is the tool's RESPONSE, not an audit row.
-      const safe = redact(result.data, { sensitiveKeys: /(?!)/ });
-      return { content: textBlock(JSON.stringify(safe, null, 2)), structuredContent: safe };
-    }
-    return { content: textBlock(serialized), structuredContent: result.data };
+    const projected = projectJsonSafe(result.data, 2);
+    return { content: textBlock(projected.text), structuredContent: projected.value };
   }
   return {
     content: textBlock(JSON.stringify(formatToolError(result, toolName, errorHint), null, 2)),
@@ -132,6 +122,9 @@ function prepareMcpTools(
         }),
         ...(mountable.method.toolView?.defaults !== undefined && {
           inputDefaults: mountable.method.toolView.defaults,
+        }),
+        ...(mountable.method.inputRecursionDepth !== undefined && {
+          inputRecursionDepth: mountable.method.inputRecursionDepth,
         }),
         // The advertised answer is the one the call returns: the tool view's
         // when one is declared. → ADR 0196.
@@ -190,6 +183,7 @@ export function prepareMcpServerSurface(
     transport: 'MCP',
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
+    inputRecursionDepth: config.inputRecursionDepth,
   })) {
     if (entry.kind === 'contract') {
       contractMountables.push(entry.mountable);
@@ -201,7 +195,10 @@ export function prepareMcpServerSurface(
 
   const contractTools = prepareMcpTools(contractMountables, config);
 
+  // Runtime tools are shaped like contract tools; only `extend` stays contract-only.
   const runtimeDescriptors = prepareMcpTools(runtimeMountables, {
+    flattenUnionInput: config.flattenUnionInput,
+    inputRecursionDepth: config.inputRecursionDepth,
     schemaValidation: config.schemaValidation,
     logger: config.logger,
     multiRound: config.multiRound,

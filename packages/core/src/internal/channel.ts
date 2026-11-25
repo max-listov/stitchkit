@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assertTimerMs } from './deadline';
 
 const PositiveSafeIntegerSchema = z.number().int().positive().safe();
 
@@ -401,10 +402,8 @@ export function createCreditWindow(config: { readonly capacityBytes: number }): 
     requested: number,
     options: CreditAcquireWaitOptions,
   ): Promise<CreditWaitResult> => {
-    const timeoutMs =
-      options.timeoutMs === undefined
-        ? undefined
-        : PositiveSafeIntegerSchema.parse(options.timeoutMs);
+    const { timeoutMs } = options;
+    assertTimerMs('Credit window wait timeoutMs', timeoutMs);
 
     // Anything a wait cannot change is answered before one is created.
     const immediate = tryLease(requested);

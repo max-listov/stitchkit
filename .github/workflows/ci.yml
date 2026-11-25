@@ -31,6 +31,7 @@ jobs:
   plan:
     name: Evidence plan
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       # Lists the workflow runs of the exact SHA to find an earlier green push run.
@@ -85,6 +86,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # The release rehearsal judges the queued notes against the previous release's tag.
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.5
@@ -94,10 +98,11 @@ jobs:
           key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-
       - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun scripts/release-lockfile.ts
       - run: bun run lint
       - run: bun run check:scripts
       - run: bun --filter stitchkit build
-      - run: bun test scripts/*.test.ts
+      - run: bun scripts/test-suites.ts scripts 'scripts orphans'
 
   # The core suite is split by file across four runners: each shard is an ordinary sequential
   # `bun test` in its own process, so the suite answers in the time of its longest shard.
@@ -154,8 +159,8 @@ jobs:
     name: Framework packed and smoke lanes
     if: needs.plan.outputs.portable == 'true'
     needs: plan
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:18-alpine
@@ -182,12 +187,20 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/stitchkit/hermes-vm
+          key: hermes-vm-${{ runner.os }}-ubuntu-24.04-${{ runner.arch }}-hermes-v260318099.0.8-${{ hashFiles('scripts/ensure-hermes-vm.ts') }}
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun --filter stitchkit build
+      - run: bun scripts/ensure-hermes-vm.ts
       - run: bun run test:postgres-stores
       - run: bun run smoke:next-ssr
       - run: bun run smoke:node
-      - run: bun run consumer-lane
+      - name: Consumer lane (with real Hermes V1 VM)
+        env:
+          STITCHKIT_REQUIRE_HERMES_VM: '1'
+        run: bun run consumer-lane
 
   tui:
     name: Terminal package
@@ -300,6 +313,9 @@ jobs:
           name: darwin-contained-files-${{ matrix.arch }}
           path: packages/core/native
       - run: bun --filter stitchkit build
+      - name: Darwin service host and unix socket tests on APFS
+        working-directory: packages/core
+        run: bun test --timeout 30000 tests/service-host-macos-darwin.test.ts tests/unix-socket-ownership.test.ts tests/unix-socket-lock.test.ts tests/unix-socket-lock-owner.test.ts tests/unix-client-transport.test.ts tests/unix-socket-birth.test.ts tests/directory-appearance.test.ts tests/host-unix-channel.test.ts tests/cli-local-app.test.ts
       - run: bun run contained-files-packed-lane
       - name: Qualify concurrent command lifetimes three consecutive times
         run: |
@@ -514,6 +530,7 @@ jobs:
   result:
     name: Required evidence complete
     if: always()
+    timeout-minutes: 5
     needs:
       [
         plan,

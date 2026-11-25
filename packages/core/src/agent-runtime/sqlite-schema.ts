@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import type { SqliteDatabase } from '../internal/sqlite';
+import { rollbackSqliteFailure, type SqliteDatabase } from '../internal/sqlite';
+import { missing } from './sql-rows';
 import { initializeSqliteConversationPurge } from './sqlite-purge';
-import { missing } from './sqlite-rows';
 import {
   createAgentRuntimeSqliteV2Tables,
   migrateAgentRuntimeSqliteV1ToV2,
@@ -149,7 +149,6 @@ export function initializeAgentRuntimeSqlite(database: SqliteDatabase): void {
     initializeSqliteConversationPurge(database);
     database.exec('COMMIT');
   } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
+    throw rollbackSqliteFailure(database, error);
   }
 }

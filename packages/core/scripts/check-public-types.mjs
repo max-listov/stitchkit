@@ -82,6 +82,14 @@ const ACCEPTED = {
     'internal protocol — only the tool runner reads it, through a symbol the package does not export',
   EndpointRouteBase:
     'structural base — a consumer writes an endpoint literal or HeadEndpointDef, never the shared route fields',
+  CliTerminalConfig:
+    'structural base — terminal fields shared by exported CliConfig, written inline in createCli',
+  CliInvokerBaseConfig:
+    'structural base — base fields shared by exported CliInvokerConfig variants',
+  CliSurfaceAccessConfig:
+    'structural base — CLI access gate fields intersected into exported CliInvokerConfig',
+  LaunchServicesSweepOptions:
+    'structural base — shared sweep fields extended by ForgetStaleRegistrationsOptions and ForgetBuildTreeOptions',
   ToolTransportEndpoint:
     'inference helper — withToolView computes the HTTP-only refusal from the endpoint',
   ToolViewProject: 'inference helper — project is typed from the endpoint schemas',

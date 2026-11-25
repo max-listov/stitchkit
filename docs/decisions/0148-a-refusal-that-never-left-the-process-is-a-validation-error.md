@@ -2,7 +2,7 @@
 title: A refusal that never left the process is a VALIDATION_ERROR with status 0
 description: Every argument the client refuses while planning a request raises one ApiError shape at one timing, and argument validation itself stays on the server because a caller's arguments and the server's input are not the same values.
 type: decision
-status: active
+status: accepted
 created: 2026-09-02
 updated: 2026-09-02
 ---

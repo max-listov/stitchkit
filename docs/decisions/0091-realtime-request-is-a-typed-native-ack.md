@@ -2,7 +2,7 @@
 title: Realtime request is a typed native acknowledgement
 description: Promise request-response stays a thin validated wrapper over Socket.IO acknowledgements with explicit timeout and disconnect errors.
 type: decision
-status: active
+status: accepted
 created: 2026-08-20
 updated: 2026-08-20
 ---

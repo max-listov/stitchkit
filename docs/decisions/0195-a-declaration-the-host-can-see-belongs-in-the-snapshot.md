@@ -1,6 +1,13 @@
+---
+title: "ADR 0195 — A declaration the host can see belongs in the snapshot"
+type: decision
+status: accepted
+created: 2026-09-22
+updated: 2026-09-22
+---
+
 # 0195 — A declaration the host can see belongs in the snapshot
 
-**Status:** Accepted
 **Date:** 2026-09-22
 
 ## Context

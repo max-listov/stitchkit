@@ -8,7 +8,6 @@ updated: 2026-05-20
 
 # ADR 0003 — Two context types: `RuntimeContext` and `HandlerContext`
 
-- **Status:** Accepted
 - **Date:** 2025-05
 
 ## Context

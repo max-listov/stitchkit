@@ -1,9 +1,16 @@
 import type {
+  BoundRealtimeClient,
   InferRealtimeEventMap,
   RealtimeClient,
+  RealtimeClientTransport,
   RetainedTopics,
 } from 'stitchkit/realtime';
-import { createRealtimeClient, defineRealtimeContract } from 'stitchkit/realtime';
+import {
+  bindRealtimeClient,
+  createRealtimeClient,
+  createSocketIOClient,
+  defineRealtimeContract,
+} from 'stitchkit/realtime';
 import { z } from 'zod';
 
 const contract = defineRealtimeContract({
@@ -35,5 +42,21 @@ const retained: RetainedTopics<{ greeting: string }> = {
   get: () => undefined,
   clear: () => undefined,
 };
+// One socket the app already holds carries the bound contract too.
+const socket: RealtimeClientTransport = createSocketIOClient({
+  url: 'http://127.0.0.1',
+  peers: { client: () => import('socket.io-client') },
+});
+const bound: BoundRealtimeClient<
+  typeof contract.serverToClient,
+  typeof contract.clientToServer
+> = bindRealtimeClient(contract, socket);
+bound.on('greeting', (value) => {
+  const message: string = value.message;
+  // @ts-expect-error the bound contract payload is a string
+  const invalid: number = value.message;
+  void message;
+  void invalid;
+});
 void typedEvents;
 void retained;

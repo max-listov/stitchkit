@@ -2,13 +2,15 @@
 title: "ADR 0019 — Generic native MCP tools (wait / download / upload)"
 type: decision
 status: accepted
+amendedBy: ["0088"]
 created: 2026-05-29
 updated: 2026-05-29
 ---
 
 # ADR 0019 — Generic native MCP tools
 
-- **Status:** Accepted — extends [ADR 0007](0007-mcp-agent-tools.md), upholds [ADR 0002](0002-generic-core.md)
+**Relations:** extends [ADR 0007](0007-mcp-agent-tools.md), upholds [ADR 0002](0002-generic-core.md)
+
 - **Date:** 2026-05-29
 
 ## Context

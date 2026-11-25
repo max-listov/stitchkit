@@ -3,6 +3,7 @@ import {
   type AgentRun,
   type AgentSnapshot,
   AgentSnapshotSchema,
+  type AgentUsage,
 } from './schemas';
 import type {
   AcceptInputAndAssignRun,
@@ -30,7 +31,7 @@ export type StoreOperation =
   | { type: 'checkpoint'; input: CheckpointRunAssistant }
   | { type: 'operation'; input: RecordRunOperation }
   | { type: 'interrupt'; input: RequestRunInterrupt }
-  | { type: 'recover'; input: RecoverAgentRun; assistant?: AgentMessage }
+  | { type: 'recover'; input: RecoverAgentRun; assistant?: AgentMessage; usage?: AgentUsage }
   | { type: 'terminal'; input: CommitRunTerminal }
   | { type: 'compact'; input: ReplaceCompactedRange }
   | { type: 'seed'; input: SeedConversationInput };

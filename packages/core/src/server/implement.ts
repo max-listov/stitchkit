@@ -280,6 +280,7 @@ export function bindContract(
   };
 }
 
+/** Bind handler implementations to a contract definition and return a mountable `ServiceDef`. */
 export function implement<
   T extends Record<string, EndpointDef>,
   TCtx extends RuntimeContext = RuntimeContext,

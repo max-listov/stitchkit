@@ -81,7 +81,7 @@ export function createFileCodingTools(
     identity: { serviceName: 'coding', action: 'read-file', method: 'POST' },
     input: FileReadInputSchema,
     output: FileReadOutputSchema,
-    transports: ['AGENT'],
+    expose: ['AGENT'],
     handler: async ({ input }) =>
       withCodingRoot(config.root, async (root, rootPath) => {
         const relative = boundedCodingRelativePath(rootPath, input.path, limits.maxPathBytes);
@@ -172,7 +172,7 @@ export function createFileCodingTools(
     identity: { serviceName: 'coding', action: 'write-file', method: 'POST' },
     input: FileWriteInputSchema,
     output: FileWriteOutputSchema,
-    transports: ['AGENT'],
+    expose: ['AGENT'],
     handler: async ({ input }) =>
       withCodingRoot(config.root, async (root, rootPath) => {
         const relative = boundedCodingRelativePath(rootPath, input.path, limits.maxPathBytes);

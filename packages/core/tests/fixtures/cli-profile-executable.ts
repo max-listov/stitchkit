@@ -26,7 +26,7 @@ export function profileTool(profile: string): RuntimeToolDefinition {
     name: 'endpoint',
     description: 'Report the selected profile',
     identity: { serviceName: 'profiles', action: 'endpoint', method: 'GET' },
-    transports: ['CLI'],
+    expose: ['CLI'],
     input: inputSchema,
     output: z.object({ profile: z.string(), input: inputSchema }),
     handler: ({ input }) => ({ profile, input }),
@@ -42,6 +42,7 @@ if (import.meta.main) {
     typeof globals.profile === 'string' ? globals.profile : undefined,
   );
   await createCli({
+    access: { open: 'local-operator' },
     name: 'profile-fixture',
     version: '1.0.0',
     globalOptions: profileGlobals,

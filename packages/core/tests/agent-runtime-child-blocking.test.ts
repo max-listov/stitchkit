@@ -9,7 +9,7 @@ import {
   type SqliteDatabase,
   type SqliteValue,
 } from '../src/agent-runtime/sqlite-bun';
-import { createSqliteAgentChildManager } from '../src/entrypoints/agent-runtime';
+import { createAgentChildManager } from '../src/entrypoints/agent-runtime';
 
 function sqlite(): SqliteDatabase {
   const raw = new Database(':memory:');
@@ -74,8 +74,11 @@ describe('the parent owns a child blocking event', () => {
         kind: 'input',
       },
     ]);
-    const manager = createSqliteAgentChildManager({
-      sqlite: durable,
+    const manager = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: durable.store,
+      host: durable.host,
       spawn: () => child.handle,
     });
     try {
@@ -85,7 +88,7 @@ describe('the parent owns a child blocking event', () => {
         childInput: {},
         budget: { tokens: 10 },
       });
-      const [request] = await manager.listChildBlocking('parent');
+      const [request] = (await manager.listChildBlocking('parent')).pending;
       if (!request) throw new Error('missing input request');
       await expect(
         manager.respondToChildBlocking('parent', {
@@ -99,7 +102,10 @@ describe('the parent owns a child blocking event', () => {
         value: { choice: 'blue' },
       });
       expect(child.answered).toEqual([{ approvalId: 'question', value: { choice: 'blue' } }]);
-      expect(await manager.listChildBlocking('parent')).toEqual([]);
+      expect(await manager.listChildBlocking('parent')).toEqual({
+        pending: [],
+        unavailable: [],
+      });
     } finally {
       await durable.close();
     }
@@ -123,8 +129,11 @@ describe('the parent owns a child blocking event', () => {
         kind: 'approval',
       },
     ]);
-    const manager = createSqliteAgentChildManager({
-      sqlite: durable,
+    const manager = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: durable.store,
+      host: durable.host,
       spawn: () => child.handle,
     });
     await manager.spawnChild({
@@ -134,7 +143,7 @@ describe('the parent owns a child blocking event', () => {
       budget: { tokens: 100 },
     });
 
-    const first = await manager.listChildBlocking('parent');
+    const first = (await manager.listChildBlocking('parent')).pending;
     expect(first).toHaveLength(1);
     const event = first[0];
     if (!event) throw new Error('blocking event missing');
@@ -152,7 +161,7 @@ describe('the parent owns a child blocking event', () => {
     expect(await actionsOn(durable, 'child')).toEqual([]);
 
     // Polling again is idempotent: still one pending, still one presentation.
-    const second = await manager.listChildBlocking('parent');
+    const second = (await manager.listChildBlocking('parent')).pending;
     expect(second.map((candidate) => candidate.approvalId)).toEqual(['child:approval-1']);
     expect(await actionsOn(durable, 'parent')).toEqual(['blocking-presented']);
 
@@ -165,7 +174,10 @@ describe('the parent owns a child blocking event', () => {
     expect(child.answered).toEqual([
       { approvalId: 'approval-1', approved: true, reason: 'looks fine' },
     ]);
-    expect(await manager.listChildBlocking('parent')).toEqual([]);
+    expect(await manager.listChildBlocking('parent')).toEqual({
+      pending: [],
+      unavailable: [],
+    });
     expect(await actionsOn(durable, 'parent')).toEqual([
       'blocking-presented',
       'blocking-resolved',
@@ -204,8 +216,11 @@ describe('the parent owns a child blocking event', () => {
         batchId: 'message-9',
       },
     ]);
-    const manager = createSqliteAgentChildManager({
-      sqlite: durable,
+    const manager = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: durable.store,
+      host: durable.host,
       spawn: () => child.handle,
     });
     await manager.spawnChild({
@@ -215,7 +230,7 @@ describe('the parent owns a child blocking event', () => {
       budget: { tokens: 100 },
     });
 
-    const presented = await manager.listChildBlocking('parent');
+    const presented = (await manager.listChildBlocking('parent')).pending;
     expect(presented.map((event) => event.approvalId).sort()).toEqual([
       'child:approval-a',
       'child:approval-b',
@@ -230,13 +245,18 @@ describe('the parent owns a child blocking event', () => {
       approved: false,
     });
     expect(
-      (await manager.listChildBlocking('parent')).map((event) => event.childApprovalId),
+      (await manager.listChildBlocking('parent')).pending.map(
+        (event) => event.childApprovalId,
+      ),
     ).toEqual(['approval-b']);
     await manager.respondToChildBlocking('parent', {
       approvalId: 'child:approval-b',
       approved: true,
     });
-    expect(await manager.listChildBlocking('parent')).toEqual([]);
+    expect(await manager.listChildBlocking('parent')).toEqual({
+      pending: [],
+      unavailable: [],
+    });
     expect(child.answered).toEqual([
       { approvalId: 'approval-a', approved: false },
       { approvalId: 'approval-b', approved: true },
@@ -256,8 +276,11 @@ describe('the parent owns a child blocking event', () => {
         kind: 'approval',
       },
     ]);
-    const manager = createSqliteAgentChildManager({
-      sqlite: durable,
+    const manager = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: durable.store,
+      host: durable.host,
       spawn: () => child.handle,
     });
     await manager.spawnChild({
@@ -297,8 +320,11 @@ describe('the parent owns a child blocking event', () => {
       input: {},
       kind: 'approval',
     };
-    const manager = createSqliteAgentChildManager({
-      sqlite: durable,
+    const manager = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: durable.store,
+      host: durable.host,
       spawn: () => ({
         result: new Promise<{ resultReference?: string }>(() => undefined),
         stopPolicy: () => undefined,
@@ -312,13 +338,16 @@ describe('the parent owns a child blocking event', () => {
       childInput: {},
       budget: { tokens: 100 },
     });
-    const first = await manager.listChildBlocking('parent');
+    const first = (await manager.listChildBlocking('parent')).pending;
     expect(first).toHaveLength(1);
     await manager.respondToChildBlocking('parent', {
       approvalId: 'child:approval-1',
       approved: true,
     });
-    expect(await manager.listChildBlocking('parent')).toEqual([]);
+    expect(await manager.listChildBlocking('parent')).toEqual({
+      pending: [],
+      unavailable: [],
+    });
     expect(
       (await actionsOn(durable, 'parent')).filter((action) => action === 'blocking-presented'),
     ).toEqual(['blocking-presented']);
@@ -337,8 +366,11 @@ describe('the parent owns a child blocking event', () => {
         kind: 'approval',
       },
     ]);
-    const manager = createSqliteAgentChildManager({
-      sqlite: durable,
+    const manager = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: durable.store,
+      host: durable.host,
       spawn: () => child.handle,
     });
     await manager.spawnChild({
@@ -349,7 +381,10 @@ describe('the parent owns a child blocking event', () => {
     });
     await manager.listChildBlocking('parent');
     await manager.stopChildren('parent');
-    expect(await manager.listChildBlocking('parent')).toEqual([]);
+    expect(await manager.listChildBlocking('parent')).toEqual({
+      pending: [],
+      unavailable: [],
+    });
     await expect(
       manager.respondToChildBlocking('parent', {
         approvalId: 'child:approval-1',
@@ -380,8 +415,11 @@ describe('the parent owns a child blocking event', () => {
         kind: 'approval',
       },
     ]);
-    const manager = createSqliteAgentChildManager({
-      sqlite: durable,
+    const manager = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: durable.store,
+      host: durable.host,
       spawn: ({ childConversationId }) =>
         childConversationId === 'child-a' ? childA.handle : childB.handle,
     });
@@ -402,13 +440,13 @@ describe('the parent owns a child blocking event', () => {
     await manager.listChildBlocking('parent-a');
     await manager.listChildBlocking('parent-b');
 
-    const forA = await manager.listChildBlocking('parent-a');
+    const forA = (await manager.listChildBlocking('parent-a')).pending;
     expect(forA.map((event) => event.approvalId)).toEqual(['child-a:approval-a']);
     expect(forA.every((event) => event.parentConversationId === 'parent-a')).toBe(true);
     expect(JSON.stringify(forA)).not.toContain('delete_file');
     expect(JSON.stringify(forA)).not.toContain('b.txt');
 
-    const forB = await manager.listChildBlocking('parent-b');
+    const forB = (await manager.listChildBlocking('parent-b')).pending;
     expect(forB.map((event) => event.approvalId)).toEqual(['child-b:approval-b']);
     expect(forB.every((event) => event.parentConversationId === 'parent-b')).toBe(true);
     expect(JSON.stringify(forB)).not.toContain('write_file');

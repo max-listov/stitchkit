@@ -40,6 +40,7 @@ export async function entryBoundaryControls({ createAgentCodingTools, mountAgent
     await writeFile(path.join(root, 'secret'), 'unchanged');
     const asked = [];
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => {
@@ -76,6 +77,7 @@ export async function entryBoundaryControls({ createAgentCodingTools, mountAgent
 
     const plans = [];
     const planned = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: (request) => {
@@ -96,6 +98,7 @@ export async function entryBoundaryControls({ createAgentCodingTools, mountAgent
       const ancestor = missingChild ? 'with-child' : 'existing';
       await mkdir(path.join(root, ancestor));
       const guarded = mountAgent([], {
+        access: { open: 'local-operator' },
         runtimeTools: createAgentCodingTools({
           root,
           authorize: async (request) => {
@@ -146,7 +149,10 @@ export async function entryBoundaryControls({ createAgentCodingTools, mountAgent
     await writeFile(path.join(root, 'refused'), 'secret guess');
     const guarded = (authorize) =>
       execute(
-        mountAgent([], { runtimeTools: createAgentCodingTools({ root, authorize }) }),
+        mountAgent([], {
+          access: { open: 'local-operator' },
+          runtimeTools: createAgentCodingTools({ root, authorize }),
+        }),
         'edit_file',
       );
     for (const oldText of ['secret', 'wrong']) {
@@ -172,6 +178,7 @@ export async function entryBoundaryControls({ createAgentCodingTools, mountAgent
     await assert.rejects(
       execute(
         mountAgent([], {
+          access: { open: 'local-operator' },
           runtimeTools: createAgentCodingTools({
             root,
             authorize: async () => {
@@ -190,6 +197,7 @@ export async function entryBoundaryControls({ createAgentCodingTools, mountAgent
     await writeFile(path.join(root, 'Guarded/token'), 'stored');
     const folds = existsSync(path.join(root, 'gUARDED'));
     const spelled = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -240,6 +248,7 @@ export async function entryBoundaryControls({ createAgentCodingTools, mountAgent
       await mkdir(workspace, { recursive: true });
       await writeFile(path.join(workspace, 'file'), 'searched');
       const nested = mountAgent([], {
+        access: { open: 'local-operator' },
         runtimeTools: createAgentCodingTools({ root: workspace, authorize: () => true }),
       });
       try {

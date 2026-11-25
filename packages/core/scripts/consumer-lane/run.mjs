@@ -27,10 +27,14 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { placeFixtureSupport } from './fixture-support/place.mjs';
+import {
+  declarationProofArguments,
+  declarationProofVariants,
+} from './installed-proof-contract.ts';
 import { runInstalledConsumerProofs } from './installed-proof-runner.ts';
-import { declarationProofArguments, declarationProofVariants } from './installed-proofs.ts';
 import { qualifyNeutralLibrary } from './neutral-library.mjs';
 import { runOptionalPeerMatrix } from './optional-peer-matrix.mjs';
 import { runSelfContainedSocketProof } from './self-contained-socket.mjs';
@@ -52,716 +56,744 @@ const pkgRoot = join(here, '..', '..');
  */
 const ACCEPTED_UNRESOLVED = ['Bun', 'bun', 'node:http', 'socket.io', '@socket.io/bun-engine'];
 
-const arguments_ = process.argv.slice(2);
-const unknownArguments = arguments_.filter(
-  (argument) =>
-    !['--contained-files-only', '--native-uid-only', '--native-owners-only'].includes(
-      argument,
-    ),
-);
-if (unknownArguments.length > 0) {
-  throw new Error(`Unknown consumer-lane option: ${unknownArguments.join(', ')}`);
-}
-const containedFilesOnly = arguments_.includes('--contained-files-only');
-const nativeUIDOnly = arguments_.includes('--native-uid-only');
-const nativeOwnersOnly = arguments_.includes('--native-owners-only');
-if (arguments_.length > 1) throw new Error('Select one consumer-lane mode');
-if (nativeUIDOnly && (process.platform !== 'linux' || process.getuid?.() !== 0))
-  throw new Error('Mandatory mixed-UID qualification requires Linux UID0');
-const narrowNative = nativeUIDOnly || nativeOwnersOnly;
-const FIXTURES = containedFilesOnly
-  ? ['minimal', 'node']
-  : narrowNative
-    ? nativeOwnersOnly
-      ? ['minimal', 'node']
-      : ['node']
-    : [
-        'minimal',
-        'native-client',
-        'declarations',
-        'nodenext',
-        'mcp-only',
-        'full',
-        'node',
-        'grammy',
-        'geo',
-        'vitals',
-        'google',
-      ];
-const PEER_FREE_FIXTURES = ['minimal', 'nodenext'];
-const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
-
-let failed = false;
-const timings = [];
-
-function step(label, fn) {
-  const started = Date.now();
-  const result = fn();
-  timings.push([label, Date.now() - started]);
-  return result;
-}
-
-/** `step`, for a proof that has to wait on a real process. */
-async function asyncStep(label, fn) {
-  const started = Date.now();
-  const result = await fn();
-  timings.push([label, Date.now() - started]);
-  return result;
-}
-
 function run(cmd, args, cwd) {
   return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-/** `run` without blocking the lane, so independent proofs can overlap; rejects as `run` throws. */
-function runAsync(cmd, args, cwd) {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { cwd, encoding: 'utf8' }, (error, stdout, stderr) => {
-      if (error) reject(Object.assign(error, { stdout, stderr }));
-      else resolve(stdout);
-    });
-  });
-}
-
 /**
- * `tsc` exits non-zero on errors, so its output arrives via the thrown error —
- * and an empty string is this lane's signal for "clean".
- *
- * Which is why a failure to RUN must not produce one. `execFileSync` throws the
- * same shape whether the compiler reported diagnostics, the binary was missing
- * or the child was killed:
- *
- *   missing binary  → { status: null, signal: null,      stdout: undefined }
- *   SIGKILLed child → { status: null, signal: 'SIGKILL', stdout: '' }
- *
- * Both joined to `''` and the lane printed "the published package works for a
- * consumer" — for every fixture, for both the strict typecheck and the
- * declaration check. A `tsc` that the OOM killer takes in a constrained CI
- * container is exactly that, and this lane exists to catch the class of thing
- * that hides behind a green run.
+ * Pack `packages/core` into `destination` via `bun pm pack --ignore-scripts`.
+ * Builds `dist/` first when `forceBuild` is set or `dist/entrypoints/index.js` is absent
+ * (and `buildIfMissing` is true). Reused by both consumer-lane and local consumer replay tooling.
  */
-function tsc(cwd, extraArgs) {
-  try {
-    run('bunx', ['tsc', '--noEmit', '-p', 'tsconfig.json', ...extraArgs], cwd);
-    return '';
-  } catch (err) {
-    const output = `${err.stdout ?? ''}${err.stderr ?? ''}`;
-    // A real diagnostic run: the compiler ran, exited non-zero and said why.
-    if (typeof err.status === 'number' && output.trim()) return output;
-    const why =
-      err.signal !== null && err.signal !== undefined
-        ? `killed by ${err.signal}`
-        : `did not run (${err.code ?? err.message ?? 'unknown failure'})`;
-    return `[consumer-lane] tsc ${why} in ${cwd} — a typecheck that did not happen is not a passing typecheck\n${output}`;
+export function packCoreTarball(options) {
+  const targetPkgRoot = options.pkgRoot ?? pkgRoot;
+  const { destination, buildIfMissing = true, forceBuild = false, onStep } = options;
+  const measure = onStep ?? ((_label, fn) => fn());
+  if (
+    forceBuild ||
+    (buildIfMissing && !existsSync(join(targetPkgRoot, 'dist/entrypoints/index.js')))
+  ) {
+    measure('build', () => run('bun', ['run', 'build'], targetPkgRoot));
   }
-}
-
-if (!existsSync(join(pkgRoot, 'dist'))) {
-  console.error('[consumer-lane] no dist/ — run the build first');
-  process.exit(1);
-}
-
-const workdir = mkdtempSync(join(tmpdir(), 'stitchkit-consumer-'));
-
-try {
-  // 1. Pack. `bun pm pack` is ~17× faster than `npm pack` and was verified to
-  //    produce an identical file list, so the artifact under test is the one
-  //    that ships.
-  const packOutput = step('pack', () =>
+  const packOutput = measure('pack', () =>
     run(
       'bun',
-      [
-        '../../scripts/package-build-lock.ts',
-        '--',
-        'bun',
-        'pm',
-        'pack',
-        '--destination',
-        workdir,
-      ],
-      pkgRoot,
+      ['pm', 'pack', '--ignore-scripts', '--destination', destination],
+      targetPkgRoot,
     ),
   );
-  const tarball = (packOutput.match(/\S+\.tgz/) ?? [])[0]
-    ? join(workdir, (packOutput.match(/[\w.@-]+\.tgz/) ?? [])[0])
-    : undefined;
+  const matched = packOutput.match(/[\w.@-]+\.tgz/);
+  const tarball = matched ? join(destination, matched[0]) : undefined;
   if (!tarball || !existsSync(tarball)) {
-    console.error('[consumer-lane] pack produced no tarball\n', packOutput);
+    throw new Error(`[consumer-lane] pack produced no tarball\n${packOutput}`);
+  }
+  return { tarball, packOutput };
+}
+
+const isMain =
+  Boolean(process.argv[1]) && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+
+if (isMain) {
+  const arguments_ = process.argv.slice(2);
+  const unknownArguments = arguments_.filter(
+    (argument) =>
+      !['--contained-files-only', '--native-uid-only', '--native-owners-only'].includes(
+        argument,
+      ),
+  );
+  if (unknownArguments.length > 0) {
+    throw new Error(`Unknown consumer-lane option: ${unknownArguments.join(', ')}`);
+  }
+  const containedFilesOnly = arguments_.includes('--contained-files-only');
+  const nativeUIDOnly = arguments_.includes('--native-uid-only');
+  const nativeOwnersOnly = arguments_.includes('--native-owners-only');
+  if (arguments_.length > 1) throw new Error('Select one consumer-lane mode');
+  if (nativeUIDOnly && (process.platform !== 'linux' || process.getuid?.() !== 0))
+    throw new Error('Mandatory mixed-UID qualification requires Linux UID0');
+  const narrowNative = nativeUIDOnly || nativeOwnersOnly;
+  const FIXTURES = containedFilesOnly
+    ? ['minimal', 'node']
+    : narrowNative
+      ? nativeOwnersOnly
+        ? ['minimal', 'node']
+        : ['node']
+      : [
+          'minimal',
+          'native-client',
+          'declarations',
+          'nodenext',
+          'mcp-only',
+          'full',
+          'node',
+          'grammy',
+          'geo',
+          'vitals',
+          'google',
+        ];
+  const PEER_FREE_FIXTURES = ['minimal', 'nodenext'];
+  const NODE_FORBIDDEN_UNRESOLVED = ['Bun', 'bun', '@socket.io/bun-engine'];
+
+  let failed = false;
+  const timings = [];
+
+  function step(label, fn) {
+    const started = Date.now();
+    const result = fn();
+    timings.push([label, Date.now() - started]);
+    return result;
+  }
+
+  /** `step`, for a proof that has to wait on a real process. */
+  async function asyncStep(label, fn) {
+    const started = Date.now();
+    const result = await fn();
+    timings.push([label, Date.now() - started]);
+    return result;
+  }
+
+  /** `run` without blocking the lane, so independent proofs can overlap; rejects as `run` throws. */
+  function runAsync(cmd, args, cwd) {
+    return new Promise((resolve, reject) => {
+      execFile(cmd, args, { cwd, encoding: 'utf8' }, (error, stdout, stderr) => {
+        if (error) reject(Object.assign(error, { stdout, stderr }));
+        else resolve(stdout);
+      });
+    });
+  }
+
+  /**
+   * `tsc` exits non-zero on errors, so its output arrives via the thrown error —
+   * and an empty string is this lane's signal for "clean".
+   *
+   * Which is why a failure to RUN must not produce one. `execFileSync` throws the
+   * same shape whether the compiler reported diagnostics, the binary was missing
+   * or the child was killed:
+   *
+   *   missing binary  → { status: null, signal: null,      stdout: undefined }
+   *   SIGKILLed child → { status: null, signal: 'SIGKILL', stdout: '' }
+   *
+   * Both joined to `''` and the lane printed "the published package works for a
+   * consumer" — for every fixture, for both the strict typecheck and the
+   * declaration check. A `tsc` that the OOM killer takes in a constrained CI
+   * container is exactly that, and this lane exists to catch the class of thing
+   * that hides behind a green run.
+   */
+  function tsc(cwd, extraArgs) {
+    try {
+      run('bunx', ['tsc', '--noEmit', '-p', 'tsconfig.json', ...extraArgs], cwd);
+      return '';
+    } catch (err) {
+      const output = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+      // A real diagnostic run: the compiler ran, exited non-zero and said why.
+      if (typeof err.status === 'number' && output.trim()) return output;
+      const why =
+        err.signal !== null && err.signal !== undefined
+          ? `killed by ${err.signal}`
+          : `did not run (${err.code ?? err.message ?? 'unknown failure'})`;
+      return `[consumer-lane] tsc ${why} in ${cwd} — a typecheck that did not happen is not a passing typecheck\n${output}`;
+    }
+  }
+
+  if (!existsSync(join(pkgRoot, 'dist'))) {
+    console.error('[consumer-lane] no dist/ — run the build first');
     process.exit(1);
   }
 
-  const unresolved = new Set();
-  const fixtureDirectories = {};
+  const workdir = mkdtempSync(join(tmpdir(), 'stitchkit-consumer-'));
 
-  for (const name of FIXTURES) {
-    const dir = join(workdir, name);
-    fixtureDirectories[name] = dir;
-    cpSync(join(here, 'fixtures', name), dir, { recursive: true });
-    if (existsSync(join(dir, 'src'))) placeFixtureSupport(join(dir, 'src'));
+  try {
+    // 1. Pack. `bun pm pack` is ~17× faster than `npm pack` and was verified to
+    //    produce an identical file list, so the artifact under test is the one
+    //    that ships. Build ran in the sequential prefix (and before every CI
+    //    consumer-lane step); pack the built dist with `--ignore-scripts` so
+    //    parallel lanes never race `build:unlocked`'s `rm -rf dist`.
+    const { tarball } = packCoreTarball({ pkgRoot, destination: workdir, onStep: step });
 
-    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
-    manifest.dependencies.stitchkit = `file:${tarball}`;
-    writeFileSync(join(dir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+    const unresolved = new Set();
+    const fixtureDirectories = {};
 
-    // Checked-in templates point at local source so editors can type them before
-    // a package exists. The consumer lane must prove the opposite boundary:
-    // remove that authoring-only path before installing and checking the tarball.
-    const tsconfigPath = join(dir, 'tsconfig.json');
-    const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'));
-    delete tsconfig.compilerOptions.paths;
-    writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`);
+    for (const name of FIXTURES) {
+      const dir = join(workdir, name);
+      fixtureDirectories[name] = dir;
+      cpSync(join(here, 'fixtures', name), dir, { recursive: true });
+      if (existsSync(join(dir, 'src'))) placeFixtureSupport(join(dir, 'src'));
 
-    step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
-  }
+      const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+      manifest.dependencies.stitchkit = `file:${tarball}`;
+      writeFileSync(join(dir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
-  // Every fixture's installed proofs share one pool, so the slowest proof of one fixture overlaps
-  // the proofs of the others instead of holding them back.
-  await runInstalledConsumerProofs({
-    fixtures: FIXTURES,
-    platform: process.platform,
-    uid: process.getuid?.(),
-    ids: nativeUIDOnly
-      ? ['native-owner-uid']
-      : nativeOwnersOnly
-        ? [
-            'native-primitives',
-            'native-owners',
-            'native-cross-entry-owner',
-            'native-command-reasons',
-            'native-owner-loss',
-            'native-owner-loss-lazy-bundle',
-          ]
-        : undefined,
-    requireCapabilities: nativeUIDOnly,
-    concurrency: availableParallelism(),
-    run: async (proof, runtime) => {
-      const name = proof.fixture;
-      const dir = fixtureDirectories[name];
-      if (runtime !== 'types')
-        return asyncStep(`${name}: ${proof.id} (${runtime})`, () =>
-          runAsync(runtime, [`src/${proof.entry}`], dir),
-        );
-      let output = '';
-      for (const variant of declarationProofVariants(proof))
-        output += await asyncStep(`${name}: ${proof.id} (${variant.id})`, () =>
-          runAsync(
-            'bun',
-            [
-              join(pkgRoot, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc'),
-              ...declarationProofArguments(`src/${proof.entry}`, variant),
-            ],
-            dir,
-          ),
-        );
-      return output;
-    },
-    verdict: (proof, runtime, state) =>
-      console.log(`[consumer-lane] ${proof.id}/${runtime}: ${state}`),
-  });
+      // Checked-in templates point at local source so editors can type them before
+      // a package exists. The consumer lane must prove the opposite boundary:
+      // remove that authoring-only path before installing and checking the tarball.
+      const tsconfigPath = join(dir, 'tsconfig.json');
+      const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'));
+      delete tsconfig.compilerOptions.paths;
+      writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`);
 
-  for (const name of FIXTURES) {
-    const dir = fixtureDirectories[name];
-    if (name === 'node' && !narrowNative)
-      step('neutral library install and types', () => qualifyNeutralLibrary(dir));
+      step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
+    }
 
-    if (name === 'declarations') continue;
-
-    if (narrowNative) continue;
-
-    if (containedFilesOnly && name === 'minimal') continue;
-    if (containedFilesOnly) {
-      for (const runtime of ['bun', 'node']) {
-        const containedFilesOutput = step(`node: contained files (${runtime})`, () =>
-          run(runtime, ['src/contained-files.mjs'], dir),
-        );
-        if (!containedFilesOutput.includes('packed contained files')) {
-          failed = true;
-          console.error(
-            `[consumer-lane] node: ${runtime} contained-files proof produced no proof`,
+    // Every fixture's installed proofs share one pool, so the slowest proof of one fixture overlaps
+    // the proofs of the others instead of holding them back.
+    await runInstalledConsumerProofs({
+      fixtures: FIXTURES,
+      platform: process.platform,
+      uid: process.getuid?.(),
+      ids: nativeUIDOnly
+        ? ['native-owner-uid']
+        : nativeOwnersOnly
+          ? [
+              'native-primitives',
+              'native-owners',
+              'native-cross-entry-owner',
+              'native-command-reasons',
+              'native-owner-loss',
+              'native-owner-loss-lazy-bundle',
+            ]
+          : undefined,
+      requireCapabilities: nativeUIDOnly,
+      concurrency: availableParallelism(),
+      run: async (proof, runtime) => {
+        const name = proof.fixture;
+        const dir = fixtureDirectories[name];
+        if (runtime !== 'types')
+          return asyncStep(`${name}: ${proof.id} (${runtime})`, () =>
+            runAsync(runtime, [`src/${proof.entry}`], dir),
           );
-        }
-      }
-      continue;
-    }
-
-    if (name === 'node' && existsSync(join(dir, 'node_modules', '@types', 'bun'))) {
-      failed = true;
-      console.error('[consumer-lane] node: unexpectedly installed @types/bun');
-    }
-    if (PEER_FREE_FIXTURES.includes(name) && existsSync(join(dir, 'node_modules', 'grammy'))) {
-      failed = true;
-      console.error(`[consumer-lane] ${name}: unexpectedly installed optional peer grammy`);
-    }
-    if (
-      PEER_FREE_FIXTURES.includes(name) &&
-      existsSync(join(dir, 'node_modules', 'google-auth-library'))
-    ) {
-      failed = true;
-      console.error(
-        `[consumer-lane] ${name}: unexpectedly installed optional peer google-auth-library`,
-      );
-    }
-    if (
-      PEER_FREE_FIXTURES.includes(name) &&
-      (existsSync(join(dir, 'node_modules', 'socket.io')) ||
-        existsSync(join(dir, 'node_modules', 'socket.io-client')) ||
-        existsSync(join(dir, 'node_modules', '@socket.io', 'component-emitter')) ||
-        existsSync(join(dir, 'node_modules', '@socket.io', 'bun-engine')))
-    ) {
-      failed = true;
-      console.error(
-        `[consumer-lane] ${name}: unexpectedly installed optional Socket.IO peers`,
-      );
-    }
-
-    // The upgrade plan, from the install — not from this repository.
-    //
-    // `stitchkit upgrade` exists so a consuming project recovers its own
-    // migration list without cloning us and without being handed the range in a
-    // message. Every part of that promise is packaging: the binary has to be in
-    // `bin`, its entry has to be built into `dist`, and the changelog it reads
-    // has to be inside `files`. All three are invisible to a source test and to
-    // a typecheck — the tarball is the only place they are true or false.
-    if (name === 'node') {
-      const binary = join(dir, 'node_modules', '.bin', 'stitchkit');
-      if (!existsSync(binary)) {
-        failed = true;
-        console.error('[consumer-lane] node: the install has no `stitchkit` binary');
-      } else {
-        const plan = step('node: upgrade plan from the install', () =>
-          run(binary, ['upgrade', '--from', '0.79.0'], dir),
-        );
-        // 0.80.0 broke a public API, so any target above it must name it.
-        if (!plan.includes('## 0.80.0') || !plan.includes('Who must act')) {
-          failed = true;
-          console.error(`[consumer-lane] node: the installed binary printed no plan\n${plan}`);
-        }
-      }
-    }
-
-    // The consumer's default. Any error here is the package's fault, full stop.
-    const strict = step(`${name}: typecheck`, () => tsc(dir, []));
-    if (strict.trim()) {
-      failed = true;
-      console.error(`[consumer-lane] ${name}: does not typecheck for a consumer\n${strict}`);
-    }
-
-    // Do the emitted declarations stand on their own? Collect what does not
-    // resolve rather than failing on it — the allowlist above is the judgement.
-    const libCheck = step(`${name}: declaration check`, () =>
-      tsc(dir, ['--skipLibCheck', 'false']),
-    );
-    if ((name === 'nodenext' || name === 'mcp-only') && libCheck.trim()) {
-      failed = true;
-      console.error(
-        `[consumer-lane] ${name}: packed isolated declarations are not clean\n${libCheck}`,
-      );
-    }
-    // Everything else the compiler said about our own declarations is a defect,
-    // and until 0.80.0 this loop threw all of it away: it recognised exactly one
-    // error class — an unresolved reference — and every other diagnostic in a
-    // packed `.d.ts` fell out of the lane silently. `TS2344` did, five times, in
-    // `tools/async-operation-contract.d.ts`, for two releases: the check that
-    // would have named it ran on every fixture, printed the errors, and the
-    // parser did not know how to see them. A filter that quietly narrows what it
-    // is looking at reports the same clean result as a real pass.
-    //
-    // So the shape is inverted. An unresolved reference is *subtracted* — the
-    // judgement lives in ACCEPTED_UNRESOLVED below — and whatever is left fails
-    // the lane rather than being ignored for not matching a pattern.
-    const unexpectedDiagnostics = libCheck
-      .split('\n')
-      .filter(
-        (line) =>
-          line.includes('node_modules/stitchkit/') &&
-          /error TS\d+:/.test(line) &&
-          !/Cannot find (?:module|namespace|name) '/.test(line),
-      );
-    if (unexpectedDiagnostics.length > 0) {
-      failed = true;
-      console.error(
-        `[consumer-lane] ${name}: packed declarations do not typecheck strictly (${unexpectedDiagnostics.length})\n${unexpectedDiagnostics.join('\n')}`,
-      );
-    }
-
-    const fixtureUnresolved = new Set();
-    for (const line of libCheck.split('\n')) {
-      if (!line.includes('node_modules/stitchkit/')) continue;
-      const module = line.match(/Cannot find module '([^']+)'/);
-      const namespace = line.match(/Cannot find (?:namespace|name) '([^']+)'/);
-      const found = module?.[1] ?? namespace?.[1];
-      if (found) {
-        unresolved.add(found);
-        fixtureUnresolved.add(found);
-      }
-    }
-    if (name === 'node') {
-      const bunLeaks = [...fixtureUnresolved].filter((name) =>
-        NODE_FORBIDDEN_UNRESOLVED.includes(name),
-      );
-      if (bunLeaks.length > 0) {
-        failed = true;
-        console.error(
-          `[consumer-lane] node: Bun declarations leaked into stitchkit/node: ${bunLeaks.join(', ')}`,
-        );
-      }
-    }
-
-    const output = step(`${name}: run`, () => {
-      try {
-        return name === 'node' || name === 'nodenext'
-          ? run('node', ['src/runtime.mjs'], dir)
-          : run('bun', ['src/app.ts'], dir);
-      } catch (err) {
-        failed = true;
-        console.error(
-          `[consumer-lane] ${name}: failed\n${err.stdout ?? ''}${err.stderr ?? ''}`,
-        );
-        return '';
-      }
+        let output = '';
+        for (const variant of declarationProofVariants(proof))
+          output += await asyncStep(`${name}: ${proof.id} (${variant.id})`, () =>
+            runAsync(
+              'bun',
+              [
+                join(pkgRoot, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc'),
+                ...declarationProofArguments(`src/${proof.entry}`, variant),
+              ],
+              dir,
+            ),
+          );
+        return output;
+      },
+      verdict: (proof, runtime, state) =>
+        console.log(`[consumer-lane] ${proof.id}/${runtime}: ${state}`),
     });
-    if (output.trim()) console.log(`[consumer-lane] ${output.trim()}`);
 
-    if (name === 'full') {
-      for (const runtime of ['bun', 'node']) {
-        const invocationOutput = step(`full: ${runtime} model invocations`, () =>
-          run(runtime, ['src/model-invocations.ts'], dir),
-        );
-        if (!invocationOutput.includes('model invocation consumer: ok')) {
-          failed = true;
-          console.error('[consumer-lane] model invocation proof missing', invocationOutput);
+    for (const name of FIXTURES) {
+      const dir = fixtureDirectories[name];
+      if (name === 'node' && !narrowNative)
+        step('neutral library install and types', () => qualifyNeutralLibrary(dir));
+
+      if (name === 'declarations') continue;
+
+      if (narrowNative) continue;
+
+      if (containedFilesOnly && name === 'minimal') continue;
+      if (containedFilesOnly) {
+        for (const runtime of ['bun', 'node']) {
+          const containedFilesOutput = step(`node: contained files (${runtime})`, () =>
+            run(runtime, ['src/contained-files.mjs'], dir),
+          );
+          if (!containedFilesOutput.includes('packed contained files')) {
+            failed = true;
+            console.error(
+              `[consumer-lane] node: ${runtime} contained-files proof produced no proof`,
+            );
+          }
         }
-        const sessionOutput = step(`full: ${runtime} session and delivery`, () =>
-          run(runtime, ['src/session-delivery.ts'], dir),
-        );
-        if (!sessionOutput.includes('session and delivery consumer: ok')) {
-          failed = true;
-          console.error('[consumer-lane] session and delivery proof missing', sessionOutput);
-        }
+        continue;
       }
 
-      // The agent runtime needs `ai`, so this belongs to the fixture that
-      // opted into it — and it is the exact invocation the upgrading guide
-      // shows, so the guide cannot drift from the package again unnoticed.
-      const storeConformanceOutput = step('full: agent store conformance', () =>
-        run('bun', ['src/agent-store-conformance.ts'], dir),
-      );
-      if (!storeConformanceOutput.includes('agent store conformance: ok')) {
+      if (name === 'node' && existsSync(join(dir, 'node_modules', '@types', 'bun'))) {
         failed = true;
-        console.error(
-          '[consumer-lane] full: agent store conformance produced no proof',
-          storeConformanceOutput,
-        );
+        console.error('[consumer-lane] node: unexpectedly installed @types/bun');
       }
-    }
-
-    if (name === 'minimal') {
-      const unixOutput = step('minimal: packed Bun Unix client', () =>
-        run('bun', ['src/unix-client-conformance.mjs'], dir),
-      );
-      const unixNodeOutput = step('minimal: packed Node Unix client', () =>
-        run('node', ['src/unix-client-conformance.mjs'], dir),
-      );
       if (
-        !unixOutput.includes('packed Bun Unix client conformance: ok') ||
-        !unixNodeOutput.includes('packed Node Unix client conformance: ok')
+        PEER_FREE_FIXTURES.includes(name) &&
+        existsSync(join(dir, 'node_modules', 'grammy'))
+      ) {
+        failed = true;
+        console.error(`[consumer-lane] ${name}: unexpectedly installed optional peer grammy`);
+      }
+      if (
+        PEER_FREE_FIXTURES.includes(name) &&
+        existsSync(join(dir, 'node_modules', 'google-auth-library'))
       ) {
         failed = true;
         console.error(
-          '[consumer-lane] minimal: Unix client conformance produced no proof',
-          unixOutput,
+          `[consumer-lane] ${name}: unexpectedly installed optional peer google-auth-library`,
         );
       }
-      const boundedOutput = step('minimal: bounded transport primitives', () =>
-        run('bun', ['src/bounded-primitives.ts'], dir),
-      );
-      if (!boundedOutput.includes('bounded transport primitives: ok')) {
+      if (
+        PEER_FREE_FIXTURES.includes(name) &&
+        (existsSync(join(dir, 'node_modules', 'socket.io')) ||
+          existsSync(join(dir, 'node_modules', 'socket.io-client')) ||
+          existsSync(join(dir, 'node_modules', '@socket.io', 'component-emitter')) ||
+          existsSync(join(dir, 'node_modules', '@socket.io', 'bun-engine')))
+      ) {
         failed = true;
         console.error(
-          '[consumer-lane] minimal: bounded primitives produced no proof',
-          boundedOutput,
+          `[consumer-lane] ${name}: unexpectedly installed optional Socket.IO peers`,
         );
       }
-      const primitivesOutput = step('minimal: peer-free application primitives', () =>
-        run('bun', ['src/application-primitives-conformance.ts'], dir),
+
+      // The upgrade plan, from the install — not from this repository.
+      //
+      // `stitchkit upgrade` exists so a consuming project recovers its own
+      // migration list without cloning us and without being handed the range in a
+      // message. Every part of that promise is packaging: the binary has to be in
+      // `bin`, its entry has to be built into `dist`, and the changelog it reads
+      // has to be inside `files`. All three are invisible to a source test and to
+      // a typecheck — the tarball is the only place they are true or false.
+      if (name === 'node') {
+        const binary = join(dir, 'node_modules', '.bin', 'stitchkit');
+        if (!existsSync(binary)) {
+          failed = true;
+          console.error('[consumer-lane] node: the install has no `stitchkit` binary');
+        } else {
+          const plan = step('node: upgrade plan from the install', () =>
+            run(binary, ['upgrade', '--from', '0.79.0'], dir),
+          );
+          // 0.80.0 broke a public API, so any target above it must name it.
+          if (!plan.includes('## 0.80.0') || !plan.includes('Who must act')) {
+            failed = true;
+            console.error(
+              `[consumer-lane] node: the installed binary printed no plan\n${plan}`,
+            );
+          }
+        }
+      }
+
+      // The consumer's default. Any error here is the package's fault, full stop.
+      const strict = step(`${name}: typecheck`, () => tsc(dir, []));
+      if (strict.trim()) {
+        failed = true;
+        console.error(`[consumer-lane] ${name}: does not typecheck for a consumer\n${strict}`);
+      }
+
+      // Do the emitted declarations stand on their own? Collect what does not
+      // resolve rather than failing on it — the allowlist above is the judgement.
+      const libCheck = step(`${name}: declaration check`, () =>
+        tsc(dir, ['--skipLibCheck', 'false']),
       );
-      if (!primitivesOutput.includes('application primitives conformance: ok')) {
+      if ((name === 'nodenext' || name === 'mcp-only') && libCheck.trim()) {
         failed = true;
         console.error(
-          '[consumer-lane] minimal: application primitives conformance produced no proof',
-          primitivesOutput,
+          `[consumer-lane] ${name}: packed isolated declarations are not clean\n${libCheck}`,
         );
       }
-      const toolsContractOutput = step('minimal: peer-free tools contract', () =>
-        run('bun', ['src/tools-contract-conformance.ts'], dir),
-      );
-      if (!toolsContractOutput.includes('tools contract conformance: ok')) {
+      // Everything else the compiler said about our own declarations is a defect,
+      // and until 0.80.0 this loop threw all of it away: it recognised exactly one
+      // error class — an unresolved reference — and every other diagnostic in a
+      // packed `.d.ts` fell out of the lane silently. `TS2344` did, five times, in
+      // `tools/async-operation-contract.d.ts`, for two releases: the check that
+      // would have named it ran on every fixture, printed the errors, and the
+      // parser did not know how to see them. A filter that quietly narrows what it
+      // is looking at reports the same clean result as a real pass.
+      //
+      // So the shape is inverted. An unresolved reference is *subtracted* — the
+      // judgement lives in ACCEPTED_UNRESOLVED below — and whatever is left fails
+      // the lane rather than being ignored for not matching a pattern.
+      const unexpectedDiagnostics = libCheck
+        .split('\n')
+        .filter(
+          (line) =>
+            line.includes('node_modules/stitchkit/') &&
+            /error TS\d+:/.test(line) &&
+            !/Cannot find (?:module|namespace|name) '/.test(line),
+        );
+      if (unexpectedDiagnostics.length > 0) {
         failed = true;
         console.error(
-          '[consumer-lane] minimal: tools contract conformance produced no proof',
-          toolsContractOutput,
+          `[consumer-lane] ${name}: packed declarations do not typecheck strictly (${unexpectedDiagnostics.length})\n${unexpectedDiagnostics.join('\n')}`,
         );
       }
-      const trackingOutput = step('minimal: peer-free tracking', () =>
-        run('bun', ['src/tracking-conformance.ts'], dir),
-      );
-      if (!trackingOutput.includes('tracking conformance: ok')) {
-        failed = true;
-        console.error(
-          '[consumer-lane] minimal: tracking conformance produced no proof',
-          trackingOutput,
-        );
+
+      const fixtureUnresolved = new Set();
+      for (const line of libCheck.split('\n')) {
+        if (!line.includes('node_modules/stitchkit/')) continue;
+        const module = line.match(/Cannot find module '([^']+)'/);
+        const namespace = line.match(/Cannot find (?:namespace|name) '([^']+)'/);
+        const found = module?.[1] ?? namespace?.[1];
+        if (found) {
+          unresolved.add(found);
+          fixtureUnresolved.add(found);
+        }
       }
-      for (const runtime of ['bun', 'node']) {
-        const invokerOutput = step(`minimal: peer-free tool invoker (${runtime})`, () =>
-          run(runtime, ['src/tool-invoker-conformance.mjs'], dir),
+      if (name === 'node') {
+        const bunLeaks = [...fixtureUnresolved].filter((name) =>
+          NODE_FORBIDDEN_UNRESOLVED.includes(name),
+        );
+        if (bunLeaks.length > 0) {
+          failed = true;
+          console.error(
+            `[consumer-lane] node: Bun declarations leaked into stitchkit/node: ${bunLeaks.join(', ')}`,
+          );
+        }
+      }
+
+      const output = step(`${name}: run`, () => {
+        try {
+          return name === 'node' || name === 'nodenext'
+            ? run('node', ['src/runtime.mjs'], dir)
+            : run('bun', ['src/app.ts'], dir);
+        } catch (err) {
+          failed = true;
+          console.error(
+            `[consumer-lane] ${name}: failed\n${err.stdout ?? ''}${err.stderr ?? ''}`,
+          );
+          return '';
+        }
+      });
+      if (output.trim()) console.log(`[consumer-lane] ${output.trim()}`);
+
+      if (name === 'full') {
+        for (const runtime of ['bun', 'node']) {
+          const invocationOutput = step(`full: ${runtime} model invocations`, () =>
+            run(runtime, ['src/model-invocations.ts'], dir),
+          );
+          if (!invocationOutput.includes('model invocation consumer: ok')) {
+            failed = true;
+            console.error('[consumer-lane] model invocation proof missing', invocationOutput);
+          }
+          const sessionOutput = step(`full: ${runtime} session and delivery`, () =>
+            run(runtime, ['src/session-delivery.ts'], dir),
+          );
+          if (!sessionOutput.includes('session and delivery consumer: ok')) {
+            failed = true;
+            console.error('[consumer-lane] session and delivery proof missing', sessionOutput);
+          }
+        }
+
+        // The agent runtime needs `ai`, so this belongs to the fixture that
+        // opted into it — and it is the exact invocation the upgrading guide
+        // shows, so the guide cannot drift from the package again unnoticed.
+        const storeConformanceOutput = step('full: agent store conformance', () =>
+          run('bun', ['src/agent-store-conformance.ts'], dir),
+        );
+        if (!storeConformanceOutput.includes('agent store conformance: ok')) {
+          failed = true;
+          console.error(
+            '[consumer-lane] full: agent store conformance produced no proof',
+            storeConformanceOutput,
+          );
+        }
+      }
+
+      if (name === 'minimal') {
+        const unixOutput = step('minimal: packed Bun Unix client', () =>
+          run('bun', ['src/unix-client-conformance.mjs'], dir),
+        );
+        const unixNodeOutput = step('minimal: packed Node Unix client', () =>
+          run('node', ['src/unix-client-conformance.mjs'], dir),
         );
         if (
-          !invokerOutput.includes(
-            `packed ${runtime === 'bun' ? 'Bun' : 'Node'} tool invoker: ok`,
-          )
+          !unixOutput.includes('packed Bun Unix client conformance: ok') ||
+          !unixNodeOutput.includes('packed Node Unix client conformance: ok')
         ) {
           failed = true;
-          console.error(`[consumer-lane] minimal: ${runtime} tool invoker produced no proof`);
+          console.error(
+            '[consumer-lane] minimal: Unix client conformance produced no proof',
+            unixOutput,
+          );
         }
-      }
-      const conformanceOutput = step('minimal: managed resource conformance', () =>
-        run('bun', ['src/managed-resource-conformance.ts'], dir),
-      );
-      if (!conformanceOutput.includes('managed resource conformance: ok')) {
-        failed = true;
-        console.error(
-          '[consumer-lane] minimal: managed resource conformance produced no proof',
-          conformanceOutput,
+        const boundedOutput = step('minimal: bounded transport primitives', () =>
+          run('bun', ['src/bounded-primitives.ts'], dir),
         );
-      }
-      const recipesOutput = step('minimal: application migration recipes', () =>
-        run('bun', ['src/application-migration-recipes.ts'], dir),
-      );
-      if (!recipesOutput.includes('application migration recipes: ok')) {
-        failed = true;
-        console.error(
-          '[consumer-lane] minimal: application migration recipes produced no proof',
-          recipesOutput,
-        );
-      }
-      // A long-lived response is served and read from `dist`, through the
-      // `exports` map, with every type named on purpose. The in-repo suite
-      // structurally cannot see either half.
-      const streamingOutput = step('minimal: long-lived streaming subscription', () =>
-        run('bun', ['src/streaming-subscription.ts'], dir),
-      );
-      if (!streamingOutput.includes('streaming subscription: ok')) {
-        failed = true;
-        console.error(
-          '[consumer-lane] minimal: streaming subscription produced no proof',
-          streamingOutput,
-        );
-      }
-    }
-
-    if (name === 'node') {
-      const output = step('node: real application signal/drain/force', () =>
-        run('node', ['src/application-signal-parent.mjs'], dir),
-      );
-      if (!output.includes('node application signal/drain/force: ok')) {
-        failed = true;
-        console.error(
-          '[consumer-lane] node: application signal path produced no proof',
-          output,
-        );
-      }
-      for (const runtime of ['bun', 'node']) {
-        const annotationOutput = step(`node: union annotations (${runtime})`, () =>
-          run(runtime, ['src/union-annotations.mjs'], dir),
-        );
-        if (!annotationOutput.includes('packed union annotations: ok')) {
-          throw new Error(`Missing ${runtime} union annotation proof`);
-        }
-        const purgeOutput = step(`node: conversation purge (${runtime})`, () =>
-          run(runtime, ['src/conversation-purge.mjs'], dir),
-        );
-        if (!purgeOutput.includes('packed conversation purge: ok')) {
+        if (!boundedOutput.includes('bounded transport primitives: ok')) {
           failed = true;
           console.error(
-            `[consumer-lane] node: ${runtime} conversation purge produced no proof`,
+            '[consumer-lane] minimal: bounded primitives produced no proof',
+            boundedOutput,
           );
         }
-        const streamShutdownOutput = step(`node: stream shutdown (${runtime})`, () =>
-          run(runtime, ['src/stream-shutdown.mjs'], dir),
+        const primitivesOutput = step('minimal: peer-free application primitives', () =>
+          run('bun', ['src/application-primitives-conformance.ts'], dir),
         );
-        if (!streamShutdownOutput.includes('packed stream shutdown: ok')) {
-          failed = true;
-          console.error(`[consumer-lane] node: ${runtime} stream shutdown produced no proof`);
-        }
-        const containedFilesOutput = step(`node: contained files (${runtime})`, () =>
-          run(runtime, ['src/contained-files.mjs'], dir),
-        );
-        if (!containedFilesOutput.includes('packed contained files')) {
+        if (!primitivesOutput.includes('application primitives conformance: ok')) {
           failed = true;
           console.error(
-            `[consumer-lane] node: ${runtime} contained-files proof produced no proof`,
+            '[consumer-lane] minimal: application primitives conformance produced no proof',
+            primitivesOutput,
           );
         }
-        const multipartOutput = step(`node: Unicode multipart (${runtime})`, () =>
-          run(runtime, ['src/multipart-unicode.mjs'], dir),
+        const toolsContractOutput = step('minimal: peer-free tools contract', () =>
+          run('bun', ['src/tools-contract-conformance.ts'], dir),
         );
-        if (!multipartOutput.includes('packed multipart Unicode: ok')) {
-          failed = true;
-          console.error(`[consumer-lane] node: ${runtime} multipart produced no proof`);
-        }
-        const groupErrorOutput = step(`node: route group errors (${runtime})`, () =>
-          run(runtime, ['src/route-group-error.mjs'], dir),
-        );
-        if (!groupErrorOutput.includes('packed route group errors: ok')) {
+        if (!toolsContractOutput.includes('tools contract conformance: ok')) {
           failed = true;
           console.error(
-            `[consumer-lane] node: ${runtime} route group errors produced no proof`,
+            '[consumer-lane] minimal: tools contract conformance produced no proof',
+            toolsContractOutput,
           );
         }
-        const harnessOutput = step(`node: headless harness (${runtime})`, () =>
-          run(runtime, ['src/headless-harness.mjs'], dir),
+        const trackingOutput = step('minimal: peer-free tracking', () =>
+          run('bun', ['src/tracking-conformance.ts'], dir),
         );
-        if (!harnessOutput.includes('packed headless harness: ok')) {
-          failed = true;
-          console.error(`[consumer-lane] node: ${runtime} headless harness produced no proof`);
-        }
-        const compositionOutput = step(`node: durable compositions (${runtime})`, () =>
-          run(runtime, ['src/durable-composition.mjs'], dir),
-        );
-        if (!compositionOutput.includes('packed durable compositions: ok')) {
+        if (!trackingOutput.includes('tracking conformance: ok')) {
           failed = true;
           console.error(
-            `[consumer-lane] node: ${runtime} durable compositions produced no proof`,
+            '[consumer-lane] minimal: tracking conformance produced no proof',
+            trackingOutput,
           );
         }
-        const deferredOutput = step(`node: deferred tools (${runtime})`, () =>
-          run(runtime, ['src/deferred-tools.mjs'], dir),
-        );
-        if (!deferredOutput.includes('packed deferred tools: ok')) {
-          failed = true;
-          console.error(`[consumer-lane] node: ${runtime} deferred tools produced no proof`);
-        }
-        const journalOutput = step(`node: diagnostic journal (${runtime})`, () =>
-          run(runtime, ['src/diagnostic-journal.mjs'], dir),
-        );
-        if (!journalOutput.includes('packed diagnostic journal: ok')) {
-          failed = true;
-          console.error(
-            `[consumer-lane] node: ${runtime} diagnostic journal produced no proof`,
+        for (const runtime of ['bun', 'node']) {
+          const invokerOutput = step(`minimal: peer-free tool invoker (${runtime})`, () =>
+            run(runtime, ['src/tool-invoker-conformance.mjs'], dir),
           );
-        }
-        const drainOutput = step(`node: drain bound (${runtime})`, () =>
-          run(runtime, ['src/drain-bound.mjs'], dir),
-        );
-        if (!drainOutput.includes('packed drain bound: ok')) {
-          failed = true;
-          console.error(`[consumer-lane] node: ${runtime} drain bound produced no proof`);
-        }
-        const revisionOutput = step(`node: operation revision (${runtime})`, () =>
-          run(runtime, ['src/operation-revision.mjs'], dir),
-        );
-        if (!revisionOutput.includes('packed operation revision: ok')) {
-          failed = true;
-          console.error(
-            `[consumer-lane] node: ${runtime} operation revision produced no proof`,
-          );
-        }
-        // The durable capabilities of 0.86.0, each proven on the installed
-        // artifact rather than in-repo — three releases shipped broken with
-        // every in-repo gate green, and this is where that class is caught.
-        for (const [file, label] of [
-          ['projections.mjs', 'projections'],
-          ['event-search.mjs', 'event search'],
-          ['spill.mjs', 'spill'],
-          ['schedules.mjs', 'schedules'],
-          ['children.mjs', 'children'],
-          ['sandbox-grade.mjs', 'sandbox grade'],
-          ['sandbox-backend.mjs', 'sandbox backend'],
-          ['sandbox-composition.mjs', 'sandbox composition'],
-          ['retry-boundary.mjs', 'retry boundary'],
-          ['migration.mjs', 'migration'],
-        ]) {
-          const output = step(`node: ${label} (${runtime})`, () =>
-            run(runtime, [`src/${file}`], dir),
-          );
-          if (!output.includes(`packed ${label}: ok`)) {
+          if (
+            !invokerOutput.includes(
+              `packed ${runtime === 'bun' ? 'Bun' : 'Node'} tool invoker: ok`,
+            )
+          ) {
             failed = true;
-            console.error(`[consumer-lane] node: ${runtime} ${label} produced no proof`);
+            console.error(
+              `[consumer-lane] minimal: ${runtime} tool invoker produced no proof`,
+            );
+          }
+        }
+        const conformanceOutput = step('minimal: managed resource conformance', () =>
+          run('bun', ['src/managed-resource-conformance.ts'], dir),
+        );
+        if (!conformanceOutput.includes('managed resource conformance: ok')) {
+          failed = true;
+          console.error(
+            '[consumer-lane] minimal: managed resource conformance produced no proof',
+            conformanceOutput,
+          );
+        }
+        const recipesOutput = step('minimal: application migration recipes', () =>
+          run('bun', ['src/application-migration-recipes.ts'], dir),
+        );
+        if (!recipesOutput.includes('application migration recipes: ok')) {
+          failed = true;
+          console.error(
+            '[consumer-lane] minimal: application migration recipes produced no proof',
+            recipesOutput,
+          );
+        }
+        // A long-lived response is served and read from `dist`, through the
+        // `exports` map, with every type named on purpose. The in-repo suite
+        // structurally cannot see either half.
+        const streamingOutput = step('minimal: long-lived streaming subscription', () =>
+          run('bun', ['src/streaming-subscription.ts'], dir),
+        );
+        if (!streamingOutput.includes('streaming subscription: ok')) {
+          failed = true;
+          console.error(
+            '[consumer-lane] minimal: streaming subscription produced no proof',
+            streamingOutput,
+          );
+        }
+      }
+
+      if (name === 'node') {
+        const output = step('node: real application signal/drain/force', () =>
+          run('node', ['src/application-signal-parent.mjs'], dir),
+        );
+        if (!output.includes('node application signal/drain/force: ok')) {
+          failed = true;
+          console.error(
+            '[consumer-lane] node: application signal path produced no proof',
+            output,
+          );
+        }
+        for (const runtime of ['bun', 'node']) {
+          const annotationOutput = step(`node: union annotations (${runtime})`, () =>
+            run(runtime, ['src/union-annotations.mjs'], dir),
+          );
+          if (!annotationOutput.includes('packed union annotations: ok')) {
+            throw new Error(`Missing ${runtime} union annotation proof`);
+          }
+          const purgeOutput = step(`node: conversation purge (${runtime})`, () =>
+            run(runtime, ['src/conversation-purge.mjs'], dir),
+          );
+          if (!purgeOutput.includes('packed conversation purge: ok')) {
+            failed = true;
+            console.error(
+              `[consumer-lane] node: ${runtime} conversation purge produced no proof`,
+            );
+          }
+          const streamShutdownOutput = step(`node: stream shutdown (${runtime})`, () =>
+            run(runtime, ['src/stream-shutdown.mjs'], dir),
+          );
+          if (!streamShutdownOutput.includes('packed stream shutdown: ok')) {
+            failed = true;
+            console.error(
+              `[consumer-lane] node: ${runtime} stream shutdown produced no proof`,
+            );
+          }
+          const containedFilesOutput = step(`node: contained files (${runtime})`, () =>
+            run(runtime, ['src/contained-files.mjs'], dir),
+          );
+          if (!containedFilesOutput.includes('packed contained files')) {
+            failed = true;
+            console.error(
+              `[consumer-lane] node: ${runtime} contained-files proof produced no proof`,
+            );
+          }
+          const multipartOutput = step(`node: Unicode multipart (${runtime})`, () =>
+            run(runtime, ['src/multipart-unicode.mjs'], dir),
+          );
+          if (!multipartOutput.includes('packed multipart Unicode: ok')) {
+            failed = true;
+            console.error(`[consumer-lane] node: ${runtime} multipart produced no proof`);
+          }
+          const groupErrorOutput = step(`node: route group errors (${runtime})`, () =>
+            run(runtime, ['src/route-group-error.mjs'], dir),
+          );
+          if (!groupErrorOutput.includes('packed route group errors: ok')) {
+            failed = true;
+            console.error(
+              `[consumer-lane] node: ${runtime} route group errors produced no proof`,
+            );
+          }
+          const harnessOutput = step(`node: headless harness (${runtime})`, () =>
+            run(runtime, ['src/headless-harness.mjs'], dir),
+          );
+          if (!harnessOutput.includes('packed headless harness: ok')) {
+            failed = true;
+            console.error(
+              `[consumer-lane] node: ${runtime} headless harness produced no proof`,
+            );
+          }
+          const compositionOutput = step(`node: durable compositions (${runtime})`, () =>
+            run(runtime, ['src/durable-composition.mjs'], dir),
+          );
+          if (!compositionOutput.includes('packed durable compositions: ok')) {
+            failed = true;
+            console.error(
+              `[consumer-lane] node: ${runtime} durable compositions produced no proof`,
+            );
+          }
+          const deferredOutput = step(`node: deferred tools (${runtime})`, () =>
+            run(runtime, ['src/deferred-tools.mjs'], dir),
+          );
+          if (!deferredOutput.includes('packed deferred tools: ok')) {
+            failed = true;
+            console.error(`[consumer-lane] node: ${runtime} deferred tools produced no proof`);
+          }
+          const journalOutput = step(`node: diagnostic journal (${runtime})`, () =>
+            run(runtime, ['src/diagnostic-journal.mjs'], dir),
+          );
+          if (!journalOutput.includes('packed diagnostic journal: ok')) {
+            failed = true;
+            console.error(
+              `[consumer-lane] node: ${runtime} diagnostic journal produced no proof`,
+            );
+          }
+          const drainOutput = step(`node: drain bound (${runtime})`, () =>
+            run(runtime, ['src/drain-bound.mjs'], dir),
+          );
+          if (!drainOutput.includes('packed drain bound: ok')) {
+            failed = true;
+            console.error(`[consumer-lane] node: ${runtime} drain bound produced no proof`);
+          }
+          const revisionOutput = step(`node: operation revision (${runtime})`, () =>
+            run(runtime, ['src/operation-revision.mjs'], dir),
+          );
+          if (!revisionOutput.includes('packed operation revision: ok')) {
+            failed = true;
+            console.error(
+              `[consumer-lane] node: ${runtime} operation revision produced no proof`,
+            );
+          }
+          // The durable capabilities of 0.86.0, each proven on the installed
+          // artifact rather than in-repo — three releases shipped broken with
+          // every in-repo gate green, and this is where that class is caught.
+          for (const [file, label] of [
+            ['projections.mjs', 'projections'],
+            ['event-search.mjs', 'event search'],
+            ['spill.mjs', 'spill'],
+            ['schedules.mjs', 'schedules'],
+            ['children.mjs', 'children'],
+            ['sandbox-grade.mjs', 'sandbox grade'],
+            ['sandbox-backend.mjs', 'sandbox backend'],
+            ['sandbox-composition.mjs', 'sandbox composition'],
+            ['retry-boundary.mjs', 'retry boundary'],
+            ['migration.mjs', 'migration'],
+            ['local-host.mjs', 'local host'],
+          ]) {
+            const output = step(`node: ${label} (${runtime})`, () =>
+              run(runtime, [`src/${file}`], dir),
+            );
+            if (!output.includes(`packed ${label}: ok`)) {
+              failed = true;
+              console.error(`[consumer-lane] node: ${runtime} ${label} produced no proof`);
+            }
           }
         }
       }
     }
-  }
 
-  if (!containedFilesOnly && !narrowNative)
-    try {
-      step('optional-peer matrix', () => runOptionalPeerMatrix({ fixtureDirectories }));
-    } catch (error) {
+    if (!containedFilesOnly && !narrowNative)
+      try {
+        step('optional-peer matrix', () => runOptionalPeerMatrix({ fixtureDirectories }));
+      } catch (error) {
+        failed = true;
+        console.error(error instanceof Error ? error.message : error);
+      }
+
+    if (!containedFilesOnly && !narrowNative)
+      try {
+        step('self-contained socket artifact', () =>
+          runSelfContainedSocketProof({ workdir, tarball, pkgRoot }),
+        );
+      } catch (error) {
+        failed = true;
+        console.error(error instanceof Error ? error.message : error);
+      }
+
+    if (!containedFilesOnly && !narrowNative)
+      try {
+        await asyncStep('self-contained socket client artifact', () =>
+          runSelfContainedSocketClientProof({ workdir, tarball, pkgRoot }),
+        );
+      } catch (error) {
+        failed = true;
+        console.error(error instanceof Error ? error.message : error);
+      }
+
+    const unexpected =
+      containedFilesOnly || narrowNative
+        ? []
+        : [...unresolved].filter((n) => !ACCEPTED_UNRESOLVED.includes(n));
+    const gone =
+      containedFilesOnly || narrowNative
+        ? []
+        : ACCEPTED_UNRESOLVED.filter((n) => !unresolved.has(n));
+    if (unexpected.length > 0) {
       failed = true;
-      console.error(error instanceof Error ? error.message : error);
-    }
-
-  if (!containedFilesOnly && !narrowNative)
-    try {
-      step('self-contained socket artifact', () =>
-        runSelfContainedSocketProof({ workdir, tarball, pkgRoot }),
+      console.error(
+        `[consumer-lane] the published declarations reference something new that a consumer cannot resolve: ${unexpected.join(', ')}\n` +
+          '  Either it belongs in ACCEPTED_UNRESOLVED (an optional peer, knowingly), or the package now needs a dependency it does not declare.',
       );
-    } catch (error) {
-      failed = true;
-      console.error(error instanceof Error ? error.message : error);
     }
-
-  if (!containedFilesOnly && !narrowNative)
-    try {
-      await asyncStep('self-contained socket client artifact', () =>
-        runSelfContainedSocketClientProof({ workdir, tarball, pkgRoot }),
+    if (gone.length > 0) {
+      console.log(
+        `[consumer-lane] no longer unresolved — drop from ACCEPTED_UNRESOLVED: ${gone.join(', ')}`,
       );
-    } catch (error) {
-      failed = true;
-      console.error(error instanceof Error ? error.message : error);
     }
 
-  const unexpected =
-    containedFilesOnly || narrowNative
-      ? []
-      : [...unresolved].filter((n) => !ACCEPTED_UNRESOLVED.includes(n));
-  const gone =
-    containedFilesOnly || narrowNative
-      ? []
-      : ACCEPTED_UNRESOLVED.filter((n) => !unresolved.has(n));
-  if (unexpected.length > 0) {
-    failed = true;
-    console.error(
-      `[consumer-lane] the published declarations reference something new that a consumer cannot resolve: ${unexpected.join(', ')}\n` +
-        '  Either it belongs in ACCEPTED_UNRESOLVED (an optional peer, knowingly), or the package now needs a dependency it does not declare.',
-    );
-  }
-  if (gone.length > 0) {
+    const total = timings.reduce((sum, [, ms]) => sum + ms, 0);
     console.log(
-      `[consumer-lane] no longer unresolved — drop from ACCEPTED_UNRESOLVED: ${gone.join(', ')}`,
+      `[consumer-lane] ${total} ms  (${timings.map(([l, ms]) => `${l} ${ms}`).join(', ')})`,
     );
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    if (failed) console.error(`[consumer-lane] workdir kept for inspection: ${workdir}`);
+    else rmSync(workdir, { recursive: true, force: true });
   }
 
-  const total = timings.reduce((sum, [, ms]) => sum + ms, 0);
+  if (failed) process.exit(1);
   console.log(
-    `[consumer-lane] ${total} ms  (${timings.map(([l, ms]) => `${l} ${ms}`).join(', ')})`,
+    nativeUIDOnly
+      ? '[consumer-lane] installed Linux mixed-UID qualification succeeded'
+      : nativeOwnersOnly
+        ? '[consumer-lane] installed native ownership qualification succeeded'
+        : containedFilesOnly
+          ? '[consumer-lane] packed contained files work for a macOS consumer'
+          : '[consumer-lane] the published package works for a consumer',
   );
-} catch (error) {
-  failed = true;
-  throw error;
-} finally {
-  if (failed) console.error(`[consumer-lane] workdir kept for inspection: ${workdir}`);
-  else rmSync(workdir, { recursive: true, force: true });
 }
-
-if (failed) process.exit(1);
-console.log(
-  nativeUIDOnly
-    ? '[consumer-lane] installed Linux mixed-UID qualification succeeded'
-    : nativeOwnersOnly
-      ? '[consumer-lane] installed native ownership qualification succeeded'
-      : containedFilesOnly
-        ? '[consumer-lane] packed contained files work for a macOS consumer'
-        : '[consumer-lane] the published package works for a consumer',
-);

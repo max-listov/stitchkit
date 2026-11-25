@@ -41,6 +41,7 @@
  */
 
 import type { HttpMethod } from '../contract/define';
+import { assertTimerMs } from '../internal/deadline';
 import { ownHttpStream, settleStreamCleanup } from './http-stream-lifetime';
 /** How a value becomes bytes on the wire. The only thing the two formats differ in. */
 import { pumpFrames } from './streaming-pump';
@@ -237,9 +238,7 @@ function streamingTimings(
   idleTimeoutSeconds: number;
 } {
   const heartbeatMs = options.heartbeatMs ?? DEFAULT_STREAM_HEARTBEAT_MS;
-  if (!Number.isFinite(heartbeatMs) || heartbeatMs <= 0) {
-    throw new TypeError('heartbeatMs must be a finite positive number of milliseconds');
-  }
+  assertTimerMs('heartbeatMs', heartbeatMs);
   const idleTimeoutSeconds = options.idleTimeoutSeconds ?? 0;
   if (!Number.isInteger(idleTimeoutSeconds) || idleTimeoutSeconds < 0) {
     throw new TypeError('idleTimeoutSeconds must be a non-negative integer');

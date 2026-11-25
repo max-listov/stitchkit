@@ -8,7 +8,8 @@ updated: 2026-05-29
 
 # ADR 0017 — Typed tool-path context via `createToolkit`
 
-- **Status:** Accepted — extends [ADR 0003](0003-two-context-types.md)
+**Relations:** extends [ADR 0003](0003-two-context-types.md)
+
 - **Date:** 2026-05-29
 
 ## Context

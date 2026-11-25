@@ -8,7 +8,8 @@ updated: 2026-06-05
 
 # ADR 0025 — Typed scoped client (consumed keys as args)
 
-- **Status:** Accepted — extends [ADR 0005](0005-typed-client.md)
+**Relations:** extends [ADR 0005](0005-typed-client.md)
+
 - **Date:** 2026-06-05
 
 ## Context

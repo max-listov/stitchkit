@@ -6,10 +6,10 @@ import { readReleaseTrain } from './release-train';
 export const VERIFY_STEPS: readonly string[] = [
   'lockfile',
   'lint',
+  'build',
   'check',
   'test',
   'test:postgres-stores',
-  'build',
   'smoke:next-ssr',
   'smoke:node',
   'consumer-lane',
@@ -20,7 +20,42 @@ export const VERIFY_STEPS: readonly string[] = [
   'starter-lane',
   'supervised-lane',
 ];
-export const FAST_STEPS: readonly string[] = ['lockfile', 'lint', 'check', 'test'];
+/**
+ * Build before types and tests. The build checks the published declarations
+ * (`check-public-types`): a public signature naming an unexported type passes
+ * `check` and `test` and is caught only by the build. The terminal package's own
+ * check and tests read the framework's build, so it has to be this tree's.
+ */
+export const FAST_STEPS: readonly string[] = ['lockfile', 'lint', 'build', 'check', 'test'];
+/**
+ * Steps that run one after another, in profile order, before the heavy lanes run side by side.
+ * Everything else in a profile is a heavy lane. Named rather than "up to the build": the build
+ * comes first, and the type check and tests behind it must not run beside the lanes.
+ */
+export const SEQUENTIAL_STEPS: ReadonlySet<string> = new Set([
+  'lockfile',
+  'lint',
+  'build',
+  'check',
+  'test',
+  'test:release-metadata',
+  'test:postgres-stores',
+]);
+
+/** A profile's sequential prefix and its heavy lanes; a sequential step after a lane refuses. */
+export function splitProfile(steps: readonly string[]): {
+  sequential: readonly string[];
+  heavy: readonly string[];
+} {
+  const first = steps.findIndex((step) => !SEQUENTIAL_STEPS.has(step));
+  const sequential = first === -1 ? steps : steps.slice(0, first);
+  const heavy = first === -1 ? [] : steps.slice(first);
+  const late = heavy.filter((step) => SEQUENTIAL_STEPS.has(step));
+  if (late.length > 0)
+    throw new Error(`Sequential steps listed after a heavy lane: ${late.join(', ')}`);
+  return { sequential, heavy };
+}
+
 /** Steps that run a subset of a fast step, so a green fast record for the tree covers them. */
 export const FAST_SUBSET_STEPS: readonly string[] = ['test:release-metadata'];
 export const VERIFY_GATE = 'verify';
@@ -46,7 +81,7 @@ export const PROFILES: Record<'full' | 'fast' | 'head' | 'candidate', VerifyProf
   // its own push. What metadata can break is the tests that read it, so the candidate runs those.
   candidate: {
     gate: 'verify:candidate',
-    steps: ['lockfile', 'lint', 'check', 'test:release-metadata'],
+    steps: ['lockfile', 'lint', 'build', 'check', 'test:release-metadata'],
   },
   fast: { gate: FAST_GATE, steps: FAST_STEPS },
   head: { gate: HEAD_GATE, steps: HEAD_STEPS },
@@ -72,6 +107,6 @@ export async function releaseProfile(root: string): Promise<VerifyProfile> {
   ];
   return {
     gate: `verify:release:${targets.sort().join('+')}`,
-    steps: [...FAST_STEPS, 'build', ...steps],
+    steps: [...FAST_STEPS, ...steps],
   };
 }

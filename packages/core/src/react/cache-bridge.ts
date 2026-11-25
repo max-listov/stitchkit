@@ -17,6 +17,7 @@ import type { WatchStateFrame } from '../live/watch-contract';
  */
 
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
+import { assertTimerMs } from '../internal/deadline';
 
 /** Minimal emitter — subscribe to an event, get an unsubscribe back. */
 import type { InferRealtimeEventMap, RealtimeEventRegistry } from '../realtime/contract';
@@ -92,9 +93,7 @@ export interface RealtimeCacheBridgeConfig<TInbound extends RealtimeEventRegistr
 export function createCacheBridge<TEvents>(config: CacheBridgeConfig<TEvents>): CacheBridge {
   const freshWindow = config.freshWindow ?? 500;
   const maxFreshKeys = config.maxFreshKeys ?? 1_000;
-  if (!Number.isFinite(freshWindow) || freshWindow < 0) {
-    throw new Error('cacheBridge.freshWindow must be a non-negative finite number');
-  }
+  assertTimerMs('cacheBridge.freshWindow', freshWindow, { min: 0 });
   if (!Number.isInteger(maxFreshKeys) || maxFreshKeys < 1) {
     throw new Error('cacheBridge.maxFreshKeys must be a positive integer');
   }

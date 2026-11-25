@@ -12,7 +12,11 @@ import {
 } from './errors';
 import { fetchConnection } from './http';
 import { type JsonRpcRequest, unwrap } from './json-rpc';
-import { readBoundedText, readConnectionErrorText, withConnectionDeadline } from './limits';
+import {
+  readBoundedConnectionText,
+  readConnectionErrorText,
+  withConnectionDeadline,
+} from './limits';
 import {
   type ConnectionReadContext,
   connectionReadContext,
@@ -209,7 +213,12 @@ export class McpHttpClient {
         readMcpCatalogHeader(response.headers.get(MCP_CATALOG_HEADER)) ?? undefined;
     }
     if (message.id === undefined) {
-      await readBoundedText(response, context.maxResponseBytes, this.connectionName, context);
+      await readBoundedConnectionText(
+        response,
+        context.maxResponseBytes,
+        this.connectionName,
+        context,
+      );
       return undefined;
     }
     const contentType = response.headers.get('content-type') ?? '';
@@ -227,7 +236,7 @@ export class McpHttpClient {
       }
       throw new Error('MCP stream ended without a response');
     }
-    const text = await readBoundedText(
+    const text = await readBoundedConnectionText(
       response,
       context.maxResponseBytes,
       this.connectionName,

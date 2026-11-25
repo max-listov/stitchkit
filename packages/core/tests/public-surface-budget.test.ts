@@ -50,6 +50,18 @@ export function budgetViolations(surface: Surface, budget: Budget): string[] {
       violations.push(`${entry}: ${names.length} exports over its limit of ${limit}`);
     }
   }
+  for (const entry of Object.keys(budget.limits).sort()) {
+    if (!Object.hasOwn(surface, entry)) {
+      violations.push(`${entry}: limit declared for unknown entrypoint`);
+    }
+  }
+  for (const overlap of budget.overlaps) {
+    const unknown = overlap.entrypoints.filter((entry) => !Object.hasOwn(surface, entry));
+    if (unknown.length > 0) {
+      const pair = [...overlap.entrypoints].sort().join(' ∩ ');
+      violations.push(`${pair}: overlap references unknown entrypoint ${unknown.join(', ')}`);
+    }
+  }
   const declared = new Map(
     budget.overlaps.map((overlap) => [
       [...overlap.entrypoints].sort().join(' ∩ '),
@@ -111,6 +123,26 @@ describe('the public surface budget', () => {
     expect(budgetViolations(grown, budget)).toEqual([
       expect.stringMatching(/^stitchkit\/tools: \d+ exports over its limit of \d+$/),
       'stitchkit/cli ∩ stitchkit/tools: shares createCli without a declared reason',
+    ]);
+  });
+
+  test('a limit or overlap naming a nonexistent entrypoint is refused (negative control)', () => {
+    const phantom = 'stitchkit/nonexistent-entry';
+    const withPhantom: Budget = {
+      ...budget,
+      limits: { ...budget.limits, [phantom]: 5 },
+      overlaps: [
+        ...budget.overlaps,
+        {
+          entrypoints: ['stitchkit/application', phantom],
+          reason: 'stale overlap left behind after removing an entrypoint',
+          names: ['ApplicationSnapshotSchema'],
+        },
+      ],
+    };
+    expect(budgetViolations(surface, withPhantom)).toEqual([
+      `${phantom}: limit declared for unknown entrypoint`,
+      `stitchkit/application ∩ ${phantom}: overlap references unknown entrypoint ${phantom}`,
     ]);
   });
 });

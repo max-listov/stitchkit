@@ -1,6 +1,11 @@
-import { AgentMessageSchema } from './schemas';
+import { z } from 'zod';
 import type { AgentRuntimeStore } from './store';
 import { branchConformance } from './store-conformance-branch';
+import {
+  archiveCapabilityScenario,
+  historyRestoreCapabilityScenario,
+} from './store-conformance-capabilities';
+import { eventOnceScenario } from './store-conformance-event-once';
 import {
   admissionPhase,
   boundedReadsPhase,
@@ -13,6 +18,7 @@ import {
   assertCausalHistoryOrder,
   assertInterruptPriorityOrder,
 } from './store-conformance-ordering';
+import { seedScenario } from './store-conformance-seed';
 import { queuedRun, requireOutcome, userMessage } from './store-conformance-support';
 import { abandonPhase, terminalPhase } from './store-conformance-terminal';
 import { decodeAgentConversationArchive } from './store-events';
@@ -47,6 +53,26 @@ export interface AgentStoreConformanceConfig {
     context: AgentStoreConformanceContext,
   ): AgentRuntimeStore | Promise<AgentRuntimeStore>;
   /**
+   * Declare which optional store capabilities this adapter implements.
+   *
+   * Nothing is silently skipped: claiming `true` without implementing the
+   * method, or claiming `false` while implementing it, fails conformance.
+   */
+  capabilities: AgentStoreConformanceCapabilities;
+  /**
+   * Make the next write transaction fail at `COMMIT` with the database's own
+   * serialization conflict — so conformance proves the adapter retries it
+   * (see `AgentRuntimeStoreDriver.transaction`) — or declare that the backing
+   * engine cannot lose a commit because it has a single writer.
+   */
+  commitConflict:
+    | {
+        arm(): void | Promise<void>;
+      }
+    | {
+        readonly impossible: 'single-writer';
+      };
+  /**
    * Remove whatever `createStore` provisioned.
    *
    * Runs exactly once, after the scenario, whether it passed or failed — a kit
@@ -56,20 +82,97 @@ export interface AgentStoreConformanceConfig {
    * not overwritten by the answer to "did the teardown work".
    */
   cleanup?(context: AgentStoreConformanceContext): void | Promise<void>;
-  /**
-   * Make the next write transaction fail at COMMIT with the database's own
-   * serialization conflict. The kit then requires that one write to apply
-   * anyway, exactly once: the retry is the adapter's duty (see
-   * `AgentRuntimeStoreDriver.transaction`). Leave it out for a store whose
-   * database cannot lose a commit, such as a single-writer SQLite.
-   */
-  armCommitConflict?(): void | Promise<void>;
+}
+
+/**
+ * The optional members an adapter declares: the two store methods, and the two driver
+ * members the store reports on `store.capabilities`.
+ */
+export const AgentStoreConformanceCapabilitiesSchema = z.strictObject({
+  branch: z.boolean(),
+  planBranch: z.boolean(),
+  archive: z.boolean(),
+  historyRestore: z.boolean(),
+});
+/** The optional members an adapter declares to the conformance kit: branch, planBranch, archive, historyRestore. */
+export type AgentStoreConformanceCapabilities = Readonly<
+  z.infer<typeof AgentStoreConformanceCapabilitiesSchema>
+>;
+
+function validateConformanceConfig(config: AgentStoreConformanceConfig): void {
+  if (!AgentStoreConformanceCapabilitiesSchema.safeParse(config.capabilities).success) {
+    throw new TypeError(
+      'runAgentStoreConformance requires capabilities: { branch: boolean, planBranch: boolean, archive: boolean, historyRestore: boolean }',
+    );
+  }
+  const commitConflict: unknown = config.commitConflict;
+  if (typeof commitConflict !== 'object' || commitConflict === null) {
+    throw new TypeError(
+      "runAgentStoreConformance requires commitConflict: { arm() } | { impossible: 'single-writer' }",
+    );
+  }
+  const hasArm = typeof Reflect.get(commitConflict, 'arm') === 'function';
+  const hasImpossible = Reflect.get(commitConflict, 'impossible') === 'single-writer';
+  if (hasArm === hasImpossible) {
+    throw new TypeError(
+      "runAgentStoreConformance requires commitConflict: { arm() } | { impossible: 'single-writer' }",
+    );
+  }
+}
+
+function assertConformanceCapabilities(
+  store: AgentRuntimeStore,
+  capabilities: AgentStoreConformanceConfig['capabilities'],
+): void {
+  const hasBranch = typeof store.branchConversation === 'function';
+  const hasPlanBranch = typeof store.planConversationBranch === 'function';
+  if (capabilities.branch && !hasBranch) {
+    throw new Error(
+      'Agent store conformance: capabilities.branch is true, but store.branchConversation is missing',
+    );
+  }
+  if (!capabilities.branch && hasBranch) {
+    throw new Error(
+      'Agent store conformance: capabilities.branch is false, but store.branchConversation is implemented',
+    );
+  }
+  if (capabilities.planBranch && !capabilities.branch) {
+    throw new Error(
+      'Agent store conformance: capabilities.planBranch is true, but capabilities.branch is false',
+    );
+  }
+  if (capabilities.planBranch && !hasPlanBranch) {
+    throw new Error(
+      'Agent store conformance: capabilities.planBranch is true, but store.planConversationBranch is missing',
+    );
+  }
+  if (!capabilities.planBranch && hasPlanBranch) {
+    throw new Error(
+      'Agent store conformance: capabilities.planBranch is false, but store.planConversationBranch is implemented',
+    );
+  }
+  const reported = store.capabilities;
+  if (reported === undefined) {
+    throw new Error(
+      'Agent store conformance: store.capabilities is missing; build the store with createAgentRuntimeStore',
+    );
+  }
+  for (const [declared, actual, member] of [
+    [capabilities.archive, reported.archive, 'archive'],
+    [capabilities.historyRestore, reported.historyRestore, 'historyRestore'],
+  ] as const) {
+    if (declared !== actual)
+      throw new Error(
+        `Agent store conformance: capabilities.${member} is ${declared}, but store.capabilities.${member} is ${actual}`,
+      );
+  }
 }
 
 /** Black-box contract shared by memory and third-party durable agent stores. */
 export async function runAgentStoreConformance(
   config: AgentStoreConformanceConfig,
 ): Promise<void> {
+  validateConformanceConfig(config);
   const run = `conformance-${crypto.randomUUID()}`;
   const context: AgentStoreConformanceContext = {
     conversationIds: [
@@ -85,14 +188,19 @@ export async function runAgentStoreConformance(
       `${run}-branch-source`,
       `${run}-branch`,
       `${run}-branch-restored`,
+      `${run}-event-once`,
+      `${run}-event-once-peer`,
+      `${run}-capability-archive`,
+      `${run}-capability-history-restore`,
       `${run}-commit-conflict`,
     ],
   };
   const store = await config.createStore(context);
   let failure: unknown;
   try {
-    await conformanceScenario(store, context.conversationIds);
-    await commitConflictScenario(store, context.conversationIds, config.armCommitConflict);
+    assertConformanceCapabilities(store, config.capabilities);
+    await conformanceScenario(store, context.conversationIds, config.capabilities);
+    await commitConflictScenario(store, context.conversationIds, config.commitConflict);
   } catch (error) {
     failure = error;
   }
@@ -116,11 +224,12 @@ export async function runAgentStoreConformance(
 async function commitConflictScenario(
   store: AgentRuntimeStore,
   conversationIds: readonly string[],
-  armCommitConflict: AgentStoreConformanceConfig['armCommitConflict'],
+  commitConflict: AgentStoreConformanceConfig['commitConflict'],
 ): Promise<void> {
+  if ('impossible' in commitConflict) return;
   const conversationId = conversationIds.at(-1);
-  if (!armCommitConflict || !conversationId) return;
-  await armCommitConflict();
+  if (!conversationId) return;
+  await commitConflict.arm();
   const accepted = await store.acceptInputAndAssignRun({
     idempotencyKey: 'commit-conflict',
     input: userMessage(conversationId, 'commit-conflict-input'),
@@ -133,88 +242,10 @@ async function commitConflictScenario(
   }
 }
 
-async function seedScenario(store: AgentRuntimeStore, conversationId: string): Promise<void> {
-  const input = {
-    conversationId,
-    seedKey: 'brief',
-    inputs: [userMessage(conversationId, 'seed-a'), userMessage(conversationId, 'seed-b')],
-  };
-  const first = await store.seedConversationInput(input);
-  requireOutcome(first, 'applied');
-  const before = await store.loadSnapshot(conversationId);
-  if (before.messages.map((message) => message.id).join(',') !== 'seed-a,seed-b')
-    throw new Error('Seed conformance: complete ordered seed missing');
-  await Promise.all([store.seedConversationInput(input), store.seedConversationInput(input)]);
-  const repeated = await store.loadSnapshot(conversationId);
-  if (repeated.version !== before.version || repeated.messages.length !== 2)
-    throw new Error('Seed conformance: replay changed history');
-  const compacted = await store.replaceCompactedRange({
-    conversationId,
-    expectedVersion: repeated.version,
-    replacedMessageIds: ['seed-a', 'seed-b'],
-    summary: AgentMessageSchema.parse({
-      ...userMessage(conversationId, 'seed-summary'),
-      role: 'summary',
-    }),
-  });
-  requireOutcome(compacted, 'applied');
-  await store.seedConversationInput(input);
-  const after = await store.loadSnapshot(conversationId);
-  if (after.messages.some((message) => message.id === 'seed-a' || message.id === 'seed-b'))
-    throw new Error('Seed conformance: compacted instructions resurrected');
-  await settledExchangeScenario(store, conversationId);
-}
-
-/**
- * A keyed exchange completed without a model lands after the settled history:
- * at the tail with no active run, and ahead of an active run's input otherwise.
- */
-async function settledExchangeScenario(
-  store: AgentRuntimeStore,
-  conversationId: string,
-): Promise<void> {
-  const exchange = (key: string) => ({
-    conversationId,
-    seedKey: key,
-    placement: 'after-settled' as const,
-    inputs: [
-      userMessage(conversationId, `${key}-user`),
-      AgentMessageSchema.parse({
-        ...userMessage(conversationId, `${key}-assistant`),
-        role: 'assistant',
-        status: 'completed',
-      }),
-    ],
-  });
-  const order = async () =>
-    (await store.loadSnapshot(conversationId)).messages.map((message) => message.id).join(',');
-  requireOutcome(await store.seedConversationInput(exchange('tail')), 'applied');
-  if ((await order()) !== 'seed-summary,tail-user,tail-assistant')
-    throw new Error('Settled exchange conformance: an idle conversation did not append it');
-  requireOutcome(
-    await store.acceptInputAndAssignRun({
-      idempotencyKey: 'settled-exchange-run',
-      input: userMessage(conversationId, 'queued-input'),
-      run: queuedRun(conversationId, 'queued-input', 'queued-run'),
-    }),
-    'applied',
-  );
-  await Promise.all([
-    store.seedConversationInput(exchange('ahead')),
-    store.seedConversationInput(exchange('ahead')),
-  ]);
-  if (
-    (await order()) !==
-    'seed-summary,tail-user,tail-assistant,ahead-user,ahead-assistant,queued-input'
-  )
-    throw new Error(
-      'Settled exchange conformance: it must land once, ahead of the active run input',
-    );
-}
-
 async function conformanceScenario(
   store: AgentRuntimeStore,
   conversationIds: readonly string[],
+  capabilities: AgentStoreConformanceConfig['capabilities'],
 ): Promise<void> {
   const [
     conversationId,
@@ -229,12 +260,32 @@ async function conformanceScenario(
     branchSourceId,
     branchDestinationId,
     branchRestoredId,
+    eventOnceId,
+    eventOncePeerId,
+    capabilityArchiveId,
+    capabilityRestoreId,
   ] = conversationIds;
   if (branchSourceId && branchDestinationId && branchRestoredId)
-    await branchConformance(store, branchSourceId, branchDestinationId, branchRestoredId);
+    await branchConformance(
+      store,
+      branchSourceId,
+      branchDestinationId,
+      branchRestoredId,
+      capabilities,
+    );
   if (seedConversationId) await seedScenario(store, seedConversationId);
+  if (eventOnceId && eventOncePeerId)
+    await eventOnceScenario(store, eventOnceId, eventOncePeerId);
   if (ledgerConversationId) await ledgerScenario(store, ledgerConversationId);
   if (archiveConversationId) await archiveScenario(store, archiveConversationId);
+  if (capabilityArchiveId)
+    await archiveCapabilityScenario(store, capabilityArchiveId, capabilities.archive);
+  if (capabilityRestoreId)
+    await historyRestoreCapabilityScenario(
+      store,
+      capabilityRestoreId,
+      capabilities.historyRestore,
+    );
   if (
     !conversationId ||
     !recoveryConversationId ||

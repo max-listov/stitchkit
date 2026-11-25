@@ -49,7 +49,6 @@ export type {
   SqliteAgentRuntimeStoreConfig,
   SqliteDatabase,
   SqliteStatement,
-  SqliteStoreTransaction,
   SqliteValue,
 } from './sqlite';
 export { createSqliteAgentRuntimeStore } from './sqlite';

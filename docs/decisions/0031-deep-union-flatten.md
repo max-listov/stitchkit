@@ -2,14 +2,16 @@
 title: "ADR 0031 — Deep discriminated-union flattening for tool schemas"
 type: decision
 status: accepted
+amendedBy: ["0034", "0050", "0205"]
 created: 2026-06-22
 updated: 2026-06-22
 ---
 
 # ADR 0031 — Deep discriminated-union flattening for tool schemas
 
-- **Status:** Accepted — completes the `flattenUnionInput` feature; refines
-  [ADR 0007](0007-mcp-agent-tools.md) / [ADR 0014](0014-tool-http-parity.md).
+**Relations:** completes the `flattenUnionInput` feature; refines
+[ADR 0007](0007-mcp-agent-tools.md) / [ADR 0014](0014-tool-http-parity.md).
+
 - **Date:** 2026-06-22
 
 ## Context

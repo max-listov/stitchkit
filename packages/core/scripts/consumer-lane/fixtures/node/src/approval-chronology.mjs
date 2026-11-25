@@ -90,7 +90,7 @@ for (const automatic of [false, true]) {
               return true;
             },
           }),
-          lifecycle: context.toolFenceLifecycle,
+          access: { gate: context.toolFenceLifecycle },
         }),
       loop: {
         toolApproval: { read_file: 'approved', write_file: 'user-approval' },

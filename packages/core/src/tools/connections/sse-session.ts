@@ -1,3 +1,4 @@
+import { abortReason } from '../../internal/abort-race';
 import { isRecord } from '../../internal/typed';
 import {
   ConnectionAuthorizationRequiredError,
@@ -9,7 +10,7 @@ import { type JsonRpcRequest, unwrap } from './json-rpc';
 import {
   awaitConnection,
   connectionMaxResponseBytes,
-  readBoundedText,
+  readBoundedConnectionText,
   readConnectionErrorText,
   recordConnectionRead,
   withConnectionDeadline,
@@ -87,7 +88,7 @@ export class SseSession {
   }
 
   private async waitForEndpoint(signal?: AbortSignal): Promise<string> {
-    const onAbort = () => this.close(signal?.reason);
+    const onAbort = () => this.close(signal === undefined ? undefined : abortReason(signal));
     signal?.addEventListener('abort', onAbort, { once: true });
     try {
       signal?.throwIfAborted();
@@ -116,7 +117,7 @@ export class SseSession {
     context: ConnectionReadContext,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    const abort = () => this.close(signal?.reason);
+    const abort = () => this.close(signal === undefined ? undefined : abortReason(signal));
     signal?.addEventListener('abort', abort, { once: true });
     try {
       signal?.throwIfAborted();
@@ -143,7 +144,12 @@ export class SseSession {
       );
       context.touch?.();
       await this.assertStatus(post, context);
-      await readBoundedText(post, context.maxResponseBytes, this.connectionName, context);
+      await readBoundedConnectionText(
+        post,
+        context.maxResponseBytes,
+        this.connectionName,
+        context,
+      );
       return message.id === undefined
         ? undefined
         : await awaitConnection(response.promise, signal);

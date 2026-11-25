@@ -1,0 +1,23 @@
+Executable=/Users/fixture-user/scratch/stitchkit-0127/sign/ensure/FixtureEnsure.app/Contents/MacOS/fixture-ensure
+Identifier=com.stitchkit.fixture.ensure
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20500 size=648 flags=0x10000(runtime) hashes=13+3 location=embedded
+Hash type=sha256 size=32
+CandidateCDHash sha256=9b11d174bae2b48b3e821be6009869b31eebda76
+CandidateCDHashFull sha256=9b11d174bae2b48b3e821be6009869b31eebda76f3a7b8e5e5841976aaa13e6d
+Hash choices=sha256
+CMSDigest=9b11d174bae2b48b3e821be6009869b31eebda76f3a7b8e5e5841976aaa13e6d
+CMSDigestType=2
+CDHash=9b11d174bae2b48b3e821be6009869b31eebda76
+Signature size=3970
+Authority=Developer ID Application: Fixture (ABCDE12345)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+Signed Time=24 Nov 2026 at 4:47:34 AM
+Info.plist entries=13
+TeamIdentifier=ABCDE12345
+Runtime Version=27.2.0
+Sealed Resources version=2 rules=13 files=0
+Internal requirements count=1 size=104
+Total signatures=1
+Chosen signature=1

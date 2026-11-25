@@ -10,8 +10,7 @@
  * same table, so a hold taken by any of them is seen here. A token kept in module or realm state
  * would mistake each of them for a previous image and take a lock from a live holder.
  */
-import { constants, fstatSync } from 'node:fs';
-import { open, readdir } from 'node:fs/promises';
+import { closeSync, constants, fstatSync, openSync, readdirSync } from 'node:fs';
 
 /** The calling process's descriptors: `/proc/self/fd` on Linux, the fdesc mount on macOS. */
 const DESCRIPTOR_DIRECTORY = '/dev/fd';
@@ -37,17 +36,30 @@ export async function holdsOpenDescriptor(
   /** @internal A fixture listing; the real one is always this process's own. */
   descriptorDirectory = DESCRIPTOR_DIRECTORY,
 ): Promise<boolean | null> {
-  const probe = await open(
-    path,
-    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-  ).catch(() => null);
-  if (!probe) return null;
+  return holdsOpenDescriptorSync(path, file, descriptorDirectory);
+}
+
+/**
+ * {@link holdsOpenDescriptor} for a caller that cannot wait. The listing is of this process's own
+ * descriptor table, which the kernel answers without touching a device, so both share this one.
+ */
+export function holdsOpenDescriptorSync(
+  path: string,
+  file: FileIdentity,
+  descriptorDirectory = DESCRIPTOR_DIRECTORY,
+): boolean | null {
+  let probe: number;
   try {
-    const opened = await probe.stat();
+    probe = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch {
+    return null;
+  }
+  try {
+    const opened = fstatSync(probe);
     if (!opened.isFile() || opened.ino !== file.ino || opened.dev !== file.dev) return null;
     let names: string[];
     try {
-      names = await readdir(descriptorDirectory);
+      names = readdirSync(descriptorDirectory);
     } catch {
       return null;
     }
@@ -55,7 +67,7 @@ export async function holdsOpenDescriptor(
     for (const name of names) {
       const descriptor = Number(name);
       if (!Number.isInteger(descriptor) || descriptor < 0) continue;
-      if (descriptor === probe.fd) {
+      if (descriptor === probe) {
         listedProbe = true;
         continue;
       }
@@ -68,6 +80,6 @@ export async function holdsOpenDescriptor(
     }
     return listedProbe ? false : null;
   } finally {
-    await probe.close();
+    closeSync(probe);
   }
 }

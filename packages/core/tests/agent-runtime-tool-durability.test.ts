@@ -106,7 +106,8 @@ test('runtime supplies durability through SDK context to the mounted handler', a
       availableHistoryTokens: 1000,
       sections: [],
     }),
-    tools: () => mountAgent([], { runtimeTools: [effect] }),
+    tools: () =>
+      mountAgent([], { access: { open: 'local-operator' }, runtimeTools: [effect] }),
     loop: { maxSteps: 1 },
   });
   try {

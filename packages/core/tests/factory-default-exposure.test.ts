@@ -49,7 +49,7 @@ describe('factory default exposure', () => {
         name: 'read_factory',
         service: 'factory',
         method: 'read',
-        transports: ['CLI'],
+        expose: ['CLI'],
       },
     ]);
     expect(summarizeTransports({ services: [service] }).totals).toEqual({
@@ -63,6 +63,7 @@ describe('factory default exposure', () => {
     let output = '';
     let exitCode = -1;
     await createCli({
+      access: { open: 'local-operator' },
       name: 'factory',
       version: '1.0.0',
       services: [service],

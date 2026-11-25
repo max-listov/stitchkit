@@ -1,6 +1,7 @@
 import type { StitchLogger } from '../internal/logger';
 import { isRecord } from '../internal/typed';
 import { getRequestContext } from './context';
+import { type RepeatLimitOptions, repeatLimited } from './log-repeat';
 import { type JsonValue, measureSize, sanitizePayload } from './sanitize';
 
 export const DEFAULT_REDACT_PATHS = Object.freeze([
@@ -35,6 +36,8 @@ export interface BoundedLoggerOptions {
   readonly sensitiveUrlPatterns?: readonly RegExp[];
   /** Exact secret values masked in every string — see `SanitizeOptions.sensitiveValues`. */
   readonly sensitiveValues?: readonly string[];
+  /** Windowed deduplication for repeated `warn` and `error` entries. */
+  readonly repeat?: RepeatLimitOptions;
 }
 
 type LogLevel = keyof StitchLogger;
@@ -91,12 +94,29 @@ function fitLogRecord(
   return { message, ...(data && { data }) };
 }
 
+function swallowRejection(result: unknown): void {
+  if (result instanceof Promise) result.catch(() => undefined);
+}
+
 /** Decorate any canonical logger with context, redaction, and hard bounds. */
 export function createBoundedLogger(options: BoundedLoggerOptions): StitchLogger {
   const entryBytes = options.bounds?.entryBytes ?? 65_536;
   if (!Number.isSafeInteger(entryBytes) || entryBytes < 128) {
     throw new TypeError('createBoundedLogger entryBytes must be an integer of at least 128');
   }
+  const emitToSink =
+    (level: LogLevel) =>
+    (message: string, data?: Record<string, unknown>): void => {
+      const fitted = fitLogRecord({ message, data }, entryBytes);
+      swallowRejection(options.sink[level](fitted.message, fitted.data));
+    };
+  const safeSink: StitchLogger = {
+    info: emitToSink('info'),
+    warn: emitToSink('warn'),
+    error: emitToSink('error'),
+    debug: emitToSink('debug'),
+  };
+  const target = options.repeat ? repeatLimited(safeSink, options.repeat) : safeSink;
   const write = (level: LogLevel, message: string, data?: Record<string, unknown>): void => {
     try {
       const context = getRequestContext();
@@ -127,11 +147,8 @@ export function createBoundedLogger(options: BoundedLoggerOptions): StitchLogger
           maxBytes: entryBytes,
         },
       );
-      const sanitized = fitLogRecord(asLogRecord(value), entryBytes);
-      // A sink typed `void` may still hand back a promise; its rejection must
-      // not surface as an unhandled rejection in the application.
-      const result: unknown = options.sink[level](sanitized.message, sanitized.data);
-      if (result instanceof Promise) result.catch(() => undefined);
+      const record = asLogRecord(value);
+      target[level](record.message, record.data);
     } catch {
       // Logging must never become the application's failure path.
     }

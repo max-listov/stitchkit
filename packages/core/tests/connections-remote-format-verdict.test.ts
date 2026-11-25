@@ -48,6 +48,7 @@ async function fixture() {
     },
   });
   const handler = createMcpHandler({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'entries', version: '1' },
     auth: () => ({}),
     context: () => ({}),
@@ -74,15 +75,20 @@ async function fixture() {
     defineMcpClientConnection({
       name: 'entries',
       transport: { url: url.href },
-      transports: ['CLI'],
+      expose: ['CLI'],
     }),
   ]);
-  const invoker = await createCliInvoker({ name: 'entries', runtimeTools });
+  const invoker = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'entries',
+    runtimeTools,
+  });
   const cli = async (args: { createdFrom: string; mode: string }) => {
     let out = '';
     let err = '';
     let code = -1;
     await createCli({
+      access: { open: 'local-operator' },
       name: 'entries',
       version: '1',
       runtimeTools,
@@ -216,7 +222,7 @@ test('OpenAPI restores the same verdict without changing query arguments or erro
   const runtimeTools = await mountConnections([
     defineOpenApiConnection({
       name: 'entries',
-      transports: ['CLI'],
+      expose: ['CLI'],
       spec: {
         openapi: '3.1.0',
         info: { title: 'Entries', version: '1' },
@@ -240,7 +246,11 @@ test('OpenAPI restores the same verdict without changing query arguments or erro
       },
     }),
   ]);
-  const invoker = await createCliInvoker({ name: 'entries', runtimeTools });
+  const invoker = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'entries',
+    runtimeTools,
+  });
   const result = await invoker.invoke('entries__list', { createdFrom: '2026-10-12' });
   expect(received).toEqual(['2026-10-12']);
   expect(result.ok).toBe(false);

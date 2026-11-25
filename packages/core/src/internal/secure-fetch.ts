@@ -18,9 +18,9 @@
  */
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { raceAbort } from './abort-race';
+import { abortReason, linkAbortSignals, raceAbort } from './abort-race';
 import { readBoundedChunks } from './bounded-body';
-import { type IdleTimer, startIdleTimer } from './deadline';
+import { assertTimerMs, type IdleTimer, startIdleTimer } from './deadline';
 import type { PinnedTransport } from './pinned-http';
 import * as pinnedHttp from './pinned-http';
 
@@ -217,18 +217,16 @@ export async function fetchGuarded(
 ): Promise<Response> {
   const timeoutMs = options.timeoutMs ?? 15_000;
   const bodyTimeoutMs = options.bodyTimeoutMs ?? 120_000;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error('timeoutMs must be positive');
-  }
-  if (!Number.isFinite(bodyTimeoutMs) || bodyTimeoutMs <= 0) {
-    throw new Error('bodyTimeoutMs must be positive');
-  }
+  assertTimerMs('timeoutMs', timeoutMs);
+  assertTimerMs('bodyTimeoutMs', bodyTimeoutMs);
+  assertTimerMs('idleTimeoutMs', options.idleTimeoutMs);
   // One controller drives the whole call; the header deadline is swapped for
-  // the body deadline the moment the final headers arrive.
+  // the body deadline the moment the final headers arrive. The caller's signal
+  // is linked to it until the body ends, or the call fails before it.
   const controller = new AbortController();
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, controller.signal])
-    : controller.signal;
+  const { signal, release } = options.signal
+    ? linkAbortSignals(options.signal, controller.signal)
+    : { signal: controller.signal, release: () => undefined };
   const headerTimer = setTimeout(() => {
     controller.abort(
       new Error(`fetch did not produce response headers within ${timeoutMs}ms`),
@@ -275,7 +273,11 @@ export async function fetchGuarded(
           controller.abort(new Error(`fetch body was not consumed within ${bodyTimeoutMs}ms`));
         }, bodyTimeoutMs);
         bodyTimer.unref?.();
-        return observeBody(res, signal, idle, bodyTimer);
+        return observeBody(res, signal, idle, () => {
+          idle?.stop();
+          clearTimeout(bodyTimer);
+          release();
+        });
       }
       await res.body?.cancel();
       url = new URL(location, url);
@@ -285,6 +287,7 @@ export async function fetchGuarded(
     if (!settled) {
       clearTimeout(headerTimer);
       idle?.stop();
+      release();
     }
   }
 }
@@ -301,12 +304,9 @@ function observeBody(
   res: Response,
   signal: AbortSignal,
   idle: IdleTimer | undefined,
-  bodyTimer: ReturnType<typeof setTimeout>,
+  /** Ends both timers and the signal link: the body is done, failed or cancelled. */
+  end: () => void,
 ): Response {
-  const end = () => {
-    idle?.stop();
-    clearTimeout(bodyTimer);
-  };
   if (!res.body) {
     end();
     return res;
@@ -325,7 +325,7 @@ function observeBody(
         controller.enqueue(value);
       } catch (error) {
         end();
-        controller.error(signal.aborted ? signal.reason : error);
+        controller.error(signal.aborted ? abortReason(signal) : error);
       }
     },
     cancel(reason) {
@@ -445,9 +445,7 @@ export async function fetchPinnedDocument(
   if (!Number.isInteger(options.maxBytes) || options.maxBytes < 1) {
     throw new Error('maxBytes must be a positive integer');
   }
-  if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
-    throw new Error('timeoutMs must be positive');
-  }
+  assertTimerMs('timeoutMs', options.timeoutMs, { absent: 'refused' });
   let url = start;
   const maxRedirects = options.maxRedirects ?? MAX_REDIRECTS;
   if (!Number.isInteger(maxRedirects) || maxRedirects < 0) {

@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { untilAborted } from '../internal/abort-race';
+import { jsonResponse } from '../internal/json-response';
+import { MAX_TIMER_MS } from '../internal/timers';
 import { createHttpStreamTracker } from './http-stream-lifetime';
 import type { FetchHandler } from './types';
 
@@ -13,9 +16,9 @@ export const ShutdownStateSchema = z.enum([
 export type ShutdownState = z.infer<typeof ShutdownStateSchema>;
 
 export const ShutdownOptionsSchema = z.object({
-  gracePeriodMs: z.number().int().nonnegative().default(30_000),
-  realtimeCloseTimeoutMs: z.number().int().nonnegative().default(1_000),
-  forceTimeoutMs: z.number().int().nonnegative().default(5_000),
+  gracePeriodMs: z.number().int().nonnegative().max(MAX_TIMER_MS).default(30_000),
+  realtimeCloseTimeoutMs: z.number().int().nonnegative().max(MAX_TIMER_MS).default(1_000),
+  forceTimeoutMs: z.number().int().nonnegative().max(MAX_TIMER_MS).default(5_000),
   retryAfterSeconds: z.number().int().nonnegative().default(5),
   signal: z
     .custom<AbortSignal>(
@@ -80,7 +83,7 @@ interface ServerLifecycle {
 }
 
 function rejectedResponse(retryAfterSeconds: number): Response {
-  return Response.json(
+  return jsonResponse(
     { error: { code: 'SERVER_SHUTTING_DOWN', message: 'Server is shutting down' } },
     {
       status: 503,
@@ -105,13 +108,6 @@ function waitForZero(read: () => number, signal: AbortSignal): Promise<void> {
     const timer = setInterval(check, 5);
     signal.addEventListener('abort', check, { once: true });
   });
-}
-
-function untilAbort(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) =>
-    signal.addEventListener('abort', () => resolve(), { once: true }),
-  );
 }
 
 function closeRealtimeWithin(
@@ -249,15 +245,16 @@ export function createServerLifecycle(getAdapter: () => ShutdownAdapter): Server
               realtimeOutcome === 'timeout' &&
               adapter.pendingWebSockets() > 0
             ) {
-              forcedWebSockets += await Promise.race([
+              const terminated = await untilAborted(
                 adapter.terminateRealtime(),
-                untilAbort(phaseAbort.signal).then(() => 0),
-              ]);
+                phaseAbort.signal,
+              );
+              if (!terminated.aborted) forcedWebSockets += terminated.value;
             }
           }
           if (!forcedReason) {
             state = 'stopping-runtime';
-            await Promise.race([adapter.stopGracefully(), untilAbort(phaseAbort.signal)]);
+            await untilAborted(adapter.stopGracefully(), phaseAbort.signal);
           }
         } catch (error) {
           if (!forcedReason) {

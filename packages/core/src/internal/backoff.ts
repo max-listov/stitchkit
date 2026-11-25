@@ -1,11 +1,13 @@
 import { z } from 'zod';
+import { MAX_TIMER_MS } from './timers';
 
-const PositiveSafeIntegerSchema = z.number().int().positive().safe();
+/** A retry pause is a timer delay: past `MAX_TIMER_MS` a timer fires at once. */
+const RetryPauseSchema = z.number().int().positive().max(MAX_TIMER_MS);
 
 export const BackoffPolicySchema = z
   .object({
-    minDelayMs: PositiveSafeIntegerSchema,
-    maxDelayMs: PositiveSafeIntegerSchema,
+    minDelayMs: RetryPauseSchema,
+    maxDelayMs: RetryPauseSchema,
     /** Fraction of the computed delay that is randomised away, `0`–`1`. */
     jitter: z.number().min(0).max(1),
   })

@@ -408,29 +408,52 @@ const server = createServer({
 `unix` is mutually exclusive with `port`/`hostname` (construction error). The
 handle stays honest: `server.url` is `unix:///run/my-daemon.sock` — an
 identifier, **not** a fetchable address (dial the path with
-`createHttpClient({ unix })`, [client guide](client.md#unix-domain-sockets)) —
+`createUnixClientTransport`, [client guide](client.md#unix-domain-sockets)) —
 and `server.port` is `0`.
 
-Socket-file hygiene is built in. A stale file left by a killed process is
-reclaimed automatically: the path is probed, and only a socket that is owned by
-the current user **and** answers no live listener is removed before binding
-(best-effort — two processes racing the same path resolve through the loud
-bind error of the loser). A regular file at the path, another user's socket, or
-a live listener each fail with a specific error instead of being unlinked. A
-clean `server.shutdown()` removes the file.
+Socket-file hygiene is built in. Before binding, `createServer({ unix })`
+checks that:
 
-`mode` is the socket's permission from birth: the socket is bound under a umask
-narrowed to exactly that mode, so no other process ever sees it wider — a
-`chmod` after listen leaves the umask rights on disk until it runs
-([`bindUnixSocket`](native-io.md#a-unix-socket-private-from-birth)). Without
-`mode` Bun creates the file `0755` under a normal umask — since `connect(2)`
-requires *write* permission that is already owner-only in practice — but when
-access to the socket **is** the credential, set `mode: 0o600` explicitly and let
-the filesystem be the policy. The Socket.IO lifecycle (`socket`) cannot mount on a unix listener
-(socket.io clients dial TCP only — construction error); Bun's own WebSocket
-client cannot dial a unix path either. Unix listeners are Bun-only: `srvx`
-resolves a numeric port unconditionally, so `stitchkit/node` does not offer
-`unix` (no half-support).
+- the UTF-8 byte length of `path` is at most **103 bytes** (the conservative
+  POSIX `sun_path` limit across macOS and Linux, so `curl`, Python and every
+  peer can dial the same path — choose a shorter path if refused);
+- the parent directory exists, is a real directory (not a symlink), is owned by
+  the current OS user (`uid === process.getuid()`), and is not group- or
+  world-writable (`(mode & 0o022) === 0`).
+
+A stale file left by a killed process is reclaimed under a per-socket startup
+lock: the path is probed, and only a socket that is owned by the current user
+**and** answers no live listener (`ECONNREFUSED`/`ENOENT`) is unlinked by its
+observed `(dev, ino)` before binding. The new socket is bound on a hidden
+staging name and published atomically to `path` via hard link (failing loudly
+if anything already exists at `path`), and a clean `server.shutdown()` removes
+`path` only when its `(dev, ino)` still matches the bound socket. A regular file
+at the path, another user's socket, a timed-out probe, or a live listener each
+fail with a specific error instead of being unlinked.
+
+The startup lock is a file beside the socket (`.<name>.lock`) that records its
+holder the way `withExclusiveLock` (`stitchkit/files`) does — this machine and one
+process lifetime, not a bare PID. A lock whose holder has exited, whose PID now
+names a different process, or whose boot is over is taken; a holder that is
+still running is waited for up to 5 s. A bare-PID lock an older version left is
+taken once it is 30 s old. A lock that cannot be removed after startup is
+logged with its cause and does not fail `createServer`: its holder is this
+process with no descriptor left open on it, so the next start takes it.
+
+`mode` is the socket's permission from birth: the socket is bound under a
+process-wide umask narrowed to exactly that mode, so no other process ever sees
+it wider — a `chmod` after listen leaves the umask rights on disk until it runs
+([`bindUnixSocket`](native-io.md#a-unix-socket-private-from-birth)). Because
+`process.umask` is process-wide, bind unix listeners **before** spawning
+`Worker` threads that create files. Without `mode` Bun creates the file `0755`
+under a normal umask — since `connect(2)` requires *write* permission that is
+already owner-only in practice — but when access to the socket **is** the
+credential, set `mode: 0o600` explicitly and let the filesystem be the policy.
+The Socket.IO lifecycle (`socket`) cannot mount on a unix listener (socket.io
+clients dial TCP only — construction error); Bun's own WebSocket client cannot
+dial a unix path either. Unix listeners are Bun-only: `srvx` resolves a numeric
+port unconditionally, so `stitchkit/node` does not offer `unix` (no
+half-support).
 
 ### Managed shutdown
 
@@ -544,6 +567,16 @@ Stitchkit is reading a JSON upload body: bounded reads race every pending stream
 read against the request signal and never parse a cancelled partial body. `499`
 is transport telemetry, not a response declared in the contract or generated
 OpenAPI document.
+
+A `4xx` that a protocol prescribes as an ordinary answer is logged at `info` as
+well. The MCP endpoint (`createMcpHandler` mounted by `createMcpHttpRoute`) offers
+no event stream and no session, and Streamable HTTP names `405` as the answer to
+the `GET` that opens a stream and the `DELETE` that ends a session; the official
+client reads it as "not offered here" and carries on. The handler that builds
+such an answer marks the response, and the request line reads that mark — never
+a path or a method. A `405` to any other method, the `401` of a missing token on
+the same path and every other `4xx` stay `warn`; the line's format and fields,
+`status` included, do not change.
 
 Unset, `format` follows `NODE_ENV`: `json` under `production`, `pretty`
 otherwise. That default is read **per request** — not at import, not when this
@@ -729,6 +762,215 @@ createServer({
 
 Hooks see `RuntimeContext` (loose types); handlers see `HandlerContext` (typed).
 That split is deliberate — see [ADR 0003](../decisions/0003-two-context-types.md).
+
+## A host beside its own window
+
+A desktop app's host — the process beside its window — is an ordinary Stitchkit server, bound to
+loopback. Calls are plain HTTP through the typed client; events travel the realtime socket with
+`retain` per topic ([realtime](./realtime.md)). There is no second transport to learn.
+
+Binding to `127.0.0.1` keeps other machines out, and nothing more. A web page open in a browser on
+the same machine can still call `http://127.0.0.1:<port>` and open a WebSocket there (a WebSocket
+obeys no CORS), and a DNS-rebinding page reaches it under an attacker's host name.
+`createLocalHostGuard` closes both: a request must name a loopback `Host`, carry an allowed `Origin`
+when it carries one, and present the host's secret. The same rules gate the Socket.IO handshake.
+
+```ts
+import { createLocalHostGuard, createServer, createSocketIOServer } from 'stitchkit/server'
+
+const secret = crypto.randomUUID() + crypto.randomUUID() // per start; hand it to the window, never in a URL
+const guard = createLocalHostGuard({ secret, origins: ['tauri://localhost'] })
+const socket = await createSocketIOServer({
+  allowRequest: guard.allowRequest,
+  handshake: guard.handshake,
+  cors: guard.cors,
+})
+
+createServer({
+  hostname: '127.0.0.1',
+  port: 0,
+  services,
+  socket,
+  cors: guard.cors,
+  hooks: { onRequest: (request) => guard.onRequest(request) },
+})
+```
+
+A window in a webview is a cross-origin page: `guard.cors` allows its origins, so the browser's
+preflight — answered before `onRequest` — passes and the window can read every answer. The window
+sends `Authorization: Bearer <secret>` on every call (`headers` on `createClient`) and
+`auth: { secret }` on the socket. A refusal is the framework error envelope: `401` for the secret,
+`403` for a foreign `Host` or `Origin`, before routing, raw routes included. Secrets compare in
+constant time and a shorter or longer guess tells nothing about the real one. `stitchkit/node` exports
+the same guard for `serveNode`.
+
+A call in flight when the host restarts never gets an answer. The typed client sends it again only
+when that is safe — see [calls that never got an answer](./client.md#calls-that-never-got-an-answer).
+
+### Adding a unix-socket channel for local CLI and agents
+
+To expose the same contract handlers to a local CLI or agent without a TCP port or bearer secret,
+start a **second** `createServer` sharing the base configuration (`services`, `scopePrefixes`, audit
+hooks) alongside the guarded loopback TCP server, and coordinate both with one composite
+`ShutdownTarget` passed to `bindProcessSignals`:
+
+```ts
+import { bindProcessSignals, createLocalHostGuard, createServer } from 'stitchkit/server'
+
+const base = { services, scopePrefixes }
+
+const tcp = createServer({
+  ...base,
+  hostname: '127.0.0.1',
+  port: 0,
+  socket,
+  cors: guard.cors,
+  hooks: {
+    onRequest: (request) => guard.onRequest(request),
+    authorize: (ctx, endpoint) => authorizeWindowRequest(ctx, endpoint),
+  },
+})
+
+// Opt-in: omit this server when the user disables local control.
+const unix = createServer({
+  ...base,
+  unix: { path: socketPath, mode: 0o600 },
+  hooks: {
+    // Filesystem permissions are the credential; scoped endpoints receive the local owner identity.
+    authorize: (ctx) => {
+      ctx.user = localSessionOwner
+    },
+  },
+})
+
+bindProcessSignals({
+  shutdown: (options) => Promise.all([tcp.shutdown(options), unix.shutdown(options)]),
+})
+```
+
+Trust boundary and operational rules for the unix channel:
+
+- **The trust boundary is the OS user, not a specific client binary.** Bun does not expose `SO_PEERCRED` /
+  `LOCAL_PEERCRED` peer credentials on `Bun.serve` requests, so any process running as the same OS user
+  can connect to the socket. Any custom client header (for example `X-Client-Name`, sent via
+  `HttpClientConfig.headers`) is **audit metadata only** and can be spoofed by any same-user process.
+  The client side (`createUnixClientTransport`) verifies the socket directory and socket owner (`uid`)
+  before connecting, guarding against talking to another user's or symlinked socket.
+- **Opt-in by configuration.** No socket file is created unless the application explicitly configures
+  `createServer({ unix })`.
+- **Narrowing the surface.** Passing the same `services` array gives local CLI and agents everything
+  the window can do. If sensitive operations (such as payments or destructive deletes) must stay
+  window-only, pass a narrowed `services` subset to the unix server instead.
+- **Streaming events over the socket.** Socket.IO does not mount on a unix listener; expose live
+  events to local CLI/agent consumers through contract `stream` endpoints (NDJSON/SSE).
+- **Bind order.** Because `bindUnixSocket` adjusts `process.umask` during bind, create the unix
+  server before spawning `Worker` threads.
+- **macOS boundaries.** Under macOS App Sandbox, place the socket inside the app's App Group
+  container and keep the full UTF-8 path within 103 bytes; TCC permissions remain bound to the host
+  process's responsible bundle.
+- **Embedded agents and shell tools.** An unsandboxed agent shell running as the same OS user has full
+  access to the socket. Inside Stitchkit's Linux Bubblewrap sandbox (`stitchkit/agent-runtime/sandbox`),
+  the host's `$HOME`, `/tmp`, `/run` and `XDG_RUNTIME_DIR` are not mounted (`--unshare-all --clearenv`),
+  so keep the socket outside the agent's mounted `workspace` directory (note that macOS has no
+  Bubblewrap isolation).
+
+## A host inside React Native
+
+When an app runs its contract host directly inside the React Native JavaScript runtime (Hermes) and
+talks to an embedded WebView or Expo DOM window, import the portable entrypoint `stitchkit/handler`
+instead of `stitchkit/server`. `stitchkit/handler` pulls no Node built-ins (`node:async_hooks`,
+`node:fs`, `process.hrtime`) and can be bundled by Metro without tree-shaking tricks.
+
+```ts
+// Host side (React Native / Hermes)
+import 'react-native-get-random-values'
+import { createHandler, implement, serveBridge } from 'stitchkit/handler'
+
+const handler = createHandler({ services: [implement(hostContract, handlers)] })
+const bridge = serveBridge(webViewHostPort, handler, {
+  origins: ['https://app.local'],
+  secret: launchSecret, // optional, at least 16 chars
+  maxFrameBytes: 1024 * 1024,
+  maxInFlight: 64,
+})
+```
+
+```ts
+// Window side (WebView or Expo DOM)
+import { BRIDGE_ORIGIN, createBridgeFetch, createClient } from 'stitchkit/http'
+
+const bridgeFetch = createBridgeFetch(windowPort, { secret: launchSecret })
+const client = createClient(hostContract, {
+  baseUrl: BRIDGE_ORIGIN,
+  fetch: bridgeFetch,
+})
+```
+
+For Expo DOM (`'use dom'`) components where the seam is a single async function instead of a
+persistent message port, pass `invoke: (frame: string) => Promise<string>` directly to
+`createBridgeFetch(invoke)`.
+
+Runtime requirements and boundaries:
+
+- **`crypto.getRandomValues` is required.** Install a Web Crypto `getRandomValues` polyfill (such as
+  `react-native-get-random-values`) before calling `createHandler()`. Missing it fails loudly at
+  construction rather than mid-request. `crypto.randomUUID` is not required.
+- **No streams or multipart without `ReadableStream`.** On a runtime that does not provide
+  `ReadableStream`, `createHandler()` refuses construction if any mounted endpoint declares
+  `stream` or `multipart`, naming each offending `serviceName.action`. Raw routes returning
+  streaming bodies are also unsupported under `whatwg-fetch` (its `Response` stringifies unknown
+  body types inside the constructor); keep raw responses on React Native textual.
+- **Textual bridge frames (v1).** The `postMessage` bridge carries UTF-8 string payloads only.
+  Binary request bodies (explicit `Uint8Array`/`ArrayBuffer`/`Blob`/`FormData`, or a `Request` or
+  a string `init.body` with a non-textual `Content-Type`), responses with a non-textual
+  `Content-Type`, and bytes that are not UTF-8 — under a text type such as
+  `text/plain; charset=windows-1251`, or without a type — fail explicitly with
+  `BridgeFailureError` (`code: 'unsupported'`) rather than arriving as U+FFFD. UTF-8 bytes keep
+  their `Content-Type`, a byte order mark included, so the window reads back the bytes the handler
+  wrote. Where the host's Fetch exposes no body stream (`whatwg-fetch` in React Native), a typed
+  body is read with its own `text()`; answer text there from strings, not bytes.
+- **No streaming endpoints over the bridge (v1).** One response travels in one frame, so a contract
+  `stream` (SSE or NDJSON) and a raw route answering `text/event-stream` or `application/x-ndjson`
+  are refused with `unsupported` as soon as the host sees the type; the stream it was handed is
+  cancelled. A request body of those types is refused in the window. Serve streams over HTTP or a
+  socket.
+- **A reply the window cannot read is refused.** A response header or status text the window's
+  `Headers` or `Response` refuses (a non-ByteString value, such as a `Content-Disposition` with a
+  non-ASCII file name) ends the call: the bridge fetch rejects with a `TypeError`, and the client
+  does not replay it. Encode such a value (`filename*=UTF-8''…`) on the host.
+- **Cancellation reaches the host over a port, not over `invoke`.** With a message port an aborted
+  call sends an `abort` frame and the host aborts the handler's `ctx.signal`. An `invoke` adapter is
+  one function call with nothing to send after it: the caller stops waiting, and the host finishes
+  the request it was given. Keep handlers reached through `invoke` short, or bounded by their own
+  timeout.
+- **Requests and responses are read no further than one frame.** Where the runtime has streams, a
+  request or response body that cannot fit `maxFrameBytes` is refused with `frame-too-large` as soon
+  as that much has been read, and the rest is cancelled. A reply over the window's own
+  `maxFrameBytes`, or one the window cannot validate (a failure code from a newer host), ends its
+  call: `frame-too-large`, or a `TypeError`, never a wait for the caller's timeout.
+- **Startup order.** Mount `serveBridge` on the host before the window starts issuing requests so
+  the host's initial `hello` frame is not mistaken for a mid-flight restart (in-process tests that
+  create both ends synchronously over an async `MessageChannel` should let the initial `hello`
+  deliver before firing non-idempotent requests).
+- **`maxJsonBodyBytes` without request body streams.** React Native's `whatwg-fetch` exposes
+  `req.body === undefined`. `createHandler()` detects this, reads `req.text()`, and enforces the
+  same UTF-8 byte ceiling (and `400 BAD_REQUEST` refusal) as streaming runtimes; the same check
+  applies to audit payload capture.
+- **Origin trust and navigation lock-down.** A `postMessage` bridge has no loopback `Host` header,
+  so `createLocalHostGuard` does not apply. `serveBridge` validates the native container-reported
+  `origin` against the exact `origins` allow-list, strips `host`, `origin`, `x-forwarded-for`,
+  `x-real-ip` and `forwarded` from every frame, refuses a handler with `trustProxy: true`, and
+  optionally verifies a per-start `secret` in constant time. Refusal reasons are logged on the host
+  and never disclosed to the window. Because any page a WebView navigates to receives
+  `window.ReactNativeWebView`, always lock navigation down in the WebView itself
+  (`originWhitelist` + `onShouldStartLoadWithRequest`).
+- **Android origin boundary.** On Android without `WebMessageListener`, `onMessage` reports the
+  top-level frame URL rather than an embedded iframe's origin. Do not embed untrusted iframes
+  inside a bridged WebView unless `WebMessageListener` enforces per-frame origins.
+- **`ctx.source` and `ctx.ipAddress`.** Calls arriving over the bridge run through the same HTTP
+  pipeline with `ctx.source === 'http'` and `expose: ['HTTP']`. Because there is no TCP peer and
+  proxy headers are stripped, `ctx.ipAddress` is `undefined` — IP-based rate limiting is not
+  meaningful on an in-process React Native host.
 
 ## Signed JSON webhooks
 

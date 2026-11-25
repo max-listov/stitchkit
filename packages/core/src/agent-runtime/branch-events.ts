@@ -3,43 +3,66 @@ import type { AgentStoreEventEnvelope } from '../durability/events';
 import { AgentConversationBranchReceiptSchema } from './branch-contract';
 import type { BranchIdentities } from './branch-identities';
 import { branchMessage, branchRun } from './branch-messages';
-import { BranchObservationSchema, branchObservation } from './branch-observations';
+import {
+  BranchObservationSchema,
+  branchObservation,
+  collectObservationDefinitions,
+} from './branch-observations';
 import { BranchProvider } from './branch-provider';
 import { BranchBaselineSchema, branchTransition } from './branch-replay';
 import { branchJson, rekeyBranchTransition } from './branch-transitions';
+import { isModelInvocationRecord } from './invocation-schema';
 import type { AgentMessage } from './schemas';
 import { canonicalAgentJson } from './store-events';
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/);
 
+/**
+ * Rekey a source log for a destination. Every identity is defined before any
+ * value is judged, so an answer never depends on the order the source wrote
+ * them in. A refusal a declaration lifts is collected on `ids` and reading
+ * goes on; the caller asks `ids.refusedError()` for all of them at once. A
+ * source the branch cannot read stops it here, with its address.
+ */
 export function rekeyBranchEvents(
   ids: BranchIdentities,
   source: string,
   events: readonly AgentStoreEventEnvelope[],
   retainedMessages: ReadonlyMap<string, AgentMessage> = new Map(),
 ) {
-  const hydrated = events.map((event) => {
-    const assistant = retainedMessages.get(event.eventId);
-    if (!assistant) return event;
-    ids.collectMessage(assistant);
-    const operation =
-      event.kind === 'runtime/transition' ? branchTransition(event) : undefined;
-    if (
-      operation?.type === 'recover' &&
-      operation.input.action === 'abandon' &&
-      !operation.assistant
-    )
-      return { ...event, payload: branchJson({ ...operation, assistant }) };
-    return event;
-  });
-  for (const event of hydrated) collectBranchEvent(ids, event);
-  for (const assistant of hydrated.flatMap((event) =>
-    retainedMessages.has(event.eventId) ? [retainedMessages.get(event.eventId)] : [],
-  )) {
-    if (assistant) branchMessage(ids, source, assistant);
+  try {
+    const hydrated = events.map((event) =>
+      atEvent(ids, event, () => {
+        const assistant = retainedMessages.get(event.eventId);
+        if (!assistant) return event;
+        ids.collectMessage(assistant);
+        const operation =
+          event.kind === 'runtime/transition' ? branchTransition(event) : undefined;
+        if (
+          operation?.type === 'recover' &&
+          operation.input.action === 'abandon' &&
+          !operation.assistant
+        )
+          return { ...event, payload: branchJson({ ...operation, assistant }) };
+        return event;
+      }),
+    );
+    for (const event of hydrated) atEvent(ids, event, () => collectBranchEvent(ids, event));
+    for (const event of hydrated) {
+      const assistant = retainedMessages.get(event.eventId);
+      if (assistant) atEvent(ids, event, () => branchMessage(ids, source, assistant));
+    }
+    const provider = new BranchProvider(ids);
+    return hydrated.map((event) =>
+      atEvent(ids, event, () => rekeyBranchEvent(ids, source, event, provider)),
+    );
+  } catch (error) {
+    throw ids.integrityError(error);
   }
-  const provider = new BranchProvider(ids);
-  return hydrated.map((event) => rekeyBranchEvent(ids, source, event, provider));
+}
+
+function atEvent<T>(ids: BranchIdentities, event: AgentStoreEventEnvelope, work: () => T): T {
+  return ids.within({ seq: event.seq, eventKind: event.kind }, work);
 }
 
 export function collectBranchEvent(ids: BranchIdentities, event: AgentStoreEventEnvelope) {
@@ -53,7 +76,14 @@ export function collectBranchEvent(ids: BranchIdentities, event: AgentStoreEvent
       throw new TypeError('Branch baseline contains an unknown opaque field');
     for (const record of baseline.runs) ids.collectRun(record.run);
     for (const message of baseline.messages) ids.collectMessage(message);
+    for (const receipt of baseline.admissions) ids.define('key', receipt.idempotencyKey);
   }
+  if (event.kind === 'runtime/branched')
+    ids.define('key', AgentConversationBranchReceiptSchema.parse(event.payload).requestKey);
+  if (event.kind === 'runtime/branch-observation') {
+    const observation = BranchObservationSchema.parse(event.payload);
+    collectObservationDefinitions(ids, observation.sourceKind, observation.payload);
+  } else collectObservationDefinitions(ids, event.kind, event.payload);
 }
 
 export function rekeyBranchEvent(
@@ -156,10 +186,13 @@ export function rekeyBranchEvent(
       }),
     };
   }
+  // Two ledgers write `provider/request` and `provider/response`: the provider
+  // journal, rekeyed here as the journal it is, and the model invocation
+  // ledger, whose records are observations like the rest of that ledger.
   if (
     event.kind === 'provider/message' ||
-    event.kind === 'provider/request' ||
-    event.kind === 'provider/response'
+    ((event.kind === 'provider/request' || event.kind === 'provider/response') &&
+      !isModelInvocationRecord(event.payload))
   )
     return { ...envelope, payload: branchJson(provider.rekey(event.kind, event.payload)) };
   const observation =
@@ -171,7 +204,12 @@ export function rekeyBranchEvent(
     kind: 'runtime/branch-observation',
     payload: branchJson({
       sourceKind: observation.sourceKind,
-      payload: branchObservation(ids, observation.sourceKind, observation.payload),
+      payload: branchObservation(
+        ids,
+        observation.sourceKind,
+        observation.payload,
+        event.kind === 'runtime/branch-observation',
+      ),
     }),
   };
 }

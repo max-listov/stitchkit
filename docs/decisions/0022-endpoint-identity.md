@@ -8,7 +8,9 @@ updated: 2026-06-05
 
 # ADR 0022 — Stable (service, action) identity on MethodDef
 
-- **Status:** Accepted — extends [ADR 0002](0002-generic-core.md) and [ADR 0021](0021-endpoint-meta-passthrough.md)
+**Relations:** extends [ADR 0002](0002-generic-core.md) and
+[ADR 0021](0021-endpoint-meta-passthrough.md)
+
 - **Date:** 2026-06-05
 
 ## Context

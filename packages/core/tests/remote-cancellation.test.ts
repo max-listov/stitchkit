@@ -77,6 +77,7 @@ test('remote caller cancellation reaches both typed endpoint argument shapes', a
       createHttpClient({ baseUrl: 'http://localhost', fetch: transport, retry: { limit: 0 } }),
     );
     const invoker = await createCliInvoker({
+      access: { open: 'local-operator' },
       name: 'cancel',
       services: [service],
       signal: controller.signal,
@@ -109,6 +110,7 @@ test('remote pre-abort and abort during argument transform prevent HTTP dispatch
   const before = new AbortController();
   before.abort(new Error('private-before'));
   const first = await createCliInvoker({
+    access: { open: 'local-operator' },
     name: 'cancel',
     signal: before.signal,
     services: [
@@ -129,6 +131,7 @@ test('remote pre-abort and abort during argument transform prevent HTTP dispatch
   const finish = deferred();
   const during = new AbortController();
   const second = await createCliInvoker({
+    access: { open: 'local-operator' },
     name: 'cancel',
     signal: during.signal,
     services: [
@@ -169,7 +172,11 @@ test('uncancelled remote calls keep typed argument and transform behavior', asyn
       transformArgs: (_key, args) => ({ ...args, text: 'transformed' }),
     },
   );
-  const invoker = await createCliInvoker({ name: 'normal', services: [service] });
+  const invoker = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'normal',
+    services: [service],
+  });
   expect(await invoker.invoke('input', { text: 'original' })).toMatchObject({
     ok: true,
     data: { ok: true },

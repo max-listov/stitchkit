@@ -25,7 +25,7 @@ function tool(data: unknown, onCall?: () => void) {
     name: 'media',
     description: 'Return synthetic data',
     identity: { serviceName: 'media', action: 'create', method: 'POST' },
-    transports: ['CLI'],
+    expose: ['CLI'],
     input: z.object({}),
     output: Output,
     handler: () => {
@@ -45,8 +45,13 @@ test('a result without media answers as it does without the flag and says nothin
     {
       argv: [],
       config: {
-        results: {
-          media: defineCliResult(Output, { present: () => 'PRESENTED\n', exitCode: () => 7 }),
+        commandSettings: {
+          media: {
+            result: defineCliResult(Output, {
+              present: () => 'PRESENTED\n',
+              exitCode: () => 7,
+            }),
+          },
         },
       },
     },
@@ -71,8 +76,10 @@ test('a result without media answers as it does without the flag and says nothin
   expect(JSON.parse(aggregate.out)).toEqual({ a: 2, b: 1 });
   const presented = await runMediaCli(null, ['media', '--output-dir', never], {
     runtimeTools: [tool(list)],
-    results: {
-      media: defineCliResult(Output, { present: () => 'PRESENTED\n', exitCode: () => 7 }),
+    commandSettings: {
+      media: {
+        result: defineCliResult(Output, { present: () => 'PRESENTED\n', exitCode: () => 7 }),
+      },
     },
   });
   expect(presented).toEqual({ out: 'PRESENTED\n', err: NOTHING_SAVED, code: 7 });
@@ -132,26 +139,30 @@ test('a result policy judges the operation result while stdout links the saved f
     ['media', '--output-dir', root, '--json', '--quiet'],
     {
       runtimeTools: [tool(data)],
-      results: {
-        media: defineCliResult(Output, {
-          exitCode: (result) => {
-            judged.push(result);
-            return 3;
-          },
-        }),
+      commandSettings: {
+        media: {
+          result: defineCliResult(Output, {
+            exitCode: (result) => {
+              judged.push(result);
+              return 3;
+            },
+          }),
+        },
       },
     },
   );
   expect(exitOnly).toEqual({ out: `${JSON.stringify(link)}\n`, err: '', code: 3 });
   const presented = await runMediaCli(null, ['media', '--output-dir', root, '--quiet'], {
     runtimeTools: [tool(data)],
-    results: {
-      media: defineCliResult(Output, {
-        present: ({ result }) => {
-          judged.push(result);
-          return 'PRESENTED\n';
-        },
-      }),
+    commandSettings: {
+      media: {
+        result: defineCliResult(Output, {
+          present: ({ result }) => {
+            judged.push(result);
+            return 'PRESENTED\n';
+          },
+        }),
+      },
     },
   });
   expect(presented).toEqual({ out: 'PRESENTED\n', err: '', code: 0 });

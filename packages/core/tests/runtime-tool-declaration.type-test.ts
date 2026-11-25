@@ -30,12 +30,13 @@ const output = z.object({ size: z.number() });
 // An inline handler in a registration list is contextually typed, not erased.
 const inline: CliInvokerConfig = {
   name: 'inline',
+  access: { open: 'local-operator' },
   runtimeTools: [
     {
       name: 'inline_tool',
       description: 'Inline registration',
       identity: { serviceName: 'probe', action: 'inline', method: 'POST' },
-      transports: ['CLI'],
+      expose: ['CLI'],
       input,
       output,
       handler: ({ input: parsed, signal, source }) => {
@@ -57,12 +58,13 @@ void inline;
 const cliConfig: CliConfig = {
   name: 'cli',
   version: '1',
+  access: { open: 'local-operator' },
   runtimeTools: [
     {
       name: 'void_tool',
       description: 'No output',
       identity: { serviceName: 'probe', action: 'noop', method: 'POST' },
-      transports: ['CLI'],
+      expose: ['CLI'],
       input,
       handler: ({ input: parsed }) => {
         void Object.keys(parsed);
@@ -72,6 +74,7 @@ const cliConfig: CliConfig = {
 };
 void cliConfig;
 void mountAgent([], {
+  access: { open: 'local-operator' },
   runtimeTools: [
     {
       name: 'agent_inline',
@@ -84,6 +87,7 @@ void mountAgent([], {
   ],
 });
 void buildMcpServer({
+  access: { open: 'local-operator' },
   serverInfo: { name: 'inline', version: '1' },
   services: [],
   runtimeTools: [
@@ -103,7 +107,7 @@ const measured = {
   name: 'measure',
   description: 'Typed construction',
   identity: { serviceName: 'probe', action: 'measure', method: 'POST' },
-  transports: ['CLI'],
+  expose: ['CLI'],
   input,
   output,
   handler: ({ input: parsed }) => ({ size: parsed.text.length }),
@@ -118,7 +122,11 @@ createDeferredAgentToolSurface({
   search: { name: 'tool_search', maxQueryBytes: 10, maxResults: 1, maxResultBytes: 512 },
   activation: { maxSelectedTools: 1, maxActiveTools: 2, maxSchemaBytes: 1_000 },
 });
-void createCliInvoker({ name: 'typed', runtimeTools: registered });
+void createCliInvoker({
+  access: { open: 'local-operator' },
+  name: 'typed',
+  runtimeTools: registered,
+});
 
 // Construction stays strict: a callback may not require a field the schema omits.
 const wideInput = z.object({ text: z.string(), required: z.string() });

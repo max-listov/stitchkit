@@ -4,7 +4,7 @@ description: How a breaking change is marked and migrated, which number moves, a
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-10-06 19:45 +07:00
+updated: 2026-11-25 05:58 +08:00
 ---
 
 # Release process — breaking changes, versions and the release train
@@ -77,6 +77,13 @@ changed default, stricter validation):
    release after 0.110.6; a fix without the line, such as one of an earlier release, is only counted by `stitchkit upgrade`. A behaviour change
    filed under `### Changed` is outside the rule. → ADR 0263
 
+   Every export an `**Affects:**` line names must exist where its item needs it, from 0.127.0 on.
+   A breaking item may name an export the release removes, so its names are looked up in the
+   tree's export snapshot (`packages/core/tests/fixtures/public-surface.json`) and in the previous
+   core release tag's; a fix ships in this release and removes nothing, so its names are looked up
+   in the tree only. A name found nowhere would never match a consumer's import; `release:check`
+   lists each one with where the name is exported now (`scripts/release-affects-names.ts`).
+
    A version with **no** `### ⚠️ Breaking changes` section is purely additive — safe to adopt
    without code changes. (0.1.0–0.7.0 had none.)
 
@@ -121,10 +128,17 @@ coordinated by one exact-tree release train. The tag flow lives in the
 - **stitchkit:** bump only `packages/core/package.json`, roll the root `CHANGELOG.md`, add the
   target to `release-train.json`, then tag `vX.Y.Z`. CI checks the core version, publishes only
   `stitchkit` and reads the root changelog. Rolling the changelog adds a minor to the count in the
-  maturity table (`docs/guide/getting-started.md`), which `scripts/surface-cadence.test.ts` derives
-  from the changelog and holds by exact sentence — recompute both sentences with the test's own term
-  lists and update the table and the test in the same commit, or the first `verify` after the roll
-  is red.
+  maturity table (`docs/guide/getting-started.md`); `prepare` rewrites the table's sentences from the
+  rolled changelog (`scripts/release-derived.ts`), and `scripts/surface-cadence.test.ts` compares the
+  table with the changelog, not with a copy of the sentences.
+
+`bun scripts/release-plan.ts prepare <target>@X.Y.Z…` writes every derived file of a train and prints
+the paths it wrote, for the caller that commits exactly them: each version and changelog roll, every
+companion the train must carry (next patch, with a line saying it rides along), the promoted
+`## Unreleased migration:` headings of `docs/guide/upgrading.md` and
+`packages/create-stitchkit/UPGRADING.md`, the cadence sentences and `release-train.json`. It computes
+everything from the last commit, so a second run writes the same bytes; a file changed after the
+commit by anything but `prepare` is refused, never overwritten.
 - **create-stitchkit:** update the template's single `catalog.stitchkit` target and lockfile —
   `bun run update:starter` moves both and restores every `"stitchkit": "catalog:"` reference a raw
   `bun update` would dissolve — pass the planner-selected compatibility lane, bump only
@@ -136,8 +150,10 @@ coordinated by one exact-tree release train. The tag flow lives in the
   dependency for the workspace), so a project installs one framework, its own. `bun pm pack` freezes
   that spec into `^<core version>` at pack time, and pre-1.0 a caret holds one minor: **a core
   release outside the range the published `stitchkit-tui` froze carries `tui` in the same train.**
-  `assertTrainCarriesItsCompanions` (`scripts/release-companions.ts`) refuses the train otherwise —
-  in `release:check` and at push, from the repository's release tags. As a hard dependency the
+  `prepare` adds it to the train itself; `assertTrainCarriesItsCompanions`
+  (`scripts/release-companions.ts`) refuses a train that still lacks it — in `release:check` and at
+  push, from the repository's release tags. The peer is optional and is kept in the rule: a project
+  that has both installs a framework outside the published range otherwise. As a hard dependency the
   frozen range gave every project a second, older stitchkit beside its own once the framework moved
   on, which breaks `instanceof` across the package boundary.
 
@@ -159,6 +175,14 @@ rode in 0.90.6's train, passed every gate at push time because 0.90.6 was not pu
 became a scaffold on 0.90.5 one minute later. Release the framework, wait for npm, run
 `bun run update:starter`, then tag the starter. A starter deliberately targeting an older minor is
 outside this and still rides along.
+
+**A security deferral names the next train.** A core release with a `### Security` section defers the starter only where the starter would
+not receive the fix anyway: the review is refused when the starter targets the core's own minor, and
+on another pre-1.0 minor it must name the follow-up starter release in `followUp`
+(`"create-stitchkit@X.Y.Z"`, later than the current starter); `release:check` and pre-push then
+refuse every train but that one until it is tagged ([ADR 0322](../decisions/0322-a-security-fix-bars-a-starter-deferral-only-where-the-starter-would-receive-it.md)).
+That train follows the core publication in the same release session: wait for npm, run
+`bun run update:starter`, migrate the template, remove the review, tag the named starter.
 
 ## Order inside a release
 

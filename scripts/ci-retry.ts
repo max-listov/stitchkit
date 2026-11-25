@@ -67,15 +67,20 @@ export function namesRunnerLoss(text: string): boolean {
   return RUNNER_LOSS_MARKERS.some((marker) => text.includes(marker));
 }
 
+/** The runs a lost runner may repeat: the nightly run and the push run a release reads. */
+const RETRIED_EVENTS: ReadonlySet<string> = new Set(['schedule', 'push']);
+
 /**
- * One retry, of a scheduled run only, and only when every unproven lane lost its runner.
- * A push run — the exact-SHA release evidence — is never repeated, and neither is a second attempt.
+ * One retry, of a scheduled or push run, and only when every unproven lane lost its runner.
+ * A push run is the exact-SHA release evidence; a lost runner proved nothing about its code, and
+ * the repeat runs the same SHA and plan, so the evidence a release reads is still that code's.
+ * A code failure, a pull request and a second attempt are never repeated. → ADR 0302
  */
 export function decideCiRetry(run: CiRun, jobs: readonly CiJobTrace[]): CiRetryDecision {
-  if (run.event !== 'schedule')
+  if (!RETRIED_EVENTS.has(run.event))
     return {
       retry: false,
-      reason: `a ${run.event} run is exact evidence and is not repeated`,
+      reason: `a ${run.event} run is not repeated`,
     };
   if (run.run_attempt !== 1)
     return {

@@ -2,15 +2,16 @@
 title: "ADR 0044 — A collided field keeps its type"
 type: decision
 status: accepted
+amendedBy: ["0050", "0065"]
 created: 2026-08-06
 updated: 2026-08-06
 ---
 
 # ADR 0044 — A collided field keeps its type
 
-- **Status:** Accepted — narrows the collision rule of
-  [ADR 0033](0033-sound-flatten-collisions.md) while keeping its invariant;
-  extends [ADR 0031](0031-deep-union-flatten.md)
+**Relations:** narrows the collision rule of [ADR 0033](0033-sound-flatten-collisions.md) while
+keeping its invariant; extends [ADR 0031](0031-deep-union-flatten.md)
+
 - **Date:** 2026-08-06
 
 ## Context

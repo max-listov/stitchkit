@@ -64,10 +64,13 @@ test('an occupied companion and a purged identity are refused without changing t
   const sqlite = createBunSqliteAgentRuntimeStore({ filename: ':memory:' });
   try {
     await branchTurn(sqlite.store, 'source', 'first');
-    sqlite.database
-      .prepare(`INSERT INTO stitchkit_agent_runtime_projections
-      (conversation_id, name, version, upto_seq, payload, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run('occupied', 'unrelated', 1, 0, '{}', '2026-10-15T00:00:00.000Z');
+    await sqlite.host.transaction('occupied', (scope) =>
+      scope.run(
+        `INSERT INTO ${sqlite.host.tables.projections}
+         (conversation_id, name, version, upto_seq, payload, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        ['occupied', 'unrelated', 1, 0, '{}', '2026-10-15T00:00:00.000Z'],
+      ),
+    );
     await expect(
       branch(sqlite.store, {
         requestKey: 'occupied',

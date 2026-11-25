@@ -35,6 +35,7 @@ const paint = {
 };
 const config = {
   serverInfo: { name: 'mcp-only', version: '1' },
+  access: { open: 'local-operator' },
   services: [],
   runtimeTools: [definition, paint],
   auth: (request) =>

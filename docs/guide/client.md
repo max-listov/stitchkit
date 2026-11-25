@@ -84,9 +84,14 @@ await transport.close()
 
 `baseUrl` stays required because it supplies the URL and `Host` header. The
 adapter structurally owns dispatch: relative and absolute redirects use the same
-socket, and a missing socket cannot fall through to that host over TCP. Defaults
-are 16 MiB request/response bodies, 64 KiB headers, 30 s to response headers,
-eight connections and five redirects.
+socket, and a missing socket cannot fall through to that host over TCP. Before
+connecting, `createUnixClientTransport` checks that `socketPath` is at most
+**103 UTF-8 bytes**, that its parent directory is a real directory (not a
+symlink) owned by the current OS user with `(mode & 0o022) === 0`, and that the
+target is a non-symlink socket owned by the current user — refusing violations
+with a non-retryable `UnixClientTransportError` (`code: 'UNIX_TARGET_REFUSED'`,
+`delivery: 'not-dispatched'`). Defaults are 16 MiB request/response bodies,
+64 KiB headers, 30 s to response headers, eight connections and five redirects.
 
 `maxHeaderBytes` is enforced before exposing a response. Bun's owned parser
 counts the complete response head in wire bytes, including the status line and
@@ -138,10 +143,12 @@ default transport for finite calls that must retain the 16 MiB unary ceiling.
 The adapter never infers this policy from `Content-Type`. → ADR 0125.
 
 The legacy `createHttpClient({ unix: '/absolute/path' })` spelling remains a
-Bun-only convenience. On a non-Bun runtime it now refuses before dispatch
-instead of ignoring the selection and dialing TCP. `unix` and an injected
-`fetch` are mutually exclusive; use `createUnixClientTransport` for portable,
-explicit lifecycle ownership. → ADR 0116.
+Bun-only convenience **without** socket-owner/directory verification or
+structured `delivery` outcome classification. On a non-Bun runtime it now
+refuses before dispatch instead of ignoring the selection and dialing TCP.
+`unix` and an injected `fetch` are mutually exclusive; use
+`createUnixClientTransport` as the primary client for portable, owner-checked
+dispatch and explicit lifecycle ownership. → ADR 0116.
 
 `trace: true` mints a fresh root trace per request. The stitchkit server
 [continues an inbound `traceparent`](./observability.md#trace-context), so the
@@ -626,6 +633,29 @@ The rules the two halves share:
 Part size is a latency decision: every part costs a round trip, so on a
 200 ms link a smaller part buys smoother progress at the price of a slower
 upload.
+
+## Calls that never got an answer
+
+A connection that drops after the request left and before an answer came — a host process that
+restarted, a reset loopback socket — leaves the caller not knowing whether the call ran. A response
+of any status is an answer and is never repeated. A network failure is repeated only when sending the
+call twice is safe, and the endpoint says when that is:
+
+| endpoint | repeated after a network failure |
+| --- | --- |
+| `idempotent: true` | yes, whatever the method |
+| `GET` / `HEAD`, `idempotent` unset | yes |
+| `idempotent: false` | never, even a `GET` |
+| `effect: 'write'`, `idempotent` unset | never, even a `GET` |
+| any other method, `idempotent` unset | never |
+
+Both clients read the rule from the endpoint itself: the bare `createClient(contract, { baseUrl })`
+repeats up to `retry.limit` times (default 2) with a short doubling pause, and a client on
+`createHttpClient` passes the endpoint's `idempotent` — or `false` for a declared write — to its own
+transport retry. A call that is not
+repeated fails with the network error, and its outcome is unknown: the server may have run it.
+Declare `idempotent: true` on a write that is safe twice — a `PUT` of a whole value, a delete, a
+write keyed by an idempotency key — and it survives a restart of the server it talks to.
 
 ## Contract URL builders
 
@@ -1214,15 +1244,99 @@ discard the stale operation, not refresh a new user's credentials. For raw/strea
 responses, guard each consumed chunk and final delivery; `run` returning a stream
 does not mean its future contents have been consumed.
 
-`createSessionCredentials({ scope, refresh, storage })` coordinates the same scope.
-`login(context, credentials)` creates a generation, `read(operation)` resolves only
-that generation's credentials, and concurrent `refresh(operation)` shares one
-flight. `logout()` invalidates memory immediately and resolves after its ordered
-storage clear (or a newer login superseding that clear). Handle storage and capacity
-errors explicitly; a rejected write is not proof of durable login/logout. Refresh
-network work never holds the storage queue. Callers decide whether a failed command
-may be retried once; do not replay a multi-step callback or treat any `403` as expiry.
+`createSessionCredentials({ scope, refresh, storage, refreshAhead, onEvent })` coordinates
+the same scope. `login(context, credentials)` creates a generation, `restore()` reads
+`storage.read()` on startup (`present`, `absent`, or `unreadable` — never clearing storage or
+scope when a keychain/store read fails), `read(operation)` resolves only that generation's
+credentials, and concurrent `refresh(operation)` calls share one flight. Passing
+`refresh(operation, { rejected })` after a late `401` returns the current credentials without
+rotating again when another refresh already replaced them.
 
-This is per-instance coordination. Route all writes through it; shared tabs/processes
-need storage-level locking. Replace the local session counter and refresh queue when
-adopting these primitives instead of retaining two independent lifetimes.
+Enable proactive refresh with `refreshAhead` and compute expiry from `expires_in` in local
+clock milliseconds at receipt time (avoiding clock-skew traps from a server's `exp`). If you
+only hold a JWT, decode its payload `exp * 1000` in three lines:
+
+```ts
+import { createSessionCredentials, createSessionScope } from 'stitchkit'
+
+interface Credentials {
+  readonly accessToken: string
+  readonly refreshToken: string
+  readonly expiresAt: number // Date.now() + expires_in * 1000 when issued
+}
+
+const scope = createSessionScope<{ accountId: string }>()
+const auth = createSessionCredentials({
+  scope,
+  refreshAhead: {
+    expiresAt: (credentials) => credentials.expiresAt, // or null when unknown
+    leadMs: 60_000,
+    cooldownMs: 30_000,
+  },
+  refresh: async (credentials, signal) => {
+    const res = await postRefresh(credentials.refreshToken, { signal })
+    return {
+      accessToken: res.accessToken,
+      refreshToken: res.refreshToken,
+      expiresAt: Date.now() + res.expiresIn * 1000,
+    }
+  },
+  storage: {
+    read: () => keychain.read(),
+    write: (session, credentials) => keychain.write({ session, credentials }),
+    clear: () => keychain.clear(),
+  },
+  onEvent: (event) => {
+    if (event.type === 'refresh-rejected') void auth.logout()
+  },
+})
+
+// Startup: distinguish unreadable storage from an absent session.
+const restored = await auth.restore()
+if (restored.status === 'present') startApp(restored.operation)
+
+// Wakeup (visibilitychange, AppState foreground, online): refresh if a timer was missed.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    try {
+      void auth.refreshIfDue(scope.capture()).catch(() => undefined)
+    } catch {
+      // Signed out — scope.capture() throws SessionExpiredError synchronously.
+    }
+  }
+})
+```
+
+For a JWT without `expires_in`, derive `expiresAt` in three lines:
+
+```ts
+const jwtExpiresAt = (jwt: string): number | null => {
+  const payload = jwt.split('.')[1]
+  if (!payload) return null
+  const { exp } = JSON.parse(atob(payload.replaceAll('-', '+').replaceAll('_', '/')))
+  return typeof exp === 'number' && Number.isInteger(exp) && exp > 0 ? exp * 1000 : null
+}
+```
+
+`logout()` invalidates memory immediately, cancels active timers and resolves after its
+ordered storage clear (or a newer login superseding that clear). `login()` still rejects on
+storage errors, and a failed login leaves nobody signed in: it clears the stored session it
+replaced, so a restart does not restore it (when that clear fails too, the rejection is an
+`AggregateError` of both, caused by the login failure). A post-rotation write failure inside `refresh()` keeps the issued credentials
+in memory, resolves `refresh()`, emits `storage-failed` and retries persistence every
+`storageRetryMs` (default 5 s) while refusing to rotate again until the previous rotation is
+persisted. For rotating refresh tokens with a server replay window, keep
+`refreshTimeoutMs + retry.minDelayMs` (default 30 s + 30 s) and `storageRetryMs` (default 5 s)
+below the server's replay window so a lost answer or failed write retries inside that window.
+
+Refresh network work never holds the storage queue. The coordinator classifies **refresh-endpoint**
+failures (`401` and `403` → `rejected` by default, stopping proactive refresh and throwing
+`SessionRefreshRejectedError` without clearing storage or scope; override with
+`classifyRefreshFailure` if needed). Application-command failures remain the host's decision:
+do not replay a multi-step callback or assume a `403` from an application endpoint means the
+session expired.
+
+This is per-instance coordination. Route all writes through it; shared tabs or processes need
+storage-level locking/CAS because proactive refresh makes multi-tab overlap regular. Replace
+the local session counter and refresh queue when adopting these primitives instead of retaining
+two independent lifetimes.

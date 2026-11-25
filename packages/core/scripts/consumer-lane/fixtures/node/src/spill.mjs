@@ -2,7 +2,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createSqliteAgentSpillStore } from 'stitchkit/agent-runtime';
+import { createAgentSpillStore } from 'stitchkit/agent-runtime';
 import { createAgentCodingTools } from 'stitchkit/agent-runtime/coding-tools';
 import { mountAgent } from 'stitchkit/tools/agent';
 import { packedSqlite, proof } from './packed-sqlite.mjs';
@@ -10,11 +10,12 @@ import { packedSqlite, proof } from './packed-sqlite.mjs';
 const { handle } = packedSqlite();
 const root = await mkdtemp(join(tmpdir(), 'stitchkit-packed-spill-'));
 try {
-  const spills = createSqliteAgentSpillStore({
-    sqlite: handle,
+  const spills = createAgentSpillStore({
+    host: handle.host,
     conversationId: 'spill',
   });
   const tools = mountAgent([], {
+    access: { open: 'local-operator' },
     runtimeTools: createAgentCodingTools({
       root,
       authorize: () => true,

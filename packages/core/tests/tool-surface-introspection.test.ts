@@ -8,6 +8,7 @@ import {
   listToolNames,
   summarizeTransports,
 } from '../src/entrypoints/tools';
+import { projectRuntimeTool } from '../src/tools/internal/surface-projector';
 import { runtimeToolMountable } from '../src/tools/runtime-tool';
 
 const contract = defineContract(
@@ -40,7 +41,7 @@ const preview = defineRuntimeTool({
   identity: { serviceName: 'assets', action: 'preview', method: 'GET' },
   input: z.object({ assetId: z.string() }),
   output: z.object({ url: z.url() }),
-  transports: ['MCP'],
+  expose: ['MCP'],
   handler: ({ input }) => ({ url: `https://example.com/${input.assetId}` }),
 });
 
@@ -50,7 +51,7 @@ describe('mixed tool-surface introspection', () => {
     expect(entry).toEqual({
       name: inspect.name,
       description: inspect.description,
-      inputSchema: runtimeToolMountable(inspect).presentationSchema,
+      inputSchema: runtimeToolMountable(projectRuntimeTool(inspect)).presentationSchema,
     });
     expect(Object.isFrozen(entry?.inputSchema)).toBe(true);
   });
@@ -124,14 +125,14 @@ describe('mixed tool-surface introspection', () => {
         name: 'inspect_asset',
         service: 'assets',
         method: 'inspect',
-        transports: ['MCP', 'AGENT'],
+        expose: ['MCP', 'AGENT'],
       },
       {
         kind: 'runtime',
         name: 'preview_asset',
         service: 'assets',
         method: 'preview',
-        transports: ['MCP'],
+        expose: ['MCP'],
       },
     ]);
   });

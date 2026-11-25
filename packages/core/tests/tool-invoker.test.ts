@@ -95,7 +95,10 @@ async function connect(server: McpServer): Promise<Client> {
 
 describe('createToolInvoker', () => {
   test('runs typed input/output through the shared runner', async () => {
-    const invoker = createToolInvoker(service, { transport: 'AGENT' });
+    const invoker = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: { open: 'local-operator' },
+    });
     expect(await invoker.invoke('math_add', { left: 2, right: 3 })).toEqual({
       ok: true,
       data: { total: 5 },
@@ -103,8 +106,14 @@ describe('createToolInvoker', () => {
   });
 
   test('honours exposure policy and fails first on unknown or duplicate names', async () => {
-    const agent = createToolInvoker(service, { transport: 'AGENT' });
-    const mcp = createToolInvoker(service, { transport: 'MCP' });
+    const agent = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: { open: 'local-operator' },
+    });
+    const mcp = createToolInvoker(service, {
+      transport: 'MCP',
+      access: { open: 'local-operator' },
+    });
     expect(agent.names).toContain('agent_only');
     expect(agent.names).not.toContain('mcp_only');
     expect(mcp.names).toContain('mcp_only');
@@ -118,32 +127,35 @@ describe('createToolInvoker', () => {
       if (AppError.is(error)) expect(error.code).toBe('UNKNOWN_OPERATION');
     }
 
-    expect(() => createToolInvoker([service, service], { transport: 'AGENT' })).toThrow(
-      'Duplicate in-process tool name',
-    );
+    expect(() =>
+      createToolInvoker([service, service], {
+        transport: 'AGENT',
+        access: { open: 'local-operator' },
+      }),
+    ).toThrow('Duplicate in-process tool name');
   });
 
   test('reports validation, lifecycle, throws and invalid output canonically', async () => {
-    const inputFailure = createToolInvoker(service, { transport: 'AGENT' });
+    const inputFailure = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: { open: 'local-operator' },
+    });
     expect(await inputFailure.invoke('math_add', { left: '2', right: 3 })).toMatchObject({
       ok: false,
       code: 'VALIDATION_ERROR',
     });
 
-    const denied = createToolInvoker(service, { transport: 'AGENT' });
-    expect(
-      await denied.invoke(
-        'math_add',
-        { left: 2, right: 3 },
-        {
-          lifecycle: {
-            beforeHandle: () => {
-              throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
-            },
+    const denied = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: {
+        gate: {
+          beforeHandle: () => {
+            throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
           },
         },
-      ),
-    ).toMatchObject({
+      },
+    });
+    expect(await denied.invoke('math_add', { left: 2, right: 3 })).toMatchObject({
       ok: false,
       code: 'FORBIDDEN',
     });
@@ -153,19 +165,15 @@ describe('createToolInvoker', () => {
       code: 'INTERNAL_SERVER_ERROR',
     });
 
-    const invalidOutput = createToolInvoker(service, { transport: 'AGENT' });
-    expect(
-      await invalidOutput.invoke(
-        'math_add',
-        { left: 2, right: 3 },
-        {
-          lifecycle: {
-            afterHandle: (_context, result, endpoint) =>
-              endpoint.key === 'add' ? { total: 'wrong' } : result,
-          },
-        },
-      ),
-    ).toMatchObject({
+    const invalidOutput = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: {
+        open: 'local-operator',
+        afterHandle: (_context, result, endpoint) =>
+          endpoint.key === 'add' ? { total: 'wrong' } : result,
+      },
+    });
+    expect(await invalidOutput.invoke('math_add', { left: 2, right: 3 })).toMatchObject({
       ok: false,
       code: 'INTERNAL_SERVER_ERROR',
     });
@@ -173,7 +181,10 @@ describe('createToolInvoker', () => {
 
   test('throws the retained normalized AppError after one terminal hook event', async () => {
     const terminal: boolean[] = [];
-    const invoker = createToolInvoker(service, { transport: 'AGENT' });
+    const invoker = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: { open: 'local-operator' },
+    });
     const options: ToolInvocationOptions = {
       hooks: {
         afterToolCall: ({ result }) => {
@@ -210,7 +221,10 @@ describe('createToolInvoker', () => {
   });
 
   test('throws framework failures with their canonical status', async () => {
-    const invoker = createToolInvoker(service, { transport: 'AGENT' });
+    const invoker = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: { open: 'local-operator' },
+    });
     try {
       await invoker.invokeOrThrow('math_add', { left: 'wrong', right: 3 });
       throw new Error('expected validation failure');
@@ -228,6 +242,7 @@ describe('createToolInvoker', () => {
     const stripped: Array<{ toolName: string; paths: string[] }> = [];
     const invoker = createToolInvoker(service, {
       transport: 'AGENT',
+      access: { open: 'local-operator' },
       flattenUnionInput: true,
       extend: {
         schema: { tenant: z.string() },
@@ -256,7 +271,10 @@ describe('createToolInvoker', () => {
   });
 
   test('reuses one registry with isolated per-call identity context', async () => {
-    const invoker = createToolInvoker(service, { transport: 'AGENT' });
+    const invoker = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: { open: 'local-operator' },
+    });
     const observed: string[] = [];
     const call = (id: string, tenantId: string) =>
       invoker.invoke(
@@ -280,15 +298,19 @@ describe('createToolInvoker', () => {
 
   test('parallel and nested calls isolate request-context writes', async () => {
     const observed: Array<{ id: string; dimension?: string }> = [];
-    const invoker = createToolInvoker(service, { transport: 'AGENT' });
-    const options: ToolInvocationOptions = {
-      lifecycle: {
-        beforeHandle: (context, endpoint) => {
-          if (endpoint.key !== 'inspect') return;
-          const parsed = IdInput.parse(context.input);
-          setRequestDimensions({ entityId: parsed.id });
+    const invoker = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: {
+        gate: {
+          beforeHandle: (context, endpoint) => {
+            if (endpoint.key !== 'inspect') return;
+            const parsed = IdInput.parse(context.input);
+            setRequestDimensions({ entityId: parsed.id });
+          },
         },
       },
+    });
+    const options: ToolInvocationOptions = {
       hooks: {
         afterToolCall: ({ args, endpoint }) => {
           if (endpoint.key !== 'inspect') return;
@@ -306,7 +328,7 @@ describe('createToolInvoker', () => {
         source: 'http',
         method: 'POST',
         path: '/invoke',
-        startedAt: 0n,
+        startedAt: 0,
         trace: { traceId: 'a'.repeat(32), spanId: 'b'.repeat(16) },
       },
       async () => {
@@ -327,12 +349,6 @@ describe('createToolInvoker', () => {
     let nestedInvoker: ReturnType<typeof createToolInvoker> | undefined;
     const dimensions: Array<{ key: string; entityId?: string }> = [];
     const options: ToolInvocationOptions = {
-      lifecycle: {
-        beforeHandle: (context, endpoint) => {
-          const input = IdInput.parse(context.input);
-          setRequestDimensions({ entityId: `${endpoint.key}:${input.id}` });
-        },
-      },
       hooks: {
         afterToolCall: ({ endpoint }) => {
           dimensions.push({
@@ -372,14 +388,24 @@ describe('createToolInvoker', () => {
         );
       },
     });
-    nestedInvoker = createToolInvoker(nestedService, { transport: 'AGENT' });
+    nestedInvoker = createToolInvoker(nestedService, {
+      transport: 'AGENT',
+      access: {
+        gate: {
+          beforeHandle: (context, endpoint) => {
+            const input = IdInput.parse(context.input);
+            setRequestDimensions({ entityId: `${endpoint.key}:${input.id}` });
+          },
+        },
+      },
+    });
 
     await runWithRequestContext(
       {
         source: 'http',
         method: 'POST',
         path: '/invoke',
-        startedAt: 0n,
+        startedAt: 0,
         trace: { traceId: 'c'.repeat(32), spanId: 'd'.repeat(16) },
       },
       () => nestedInvoker?.invoke('nested_outer', { id: 'x' }, options) ?? Promise.resolve(),
@@ -392,10 +418,13 @@ describe('createToolInvoker', () => {
   });
 
   test('matches the same operation through agent and MCP mounts', async () => {
-    const invoker = createToolInvoker(service, { transport: 'AGENT' });
+    const invoker = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: { open: 'local-operator' },
+    });
     const internal = await invoker.invoke('math_add', { left: 4, right: 6 });
 
-    const agentTools = mountAgent(service);
+    const agentTools = mountAgent(service, { access: { open: 'local-operator' } });
     const execute = agentTools.math_add?.execute;
     if (!execute) throw new Error('missing agent tool');
     const agent = await execute(
@@ -404,7 +433,7 @@ describe('createToolInvoker', () => {
     );
 
     const mcpServer = new McpServer({ name: 'invoker-test', version: '1' });
-    mountMcp(mcpServer, service);
+    mountMcp(mcpServer, service, { access: { open: 'local-operator' } });
     const client = await connect(mcpServer);
     const mcp = await client.callTool({
       name: 'math_add',
@@ -418,7 +447,10 @@ describe('createToolInvoker', () => {
   });
 
   test('compiles an immutable lookup once', () => {
-    const invoker = createToolInvoker(service, { transport: 'AGENT' });
+    const invoker = createToolInvoker(service, {
+      transport: 'AGENT',
+      access: { open: 'local-operator' },
+    });
     const before = invoker.names;
     expect(Object.isFrozen(invoker)).toBe(true);
     expect(Object.isFrozen(invoker.names)).toBe(true);

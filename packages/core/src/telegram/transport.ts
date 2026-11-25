@@ -14,8 +14,9 @@
  * no connection is repeated with new sockets inside a bounded budget.
  */
 
+import { abortReason, raceAbort } from '../internal/abort-race';
+import { assertTimerMs } from '../internal/deadline';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
-import { untilAborted } from '../internal/until-aborted';
 import { TelegramNotDispatchedError } from './not-dispatched';
 import {
   establish,
@@ -183,7 +184,8 @@ function exchange(
         reject(parseError);
       }
     };
-    const abort = () => finish(signal?.reason);
+    // Never `undefined`: `finish` reads that as an answer that ended and parses it.
+    const abort = () => finish(signal === undefined ? undefined : abortReason(signal));
     const timer = setTimeout(
       () =>
         finish(new Error(`Telegram answer took longer than ${limits.responseTimeoutMs} ms`)),
@@ -232,7 +234,7 @@ async function requestBytes(
     );
     // A body the caller streams may never end: only the caller's signal bounds this read.
     const read = request.arrayBuffer();
-    body = new Uint8Array(await (signal ? untilAborted(read, signal) : read));
+    body = new Uint8Array(await (signal ? raceAbort(read, signal) : read));
   } catch (cause) {
     signal?.throwIfAborted();
     throw new TelegramNotDispatchedError(
@@ -270,9 +272,9 @@ export function createTelegramBotTransport(
   const connectBudgetMs = options.connectBudgetMs ?? 5_000;
   const responseTimeoutMs = options.responseTimeoutMs ?? 30_000;
   const maxResponseBytes = options.maxResponseBytes ?? 1024 * 1024;
-  assertPositiveSafeInteger('connectAttemptMs', connectAttemptMs);
-  assertPositiveSafeInteger('connectBudgetMs', connectBudgetMs);
-  assertPositiveSafeInteger('responseTimeoutMs', responseTimeoutMs);
+  assertTimerMs('connectAttemptMs', connectAttemptMs);
+  assertTimerMs('connectBudgetMs', connectBudgetMs);
+  assertTimerMs('responseTimeoutMs', responseTimeoutMs);
   assertPositiveSafeInteger('maxResponseBytes', maxResponseBytes);
   const policy = {
     resolve: options.resolve ?? resolveAll,

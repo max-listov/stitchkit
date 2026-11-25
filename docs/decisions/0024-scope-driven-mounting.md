@@ -2,13 +2,15 @@
 title: "ADR 0024 — Scope-driven mounting (scopePrefixes)"
 type: decision
 status: accepted
+amendedBy: ["0075"]
 created: 2026-06-05
 updated: 2026-06-05
 ---
 
 # ADR 0024 — Scope-driven mounting (`scopePrefixes`)
 
-- **Status:** Accepted — extends [ADR 0002](0002-generic-core.md)
+**Relations:** extends [ADR 0002](0002-generic-core.md)
+
 - **Date:** 2026-06-05
 
 ## Context

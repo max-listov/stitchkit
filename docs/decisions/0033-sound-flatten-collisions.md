@@ -2,13 +2,15 @@
 title: "ADR 0033 — Sound flatten: collision widening, discriminator support, probe parity"
 type: decision
 status: accepted
+amendedBy: ["0034", "0050", "0205"]
 created: 2026-06-22
 updated: 2026-06-22
 ---
 
 # ADR 0033 — Sound flatten: collision widening, discriminator support, probe parity
 
-- **Status:** Accepted — completes/repairs [ADR 0031](0031-deep-union-flatten.md).
+**Relations:** completes/repairs [ADR 0031](0031-deep-union-flatten.md).
+
 - **Date:** 2026-06-22
 
 ## Context

@@ -50,3 +50,34 @@ const spawnWithBun: CommandLauncher = (file, args, maxBuffer) => {
 /** The Bun launcher, or `undefined` off Bun, where `node:child_process` reports a child's end. */
 export const launchWithBun: CommandLauncher | undefined =
   typeof Bun === 'undefined' ? undefined : spawnWithBun;
+
+/**
+ * Runs a command to its end for a caller that cannot wait, and returns its stdout. The deadline is
+ * the child's own kill timer, so the call ends within it; a timeout, an overflow and an exit other
+ * than `0` throw.
+ */
+export type SyncCommandRunner = (
+  file: string,
+  args: readonly string[],
+  limits: { readonly timeout: number; readonly maxBuffer: number },
+) => string;
+
+const spawnSyncWithBun: SyncCommandRunner = (file, args, { timeout, maxBuffer }) => {
+  const result = Bun.spawnSync([file, ...args], {
+    stdin: 'ignore',
+    stdout: 'pipe',
+    stderr: 'ignore',
+    timeout,
+    maxBuffer,
+  });
+  if (result.exitedDueToTimeout)
+    throw new Error(`${file} did not answer within ${timeout} ms`);
+  if (result.exitedDueToMaxBuffer)
+    throw new Error(`${file} wrote more than ${maxBuffer} bytes`);
+  if (result.exitCode !== 0) throw new Error(`${file} ended with ${String(result.exitCode)}`);
+  return result.stdout.toString('utf8');
+};
+
+/** The synchronous Bun runner, or `undefined` off Bun. */
+export const runWithBunSync: SyncCommandRunner | undefined =
+  typeof Bun === 'undefined' ? undefined : spawnSyncWithBun;

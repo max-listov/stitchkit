@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { createBoundedChannel } from '../internal/channel';
-import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import { assertTimerMs } from '../internal/deadline';
 import {
   type DiagnosticJournal,
   DiagnosticJournalCloseResultSchema,
@@ -39,7 +39,7 @@ type WaitOutcome = 'settled' | 'timed-out' | 'cancelled';
 
 function waitBudget(options: DiagnosticJournalWaitOptions): number | undefined {
   if (options.timeoutMs === undefined) return undefined;
-  assertPositiveSafeInteger('Diagnostic journal timeoutMs', options.timeoutMs);
+  assertTimerMs('Diagnostic journal timeoutMs', options.timeoutMs);
   return options.timeoutMs;
 }
 
@@ -268,6 +268,8 @@ export function createDiagnosticJournalManager<SCHEMA extends z.ZodType>(
     },
     getStatus,
     async close(options = {}) {
+      // Before the journal stops accepting: a refused close leaves it open.
+      waitBudget(options);
       if (state === 'open') {
         state = 'draining';
         channel.close({ mode: 'drain' });

@@ -2,7 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { PROFILES, VERIFY_FLAGS, VERIFY_STEPS } from './verify-profiles';
+import {
+  PROFILES,
+  releaseProfile,
+  SEQUENTIAL_STEPS,
+  splitProfile,
+  VERIFY_FLAGS,
+  VERIFY_STEPS,
+} from './verify-profiles';
 
 const CI = readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8');
 const PLAN = readFileSync(join(import.meta.dir, 'release-plan.ts'), 'utf8');
@@ -154,7 +161,10 @@ describe('local gate vocabulary', () => {
     // lockfile once passed every local step and reddened a release's first run.
     const ciInstall = 'bun install --frozen-lockfile --ignore-scripts';
     expect(CI).toContain(ciInstall);
-    expect(PACKAGE.scripts?.lockfile).toBe(ciInstall);
+    // The install accepts a manifest the lock never recorded, so the lock is read against them too.
+    const lockCheck = 'bun scripts/release-lockfile.ts';
+    expect(CI).toContain(lockCheck);
+    expect(PACKAGE.scripts?.lockfile).toBe(`${ciInstall} && ${lockCheck}`);
     expect(PROFILES.fast.steps[0]).toBe('lockfile');
     expect(VERIFY_STEPS[0]).toBe('lockfile');
   });
@@ -165,10 +175,61 @@ describe('local gate vocabulary', () => {
     expect(PROFILES.candidate.steps).toEqual([
       'lockfile',
       'lint',
+      'build',
       'check',
       'test:release-metadata',
     ]);
     expect(PROFILES.fast.steps).toContain('test');
+  });
+
+  test('every profile builds before it checks types and runs tests', async () => {
+    // The build checks the published declarations; a type check before it passes a public
+    // signature that names an unexported type, and the terminal package reads the old build.
+    const release = await releaseProfile(join(import.meta.dir, '..'));
+    for (const steps of [
+      VERIFY_STEPS,
+      PROFILES.fast.steps,
+      PROFILES.candidate.steps,
+      release.steps,
+    ]) {
+      const build = steps.indexOf('build');
+      expect(build).toBeGreaterThan(-1);
+      expect(build).toBeLessThan(steps.indexOf('check'));
+      const tests = steps.findIndex((step) => step.startsWith('test'));
+      expect(build).toBeLessThan(tests);
+      // And the type check and tests behind it run in order, never beside the heavy lanes.
+      expect(splitProfile(steps).heavy.filter((step) => SEQUENTIAL_STEPS.has(step))).toEqual(
+        [],
+      );
+    }
+    expect(() => splitProfile(['lockfile', 'consumer-lane', 'check'])).toThrow(
+      'Sequential steps listed after a heavy lane: check',
+    );
+  });
+
+  test('every heavy lane that packs a package passes --ignore-scripts', () => {
+    // Build runs once in the sequential prefix; packing without `--ignore-scripts` would re-run
+    // `prepack` (`rm -rf dist`) in parallel with lanes reading `packages/core/dist`.
+    const root = join(import.meta.dir, '..');
+    const packingLanes = [
+      'scripts/tui-packed-lane.ts',
+      'scripts/starter-lane.ts',
+      'packages/core/scripts/consumer-lane/run.mjs',
+      'packages/core/scripts/next-ssr-retry-smoke.mjs',
+    ];
+    for (const file of packingLanes) {
+      const source = readFileSync(join(root, file), 'utf8');
+      const invocations = [
+        ...source.matchAll(/\[[^\]]*['"]pm['"]\s*,\s*['"]pack['"][^\]]*\]/gs),
+      ].map((match) => match[0]);
+      expect(
+        invocations.length,
+        `${file} must contain at least one bun pm pack`,
+      ).toBeGreaterThan(0);
+      for (const invocation of invocations) {
+        expect(invocation, `${file}: ${invocation}`).toContain('--ignore-scripts');
+      }
+    }
   });
 });
 
@@ -263,7 +324,7 @@ describe('CI evidence parity', () => {
     expect(CI).toContain("branches: [master, main, 'release/**']");
     expect(PLAN).toContain('ciAlreadyAnsweredFor');
     expect(CI).toContain('bun --filter stitchkit test');
-    expect(CI).toContain('bun test scripts');
+    expect(CI).toContain("bun scripts/test-suites.ts scripts 'scripts orphans'");
   });
 
   test('real Darwin qualification is packed and deliberately narrow', () => {

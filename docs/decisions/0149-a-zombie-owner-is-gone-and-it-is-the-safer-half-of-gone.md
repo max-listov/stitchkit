@@ -2,7 +2,7 @@
 title: A zombie owner is gone, and it is the safer half of gone
 description: reclaim-stale treats a pid that has exited but not been reaped as gone, because a signal probe reports a table entry rather than a running process, and a zombie's pid cannot have been reused.
 type: decision
-status: active
+status: accepted
 created: 2026-09-02
 updated: 2026-09-02
 ---

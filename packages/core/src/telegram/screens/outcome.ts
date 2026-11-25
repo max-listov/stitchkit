@@ -14,7 +14,7 @@
  *   itself; the screen stays where it is.
  */
 
-import { MAX_TIMER_MS } from '../../internal/timers';
+import { assertTimerMs } from '../../internal/deadline';
 import type { ActionValue } from './callback-codec';
 import type { TelegramText } from './html';
 import type { AnyTelegramScreen, ScreenLinkArgs } from './screen-types';
@@ -112,14 +112,7 @@ export class ScreenOutcome {
   /** Post a message: a receipt that stays, or a remark that expires. */
   notice(content: TelegramText, options: NoticeOptions = {}): ScreenOutcome {
     const { expiresInMs } = options;
-    if (
-      expiresInMs !== undefined &&
-      (!Number.isInteger(expiresInMs) || expiresInMs <= 0 || expiresInMs > MAX_TIMER_MS)
-    ) {
-      throw new RangeError(
-        `[stitchkit] telegram screens: expiresInMs must be a positive integer up to ${MAX_TIMER_MS}.`,
-      );
-    }
+    assertTimerMs('expiresInMs', expiresInMs);
     const notice: ScreenNotice =
       expiresInMs === undefined ? { content } : { content, expiresInMs };
     return new ScreenOutcome(this.navigation, this.toastSpec, [...this.notices, notice]);

@@ -171,7 +171,12 @@ test('a migrated baseline retains inactive rows and exact active context in memo
 
 test('copied state, schedules, children, pending effects and approval signatures never become destination authority', async () => {
   const sqlite = createBunSqliteAgentRuntimeStore({ filename: ':memory:' });
-  const schedules = createAgentScheduleService({ sqlite, dispatch: () => undefined });
+  const schedules = createAgentScheduleService({
+    maxActivePerConversation: 100,
+    minIntervalMs: 1,
+    host: sqlite.host,
+    dispatch: () => undefined,
+  });
   try {
     await branchTurn(sqlite.store, 'source', 'first', [
       { type: 'tool-call', callId: 'call', toolName: 'example', input: {} },
@@ -228,8 +233,8 @@ test('copied state, schedules, children, pending effects and approval signatures
     });
     expect(await state.get('source', 'permission')).toMatchObject({ value: true });
     expect(await state.get('copy', 'permission')).toBeUndefined();
-    expect(schedules.listSchedules('source')).toHaveLength(1);
-    expect(schedules.listSchedules('copy')).toHaveLength(0);
+    expect(await schedules.listSchedules('source')).toHaveLength(1);
+    expect(await schedules.listSchedules('copy')).toHaveLength(0);
     const snapshot = await sqlite.store.loadSnapshot('copy');
     const clonedRunId = snapshot.runs[0]?.id;
     if (!clonedRunId) throw new Error('Missing copied run');

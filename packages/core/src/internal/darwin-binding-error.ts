@@ -1,3 +1,5 @@
+import { errnoOf } from './errno';
+
 /** Error code of a generated beside-loader that runs inside a bundle built without the packaging plugin. */
 export const NATIVE_NOT_PACKAGED = 'STITCHKIT_NATIVE_NOT_PACKAGED';
 
@@ -25,13 +27,8 @@ const nativeCodes = new Set([
 export function darwinNativeCode(cause: unknown): string | undefined {
   let current = cause;
   for (let depth = 0; depth < 3 && current instanceof Error; depth++) {
-    if (
-      'code' in current &&
-      typeof current.code === 'string' &&
-      nativeCodes.has(current.code)
-    ) {
-      return current.code;
-    }
+    const code = errnoOf(current);
+    if (code !== undefined && nativeCodes.has(code)) return code;
     current = current.cause;
   }
   return undefined;

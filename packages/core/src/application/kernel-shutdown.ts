@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { monotonicTimerClock, scheduleAt } from '../internal/timers';
 import type { ResolvedManagedResource } from './graph';
 import { waitForPending } from './kernel-admission';
 import {
@@ -210,14 +211,14 @@ async function forceOne(
 async function forceSweep(shutdown: ShutdownRun): Promise<void> {
   shutdown.state.lifetimeAbort.abort();
   const forceAbort = new AbortController();
-  const forceTimer = setTimeout(
-    () => forceAbort.abort(),
-    Math.max(0, shutdown.forceDeadlineAt - performance.now()),
+  // Grace plus force, and reached early when a signal forces: waited for in steps.
+  const forceTimer = scheduleAt(monotonicTimerClock, shutdown.forceDeadlineAt, () =>
+    forceAbort.abort(),
   );
   await Promise.all(
     shutdown.state.reverse.map((entry) => forceOne(shutdown, entry, forceAbort.signal)),
   );
-  clearTimeout(forceTimer);
+  forceTimer.cancel();
 }
 
 function shutdownResult(

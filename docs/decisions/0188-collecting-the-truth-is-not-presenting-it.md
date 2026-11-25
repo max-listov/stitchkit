@@ -1,6 +1,13 @@
+---
+title: "ADR 0188 — Collecting the truth is not presenting it"
+type: decision
+status: accepted
+created: 2026-09-22
+updated: 2026-09-22
+---
+
 # 0188 — Collecting the truth is not presenting it
 
-**Status:** Accepted
 **Date:** 2026-09-22
 
 ## Context

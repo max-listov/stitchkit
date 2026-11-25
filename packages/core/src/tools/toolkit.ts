@@ -16,8 +16,10 @@
  */
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { ToolSet } from 'ai';
+import type { ZodObject } from 'zod';
 import type { ServiceDef } from '../server/types';
 import { type AgentMountConfig, mountAgent } from './agent';
+import type { CliCommandDefinition } from './cli/command';
 import { type CliConfig, createCli } from './cli/create-cli';
 import { createMcpHandler, type McpHandlerConfig, type McpHttpHandler } from './mcp/handler';
 import {
@@ -32,6 +34,7 @@ import {
   type StdioMcpServerConfig,
 } from './mcp/stdio';
 import type { ToolExtend } from './mount';
+import type { RuntimeToolDefinition } from './runtime-tool-declaration';
 
 /** Re-type a config's static `context` (and `extend`) to the toolkit's `TContext`. */
 type WithStaticContext<C, TContext extends Record<string, unknown>> = C extends unknown
@@ -53,11 +56,11 @@ export interface Toolkit<TContext extends Record<string, unknown>> {
   mountMcp(
     server: McpServer,
     services: ServiceDef | ServiceDef[],
-    config?: WithStaticContext<McpMountConfig, TContext>,
+    config: WithStaticContext<McpMountConfig, TContext>,
   ): void;
   mountAgent(
     services: ServiceDef | ServiceDef[],
-    config?: WithStaticContext<AgentMountConfig, TContext>,
+    config: WithStaticContext<AgentMountConfig, TContext>,
   ): ToolSet;
   buildMcpServer<TAuth>(
     config: WithAuthContext<McpServerBuildConfig<TAuth>, TAuth, TContext>,
@@ -69,7 +72,15 @@ export interface Toolkit<TContext extends Record<string, unknown>> {
   createStdioMcpServer<TAuth>(
     config: WithAuthContext<StdioMcpServerConfig<TAuth>, TAuth, TContext>,
   ): Promise<McpStdioHandle>;
-  createCli<TAuth = unknown>(config: CliConfig<TAuth, TContext>): Promise<void>;
+  createCli<
+    TAuth = unknown,
+    TGlobals extends ZodObject = ZodObject,
+    TServices extends readonly ServiceDef[] = never,
+    TRuntime extends readonly RuntimeToolDefinition[] = never,
+    TCommands extends readonly CliCommandDefinition[] = never,
+  >(
+    config: CliConfig<TAuth, TContext, TGlobals, TServices, TRuntime, TCommands>,
+  ): Promise<void>;
 }
 
 /**

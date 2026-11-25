@@ -1,10 +1,11 @@
-# One repetition of a scheduled CI run whose only unproven lanes lost their hosted runner.
-# GitHub sometimes never assigns a macOS runner or shuts one down mid-job; the nightly run then
-# goes red with no defect in the code. `scripts/ci-retry.ts` reads GitHub's own markers for that,
-# and only then re-runs the failed jobs of the same run — same SHA, same plan, the lost lanes and
-# the aggregates that refused them. A push run (exact-SHA release evidence), a code failure and a
-# second attempt are never repeated, so a lane lost twice still leaves the run red.
+# One repetition of a scheduled or push CI run whose only unproven lanes lost their hosted runner.
+# GitHub sometimes never assigns a macOS runner or shuts one down mid-job; the run then goes red
+# with no defect in the code. `scripts/ci-retry.ts` reads GitHub's own markers for that, and only
+# then re-runs the failed jobs of the same run — same SHA, same plan, the lost lanes and the
+# aggregates that refused them. A code failure, a pull request and a second attempt are never
+# repeated, so a lane lost twice still leaves the run red (ADR 0302).
 name: CI retry
+run-name: CI retry for ${{ github.event.workflow_run.id }}
 
 on:
   workflow_run:
@@ -18,7 +19,8 @@ jobs:
   retry:
     name: Repeat lanes that lost their runner
     if: >-
-      github.event.workflow_run.event == 'schedule' &&
+      (github.event.workflow_run.event == 'schedule' ||
+        github.event.workflow_run.event == 'push') &&
       github.event.workflow_run.conclusion == 'failure' &&
       github.event.workflow_run.run_attempt == 1
     runs-on: ubuntu-latest

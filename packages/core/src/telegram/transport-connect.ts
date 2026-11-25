@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import { connect as connectTcp, isIP } from 'node:net';
 import { connect as connectTls } from 'node:tls';
+import { abortReason } from '../internal/abort-race';
 import { TelegramNotDispatchedError } from './not-dispatched';
 
 /**
@@ -129,7 +130,7 @@ function lookupWithin(
       signal?.removeEventListener('abort', abort);
       act();
     };
-    const abort = () => settle(() => reject(signal?.reason));
+    const abort = () => settle(() => reject(signal ? abortReason(signal) : undefined));
     const timer = setTimeout(
       () =>
         settle(() =>

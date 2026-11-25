@@ -124,11 +124,10 @@ async function settledSeed<TRANSACTION>(
   for (const message of input.inputs) {
     if (
       current.messages.some((candidate) => candidate.id === message.id) ||
-      (driver.history.hasMessage &&
-        (await driver.history.hasMessage(transaction, {
-          conversationId,
-          messageId: message.id,
-        })))
+      (await driver.history.hasMessage(transaction, {
+        conversationId,
+        messageId: message.id,
+      }))
     )
       collisions++;
   }

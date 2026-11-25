@@ -2,7 +2,7 @@
 title: A page follows the release it was built for
 description: A tab that outlives a release keeps talking to a server that no longer serves its bundle. One consuming application solved it in three places of its own code with four defects; another tolerates stale tabs with a compatibility layer in its contract. The comparison and the channels belong in the framework, once; the build-id source and the deploy signal stay with the application.
 type: decision
-status: active
+status: accepted
 created: 2026-09-06
 updated: 2026-09-06
 ---

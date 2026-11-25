@@ -25,7 +25,7 @@ function serviceFor(input: z.ZodType, receive: (value: unknown) => void) {
 async function roundTrip(
   input: z.ZodType,
   args: Record<string, unknown>,
-  options: Parameters<typeof mountMcp>[2] = {},
+  options: Parameters<typeof mountMcp>[2] = { access: { open: 'local-operator' } },
 ) {
   const received: unknown[] = [];
   const server = new McpServer({ name: 'test', version: '1' });
@@ -49,6 +49,7 @@ describe('presentation schemas never execute contract effects', () => {
       z.object({ value: z.string() }).strict(),
       { value: 'x', dirt: true },
       {
+        access: { open: 'local-operator' },
         hooks: {
           beforeToolCall: () => void fired.push('before'),
           afterToolCall: () => void fired.push('after'),
@@ -96,6 +97,7 @@ describe('presentation schemas never execute contract effects', () => {
         }),
         (value) => received.push(value),
       ),
+      { access: { open: 'local-operator' } },
     );
     const agentTool = tools.patch_flow;
     if (!agentTool) throw new Error('expected tool');
@@ -116,6 +118,7 @@ describe('presentation schemas never execute contract effects', () => {
     mountMcp(
       server,
       serviceFor(z.object({ value: z.string() }).strict(), () => undefined),
+      { access: { open: 'local-operator' } },
     );
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'client', version: '1' });

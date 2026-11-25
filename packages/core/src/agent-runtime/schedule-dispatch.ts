@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
+import type { AgentCompanionHost } from './companion-host';
 import { type AgentSchedule, AgentScheduleDeliveryOutcomeSchema } from './schedule-contract';
 import { claimSchedule, recordDispatchFailure, settleFiring } from './schedule-records';
-import type { SqliteAgentRuntimeStore } from './sqlite';
 
 export interface ScheduleDispatchRequest {
   conversationId: string;
@@ -13,7 +13,8 @@ export interface ScheduleDispatchRequest {
   signal: AbortSignal;
 }
 export interface ScheduleDispatchContext {
-  sqlite: SqliteAgentRuntimeStore;
+  /** The store's companion host: `store.host` of the SQLite or Postgres store. */
+  host: AgentCompanionHost;
   /**
    * Admit the firing. Return an `AgentScheduleDeliveryOutcome` (or throw) to
    * fail it; returning anything else — nothing, a queue length, a receipt —
@@ -35,7 +36,7 @@ export async function dispatchSchedule(
 ) {
   if (context.signal.aborted) return;
   const owner = randomUUID();
-  if (!(await claimSchedule(context.sqlite, owner, schedule, context.now))) return;
+  if (!(await claimSchedule(context.host, owner, schedule, context.now))) return;
   const observedAt = context.now();
   const occurrence = schedule.occurrence + 1;
   const lateByMs = Math.max(0, observedAt.getTime() - new Date(schedule.nextAt).getTime());
@@ -68,10 +69,10 @@ export async function dispatchSchedule(
     // — `jobs.push(...)`'s length, a receipt — it returned, so it delivered.
     const failure = AgentScheduleDeliveryOutcomeSchema.safeParse(outcome);
     if (!failure.success) {
-      await settleFiring(context.sqlite, firing, lateByMs);
+      await settleFiring(context.host, firing, lateByMs);
     } else {
       await recordDispatchFailure(
-        context.sqlite,
+        context.host,
         firing,
         failure.data.reason,
         context.maxAttempts,
@@ -82,7 +83,7 @@ export async function dispatchSchedule(
     // Closing leaves the durable lease for recovery without touching a closing store.
     if (!context.signal.aborted) {
       await recordDispatchFailure(
-        context.sqlite,
+        context.host,
         { schedule, occurrence, now: context.now, owner },
         error instanceof Error ? error.message : String(error),
         context.maxAttempts,

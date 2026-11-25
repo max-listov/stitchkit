@@ -3,6 +3,7 @@ title: "ADR 0287: A read says it reads on every tool surface"
 description: The MCP server publishes readOnlyHint for a GET that declared none, and a client connection carries published hints onto the tools it mounts, so one rule decides a read over the contract and over MCP.
 type: decision
 status: accepted
+amends: ["0286"]
 created: 2026-11-10 14:31 +07:00
 updated: 2026-11-10 14:31 +07:00
 ---

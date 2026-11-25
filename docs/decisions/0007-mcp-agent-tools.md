@@ -8,7 +8,6 @@ updated: 2026-05-20
 
 # ADR 0007 — MCP and agent tools from one shared pipeline
 
-- **Status:** Accepted
 - **Date:** 2026-05-13 (pipeline, extend), 2026-05-20 (`createMcpHandler`)
 
 ## Context

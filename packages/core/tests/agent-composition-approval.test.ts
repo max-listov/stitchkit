@@ -80,7 +80,7 @@ test('browser approval executes one authorized tool and interrupt cancels a live
     tools: (run) =>
       mountAgent([], {
         context: run.context,
-        lifecycle: composeToolLifecycle(undefined, run.toolFenceLifecycle),
+        access: { gate: composeToolLifecycle(run.toolFenceLifecycle) },
         runtimeTools: [
           defineRuntimeTool({
             name: 'change_item',

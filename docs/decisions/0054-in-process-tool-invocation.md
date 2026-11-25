@@ -9,8 +9,9 @@ updated: 2026-08-07
 
 # ADR 0054 — In-process tool calls use the canonical runner
 
-- **Status:** Accepted — extends the shared execution path in ADR 0014 and the
-  per-call isolation rule in [ADR 0045](0045-a-tool-call-runs-in-its-own-context.md)
+**Relations:** extends the shared execution path in ADR 0014 and the per-call isolation rule in
+[ADR 0045](0045-a-tool-call-runs-in-its-own-context.md)
+
 - **Date:** 2026-08-07
 
 ## Context

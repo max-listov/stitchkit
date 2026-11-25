@@ -1,7 +1,6 @@
-import { raceAbort } from '../internal/abort-race';
-import { withSignalDeadline } from '../internal/deadline';
+import { linkAbortSignals, raceAbort } from '../internal/abort-race';
+import { assertTimerMs, withSignalDeadline } from '../internal/deadline';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
-import { MAX_TIMER_MS } from '../internal/timers';
 import { bindRealtimeServer, type RealtimeServerHandle } from '../server/realtime';
 import {
   type AgentBrowserRequest,
@@ -12,6 +11,7 @@ import type { HeadlessAgentHarness } from './harness-contract';
 import {
   type AgentHarnessControlServerConfig,
   createAgentHarnessControlServer,
+  reportAgentControlError,
 } from './harness-control';
 
 /**
@@ -38,8 +38,6 @@ export interface AgentHarnessRealtimeConfig<IDENTITY, CONTEXT>
     source: 'request' | 'delivery';
     signal: AbortSignal;
   }): { context: CONTEXT } | null | Promise<{ context: CONTEXT } | null>;
-  /** Server-only diagnostic; raw authorization errors are never sent to a browser. */
-  onError?(error: unknown): void;
   maxPendingRequests?: number;
   authorizationTimeoutMs?: number;
 }
@@ -63,8 +61,12 @@ interface SocketGrants<IDENTITY> {
   identity: IDENTITY;
   /** Conversations whose events may be delivered without asking the hook again. */
   granted: Set<string>;
-  /** Bumped by every revoke, so an authorization that began before one cannot grant. */
-  revocations: Map<string, number>;
+  /**
+   * The authorizations in flight, by conversation. A revoke marks each of them, so one
+   * that began before it cannot grant; an entry lives only while its authorization
+   * runs, so a revoke of a conversation this socket is not authorizing leaves nothing.
+   */
+  authorizing: Map<string, Set<{ revoked: boolean }>>;
   /** Conversations refused during delivery; their queued events are dropped. */
   refused: Set<string>;
 }
@@ -90,7 +92,8 @@ async function askAuthorizationHook<IDENTITY, CONTEXT>(input: {
       undefined,
       () => new Error('Agent authorization timed out'),
       (deadline) => {
-        const signal = AbortSignal.any([deadline, settled.signal]);
+        // `settled` aborts in every outcome (`finally` below), and the link detaches on that abort.
+        const { signal } = linkAbortSignals(deadline, settled.signal);
         return raceAbort(
           Promise.resolve().then(() =>
             config.authorize({ identity, request, source, signal }),
@@ -115,56 +118,53 @@ export function bindAgentHarnessRealtime<CONTEXT, IDENTITY>(
   handle: RealtimeServerHandle<IDENTITY>,
   config: AgentHarnessRealtimeConfig<IDENTITY, CONTEXT>,
 ): AgentHarnessRealtimeBinding<IDENTITY> {
+  const maxPending = config.maxPendingRequests ?? 32;
+  const authTimeout = config.authorizationTimeoutMs ?? 10_000;
+  assertPositiveSafeInteger('maxPendingRequests', maxPending);
+  assertTimerMs('authorizationTimeoutMs', authTimeout);
   const control = createAgentHarnessControlServer(harness, config);
   const realtime = bindRealtimeServer(agentControlRealtimeContract, handle);
   const cleanups = new Set<() => void>();
   const sockets = new Set<SocketGrants<IDENTITY>>();
-  const maxPending = config.maxPendingRequests ?? 32;
-  const authTimeout = config.authorizationTimeoutMs ?? 10_000;
-  assertPositiveSafeInteger('maxPendingRequests', maxPending);
-  assertPositiveSafeInteger('authorizationTimeoutMs', authTimeout);
-  if (authTimeout > MAX_TIMER_MS) {
-    throw new RangeError('authorizationTimeoutMs exceeds the timer range');
-  }
   const unsubscribe = realtime.onConnection(({ raw, events }) => {
     let closed = false;
     const grants: SocketGrants<IDENTITY> = {
       identity: raw.data,
       granted: new Set(),
-      revocations: new Map(),
+      authorizing: new Map(),
       refused: new Set(),
     };
     sockets.add(grants);
     const pending = new Set<{ conversationId: string; cancelled: boolean }>();
     const deciding = new Map<string, ReturnType<typeof authorize>>();
-    const report = (error: unknown) => {
-      try {
-        if (config.onError) config.onError(error);
-        else console.error('[stitchkit] agent control authorization failed', error);
-      } catch (observerError) {
-        console.error('[stitchkit] agent control error observer failed', {
-          error,
-          observerError,
-        });
-      }
-    };
+    const report = (error: unknown) =>
+      reportAgentControlError(config, error, 'agent control authorization failed');
     const authorize = async (
       request: AgentBrowserRequest,
       source: 'request' | 'delivery' = 'request',
     ) => {
-      const startedAt = grants.revocations.get(request.conversationId) ?? 0;
-      let allowed = await askAuthorizationHook({
-        config,
-        identity: raw.data,
-        request,
-        source,
-        timeoutMs: authTimeout,
-        report,
-      });
-      // A revoke that arrived while the hook was deciding outranks its answer.
-      if (allowed && (grants.revocations.get(request.conversationId) ?? 0) !== startedAt) {
-        allowed = null;
+      const { conversationId } = request;
+      const attempt = { revoked: false };
+      const inFlight = grants.authorizing.get(conversationId) ?? new Set();
+      inFlight.add(attempt);
+      grants.authorizing.set(conversationId, inFlight);
+      let allowed: { context: CONTEXT } | null;
+      try {
+        allowed = await askAuthorizationHook({
+          config,
+          identity: raw.data,
+          request,
+          source,
+          timeoutMs: authTimeout,
+          report,
+        });
+      } finally {
+        inFlight.delete(attempt);
+        if (inFlight.size === 0 && grants.authorizing.get(conversationId) === inFlight)
+          grants.authorizing.delete(conversationId);
       }
+      // A revoke that arrived while the hook was deciding outranks its answer.
+      if (attempt.revoked) allowed = null;
       if (allowed && request.operation !== 'detach') {
         grants.granted.add(request.conversationId);
         if (request.operation === 'attach') grants.refused.delete(request.conversationId);
@@ -282,10 +282,8 @@ export function bindAgentHarnessRealtime<CONTEXT, IDENTITY>(
       for (const socket of sockets) {
         if (matches && !matches(socket.identity)) continue;
         socket.granted.delete(conversationId);
-        socket.revocations.set(
-          conversationId,
-          (socket.revocations.get(conversationId) ?? 0) + 1,
-        );
+        for (const attempt of socket.authorizing.get(conversationId) ?? [])
+          attempt.revoked = true;
       }
     },
     close() {

@@ -2,7 +2,8 @@
 title: "ADR 0132: Agent TUI is an explicit starter profile"
 description: "The official scaffolder may compose the headless harness into an OpenTUI host without moving a renderer or product policy into core."
 type: decision
-status: accepted
+status: superseded
+supersededBy: ["0133"]
 created: 2026-08-30
 updated: 2026-08-30
 ---

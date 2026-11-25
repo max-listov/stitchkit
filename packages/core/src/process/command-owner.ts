@@ -110,6 +110,7 @@ export function startNativeCommand(
     launched = launchNativeCommand({
       options,
       driver,
+      signal: controller.signal,
       onSpawn,
       onFailure: (error) => {
         spawnFailure = new NativeCommandError(

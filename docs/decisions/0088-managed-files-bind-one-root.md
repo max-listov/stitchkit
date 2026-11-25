@@ -3,6 +3,7 @@ title: "ADR 0088: Managed files bind one application-owned root"
 description: Portable Bun/Node file operations use canonical relative refs, opened-handle reads and atomic sibling-temp commits.
 type: decision
 status: accepted
+amends: ["0019", "0081", "0082"]
 created: 2026-08-20
 updated: 2026-08-20
 ---

@@ -1,6 +1,13 @@
+---
+title: "ADR 0193 — An unchecked signature must be visible"
+type: decision
+status: accepted
+created: 2026-09-22
+updated: 2026-09-22
+---
+
 # 0193 — An unchecked signature must be visible
 
-**Status:** Accepted
 **Date:** 2026-09-22
 
 ## Context

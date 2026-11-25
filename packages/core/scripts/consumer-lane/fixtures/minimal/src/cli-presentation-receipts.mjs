@@ -38,7 +38,7 @@ const runtime = {
   name: 'runtime_create',
   description: 'Create a runtime receipt',
   identity: { serviceName: 'receipts', action: 'create', method: 'POST' },
-  transports: ['CLI'],
+  expose: ['CLI'],
   input,
   output,
   handler: ({ input }) => create(input),
@@ -64,6 +64,7 @@ async function run(argv, config = {}) {
       code = value;
     },
     ...config,
+    access: config.access ?? { open: 'local-operator' },
   });
   return { out, err, code };
 }

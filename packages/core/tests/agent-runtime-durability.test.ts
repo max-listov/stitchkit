@@ -224,6 +224,38 @@ describe('local step durability', () => {
     expect(resumed).toBe(true);
   });
 
+  test('a park linked to the engine signal and a call signal leaves the engine signal holding nothing', async () => {
+    const store = createMemoryAgentRuntimeStore();
+    const clock = new TestClock();
+    const engine = new AbortController();
+    let attached = 0;
+    const add = engine.signal.addEventListener.bind(engine.signal);
+    const remove = engine.signal.removeEventListener.bind(engine.signal);
+    engine.signal.addEventListener = (type: string, ...rest: [never, never?]) => {
+      if (type === 'abort') attached += 1;
+      add(type, ...rest);
+    };
+    engine.signal.removeEventListener = (type: string, ...rest: [never, never?]) => {
+      if (type === 'abort') attached -= 1;
+      remove(type, ...rest);
+    };
+    const durability = createLocalStepDurability({
+      store,
+      conversationId,
+      runId,
+      clock,
+      signal: engine.signal,
+    });
+    const call = new AbortController();
+    const parking = durability.sleep({ seconds: 1, name: 'linked' }, { signal: call.signal });
+    await flushUntil(() => clock.pendingTimers() === 1, 'linked sleep timer');
+    expect(attached).toBeGreaterThan(0);
+    await clock.advanceBy(1_000);
+    await parking;
+    expect(attached).toBe(0);
+    expect(engine.signal.aborted).toBe(false);
+  });
+
   test('reconstruction mid-sleep continues from the recorded deadline', async () => {
     const store = createMemoryAgentRuntimeStore();
     const clock = new TestClock();

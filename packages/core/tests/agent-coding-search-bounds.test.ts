@@ -407,6 +407,7 @@ test('scoped glob does not exhaust its file budget outside the requested subtree
   await writeFile(path.join(root, 'a.txt'), 'unrelated');
   await writeFile(path.join(root, 'z-docs', 'match.md'), 'needle');
   const tools = mountAgent([], {
+    access: { open: 'local-operator' },
     runtimeTools: createAgentCodingTools({
       root,
       authorize: () => true,

@@ -3,8 +3,10 @@ title: "ADR 0083: CLI composes managed and native commands"
 description: Explicit runtime tools join the canonical CLI runner while binary-owned commands use a smaller CLI-only definition and lazy startup boundary.
 type: decision
 status: accepted
+amends: ["0059"]
+amendedBy: ["0296", "0310"]
 created: 2026-08-20
-updated: 2026-11-20 04:23 +08:00
+updated: 2026-11-23 15:48 +08:00
 ---
 
 # ADR 0083 — CLI composes managed and native commands
@@ -59,7 +61,7 @@ Command presentation is one CLI-owned policy over the same resolved descriptor,
 not a second command model. `CliConfig` may select a `defaultCommand`, declare
 command-local one-letter option aliases and replace automatic schema-order
 positionals with an exact ordered field list. The router recognises framework
-globals before choosing an explicit/default command (amended by [ADR 0296](0296-framework-options-reserve-their-cli-spellings.md) for option-shaped names and offline native dispatch); help, parsing and policy
+globals before choosing an explicit/default command (amended by [ADR 0296](0296-framework-options-reserve-their-cli-spellings.md) for option-shaped names and offline native dispatch, and by [ADR 0310](0310-one-model-for-cli-invocation-and-json-schema-keywords.md) to project routing, global options and notices from one `scanCliInvocation` pass with broken boolean boundary refusal and native view handling); help, parsing and policy
 validation all consume the same resolved descriptor. Native commands keep their
 early credential-free dispatch, while policies for an identity-dependent
 managed surface validate only when that surface resolves.

@@ -40,29 +40,50 @@
  * npm — and an npm version is immutable, so that is the one push where a leak
  * cannot be scrubbed by the next release.
  */
+
 import {
   inspectTrackedPublication,
   STITCHKIT_CONVENTIONS,
   STITCHKIT_EXEMPTIONS,
 } from './publication-privacy';
+import {
+  inspectTrackedNames,
+  PRIVATE_NAME_RULE,
+  PRIVATE_NAMES_CONFIG,
+  readPrivateNames,
+} from './publication-private-names';
 
 const root = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 
-const findings = await inspectTrackedPublication({
-  root,
-  conventions: STITCHKIT_CONVENTIONS,
-  exemptions: STITCHKIT_EXEMPTIONS,
-});
+// Names have no shape: they come from a list this clone names and the repository never holds
+// (`publication-private-names.ts`). A clone without one says so instead of reporting them clean.
+const names = await readPrivateNames(root);
+const findings = [
+  ...(await inspectTrackedPublication({
+    root,
+    conventions: STITCHKIT_CONVENTIONS,
+    exemptions: STITCHKIT_EXEMPTIONS,
+  })),
+  ...(names.kind === 'listed' ? await inspectTrackedNames(root, names.names) : []),
+];
+if (names.kind === 'unconfigured')
+  process.stderr.write(
+    `[gate] publication privacy: private project names not checked — this clone sets no ${PRIVATE_NAMES_CONFIG}\n`,
+  );
 
 if (findings.length > 0) {
   process.stderr.write(
     `[gate] publication privacy: ${findings.length} unexplained finding(s) in what git carries\n`,
   );
   for (const finding of findings) {
-    process.stderr.write(`  ${finding.file}:${finding.line} ${finding.rule}\n`);
+    const where =
+      finding.line === 0 ? `${finding.file} (its path)` : `${finding.file}:${finding.line}`;
+    process.stderr.write(`  ${where} ${finding.rule}\n`);
   }
   process.stderr.write(
-    '  Remove it, or add an allowance to STITCHKIT_EXEMPTIONS in scripts/publication-privacy.ts saying why it is not a leak.\n',
+    findings.every((finding) => finding.rule === PRIVATE_NAME_RULE)
+      ? '  Remove it: a private project name has no allowance — write "a consuming project" or a neutral name.\n'
+      : '  Remove it, or add an allowance to STITCHKIT_EXEMPTIONS in scripts/publication-privacy.ts saying why it is not a leak.\n',
   );
   process.exit(1);
 }

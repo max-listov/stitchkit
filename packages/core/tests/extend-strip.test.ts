@@ -46,7 +46,7 @@ const extend: ToolExtend = {
 
 describe('createToolRunner — extend-key strip is gated on shouldExtend', () => {
   const tools = collectTools(service, 'AGENT', { extend });
-  const runTool = createToolRunner({ source: 'agent', extend });
+  const runTool = createToolRunner({ lifecycle: {}, source: 'agent', extend });
   const getTool = tools.find((t) => t.method.key === 'get');
   const extTool = tools.find((t) => t.method.key === 'extended');
 

@@ -254,3 +254,23 @@ test('server bounds pending requests and authorization time while error observer
     await server.shutdown({ gracePeriodMs: 0 });
   }
 });
+
+test('authorizationTimeoutMs follows the one timer rule: a number out of the timer range is a RangeError', async () => {
+  const harness = compositionHarness();
+  const socket = await createSocketIOServer({});
+  try {
+    for (const bad of [0, 1.5, 2_147_483_648]) {
+      const bind = () =>
+        bindAgentHarnessRealtime(harness, socket, {
+          authorize: () => null,
+          authorizationTimeoutMs: bad,
+        });
+      expect(bind).toThrow(RangeError);
+      expect(bind).toThrow(
+        `authorizationTimeoutMs must be an integer from 1 to 2147483647 milliseconds, received ${bad}`,
+      );
+    }
+  } finally {
+    await harness.close();
+  }
+});

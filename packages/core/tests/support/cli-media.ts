@@ -56,7 +56,7 @@ export async function runMediaCli(
         name: 'media',
         description: 'Return synthetic media',
         identity: { serviceName: 'media', action: 'create', method: 'POST' },
-        transports: ['CLI'],
+        expose: ['CLI'],
         input: z.object({}),
         output: z.unknown(),
         handler: () => data,
@@ -64,6 +64,7 @@ export async function runMediaCli(
     ],
     stdin: async () => null,
     ...config,
+    access: config.access ?? { open: 'local-operator' },
     argv,
     stdout: (text) => {
       out += text;

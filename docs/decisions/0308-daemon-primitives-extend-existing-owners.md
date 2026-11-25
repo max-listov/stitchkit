@@ -1,0 +1,31 @@
+---
+title: "ADR 0308: Daemon primitives extend existing owners"
+description: "Non-blocking regular-file/polled JSON config reading, bounded warn/error repeat suppression and closed read/write contract operation effects extend stitchkit/files, stitchkit/observability and stitchkit/contract instead of adding a new entrypoint."
+type: decision
+status: accepted
+created: 2026-11-23
+updated: 2026-11-24
+---
+
+# ADR 0308: Daemon primitives extend existing owners
+
+## Context
+
+Long-running services repeatedly need three foundational guards:
+
+1. **Regular-file and polled JSON config reading:** opening a configuration path without blocking on a FIFO (`O_RDONLY | O_NONBLOCK`), rejecting directories/sockets/special files and oversized payloads, retrying once on concurrent replacement (`fileIdentity`), decoding strict fatal UTF-8 without prototype pollution, and polling files under bounded memory (`MAX_POLLED_JSON_CACHE_BYTES`, `MAX_POLLED_JSON_PATHS`). A drop-in directory adds three needs: a file written there by another user must not be followed through a symbolic link or read before its owner and mode are checked on the very descriptor the bytes come from, the set of files changes while the service runs, and a service whose directories do not exist yet must not wake on a timer to look for them.
+2. **Bounded repeat suppression for `warn`/`error` logs:** preventing identical failure bursts from flooding disks while passing `info`/`debug` untouched, keeping per-call identifiers out of deduplication keys (a number in `data` enters the key as `#`, the rule digits in the message already follow; a cause with a `code` is keyed by `name` and `code` without its message; `kindOf` names the kind when neither rule fits), reporting `repeatedSinceLastWrite` on release, and flushing accumulated counts on LRU eviction so counts are never silently dropped.
+3. **Closed `'read' | 'write'` operation effects on contracts:** allowing read-only delegation and policy layers to inspect declared side effects directly from `defineContract` instead of guessing from HTTP verbs or maintaining parallel hand-written maps.
+
+## Decision
+
+Extend the three existing owning entrypoints rather than introducing a new daemon-specific entrypoint (I8):
+
+- **`stitchkit/files`** gains `RegularFileError`, `RegularFileRefusal`, `RegularFileReadOptions`, `RegularFileAsyncReadOptions`, `RegularFileAccept`, `DEFAULT_JSON_FILE_BYTES`, `MAX_POLLED_JSON_CACHE_BYTES`, `fileIdentity`, `readRegularFileSync`, `readRegularFile` (reusing `internal/bounded-file-read` for async stability), `parseJsonBytes`, `readJsonFileSync`, `JsonValueSchema`, `readJsonOnce`, `JsonFileReading`, `JsonValueRefusal`, `PolledJsonFile`, `PolledJsonFiles`, `PolledJsonEntry`, `PolledJsonOptions`, `PolledJsonChange`, `MAX_POLLED_JSON_PATHS`, `waitForDirectory` and `WaitForDirectoryOptions`. A refusal carries a typed `reason`, so a caller tells a symbolic link from a rejected owner without reading the message. Every read takes one options object (`RegularFileReadOptions`: `limit`, `noFollow`, `accept`; the async read adds `signal`) instead of positional parameters. `noFollow` opens with `O_NOFOLLOW` (the last path component; the directories above are the caller's to trust) and a platform without it refuses rather than follows; `accept` receives the `fstat` of the open descriptor in both the sync and the async read, before any byte is read, so a check cannot be raced by replacing the file at the path, and only an explicit `true` admits the file, so a forgotten `return` refuses. The sync and async reads share the one descriptor reader. `PolledJsonFiles` takes the same options, keeps the unchanged-identity shortcut honest under `noFollow` by using `lstat`, and gains `refresh(entries)`, where each entry is a path or `{ path, options }` whose options replace the set's field by field: the set is replaced and its changes are returned, `removed` for a path that left it, and tracking more than `MAX_POLLED_JSON_PATHS` is refused, by `refresh` and by a read of a new path alike, instead of evicted, because an evicted path would return as a false change and a path that left the set would never be reported. `refreshAsync(entries, { signal })` reads off the event loop and commits its changes only after every read, so a cancelled refresh changes nothing. Bytes that are not the value — not strict UTF-8, not JSON, a `__proto__` key, or refused by the schema — are an `invalid` reading with a `reason` of `encoding`, `syntax` or `schema` and the original error as `cause`, kept apart from an `unreadable` file the operating system refused, never a broken poll; the thrown path (`parseJsonBytes`, `readJsonFileSync`) raises `RegularFileError` with the same reasons. `waitForDirectory` resolves when a directory appears by watching its nearest existing ancestor, with one immediate and one deferred rescan after each watch start for the event a watcher misses, a watch re-armed on each of its events (a watcher follows an inode, and a directory made again at the same path is a new one), and no repeating timer; `keepAlive: false` lets the watcher and its deferred rescan not hold the process open.
+- **`stitchkit/observability`** gains `repeatLimited`, `RepeatLimitOptions`, `DEFAULT_REPEAT_WINDOW_MS`, `DEFAULT_REPEAT_MAX_KINDS`, and an optional `repeat` option on `createBoundedLogger` and `createJsonLogger`. Inside `createBoundedLogger`, redaction (`sanitizePayload`) runs before `repeatLimited` (so secrets never enter deduplication keys or eviction buffers) and `fitLogRecord` runs after `repeatLimited` (so injecting `repeatedSinceLastWrite` still respects `entryBytes`, I10/I13).
+- **`stitchkit/contract`** (and the root `stitchkit` re-export) gains `OperationEffect = 'read' | 'write'`, `OperationEffectSchema`, optional `effect?: OperationEffect` on contract endpoints (validated at `defineContract` time), `contractOperationEffects`, and fail-closed `requireContractOperationEffects` (I12).
+
+## Consequences
+
+- Existing contracts without `effect` remain fully backwards compatible while strict policy callers fail closed when any operation omits `effect`.
+- Services drop duplicated file pollers, log-flood guards, and parallel effect maps while preserving single-owner entrypoints and bounded memory.

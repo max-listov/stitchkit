@@ -8,7 +8,7 @@ const operation = (name, input) => ({
   name,
   description: `${name} operation`,
   identity: { serviceName: 'catalog', action: name, method: 'POST' },
-  transports: ['CLI'],
+  expose: ['CLI'],
   input,
   output: z.unknown(),
   handler: ({ input }) => {
@@ -60,6 +60,7 @@ async function run(argv, config = {}) {
       code = value;
     },
     ...config,
+    access: config.access ?? { open: 'local-operator' },
   });
   return { out, err, code };
 }
@@ -117,8 +118,7 @@ assert.equal(override.code, 29);
 assert.equal(JSON.parse(override.err)._hint, 'Repair the catalogue');
 await assert.rejects(
   run(['healthy'], {
-    optionAliases: { blocked: { c: 'caller' } },
-    passthrough: { blocked: 'caller' },
+    commandSettings: { blocked: { aliases: { c: 'caller' }, passthrough: 'caller' } },
   }),
   /cannot alias passthrough field "caller"/,
 );
@@ -133,7 +133,12 @@ await assert.rejects(
   /CLI command "native" declares field\(s\) shadowed/,
 );
 const invoker = await createCliInvoker(
-  { name: 'catalog', globalOptions, runtimeTools: [blocked, healthy] },
+  {
+    access: { open: 'local-operator' },
+    name: 'catalog',
+    globalOptions,
+    runtimeTools: [blocked, healthy],
+  },
   { caller: 'application' },
 );
 assert.deepEqual(await invoker.invoke('blocked', { caller: 'operation', json: false }), {

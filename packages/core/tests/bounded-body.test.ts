@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { readBoundedBody } from '../src/entrypoints/http';
+import { readBoundedText } from '../src/internal/bounded-body';
 
 const bytes = (length: number, fill = 1) => new Uint8Array(length).fill(fill);
 
@@ -144,5 +145,87 @@ describe('readBoundedBody', () => {
     }
     await expect(readBoundedBody(text(), options(10))).rejects.toThrow(/must yield bytes/);
     expect(yielded).toBe(1);
+  });
+});
+
+describe('readBoundedText', () => {
+  test('returns empty text for a null body without touching TextDecoder', async () => {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, 'TextDecoder');
+    Reflect.deleteProperty(globalThis, 'TextDecoder');
+    try {
+      const req = new Request('http://local/empty', { method: 'GET' });
+      expect(await readBoundedText(req, { maxBytes: 16 })).toEqual({
+        kind: 'complete',
+        text: '',
+      });
+    } finally {
+      if (saved) Object.defineProperty(globalThis, 'TextDecoder', saved);
+    }
+  });
+
+  test('bounds a streaming body, cancels on over-limit, and honours checkContentLength', async () => {
+    const enc = new TextEncoder();
+    const { stream, state } = counted([
+      enc.encode('aaaa'),
+      enc.encode('bbbbb'),
+      enc.encode('ccc'),
+    ]);
+    const req = new Request('http://local/stream', { method: 'POST', body: stream });
+    expect(await readBoundedText(req, { maxBytes: 8 })).toEqual({ kind: 'over-limit' });
+    expect(state.cancelled).toBe(1);
+    expect(state.pulled).toBeLessThanOrEqual(3);
+
+    let clPulled = 0;
+    let clCancelled = 0;
+    const clStream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          clPulled += 1;
+          controller.enqueue(enc.encode('abcd'));
+          controller.close();
+        },
+        cancel() {
+          clCancelled += 1;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const clRes = new Response(clStream, { headers: { 'content-length': '100' } });
+    expect(await readBoundedText(clRes, { maxBytes: 8, checkContentLength: true })).toEqual({
+      kind: 'over-limit',
+    });
+    expect(clPulled).toBe(0);
+    expect(clCancelled).toBe(1);
+  });
+
+  test('falls back to text() with utf8ByteLength and signal racing when body is undefined', async () => {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, 'TextDecoder');
+    Reflect.deleteProperty(globalThis, 'TextDecoder');
+    try {
+      const okReq = {
+        body: undefined,
+        headers: new Headers(),
+        text: async () => 'Привет',
+      } as unknown as Request;
+      // 'Привет' is 12 UTF-8 bytes
+      expect(await readBoundedText(okReq, { maxBytes: 12 })).toEqual({
+        kind: 'complete',
+        text: 'Привет',
+      });
+      expect(await readBoundedText(okReq, { maxBytes: 11 })).toEqual({ kind: 'over-limit' });
+
+      const controller = new AbortController();
+      const marker = new Error('aborted-text-fallback');
+      const hangingReq = {
+        body: undefined,
+        headers: new Headers(),
+        text: () => new Promise<string>(() => undefined),
+      } as unknown as Request;
+      const pending = readBoundedText(hangingReq, { maxBytes: 64, signal: controller.signal });
+      controller.abort(marker);
+      await expect(pending).rejects.toBe(marker);
+    } finally {
+      if (saved) Object.defineProperty(globalThis, 'TextDecoder', saved);
+    }
   });
 });

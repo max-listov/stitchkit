@@ -29,7 +29,7 @@ import {
   AGENT_CODING_TOOL_NAMES,
   createAgentCodingTools,
 } from '../src/agent-runtime/coding-tools';
-import { createSqliteAgentSpillStore } from '../src/agent-runtime/spill';
+import { createAgentSpillStore } from '../src/agent-runtime/spill';
 import { createSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import { mountAgent } from '../src/tools/agent';
 
@@ -197,10 +197,11 @@ beforeAll(async () => {
   const runtime = createSqliteAgentRuntimeStore({ database: new Database(':memory:') });
   closeSpills = () => runtime.close();
   tools = mountAgent([], {
+    access: { open: 'local-operator' },
     runtimeTools: createAgentCodingTools({
       root,
       authorize: () => true,
-      artifacts: createSqliteAgentSpillStore({ sqlite: runtime, conversationId: 'refusals' }),
+      artifacts: createAgentSpillStore({ host: runtime.host, conversationId: 'refusals' }),
     }),
   });
 });
@@ -249,6 +250,7 @@ describe('an ordinary coding-tool outcome never looks like a server fault', () =
     // something a model can act on, and its cause must not leave the process.
     const gone = path.join(root, 'gone');
     const detached = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({ root: gone, authorize: () => true }),
     });
     const original = console.error;

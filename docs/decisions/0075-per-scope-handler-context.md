@@ -3,14 +3,16 @@ title: "ADR 0075 — Per-scope handler context (createScopedImplement)"
 description: Handlers are typed by their endpoint's effective scope through one application-declared scope map, and the contract factory holds endpoint scope overrides to that vocabulary.
 type: decision
 status: accepted
+amends: ["0024"]
 created: 2026-08-17
 updated: 2026-08-17
 ---
 
 # ADR 0075 — Per-scope handler context (`createScopedImplement`)
 
-- **Status:** Accepted — supersedes the deferred scope→context clause of
-  [ADR 0024](0024-scope-driven-mounting.md)
+**Relations:** supersedes the deferred scope→context clause of
+[ADR 0024](0024-scope-driven-mounting.md)
+
 - **Date:** 2026-08-17
 
 ## Context

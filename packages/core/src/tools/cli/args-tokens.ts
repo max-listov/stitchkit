@@ -2,25 +2,26 @@
 import { isUnsafeKey } from '../../internal/safe-json';
 import type { CliRunOptions } from './args';
 import {
-  appendCliOptionValue,
+  classifyLongOptionToken,
+  consumeFrameworkOptionToken,
+  type FrameworkFlagState,
+  isOptionToken,
+  looksLikeOption,
+  RESERVED_CLI_OPTIONS,
+} from './args-classify';
+import {
   type describeSchemaFields,
   type FieldInfo,
   parseReservedBool,
   separateBoolValue,
 } from './args-fields';
 import { appendCliFieldValue, cliFieldOption } from './args-json';
-import {
-  classifyLongOptionToken,
-  isOptionToken,
-  looksLikeOption,
-  RESERVED_CLI_OPTIONS,
-  VIEW_OPTIONS,
-} from './args-route';
 import { CliArgumentError } from './argument-error';
 
 type CliConfigForParse = {
   allowUnknown?: boolean;
-  optionAliases?: ReadonlyMap<string, string>;
+  aliases?: ReadonlyMap<string, string>;
+  separatedBefore?: ReadonlySet<number>;
 };
 type FieldResolver = (name: string) => FieldInfo | undefined;
 
@@ -48,25 +49,22 @@ export function readCliTokens(
   fieldFor: FieldResolver,
   config: CliConfigForParse,
 ): CliTokens {
-  const options: CliRunOptions = {
-    json: false,
-    wait: false,
-    quiet: false,
-    dryRun: false,
-    help: false,
+  const fwState: FrameworkFlagState = {
+    fw: { json: false, wait: false, quiet: false, dryRun: false, help: false, schema: false },
+    fwFlags: new Map(),
+    viewFlags: new Map(),
+    ascending: false,
   };
 
   const flags = new Map<string, string[]>();
   const jsonFields = new Set<string>();
   const literalBooleanFlags = new Set<string>();
-  const frameworkFlags = new Map<string, string[]>();
-  const viewFlags = new Map<string, string>();
-  let ascending = false;
   const positionals: string[] = [];
 
   const pushFlag = (name: string, value: string, json = false): void => {
     appendCliFieldValue(flags, jsonFields, name, value, fieldFor(name), json);
   };
+  const adjacent = (index: number): boolean => !config.separatedBefore?.has(index);
 
   let optionsEnded = false;
   for (let i = 0; i < argv.length; i++) {
@@ -81,27 +79,30 @@ export function readCliTokens(
       continue;
     }
     if (tok === '-h') {
-      options.help = true;
+      fwState.fw.help = true;
       continue;
     }
     if (!tok.startsWith('--')) {
       const match = /^-([A-Za-z])(?:=(.*))?$/.exec(tok);
       const alias = match?.[1];
-      const field = alias === undefined ? undefined : config.optionAliases?.get(alias);
+      const field = alias === undefined ? undefined : config.aliases?.get(alias);
       if (!alias || !field) throw new CliArgumentError(`Unknown option "${tok}"`);
       const inline = match?.[2];
       const info = fieldFor(field);
       if (info?.kind === 'boolean') {
-        const separate = inline === undefined ? separateBoolValue(argv[i + 1]) : undefined;
+        const separate =
+          inline === undefined && adjacent(i + 1) ? separateBoolValue(argv[i + 1]) : undefined;
         if (separate !== undefined) i++;
         pushFlag(field, inline ?? String(separate ?? true));
-        if (inline !== undefined) parseReservedBool(field, inline);
+        if (inline !== undefined && info.pureBoolean === true) {
+          parseReservedBool(field, inline);
+        }
         literalBooleanFlags.add(field);
         continue;
       }
       let value = inline;
       if (value === undefined) {
-        const next = argv[i + 1];
+        const next = adjacent(i + 1) ? argv[i + 1] : undefined;
         if (next !== undefined && !isOptionToken(next)) {
           value = next;
           i++;
@@ -121,52 +122,20 @@ export function readCliTokens(
       throw new CliArgumentError(`--${name} is a framework option and does not accept :=JSON`);
     }
 
-    if (option.globalKind === 'boolean') {
-      const separate = value === undefined ? separateBoolValue(argv[i + 1]) : undefined;
-      if (separate !== undefined) i++;
-      // Help is a request, not a setting: asking twice asks once.
-      if (name !== 'help') {
-        appendCliOptionValue(frameworkFlags, name, value ?? String(separate ?? true), {
-          kind: 'boolean',
-        });
-      }
-      const enabled =
-        value === undefined ? (separate ?? true) : parseReservedBool(name, value);
-      if (name === 'dry-run') options.dryRun = enabled;
-      else if (name === 'json') options.json = enabled;
-      else if (name === 'wait') options.wait = enabled;
-      else if (name === 'quiet') options.quiet = enabled;
-      else if (name === 'ascending') ascending = enabled;
-      // `--schema` is answered from the route, before any argument is parsed.
-      else if (name === 'schema') continue;
-      else options.help = options.help || enabled;
-      continue;
-    }
-    if (option.globalKind === 'value') {
-      const next = argv[i + 1];
-      value = value ?? next;
-      if (value === undefined || (!option.inline && isOptionToken(value))) {
-        throw new CliArgumentError(`--${name} requires a value`);
-      }
-      if (!option.inline) i++;
-      appendCliOptionValue(frameworkFlags, name, value, { kind: 'string' });
-      if (name === 'wait-timeout') {
-        const timeout = Number(value);
-        if (!Number.isFinite(timeout) || timeout <= 0) {
-          throw new CliArgumentError('--wait-timeout must be a positive number');
-        }
-        options.waitTimeout = timeout;
-      } else if (VIEW_OPTIONS.has(name)) {
-        viewFlags.set(name, value);
-      } else {
-        options.outputDir = value;
-      }
+    if (option.globalKind !== undefined) {
+      i = consumeFrameworkOptionToken(argv, i, option, fwState, {
+        adjacent,
+        onError: (error) => {
+          throw error;
+        },
+      });
       continue;
     }
 
     if (
       value === undefined &&
       name.startsWith('no-') &&
+      !fieldFor(name) &&
       fieldFor(name.slice(3))?.kind === 'boolean'
     ) {
       pushFlag(name.slice(3), 'false');
@@ -187,7 +156,7 @@ export function readCliTokens(
     }
     if (value === undefined) {
       if (info?.kind === 'boolean') {
-        const separate = separateBoolValue(argv[i + 1]);
+        const separate = adjacent(i + 1) ? separateBoolValue(argv[i + 1]) : undefined;
         if (separate !== undefined) i++;
         pushFlag(name, String(separate ?? true));
         literalBooleanFlags.add(name);
@@ -195,7 +164,7 @@ export function readCliTokens(
       }
       // The next token is the value unless it is itself an option: `--grep
       // -foo` and `--count -5` are values, `--grep --json` is a missing one.
-      const next = argv[i + 1];
+      const next = adjacent(i + 1) ? argv[i + 1] : undefined;
       if (next !== undefined && !isOptionToken(next)) {
         value = next;
         i++;
@@ -204,14 +173,28 @@ export function readCliTokens(
       }
     }
     pushFlag(name, value, json);
+    if (option.inline && !json && info?.kind === 'boolean' && info.pureBoolean === true) {
+      parseReservedBool(name, value);
+    }
   }
+  const { fw } = fwState;
+  const options: CliRunOptions = {
+    json: fw.json,
+    wait: fw.wait,
+    quiet: fw.quiet,
+    dryRun: fw.dryRun,
+    help: fw.help,
+    schema: fw.schema,
+    ...(fw.waitTimeout !== undefined && { waitTimeout: fw.waitTimeout }),
+    ...(fw.outputDir !== undefined && { outputDir: fw.outputDir }),
+  };
   return {
     options,
     flags,
     jsonFields,
     literalBooleanFlags,
-    viewFlags,
-    ascending,
+    viewFlags: fwState.viewFlags,
+    ascending: fwState.ascending,
     positionals,
   };
 }

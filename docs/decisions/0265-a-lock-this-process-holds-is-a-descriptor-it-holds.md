@@ -3,6 +3,7 @@ title: "ADR 0265: A lock this process holds is a descriptor it holds"
 description: "A lock record that names this very process is held only while a descriptor of this process is open on it; a process image replaced in place keeps its PID and start time, but not that descriptor."
 type: decision
 status: accepted
+amends: ["0210"]
 created: 2026-10-20 08:03 +07:00
 updated: 2026-10-20 08:03 +07:00
 ---

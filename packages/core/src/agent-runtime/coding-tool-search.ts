@@ -259,7 +259,7 @@ export function createSearchCodingTool(
     identity: { serviceName: 'coding', action: 'search', method: 'POST' },
     input: SearchInputSchema,
     output: SearchOutputSchema,
-    transports: ['AGENT'],
+    expose: ['AGENT'],
     handler: ({ input, signal }) => searchFiles(config, limits, input, signal),
   });
 }

@@ -2,13 +2,15 @@
 title: "ADR 0004 — Four lifecycle hooks instead of a middleware chain"
 type: decision
 status: superseded
+supersededBy: ["0072"]
 created: 2025-05-01
 updated: 2026-05-20
 ---
 
 # ADR 0004 — Four lifecycle hooks instead of a middleware chain
 
-- **Status:** Superseded by [ADR 0072](0072-http-authorization-precedes-payload-parsing.md)
+**Relations:** Superseded by [ADR 0072](0072-http-authorization-precedes-payload-parsing.md)
+
 - **Date:** 2025-05
 
 ## Context

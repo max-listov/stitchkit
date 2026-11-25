@@ -40,9 +40,21 @@ const COVERED: Record<string, string> = {
   ResolveAttributionInput: 'entrypoints/tracking.ts',
   ResolveTrackedClickOptions: 'entrypoints/tracking.ts',
   SessionCredentialsConfig: 'entrypoints/index.ts',
+  SessionRefreshAhead: 'entrypoints/index.ts',
   ClientRequestOptions: 'entrypoints/contract.ts',
   ChunkedUploadConfig: 'entrypoints/index.ts',
   ChunkSpoolConfig: 'entrypoints/files.ts',
+  AgentStepBarriers: 'entrypoints/agent-runtime.ts',
+  OpenRouterProviderAccess: 'entrypoints/agent-runtime/openrouter.ts',
+  OpenRouterSnapshotOptions: 'entrypoints/agent-runtime/openrouter.ts',
+  SpendGatewayConfig: 'entrypoints/spend.ts',
+  SpooledSpendStoreConfig: 'entrypoints/spend.ts',
+  ReconcilePendingSpendOptions: 'entrypoints/spend.ts',
+  AgentStoreConformanceCapabilities: 'entrypoints/agent-runtime/testing.ts',
+  RegularFileReadOptions: 'entrypoints/files.ts',
+  RegularFileAsyncReadOptions: 'entrypoints/files.ts',
+  PolledJsonOptions: 'entrypoints/files.ts',
+  WaitForDirectoryOptions: 'entrypoints/files.ts',
   ChangeSubscriptionConfig: 'entrypoints/application.ts',
   NotificationDeliveryConfig: 'entrypoints/application.ts',
   CacheBridgeConfig: 'entrypoints/react.ts',
@@ -68,6 +80,7 @@ const COVERED: Record<string, string> = {
   WatchHubConfig: 'entrypoints/application.ts',
   DirectoryInboxConfig: 'entrypoints/application.ts',
   CliPublicationOptions: 'entrypoints/cli/publish.ts',
+  CliInvocationScanOptions: 'entrypoints/cli.ts',
   CliUpdateApplyConfig: 'entrypoints/cli.ts',
   McpClientConnectionConfig: 'entrypoints/tools/connections.ts',
   McpConnectionLimits: 'entrypoints/tools/connections.ts',
@@ -108,6 +121,8 @@ const COVERED: Record<string, string> = {
   NavZoneOptions: 'entrypoints/react/keyboard.ts',
   FocusZoneOptions: 'entrypoints/react/keyboard.ts',
   EndpointToolView: 'entrypoints/contract.ts',
+  EndpointToolOptions: 'entrypoints/contract.ts',
+  ToolInputProjection: 'tools/internal/surface-projector.ts',
   ExclusiveLockOptions: 'entrypoints/files.ts',
   WriteFileAtomicOptions: 'entrypoints/files.ts',
   UnixSocketBinding: 'entrypoints/files.ts',
@@ -122,6 +137,80 @@ const COVERED: Record<string, string> = {
   EffectRunOptions: 'entrypoints/tools.ts',
   AgentControllerConfig: 'entrypoints/agent-runtime/browser.ts',
   AgentHarnessRealtimeConfig: 'entrypoints/agent-runtime/realtime.ts',
+  BranchAgentConversationInput: 'entrypoints/agent-runtime.ts',
+  AgentChildManagerConfig: 'entrypoints/agent-runtime.ts',
+  DeferredAgentToolCommonConfig: 'entrypoints/agent-runtime.ts',
+  AgentScheduleServiceConfig: 'entrypoints/agent-runtime.ts',
+  AgentChildToolsConfig: 'entrypoints/agent-runtime.ts',
+  AgentScheduleToolsConfig: 'entrypoints/agent-runtime.ts',
+  AgentStateToolsConfig: 'entrypoints/agent-runtime.ts',
+  AgentEventSearchToolsConfig: 'entrypoints/agent-runtime.ts',
+  LocalHostGuardConfig: 'entrypoints/server.ts',
+  ClientConfig: 'entrypoints/index.ts',
+  SyncSessionPorts: 'entrypoints/sync.ts',
+  OutboxPolicy: 'entrypoints/sync.ts',
+  OverlaySpec: 'entrypoints/sync.ts',
+  SyncResultReading: 'entrypoints/sync.ts',
+  OutboxPage: 'entrypoints/sync.ts',
+  SyncPushLimits: 'entrypoints/sync.ts',
+  MemorySyncStoreConfig: 'entrypoints/sync/postgres.ts',
+  PostgresSyncStoreConfig: 'entrypoints/sync/postgres.ts',
+  PostgresAgentRuntimeStoreConfig: 'entrypoints/agent-runtime/postgres.ts',
+  PostgresAgentEventSearchConfig: 'entrypoints/agent-runtime.ts',
+  ClaudeCliDriverConfig: 'entrypoints/agent-executor/claude.ts',
+  CodexDriverConfig: 'entrypoints/agent-executor/codex.ts',
+  ClaudeSdkDriverConfig: 'entrypoints/agent-executor/claude-sdk.ts',
+  AcpDriverConfig: 'entrypoints/agent-executor/acp.ts',
+  SqliteMigrationRun: 'entrypoints/application.ts',
+  SignLinkOptions: 'entrypoints/server.ts',
+  VerifySignedLinkOptions: 'entrypoints/server.ts',
+  BridgeHostConfig: 'entrypoints/handler.ts',
+  BridgeFetchOptions: 'entrypoints/http.ts',
+  RepeatLimitOptions: 'entrypoints/observability.ts',
+  VerifyArtifactOptions: 'entrypoints/service-host.ts',
+  ActivateVersionedArtifactOptions: 'entrypoints/service-host.ts',
+  RollbackVersionedArtifactOptions: 'entrypoints/service-host.ts',
+  SystemdServiceUnitConfig: 'entrypoints/service-host.ts',
+  CheckSystemdUnitOptions: 'entrypoints/service-host.ts',
+  ApplySystemdUnitOptions: 'entrypoints/service-host.ts',
+  LaunchdPlistConfig: 'entrypoints/service-host.ts',
+  ReloadLaunchdJobOptions: 'entrypoints/service-host.ts',
+  VerifySupervisedProcessOptions: 'entrypoints/service-host.ts',
+  ConfigReloaderOptions: 'entrypoints/service-host.ts',
+  PolledJsonConfigSourceOptions: 'entrypoints/service-host.ts',
+  ConfigReloaderShutdownOptions: 'entrypoints/service-host.ts',
+  EventLoopDelayMonitorOptions: 'entrypoints/observability.ts',
+  VerifySignedBundleOptions: 'entrypoints/service-host/macos.ts',
+  MacosLauncherConfig: 'entrypoints/service-host/macos.ts',
+  GenerateAppIconIcnsOptions: 'entrypoints/service-host/macos.ts',
+  EnsureSignedBundleOptions: 'entrypoints/service-host/macos.ts',
+  ForgetStaleRegistrationsOptions: 'entrypoints/service-host/macos.ts',
+  ForgetBuildTreeOptions: 'entrypoints/service-host/macos.ts',
+  InspectResponsibleProcessOptions: 'entrypoints/service-host/macos.ts',
+  VerifyProcessSubtreeResponsibilityOptions: 'entrypoints/service-host/macos.ts',
+  TelegramMarkdownSplitOptions: 'entrypoints/telegram/html.ts',
+  CliCommandSettings: 'entrypoints/cli.ts',
+  SessionRefreshOptions: 'entrypoints/index.ts',
+  SpendCoveragePolicy: 'entrypoints/spend/testing.ts',
+  OpenRouterAdmissionPolicy: 'entrypoints/agent-runtime/openrouter.ts',
+  OpenRouterRequestPolicy: 'entrypoints/agent-runtime/openrouter.ts',
+  JsonRpcPeerConfig: 'entrypoints/agent-executor.ts',
+  ExecutorProfileConfig: 'entrypoints/agent-executor.ts',
+  AgentEngineConformanceConfig: 'entrypoints/agent-executor/testing.ts',
+  BootoutLaunchdJobOptions: 'entrypoints/service-host.ts',
+  InspectLaunchdJobOptions: 'entrypoints/service-host.ts',
+  LintLaunchdPlistOptions: 'entrypoints/service-host.ts',
+  ReadLaunchdPlistOptions: 'entrypoints/service-host.ts',
+  SystemdUnitQueryOptions: 'entrypoints/service-host.ts',
+  MacosBundleInfoPlistConfig: 'entrypoints/service-host/macos.ts',
+  FindDeveloperIdsOptions: 'entrypoints/service-host/macos.ts',
+  ResolveSigningIdentityOptions: 'entrypoints/service-host/macos.ts',
+  SignBundleOptions: 'entrypoints/service-host/macos.ts',
+  RenderAppleSquircleSvgOptions: 'entrypoints/service-host/macos.ts',
+  LaunchServicesBundleOptions: 'entrypoints/service-host/macos.ts',
+  ScanLsregisterDumpOptions: 'entrypoints/service-host/macos.ts',
+  CompileMacosLauncherOptions: 'entrypoints/service-host/macos.ts',
+  MacosCommandOptions: 'entrypoints/service-host/macos.ts',
 };
 
 const EntrySchema = z.union([
@@ -163,7 +252,40 @@ function membersOf(typeName: string, file: string): string[] {
     .sort();
 }
 
-/** Every `test('…')` name defined anywhere in this suite. */
+/** Collect titles declared via `test.each(...)('…', fn)` using the TypeScript AST. */
+function collectTestEachNames(path: string, source: string, names: Set<string>): void {
+  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, false);
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isCallExpression(node.expression) &&
+      ts.isPropertyAccessExpression(node.expression.expression) &&
+      node.expression.expression.name.text === 'each'
+    ) {
+      const target = node.expression.expression.expression;
+      const isActiveTestEach =
+        (ts.isIdentifier(target) && target.text === 'test') ||
+        (ts.isPropertyAccessExpression(target) &&
+          ts.isIdentifier(target.expression) &&
+          target.expression.text === 'test' &&
+          target.name.text !== 'skip' &&
+          target.name.text !== 'todo');
+      const firstArg = node.arguments[0];
+      if (
+        isActiveTestEach &&
+        firstArg &&
+        (ts.isStringLiteral(firstArg) || ts.isNoSubstitutionTemplateLiteral(firstArg)) &&
+        firstArg.text.length > 0
+      ) {
+        names.add(firstArg.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+}
+
+/** Every `test('…')` and `test.each(…)('…')` name defined anywhere in this suite. */
 function definedTestNames(): Set<string> {
   const names = new Set<string>();
   const walk = (directory: string): void => {
@@ -180,6 +302,7 @@ function definedTestNames(): Set<string> {
       )) {
         if (match[2]) names.add(match[2]);
       }
+      if (source.includes('.each(')) collectTestEachNames(path, source, names);
     }
   };
   walk(TESTS);
@@ -195,6 +318,7 @@ describe('a declared option is load-bearing', () => {
     // named nothing findable would otherwise look exactly like a clean sweep.
     expect(defined.size).toBeGreaterThan(500);
     expect(defined.has('the registry can find the tests it names')).toBe(true);
+    expect(defined.has('finds %s')).toBe(true);
   });
 
   for (const [typeName, file] of Object.entries(COVERED)) {

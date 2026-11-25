@@ -10,3 +10,15 @@ export const ArchiveProjectionSchema = z
     updatedAt: z.string(),
   })
   .strict();
+export type ArchiveProjection = z.infer<typeof ArchiveProjectionSchema>;
+
+/** The archive entry that carries the store's own snapshot rather than a companion projection. */
+export function isRuntimeSnapshotEntry<E>(entry: E): entry is E & { snapshot: unknown } {
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    !Array.isArray(entry) &&
+    Reflect.get(entry, 'archiveType') === 'runtime-snapshot' &&
+    'snapshot' in entry
+  );
+}

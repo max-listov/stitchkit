@@ -39,7 +39,7 @@ const runtime = defineRuntimeTool({
   name: 'runtime',
   description: 'Runtime',
   input,
-  transports: ['CLI'],
+  expose: ['CLI'],
   identity: { serviceName: 'bounds', action: 'runtime', method: 'POST' },
   handler,
 });
@@ -48,6 +48,7 @@ async function run(argv) {
   let err = '';
   let code = -1;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'bounds',
     version: '1',
     services: [service],

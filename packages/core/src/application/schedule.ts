@@ -1,3 +1,4 @@
+import { monotonicTimerClock, scheduleAt } from '../internal/timers';
 import type { ManagedResourceContext } from './resource';
 import {
   type ManagedSchedule,
@@ -21,12 +22,8 @@ import {
 import { ApplicationIdSchema } from './schemas';
 
 const systemClock: ManagedScheduleClock = {
-  now: () => performance.now(),
+  ...monotonicTimerClock,
   wallNow: () => new Date(),
-  schedule(callback, delayMs) {
-    const timer = setTimeout(callback, delayMs);
-    return { cancel: () => clearTimeout(timer) };
-  },
 };
 
 /** Create one fixed-rate, process-local periodic application resource. */
@@ -152,8 +149,7 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
 
   const arm = (): void => {
     if (!accepting || nextRunAt === null) return;
-    const delayMs = Math.max(0, nextRunAt - clock.now());
-    timer = clock.schedule(() => {
+    timer = scheduleAt(clock, nextRunAt, () => {
       timer = null;
       if (!accepting || nextRunAt === null) return;
       const scheduledAt = nextRunAt;
@@ -165,7 +161,7 @@ export function createManagedSchedule(config: ManagedScheduleConfig): ManagedSch
       nextRunAt = scheduledAt + elapsed * descriptor.everyMs;
       arm();
       dispatchTick(scheduledAt);
-    }, delayMs);
+    });
   };
 
   const waitForActive = (context: ManagedResourceContext, deadlineAt: number | undefined) =>

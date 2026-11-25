@@ -20,7 +20,7 @@
  *
  * → ADR 0155.
  */
-import { withDeadline } from '../internal/deadline';
+import { assertTimerMs, withDeadline } from '../internal/deadline';
 import { type PolicyDecision, PolicyDecisionSchema } from '../internal/decision';
 
 export type { PolicyDecision } from '../internal/decision';
@@ -136,11 +136,9 @@ export function createDecisionPipeline<TInput>(
   config: DecisionPipelineConfig,
 ): DecisionPipeline<TInput> {
   const { policyTimeoutMs } = config;
-  if (!Number.isInteger(policyTimeoutMs) || policyTimeoutMs <= 0) {
-    throw new Error(
-      '[stitchkit] decision pipeline: policyTimeoutMs must be a positive integer number of milliseconds.',
-    );
-  }
+  assertTimerMs('[stitchkit] decision pipeline: policyTimeoutMs', policyTimeoutMs, {
+    absent: 'refused',
+  });
   const seen = new Set<string>();
   for (const policy of policies) {
     if (policy.id.trim() === '') {

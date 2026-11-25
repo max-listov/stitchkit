@@ -3,17 +3,18 @@ title: "ADR 0059 — Unified tool-surface introspection"
 description: Manifests, name snapshots and transport summaries resolve contracts and runtime tools through one canonical collector.
 type: decision
 status: accepted
+amendedBy: ["0083"]
 created: 2026-08-08
 updated: 2026-08-08
 ---
 
 # ADR 0059 — Unified tool-surface introspection
 
-- **Status:** Accepted — extends the shared runner of
-  [ADR 0014](0014-tool-http-parity.md), the name guarantees of
-  [ADR 0035](0035-tool-name-derivation-and-validation.md), the presentation
-  document of [ADR 0050](0050-presentation-schema-is-not-a-parser.md), and the
-  pathless operations of [ADR 0055](0055-runtime-tools-share-one-neutral-operation.md)
+**Relations:** extends the shared runner of [ADR 0014](0014-tool-http-parity.md), the name
+guarantees of [ADR 0035](0035-tool-name-derivation-and-validation.md), the presentation document of
+[ADR 0050](0050-presentation-schema-is-not-a-parser.md), and the pathless operations of
+[ADR 0055](0055-runtime-tools-share-one-neutral-operation.md)
+
 - **Date:** 2026-08-08
 
 ## Context

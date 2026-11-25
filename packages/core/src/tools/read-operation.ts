@@ -11,18 +11,22 @@ import { z } from 'zod';
 import type { EndpointToolAnnotations } from '../contract/tool-options';
 import type { OperationIdentity } from '../server/types';
 
-type Operation = Pick<OperationIdentity, 'method' | 'annotations'>;
+type Operation = Pick<OperationIdentity, 'method' | 'effect' | 'annotations'>;
 
 /**
  * Whether calling the operation again returns its answer without a new effect.
  *
- * The declared `readOnlyHint` decides in either direction. Without one, `GET`
- * is the contract's own statement that the endpoint reads — unless it declares
- * `destructiveHint: true`, which says the opposite in the same breath.
+ * Precedence:
+ * 1. An explicit `annotations.readOnlyHint` decides in either direction.
+ * 2. `effect === 'write'` returns `false` (blocking fallback to `GET`).
+ * 3. `effect === 'read'` returns `true` unless `annotations.destructiveHint === true`.
+ * 4. Without `effect`, `GET` is the fallback read unless `destructiveHint === true`.
  */
 export function isRepeatableRead(operation: Operation): boolean {
   const declared = operation.annotations;
   if (declared?.readOnlyHint !== undefined) return declared.readOnlyHint;
+  if (operation.effect === 'write') return false;
+  if (operation.effect === 'read') return declared?.destructiveHint !== true;
   return operation.method === 'GET' && declared?.destructiveHint !== true;
 }
 

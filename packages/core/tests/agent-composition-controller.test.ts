@@ -10,6 +10,7 @@ import {
   createAgentController,
 } from '../src/entrypoints/agent-runtime/browser';
 import { eventually } from './support/agent-composition';
+import { expectTimerRefusal } from './support/timer-refusal';
 import { eventLoopTurn } from './support/until';
 
 function fixture() {
@@ -89,15 +90,19 @@ test('controller rejects excess requests before sending and validates finite con
   await eventually(() => controller.getSnapshot().status === 'ready');
   f.connection(false);
   await controller.close();
-  for (const value of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.1]) {
-    expect(() =>
-      createAgentController({
-        transport: f.transport,
-        conversationId: 'one',
-        access: 'observe',
-        timeoutMs: value,
-      }),
-    ).toThrow('positive safe integer');
+  // 2 ** 31 is past the timer ceiling, where a timer fires at once.
+  for (const value of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.1, 2 ** 31]) {
+    expectTimerRefusal(
+      () =>
+        createAgentController({
+          transport: f.transport,
+          conversationId: 'one',
+          access: 'observe',
+          timeoutMs: value,
+        }),
+      'timeoutMs',
+      value,
+    );
   }
 });
 
@@ -228,6 +233,69 @@ test('an access-denied delivery turns the controller into a FORBIDDEN error', as
     status: 'error',
     error: { code: 'FORBIDDEN' },
   });
+  f.connection(false);
+  await controller.close();
+});
+
+test('a reconnect keeps the last snapshot on screen until the next attach answers', async () => {
+  const f = fixture();
+  const controller = createAgentController({
+    transport: f.transport,
+    conversationId: 'one',
+    access: 'observe',
+  });
+  await eventually(() => f.requests.length === 1);
+  f.respond(0, 4);
+  await eventually(() => controller.getSnapshot().status === 'ready');
+  f.connection(false);
+  const offline = controller.getSnapshot();
+  expect(offline.status).toBe('disconnected');
+  expect(offline.view.conversations.one?.snapshot?.version).toBe(4);
+  expect(offline.view.cursor.conversations.one).toEqual({
+    runs: {},
+    durableEventIds: [],
+    snapshotVersion: 4,
+  });
+  f.connection(true);
+  expect(controller.getSnapshot().view.conversations.one?.snapshot?.version).toBe(4);
+  await eventually(() => f.requests.length === 2);
+  f.respond(1, 5);
+  await eventually(
+    () => controller.getSnapshot().view.conversations.one?.snapshot?.version === 5,
+  );
+  f.connection(false);
+  await controller.close();
+});
+
+test("a reconnect's attach answer replaces the kept snapshot even at a lower version", async () => {
+  const f = fixture();
+  const controller = createAgentController({
+    transport: f.transport,
+    conversationId: 'one',
+    access: 'observe',
+  });
+  await eventually(() => f.requests.length === 1);
+  f.respond(0, 7);
+  await eventually(() => controller.getSnapshot().status === 'ready');
+  f.connection(false);
+  // The server lost its versions meanwhile (a restarted memory store, a purged and
+  // reused conversation): its attach answer is the present, not an older read.
+  f.connection(true);
+  await eventually(() => f.requests.length === 2);
+  f.respond(1, 1);
+  await eventually(() => controller.getSnapshot().status === 'ready');
+  expect(controller.getSnapshot().view.conversations.one?.snapshot?.version).toBe(1);
+  // Within the connection, an older snapshot answer still loses to the newer view.
+  const stale = controller.request({ operation: 'snapshot' });
+  await eventually(() => f.requests.length === 3);
+  f.respond(2, 3);
+  await stale;
+  expect(controller.getSnapshot().view.conversations.one?.snapshot?.version).toBe(3);
+  const older = controller.request({ operation: 'snapshot' });
+  await eventually(() => f.requests.length === 4);
+  f.respond(3, 2);
+  await older;
+  expect(controller.getSnapshot().view.conversations.one?.snapshot?.version).toBe(3);
   f.connection(false);
   await controller.close();
 });

@@ -1,6 +1,13 @@
+---
+title: "ADR 0196 — A tool answer is a declared view of the HTTP answer"
+type: decision
+status: accepted
+created: 2026-09-23
+updated: 2026-09-23
+---
+
 # 0196 — A tool answer is a declared view of the HTTP answer
 
-**Status:** Accepted
 **Date:** 2026-09-23
 
 Extends [ADR 0014](0014-tool-http-parity.md) with a third intentional difference,

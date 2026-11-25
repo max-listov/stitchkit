@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { MAX_TIMER_MS } from '../src/internal/timers';
 import { callTelegramBotApi, TelegramBotApiError } from '../src/telegram/bot-api';
 import {
   createTelegramOperatorChannel,
@@ -70,6 +71,91 @@ describe('createTelegramOperatorChannel', () => {
     await channel.drain();
     expect(calls).toBe(2);
     expect(waits).toEqual([7_000]);
+  });
+
+  test('a retry_after longer than maxRetryAfterMs drops the message as flood-wait and goes on with the next', async () => {
+    for (const [retryAfter, maxRetryAfterMs] of [
+      [61, undefined],
+      [5_000_000, 600_000],
+      [1e307, 600_000],
+    ] as const) {
+      const waits: number[] = [];
+      const sent: string[] = [];
+      const drops: TelegramOperatorDrop<never>[] = [];
+      let calls = 0;
+      const channel = createTelegramOperatorChannel({
+        chatId: 1,
+        minIntervalMs: 10,
+        ...(maxRetryAfterMs !== undefined && { maxRetryAfterMs }),
+        send: async (message) => {
+          calls += 1;
+          if (calls === 1) throw refusal(429, 'Too Many Requests', retryAfter);
+          sent.push(message.text);
+        },
+        sleep: (milliseconds, signal) => {
+          waits.push(milliseconds);
+          return noSleep(milliseconds, signal);
+        },
+        onDropped: (drop) => drops.push(drop),
+      });
+      channel.post('held');
+      channel.post('next');
+      await channel.drain();
+      const label = `retry_after ${retryAfter}, maxRetryAfterMs ${maxRetryAfterMs}`;
+      expect(drops, label).toMatchObject([
+        { text: 'held', reason: 'flood-wait', failure: { retryAfterSeconds: retryAfter } },
+      ]);
+      expect(sent, label).toEqual(['next']);
+      expect(waits, label).toEqual([10]);
+    }
+  });
+
+  test('a retry_after within maxRetryAfterMs is waited in full', async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    const channel = createTelegramOperatorChannel({
+      chatId: 1,
+      minIntervalMs: 10,
+      maxRetryAfterMs: 600_000,
+      send: async () => {
+        calls += 1;
+        if (calls === 1) throw refusal(429, 'Too Many Requests', 600);
+      },
+      sleep: (milliseconds, signal) => {
+        waits.push(milliseconds);
+        return noSleep(milliseconds, signal);
+      },
+    });
+    channel.post('msg');
+    await channel.drain();
+    expect(calls).toBe(2);
+    expect(waits).toEqual([600_000]);
+  });
+
+  test('a count or a pause that is not a whole number in range is refused when the channel is created', () => {
+    const send = async () => undefined;
+    for (const bad of [Number.NaN, 0, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        createTelegramOperatorChannel({ chatId: 1, send, maxAttempts: bad }),
+      ).toThrow(TypeError);
+      expect(() => createTelegramOperatorChannel({ chatId: 1, send, maxQueued: bad })).toThrow(
+        TypeError,
+      );
+    }
+    for (const bad of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY, MAX_TIMER_MS + 1]) {
+      expect(() =>
+        createTelegramOperatorChannel({ chatId: 1, send, maxRetryAfterMs: bad }),
+      ).toThrow(RangeError);
+      expect(() =>
+        createTelegramOperatorChannel({ chatId: 1, send, minIntervalMs: bad }),
+      ).toThrow(RangeError);
+    }
+    // No pause and the longest timer are both pauses a timer honours.
+    for (const minIntervalMs of [0, MAX_TIMER_MS]) {
+      expect(() =>
+        createTelegramOperatorChannel({ chatId: 1, send, minIntervalMs }),
+      ).not.toThrow();
+    }
   });
 
   test('a refusal repeating will not fix is dropped with its classification; overflow drops the oldest', async () => {

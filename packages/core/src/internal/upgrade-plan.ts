@@ -10,8 +10,8 @@
 import {
   affectsLineOf,
   breakingItems,
-  fixedSectionItems,
   parseAffectsLine,
+  releaseSectionItems,
   type UpgradeAffectsTarget,
 } from './upgrade-affects';
 
@@ -48,6 +48,13 @@ export const BREAKING_HEADING = /^### \s*⚠️?\s*Breaking changes[^\n]*$/m;
 
 const NOT_DECLARED = 'Not declared in this legacy changelog section.';
 
+/**
+ * What joins two entrypoints in an item's leading run: `, `, ` and `, `, and `,
+ * ` + ` or one space. Both readers of the run — the entrypoints and a fix's title —
+ * take it from here.
+ */
+const ENTRYPOINT_SEPARATOR = '(?:, and |, | and | \\+ | )';
+
 /** The backticked `stitchkit` (or `stitchkit-…` package) entrypoints an item leads with, in order. */
 export function leadingEntrypoints(
   item: string,
@@ -61,7 +68,7 @@ export function leadingEntrypoints(
     if (!match || name === undefined || !accept(name)) break;
     names.push(name);
     rest = rest.slice(match[0].length);
-    const separator = /^(?:, and |, | and | \+ )/.exec(rest);
+    const separator = new RegExp(`^${ENTRYPOINT_SEPARATOR}`).exec(rest);
     if (!separator) break;
     rest = rest.slice(separator[0].length);
   }
@@ -106,7 +113,9 @@ function fixTitle(item: string): string {
     .replace(/\s+/g, ' ')
     .replace(/^[-*+] /, '')
     .trim();
-  const prefix = /^(?:`stitchkit[^`]*`(?:, and |, | and | \+ )?)+\s*[:—-]?\s*/.exec(flat);
+  const prefix = new RegExp(
+    `^(?:\`stitchkit[^\`]*\`${ENTRYPOINT_SEPARATOR}?)+\\s*[:—-]?\\s*`,
+  ).exec(flat);
   const text = flat.slice(prefix?.[0].length ?? 0).replace(/\*\*/g, '');
   const sentence = /^(.*?[.!?])(?:\s|$)/.exec(text)?.[1] ?? text;
   const trimmed = sentence.replace(/[.:]$/, '');
@@ -200,7 +209,9 @@ export function planUpgrade(
 
 /** The items of every `### Fixed` section of a release body. */
 export function fixedItems(version: string, body: string): UpgradeItem[] {
-  return fixedSectionItems(body).map(({ markdown }) => fixedItem(version, markdown));
+  return releaseSectionItems(body, 'Fixed').map(({ markdown }) =>
+    fixedItem(version, markdown),
+  );
 }
 
 /** The fixes of an exact `from` (exclusive) → `to` (inclusive) upgrade, oldest first. */

@@ -97,6 +97,7 @@ describe('MCP portable-format policy', () => {
     const services = [portableService(z.object({ owners: z.array(z.cuid2()) }))];
     expect(() =>
       createMcpHandler({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'test', version: '1' },
         auth: () => ({ id: 'u1' }),
         services,
@@ -108,6 +109,7 @@ describe('MCP portable-format policy', () => {
   test('the handler validates fields added by ToolExtend', () => {
     expect(() =>
       createMcpHandler({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'test', version: '1' },
         auth: () => ({ id: 'u1' }),
         services: [portableService(z.string())],

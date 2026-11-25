@@ -19,6 +19,7 @@
 import { constants } from 'node:fs';
 import { access, lstat, realpath, stat, unlink } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { errnoOf } from '../internal/errno';
 
 /**
  * Why a file will not be handed out.
@@ -76,10 +77,8 @@ export interface TelegramLocalFiles {
   check(): Promise<TelegramLocalFilesCheck>;
 }
 
-const absent = (error: unknown): boolean =>
-  error instanceof Error &&
-  'code' in error &&
-  (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+const ABSENT = new Set(['ENOENT', 'ENOTDIR']);
+const absent = (error: unknown): boolean => ABSENT.has(errnoOf(error) ?? '');
 
 function inside(directory: string, candidate: string): boolean {
   const path = relative(directory, candidate);

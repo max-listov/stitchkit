@@ -15,6 +15,8 @@ describe('agent runtime store driver', () => {
   test('memory driver passes the reusable production-store contract', async () => {
     await runAgentStoreConformance({
       createStore: createMemoryAgentRuntimeStore,
+      capabilities: { branch: true, planBranch: true, archive: true, historyRestore: true },
+      commitConflict: { impossible: 'single-writer' },
     });
   });
 
@@ -451,8 +453,8 @@ describe('agent runtime store driver', () => {
         }),
       });
     };
-    await admit('a\u0000b', 'c');
-    await admit('a', 'b\u0000c');
+    await admit('a\u001fb', 'c');
+    await admit('a', 'b\u001fc');
     for (let index = 0; index < 101; index += 1) {
       await admit('large-conversation', `run-${index.toString().padStart(3, '0')}`);
     }

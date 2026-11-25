@@ -10,7 +10,6 @@ import {
   ManagedFileError,
 } from '../src/files/boundary';
 import * as pinnedHttp from '../src/internal/pinned-http';
-import { isRecord } from '../src/internal/typed';
 import { mountAgent } from '../src/tools/agent';
 import { buildMcpServer } from '../src/tools/mcp/mount';
 import { coerceJsonArgs } from '../src/tools/schema/coerce';
@@ -19,41 +18,19 @@ import {
   mountViewFile,
   resolveMedia,
   runViewFileOperation,
+} from '../src/tools/transfer/view-file';
+import {
   ViewFileInputSchema,
   ViewFileOutputSchema,
-} from '../src/tools/transfer/view-file';
-
-/**
- * A connected client that also keeps every message as it arrived, before the client
- * parsed it: what a host reads off the wire, not what the SDK's schema leaves of it.
- */
-async function connectRecording(
-  server: McpServer,
-): Promise<{ client: Client; received: unknown[] }> {
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: 'managed-view-file-wire', version: '1' });
-  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  const received: unknown[] = [];
-  const deliver = clientTransport.onmessage;
-  clientTransport.onmessage = (message, extra) => {
-    received.push(structuredClone(message));
-    deliver?.(message, extra);
-  };
-  return { client, received };
-}
-
-/** The `result` of the one tool call a recording holds. */
-function wireResult(received: unknown[]): Record<string, unknown> {
-  const results = received.flatMap((message) =>
-    isRecord(message) && isRecord(message.result) && Array.isArray(message.result.content)
-      ? [message.result]
-      : [],
-  );
-  if (results.length !== 1) throw new Error(`expected one tool result, got ${results.length}`);
-  const [result] = results;
-  if (!result) throw new Error('expected a tool result');
-  return result;
-}
+} from '../src/tools/transfer/view-file-contract';
+import {
+  ALL_RESULT_TRANSPORTS,
+  connectRecording,
+  openTransportHarness,
+  type ResultTransport,
+  type TransportHarness,
+  wireResult,
+} from './support/operation-transports';
 
 async function connect(server: McpServer): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -92,9 +69,11 @@ describe('managed view_file definition', () => {
           serverInfo: { name: 'managed-view', version: '1' },
           services: [],
           runtimeTools: [definition],
-          lifecycle: {
-            beforeHandle: (_context, endpoint) => {
-              phases.push(`${endpoint.serviceName}:${endpoint.key}`);
+          access: {
+            gate: {
+              beforeHandle: (_context, endpoint) => {
+                phases.push(`${endpoint.serviceName}:${endpoint.key}`);
+              },
             },
           },
           hooks: {
@@ -130,9 +109,11 @@ describe('managed view_file definition', () => {
 
     const agentTools = mountAgent([], {
       runtimeTools: [definition],
-      lifecycle: {
-        beforeHandle: (_context, endpoint) => {
-          phases.push(`${endpoint.serviceName}:${endpoint.key}`);
+      access: {
+        gate: {
+          beforeHandle: (_context, endpoint) => {
+            phases.push(`${endpoint.serviceName}:${endpoint.key}`);
+          },
         },
       },
       hooks: {
@@ -168,7 +149,7 @@ describe('managed view_file definition', () => {
     await client.close();
   });
 
-  test('the file name reaches an MCP host inside the block, in content as in structuredContent', async () => {
+  describe('the file name reaches an MCP host inside the block, in content as in structuredContent', () => {
     const image = {
       type: 'image',
       data: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'),
@@ -179,48 +160,57 @@ describe('managed view_file definition', () => {
       _meta: { 'stitchkit/fileName': 'pic.png' },
     };
     const label = { type: 'text', text: '[image] image/png, 0KB' };
-    const definition = defineViewFileTool({
-      description: 'Inspect protected media',
-      identity: { serviceName: 'media', action: 'view' },
-      files,
+    let harness: TransportHarness;
+
+    beforeAll(async () => {
+      const definition = defineViewFileTool({
+        description: 'Inspect protected media',
+        identity: { serviceName: 'media', action: 'view' },
+        expose: ['MCP', 'AGENT', 'CLI'],
+        files,
+      });
+      harness = await openTransportHarness({ runtimeTools: [definition] });
     });
 
-    const managed = await connectRecording(
-      buildMcpServer(
-        {
-          serverInfo: { name: 'managed-wire', version: '1' },
-          services: [],
-          runtimeTools: [definition],
-        },
-        undefined,
-      ),
+    afterAll(async () => {
+      await harness?.close();
+    });
+
+    test.each(ALL_RESULT_TRANSPORTS)(
+      'transport %s carries the file name inside the block',
+      async (transport: ResultTransport) => {
+        const result = await harness.invoke(transport, {
+          name: 'view_file',
+          args: { paths: 'nested/pic.png' },
+        });
+        if (result.transport === 'mcp-content') {
+          expect(result.content).toEqual([image, label]);
+        } else if (result.transport === 'mcp-structured') {
+          expect(result.structuredContent).toEqual({ content: [image, label], errors: [] });
+        } else if (result.transport === 'agent') {
+          expect(result.output).toEqual({ content: [image, label], errors: [] });
+        } else {
+          expect(result.code).toBe(0);
+          expect(JSON.parse(result.out)).toEqual({ content: [image, label], errors: [] });
+        }
+      },
     );
-    await managed.client.callTool({
-      name: 'view_file',
-      arguments: { paths: 'nested/pic.png' },
+
+    test('raw mountViewFile carries the file name on the wire too', async () => {
+      const server = new McpServer({ name: 'raw-wire', version: '1' });
+      mountViewFile(server, { files });
+      const raw = await connectRecording(server);
+      try {
+        await raw.client.callTool({
+          name: 'view_file',
+          arguments: { paths: 'nested/pic.png' },
+        });
+        expect(wireResult(raw.received).content).toEqual([image, label]);
+      } finally {
+        await raw.client.close();
+        await server.close();
+      }
     });
-    const managedResult = wireResult(managed.received);
-    expect(managedResult.content).toEqual([image, label]);
-    // One block, one shape: what the output schema validated is what `content` carries.
-    expect(managedResult.structuredContent).toEqual({ content: [image, label], errors: [] });
-    await managed.client.close();
-
-    const server = new McpServer({ name: 'raw-wire', version: '1' });
-    mountViewFile(server, { files });
-    const raw = await connectRecording(server);
-    await raw.client.callTool({ name: 'view_file', arguments: { paths: 'nested/pic.png' } });
-    expect(wireResult(raw.received).content).toEqual([image, label]);
-    await raw.client.close();
-
-    // The Agent's result is the same output, not a second shape of it.
-    const execute = mountAgent([], { runtimeTools: [definition] }).view_file?.execute;
-    if (!execute) throw new Error('expected executable managed view_file');
-    expect(
-      await execute(
-        { paths: 'nested/pic.png' },
-        { toolCallId: 'view', messages: [], context: undefined },
-      ),
-    ).toEqual({ content: [image, label], errors: [] });
   });
 
   test('a field MCP does not declare never reaches content: the reason the name is in _meta', async () => {
@@ -229,11 +219,15 @@ describe('managed view_file definition', () => {
       content: [{ type: 'image', data: 'AAEC', mimeType: 'image/png', name: 'lost.png' }],
     }));
     const { client, received } = await connectRecording(server);
-    await client.callTool({ name: 'named', arguments: {} });
-    expect(wireResult(received).content).toEqual([
-      { type: 'image', data: 'AAEC', mimeType: 'image/png' },
-    ]);
-    await client.close();
+    try {
+      await client.callTool({ name: 'named', arguments: {} });
+      expect(wireResult(received).content).toEqual([
+        { type: 'image', data: 'AAEC', mimeType: 'image/png' },
+      ]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   test('the raw mount keeps its content-only MCP envelope over the shared operation', async () => {
@@ -264,6 +258,7 @@ describe('managed view_file definition', () => {
     const client = await connect(
       buildMcpServer(
         {
+          access: { open: 'local-operator' },
           serverInfo: { name: 'view-input', version: '1' },
           services: [],
           runtimeTools: [definition],
@@ -271,7 +266,10 @@ describe('managed view_file definition', () => {
         undefined,
       ),
     );
-    const execute = mountAgent([], { runtimeTools: [definition] }).view_file?.execute;
+    const execute = mountAgent([], {
+      access: { open: 'local-operator' },
+      runtimeTools: [definition],
+    }).view_file?.execute;
     if (!execute) throw new Error('expected executable managed view_file');
     const read = spyOn(files, 'read');
     const fetchMock = spyOn(globalThis, 'fetch');

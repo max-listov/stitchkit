@@ -4,6 +4,7 @@ import { AgentContextOverflowError } from './context-refusal';
 import { InvocationReceiptError } from './invocation-failure';
 import { hasProviderOrigin, isOwnInputRefusal } from './provider-origin';
 import type { RunExecution } from './run-execution-state';
+import { AgentStepBarrierError } from './run-step-barriers';
 import { abortTerminalReason } from './runtime-internals';
 import { AgentMessagePartSchema, type AgentTerminalReason } from './schemas';
 import { AgentRuntimeConflictError } from './terminal-commit';
@@ -19,6 +20,7 @@ export function failureThisRuntimeOwns(error: unknown): AgentTerminalReason | un
   if (error instanceof InvocationReceiptError) return 'runtime_failure';
   if (error instanceof AgentContextOverflowError) return 'context_overflow';
   if (error instanceof AgentRuntimeConflictError) return 'storage_conflict';
+  if (error instanceof AgentStepBarrierError) return 'policy_stop';
   if (isOwnInputRefusal(error)) return 'runtime_failure';
   return undefined;
 }

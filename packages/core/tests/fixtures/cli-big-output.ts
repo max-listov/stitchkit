@@ -36,6 +36,7 @@ const service = implement(contract, {
 });
 
 await createCli({
+  access: { open: 'local-operator' },
   name: 'big',
   version: '0.0.0',
   services: [service],

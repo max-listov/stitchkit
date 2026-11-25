@@ -39,6 +39,7 @@ const service = implement(contract, {
 async function connect(): Promise<Client> {
   const server = buildMcpServer(
     {
+      access: { open: 'local-operator' },
       serverInfo: { name: 't', version: '1' },
       services: [service],
       resources: [

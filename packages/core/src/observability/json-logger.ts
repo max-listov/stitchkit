@@ -66,7 +66,13 @@ export function createJsonLogger(options: JsonLoggerOptions = {}): StitchLogger 
     warn: line('warn'),
     error: line('error'),
   };
-  const bounded = createBoundedLogger({ ...options, sink });
+  const bounded = createBoundedLogger({
+    ...options,
+    ...(options.repeat !== undefined && {
+      repeat: { ...options.repeat, now: options.repeat.now ?? now },
+    }),
+    sink,
+  });
   const gated =
     (level: JsonLogLevel) =>
     (msg: string, data?: Record<string, unknown>): void => {

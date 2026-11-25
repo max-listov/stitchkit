@@ -2,15 +2,16 @@
 title: "ADR 0027 — Transport-neutral contract execution (bring-your-own transport)"
 type: decision
 status: accepted
+amendedBy: ["0028"]
 created: 2026-06-05
 updated: 2026-06-05
 ---
 
 # ADR 0027 — Transport-neutral contract execution (bring-your-own transport)
 
-- **Status:** Accepted — upholds [ADR 0008](0008-thin-wrappers.md) and
-  [ADR 0020](0020-raw-websocket-lane.md); keeps the core generic per
-  [ADR 0002](0002-generic-core.md)
+**Relations:** upholds [ADR 0008](0008-thin-wrappers.md) and [ADR 0020](0020-raw-websocket-lane.md);
+keeps the core generic per [ADR 0002](0002-generic-core.md)
+
 - **Date:** 2026-06-05
 
 ## Context

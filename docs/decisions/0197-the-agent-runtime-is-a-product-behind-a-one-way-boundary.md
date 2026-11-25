@@ -1,6 +1,13 @@
+---
+title: "ADR 0197 — The agent runtime is a product behind a one-way boundary"
+type: decision
+status: accepted
+created: 2026-09-23
+updated: 2026-09-23
+---
+
 # 0197 — The agent runtime is a product behind a one-way boundary
 
-**Status:** Accepted
 **Date:** 2026-09-23
 
 Read with [ADR 0098](0098-optional-agent-application-runtime.md),

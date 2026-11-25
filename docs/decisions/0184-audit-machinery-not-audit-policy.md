@@ -3,8 +3,9 @@ title: "ADR 0184: The audit layer ships the filter and the spool, and stays opti
 description: "A ready-made mutation filter and a spooled sink become framework machinery; making audit mandatory at startup was considered and rejected on a measurement."
 type: decision
 status: accepted
+amendedBy: ["0323"]
 created: 2026-09-15
-updated: 2026-09-15T09:26+07:00
+updated: 2026-11-25
 ---
 
 # ADR 0184 — Audit machinery, not audit policy
@@ -20,7 +21,10 @@ updated: 2026-09-15T09:26+07:00
 - **`createSpooledSink`** — writes the row to a local append-only file before
   offering it to the store, marks it delivered once the store took it, and
   replays what a previous process left unmarked. At-least-once; the store must
-  be idempotent on the record key (the `spanId` by default).
+  be idempotent on the record key (the `spanId` by default). (amended by ADR 0323:
+  at-least-once within finite memory and file bounds; a record past them is
+  refused to its writer with `SPOOL_UNSPOOLED`, a debt past them at `recover`
+  moves to a `.overflow` file, and an unreadable file is an unknown debt.)
 
 **Audit remains opt-in.** `createHandler` and the tool mounts are unchanged: a
 project that does not audit still never imports this entrypoint (→ ADR 0012).

@@ -4,6 +4,7 @@ import type { MountableTool } from '../mount';
 import { commandShapeIssue } from './command-shape';
 import { buildCliSurface } from './invoke';
 import type { CliCommandPresentation } from './policy';
+import { resolveCliIdentity } from './runner';
 import type { CliSession } from './session';
 import type { CliStreamOperation } from './stream-surface';
 
@@ -43,15 +44,7 @@ export async function buildManagedSurface<
   forExecution: boolean,
 ): Promise<ManagedSurface<TAuth>> {
   const { config, nativeHelp, applicationGlobalNames } = session;
-  let authPromise: Promise<Awaited<TAuth> | undefined> | undefined;
-  const resolveIdentity = (): Promise<Awaited<TAuth> | undefined> => {
-    // An async IIFE, not `Promise.resolve(...)`: a `resolveAuth` that throws
-    // SYNCHRONOUSLY would otherwise escape before the memo is assigned, and the
-    // next caller would run it a second time.
-    authPromise ??= (async (): Promise<Awaited<TAuth> | undefined> =>
-      config.resolveAuth ? await config.resolveAuth(typedGlobals) : await config.auth)();
-    return authPromise;
-  };
+  const resolveIdentity = resolveCliIdentity(config, typedGlobals);
   let auth: Awaited<TAuth> | undefined;
   if (session.hasManagedFactory || forExecution) {
     try {
@@ -73,6 +66,7 @@ export async function buildManagedSurface<
   const { tools, streams, help } = buildCliSurface(
     config,
     auth,
+    typedGlobals,
     nativeHelp,
     applicationGlobalNames,
     commandShapeIssue,

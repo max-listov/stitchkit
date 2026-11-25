@@ -3,6 +3,13 @@ export {
   type TelegramHtmlCheck,
   type TelegramHtmlProblem,
 } from '../../telegram/html/check';
+export { markdownToTelegramHtml } from '../../telegram/html/markdown';
+export {
+  splitTelegramMarkdown,
+  TelegramMarkdownSplitError,
+  type TelegramMarkdownSplitOptions,
+  type TelegramMarkdownSplitRefusal,
+} from '../../telegram/html/markdown-split';
 export {
   TELEGRAM_CAPTION_LIMIT,
   TELEGRAM_TEXT_LIMIT,

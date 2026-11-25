@@ -32,7 +32,7 @@ const forms = [
 const parse = (argv) =>
   parseCliArgs(argv, Input, {
     positionals: ['root'],
-    optionAliases: aliases,
+    aliases,
   });
 
 for (const [flags, value] of forms) {
@@ -119,16 +119,19 @@ async function run(argv) {
   let err = '';
   let code = -1;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'inspection',
     version: '1',
     argv,
     commands: [native],
     services: [service],
     defaultCommand: 'native',
-    positionals: { native: ['root'], managed: ['root'] },
-    optionAliases: {
-      native: { c: 'check', i: 'issuer', t: 'tags', f: 'feature.enabled' },
-      managed: { c: 'check' },
+    commandSettings: {
+      native: {
+        positionals: ['root'],
+        aliases: { c: 'check', i: 'issuer', t: 'tags', f: 'feature.enabled' },
+      },
+      managed: { positionals: ['root'], aliases: { c: 'check' } },
     },
     globalOptions: z.object({ verbose: z.boolean().optional() }),
     resolveAuth: () => {

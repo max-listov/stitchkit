@@ -44,7 +44,7 @@ const output = z.object({ size: z.number() })
 const measure = {
   name: 'measure', description: 'Measure text',
   identity: { serviceName: 'text', action: 'measure', method: 'POST' },
-  transports: ['CLI'], input, output,
+  expose: ['CLI'], input, output,
   handler: ({ input }) => ({ size: input.text.length }),
 } satisfies RuntimeToolDefinitionWithOutput<typeof input, typeof output>
 ```
@@ -71,7 +71,7 @@ the CLI never silently turns your existing API tools into shell commands.
 
 A fresh contract shows **zero** CLI commands until methods opt in — that is the
 design, not a bug. A pathless runtime definition follows the same rule: it must
-explicitly include `'CLI'` in `transports`; the undefined default remains
+explicitly include `'CLI'` in `expose`; the undefined default remains
 `['MCP', 'AGENT']`. The command name is the tool name — `tool.name` if set, else
 a verb-aware name from the method + prefix (`list` → `list_widgets`, `get` →
 `get_widget`), not a literal `prefix_key`.
@@ -91,6 +91,7 @@ await createCli({
   name: 'myapp',
   version: '1.0.0',
   services: [catalogService, generateService],
+  access: { gate: { beforeHandle: authHook } },
   resolveAuth: () => resolveToken(process.env.MYAPP_TOKEN), // lazy, at most once
 })
 ```
@@ -126,7 +127,7 @@ const uploadInput = defineUploadTool({
   description: 'Upload one local input file',
   identity: { serviceName: 'jobs', action: 'uploadInput', scope: 'user' },
   output: z.object({ url: z.url() }),
-  transports: ['MCP', 'AGENT', 'CLI'],
+  expose: ['MCP', 'AGENT', 'CLI'],
   upload: (path, context) => uploadFile(path, context.signal),
 })
 
@@ -134,6 +135,7 @@ await createCli({
   name: 'myapp',
   version: '1.0.0',
   runtimeTools: [uploadInput],
+  access: { gate: { beforeHandle: authHook } },
 })
 ```
 
@@ -168,6 +170,7 @@ await createCli({
   commands: [login],
   resolveAuth: loadStoredIdentity,
   services: (identity) => createRemoteServices(identity),
+  access: { open: 'remote' },
 })
 ```
 
@@ -208,7 +211,7 @@ either callback.
 ### The same policy for a managed command
 
 A command that comes from a contract or a runtime tool declares the same two
-callbacks where the CLI is mounted — `CliConfig.results`, keyed by command name.
+callbacks where the CLI is mounted — inside `CliConfig.commandSettings[name].result`.
 A client and a server print nothing, so the policy belongs to the CLI, not to
 the contract. `defineCliResult` types both callbacks against the operation's
 output schema:
@@ -220,12 +223,15 @@ await createCli({
   name: 'myapp',
   version: '1.0.0',
   services: [recordService],
-  results: {
-    lookup: defineCliResult(LookupOutput, {
-      present: ({ result, options }) =>
-        options.json ? `${JSON.stringify(result)}\n` : `${result.location ?? 'not found'}\n`,
-      exitCode: (result) => (result.found ? 0 : 1),
-    }),
+  access: { open: 'local-operator' },
+  commandSettings: {
+    lookup: {
+      result: defineCliResult(LookupOutput, {
+        present: ({ result, options }) =>
+          options.json ? `${JSON.stringify(result)}\n` : `${result.location ?? 'not found'}\n`,
+        exitCode: (result) => (result.found ? 0 : 1),
+      }),
+    },
   },
 })
 ```
@@ -383,14 +389,17 @@ await createCli({
   name: 'myapp',
   version: '1.0.0',
   services,
+  access: { gate: { beforeHandle: authHook } },
   commands: [doctor],
   defaultCommand: 'logs',
-  optionAliases: {
-    logs: { f: 'follow', n: 'lines' },
-  },
-  positionals: {
-    logs: ['target'],       // `lines` is option-only
-    doctor: [],             // no argv positionals
+  commandSettings: {
+    logs: {
+      aliases: { f: 'follow', n: 'lines' },
+      positionals: ['target'],       // `lines` is option-only
+    },
+    doctor: {
+      positionals: [],               // no argv positionals
+    },
   },
 })
 ```
@@ -415,7 +424,7 @@ When the LAST declared positional is an array field, it takes every remaining
 token, each coerced by the array's element type:
 
 ```ts
-positionals: { handoff: ['to', 'files'] }   // files: z.array(z.string())
+commandSettings: { handoff: { positionals: ['to', 'files'] } }   // files: z.array(z.string())
 ```
 
 ```
@@ -447,23 +456,28 @@ same Zod schema an HTTP or MCP call does.
 ## Global flags
 
 Framework options can precede an explicit command even when the CLI has no
-default command. With a static catalogue, `myapp --quiet item_list --json` and
-`myapp item_list --quiet --json` produce the same output. Keep an option's value
-next to it, as in `myapp --sort date item_list`. Place `--help` before the
-command name to filter the command list or after the name to show that command's help.
+default command. In every CLI profile — static, native or managed factory —
+`myapp --quiet item_list --json` and `myapp item_list --quiet --json` produce
+the same output. Keep an option's value next to it, as in
+`myapp --sort date item_list`. Place `--help` before the command name to filter
+the command list or after the name to show that command's help. A command's own
+option goes after its name: without a default command, `myapp --verbose inspect`
+is a usage error (exit 2) that says so, the same answer `routeCliArgv` returns as
+`error`.
 
-Shell command names cannot use a framework option spelling such as `--quiet`,
-`--sort` or `--json=false`, the separator `--`, or a built-in help or version
+Shell command names cannot be option-shaped (`-x`, `--custom`), use a framework
+option spelling such as `--quiet`, `--sort` or `--json=false`, the separator `--`, or a built-in help or version
 token. Static CLI declarations are checked before dispatch. Names supplied by
 a managed factory are checked when that factory is resolved.
 
-If a CLI has a managed factory and no default command, put a native command
-first, for example `myapp whoami --quiet`. A leading framework option before a
-native command exits with code 2: older catalogues could use that option as a
-command name. This refusal and the command-first invocation both work offline.
-To keep a positional `false` in a preview after moving the command first,
-use `myapp inspect --dry-run=true false`.
-Discovered managed commands accept framework flags in either position.
+Native and managed commands alike accept leading framework options in any CLI
+profile, including a CLI with a managed factory and no default command —
+`myapp --quiet whoami` and `myapp whoami --quiet` both resolve the native
+command offline without loading credentials. Do not separate a bare boolean
+framework flag from a trailing `true` or `false` token with a command name or
+application option (`myapp --dry-run inspect false` exits with code 2); write
+`myapp --dry-run=true inspect false`, `myapp inspect --dry-run=true false`, or
+`myapp inspect --dry-run -- false` instead.
 
 | Flag                  | Effect                                                     |
 | --------------------- | ---------------------------------------------------------- |
@@ -560,6 +574,7 @@ await createCli({
   resolveAuth: (globals) => loadIdentity(globals.caller),
   context: (auth, globals) => ({ auth, root: globals.root }),
   runtimeTools: (auth) => catalogFor(auth),
+  access: { gate: { beforeHandle: authHook } },
 })
 ```
 
@@ -580,6 +595,44 @@ runtime catalogue entries are isolated as described below. Past a bare
 survives intact.
 
 Both help levels list them under `Application options:`.
+
+### Parsing argv yourself
+
+An entry point that needs the globals or the command before `createCli` runs —
+to pick a profile, or to decide whether to discover a catalogue — reads the line
+with the same grammar through the public projections. Each answers what
+`createCli` answers: the same refusal, the same arguments, the same exit code.
+
+```ts
+import { CliArgumentError, extractCliGlobalOptions, parseCliArgs, routeCliArgv } from 'stitchkit/cli'
+
+try {
+  const lifted = extractCliGlobalOptions(argv, GlobalsSchema)
+  const route = routeCliArgv(lifted.argv, { separatedBefore: lifted.separatedBefore })
+  if (route.error !== undefined) return refuse(route.error) // exit 2, nothing ran
+  if (route.command === undefined || route.topLevelHelp) return showHelp()
+  const parsed = parseCliArgs(route.commandArgv, inputFor(route.command), {
+    separatedBefore: route.separatedBefore,
+  })
+  if (parsed.options.help) return showCommandHelp(route.command)
+  if (parsed.options.schema) return showSchema(route.command)
+  const result = await invoker.invoke(route.command, parsed.toolArgs)
+} catch (error) {
+  if (!(error instanceof CliArgumentError)) throw error
+  return refuse(error.message) // exit 2
+}
+```
+
+`separatedBefore` is how a boundary survives the lift: in
+`inspect --verbose --profile demo false` the word `false` was never the value of
+`--verbose`, so it stays the positional it was. A `--` before the command stays in
+the lifted argv and the route refuses it; a line answered by help, `--version` or
+`--schema` reports no global's error; the route refuses in `error` every line
+`createCli` refuses before a command runs (a repeated or malformed framework option
+included); `parseCliArgs` answers help and `--schema` before arguments it cannot read
+(`inspect --verbose=maybe --help` asks for help, with empty `toolArgs`); a pure boolean
+written `--verbose=maybe` is otherwise a `CliArgumentError`; and a name no command
+answers to is `UNKNOWN_OPERATION` (exit `4`) on both `createCli` and `createCliInvoker`.
 
 ## When one runtime command cannot be represented in argv
 
@@ -678,12 +731,15 @@ await createCli({
   name: 'myapp',
   version: '1.0.0',
   services,
-  wait: {
+  access: { gate: { beforeHandle: authHook } },
+  commandSettings: {
     generate: {
-      tool: 'get_generation',
-      poll: (r) => (isRecord(r) && typeof r.id === 'string' ? { id: r.id } : null),
-      done: (r) => isRecord(r) && ['COMPLETED', 'FAILED'].includes(String(r.status)),
-      failed: (r) => isRecord(r) && r.status === 'FAILED',
+      wait: {
+        tool: 'get_generation',
+        poll: (r) => (isRecord(r) && typeof r.id === 'string' ? { id: r.id } : null),
+        done: (r) => isRecord(r) && ['COMPLETED', 'FAILED'].includes(String(r.status)),
+        failed: (r) => isRecord(r) && r.status === 'FAILED',
+      },
     },
   },
 })
@@ -869,16 +925,19 @@ and `details.resultOnStdout` states which case occurred:
 | has an effect | the complete original result in the normal JSON format (`--json` still selects compact output) | reading stdout — never by repeating the mutation |
 | only reads | nothing | repeating the command with a corrected view |
 
-A managed command only reads when its tool declares `annotations.readOnlyHint: true`,
-or declares no `readOnlyHint` and its method is `GET`. `readOnlyHint: false`, or
-`destructiveHint: true` without a `readOnlyHint`, on a `GET` endpoint keeps the result on stdout. A native
-`defineCliCommand` declares neither fact, so a failed `present` always keeps the validated
-result on stdout.
+A managed command only reads by the same four-step rule used for `readOnlyHint`:
+an explicit `annotations.readOnlyHint` decides in either direction; otherwise
+`effect: 'write'` marks a non-read (even on `GET`); otherwise `effect: 'read'`
+marks a read unless `destructiveHint: true`; otherwise `GET` is the fallback read
+unless `destructiveHint: true`. `readOnlyHint: false`, `effect: 'write'` without
+`readOnlyHint`, or `destructiveHint: true` without `readOnlyHint` keeps the result
+on stdout. A native `defineCliCommand` declares none of those facts, so a failed
+`present` always keeps the validated result on stdout.
 
 A CLI that mounts a server's tools through `defineMcpClientConnection` never sees the
-method — every MCP call is a `POST` — so it reads the `readOnlyHint` the server
-publishes. A Stitchkit server publishes it for every `GET` by the rule above
-([MCP → `readOnlyHint`](./mcp-and-agents.md#saying-which-tools-only-read--readonlyhint)),
+method or contract `effect` — every MCP call is a `POST` — so it reads the `readOnlyHint`
+the server publishes. A Stitchkit server publishes it for every repeatable read by the
+rule above ([MCP → `readOnlyHint`](./mcp-and-agents.md#saying-which-tools-only-read--readonlyhint)),
 so the same command behaves the same over the contract and over MCP. The hint is the
 server's word: a server that labels a write as read-only makes the CLI withhold that
 write's result on a refused view, and repeating the command repeats the effect.
@@ -926,6 +985,7 @@ await createCli({
   globalOptions: z.object({ profile: z.string().optional() }),
   resolveAuth: (globals) => profiles.resolve(globals.profile).value,
   services,
+  access: { open: 'remote' },
 })
 ```
 
@@ -1260,16 +1320,16 @@ myapp watch_record --record main | head -n 5
 
 The command is named from the contract prefix and the endpoint key
 (`records.watch` → `watch_record`); a stream takes no `tool` group, so it has no
-`tool.name`. `optionAliases` and `positionals` apply as to any command.
+`tool.name`. `commandSettings[name].aliases` and `.positionals` apply as to any command.
 
 The call opens through the same runner as every command — validation, the
-`lifecycle.beforeHandle` gate, hooks — and the handler's async iterable is read
+`access` gate (`beforeHandle`), hooks — and the handler's async iterable is read
 by the loop the HTTP response uses: each item is validated against
 `stream.item` (`STREAM_ITEM_INVALID` otherwise), a declared `terminal` item
 completes the command, and a stream that ends before it fails with
 `STREAM_TERMINAL_MISSING`. A stream proxied by `implementRemote` is a stream
 here too. Without a policy an item is one compact JSON line;
-`results[command].present` formats each item instead. A presenter that throws
+`commandSettings[command].result.present` formats each item instead. A presenter that throws
 ends the feed with `CLI_PRESENTATION_FAILED` after the lines already printed.
 `exitCode` is refused for a stream at startup — a feed has no single result to
 classify.
@@ -1303,14 +1363,18 @@ already-parsed call.
 ```ts
 import { createCliInvoker, defineCliStreamCommand, defineCliBatchCommand } from 'stitchkit/cli'
 
-const invoker = await createCliInvoker({ name: 'myapp', services })
+const invoker = await createCliInvoker({
+  name: 'myapp',
+  services,
+  access: { gate: { beforeHandle: authHook } },
+})
 
 const outcome = await invoker.invoke('create_item', { title: 'hello', tags: ['a'] })
 // { ok: true, exitCode: 0, data: { … } }   — nothing written, nothing exited
 ```
 
 `invoke` runs the same pipeline a typed command runs — the same validation, the
-same `lifecycle` gate, the same hooks — and returns the handler's validated
+same `access` gate, the same hooks — and returns the handler's validated
 output with **the exit code the printed path would give**, from the same table.
 `data` is typed `unknown`: the surface is resolved at run time from services and
 runtime tools, so there is no compile-time name to key a result type on. Narrow
@@ -1339,7 +1403,12 @@ const describe = defineCliCommand({
   handler: ({ input }) => ({ model: input.model, ratios: ['1:1', '16:9'] }),
 })
 
-await createCliInvoker({ name: 'myapp', services, commands: [describe] })
+await createCliInvoker({
+  name: 'myapp',
+  services,
+  access: { gate: { beforeHandle: authHook } },
+  commands: [describe],
+})
 // invoke('describe', { model: 'flux' }) → { ok: true, exitCode: 0, data: { … } }
 ```
 
@@ -1364,6 +1433,7 @@ outcome.written // { stderr: 'warming the cache\n' } — absent when nothing was
 ```ts
 await createCli({
   name: 'myapp', version, services,
+  access: { gate: { beforeHandle: authHook } },
   commands: [
     defineCliStreamCommand({ name: 'jsonl', invoker }),
     defineCliBatchCommand({ name: 'batch', invoker, checkpointPath: '.myapp-batch.json' }),
@@ -1412,7 +1482,7 @@ const discovered = await mountConnections([
     name: 'api',
     transport: { url },
     token: () => key,
-    transports: ['CLI'],   // the opt-in: this server's tools are commands
+    expose: ['CLI'],   // the opt-in: this server's tools are commands
     limits: {
       discovery: { maxResponseBytes: 4 * 1024 * 1024 }, // 300 s total, 30 s of silence
       call: { timeoutMs: 120_000 },
@@ -1424,10 +1494,10 @@ const discovered = await mountConnections([
     },
   }),
 ])
-await createCli({ name: 'myapp', version, runtimeTools: discovered, commands: [...] })
+await createCli({ name: 'myapp', version, runtimeTools: discovered, access: { open: 'remote' }, commands: [...] })
 ```
 
-`transports` is where the opt-in belongs: a whole server becomes a set of
+`expose` is where the opt-in belongs: a whole server becomes a set of
 commands, and a connection without it still contributes nothing to the CLI —
 exposure stays explicit, as it is everywhere else in the framework.
 
@@ -1538,11 +1608,70 @@ Several parts, an image or audio pass through whole — picking one of many woul
 be inventing an answer.
 
 
+## Local application over a unix socket
+
+A CLI compiled from contracts can target a local desktop or daemon host over its unix socket using
+`implementRemote`, `createUnixClientTransport`, and application-owned `globalOptions` (for example
+`--socket` or `--dev`). `services` and `runtimeTools` factories receive `(auth, globals)` so the
+application computes the socket path for the selected variant and closes the transport after the
+command finishes:
+
+```ts
+import { createHttpClient } from 'stitchkit'
+import { createCli } from 'stitchkit/cli'
+import { implementRemote } from 'stitchkit/remote'
+import { createUnixClientTransport } from 'stitchkit/server'
+import { z } from 'zod'
+
+let activeTransport: ReturnType<typeof createUnixClientTransport> | undefined
+
+try {
+  await createCli({
+    name: 'myapp',
+    version: '1.0.0',
+    globalOptions: z.object({
+      socket: z.string().optional().describe('Path to the local app unix socket'),
+      dev: z.boolean().optional().describe('Target the development variant'),
+    }),
+    access: { open: 'remote' },
+    services: (_auth, globals) => {
+      const socketPath = globals.socket ?? resolveVariantSocketPath(globals.dev === true)
+      const transport = createUnixClientTransport({ socketPath })
+      activeTransport = transport
+      const client = createHttpClient({
+        baseUrl: 'http://local-app',
+        fetch: transport.fetch,
+        headers: { 'x-client-name': 'myapp-cli' },
+      })
+      return [implementRemote(appContract, client)]
+    },
+  })
+} finally {
+  await activeTransport?.close()
+}
+```
+
+When a remote call over `createUnixClientTransport` fails, the CLI preserves the transport's
+delivery guarantee as distinct error codes and default exit codes:
+
+- **`not-dispatched` (exit `9`)** — `UNIX_CONNECT_FAILED`, `UNIX_TARGET_REFUSED`,
+  `UNIX_CLIENT_CLOSED`, `UNIX_CONNECTION_LIMIT`, `UNIX_REQUEST_TOO_LARGE`. The request never
+  reached the application (`Not executed: application is not listening on "<path>"` or target
+  refusal); scripts can safely start the application and retry.
+- **`possibly-dispatched` (exit `10`)** — `UNIX_DELIVERY_UNCERTAIN`, `UNIX_HEADERS_TIMEOUT`. The
+  request left the client and the connection dropped or timed out before response headers arrived
+  (`Outcome unknown, not retried: ...`). Endpoints without `idempotent: true` (other than unflagged
+  `GET`/`HEAD`) are never retried automatically; inspect application state before repeating.
+- **`response-received` (exit `1`)** — `UNIX_RESPONSE_TOO_LARGE`, `UNIX_HEADERS_TOO_LARGE`,
+  `UNIX_RESPONSE_ABORTED`, `UNIX_REDIRECT_REFUSED`.
+
 ## Auth parity
 
-A scoped command is guarded by the same `createAuthHook` your HTTP server uses —
-pass it as `lifecycle`, and inject the identity through `context` so
-`resolveFromContext` can read it:
+Every managed CLI (any `createCli` / `createCliInvoker` with `services` or
+`runtimeTools`) requires an explicit `access` policy — guard scoped commands
+with the same `createAuthHook` your HTTP server uses via
+`access: { gate: { beforeHandle: authHook } }`, and inject the identity through
+`context` so `resolveFromContext` can read it:
 
 ```ts
 const authHook = createAuthHook({ /* resolve, resolveFromContext, rules */ })
@@ -1551,20 +1680,21 @@ await createCli({
   name: 'myapp',
   version: '1.0.0',
   resolveAuth: () => resolveIdentityFromToken(process.env.MYAPP_TOKEN),
-  context: (identity) => ({ user: identity }),   // resolveFromContext reads this
-  lifecycle: { beforeHandle: authHook },          // same policy; HTTP wires it as authorize
+  context: (identity) => ({ user: identity }),      // resolveFromContext reads this
+  access: { gate: { beforeHandle: authHook } },     // same policy; HTTP wires it as authorize
   services,
 })
 ```
 
-Without `lifecycle`, a scoped command runs **unguarded** — the scope check lives
-entirely inside the `createAuthHook` result, so with no hook wired in there is
-nothing to enforce a method's `scope`. This matches the MCP / agent surfaces
-exactly ([ADR 0014](../decisions/0014-tool-http-parity.md)): on every tool
-transport the auth gate is opt-in, so a contract with scoped methods **must** be
-given a `lifecycle` (and `context` identity) to be protected. The gate only
-*fails closed* once the hook **is** present but `resolveFromContext` is missing —
-then a scoped call has no identity and is rejected.
+Omitting `access` (or passing an empty object or legacy `lifecycle`) is both a
+type error and a startup `TypeError` before the first command executes
+([ADR 0311](../decisions/0311-planned-breaking-release-access-expose-and-clean-boundaries.md),
+amending [ADR 0014](../decisions/0014-tool-http-parity.md)). When a CLI talks
+only to a remote server that enforces its own auth, or serves a deliberately
+public or local-operator surface, declare that explicitly with
+`access: { open: 'remote' | 'public' | 'local-operator', afterHandle? }`.
+A native-only CLI (only `commands`, no `services` or `runtimeTools`) takes no
+`access`.
 
 ## Typed context
 
@@ -1578,6 +1708,7 @@ await tools.createCli({
   name: 'myapp',
   version: '1.0.0',
   services,
+  access: { gate: { beforeHandle: authHook } },
   context: (identity) => ({ user: identity }),   // checked against { user: User }
 })
 ```
@@ -1588,3 +1719,17 @@ File-upload (`multipart`) contract endpoints remain CLI-invisible, the same as
 on MCP/Agent: their wire body is not a JSON tool form. Model file-oriented
 application behavior as a managed pathless command, or binary-only behavior as
 a native command. Streaming (SSE) output is not yet piped to stdout.
+
+## Active decisions
+
+The current CLI parsing, routing, view-checking and runner contract is governed
+by:
+
+- [ADR 0083](../decisions/0083-cli-composes-managed-and-native-commands.md) — composition of contract, runtime and native commands with lazy credential-free native startup.
+- [ADR 0289](../decisions/0289-a-managed-command-owns-its-terminal-result-and-a-stream-is-a-command.md) — managed `results` presentation/exit policies, `--schema` and streaming CLI commands.
+- [ADR 0295](../decisions/0295-quiet-suppresses-profile-selection-notices.md) — `--quiet` suppresses inferred-profile notices before and inside `createCli`.
+- [ADR 0296](../decisions/0296-framework-options-reserve-their-cli-spellings.md) — framework option spellings are reserved and cannot be declared as command names.
+- [ADR 0310](../decisions/0310-one-model-for-cli-invocation-and-json-schema-keywords.md) — single-pass `scanCliInvocation`, exhaustive JSON Schema keyword table, pre-call view column checks, shared runner and removal of the ADR 0296 transitional refusal:
+  - **Boolean case policy:** inline boolean words (`true`/`1`/`yes`/`on`, `false`/`0`/`no`/`off`) and separate adjacent boolean tokens (`true`, `false`) are matched **case-insensitively** (`--quiet TRUE cmd` sets `quiet: true` and selects `cmd`); invalid inline values such as `--quiet=maybe` fail with exit code 2 before any profile notice is printed.
+  - **Broken boolean boundary:** adjacent `--flag false` remains a value (`inspect --dry-run false` executes `inspect`), but a bare boolean framework flag separated from `true` or `false` by a stripped token (a command name or an application option — `--dry-run inspect false` or `inspect --dry-run --profile demo false`) is refused with exit code 2, zero handler calls, and a hint to pass `--flag=false` or `-- false`.
+  - **Passthrough coercion:** untyped passthrough flags coerce only `true`/`false` and numbers (`--mode on` stays `"on"`).

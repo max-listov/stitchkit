@@ -1,11 +1,13 @@
 import type { Tool } from 'ai';
 import type { ZodObject, ZodType, z } from 'zod';
 import type { HttpMethod } from '../contract/define';
+import { type OperationEffect, OperationEffectSchema } from '../contract/operation-effect';
 import type { EndpointMcpPolicy } from '../contract/tool-options';
 import { isRecord } from '../internal/typed';
 import type { OperationIdentity } from '../server/types';
 import type { ToolOperation } from './execute';
-import { projectRuntimeTool } from './internal/surface-projector';
+import { assertNoLegacyTransports } from './internal/expose';
+import type { ProjectedRuntimeTool } from './internal/surface-projector';
 import type { MountableTool } from './mount';
 import type {
   DeferredAgentRuntimeToolDefinition,
@@ -49,6 +51,8 @@ export interface RuntimeToolFactoryConfig<TContext extends ZodObject> {
 export interface RuntimeToolFactoryIdentityFields {
   action: string;
   method: HttpMethod;
+  /** Closed side-effect classification (`'read'` or `'write'`) for gates and read-only hints. */
+  effect?: OperationEffect;
   meta?: Record<string, unknown>;
 }
 
@@ -104,6 +108,15 @@ export interface RuntimeToolFactory<TContext extends ZodObject> {
   ): RuntimeToolDefinitionWithoutOutput<TInput, TMcp>;
 }
 
+function assertRuntimeToolEffect(name: string, effect: unknown): void {
+  if (effect === undefined) return;
+  if (!OperationEffectSchema.safeParse(effect).success) {
+    throw new Error(
+      `Runtime tool "${name}" has invalid effect "${String(effect)}" — expected "read" or "write"`,
+    );
+  }
+}
+
 /**
  * Typed construction of a runtime tool with the MCP and Agent presenters of this
  * entrypoint; execution remains owned by the transport mounts.
@@ -132,7 +145,9 @@ export function defineRuntimeTool<
   definition: RuntimeToolDefinitionWithoutOutput<TInput, TMcp>,
 ): RuntimeToolDefinitionWithoutOutput<TInput, TMcp>;
 export function defineRuntimeTool(definition: RuntimeToolDefinition): RuntimeToolDefinition {
-  if (definition.transports?.length === 0) {
+  assertNoLegacyTransports(definition, `Runtime tool "${definition.name}"`);
+  assertRuntimeToolEffect(definition.name, definition.identity.effect);
+  if (definition.expose?.length === 0) {
     throw new Error(`Runtime tool "${definition.name}" must expose at least one transport`);
   }
   return definition;
@@ -177,33 +192,33 @@ export function createRuntimeToolFactory<TContext extends ZodObject>(
       | RuntimeToolFactoryDefinitionWithOutput<TContext, ZodObject, ZodType>
       | RuntimeToolFactoryDefinitionWithoutOutput<TContext, ZodObject>,
   ): RuntimeToolDefinition {
+    const buildIdentity = ({
+      action,
+      method,
+      effect,
+      meta,
+    }: RuntimeToolFactoryIdentityFields): RuntimeToolIdentity => ({
+      serviceName: config.serviceName,
+      action,
+      method,
+      ...(effect !== undefined && { effect }),
+      ...(config.scope !== undefined && { scope: config.scope }),
+      ...((meta ?? config.meta) !== undefined && { meta: meta ?? config.meta }),
+    });
+
     if (definition.output !== undefined) {
-      const { action, method, meta, handler, ...tool } = definition;
-      const identity: RuntimeToolIdentity = {
-        serviceName: config.serviceName,
-        action,
-        method,
-        ...(config.scope !== undefined && { scope: config.scope }),
-        ...((meta ?? config.meta) !== undefined && { meta: meta ?? config.meta }),
-      };
+      const { action, method, effect, meta, handler, ...tool } = definition;
       return defineRuntimeTool({
         ...tool,
-        identity,
+        identity: buildIdentity({ action, method, effect, meta }),
         handler: (context) => handler(parseContext(context)),
       });
     }
 
-    const { action, method, meta, handler, ...tool } = definition;
-    const identity: RuntimeToolIdentity = {
-      serviceName: config.serviceName,
-      action,
-      method,
-      ...(config.scope !== undefined && { scope: config.scope }),
-      ...((meta ?? config.meta) !== undefined && { meta: meta ?? config.meta }),
-    };
+    const { action, method, effect, meta, handler, ...tool } = definition;
     return defineRuntimeTool({
       ...tool,
-      identity,
+      identity: buildIdentity({ action, method, effect, meta }),
       handler: (context) => handler(parseContext(context)),
     });
   }
@@ -234,6 +249,7 @@ export function agentPresenterOf(
 }
 
 function runtimeToolIdentity(definition: RuntimeToolDefinition): OperationIdentity {
+  assertRuntimeToolEffect(definition.name, definition.identity.effect);
   return {
     method: definition.identity.method,
     desc: definition.description,
@@ -241,6 +257,7 @@ function runtimeToolIdentity(definition: RuntimeToolDefinition): OperationIdenti
     key: definition.identity.action,
     toolName: definition.name,
     scope: definition.identity.scope,
+    effect: definition.identity.effect,
     meta: definition.identity.meta,
     annotations: definition.annotations,
     ui: definition.ui,
@@ -248,11 +265,11 @@ function runtimeToolIdentity(definition: RuntimeToolDefinition): OperationIdenti
   };
 }
 
+/** Add execution to one projected runtime tool; its advertised document is the projection's. */
 export function runtimeToolMountable(
-  definition: RuntimeToolDefinition,
-  assertName = true,
+  projected: ProjectedRuntimeTool<RuntimeToolDefinition>,
 ): MountableTool {
-  const projected = projectRuntimeTool(definition, assertName);
+  const definition = projected.source;
   const method: ToolOperation = {
     ...runtimeToolIdentity(definition),
     inputSchema: definition.input,

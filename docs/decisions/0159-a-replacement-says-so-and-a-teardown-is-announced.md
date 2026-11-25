@@ -2,7 +2,7 @@
 title: A replacement says so, and a teardown is announced
 description: A snapshot taken mid-restart used to be indistinguishable from a resource that failed on its own, and a closing watch hub dropped its subscribers in silence; both now say what is happening, and neither says it through a lifecycle state.
 type: decision
-status: active
+status: accepted
 created: 2026-09-03
 updated: 2026-09-03
 ---

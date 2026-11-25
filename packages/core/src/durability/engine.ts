@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { raceAbort } from '../internal/abort-race';
+import { linkAbortSignals, raceAbort } from '../internal/abort-race';
 import {
   DURABILITY_EVENT_EVENT_KIND,
   DURABILITY_STEP_EVENT_KIND,
@@ -178,12 +178,16 @@ export function createLocalStepDurability(
         (signal): signal is AbortSignal => signal !== undefined,
       );
       const result = detachedResult<EffectOutcome<P>>(existing);
-      if (signals.length === 0) return result;
-      const signal = AbortSignal.any(signals);
-      return raceAbort(result, signal).catch((error: unknown) => {
-        if (signal.aborted) throw new StepAbortedError(name);
-        throw error;
-      });
+      const [first, second] = signals;
+      if (!first) return result;
+      // Linked only while this caller waits: the engine's signal outlives every effect.
+      const { signal, release } = linkAbortSignals(second, first);
+      return raceAbort(result, signal)
+        .catch((error: unknown) => {
+          if (signal.aborted) throw new StepAbortedError(name);
+          throw error;
+        })
+        .finally(release);
     }
     const pending = executeEffect<P>(
       { store, conversationId, runId, signal: options.signal, readLedger },

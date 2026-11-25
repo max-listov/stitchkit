@@ -8,12 +8,9 @@ import type {
   ResponseMetadata,
   Transport,
 } from '../contract/define';
+import type { OperationEffect } from '../contract/operation-effect';
 import type { HandlerContext, RuntimeContext } from '../contract/runtime-context';
-import type {
-  EndpointMcpPolicy,
-  EndpointToolAnnotations,
-  EndpointUiMeta,
-} from '../contract/tool-options';
+import type { EndpointToolOptions } from '../contract/tool-options';
 import type { EndpointToolView } from '../contract/tool-view';
 import type { StitchLogger } from '../internal/logger';
 import type { PathParams } from '../internal/route-pattern';
@@ -116,6 +113,7 @@ export type EndpointHandlerContext<
 // The default is the loose runtime context, not `HandlerContext` (whose
 // `params` default to `undefined`): the per-endpoint context intersects the
 // base with the inferred params, and `undefined & { id: string }` is `never`.
+/** Map of typed endpoint handler implementations keyed by contract endpoint name. */
 export type Handlers<
   C extends Record<string, EndpointDef>,
   TCtx extends RuntimeContext = RuntimeContext,
@@ -209,9 +207,11 @@ export interface StreamingMultipartImplementation {
 /**
  * Stable identity shared by HTTP contract endpoints and pathless native tool
  * operations. Tool lifecycle/audit consume this shape; only `MethodDef` adds an
- * HTTP route path and executable contract schemas.
+ * HTTP route path and executable contract schemas. The tool options it carries
+ * are the endpoint's `tool` group, declared once in `EndpointToolOptions`.
  */
-export interface OperationIdentity {
+export interface OperationIdentity
+  extends Pick<EndpointToolOptions, 'ui' | 'annotations' | 'mcp' | 'inputRecursionDepth'> {
   method: HttpMethod;
   desc: string;
   /**
@@ -228,12 +228,8 @@ export interface OperationIdentity {
   key: string;
   toolName?: string;
   scope?: string;
-  /** MCP Apps widget metadata — carried onto the MCP tool's `_meta.ui`. */
-  ui?: EndpointUiMeta;
-  /** MCP behavioural hints — carried onto the MCP tool's `annotations`. */
-  annotations?: EndpointToolAnnotations;
-  /** MCP-only multi-round input gate carried with operation identity. */
-  mcp?: EndpointMcpPolicy;
+  /** Closed side-effect classification (`'read'` or `'write'`) declared on the operation. */
+  effect?: OperationEffect;
   /**
    * Opaque app-defined metadata from `EndpointDef.meta` — the core gives it no
    * meaning. Read it in lifecycle hooks (`endpoint.meta?.X`) or on tool mounts;
@@ -292,6 +288,7 @@ export interface AuthorizationContext extends RuntimeContext {
   files?: never;
 }
 
+/** Bound service definition produced by `implement` and mounted on a handler or server. */
 export interface ServiceDef {
   name: string;
   prefix: string;
@@ -299,6 +296,7 @@ export interface ServiceDef {
   methods: Record<string, MethodDef<unknown, unknown, unknown>>;
 }
 
+/** Request lifecycle hooks invoked across routing, authorization, execution, and error handling. */
 export interface LifecycleHooks {
   onRequest?: (req: Request) => undefined | Response | Promise<undefined | Response>;
   authorize?: (ctx: AuthorizationContext, endpoint: MethodDef) => void | Promise<void>;
@@ -337,6 +335,7 @@ export interface LifecycleHooks {
  */
 export type RouteGroupHooks = Omit<LifecycleHooks, 'onRequest'>;
 
+/** Collection of services sharing an optional URL path prefix and group lifecycle hooks. */
 export interface RouteGroup {
   pathPrefix?: string;
   services: ServiceDef[];
@@ -372,6 +371,7 @@ export interface RawRouteContext<TServer = unknown> {
   ipAddress?: string;
 }
 
+/** Non-contract HTTP route handled directly as `Request` to `Response` within the same router. */
 export interface RawRoute<TServer = unknown> {
   method: HttpMethod | 'ALL';
   /**
@@ -523,7 +523,7 @@ export interface HandlerConfig<TServer = unknown> {
    * without credentials, from the application's own data. Socket.IO keeps its
    * own `cors`.
    */
-  cors?: CorsConfig | CorsOriginPolicy;
+  cors?: CorsConfig | CorsOriginPolicy | undefined;
   /**
    * The current frontend build, named on every response as `X-Build-Id` so a
    * browser can tell it is running a bundle the server no longer serves

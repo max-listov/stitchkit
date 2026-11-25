@@ -23,6 +23,10 @@
       "stitchkit/tools": ["./src/entrypoints/tools.ts"]
     }
   },
-  "include": ["src", "tests", "examples", "scripts/generate-native-assets.ts"],
-  "exclude": ["tests/fixtures/next-ssr-retry"]
+  "include": ["src", "tests", "examples", "scripts/**/*.ts"],
+  "exclude": [
+    "tests/fixtures/next-ssr-retry",
+    "scripts/consumer-lane/fixtures",
+    "scripts/consumer-lane/neutral-library"
+  ]
 }

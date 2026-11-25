@@ -1,9 +1,12 @@
 // Guard removal is paused while a competing writer arrives: the competitor must wait for the guard owner.
 import { mock } from 'bun:test';
 import * as fs from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { until } from '../support/until';
 
-const root = await fs.mkdtemp('/tmp/stitchkit-guard-pause-');
+// Under `tmpdir()`, not a literal `/tmp`: the leak gate checks the run's own TMPDIR.
+const root = await fs.mkdtemp(join(tmpdir(), 'stitchkit-guard-pause-'));
 const path = `${root}/lock`;
 const guard = `${path}.reclaim`;
 const realUnlink = fs.unlink;

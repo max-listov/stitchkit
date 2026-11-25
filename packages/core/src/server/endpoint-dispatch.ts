@@ -5,7 +5,9 @@
  * path with the context bound so far.
  */
 
-import { setRequestEndpoint } from '../observability/context';
+import { badRequest } from '../contract/errors';
+import { MalformedQueryError } from '../internal/request';
+import { getRequestContext } from '../observability/context';
 import { buildBaseContext, parsePathParamsInto, parseRequestPayloadInto } from './context';
 import { endpointResponse } from './endpoint-response';
 import type { HandlerState, RequestState } from './handler-state';
@@ -27,7 +29,11 @@ export async function dispatchEndpoint<TServer>(
   // Surface the matched operation's stable identity into the request context
   // before validation — a no-op without an active observability context, so an
   // audit event is attributed to its `(service, action)` even on a 400. → ADR 0022 / 0029.
-  setRequestEndpoint(method.serviceName, method.key);
+  const activeContext = request.context ?? getRequestContext();
+  if (activeContext) {
+    activeContext.serviceName = method.serviceName;
+    activeContext.action = method.key;
+  }
 
   let multipartLifecycle: Awaited<ReturnType<typeof parseRequestPayloadInto>>;
   try {
@@ -40,14 +46,21 @@ export async function dispatchEndpoint<TServer>(
       await groupHooks.authorize(ctx, method);
     }
 
-    multipartLifecycle = await parseRequestPayloadInto(
-      ctx,
-      req,
-      url,
-      method,
-      config.maxJsonBodyBytes,
-      request.cors,
-    );
+    try {
+      multipartLifecycle = await parseRequestPayloadInto(
+        ctx,
+        req,
+        url,
+        method,
+        config.maxJsonBodyBytes,
+        request.cors,
+      );
+    } catch (payloadError) {
+      if (payloadError instanceof MalformedQueryError) {
+        badRequest(payloadError.message);
+      }
+      throw payloadError;
+    }
 
     if (hooks?.beforeHandle) {
       await hooks.beforeHandle(ctx, method);

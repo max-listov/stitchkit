@@ -1,6 +1,13 @@
+---
+title: "ADR 0237 — The release commit holds release metadata only"
+type: decision
+status: accepted
+created: 2026-10-05
+updated: 2026-10-05
+---
+
 # 0237 — The release commit holds release metadata only
 
-**Status:** Accepted
 **Date:** 2026-10-05
 
 Builds on ADR 0136. Invariants I8 and I14.

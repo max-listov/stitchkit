@@ -20,6 +20,8 @@
  */
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { type FenceState, stepFence } from './markdown-fences';
+import { comparePreOneVersions } from './release-notes';
 
 const ROOT = join(import.meta.dir, '..');
 const GUIDE_DIR = join(ROOT, 'docs/guide');
@@ -133,6 +135,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'request and tool-call observability, W3C trace context, createObservability',
   ],
   [
+    'spend.md',
+    'Spend',
+    'the spend gateway for paid model APIs, the spooled ledger, receipts, reconciliation and the coverage guard',
+  ],
+  [
     'testing-and-deployment.md',
     'Testing & deployment',
     'in-process testing; deploying on Bun and on Node (serveNode)',
@@ -161,6 +168,11 @@ const GUIDE: Array<[file: string, title: string, desc: string]> = [
     'voice.md',
     'Voice',
     'stitchkit/voice — sentences cut while a reply streams, the text a voice reads, a speech queue that synthesises ahead and stops on interruption',
+  ],
+  [
+    'sync.md',
+    'Sync',
+    'stitchkit/sync and stitchkit/sync/postgres — the outbox decision, pending edits over remote rows, tombstones, the cursor session, an open outcome vocabulary; versions that commit in order, a change ledger and a feed inside your transaction; SQLite migrations',
   ],
   [
     'telegram.md',
@@ -257,6 +269,13 @@ export const GUIDE_SLICES: GuideMap = {
       './agent-runtime/react',
       './agent-runtime/realtime',
       './agent-runtime/openrouter',
+      './agent-runtime/postgres',
+      './agent-executor',
+      './agent-executor/acp',
+      './agent-executor/claude',
+      './agent-executor/claude-sdk',
+      './agent-executor/codex',
+      './agent-executor/testing',
       './agent-runtime/sqlite/bun',
       './agent-runtime/sqlite/node',
       './agent-runtime/sandbox',
@@ -269,7 +288,6 @@ export const GUIDE_SLICES: GuideMap = {
       './application/opentelemetry',
       './application/diagnostic-journal',
       './application/directory-inbox',
-      './application/schemas',
     ],
   },
   'sandbox.md': { primary: './agent-runtime/sandbox' },
@@ -282,6 +300,7 @@ export const GUIDE_SLICES: GuideMap = {
   'auth-and-errors.md': { primary: './server', also: ['./node', './contract', '.'] },
   'oauth.md': { primary: './oauth', also: ['./google'] },
   'observability.md': { primary: './observability' },
+  'spend.md': { primary: './spend', also: ['./spend/testing'] },
   'testing-and-deployment.md': { primary: './testing', also: ['./server', './node'] },
   'multi-tenant.md': { primary: './server' },
   'frontend-integrations.md': { primary: './react' },
@@ -290,6 +309,7 @@ export const GUIDE_SLICES: GuideMap = {
   'geo.md': { primary: './geo', also: ['./geo/contract'] },
   'xlsx.md': { primary: './xlsx' },
   'voice.md': { primary: './voice' },
+  'sync.md': { primary: './sync', also: ['./sync/postgres', './application'] },
   'telegram.md': {
     primary: './telegram',
     also: [
@@ -388,16 +408,15 @@ function guideText(file: string): string {
   return stripFrontMatter(readFileSync(join(GUIDE_DIR, file), 'utf8')).trim();
 }
 
-const FENCE = /^\s*(```|~~~)/;
-
 /** Split at headings of exactly `level`, ignoring `#` lines inside code fences. */
 function sectionsAt(markdown: string, level: number): string[] {
   const heading = new RegExp(`^#{${level}} `);
   const sections: string[][] = [[]];
-  let fenced = false;
+  let fence: FenceState | null = null;
   for (const line of markdown.split('\n')) {
-    if (FENCE.test(line)) fenced = !fenced;
-    if (!fenced && heading.test(line)) sections.push([]);
+    const stepped = stepFence(line, fence);
+    fence = stepped.fence;
+    if (!stepped.isDelimiter && fence === null && heading.test(line)) sections.push([]);
     sections[sections.length - 1]?.push(line);
   }
   return sections.map((lines) => lines.join('\n').trim()).filter((s) => s.length > 0);
@@ -406,10 +425,11 @@ function sectionsAt(markdown: string, level: number): string[] {
 /** Paragraphs separated by blank lines outside code fences. */
 function paragraphsOf(markdown: string): string[] {
   const paragraphs: string[][] = [[]];
-  let fenced = false;
+  let fence: FenceState | null = null;
   for (const line of markdown.split('\n')) {
-    if (FENCE.test(line)) fenced = !fenced;
-    if (!fenced && line.trim() === '') paragraphs.push([]);
+    const stepped = stepFence(line, fence);
+    fence = stepped.fence;
+    if (!stepped.isDelimiter && fence === null && line.trim() === '') paragraphs.push([]);
     else paragraphs[paragraphs.length - 1]?.push(line);
   }
   return paragraphs.map((lines) => lines.join('\n')).filter((p) => p.trim().length > 0);
@@ -592,16 +612,6 @@ function referenceByEntrypoint(
   return byEntry;
 }
 
-const versionKey = (version: string): number[] => version.split('.').map(Number);
-const compareVersions = (a: string, b: string): number => {
-  const [x, y] = [versionKey(a), versionKey(b)];
-  for (let i = 0; i < Math.max(x.length, y.length); i++) {
-    const d = (x[i] ?? 0) - (y[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  return 0;
-};
-
 /** The version an upgrading section belongs to, or null for general guidance. */
 function sectionVersion(section: string): string | null {
   const title = section.split('\n', 1)[0] ?? '';
@@ -624,7 +634,7 @@ function upgradingSlices(markdown: string): Slice[] {
     if (version === null) general.push(section);
     else versioned.push({ version, text: section });
   }
-  versioned.sort((a, b) => compareVersions(b.version, a.version));
+  versioned.sort((a, b) => comparePreOneVersions(b.version, a.version));
 
   const budget = SLICE_LIMIT_BYTES - HEADER_RESERVE_BYTES - 512;
   const ranges: { newest: string; oldest: string; texts: string[] }[] = [];
@@ -737,7 +747,7 @@ function renderIndex(slices: readonly Slice[]): string {
     '',
     '> Contract-first backend framework for Bun and Node. One `defineContract()` becomes an HTTP API, MCP tools, AI-agent tools, a CLI and a fully-typed client — one source of truth, no drift.',
     '',
-    'Build with stitchkit: define a contract once, then `implement` it and serve it (`createServer` on Bun, `serveNode` on Node ≥ 22). The same contract drives MCP / agent tools and a typed client, so the transports cannot diverge.',
+    'Build with stitchkit: define a contract once, then `implement` it and serve it (`createServer` on Bun ≥ 1.4, `serveNode` on Node ≥ 22.3). The same contract drives MCP / agent tools and a typed client, so the transports cannot diverge.',
     '',
     '## How to read these docs',
     '',

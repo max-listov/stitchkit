@@ -1,7 +1,7 @@
 import type { RuntimeContext } from '../contract/runtime-context';
 import type { OperationIdentity } from '../server/types';
+import type { ToolGate } from '../tools/access';
 import { ToolExecutionControlError, type ToolExecutionControlReason } from '../tools/execute';
-import type { ToolLifecycle } from '../tools/execute-hooks';
 
 export interface AgentToolFenceContext {
   runId: string;
@@ -33,7 +33,7 @@ async function assertFence(
 }
 
 /** Compose beside auth/application lifecycles with `composeToolLifecycle`. */
-export function createAgentToolFenceLifecycle(config: AgentToolFenceConfig): ToolLifecycle {
+export function createAgentToolFenceLifecycle(config: AgentToolFenceConfig): ToolGate {
   const callContext = (
     ctx: RuntimeContext,
     endpoint: OperationIdentity,

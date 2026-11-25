@@ -26,7 +26,7 @@ const command = defineCliCommand({
 });
 const route = routeCliArgv(['measure', '--text', 'hello', '--repeat', '2', '--json']);
 const parsed = parseCliArgs(route.commandArgv, command.input);
-async function runMeasure(argv) {
+async function runCli(argv) {
   let stdout = '';
   let stderr = '';
   let code;
@@ -46,6 +46,10 @@ async function runMeasure(argv) {
     },
     stdin: async () => null,
   });
+  return { code, stdout, stderr };
+}
+async function runMeasure(argv) {
+  const { code, stdout, stderr } = await runCli(argv);
   assert.equal(code, 0, stderr);
   assert.equal(stderr, '');
   return JSON.parse(stdout);
@@ -57,8 +61,15 @@ for (const argv of [
   assert.deepEqual(await runMeasure(argv), { size: 10 });
 }
 assert.equal(measureCalls, 2);
+// A bare `--dry-run` separated from `false` by the command is refused with the migration's
+// spelling, and the spelling the migration gives still previews without calling the handler.
+const separated = await runCli(['--dry-run', 'measure', 'false', '--repeat', '2', '--json']);
+assert.equal(separated.code, 2);
+assert.equal(separated.stdout, '');
+assert.match(separated.stderr, /--dry-run=true/);
+assert.match(separated.stderr, /-- false/);
 assert.deepEqual(
-  await runMeasure(['--dry-run', 'measure', 'false', '--repeat', '2', '--json']),
+  await runMeasure(['--dry-run=true', 'measure', 'false', '--repeat', '2', '--json']),
   {
     command: 'measure',
     args: { text: 'false', repeat: 2 },
@@ -204,12 +215,13 @@ const managed = {
   name: 'managed',
   description: 'A managed operation',
   identity: { serviceName: 'probe', action: 'managed', method: 'POST' },
-  transports: ['CLI'],
+  expose: ['CLI'],
   input: command.input,
   output: command.output,
   handler: ({ input }) => ({ size: input.text.length * input.repeat }),
 };
 const invoker = await createCliInvoker({
+  access: { open: 'local-operator' },
   name: 'invoker-probe',
   commands: [command],
   runtimeTools: [managed],

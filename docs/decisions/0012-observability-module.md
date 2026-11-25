@@ -2,13 +2,13 @@
 title: "ADR 0012 — A built-in observability module"
 type: decision
 status: accepted
+amendedBy: ["0063"]
 created: 2026-05-20
 updated: 2026-05-20
 ---
 
 # ADR 0012 — A built-in observability module
 
-- **Status:** Accepted
 - **Date:** 2026-05-20
 
 ## Context

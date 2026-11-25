@@ -2,13 +2,15 @@
 title: "ADR 0014 — The tool surface carries the same contract guarantees as HTTP"
 type: decision
 status: accepted
+amendedBy: ["0311"]
 created: 2026-05-20
 updated: 2026-05-20
 ---
 
 # ADR 0014 — The tool surface carries the same contract guarantees as HTTP
 
-- **Status:** Accepted — refines [ADR 0007](0007-mcp-agent-tools.md)
+**Relations:** refines [ADR 0007](0007-mcp-agent-tools.md)
+
 - **Date:** 2026-05-20
 
 ## Context
@@ -44,7 +46,9 @@ over HTTP:
 3. **The lifecycle gate.** `ToolLifecycle` (`beforeHandle` / `afterHandle`) is
    the tool-side twin of `createServer`'s hooks. A `createAuthHook` result
    passed as `lifecycle.beforeHandle` scope-guards tools by the **same** rules
-   it enforces on HTTP.
+   it enforces on HTTP (amended by [ADR 0311](0311-planned-breaking-release-access-expose-and-clean-boundaries.md):
+   optional `lifecycle` is replaced by required mount-time `access: { gate } | { open }`
+   enforced before the first call).
 4. **The reserved-key guard.** `params`, `input` and `source` are written onto
    the context last — neither static context nor a `ToolExtend.resolve` result
    can shadow them.

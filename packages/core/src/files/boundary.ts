@@ -1,8 +1,11 @@
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { ManagedFilePathSchema, type ManagedFileRef } from '../contract/file-ref';
+import { abortReason } from '../internal/abort-race';
 import { writeAtomicFileStaged } from '../internal/atomic-file';
 import { AtomicFilePublicationError } from '../internal/atomic-publication';
+import { assertTimerMs } from '../internal/deadline';
+import { errnoOf } from '../internal/errno';
 import type { FileObservation } from '../internal/file-observation';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { isWithinDir } from '../internal/within-dir';
@@ -120,11 +123,6 @@ function filePath(path: string): string {
   return parsed.data;
 }
 
-function errorCode(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
-  return typeof error.code === 'string' ? error.code : undefined;
-}
-
 function ioError(message: string, error: unknown): ManagedFileError {
   if (error instanceof ManagedFileError) return error;
   return new ManagedFileError('FILE_IO_ERROR', message, { cause: error });
@@ -134,7 +132,7 @@ async function realpathOrNull(path: string, message: string): Promise<string | n
   try {
     return await realpath(path);
   } catch (error) {
-    if (errorCode(error) === 'ENOENT') return null;
+    if (errnoOf(error) === 'ENOENT') return null;
     throw ioError(message, error);
   }
 }
@@ -167,8 +165,8 @@ async function bindRoot(config: ManagedFileBoundaryConfig): Promise<string> {
     } catch (error) {
       // Another boundary may have won the same bootstrap race. The canonical
       // bind and directory check below decide whether that winner is acceptable.
-      if (errorCode(error) !== 'EEXIST') {
-        if (errorCode(error) === 'ENOENT') {
+      if (errnoOf(error) !== 'EEXIST') {
+        if (errnoOf(error) === 'ENOENT') {
           throw new ManagedFileError('FILE_NOT_FOUND', 'managed-file root parent must exist');
         }
         throw ioError('failed to create managed-file root', error);
@@ -217,6 +215,8 @@ async function existingParent(root: string, target: string): Promise<string> {
 export async function createManagedFileBoundary(
   config: ManagedFileBoundaryConfig,
 ): Promise<ManagedFileBoundary> {
+  // Before the root is bound: the deadline of every inspection is a timer.
+  assertTimerMs('inspectionTimeoutMs', config.inspectionTimeoutMs);
   const root = await bindRoot(config);
   const maxReadBytes = positiveLimit(config.maxReadBytes, DEFAULT_MAX_BYTES, 'maxReadBytes');
   const maxWriteBytes = positiveLimit(
@@ -229,11 +229,7 @@ export async function createManagedFileBoundary(
     DEFAULT_INSPECTION_BYTES,
     'inspectionBytes',
   );
-  const inspectionTimeoutMs = positiveLimit(
-    config.inspectionTimeoutMs,
-    DEFAULT_INSPECTION_TIMEOUT_MS,
-    'inspectionTimeoutMs',
-  );
+  const inspectionTimeoutMs = config.inspectionTimeoutMs ?? DEFAULT_INSPECTION_TIMEOUT_MS;
 
   const targetFor = (path: string): { path: string; target: string } => {
     const relative = filePath(path);
@@ -279,12 +275,12 @@ export async function createManagedFileBoundary(
           timeoutMs: inspectionTimeoutMs,
         });
       } catch (error) {
-        if (options.signal?.aborted) throw options.signal.reason;
-        if (errorCode(error) === 'ELOOP')
+        if (options.signal?.aborted) throw abortReason(options.signal);
+        if (errnoOf(error) === 'ELOOP')
           throw new ManagedFileError('FILE_UNSAFE_LINK', 'managed file leaf is a symlink', {
             cause: error,
           });
-        if (errorCode(error) === 'ENOENT')
+        if (errnoOf(error) === 'ENOENT')
           throw new ManagedFileError('FILE_NOT_FOUND', 'managed file not found');
         throw ioError('failed to read managed file', error);
       }
@@ -334,7 +330,7 @@ export async function createManagedFileBoundary(
       } catch (error) {
         if (error instanceof AtomicFilePublicationError) throw error;
         if (options.signal?.aborted && error === options.signal.reason) throw error;
-        if (errorCode(error) === 'EEXIST')
+        if (errnoOf(error) === 'EEXIST')
           throw new ManagedFileError('FILE_EXISTS', 'managed file already exists');
         throw ioError('failed to write managed file', error);
       }

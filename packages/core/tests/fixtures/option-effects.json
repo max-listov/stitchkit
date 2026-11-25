@@ -522,6 +522,34 @@
       "test": "a listener that never settles is reported at its deadline and the next still runs"
     }
   },
+  "EndpointToolOptions": {
+    "name": {
+      "test": "MCP tools/list, catalog stamp, and CLI refused-view honor effect across contract and runtime tools"
+    },
+    "view": {
+      "test": "a call gets the projected card, and the handler was asked to load nothing"
+    },
+    "ui": {
+      "test": "tool list carries _meta.ui.resourceUri"
+    },
+    "annotations": {
+      "test": "MCP tools/list, catalog stamp, and CLI refused-view honor effect across contract and runtime tools"
+    },
+    "mcp": {
+      "test": "runs ordered rounds and exposes one typed aggregate only to the final handler"
+    },
+    "inputRecursionDepth": {
+      "test": "a tool declares its own depth over the surface depth"
+    }
+  },
+  "ToolInputProjection": {
+    "flattenUnionInput": {
+      "test": "every nested tool surface retains branch meaning and optional availability"
+    },
+    "inputRecursionDepth": {
+      "test": "depth %i writes every reference out and still accepts every deeper value"
+    }
+  },
   "EndpointToolView": {
     "defaults": {
       "test": "a call gets the projected card, and the handler was asked to load nothing"
@@ -570,6 +598,9 @@
     },
     "durability": {
       "test": "directory durability option syncs after publish and default leaves directory untouched"
+    },
+    "idempotent": {
+      "test": "idempotent replace: false performs 1 bounded retry on EEXIST -> ENOENT race and syncs directory on hit (async)"
     }
   },
   "SweepAtomicStagingOptions": {
@@ -685,6 +716,9 @@
     },
     "sensitiveValues": {
       "test": "a journal given them masks every occurrence in the message and in any field"
+    },
+    "repeat": {
+      "test": "integrates with createBoundedLogger and createJsonLogger via repeat option"
     }
   },
   "TelegramBroadcastConfig": {
@@ -799,6 +833,9 @@
     "maxAttempts": {
       "test": "post never throws, even when the observer and the sender do"
     },
+    "maxRetryAfterMs": {
+      "test": "a retry_after longer than maxRetryAfterMs drops the message as flood-wait and goes on with the next"
+    },
     "sensitivePatterns": {
       "test": "a bot token in a posted text is sent and reported masked, and so is an application pattern"
     },
@@ -860,6 +897,35 @@
     },
     "storageTimeoutMs": {
       "test": "a storage write that hangs does not keep logout from clearing, and a late write is undone"
+    },
+    "refreshAhead": {
+      "test": "proactive refresh fires once at exp minus lead and not 1 ms earlier"
+    },
+    "classifyRefreshFailure": {
+      "test": "a custom classifyRefreshFailure overrides the default classifier and never sees SessionExpiredError"
+    },
+    "retry": {
+      "test": "an unavailable refresh retries with configured backoff and keeps current credentials"
+    },
+    "storageRetryMs": {
+      "test": "a failed storage write after rotation resolves refresh, keeps new credentials and retries storage"
+    },
+    "onEvent": {
+      "test": "a rejected refresh stops proactive refresh, emits refresh-rejected and leaves scope and storage intact"
+    },
+    "clock": {
+      "test": "proactive refresh fires once at exp minus lead and not 1 ms earlier"
+    }
+  },
+  "SessionRefreshAhead": {
+    "expiresAt": {
+      "test": "proactive refresh fires once at exp minus lead and not 1 ms earlier"
+    },
+    "leadMs": {
+      "test": "proactive refresh fires once at exp minus lead and not 1 ms earlier"
+    },
+    "cooldownMs": {
+      "test": "a token shorter than leadMs refreshes at half its lifetime, and the cooldown never outlasts that half"
     }
   },
   "ChangeSubscriptionConfig": {
@@ -1284,7 +1350,7 @@
       "test": "keeps the rules, with bigint columns read back as strings"
     },
     "table": {
-      "test": "the schema for a migration is the table the store uses, and runs twice"
+      "test": "the DDL for a migration is the table the store uses, and runs twice"
     },
     "createTable": {
       "test": "without the table and without creating it, a store says so"
@@ -1429,6 +1495,14 @@
       "test": "descendants: terminate-after-leader ends a detached grandchild after a successful run, leave keeps it"
     }
   },
+  "CliInvocationScanOptions": {
+    "appGlobals": {
+      "test": "all 4 profiles × all atom classes × all valid slots satisfy the absolute oracle and refusals table"
+    },
+    "defaultCommand": {
+      "test": "all 4 profiles × all atom classes × all valid slots satisfy the absolute oracle and refusals table"
+    }
+  },
   "CliPublicationOptions": {
     "name": {
       "test": "publisher refuses a linked storage root and unsafe version/name/target values"
@@ -1498,7 +1572,7 @@
     "limits": {
       "test": "discovery.maxResponseBytes admits a large catalog while call keeps its default ceiling"
     },
-    "transports": {
+    "expose": {
       "test": "a connection that opts in contributes commands with no per-definition rewriting"
     },
     "catalog": {
@@ -1652,6 +1726,1628 @@
     },
     "verifyTimeoutMs": {
       "test": "a candidate that hangs is refused at the deadline, and told so"
+    }
+  },
+  "BranchAgentConversationInput": {
+    "requestKey": {
+      "test": "the same request returns the same receipt; a different declaration conflicts"
+    },
+    "destinationConversationId": {
+      "test": "an occupied companion and a purged identity are refused without changing their bytes"
+    },
+    "source": {
+      "test": "a settled middle remains branchable while the later source run has a live checkpoint"
+    },
+    "artifactAuthorization": {
+      "test": "spills rekey once, use fresh policy and stay private to the destination in SQLite and memory archives"
+    },
+    "applicationFiles": {
+      "test": "an attached image and a runtime spill are both readable after fork, restore and restart"
+    },
+    "applicationKeys": {
+      "test": "a retained record crosses fork, restore and restart unchanged"
+    }
+  },
+  "AgentChildManagerConfig": {
+    "store": {
+      "test": "a spawn that throws leaves no record and no event"
+    },
+    "host": {
+      "test": "the child limit holds between two managers over one SQLite store"
+    },
+    "spawn": {
+      "test": "a spawn that throws leaves no record and no event"
+    },
+    "remainingBudget": {
+      "test": "refuses a child past maxActiveChildren, with no budget, and from a spent parent"
+    },
+    "maxActiveChildren": {
+      "test": "refuses a child past maxActiveChildren, with no budget, and from a spent parent"
+    },
+    "now": {
+      "exempt": "A test clock seam: it changes only the timestamps a record carries, which every child test reads from the same clock."
+    }
+  },
+  "AgentScheduleServiceConfig": {
+    "host": {
+      "test": "two processes over one file fire a due row once"
+    },
+    "dispatch": {
+      "test": "two ticks over one due row fire it once"
+    },
+    "maxActivePerConversation": {
+      "test": "refuses a repeat shorter than minIntervalMs and a schedule past the active limit"
+    },
+    "minIntervalMs": {
+      "test": "refuses a repeat shorter than minIntervalMs and a schedule past the active limit"
+    },
+    "now": {
+      "test": "every fires once after sleeping through several intervals"
+    },
+    "setTimer": {
+      "test": "read failures back off with one recovery timer and recover without writes"
+    },
+    "clearTimer": {
+      "test": "read failures back off with one recovery timer and recover without writes"
+    },
+    "onError": {
+      "test": "read failures back off with one recovery timer and recover without writes"
+    },
+    "maxAttempts": {
+      "test": "a dispatch returning anything but an outcome delivered; failures stop at maxAttempts"
+    }
+  },
+  "AgentChildToolsConfig": {
+    "manager": {
+      "test": "child tools act only for the conversation of their run"
+    },
+    "run": {
+      "test": "a run context built by hand is refused by every factory"
+    }
+  },
+  "AgentScheduleToolsConfig": {
+    "service": {
+      "test": "schedule tools act only for the conversation of their run"
+    },
+    "run": {
+      "test": "a run context built by hand is refused by every factory"
+    }
+  },
+  "AgentStateToolsConfig": {
+    "state": {
+      "test": "state tools built in tools() write to the conversation of the run that called them"
+    },
+    "run": {
+      "test": "a run context built by hand is refused by every factory"
+    }
+  },
+  "AgentEventSearchToolsConfig": {
+    "run": {
+      "test": "a run context built by hand is refused by every factory"
+    },
+    "search": {
+      "test": "search returns exact event seq and denies cross-conversation results by default"
+    },
+    "store": {
+      "test": "search returns exact event seq and denies cross-conversation results by default"
+    },
+    "authorizeConversation": {
+      "test": "search returns exact event seq and denies cross-conversation results by default"
+    }
+  },
+  "LocalHostGuardConfig": {
+    "secret": {
+      "test": "a rebinding host name, a foreign origin and a wrong secret are each refused by name"
+    },
+    "origins": {
+      "test": "a rebinding host name, a foreign origin and a wrong secret are each refused by name"
+    }
+  },
+  "ClientConfig": {
+    "baseUrl": {
+      "test": "a read and a write declared idempotent go again and succeed"
+    },
+    "fetch": {
+      "test": "an injected fetch is used even where XMLHttpRequest exists"
+    },
+    "timeout": {
+      "test": "endpoint timeout is distinct from caller cancellation"
+    },
+    "headers": {
+      "test": "headers as function"
+    },
+    "credentials": {
+      "test": "credentials 'omit' is refused: XHR cannot drop same-origin cookies"
+    },
+    "onError": {
+      "test": "bare client preserves x-request-id on a structured API error"
+    },
+    "retry": {
+      "test": "a call is sent again at most retry.limit times"
+    }
+  },
+  "SyncSessionPorts": {
+    "isConnected": {
+      "test": "nothing starts while the transport is down"
+    },
+    "readCursor": {
+      "test": "a saved cursor starts an incremental session, no cursor starts a full one"
+    },
+    "beginFullSync": {
+      "test": "a disconnect drops the session; the interrupted full sync comes back as full"
+    },
+    "send": {
+      "test": "a send that throws is a transport failure with its own pause"
+    },
+    "apply": {
+      "test": "an apply failure resets a full session and retries after a growing pause"
+    },
+    "saveCursor": {
+      "test": "pages follow the continuation cursor with fresh request ids, the cursor is saved on the last"
+    },
+    "saveProgress": {
+      "test": "with a progress port each applied page saves the next cursor before it is requested"
+    },
+    "rebasePending": {
+      "test": "a full snapshot rebases pending changes after its last page, before its cursor"
+    },
+    "log": {
+      "test": "the app’s own deadline, retry policy, clock and log replace the defaults"
+    },
+    "schedule": {
+      "test": "the app’s own deadline, retry policy, clock and log replace the defaults"
+    },
+    "now": {
+      "test": "the app’s own deadline, retry policy, clock and log replace the defaults"
+    },
+    "deadlineMs": {
+      "test": "the app’s own deadline, retry policy, clock and log replace the defaults"
+    },
+    "retry": {
+      "test": "the app’s own deadline, retry policy, clock and log replace the defaults"
+    },
+    "newId": {
+      "test": "pages follow the continuation cursor with fresh request ids, the cursor is saved on the last"
+    }
+  },
+  "OutboxPolicy": {
+    "toChange": {
+      "test": "message bytes include the envelope, separators and UTF-8 at the exact boundary"
+    },
+    "emptyEnvelopeBytes": {
+      "test": "message bytes include the envelope, separators and UTF-8 at the exact boundary"
+    },
+    "maxBytes": {
+      "test": "a change larger than a whole batch is quarantined, not retried forever"
+    },
+    "maxChanges": {
+      "test": "a full batch asks to be read again at once; otherwise the next wake is the nearest retry"
+    },
+    "retryAfterMs": {
+      "test": "a full batch asks to be read again at once; otherwise the next wake is the nearest retry"
+    },
+    "keysOf": {
+      "test": "a row is ripe when no earlier unresolved row shares any of its keys"
+    },
+    "setAside": {
+      "test": "an app whose rows stand alone lets a set-aside row release its keys"
+    }
+  },
+  "OverlaySpec": {
+    "parse": {
+      "test": "a field an edit protects without carrying its value is kept from the local row"
+    },
+    "keep": {
+      "test": "a keep rule may keep nothing: a null priority does not hide the server’s"
+    }
+  },
+  "MemorySyncStoreConfig": {
+    "startAfter": {
+      "test": "a scope starts after the version it is given, so existing cursors stay valid"
+    },
+    "now": {
+      "test": "the clock dates ledger records, so prune keeps a record newer than its cut"
+    }
+  },
+  "PostgresSyncStoreConfig": {
+    "transaction": {
+      "test": "a writer that took a version first commits it first; a reader never skips it"
+    },
+    "query": {
+      "test": "the Postgres store keeps the rules, twice on one database"
+    },
+    "prefix": {
+      "test": "tables live under the prefix; without createTables the store uses only what a migration made"
+    },
+    "createTables": {
+      "test": "tables live under the prefix; without createTables the store uses only what a migration made"
+    },
+    "startAfter": {
+      "test": "tables live under the prefix; without createTables the store uses only what a migration made"
+    },
+    "now": {
+      "test": "tables live under the prefix; without createTables the store uses only what a migration made"
+    },
+    "lockTimeoutMs": {
+      "test": "a writer waiting on the counter longer than its timeout fails instead of hanging"
+    }
+  },
+  "PostgresAgentRuntimeStoreConfig": {
+    "transaction": {
+      "test": "a transaction the application already used is refused in words"
+    },
+    "query": {
+      "test": "passes the store conformance contract, a conflict at COMMIT included"
+    },
+    "prefix": {
+      "test": "two stores starting at once on an empty prefix both come up"
+    },
+    "createTables": {
+      "test": "createTables false refuses an empty prefix and accepts a migrated one"
+    },
+    "maxAttempts": {
+      "test": "maxAttempts bounds the retries of a conflicting transaction"
+    }
+  },
+  "PostgresAgentEventSearchConfig": {
+    "diacritics": {
+      "test": "unaccent refuses without the extension, folds with it, and the index keeps its choice"
+    },
+    "maxIndexedChars": {
+      "test": "a dense document past the tsvector limit is indexed from fewer characters"
+    },
+    "maxSyncEvents": {
+      "test": "a search far behind indexes its budget, refuses, and the next one continues"
+    }
+  },
+  "ClaudeCliDriverConfig": {
+    "executable": {
+      "test": "the Claude CLI driver passes the engine conformance kit"
+    },
+    "prefixArgs": {
+      "test": "the driver passes its model and permission mode, after the prefix, and the profile home only"
+    },
+    "model": {
+      "test": "the driver passes its model and permission mode, after the prefix, and the profile home only"
+    },
+    "permissionMode": {
+      "test": "the driver passes its model and permission mode, after the prefix, and the profile home only"
+    },
+    "ambient": {
+      "test": "the Claude CLI driver passes the engine conformance kit"
+    }
+  },
+  "CodexDriverConfig": {
+    "executable": {
+      "test": "the Codex driver passes the engine conformance kit"
+    },
+    "prefixArgs": {
+      "test": "the Codex driver passes the engine conformance kit"
+    },
+    "model": {
+      "test": "a new thread carries the approval policy, sandbox and model the driver was given"
+    },
+    "approvalPolicy": {
+      "test": "a new thread carries the approval policy, sandbox and model the driver was given"
+    },
+    "sandbox": {
+      "test": "a new thread carries the approval policy, sandbox and model the driver was given"
+    },
+    "ambient": {
+      "test": "the Codex driver passes the engine conformance kit"
+    }
+  },
+  "ClaudeSdkDriverConfig": {
+    "query": {
+      "test": "the Agent SDK leaf passes the engine conformance kit"
+    },
+    "sdkVersion": {
+      "test": "the leaf passes its model, permission mode and the profile environment to the query, and reports its SDK version"
+    },
+    "model": {
+      "test": "the leaf passes its model, permission mode and the profile environment to the query, and reports its SDK version"
+    },
+    "permissionMode": {
+      "test": "the leaf passes its model, permission mode and the profile environment to the query, and reports its SDK version"
+    },
+    "ambient": {
+      "test": "the leaf passes its model, permission mode and the profile environment to the query, and reports its SDK version"
+    }
+  },
+  "AcpDriverConfig": {
+    "executable": {
+      "test": "a missing agent, a signed-out agent and a silent agent each answer at once"
+    },
+    "args": {
+      "test": "the ACP driver passes the engine conformance kit"
+    },
+    "model": {
+      "test": "model, thought level and mode are set by category, in order, and a value not offered is refused"
+    },
+    "thoughtLevel": {
+      "test": "model, thought level and mode are set by category, in order, and a value not offered is refused"
+    },
+    "mode": {
+      "test": "model, thought level and mode are set by category, in order, and a value not offered is refused"
+    },
+    "mcpServers": {
+      "test": "an agent that resumes reopens with session/resume, and both pass the MCP servers"
+    },
+    "resolveFile": {
+      "test": "an image goes as an image block when the agent takes images, and is refused otherwise"
+    },
+    "maxImageBytes": {
+      "test": "an image goes as an image block when the agent takes images, and is refused otherwise"
+    },
+    "maxFrameBytes": {
+      "test": "a frame longer than maxFrameBytes fails the connection rather than growing without bound"
+    },
+    "ambient": {
+      "test": "the ACP driver passes the engine conformance kit"
+    },
+    "requestTimeoutMs": {
+      "test": "a missing agent, a signed-out agent and a silent agent each answer at once"
+    }
+  },
+  "SignLinkOptions": {
+    "secret": {
+      "test": "control: no link, another path, an edited parameter, another method or secret are refused"
+    },
+    "method": {
+      "test": "control: no link, another path, an edited parameter, another method or secret are refused"
+    },
+    "url": {
+      "test": "an absolute URL stays absolute, and the host is not part of what is signed"
+    },
+    "expiresInSeconds": {
+      "test": "a link stops opening the endpoint once it expires"
+    },
+    "now": {
+      "test": "a link stops opening the endpoint once it expires"
+    }
+  },
+  "VerifySignedLinkOptions": {
+    "secret": {
+      "test": "names why a link is refused"
+    },
+    "now": {
+      "test": "names why a link is refused"
+    }
+  },
+  "SqliteMigrationRun": {
+    "ledger": {
+      "test": "two lists in one database keep separate ledgers, and each starts at version 1"
+    },
+    "scope": {
+      "test": "a changed name or text anywhere stops the whole plan, naming the scope and version"
+    },
+    "migrations": {
+      "test": "applies what is missing once, and a second run applies nothing"
+    },
+    "begin": {
+      "test": "each migration begins the way the host asks and is dated by its clock"
+    },
+    "now": {
+      "test": "each migration begins the way the host asks and is dated by its clock"
+    }
+  },
+  "SyncResultReading": {
+    "rejected": {
+      "test": "a rejection waits for a person by default; an app whose rows stand alone acknowledges it"
+    },
+    "holdAfterFailures": {
+      "test": "a known failure is held after holdAfterFailures answers, when the app asks for it"
+    },
+    "failuresOf": {
+      "test": "a known failure is held after holdAfterFailures answers, when the app asks for it"
+    },
+    "holdAfter": {
+      "test": "an unknown outcome is held once it came back holdAfter times; a known failure never is"
+    },
+    "unknownOutcomesOf": {
+      "test": "an unknown outcome is held once it came back holdAfter times; a known failure never is"
+    }
+  },
+  "OutboxPage": {
+    "now": {
+      "test": "the next wake is the nearest of every wait, and a sent row waits its whole retry"
+    },
+    "policy": {
+      "test": "message bytes include the envelope, separators and UTF-8 at the exact boundary"
+    },
+    "previous": {
+      "test": "a full batch stays full on the next page, and bytes and wake carry over"
+    }
+  },
+  "SyncPushLimits": {
+    "maxChanges": {
+      "test": "a push refuses more changes or more bytes than its limits"
+    },
+    "maxBytes": {
+      "test": "a push refuses more changes or more bytes than its limits"
+    }
+  },
+  "BridgeHostConfig": {
+    "origins": {
+      "test": "origin trust, secret enforcement on abort & id-collision, logger.warn diagnostics, trustProxy refusal, and mixed-case header stripping"
+    },
+    "secret": {
+      "test": "origin trust, secret enforcement on abort & id-collision, logger.warn diagnostics, trustProxy refusal, and mixed-case header stripping"
+    },
+    "maxFrameBytes": {
+      "test": "oversized ASCII and multi-byte UTF-8 frames are rejected BEFORE JSON.parse on host and client, plus outbound frame-too-large"
+    },
+    "maxInFlight": {
+      "test": "duplicate id in flight is refused with duplicate-id and maxInFlight + 1 with host-busy"
+    },
+    "hostInstance": {
+      "test": "new hello replays GET automatically while non-idempotent POST fails without replay (including when initial hello was lost)"
+    },
+    "logger": {
+      "test": "origin trust, secret enforcement on abort & id-collision, logger.warn diagnostics, trustProxy refusal, and mixed-case header stripping"
+    }
+  },
+  "BridgeFetchOptions": {
+    "maxFrameBytes": {
+      "test": "oversized ASCII and multi-byte UTF-8 frames are rejected BEFORE JSON.parse on host and client, plus outbound frame-too-large"
+    },
+    "secret": {
+      "test": "origin trust, secret enforcement on abort & id-collision, logger.warn diagnostics, trustProxy refusal, and mixed-case header stripping"
+    },
+    "windowInstance": {
+      "test": "typed client calls succeed, out-of-order responses correlate, and 204 No Content works"
+    },
+    "onDroppedFrame": {
+      "test": "oversized ASCII and multi-byte UTF-8 frames are rejected BEFORE JSON.parse on host and client, plus outbound frame-too-large"
+    }
+  },
+  "RepeatLimitOptions": {
+    "windowMs": {
+      "test": "suppresses repeated warn and error within window and emits repeatedSinceLastWrite on release"
+    },
+    "maxKinds": {
+      "test": "flushes accumulated repeatedSinceLastWrite on LRU eviction when maxKinds is exceeded"
+    },
+    "now": {
+      "test": "suppresses repeated warn and error within window and emits repeatedSinceLastWrite on release"
+    },
+    "kindOf": {
+      "test": "kindOf names the kind, and kinds of different levels never merge"
+    },
+    "schedule": {
+      "test": "a kind that stops repeating still gets its count written when its window ends"
+    }
+  },
+  "VerifyArtifactOptions": {
+    "manifestFileName": {
+      "test": "allows payload named manifest.json when custom manifestFileName is used, while refusing self-inclusion"
+    },
+    "maxFileBytes": {
+      "test": "enforces maxFileBytes, maxManifestBytes, maxFiles (both manifest and disk), and checkRequirements failure"
+    },
+    "maxManifestBytes": {
+      "test": "enforces maxFileBytes, maxManifestBytes, maxFiles (both manifest and disk), and checkRequirements failure"
+    },
+    "maxFiles": {
+      "test": "enforces maxFileBytes, maxManifestBytes, maxFiles (both manifest and disk), and checkRequirements failure"
+    },
+    "checkRequirements": {
+      "test": "verifies a valid artifact directory, executable flags, digest and domain requirements"
+    }
+  },
+  "ActivateVersionedArtifactOptions": {
+    "rootDir": {
+      "test": "activates into releases/<key>, switches current atomically without mutating prior release, and rolls back with default verification"
+    },
+    "sourceDir": {
+      "test": "activates into releases/<key>, switches current atomically without mutating prior release, and rolls back with default verification"
+    },
+    "releaseKey": {
+      "test": "activates into releases/<key>, switches current atomically without mutating prior release, and rolls back with default verification"
+    },
+    "releasesDirName": {
+      "test": "pre-validates releasesDirName/currentLinkName, refuses symlinked releasesDir or non-symlink current before mutating"
+    },
+    "currentLinkName": {
+      "test": "pre-validates releasesDirName/currentLinkName, refuses symlinked releasesDir or non-symlink current before mutating"
+    },
+    "verifyOptions": {
+      "test": "activates into releases/<key>, switches current atomically without mutating prior release, and rolls back with default verification"
+    }
+  },
+  "RollbackVersionedArtifactOptions": {
+    "rootDir": {
+      "test": "activates into releases/<key>, switches current atomically without mutating prior release, and rolls back with default verification"
+    },
+    "previousTarget": {
+      "test": "activates into releases/<key>, switches current atomically without mutating prior release, and rolls back with default verification"
+    },
+    "releasesDirName": {
+      "test": "rollbackVersionedArtifact strictly rejects ., releases, symlink escapes, non-symlink current, and name collisions"
+    },
+    "currentLinkName": {
+      "test": "rollbackVersionedArtifact strictly rejects ., releases, symlink escapes, non-symlink current, and name collisions"
+    },
+    "verifyOptions": {
+      "test": "activates into releases/<key>, switches current atomically without mutating prior release, and rolls back with default verification"
+    }
+  },
+  "SystemdServiceUnitConfig": {
+    "after": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "description": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "environment": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "environmentFile": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "execStart": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "execStartPre": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "group": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "ioAccounting": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "killMode": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "limitNOFILE": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "noNewPrivileges": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "oomPolicy": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "oomScoreAdjust": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "restart": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "restartSec": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "runtimeDirectory": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "scope": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "timeoutStopSec": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "type": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "umask": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "user": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "wantedBy": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "wants": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "workingDirectory": {
+      "test": "escapes %, \\\\, \", and $ in ExecStart while preserving literal $ in Environment"
+    },
+    "allowHomeSpecifier": {
+      "test": "supports explicit %h preservation when allowHomeSpecifier is true while treating %% as an atomic literal pair"
+    }
+  },
+  "CheckSystemdUnitOptions": {
+    "adapter": {
+      "test": "checkSystemdUnit verifies digest, fragment path, UnitPath drop-ins at not-found, and fails on non-zero systemctl show"
+    },
+    "expectedContent": {
+      "test": "checkSystemdUnit verifies digest, fragment path, UnitPath drop-ins at not-found, and fails on non-zero systemctl show"
+    },
+    "expectedDigest": {
+      "test": "checkSystemdUnit supports expectedDigest, fails closed on UnitPath error, and handles LoadState=masked (/dev/null)"
+    },
+    "scope": {
+      "test": "checkSystemdUnit verifies digest, fragment path, UnitPath drop-ins at not-found, and fails on non-zero systemctl show"
+    },
+    "unitName": {
+      "test": "checkSystemdUnit verifies digest, fragment path, UnitPath drop-ins at not-found, and fails on non-zero systemctl show"
+    },
+    "unitPath": {
+      "test": "checkSystemdUnit verifies digest, fragment path, UnitPath drop-ins at not-found, and fails on non-zero systemctl show"
+    },
+    "unitSearchDirs": {
+      "test": "checkSystemdUnit verifies digest, fragment path, UnitPath drop-ins at not-found, and fails on non-zero systemctl show"
+    }
+  },
+  "ApplySystemdUnitOptions": {
+    "adapter": {
+      "test": "installAndStartSystemdUnit removes the links enable made on fresh-install rollback, succeeds when stable, and validates wait bounds"
+    },
+    "content": {
+      "test": "installAndStartSystemdUnit removes the links enable made on fresh-install rollback, succeeds when stable, and validates wait bounds"
+    },
+    "enable": {
+      "test": "installAndStartSystemdUnit removes the links enable made on fresh-install rollback, succeeds when stable, and validates wait bounds"
+    },
+    "mode": {
+      "test": "installAndStartSystemdUnit removes the links enable made on fresh-install rollback, succeeds when stable, and validates wait bounds"
+    },
+    "pollIntervalMs": {
+      "test": "installAndStartSystemdUnit removes the links enable made on fresh-install rollback, succeeds when stable, and validates wait bounds"
+    },
+    "scope": {
+      "test": "installAndStartSystemdUnit removes the links enable made on fresh-install rollback, succeeds when stable, and validates wait bounds"
+    },
+    "stabilityMs": {
+      "test": "reloadSystemdUnit rolls back on crash-looping MainPID change and reports rollback failure when rollback also fails"
+    },
+    "startupTimeoutMs": {
+      "test": "installAndStartSystemdUnit removes the links enable made on fresh-install rollback, succeeds when stable, and validates wait bounds"
+    },
+    "unitName": {
+      "test": "installAndStartSystemdUnit removes the links enable made on fresh-install rollback, succeeds when stable, and validates wait bounds"
+    },
+    "unitPath": {
+      "test": "installAndStartSystemdUnit removes the links enable made on fresh-install rollback, succeeds when stable, and validates wait bounds"
+    },
+    "unitSearchDirs": {
+      "test": "installAndStartSystemdUnit removes the links enable made on fresh-install rollback, succeeds when stable, and validates wait bounds"
+    }
+  },
+  "LaunchdPlistConfig": {
+    "associatedBundleIdentifiers": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "environmentVariables": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "keepAlive": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "label": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "limitLoadToSessionType": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "processType": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "programArguments": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "runAtLoad": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "standardErrorPath": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "standardOutPath": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "throttleInterval": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    },
+    "workingDirectory": {
+      "test": "renders XML-escaped LaunchAgent plist including &#13;, AssociatedBundleIdentifiers, LimitLoadToSessionType, and sorted EnvironmentVariables"
+    }
+  },
+  "ReloadLaunchdJobOptions": {
+    "adapter": {
+      "test": "uses plutil -lint + bootout + bootstrap (never kickstart -k) and supports validatePlist: none"
+    },
+    "content": {
+      "test": "uses plutil -lint + bootout + bootstrap (never kickstart -k) and supports validatePlist: none"
+    },
+    "expectedProgram": {
+      "test": "uses plutil -lint + bootout + bootstrap (never kickstart -k) and supports validatePlist: none"
+    },
+    "label": {
+      "test": "uses plutil -lint + bootout + bootstrap (never kickstart -k) and supports validatePlist: none"
+    },
+    "pollIntervalMs": {
+      "test": "uses plutil -lint + bootout + bootstrap (never kickstart -k) and supports validatePlist: none"
+    },
+    "plistPath": {
+      "test": "uses plutil -lint + bootout + bootstrap (never kickstart -k) and supports validatePlist: none"
+    },
+    "stabilityMs": {
+      "test": "uses plutil -lint + bootout + bootstrap (never kickstart -k) and supports validatePlist: none"
+    },
+    "uid": {
+      "test": "uses plutil -lint + bootout + bootstrap (never kickstart -k) and supports validatePlist: none"
+    },
+    "validatePlist": {
+      "test": "uses plutil -lint + bootout + bootstrap (never kickstart -k) and supports validatePlist: none"
+    },
+    "bootoutSettleTimeoutMs": {
+      "test": "restores/removes plist even when bootoutSettleTimeoutMs fails, honours mode/startupTimeoutMs, and validates wait bounds"
+    },
+    "mode": {
+      "test": "restores/removes plist even when bootoutSettleTimeoutMs fails, honours mode/startupTimeoutMs, and validates wait bounds"
+    },
+    "startupTimeoutMs": {
+      "test": "restores/removes plist even when bootoutSettleTimeoutMs fails, honours mode/startupTimeoutMs, and validates wait bounds"
+    }
+  },
+  "VerifySupervisedProcessOptions": {
+    "adapter": {
+      "test": "verifies live PID, exe, argv (prefix), canonicalized and @abstract Unix sockets, and confirms owner AFTER checks"
+    },
+    "argvMatch": {
+      "test": "reports runtime-conflict on exe mismatch or argv mismatch (exact vs prefix)"
+    },
+    "expectedArgv": {
+      "test": "verifies live PID, exe, argv (prefix), canonicalized and @abstract Unix sockets, and confirms owner AFTER checks"
+    },
+    "expectedExe": {
+      "test": "verifies live PID, exe, argv (prefix), canonicalized and @abstract Unix sockets, and confirms owner AFTER checks"
+    },
+    "pid": {
+      "test": "verifies live PID, exe, argv (prefix), canonicalized and @abstract Unix sockets, and confirms owner AFTER checks"
+    },
+    "recordedInstance": {
+      "test": "classifies ENOENT at Step 1 as process-gone, EPERM as process-unobservable, and checks recordedInstance"
+    },
+    "socketPath": {
+      "test": "verifies live PID, exe, argv (prefix), canonicalized and @abstract Unix sockets, and confirms owner AFTER checks"
+    }
+  },
+  "ConfigReloaderOptions": {
+    "clock": {
+      "test": "validates BEFORE stop, deduplicates onInvalidConfig per failureKey, and avoids restart on v1 -> broken -> v1"
+    },
+    "onError": {
+      "test": "guards sync/async observer exceptions, deduplicates validate errors, reports read/rollback errors, and validates numeric options"
+    },
+    "onInvalidConfig": {
+      "test": "validates BEFORE stop, deduplicates onInvalidConfig per failureKey, and avoids restart on v1 -> broken -> v1"
+    },
+    "onReload": {
+      "test": "validates BEFORE stop, deduplicates onInvalidConfig per failureKey, and avoids restart on v1 -> broken -> v1"
+    },
+    "pollIntervalMs": {
+      "test": "validates BEFORE stop, deduplicates onInvalidConfig per failureKey, and avoids restart on v1 -> broken -> v1"
+    },
+    "rollbackOnStartFailure": {
+      "test": "prevents hot-loop via lastFailedStartDigest and honors rollbackOnStartFailure (true vs false)"
+    },
+    "source": {
+      "test": "validates BEFORE stop, deduplicates onInvalidConfig per failureKey, and avoids restart on v1 -> broken -> v1"
+    },
+    "start": {
+      "test": "validates BEFORE stop, deduplicates onInvalidConfig per failureKey, and avoids restart on v1 -> broken -> v1"
+    },
+    "startTimeoutMs": {
+      "test": "refuses to call start(next) when stop(oldHandle) fails or exceeds stopTimeoutMs, and enforces startTimeoutMs"
+    },
+    "stop": {
+      "test": "refuses to call start(next) when stop(oldHandle) fails or exceeds stopTimeoutMs, and enforces startTimeoutMs"
+    },
+    "stopTimeoutMs": {
+      "test": "refuses to call start(next) when stop(oldHandle) fails or exceeds stopTimeoutMs, and enforces startTimeoutMs"
+    },
+    "validate": {
+      "test": "validates BEFORE stop, deduplicates onInvalidConfig per failureKey, and avoids restart on v1 -> broken -> v1"
+    }
+  },
+  "PolledJsonConfigSourceOptions": {
+    "digest": {
+      "test": "createPolledJsonConfigSource wraps PolledJsonFile + canonicalDigest, supports custom digest and size bounds"
+    },
+    "maxBytes": {
+      "test": "createPolledJsonConfigSource wraps PolledJsonFile + canonicalDigest, supports custom digest and size bounds"
+    },
+    "maxCacheBytes": {
+      "test": "createPolledJsonConfigSource wraps PolledJsonFile + canonicalDigest, supports custom digest and size bounds"
+    },
+    "path": {
+      "test": "createPolledJsonConfigSource wraps PolledJsonFile + canonicalDigest, supports custom digest and size bounds"
+    },
+    "schema": {
+      "test": "createPolledJsonConfigSource wraps PolledJsonFile + canonicalDigest, supports custom digest and size bounds"
+    }
+  },
+  "ConfigReloaderShutdownOptions": {
+    "gracePeriodMs": {
+      "test": "shutdown is idempotent, supports gracePeriodMs: 0, stops late-resolving start(next), and integrates with bindProcessSignals"
+    },
+    "signal": {
+      "test": "shutdown is idempotent, supports gracePeriodMs: 0, stops late-resolving start(next), and integrates with bindProcessSignals"
+    }
+  },
+  "EventLoopDelayMonitorOptions": {
+    "bucketMs": {
+      "test": "rotates O(1) ring buffer, expires spikes after windowMs, handles clock jumps, and closes idempotently"
+    },
+    "clock": {
+      "test": "rotates O(1) ring buffer, expires spikes after windowMs, handles clock jumps, and closes idempotently"
+    },
+    "createHistogram": {
+      "test": "protects against Node empty-histogram 511 ns bug and Bun p99 > max quantization bug"
+    },
+    "resolutionMs": {
+      "test": "validates options (I10 bucket cap) and fails loud when perf_hooks is unavailable"
+    },
+    "windowMs": {
+      "test": "rotates O(1) ring buffer, expires spikes after windowMs, handles clock jumps, and closes idempotently"
+    }
+  },
+  "VerifySignedBundleOptions": {
+    "bundlePath": {
+      "test": "verifySignedBundle accepts full Developer ID chain and refuses ad-hoc, missing team, broken chain, wrong identifier, or missing runtime"
+    },
+    "expectedBundleId": {
+      "test": "verifySignedBundle accepts full Developer ID chain and refuses ad-hoc, missing team, broken chain, wrong identifier, or missing runtime"
+    },
+    "expectedTeamId": {
+      "test": "verifySignedBundle accepts full Developer ID chain and refuses ad-hoc, missing team, broken chain, wrong identifier, or missing runtime"
+    },
+    "requireHardenedRuntime": {
+      "test": "verifySignedBundle accepts full Developer ID chain and refuses ad-hoc, missing team, broken chain, wrong identifier, or missing runtime"
+    },
+    "runner": {
+      "test": "verifySignedBundle accepts full Developer ID chain and refuses ad-hoc, missing team, broken chain, wrong identifier, or missing runtime"
+    },
+    "timeoutMs": {
+      "test": "verifySignedBundle accepts full Developer ID chain and refuses ad-hoc, missing team, broken chain, wrong identifier, or missing runtime"
+    }
+  },
+  "MacosLauncherConfig": {
+    "envOverrides": {
+      "test": "encodes every string as C byte arrays (zero raw string injection), uses posix_spawn, enforces getppid()==1, and ignores runtime argv by default"
+    },
+    "fixedArgs": {
+      "test": "encodes every string as C byte arrays (zero raw string injection), uses posix_spawn, enforces getppid()==1, and ignores runtime argv by default"
+    },
+    "forwardArgv": {
+      "test": "supports opt-in forwardArgv and requireLaunchdParent: false"
+    },
+    "requireLaunchdParent": {
+      "test": "supports opt-in forwardArgv and requireLaunchdParent: false"
+    },
+    "targetExecutable": {
+      "test": "encodes every string as C byte arrays (zero raw string injection), uses posix_spawn, enforces getppid()==1, and ignores runtime argv by default"
+    },
+    "workingDirectory": {
+      "test": "encodes every string as C byte arrays (zero raw string injection), uses posix_spawn, enforces getppid()==1, and ignores runtime argv by default"
+    }
+  },
+  "GenerateAppIconIcnsOptions": {
+    "outputPath": {
+      "test": "generateAppIconIcns builds all 10 iconset sizes, verifies icns magic, writes output, and cleans staging even on failure"
+    },
+    "rasterizeSvg": {
+      "test": "generateAppIconIcns builds all 10 iconset sizes, verifies icns magic, writes output, and cleans staging even on failure"
+    },
+    "runner": {
+      "test": "generateAppIconIcns builds all 10 iconset sizes, verifies icns magic, writes output, and cleans staging even on failure"
+    },
+    "source": {
+      "test": "generateAppIconIcns builds all 10 iconset sizes, verifies icns magic, writes output, and cleans staging even on failure"
+    },
+    "timeoutMs": {
+      "test": "generateAppIconIcns builds all 10 iconset sizes, verifies icns magic, writes output, and cleans staging even on failure"
+    }
+  },
+  "EnsureSignedBundleOptions": {
+    "adapter": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "afterSwapVerify": {
+      "test": "rolls back on post-swap verification failure and preserves stagingDir when rollback itself fails"
+    },
+    "arch": {
+      "test": "validates signingIdentity BEFORE current short-circuit, hashes entitlements/arch/identity drift, handles SWAP_FAILED and fresh-install rollback"
+    },
+    "bundleIdentifier": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "bundleName": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "bundlePath": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "bundleVersion": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "displayName": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "entitlementsPath": {
+      "test": "validates signingIdentity BEFORE current short-circuit, hashes entitlements/arch/identity drift, handles SWAP_FAILED and fresh-install rollback"
+    },
+    "entitlementsSha256": {
+      "test": "validates signingIdentity BEFORE current short-circuit, hashes entitlements/arch/identity drift, handles SWAP_FAILED and fresh-install rollback"
+    },
+    "executableName": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "expectedTeamId": {
+      "test": "validates signingIdentity BEFORE current short-circuit, hashes entitlements/arch/identity drift, handles SWAP_FAILED and fresh-install rollback"
+    },
+    "extraInfoPlistEntries": {
+      "test": "renderBundleInfoPlist embeds StitchkitBundleSpecDigest and computeBundleSpecDigest detects config drift"
+    },
+    "force": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "icon": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "launcher": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "lsBackgroundOnly": {
+      "test": "renderBundleInfoPlist embeds StitchkitBundleSpecDigest and computeBundleSpecDigest detects config drift"
+    },
+    "lsMinimumSystemVersion": {
+      "test": "renderBundleInfoPlist embeds StitchkitBundleSpecDigest and computeBundleSpecDigest detects config drift"
+    },
+    "lsUIElement": {
+      "test": "renderBundleInfoPlist embeds StitchkitBundleSpecDigest and computeBundleSpecDigest detects config drift"
+    },
+    "registerWithLaunchServices": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "requireHardenedRuntime": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "shortVersionString": {
+      "test": "installs fresh bundle, skips rebuild when current, and rebuilds on config drift or force: true"
+    },
+    "signingIdentity": {
+      "test": "validates signingIdentity BEFORE current short-circuit, hashes entitlements/arch/identity drift, handles SWAP_FAILED and fresh-install rollback"
+    }
+  },
+  "ForgetStaleRegistrationsOptions": {
+    "bundleId": {
+      "test": "forgetStaleRegistrations is fail-closed without filter, protects system roots, honors keepPaths and maxUnregistrations"
+    },
+    "bundleIdPrefix": {
+      "test": "forgetStaleRegistrations is fail-closed without filter, protects system roots, honors keepPaths and maxUnregistrations"
+    },
+    "keepPaths": {
+      "test": "forgetStaleRegistrations is fail-closed without filter, protects system roots, honors keepPaths and maxUnregistrations"
+    },
+    "maxDumpBytes": {
+      "test": "streams lsregister -dump in arbitrary UTF-8 chunks with O(1) parser, first-wins semantics, overlong line cap, and COMMAND_LIMIT translation"
+    },
+    "maxUnregistrations": {
+      "test": "forgetStaleRegistrations is fail-closed without filter, protects system roots, honors keepPaths and maxUnregistrations"
+    },
+    "pathExists": {
+      "test": "forgetStaleRegistrations is fail-closed without filter, protects system roots, honors keepPaths and maxUnregistrations"
+    },
+    "realpathFn": {
+      "test": "forgetBuildTree refuses root/system directories, canonicalizes /var <-> /private/var, and avoids sibling prefix collisions"
+    },
+    "removeExistingOutsideKeep": {
+      "test": "forgetStaleRegistrations is fail-closed without filter, protects system roots, honors keepPaths and maxUnregistrations"
+    },
+    "runner": {
+      "test": "forgetStaleRegistrations is fail-closed without filter, protects system roots, honors keepPaths and maxUnregistrations"
+    },
+    "timeoutMs": {
+      "test": "forgetStaleRegistrations is fail-closed without filter, protects system roots, honors keepPaths and maxUnregistrations"
+    }
+  },
+  "ForgetBuildTreeOptions": {
+    "buildDir": {
+      "test": "forgetBuildTree refuses root/system directories, canonicalizes /var <-> /private/var, and avoids sibling prefix collisions"
+    },
+    "bundleId": {
+      "test": "forgetBuildTree refuses root/system directories, canonicalizes /var <-> /private/var, and avoids sibling prefix collisions"
+    },
+    "bundleIdPrefix": {
+      "test": "forgetBuildTree refuses root/system directories, canonicalizes /var <-> /private/var, and avoids sibling prefix collisions"
+    },
+    "maxDumpBytes": {
+      "test": "streams lsregister -dump in arbitrary UTF-8 chunks with O(1) parser, first-wins semantics, overlong line cap, and COMMAND_LIMIT translation"
+    },
+    "maxUnregistrations": {
+      "test": "forgetStaleRegistrations is fail-closed without filter, protects system roots, honors keepPaths and maxUnregistrations"
+    },
+    "realpathFn": {
+      "test": "forgetBuildTree refuses root/system directories, canonicalizes /var <-> /private/var, and avoids sibling prefix collisions"
+    },
+    "runner": {
+      "test": "forgetBuildTree refuses root/system directories, canonicalizes /var <-> /private/var, and avoids sibling prefix collisions"
+    },
+    "timeoutMs": {
+      "test": "forgetBuildTree refuses root/system directories, canonicalizes /var <-> /private/var, and avoids sibling prefix collisions"
+    }
+  },
+  "InspectResponsibleProcessOptions": {
+    "adapter": {
+      "test": "inspectResponsibleProcess classifies attributed (/tmp <-> /private/tmp), observed, misattributed (.app2), and TOCTOU pid-reused"
+    },
+    "expectedBundlePath": {
+      "test": "inspectResponsibleProcess classifies attributed (/tmp <-> /private/tmp), observed, misattributed (.app2), and TOCTOU pid-reused"
+    },
+    "pid": {
+      "test": "inspectResponsibleProcess classifies attributed (/tmp <-> /private/tmp), observed, misattributed (.app2), and TOCTOU pid-reused"
+    }
+  },
+  "VerifyProcessSubtreeResponsibilityOptions": {
+    "adapter": {
+      "test": "verifyProcessSubtreeResponsibility records ephemeral gone children in gonePids and flags any misattributed descendant"
+    },
+    "expectedBundlePath": {
+      "test": "verifyProcessSubtreeResponsibility records ephemeral gone children in gonePids and flags any misattributed descendant"
+    },
+    "maxProcesses": {
+      "test": "parsePsPidPpidTable and collectProcessSubtreePids traverse BFS safely against cycles and enforce maxProcesses"
+    },
+    "rootPid": {
+      "test": "verifyProcessSubtreeResponsibility records ephemeral gone children in gonePids and flags any misattributed descendant"
+    }
+  },
+  "RegularFileReadOptions": {
+    "accept": {
+      "test": "sync accept sees the opened descriptor, so a swap at the path after open changes nothing"
+    },
+    "limit": {
+      "test": "refuses files exceeding limit and invalid limit values"
+    },
+    "noFollow": {
+      "test": "noFollow refuses a symlink at the path, sync and async, and a dangling one too"
+    }
+  },
+  "RegularFileAsyncReadOptions": {
+    "accept": {
+      "test": "async accept refuses before any byte is read, and runs on each attempt"
+    },
+    "limit": {
+      "test": "refuses files exceeding limit and invalid limit values"
+    },
+    "noFollow": {
+      "test": "noFollow refuses a symlink at the path, sync and async, and a dangling one too"
+    },
+    "signal": {
+      "test": "readRegularFile respects AbortSignal before and during read"
+    }
+  },
+  "PolledJsonOptions": {
+    "accept": {
+      "test": "accept runs on every real read and its refusal is an unreadable reading"
+    },
+    "limit": {
+      "test": "the byte limit applies to every polled read"
+    },
+    "maxCacheBytes": {
+      "test": "respects maxCacheBytes bound and never caches oversized payloads"
+    },
+    "noFollow": {
+      "test": "noFollow refuses a symlink, including one that points at the inode already cached"
+    }
+  },
+  "WaitForDirectoryOptions": {
+    "keepAlive": {
+      "test": "keepAlive: false leaves the process free to exit; the default holds it"
+    },
+    "settleMs": {
+      "test": "the deferred rescan finds a directory whose creation event the watcher missed, after settleMs"
+    },
+    "signal": {
+      "test": "abort rejects with the reason and closes every watcher"
+    }
+  },
+  "AgentStoreConformanceCapabilities": {
+    "archive": {
+      "test": "a declaration that disagrees with the store fails"
+    },
+    "branch": {
+      "test": "refuses capability mismatches in both directions (claimed vs implemented)"
+    },
+    "historyRestore": {
+      "test": "a driver without both members passes when it declares them false"
+    },
+    "planBranch": {
+      "test": "refuses capability mismatches in both directions (claimed vs implemented)"
+    }
+  },
+  "SpendGatewayConfig": {
+    "context": {
+      "test": "the runtime context fills what the explicit attribution leaves out, and nested attribution refines"
+    },
+    "fetch": {
+      "test": "records the attempt before the call, sends only its own credentials, and closes with the usage"
+    },
+    "maxEventLength": {
+      "test": "an event longer than maxEventLength is passed through but not parsed"
+    },
+    "newAttemptId": {
+      "test": "records the attempt before the call, sends only its own credentials, and closes with the usage"
+    },
+    "now": {
+      "test": "now times the attempt, and onLedgerError sees a close the ledger refused"
+    },
+    "onLedgerError": {
+      "test": "now times the attempt, and onLedgerError sees a close the ledger refused"
+    },
+    "providers": {
+      "test": "refuses before writing or sending: unknown provider, foreign origin, no attribution"
+    },
+    "store": {
+      "test": "a ledger that refuses the attempt stops the call"
+    },
+    "admit": {
+      "test": "admit refuses before the call: recorded as refused, nothing sent"
+    }
+  },
+  "SpooledSpendStoreConfig": {
+    "maxFileBytes": {
+      "test": "the spool bounds refuse what they cannot hold, and onSpoolError says why"
+    },
+    "maxPendingEntries": {
+      "test": "the spool bounds refuse what they cannot hold, and onSpoolError says why"
+    },
+    "onSpoolError": {
+      "test": "the spool bounds refuse what they cannot hold, and onSpoolError says why"
+    },
+    "path": {
+      "test": "a database that is down does not stop the call; recover delivers attempt before receipt"
+    },
+    "store": {
+      "test": "a database that is down does not stop the call; recover delivers attempt before receipt"
+    }
+  },
+  "ReconcilePendingSpendOptions": {
+    "limit": {
+      "test": "limit bounds one pass, and now stamps the reconciled receipt"
+    },
+    "now": {
+      "test": "limit bounds one pass, and now stamps the reconciled receipt"
+    },
+    "reconcilers": {
+      "test": "a pass settles what the provider now knows, leaves the rest pending, and counts failures"
+    },
+    "store": {
+      "test": "a store without pendingCosts or openAttempts is refused, not silently skipped"
+    },
+    "onError": {
+      "test": "a pass settles what the provider now knows, leaves the rest pending, and counts failures"
+    }
+  },
+  "DeferredAgentToolCommonConfig": {
+    "pins": {
+      "test": "refuses selected tools and dynamic pins before they exceed the shared active ceiling"
+    },
+    "search": {
+      "test": "bounds custom selection, results and evidence without retaining query content"
+    },
+    "activation": {
+      "test": "refuses selected tools and dynamic pins before they exceed the shared active ceiling"
+    },
+    "extend": {
+      "test": "the surface's extend and flattenUnionInput shape the manifest the selector ranks and the tools it mounts"
+    },
+    "flattenUnionInput": {
+      "test": "the surface's extend and flattenUnionInput shape the manifest the selector ranks and the tools it mounts"
+    },
+    "inputRecursionDepth": {
+      "test": "the schema-byte ceiling measures every schema as the mount advertises it"
+    },
+    "observe": {
+      "test": "bounds custom selection, results and evidence without retaining query content"
+    }
+  },
+  "OpenRouterProviderAccess": {
+    "defaultPolicy": {
+      "test": "defaultPolicy shapes a model resolvePolicy says nothing about"
+    },
+    "resolvePolicy": {
+      "test": "on the wire: tools go out with strict false, with the session and the routing"
+    },
+    "sessionPerConversation": {
+      "test": "end to end: an agent-runtime model call through the spend gateway is recorded with its invocation"
+    }
+  },
+  "OpenRouterSnapshotOptions": {
+    "apiKey": {
+      "test": "the snapshot sends the key, stamps its time, runs endpoint requests at most concurrency at once"
+    },
+    "concurrency": {
+      "test": "the snapshot sends the key, stamps its time, runs endpoint requests at most concurrency at once"
+    },
+    "endpointsFor": {
+      "test": "reads prices per million, never turns an unknown price into zero, and fetches endpoints"
+    },
+    "fetcher": {
+      "test": "the snapshot sends the key, stamps its time, runs endpoint requests at most concurrency at once"
+    },
+    "maxResponseBytes": {
+      "test": "bounds the response body and the concurrency"
+    },
+    "now": {
+      "test": "the snapshot sends the key, stamps its time, runs endpoint requests at most concurrency at once"
+    },
+    "signal": {
+      "test": "a signal or a timeout stops the snapshot"
+    },
+    "timeoutMs": {
+      "test": "a signal or a timeout stops the snapshot"
+    }
+  },
+  "AgentStepBarriers": {
+    "maxReasoningCharsPerStep": {
+      "test": "reasoning past its bound stops the run as policy_stop"
+    },
+    "maxToolCallsPerStep": {
+      "test": "a step making more calls than allowed has the extra one refused to the model"
+    },
+    "stepText": {
+      "test": "after-tools: a step whose call failed shows none of its text; a clean step shows it after the call"
+    },
+    "toolDependencies": {
+      "test": "a read of an entity waits for the step's earlier write of it"
+    }
+  },
+  "TelegramMarkdownSplitOptions": {
+    "limit": {
+      "test": "splitTelegramMarkdown honors default and custom limit options"
+    }
+  },
+  "CliCommandSettings": {
+    "aliases": {
+      "test": "valid commandSettings configures aliases, positionals, passthrough, result and wait together"
+    },
+    "passthrough": {
+      "test": "valid commandSettings configures aliases, positionals, passthrough, result and wait together"
+    },
+    "positionals": {
+      "test": "valid commandSettings configures aliases, positionals, passthrough, result and wait together"
+    },
+    "result": {
+      "test": "valid commandSettings configures aliases, positionals, passthrough, result and wait together"
+    },
+    "wait": {
+      "test": "polls a tool until done"
+    }
+  },
+  "SessionRefreshOptions": {
+    "rejected": {
+      "test": "refresh with already-replaced rejected credentials returns current credentials without rotating"
+    }
+  },
+  "SpendCoveragePolicy": {
+    "allowedFiles": {
+      "test": "passes when only the allowed file reaches the provider, and is red on a bare call in a new file"
+    },
+    "envKeys": {
+      "test": "finds %s"
+    },
+    "hosts": {
+      "test": "finds %s"
+    },
+    "modules": {
+      "test": "passes when only the allowed file reaches the provider, and is red on a bare call in a new file"
+    }
+  },
+  "OpenRouterAdmissionPolicy": {
+    "maxCompletionUsdPerMillion": {
+      "test": "parameters, context, price and endpoints decide; what the snapshot cannot show is unverified"
+    },
+    "maxPromptUsdPerMillion": {
+      "test": "parameters, context, price and endpoints decide; what the snapshot cannot show is unverified"
+    },
+    "maxSnapshotAgeMs": {
+      "test": "a stale snapshot verifies nothing, and an unknown model is refused"
+    },
+    "minContextLength": {
+      "test": "parameters, context, price and endpoints decide; what the snapshot cannot show is unverified"
+    },
+    "requireLiveEndpoint": {
+      "test": "parameters, context, price and endpoints decide; what the snapshot cannot show is unverified"
+    },
+    "requiredInputModalities": {
+      "test": "admission refuses openrouter/auto, a missing modality, and a snapshot from the future"
+    },
+    "requiredParameters": {
+      "test": "parameters, context, price and endpoints decide; what the snapshot cannot show is unverified"
+    }
+  },
+  "OpenRouterRequestPolicy": {
+    "looseTools": {
+      "test": "a model's own policy puts strict false on the wire, without the provider-wide switch"
+    },
+    "maxPrice": {
+      "test": "becomes OpenRouter chat settings: routing, price ceiling, reasoning, session, usage"
+    },
+    "provider": {
+      "test": "becomes OpenRouter chat settings: routing, price ceiling, reasoning, session, usage"
+    },
+    "reasoning": {
+      "test": "becomes OpenRouter chat settings: routing, price ceiling, reasoning, session, usage"
+    },
+    "sessionId": {
+      "test": "becomes OpenRouter chat settings: routing, price ceiling, reasoning, session, usage"
+    }
+  },
+  "JsonRpcPeerConfig": {
+    "header": {
+      "test": "non-JSON onRequest return values answer with -32603 for matching id without unhandled rejections"
+    },
+    "onNotification": {
+      "test": "the session keeps the agent options, title and commands it reports, and info lists the models"
+    },
+    "onRequest": {
+      "test": "non-JSON onRequest return values answer with -32603 for matching id without unhandled rejections"
+    },
+    "requestTimeoutMs": {
+      "test": "invalid timeouts throw or reject before send (a missing one TypeError, one out of range RangeError), timeoutMs null is preserved, and real timeout fires -32099"
+    },
+    "send": {
+      "test": "transport send errors while answering incoming requests do not recurse or emit unhandled rejections"
+    }
+  },
+  "ExecutorProfileConfig": {
+    "accountLabel": {
+      "test": "a hello of a profile whose home holds a token carries no token, no path and no value"
+    },
+    "engine": {
+      "test": "a driver refuses a profile of another engine before it starts the engine"
+    },
+    "env": {
+      "test": "out-of-range resetsAt (1e16) is omitted safely and loginExpiresAt is read only as the ISO time the CLI writes"
+    },
+    "home": {
+      "test": "a spawned engine prints no credential of the executor, and gets its profile home"
+    },
+    "profileId": {
+      "test": "a hello of a profile whose home holds a token carries no token, no path and no value"
+    }
+  },
+  "AgentEngineConformanceConfig": {
+    "open": {
+      "test": "the Claude CLI driver passes the engine conformance kit"
+    },
+    "scenarios": {
+      "test": "the Claude CLI driver passes the engine conformance kit"
+    }
+  },
+  "BootoutLaunchdJobOptions": {
+    "adapter": {
+      "test": "bootoutLaunchdJob unloads job and polls launchctl print until absent"
+    },
+    "label": {
+      "test": "bootoutLaunchdJob unloads job and polls launchctl print until absent"
+    },
+    "pollIntervalMs": {
+      "test": "bootoutLaunchdJob unloads job and polls launchctl print until absent"
+    },
+    "settleTimeoutMs": {
+      "test": "bootoutLaunchdJob unloads job and polls launchctl print until absent"
+    },
+    "uid": {
+      "test": "bootoutLaunchdJob unloads job and polls launchctl print until absent"
+    }
+  },
+  "InspectLaunchdJobOptions": {
+    "adapter": {
+      "test": "inspectLaunchdJob returns loaded: false when launchctl print exits non-zero"
+    },
+    "label": {
+      "test": "inspectLaunchdJob returns loaded: false when launchctl print exits non-zero"
+    },
+    "uid": {
+      "test": "inspectLaunchdJob returns loaded: false when launchctl print exits non-zero"
+    }
+  },
+  "LintLaunchdPlistOptions": {
+    "adapter": {
+      "test": "lintLaunchdPlist runs /usr/bin/plutil -lint on stdin content or file path and throws INVALID_PLIST on failure"
+    },
+    "content": {
+      "test": "lintLaunchdPlist runs /usr/bin/plutil -lint on stdin content or file path and throws INVALID_PLIST on failure"
+    },
+    "path": {
+      "test": "lintLaunchdPlist runs /usr/bin/plutil -lint on stdin content or file path and throws INVALID_PLIST on failure"
+    },
+    "timeoutMs": {
+      "exempt": "forwarded unchanged to adapter.runCommand / runNativeCommand, whose timeout tests prove deadline enforcement"
+    }
+  },
+  "ReadLaunchdPlistOptions": {
+    "adapter": {
+      "test": "readLaunchdPlist returns null on ENOENT, parses JSON object, and throws INVALID_PLIST on malformed JSON or non-object"
+    },
+    "path": {
+      "test": "readLaunchdPlist returns null on ENOENT, parses JSON object, and throws INVALID_PLIST on malformed JSON or non-object"
+    },
+    "timeoutMs": {
+      "exempt": "forwarded unchanged to adapter.runCommand / runNativeCommand, whose timeout tests prove deadline enforcement"
+    }
+  },
+  "SystemdUnitQueryOptions": {
+    "adapter": {
+      "test": "rejects flag-like and control-character unit names and passes -- before unitName"
+    },
+    "scope": {
+      "test": "rejects flag-like and control-character unit names and passes -- before unitName"
+    },
+    "unitName": {
+      "test": "rejects flag-like and control-character unit names and passes -- before unitName"
+    }
+  },
+  "MacosBundleInfoPlistConfig": {
+    "bundleIdentifier": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "bundleName": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "bundleVersion": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "displayName": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "executableName": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "extraEntries": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "iconFile": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "lsBackgroundOnly": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "lsMinimumSystemVersion": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "lsUIElement": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "shortVersionString": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    },
+    "specDigest": {
+      "test": "renderBundleInfoPlist renders every MacosBundleInfoPlistConfig option including boolean toggles, versions, icon, digest, and extraEntries"
+    }
+  },
+  "FindDeveloperIdsOptions": {
+    "keychain": {
+      "test": "findDeveloperIds passes optional keychain argument to /usr/bin/security"
+    },
+    "runner": {
+      "test": "findDeveloperIds passes optional keychain argument to /usr/bin/security"
+    },
+    "timeoutMs": {
+      "exempt": "forwarded unchanged to runner.runCommand / runNativeCommand, whose timeout tests prove deadline enforcement"
+    }
+  },
+  "ResolveSigningIdentityOptions": {
+    "identity": {
+      "test": "resolveSigningIdentity is strictly fail-closed on null, empty, whitespace, ad-hoc \"-\", CSSMERR, non-Developer-ID, 0 certs, and >1 certs"
+    },
+    "keychain": {
+      "exempt": "forwarded unchanged to findDeveloperIds(options), whose own keychain test proves it"
+    },
+    "runner": {
+      "test": "resolveSigningIdentity is strictly fail-closed on null, empty, whitespace, ad-hoc \"-\", CSSMERR, non-Developer-ID, 0 certs, and >1 certs"
+    },
+    "timeoutMs": {
+      "exempt": "forwarded unchanged to findDeveloperIds -> runner.runCommand / runNativeCommand, whose timeout tests prove deadline enforcement"
+    }
+  },
+  "SignBundleOptions": {
+    "bundlePath": {
+      "test": "signBundle refuses ad-hoc \"-\" and CR/LF paths, and passes hardened runtime + timestamp by default"
+    },
+    "deep": {
+      "test": "signBundle toggles --deep, --options runtime, and --timestamp according to deep, hardenedRuntime, and timestamp options"
+    },
+    "entitlementsPath": {
+      "test": "signBundle refuses ad-hoc \"-\" and CR/LF paths, and passes hardened runtime + timestamp by default"
+    },
+    "hardenedRuntime": {
+      "test": "signBundle toggles --deep, --options runtime, and --timestamp according to deep, hardenedRuntime, and timestamp options"
+    },
+    "identity": {
+      "test": "signBundle refuses ad-hoc \"-\" and CR/LF paths, and passes hardened runtime + timestamp by default"
+    },
+    "runner": {
+      "test": "signBundle refuses ad-hoc \"-\" and CR/LF paths, and passes hardened runtime + timestamp by default"
+    },
+    "timeoutMs": {
+      "exempt": "forwarded unchanged to resolveSigningIdentity and runner.runCommand / runNativeCommand, whose timeout tests prove deadline enforcement"
+    },
+    "timestamp": {
+      "test": "signBundle toggles --deep, --options runtime, and --timestamp according to deep, hardenedRuntime, and timestamp options"
+    }
+  },
+  "RenderAppleSquircleSvgOptions": {
+    "backgroundColor": {
+      "test": "renderAppleSquircleSvg wraps SVG and JPEG in 824x824 clipPath, passes assertSafeSvg, and rejects unsafe colors"
+    },
+    "embeddedImage": {
+      "test": "renderAppleSquircleSvg wraps SVG and JPEG in 824x824 clipPath, passes assertSafeSvg, and rejects unsafe colors"
+    },
+    "innerSvg": {
+      "test": "renderAppleSquircleSvg wraps SVG and JPEG in 824x824 clipPath, passes assertSafeSvg, and rejects unsafe colors"
+    }
+  },
+  "LaunchServicesBundleOptions": {
+    "bundlePath": {
+      "test": "registerBundle and forgetRegistration: accepts ONLY -10814 as not-registered and throws on -10815 or other errors"
+    },
+    "runner": {
+      "test": "registerBundle and forgetRegistration: accepts ONLY -10814 as not-registered and throws on -10815 or other errors"
+    },
+    "timeoutMs": {
+      "exempt": "forwarded unchanged to runner.runCommand / runNativeCommand, whose timeout tests prove deadline enforcement"
+    }
+  },
+  "ScanLsregisterDumpOptions": {
+    "maxDumpBytes": {
+      "test": "streams lsregister -dump in arbitrary UTF-8 chunks with O(1) parser, first-wins semantics, overlong line cap, and COMMAND_LIMIT translation"
+    },
+    "onRecord": {
+      "test": "streams lsregister -dump in arbitrary UTF-8 chunks with O(1) parser, first-wins semantics, overlong line cap, and COMMAND_LIMIT translation"
+    },
+    "runner": {
+      "test": "streams lsregister -dump in arbitrary UTF-8 chunks with O(1) parser, first-wins semantics, overlong line cap, and COMMAND_LIMIT translation"
+    },
+    "timeoutMs": {
+      "exempt": "forwarded unchanged to runner.runCommand / runNativeCommand, whose timeout tests prove deadline enforcement"
+    }
+  },
+  "CompileMacosLauncherOptions": {
+    "arch": {
+      "test": "compileMacosLauncher invokes /usr/bin/clang with strict C11 hardening flags and cleans up temp staging"
+    },
+    "config": {
+      "test": "compileMacosLauncher invokes /usr/bin/clang with strict C11 hardening flags and cleans up temp staging"
+    },
+    "outputPath": {
+      "test": "compileMacosLauncher invokes /usr/bin/clang with strict C11 hardening flags and cleans up temp staging"
+    },
+    "runner": {
+      "test": "compileMacosLauncher invokes /usr/bin/clang with strict C11 hardening flags and cleans up temp staging"
+    },
+    "sourcePath": {
+      "test": "compileMacosLauncher invokes /usr/bin/clang with strict C11 hardening flags and cleans up temp staging"
+    },
+    "timeoutMs": {
+      "exempt": "forwarded unchanged to runner.runCommand / runNativeCommand, whose timeout tests prove deadline enforcement"
+    }
+  },
+  "MacosCommandOptions": {
+    "cwd": {
+      "test": "createDefaultMacosCommandRunner honours cwd, stdin, and env, and passes only the declared environment"
+    },
+    "env": {
+      "test": "createDefaultMacosCommandRunner honours cwd, stdin, and env, and passes only the declared environment"
+    },
+    "maxOutputBytes": {
+      "test": "createDefaultMacosCommandRunner enforces maxOutputBytes and timeoutMs via NativeCommandError COMMAND_LIMIT"
+    },
+    "onOutput": {
+      "test": "createDefaultMacosCommandRunner streams stdout and stderr incrementally via onOutput while returning empty stdout and bounded stderr"
+    },
+    "stdin": {
+      "test": "createDefaultMacosCommandRunner honours cwd, stdin, and env, and passes only the declared environment"
+    },
+    "timeoutMs": {
+      "test": "createDefaultMacosCommandRunner enforces maxOutputBytes and timeoutMs via NativeCommandError COMMAND_LIMIT"
     }
   }
 }

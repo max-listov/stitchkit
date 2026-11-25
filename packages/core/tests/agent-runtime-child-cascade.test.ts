@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
@@ -8,8 +8,8 @@ import {
   type SqliteValue,
 } from '../src/agent-runtime/sqlite-bun';
 import {
+  createAgentChildManager,
   createAgentRuntime,
-  createSqliteAgentChildManager,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
 
@@ -56,8 +56,11 @@ describe('parent stop cascades to children', () => {
     const database = sqlite();
     const durable = createSqliteAgentRuntimeStore({ database });
     const stopped: string[] = [];
-    const children = createSqliteAgentChildManager({
-      sqlite: durable,
+    const children = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: durable.store,
+      host: durable.host,
       spawn: ({ childConversationId }) => ({
         result: new Promise(() => undefined),
         stopPolicy: (name) => {
@@ -114,7 +117,7 @@ describe('parent stop cascades to children', () => {
     const result = await ticket.result;
     expect(result.reason).toBe('interrupted');
 
-    const records = children.listChildren('parent');
+    const records = await children.listChildren('parent');
     expect(records.map((record) => [record.childConversationId, record.state])).toEqual([
       ['child-reachable', 'stopped'],
       ['child-unreachable', 'lost'],
@@ -149,8 +152,11 @@ describe('parent stop cascades to children', () => {
     const database = sqlite();
     const durable = createSqliteAgentRuntimeStore({ database });
     const stopped: string[] = [];
-    const children = createSqliteAgentChildManager({
-      sqlite: durable,
+    const children = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: durable.store,
+      host: durable.host,
       spawn: () => ({
         result: new Promise(() => undefined),
         stopPolicy: (name) => {
@@ -201,9 +207,146 @@ describe('parent stop cascades to children', () => {
     release.resolve();
     const result = await ticket.result;
     expect(result.reason).toBe('superseded');
-    expect(children.listChildren('parent').map((record) => record.state)).toEqual(['running']);
+    expect((await children.listChildren('parent')).map((record) => record.state)).toEqual([
+      'running',
+    ]);
     expect(stopped).toEqual([]);
     await runtime.close();
     await durable.close();
+  });
+
+  test('stopChild records lost when stopPolicy times out, throws, or rejects, and when reachable throws or rejects', async () => {
+    const database = sqlite();
+    const durable = createSqliteAgentRuntimeStore({ database });
+    const unexpectedStops: string[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const fastBound = new Proxy(realSetTimeout, {
+      apply: (target, thisArg, args: unknown[]) =>
+        Reflect.apply(target, thisArg, [
+          args[0],
+          args[1] === 10_000 ? 10 : args[1],
+          ...args.slice(2),
+        ]),
+    });
+    const timerSpy = spyOn(globalThis, 'setTimeout').mockImplementation(fastBound);
+    try {
+      let tick = 1_700_000_000_000;
+      const children = createAgentChildManager({
+        remainingBudget: () => ({}),
+        maxActiveChildren: 8,
+        store: durable.store,
+        host: durable.host,
+        now: () => {
+          tick += 1_000;
+          return new Date(tick);
+        },
+        spawn: ({ childConversationId }) => {
+          if (childConversationId === 'child-timeout') {
+            return {
+              result: new Promise(() => undefined),
+              stopPolicy: () => new Promise(() => undefined),
+            };
+          }
+          if (childConversationId === 'child-sync-throw') {
+            return {
+              result: new Promise(() => undefined),
+              stopPolicy: () => {
+                throw new Error('sync stop failed');
+              },
+            };
+          }
+          if (childConversationId === 'child-async-reject') {
+            return {
+              result: new Promise(() => undefined),
+              stopPolicy: async () => {
+                throw new Error('async stop failed');
+              },
+            };
+          }
+          if (childConversationId === 'child-reach-sync-throw') {
+            return {
+              result: new Promise(() => undefined),
+              reachable: () => {
+                throw new Error('sync probe failed');
+              },
+              stopPolicy: () => {
+                unexpectedStops.push(childConversationId);
+              },
+            };
+          }
+          return {
+            result: new Promise(() => undefined),
+            reachable: async () => {
+              throw new Error('async probe failed');
+            },
+            stopPolicy: () => {
+              unexpectedStops.push(childConversationId);
+            },
+          };
+        },
+      });
+      const ids = [
+        'child-timeout',
+        'child-sync-throw',
+        'child-async-reject',
+        'child-reach-sync-throw',
+        'child-reach-async-reject',
+      ];
+      for (const childConversationId of ids) {
+        await children.spawnChild({
+          parentConversationId: 'parent',
+          childConversationId,
+          childInput: {},
+          budget: { tokens: 100 },
+        });
+      }
+
+      await children.stopChildren('parent');
+
+      const records = await children.listChildren('parent');
+      expect(records.map((record) => [record.childConversationId, record.state])).toEqual(
+        ids.map((id) => [id, 'lost']),
+      );
+      expect(unexpectedStops).toEqual([]);
+    } finally {
+      timerSpy.mockRestore();
+      await durable.close();
+    }
+  });
+
+  test('interruptChild re-checks live state so a child that finishes during stopPolicy keeps finished and its result', async () => {
+    const database = sqlite();
+    const durable = createSqliteAgentRuntimeStore({ database });
+    const result = Promise.withResolvers<{ resultReference?: string }>();
+    try {
+      const children = createAgentChildManager({
+        remainingBudget: () => ({}),
+        maxActiveChildren: 8,
+        store: durable.store,
+        host: durable.host,
+        spawn: () => ({
+          result: result.promise,
+          stopPolicy: async () => {
+            result.resolve({ resultReference: 'raced-answer' });
+            await children.waitChild('child-race');
+          },
+        }),
+      });
+      await children.spawnChild({
+        parentConversationId: 'parent',
+        childConversationId: 'child-race',
+        childInput: {},
+        budget: { tokens: 100 },
+      });
+
+      await children.interruptChild('parent', 'child-race');
+
+      const records = await children.listChildren('parent');
+      expect(records.map((record) => [record.state, record.resultReference])).toEqual([
+        ['finished', 'raced-answer'],
+      ]);
+    } finally {
+      await durable.close();
+    }
   });
 });

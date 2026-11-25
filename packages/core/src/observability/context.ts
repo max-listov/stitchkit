@@ -8,10 +8,10 @@
  * with `setRequestUser` / `setRequestError` / `setRequestEndpoint` /
  * `setRequestDimensions`.
  */
-import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TransportSource } from '../contract/define';
 import { getClientInfo, resolveSocketIp } from '../internal/request';
 import { isUnsafeKey } from '../internal/safe-json';
+import { isRecord } from '../internal/typed';
 import { resolveTraceContext, type TraceContext } from './trace';
 
 /** What a unit of work is: a call that arrived, or work that runs on its own. */
@@ -46,8 +46,8 @@ export interface RequestContext {
   method?: string;
   /** Request path — absent for work that did not arrive over a transport. */
   path?: string;
-  /** Monotonic start, for duration — `process.hrtime.bigint()`. */
-  startedAt: bigint;
+  /** Monotonic start in milliseconds, for duration — `performance.now()`. */
+  startedAt: number;
   /** Client IP, when resolvable. */
   ipAddress?: string;
   /** Client user-agent, when present. */
@@ -73,20 +73,56 @@ export interface RequestContext {
   error?: { code?: string; message?: string; details?: unknown };
 }
 
+interface ContextStorage<T> {
+  run<R>(store: T, callback: () => R): R;
+  getStore(): T | undefined;
+}
+
+const NO_AMBIENT_STORAGE: ContextStorage<RequestContext> = {
+  run: (_store, callback) => callback(),
+  getStore: () => undefined,
+};
+
+function isContextStorage(value: unknown): value is ContextStorage<RequestContext> {
+  return (
+    isRecord(value) && typeof value.run === 'function' && typeof value.getStore === 'function'
+  );
+}
+
 /**
- * Built on first use, not while the module loads.
+ * Resolve `AsyncLocalStorage` lazily without a static `node:async_hooks` import,
+ * so browser and Hermes bundles stay free of Node built-ins.
  *
- * `new AsyncLocalStorage()` at module scope is evaluated by the mere act of
- * importing this file. A browser bundler substitutes a stub for
- * `node:async_hooks`, so the constructor is `undefined` and the page dies during
- * initialisation — `AsyncLocalStorage is not a constructor` — for every entry
- * that reaches this module, on every route, whether or not a request context is
- * ever used. Deferring it costs one branch and turns a page-killer into a
- * function that is simply never called in a browser.
+ * On Node and Bun, `process.getBuiltinModule('async_hooks')` provides real
+ * async context isolation; a Node or Bun runtime missing that API fails loudly
+ * instead of silently dropping ambient context. On runtimes without Node built-ins
+ * (browsers, Hermes / React Native), ambient storage is a no-op and the HTTP
+ * pipeline carries its own explicit `RequestContext`.
  */
-let storage: AsyncLocalStorage<RequestContext> | undefined;
-const requestStorage = (): AsyncLocalStorage<RequestContext> => {
-  storage ??= new AsyncLocalStorage<RequestContext>();
+function resolveStorage(): ContextStorage<RequestContext> {
+  const proc: unknown = Reflect.get(globalThis, 'process');
+  if (!isRecord(proc)) return NO_AMBIENT_STORAGE;
+  const getBuiltinModule = proc.getBuiltinModule;
+  if (typeof getBuiltinModule === 'function') {
+    const mod: unknown = Reflect.apply(getBuiltinModule, proc, ['async_hooks']);
+    const ctor = isRecord(mod) ? mod.AsyncLocalStorage : undefined;
+    if (typeof ctor === 'function') {
+      const instance: unknown = Reflect.construct(ctor, []);
+      if (isContextStorage(instance)) return instance;
+    }
+  }
+  const versions = isRecord(proc.versions) ? proc.versions : undefined;
+  if (versions && (typeof versions.bun === 'string' || typeof versions.node === 'string')) {
+    throw new Error(
+      '[stitchkit] RequestContext requires process.getBuiltinModule("async_hooks") on Node (>=22.3.0) and Bun (>=1.4.0)',
+    );
+  }
+  return NO_AMBIENT_STORAGE;
+}
+
+let storage: ContextStorage<RequestContext> | undefined;
+const requestStorage = (): ContextStorage<RequestContext> => {
+  storage ??= resolveStorage();
   return storage;
 };
 
@@ -227,7 +263,7 @@ export function wrapInRequestContext<S>(
       // `req.url` may be a bare pathname on a Node adapter — the base avoids
       // a `TypeError: Invalid URL`.
       path: new URL(req.url, 'http://localhost').pathname,
-      startedAt: process.hrtime.bigint(),
+      startedAt: performance.now(),
       ...getClientInfo(req, {
         trustProxy: options.trustProxy,
         socketIp: resolveSocketIp(req, server),

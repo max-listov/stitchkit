@@ -2,7 +2,7 @@
 title: One declaration of which entrypoints a browser may import
 description: Six places answered that question independently and drifted in both directions; the manifest is now the only one, the two build lanes collapse into one pass, and the guide and the consumer lane are asserted against it.
 type: decision
-status: active
+status: accepted
 created: 2026-09-03
 updated: 2026-09-03
 ---

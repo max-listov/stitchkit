@@ -89,6 +89,7 @@ const service = implement(contract, {
 
 console.error('stitchkit-stdio-ready');
 await createStdioMcpServer({
+  access: { open: 'local-operator' },
   serverInfo: { name: 'stitchkit-stdio-test', version: '1' },
   auth: {},
   services: [service],

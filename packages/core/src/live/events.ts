@@ -20,7 +20,9 @@
  *
  * → ADR 0150.
  */
+
 import { z } from 'zod';
+import { assertTimerMs } from '../internal/deadline';
 import type { UndecidedOutcome } from '../internal/decision';
 import type { RealtimeContract, RealtimeEventRegistry } from '../realtime/contract';
 
@@ -202,11 +204,10 @@ export function defineEvents<
           `[stitchkit] defineEvents: topic "${name}" has mode '${topic.mode}', which waits for listeners, so it must declare listenerTimeoutMs.`,
         );
       }
-      if (!Number.isFinite(topic.listenerTimeoutMs) || topic.listenerTimeoutMs <= 0) {
-        throw new Error(
-          `[stitchkit] defineEvents: topic "${name}" declares listenerTimeoutMs ${String(topic.listenerTimeoutMs)}; it must be finite and greater than zero.`,
-        );
-      }
+      assertTimerMs(
+        `[stitchkit] defineEvents: topic "${name}" listenerTimeoutMs`,
+        topic.listenerTimeoutMs,
+      );
       if (topic.mode === 'decision' && topic.whenAllDefer === undefined) {
         throw new Error(
           `[stitchkit] defineEvents: topic "${name}" has mode 'decision', so it must declare whenAllDefer: 'allow' or 'deny' — the outcome when every listener defers. There is no default, because a default would decide it silently.`,

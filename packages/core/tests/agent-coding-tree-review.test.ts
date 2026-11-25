@@ -25,7 +25,10 @@ async function workspace() {
   return root;
 }
 function mounted(config: AgentCodingToolConfig) {
-  const tools = mountAgent([], { runtimeTools: createAgentCodingTools(config) });
+  const tools = mountAgent([], {
+    access: { open: 'local-operator' },
+    runtimeTools: createAgentCodingTools(config),
+  });
   return async (name: string, input: Record<string, unknown>, signal?: AbortSignal) => {
     const execute = tools[name]?.execute;
     if (!execute) throw new Error(`Missing ${name}`);

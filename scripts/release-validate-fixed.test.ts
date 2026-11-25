@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { PUBLIC_SURFACE_PATH } from './release-affects-names';
 import { comparePreOneVersions } from './release-notes';
 import {
   assertFixedAffects,
@@ -86,6 +87,7 @@ describe('the release gate applies the rule to a core release', () => {
       }),
       'CHANGELOG.md': `## [9.9.0] - x\n\n${changelogBody}\n`,
       'docs/guide/upgrading.md': '# Upgrading\n',
+      [PUBLIC_SURFACE_PATH]: JSON.stringify({ 'stitchkit/process': ['runNativeCommand'] }),
       'bun.lock': WORKSPACES.map(
         (dir) =>
           `    "${dir}": {\n      "name": "x",\n      "version": "${dir === 'packages/core' ? '9.9.0' : '0.0.0'}",\n    },`,
@@ -99,7 +101,11 @@ describe('the release gate applies the rule to a core release', () => {
       : Promise.resolve(contents);
   };
   const judge = (body: string) =>
-    validateReleaseTag('/unused', 'v9.9.0', { read: tree(body), checkStarterLockfile: false });
+    validateReleaseTag('/unused', 'v9.9.0', {
+      read: tree(body),
+      checkStarterLockfile: false,
+      previousSurface: async () => new Map(),
+    });
 
   test('an unlabelled fix to an entrypoint refuses the tag; the labelled one passes', async () => {
     await expect(judge('### Fixed\n\n- `stitchkit/process`: a group stops.')).rejects.toThrow(
@@ -110,5 +116,13 @@ describe('the release gate applies the rule to a core release', () => {
         '### Fixed\n\n- `stitchkit/process`: a group stops.\n  **Affects:** `stitchkit/process` runNativeCommand',
       ),
     ).resolves.toMatchObject({ version: '9.9.0' });
+  });
+
+  test('a fix naming an export its entrypoint does not ship refuses the tag', async () => {
+    await expect(
+      judge(
+        '### Fixed\n\n- `stitchkit/process`: a group stops.\n  **Affects:** `stitchkit/process` runNativeCommnd',
+      ),
+    ).rejects.toThrow(/`stitchkit\/process` runNativeCommnd — exported by no entrypoint/);
   });
 });

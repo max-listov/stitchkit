@@ -8,7 +8,6 @@ updated: 2026-05-20
 
 # ADR 0001 — Build on `Bun.serve()`, no HTTP framework
 
-- **Status:** Accepted
 - **Date:** 2025-05
 
 ## Context

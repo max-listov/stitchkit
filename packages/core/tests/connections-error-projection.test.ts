@@ -13,7 +13,7 @@ import {
   defineMcpClientConnection,
   mountConnections,
 } from '../src/entrypoints/tools/connections';
-import { cliExitCode } from '../src/tools/cli/format';
+import { cliExitCode, DEFAULT_EXIT_CODES } from '../src/tools/cli/format';
 import {
   type ToolFailure,
   toolCauseFromResult,
@@ -125,7 +125,7 @@ test('mounted expected failures are quiet on the invoker and CLI JSON/text paths
       name: secret,
       transport: { url: fixture.url.href },
       token: () => secret,
-      transports: ['CLI'],
+      expose: ['CLI'],
     }),
   ]);
   const raw: unknown[] = [];
@@ -138,7 +138,12 @@ test('mounted expected failures are quiet on the invoker and CLI JSON/text paths
       after.push(error);
     },
   };
-  const invoker = await createCliInvoker({ name: 'safe', runtimeTools: definitions, hooks });
+  const invoker = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'safe',
+    runtimeTools: definitions,
+    hooks,
+  });
   const logger = spyOn(console, 'error').mockImplementation(() => undefined);
   try {
     for (const refusal of [
@@ -157,6 +162,7 @@ test('mounted expected failures are quiet on the invoker and CLI JSON/text paths
         let err = '';
         let exit = -1;
         await createCli({
+          access: { open: 'local-operator' },
           name: 'safe',
           version: '1',
           runtimeTools: definitions,
@@ -247,7 +253,7 @@ test('unknown tool errors scrub console and public output while observers keep e
       defineMcpClientConnection({
         name: 'unknown',
         transport: { url: fixture.url.href },
-        transports: ['CLI'],
+        expose: ['CLI'],
         token: () => {
           if (fail) throw thrown;
           return undefined;
@@ -256,6 +262,7 @@ test('unknown tool errors scrub console and public output while observers keep e
     ]);
     fail = true;
     const managed = await createCliInvoker({
+      access: { open: 'local-operator' },
       name: 'safe',
       runtimeTools: definitions,
       hooks: {
@@ -305,12 +312,13 @@ test('remote isError envelopes retain code, details, hint and declared retryabil
     defineMcpClientConnection({
       name: 'remote',
       transport: { url: fixture.url.href },
-      transports: ['CLI'],
+      expose: ['CLI'],
     }),
   ]);
   expect(
     await (
       await createCliInvoker({
+        access: { open: 'local-operator' },
         name: 'safe',
         runtimeTools: definitions,
         exitCodes: { REMOTE_CONFLICT: 42 },
@@ -326,4 +334,17 @@ test('remote isError envelopes retain code, details, hint and declared retryabil
       hint: 'Reconcile the remote state.',
     },
   });
+});
+
+test('every code a connection raises declares its CLI exit code instead of the unknown-code fallback', () => {
+  for (const code of [
+    'CONNECTION_TIMEOUT',
+    'CONNECTION_RESPONSE_TOO_LARGE',
+    'CONNECTION_REQUEST_FAILED',
+    'UPSTREAM_TOOL_ERROR',
+    'MCP_STRUCTURED_CONTENT_MISSING',
+  ]) {
+    expect(isStitchErrorCode(code)).toBe(true);
+    expect(Object.hasOwn(DEFAULT_EXIT_CODES, code)).toBe(true);
+  }
 });

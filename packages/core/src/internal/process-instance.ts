@@ -1,12 +1,12 @@
 /**
  * OS process lifetime evidence; timestamps and PID presence alone never establish ownership.
  */
-import { readFile, readlink } from 'node:fs/promises';
+import { readFileSync, readlinkSync } from 'node:fs';
 import { platform } from 'node:os';
 import { z } from 'zod';
 import { loadDarwinBinding } from './darwin-binding';
 import { errnoOf } from './errno';
-import { probeLiveness } from './process-identity';
+import { probeLiveness, probeLivenessSync } from './process-identity';
 
 /**
  * Identity of one running process (boot id, PID namespace, start tick); a bare PID can be
@@ -25,6 +25,16 @@ export const ProcessInstanceSchema = z
  * a reused PID.
  */
 export type ProcessInstance = z.infer<typeof ProcessInstanceSchema>;
+
+/** Return `true` when two observed process instances represent the exact same OS process. */
+export function sameProcessInstance(left: ProcessInstance, right: ProcessInstance): boolean {
+  return (
+    left.platform === right.platform &&
+    left.bootId === right.bootId &&
+    left.namespace === right.namespace &&
+    left.startId === right.startId
+  );
+}
 
 /**
  * An unavailable observation preserves its native or validation cause; it never proves death.
@@ -74,7 +84,15 @@ export async function readProcessInstance(
   pid: number,
   procRoot = '/proc',
 ): Promise<ProcessInstance | null> {
-  const result = await observeProcessInstanceAt(pid, procRoot);
+  return readProcessInstanceSync(pid, procRoot);
+}
+
+/** {@link readProcessInstance} for a caller that cannot wait. */
+export function readProcessInstanceSync(
+  pid: number,
+  procRoot = '/proc',
+): ProcessInstance | null {
+  const result = observeProcessInstanceAtSync(pid, procRoot);
   return result.state === 'observed' ? result.instance : null;
 }
 
@@ -83,6 +101,17 @@ export async function observeProcessInstanceAt(
   pid: number,
   procRoot: string,
 ): Promise<ProcessInstanceObservation> {
+  return observeProcessInstanceAtSync(pid, procRoot);
+}
+
+/**
+ * The observation itself. Every source is a kernel answer — procfs files and links, or one Darwin
+ * system call — that never waits on a device, so the asynchronous readers share this one.
+ */
+function observeProcessInstanceAtSync(
+  pid: number,
+  procRoot: string,
+): ProcessInstanceObservation {
   try {
     if (platform() === 'darwin') {
       return {
@@ -92,19 +121,12 @@ export async function observeProcessInstanceAt(
     }
     if (platform() !== 'linux')
       throw new Error('Process lifetime observation requires Linux or Darwin');
-    const [bootId, namespace, ownStatus, timeNamespace, ownStat, stat] = await Promise.all([
-      readFile(`${procRoot}/sys/kernel/random/boot_id`, 'utf8'),
-      readlink(`${procRoot}/self/ns/pid`),
-      readFile(`${procRoot}/self/status`, 'utf8'),
-      // Time namespaces arrived in Linux 5.6; an older kernel has one clock
-      // for everyone, so its absence is part of the identity, not a gap in it.
-      readlink(`${procRoot}/self/ns/time`).catch((error: unknown) => {
-        if (errnoOf(error) === 'ENOENT') return '';
-        throw error;
-      }),
-      readFile(`${procRoot}/self/stat`, 'utf8'),
-      readFile(`${procRoot}/${pid}/stat`, 'utf8'),
-    ]);
+    const bootId = readFileSync(`${procRoot}/sys/kernel/random/boot_id`, 'utf8');
+    const namespace = readlinkSync(`${procRoot}/self/ns/pid`);
+    const ownStatus = readFileSync(`${procRoot}/self/status`, 'utf8');
+    const timeNamespace = readTimeNamespace(procRoot);
+    const ownStat = readFileSync(`${procRoot}/self/stat`, 'utf8');
+    const stat = readFileSync(`${procRoot}/${pid}/stat`, 'utf8');
     // NStgid starts at the procfs mount's namespace. Multiple IDs mean a
     // host-mounted /proc inside a child namespace, even if the numeric IDs coincide.
     // Read our own status, not PID 1's namespace (ptrace-restricted for ordinary users).
@@ -135,6 +157,19 @@ export async function observeProcessInstanceAt(
   } catch (cause) {
     // Missing native support, EPERM and unavailable proc evidence cannot authorize reclaim.
     return { state: 'unavailable', cause };
+  }
+}
+
+/**
+ * Time namespaces arrived in Linux 5.6; an older kernel has one clock for everyone, so its absence
+ * is part of the identity, not a gap in it.
+ */
+function readTimeNamespace(procRoot: string): string {
+  try {
+    return readlinkSync(`${procRoot}/self/ns/time`);
+  } catch (error) {
+    if (errnoOf(error) === 'ENOENT') return '';
+    throw error;
   }
 }
 
@@ -178,6 +213,53 @@ interface ProcessOwnerProbes {
   observe?(pid: number): Promise<ProcessInstanceObservation>;
 }
 
+const unavailable = (cause: unknown): ProcessOwnerEvidence => ({
+  liveness: 'not-probed',
+  identity: 'unavailable',
+  cause,
+});
+
+/**
+ * The rule, in the order its evidence is gathered. Each step either decides or hands the next one
+ * what it needs; the asynchronous and the synchronous probe run the same steps, so a lock judged on
+ * either path is judged alike.
+ *
+ * First the record against this process's own observation: only a record of this boot and of this
+ * PID namespace can be compared PID for PID.
+ */
+function judgeAgainstSelf(
+  recorded: ProcessInstance,
+  own: ProcessInstanceObservation,
+): ProcessOwnerEvidence | { readonly current: ProcessInstance } {
+  if (own.state === 'unavailable') return unavailable(own.cause);
+  const current = own.instance;
+  if (recorded.platform !== current.platform)
+    return unavailable(new Error('Process platforms differ'));
+  if (recorded.bootId !== current.bootId)
+    return { liveness: 'gone', identity: 'different-boot' };
+  if (recorded.namespace !== current.namespace)
+    return unavailable(new Error('Process namespaces differ'));
+  return { current };
+}
+
+/** Then the PID's own lifetime, observed after it was found reachable. */
+function judgeObserved(
+  recorded: ProcessInstance,
+  current: ProcessInstance,
+  observation: ProcessInstanceObservation,
+): ProcessOwnerEvidence {
+  if (observation.state === 'unavailable') return unavailable(observation.cause);
+  const observed = observation.instance;
+  if (observed.bootId !== current.bootId || observed.namespace !== current.namespace)
+    return unavailable(new Error('Observed boot or namespace changed during probe'));
+  if (recorded.startId !== observed.startId)
+    return { liveness: 'gone', identity: 'reused-pid' };
+  return { liveness: 'alive', identity: 'matched' };
+}
+
+const unrecordedLifetime = (): ProcessOwnerEvidence =>
+  unavailable(new Error('Recorded process lifetime is unavailable'));
+
 /**
  * @internal Injection is for kernel-format controls, not a public ownership assertion.
  */
@@ -188,13 +270,7 @@ export async function probeProcessOwnerWith(
 ): Promise<ProcessOwnerEvidence> {
   if (recorded === undefined)
     return { liveness: await probes.liveness(pid), identity: 'legacy' };
-  const unavailable = (cause: unknown): ProcessOwnerEvidence => ({
-    liveness: 'not-probed',
-    identity: 'unavailable',
-    cause,
-  });
-  if (recorded === null)
-    return unavailable(new Error('Recorded process lifetime is unavailable'));
+  if (recorded === null) return unrecordedLifetime();
   const observe = async (target: number): Promise<ProcessInstanceObservation> => {
     if (probes.observe) return probes.observe(target);
     const instance = await probes.read(target);
@@ -205,23 +281,25 @@ export async function probeProcessOwnerWith(
           cause: new Error('Process lifetime reader returned no evidence'),
         };
   };
-  const own = await observe(process.pid);
-  if (own.state === 'unavailable') return unavailable(own.cause);
-  const current = own.instance;
-  if (recorded.platform !== current.platform)
-    return unavailable(new Error('Process platforms differ'));
-  if (recorded.bootId !== current.bootId)
-    return { liveness: 'gone', identity: 'different-boot' };
-  if (recorded.namespace !== current.namespace)
-    return unavailable(new Error('Process namespaces differ'));
+  const self = judgeAgainstSelf(recorded, await observe(process.pid));
+  if (!('current' in self)) return self;
   const liveness = await probes.liveness(pid);
   if (liveness === 'gone') return { liveness, identity: 'pid-gone' };
-  const observation = await observe(pid);
-  if (observation.state === 'unavailable') return unavailable(observation.cause);
-  const observed = observation.instance;
-  if (observed.bootId !== current.bootId || observed.namespace !== current.namespace)
-    return unavailable(new Error('Observed boot or namespace changed during probe'));
-  if (recorded.startId !== observed.startId)
-    return { liveness: 'gone', identity: 'reused-pid' };
-  return { liveness: 'alive', identity: 'matched' };
+  return judgeObserved(recorded, self.current, await observe(pid));
+}
+
+/** {@link probeProcessOwner} for a caller that cannot wait: the same steps on synchronous probes. */
+export function probeProcessOwnerSync(
+  pid: number,
+  recorded: ProcessInstance | null | undefined,
+): ProcessOwnerEvidence {
+  z.number().int().positive().max(MAX_PID).parse(pid);
+  if (recorded === undefined) return { liveness: probeLivenessSync(pid), identity: 'legacy' };
+  if (recorded === null) return unrecordedLifetime();
+  ProcessInstanceSchema.parse(recorded);
+  const self = judgeAgainstSelf(recorded, observeProcessInstanceAtSync(process.pid, '/proc'));
+  if (!('current' in self)) return self;
+  const liveness = probeLivenessSync(pid);
+  if (liveness === 'gone') return { liveness, identity: 'pid-gone' };
+  return judgeObserved(recorded, self.current, observeProcessInstanceAtSync(pid, '/proc'));
 }

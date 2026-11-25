@@ -13,6 +13,7 @@ async function run(data, argv) {
   let code = -1;
   let calls = 0;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'empty-lists',
     version: '1',
     runtimeTools: [
@@ -20,7 +21,7 @@ async function run(data, argv) {
         name: 'list',
         description: 'List synthetic records',
         identity: { serviceName: 'records', action: 'list', method: 'GET' },
-        transports: ['CLI'],
+        expose: ['CLI'],
         input,
         output,
         handler: ({ input }) => {

@@ -86,35 +86,35 @@ describe('listToolNames', () => {
         name: 'get_video',
         service: 'videos',
         method: 'get',
-        transports: ['MCP', 'AGENT'],
+        expose: ['MCP', 'AGENT'],
       },
       {
         kind: 'contract',
         name: 'list_videos',
         service: 'videos',
         method: 'list',
-        transports: ['MCP', 'AGENT'],
+        expose: ['MCP', 'AGENT'],
       },
       {
         kind: 'contract',
         name: 'mcp_only_video',
         service: 'videos',
         method: 'mcpOnly',
-        transports: ['MCP'],
+        expose: ['MCP'],
       },
       {
         kind: 'contract',
         name: 'run_analytics',
         service: 'analytics',
         method: 'run',
-        transports: ['MCP', 'AGENT'],
+        expose: ['MCP', 'AGENT'],
       },
       {
         kind: 'contract',
         name: 'transcode_video_now',
         service: 'videos',
         method: 'transcode',
-        transports: ['MCP', 'AGENT', 'CLI'],
+        expose: ['MCP', 'AGENT', 'CLI'],
       },
     ]);
   });
@@ -126,7 +126,7 @@ describe('listToolNames', () => {
   });
 
   test('CLI is opt-in — only the endpoint that lists it carries the transport', () => {
-    const withCli = entries.filter((e) => e.transports.includes('CLI'));
+    const withCli = entries.filter((e) => e.expose.includes('CLI'));
     expect(withCli.map((e) => e.name)).toEqual(['transcode_video_now']);
   });
 

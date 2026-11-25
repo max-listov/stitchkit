@@ -48,34 +48,43 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     const { execution } = acquisition;
     const runId = execution.state.run.id;
     executing.add(runId);
+    let result: AgentRuntimeResult;
+    // The outer `finally` frees the run's place and its link to the caller's
+    // signal on every path, a failure of the failure handling included.
     try {
-      await beginRunExecution(execution);
-      const invocations = dependencies.config.invocations;
-      if (invocations) {
-        const trace = await invocations.trace({
-          context: input.context,
-          conversationId: execution.state.run.conversationId,
-          run: execution.state.run,
-        });
-        execution.invocation = await beginAgentInvocation(
-          invocations.ledger,
-          dependencies.config.store,
-          { run: execution.state.run, trace },
-          input.context,
-        );
+      try {
+        await beginRunExecution(execution);
+        const invocations = dependencies.config.invocations;
+        if (invocations) {
+          const trace = await invocations.trace({
+            context: input.context,
+            conversationId: execution.state.run.conversationId,
+            run: execution.state.run,
+          });
+          execution.invocationTrace = trace;
+          execution.invocation = await beginAgentInvocation(
+            invocations.ledger,
+            dependencies.config.store,
+            { run: execution.state.run, trace },
+            input.context,
+          );
+        }
+        const turn = await prepareTurn(execution);
+        await runModelAttempts(execution, turn);
+        await settleStreamOutcome(execution);
+      } catch (error) {
+        await classifyRunFailure(execution, error);
+      } finally {
+        // In a `finally` because the `catch` above does its own I/O: a
+        // `loadSnapshot` that throws used to skip this line and leave the idle
+        // timer armed for the rest of the process's life.
+        execution.idleDeadline.dispose();
       }
-      const turn = await prepareTurn(execution);
-      await runModelAttempts(execution, turn);
-      await settleStreamOutcome(execution);
-    } catch (error) {
-      await classifyRunFailure(execution, error);
+      result = await commitRunTerminal(execution);
     } finally {
-      // In a `finally` because the `catch` above does its own I/O: a
-      // `loadSnapshot` that throws used to skip this line and leave the idle
-      // timer armed for the rest of the process's life.
-      execution.idleDeadline.dispose();
+      executing.delete(runId);
+      execution.idleDeadline.release();
     }
-    const result = await commitRunTerminal(execution).finally(() => executing.delete(runId));
     await execution.invocation?.finish(
       result.reason === 'success'
         ? 'succeeded'

@@ -3,6 +3,7 @@ title: "ADR 0286: A refused view withholds a read and keeps an effect"
 description: When a managed CLI view is refused, a command that only reads prints nothing and names the field; a command with an effect still prints its complete result.
 type: decision
 status: accepted
+amendedBy: ["0287"]
 created: 2026-11-10 13:48 +07:00
 updated: 2026-11-10 14:37 +07:00
 ---

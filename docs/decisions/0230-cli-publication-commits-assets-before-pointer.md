@@ -1,7 +1,7 @@
 ---
 title: CLI publication commits assets before the public pointer
 description: A bounded opt-in publisher reuses CLI manifest, signatures, exclusive locking and atomic filesystem publication.
-status: active
+status: accepted
 created: 2026-10-04 12:49 +07:00
 updated: 2026-10-04 12:49 +07:00
 type: decision

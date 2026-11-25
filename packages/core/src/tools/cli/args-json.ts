@@ -1,6 +1,6 @@
 import { safeJsonParse } from '../../internal/safe-json';
+import type { CliLongOptionToken } from './args-classify';
 import { appendCliOptionValue, coerceField, type FieldInfo } from './args-fields';
-import type { CliLongOptionToken } from './args-route';
 import { CliArgumentError } from './argument-error';
 
 /** An inline := assigns a whole JSON value; an exact declared colon name stays literal. */

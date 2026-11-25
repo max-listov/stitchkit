@@ -3,6 +3,7 @@ title: "ADR 0081: Generic native operations use managed definitions"
 description: Wait, download and upload are canonical runtime-tool definitions over shared neutral operations; direct MCP mounts remain raw adapters.
 type: decision
 status: accepted
+amendedBy: ["0082", "0088", "0311"]
 created: 2026-08-20
 updated: 2026-08-20
 ---
@@ -24,7 +25,8 @@ would recover policy at the cost of duplicating framework mechanics.
 
 - `defineWaitTool`, `defineDownloadTool` and `defineUploadTool` return ordinary
   `RuntimeToolDefinition` data. They use the canonical runner and can be mounted
-  on MCP, Agent or an explicit subset of those transports.
+  on MCP, Agent or an explicit subset of those transports (amended by [ADR 0311](0311-planned-breaking-release-access-expose-and-clean-boundaries.md):
+  visibility is configured via `expose` instead of `transports`).
 - Each factory takes Zod input/output schemas, stable operation identity and
   typed callbacks. Success is neutral validated data; failures enter the
   canonical `AppError -> ToolResult` path.

@@ -1,11 +1,13 @@
 import type { ToolSet } from 'ai';
+import type { z } from 'zod';
 import type { MutationQueue } from '../internal/mutation-queue';
 import { type AgentRuntimeEvent, agentDurableEventId } from './events';
 import type { AgentInjectionRegistry } from './injection';
+import type { ModelInvocationTrace } from './invocation-schema';
 import type { AgentInvocationScope } from './invocations';
 import type { AgentResolvedModel } from './models';
 import type { createAgentRunOperationLifecycle } from './run-operation-lifecycle';
-import type { AgentRuntimeConfig } from './runtime';
+import type { AgentRuntimeConfig, AgentRuntimeRunContext } from './runtime';
 import {
   addUsage,
   type createIdleDeadline,
@@ -36,6 +38,7 @@ export interface RunExecutorDependencies<CONTEXT, TOOLS extends ToolSet> {
   checkpointEveryEvents: number;
   maxSteps: number;
   idleTimeoutMs?: number;
+  stepSpendTimeoutMs: number;
   /**
    * Present only when this runtime's `inputPolicy` can ever produce `inject`.
    *
@@ -124,6 +127,8 @@ export interface RunExecutionState {
   // the ones that were abandoned mid-stream.
   sawProviderFinish: boolean;
   step: number;
+  /** The current step under `stepBarriers`: held text, a failed call, reasoning so far. */
+  stepGuard: { text: string; toolFailed: boolean; reasoningChars: number };
   selectedModel: AgentResolvedModel | undefined;
   internalCause: unknown;
   providerStreamCleanupFailure: unknown;
@@ -144,6 +149,8 @@ type RootTrace<CONTEXT, TOOLS extends ToolSet> = ReturnType<
 /** One acquired run: its dependencies, its input, its state and its owned machinery. */
 export interface RunExecution<CONTEXT, TOOLS extends ToolSet> {
   invocation?: AgentInvocationScope;
+  invocationTrace?: ModelInvocationTrace;
+  runtimeContext?: AgentRuntimeRunContext<CONTEXT>;
   readonly dependencies: RunExecutorDependencies<CONTEXT, TOOLS>;
   readonly input: RunExecutionInput<CONTEXT>;
   readonly state: RunExecutionState;
@@ -188,6 +195,17 @@ export function billedUsage(state: RunExecutionState): AgentUsage | undefined {
     : (state.abandonedUsage ?? state.modelUsage);
 }
 
+/**
+ * What the run has cost so far: every model step and discarded attempt it was billed for,
+ * plus the calls it caused outside a step, such as history compaction.
+ */
+export function runUsage(state: RunExecutionState): AgentUsage | undefined {
+  const billed = billedUsage(state);
+  return state.nonModelUsage && billed
+    ? addUsage(state.nonModelUsage, billed)
+    : (billed ?? state.nonModelUsage);
+}
+
 export function updateReasoning(
   state: RunExecutionState,
   text: string,
@@ -221,8 +239,18 @@ export function updateReasoning(
   );
 }
 
+/** A tool call's new status, published after the checkpoint that holds it. */
+export interface CheckpointedToolStatus {
+  callId: string;
+  toolName: string;
+  status: 'started' | 'completed' | 'failed' | 'interrupted';
+  input?: z.core.util.JSONType;
+  output?: z.core.util.JSONType;
+}
+
 export function checkpoint<CONTEXT, TOOLS extends ToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
+  toolStatus?: CheckpointedToolStatus,
 ): Promise<void> {
   const { config, runtimeEpoch, publish, now } = execution.dependencies;
   const { state } = execution;
@@ -272,5 +300,22 @@ export function checkpoint<CONTEXT, TOOLS extends ToolSet>(
       metrics: checkpointMetrics,
       emittedAt: now().toISOString(),
     });
+    // Inside the same serialized step as the CAS: the status is never ahead of
+    // the snapshot that holds it, and two statuses cannot share a version.
+    if (toolStatus)
+      await publish({
+        type: 'tool-status',
+        eventId: agentDurableEventId(
+          'tool-status',
+          state.run.id,
+          state.observedVersion,
+          `${toolStatus.callId}:${toolStatus.status}`,
+        ),
+        conversationId: state.run.conversationId,
+        runId: state.run.id,
+        snapshotVersion: state.observedVersion,
+        ...toolStatus,
+        emittedAt: now().toISOString(),
+      });
   });
 }

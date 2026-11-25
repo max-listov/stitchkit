@@ -1,0 +1,35 @@
+{
+  "$comment": "Live traffic recorded on 2026-11-24, reduced to the fields the drivers read, paths replaced. The raw recordings stay outside git.",
+  "recordings": [
+    {
+      "file": "claude-2.1.330-text.jsonl",
+      "engine": "claude-cli",
+      "version": "2.1.330",
+      "turn": "a text answer"
+    },
+    {
+      "file": "claude-2.1.330-approval-denied.jsonl",
+      "engine": "claude-cli",
+      "version": "2.1.330",
+      "turn": "a Write asked of the host and denied"
+    },
+    {
+      "file": "codex-0.162.1-failed-turn.jsonl",
+      "engine": "codex",
+      "version": "0.162.1",
+      "turn": "a turn the server failed (model not available on the account)"
+    },
+    {
+      "file": "agy-1.5.14-text.jsonl",
+      "engine": "acp",
+      "version": "agy 1.5.14",
+      "turn": "a text answer"
+    },
+    {
+      "file": "agy-1.5.14-cancelled.jsonl",
+      "engine": "acp",
+      "version": "agy 1.5.14",
+      "turn": "a turn cancelled with session/cancel"
+    }
+  ]
+}

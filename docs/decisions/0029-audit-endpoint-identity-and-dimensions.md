@@ -8,10 +8,11 @@ updated: 2026-06-18
 
 # ADR 0029 — Endpoint identity and domain dimensions on the audit event
 
-- **Status:** Accepted — extends [ADR 0012](0012-observability-module.md) (the
-  observability module), [ADR 0022](0022-endpoint-identity.md) (stable endpoint
-  identity), [ADR 0021](0021-endpoint-meta-passthrough.md) (opaque passthrough)
-  and keeps the core generic per [ADR 0002](0002-generic-core.md).
+**Relations:** extends [ADR 0012](0012-observability-module.md) (the observability module),
+[ADR 0022](0022-endpoint-identity.md) (stable endpoint identity),
+[ADR 0021](0021-endpoint-meta-passthrough.md) (opaque passthrough) and keeps the core generic per
+[ADR 0002](0002-generic-core.md).
+
 - **Date:** 2026-06-18
 
 ## Context

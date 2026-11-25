@@ -67,6 +67,7 @@ async function run(argv: string[]): Promise<{ out: string; err: string; code: nu
   let err = '';
   let code = -1;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'items',
     version: '1.0.0',
     services: [service],
@@ -127,14 +128,12 @@ describe('createCli — aggregate views', () => {
     expect(lines).toHaveLength(ITEMS.length + 2);
   });
 
-  test('an absent view field is refused, never inventing an empty group', async () => {
+  test('an absent view field is refused before execution, never inventing an empty group', async () => {
     const { out, err, code } = await run(['item_list', '--count-by', 'stat']);
-    expect(code).toBe(8);
-    // The command is a read: nothing is printed, the corrected call returns the answer.
+    expect(code).toBe(2);
+    // Unambiguous output schema rejects the unknown column before calling the handler.
     expect(out).toBe('');
-    expect(JSON.parse(err).details.cause.details.message).toContain(
-      'no record carries the field "stat"',
-    );
+    expect(err).toContain('no record carries the field "stat"');
     // The message names what the caller could have meant.
     expect(err).toContain('status');
   });

@@ -3,6 +3,7 @@ title: "ADR 0111: The driver is the extension point, and the agent runtime is no
 description: "AgentRuntimeStore stops being a public implementation target so its growth costs adopters nothing; promotion to stable waits on two named conditions, not on a feeling."
 type: decision
 status: accepted
+amendedBy: ["0311"]
 created: 2026-08-25
 updated: 2026-08-25
 ---
@@ -59,7 +60,10 @@ implementable, for an in-process double or a store that is not a database.
 What changes is what its growth *means*: **adding a member to the aggregate is
 not a breaking change**, because the supported way to obtain one is
 `createAgentRuntimeStore(driver)`. Adding a member to the **driver** is, and that
-is where the stability promise lives.
+is where the stability promise lives (amended by [ADR 0311](0311-planned-breaking-release-access-expose-and-clean-boundaries.md):
+`history.hasMessage` and `events.find` are required driver members, `archive` and
+`history.restore` are declared capabilities checked on `store.capabilities`, and
+`AgentScheduleService.listSchedules` is async).
 
 This is itself a change of contract and is announced as one. Without it, an
 adopter reads three aggregate members in three releases as three migrations, when

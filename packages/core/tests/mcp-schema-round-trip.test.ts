@@ -28,7 +28,9 @@ async function serveInputSchema(input: z.ZodType): Promise<Record<string, unknow
     { walk: { method: 'POST', path: '/', desc: 'Walk a tree', input } },
   );
   const server = new McpServer({ name: 'test', version: '1' });
-  mountMcp(server, implement(contract, { walk: () => undefined }));
+  mountMcp(server, implement(contract, { walk: () => undefined }), {
+    access: { open: 'local-operator' },
+  });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'client', version: '1' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);

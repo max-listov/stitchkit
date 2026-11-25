@@ -1,6 +1,13 @@
+---
+title: "ADR 0199 — One owner per name, one way per job: the 0.94 consolidation"
+type: decision
+status: accepted
+created: 2026-09-23
+updated: 2026-09-23
+---
+
 # 0199 — One owner per name, one way per job: the 0.94 consolidation
 
-**Status:** Accepted
 **Date:** 2026-09-23
 
 Applies [PRINCIPLES](../PRINCIPLES.md) I8 (one mechanism per job, no parallel

@@ -35,7 +35,10 @@ function surface(input: z.ZodType) {
     transport: 'AGENT',
     flattenUnionInput: true,
   });
-  const mounted = mountAgent(service, { flattenUnionInput: true }).project_input;
+  const mounted = mountAgent(service, {
+    access: { open: 'local-operator' },
+    flattenUnionInput: true,
+  }).project_input;
   if (!manifest || !mounted) throw new Error('expected manifest and mounted tool');
   return { manifest: manifest.inputSchema, mounted, received };
 }

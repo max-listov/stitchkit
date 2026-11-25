@@ -1,35 +1,11 @@
 import { isRecord } from '../internal/typed';
+import { SCHEMA_KEYWORDS, SCHEMA_LIST_KEYWORDS, SCHEMA_MAP_KEYWORDS } from './keywords';
 
 const DRAFT_07_MARKER = 'draft-07';
 
 /** Draft-07 keeps reusable subschemas in `definitions`; 2020-12 renamed it `$defs`. */
 const DRAFT_07_KEYWORD = 'definitions';
 const DEFS_KEYWORD = '$defs';
-
-/** Keywords whose value is one subschema. */
-export const SCHEMA_KEYWORDS = [
-  'items',
-  'additionalItems',
-  'additionalProperties',
-  'contains',
-  'propertyNames',
-  'not',
-  'if',
-  'then',
-  'else',
-  'unevaluatedItems',
-  'unevaluatedProperties',
-];
-/** Keywords whose value is a list of subschemas. */
-export const SCHEMA_LIST_KEYWORDS = ['allOf', 'anyOf', 'oneOf', 'prefixItems'];
-/** Keywords whose value maps a name to a subschema. */
-export const SCHEMA_MAP_KEYWORDS = [
-  'properties',
-  'patternProperties',
-  'dependentSchemas',
-  DRAFT_07_KEYWORD,
-  DEFS_KEYWORD,
-];
 
 /** True when a document says, in its own `$schema`, that it is draft-07. */
 export function declaresDraft07(dialect: unknown): boolean {
@@ -67,8 +43,11 @@ function withPositionalItems(schema: unknown): unknown {
   if (!isRecord(schema)) return schema;
   const rewritten: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(schema)) {
-    if (SCHEMA_KEYWORDS.includes(key)) rewritten[key] = withPositionalItems(child);
-    else if (SCHEMA_LIST_KEYWORDS.includes(key) && Array.isArray(child)) {
+    if (SCHEMA_KEYWORDS.includes(key)) {
+      rewritten[key] = Array.isArray(child)
+        ? child.map(withPositionalItems)
+        : withPositionalItems(child);
+    } else if (SCHEMA_LIST_KEYWORDS.includes(key) && Array.isArray(child)) {
       rewritten[key] = child.map(withPositionalItems);
     } else if (SCHEMA_MAP_KEYWORDS.includes(key)) {
       rewritten[key] = mapValues(child, withPositionalItems);

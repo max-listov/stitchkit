@@ -1,6 +1,14 @@
+---
+title: "ADR 0251 — A release does not wait for its consumers"
+type: decision
+status: accepted
+supersedes: ["0250"]
+created: 2026-10-06
+updated: 2026-10-06
+---
+
 # 0251 — A release does not wait for its consumers
 
-**Status:** Accepted
 **Date:** 2026-10-06
 
 Practice. Invariant P. Supersedes [ADR 0250](0250-a-release-that-changes-process-behaviour-is-tried-on-the-consumers-before-its-tag.md).

@@ -3,6 +3,8 @@ title: "ADR 0082: View-file has one managed batch operation"
 description: Protected multimodal inspection is a managed runtime-tool definition and the raw MCP mount is a presentation adapter over the same bounded batch core.
 type: decision
 status: accepted
+amends: ["0081"]
+amendedBy: ["0088"]
 created: 2026-08-20
 updated: 2026-08-20
 ---

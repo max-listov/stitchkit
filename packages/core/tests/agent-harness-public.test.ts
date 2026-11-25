@@ -407,7 +407,10 @@ describe('published headless Agent harness', () => {
       "---\nname: 'changed'\ndescription: changed\n---\n\nChanged body.",
     );
     expect(await discovered.load()).toBe(loaded);
-    const tools = mountAgent([], { runtimeTools: discovered.runtimeTools });
+    const tools = mountAgent([], {
+      access: { open: 'local-operator' },
+      runtimeTools: discovered.runtimeTools,
+    });
     const execute = tools.read_resource?.execute;
     if (!execute) throw new Error('expected read_resource');
     expect(
@@ -514,7 +517,7 @@ describe('published headless Agent harness', () => {
       identity: { serviceName: 'fixture', action: 'dangerous-change', method: 'POST' },
       input: z.object({ value: z.string() }),
       output: z.object({ ok: z.literal(true) }),
-      transports: ['AGENT'],
+      expose: ['AGENT'],
       handler: () => {
         effects += 1;
         return { ok: true as const };
@@ -565,7 +568,10 @@ describe('published headless Agent harness', () => {
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
       promptBudget: ({ contextWindow }) => budget(contextWindow),
       tools: (context) =>
-        mountAgent([], { runtimeTools: [dangerous], lifecycle: context.toolFenceLifecycle }),
+        mountAgent([], {
+          runtimeTools: [dangerous],
+          access: { gate: context.toolFenceLifecycle },
+        }),
       loop: {
         toolApproval: { dangerous_change: 'user-approval' },
         toolApprovalSecret: 'fixture-approval-secret',
@@ -655,7 +661,7 @@ describe('published headless Agent harness', () => {
       identity: { serviceName: 'fixture', action: 'recoverable-change', method: 'POST' },
       input: z.object({}),
       output: z.object({ ok: z.literal(true) }),
-      transports: ['AGENT'],
+      expose: ['AGENT'],
       handler: () => {
         effects += 1;
         return { ok: true as const };
@@ -705,7 +711,10 @@ describe('published headless Agent harness', () => {
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
       promptBudget: ({ contextWindow }) => budget(contextWindow),
       tools: (context) =>
-        mountAgent([], { runtimeTools: [effect], lifecycle: context.toolFenceLifecycle }),
+        mountAgent([], {
+          runtimeTools: [effect],
+          access: { gate: context.toolFenceLifecycle },
+        }),
       loop: {
         toolApproval: { recoverable_change: 'user-approval' },
         toolApprovalSecret: 'recovery-secret',
@@ -741,7 +750,10 @@ describe('published headless Agent harness', () => {
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
       promptBudget: ({ contextWindow }) => budget(contextWindow),
       tools: (context) =>
-        mountAgent([], { runtimeTools: [effect], lifecycle: context.toolFenceLifecycle }),
+        mountAgent([], {
+          runtimeTools: [effect],
+          access: { gate: context.toolFenceLifecycle },
+        }),
       loop: {
         toolApproval: { recoverable_change: 'user-approval' },
         toolApprovalSecret: 'recovery-secret',
@@ -769,7 +781,7 @@ describe('published headless Agent harness', () => {
       identity: { serviceName: 'fixture', action: 'denied-change', method: 'POST' },
       input: z.object({}),
       output: z.object({ ok: z.literal(true) }),
-      transports: ['AGENT'],
+      expose: ['AGENT'],
       handler: () => {
         effects += 1;
         return { ok: true as const };
@@ -818,7 +830,10 @@ describe('published headless Agent harness', () => {
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
       promptBudget: ({ contextWindow }) => budget(contextWindow),
       tools: (context) =>
-        mountAgent([], { runtimeTools: [denied], lifecycle: context.toolFenceLifecycle }),
+        mountAgent([], {
+          runtimeTools: [denied],
+          access: { gate: context.toolFenceLifecycle },
+        }),
       loop: {
         toolApproval: { denied_change: 'user-approval' },
         toolApprovalSecret: 'denial-secret',
@@ -881,7 +896,7 @@ describe('published headless Agent harness', () => {
       identity: { serviceName: 'workspace', action: 'echo', method: 'POST' },
       input: z.object({ value: z.string() }),
       output: z.object({ value: z.string() }),
-      transports: ['AGENT'],
+      expose: ['AGENT'],
       handler: ({ input }) => {
         calls.push(input.value);
         return input;
@@ -924,10 +939,12 @@ describe('published headless Agent harness', () => {
         mountAgent([], {
           runtimeTools: [echo],
           context: context.context,
-          lifecycle: {
-            beforeHandle: (_toolContext, operation) => {
-              if (!operation.toolName) throw new Error('expected direct tool identity');
-              lifecycle.push(operation.toolName);
+          access: {
+            gate: {
+              beforeHandle: (_toolContext, operation) => {
+                if (!operation.toolName) throw new Error('expected direct tool identity');
+                lifecycle.push(operation.toolName);
+              },
             },
           },
         }),
@@ -975,7 +992,7 @@ describe('published headless Agent harness', () => {
       identity: { serviceName: 'fixture', action: 'effect', method: 'POST' },
       input: z.object({}),
       output: z.object({ ok: z.literal(true) }),
-      transports: ['AGENT'],
+      expose: ['AGENT'],
       handler: (): { ok: true } => {
         effects += 1;
         return { ok: true };
@@ -1028,7 +1045,7 @@ describe('published headless Agent harness', () => {
       tools: (context) =>
         mountAgent([], {
           runtimeTools: [effect],
-          lifecycle: context.toolFenceLifecycle,
+          access: { gate: context.toolFenceLifecycle },
         }),
     });
     await harness.submit({

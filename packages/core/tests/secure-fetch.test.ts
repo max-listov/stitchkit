@@ -13,7 +13,7 @@ import {
   isPrivateIp,
   readCapped,
 } from '../src/internal/secure-fetch';
-import { ViewFileInputSchema } from '../src/tools/transfer/view-file';
+import { ViewFileInputSchema } from '../src/tools/transfer/view-file-contract';
 
 describe('isPrivateIp', () => {
   test('flags loopback / private / link-local / CGNAT / ULA', () => {

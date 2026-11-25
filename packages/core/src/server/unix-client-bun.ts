@@ -1,4 +1,5 @@
-import { UnixClientTransportError } from './unix-client-error';
+import { abortReason } from '../internal/abort-race';
+import { UnixClientTransportError, unixTransportError } from '../internal/unix-client-error';
 import { BodyDecoder, readResponseHead, requestBytes, WireBuffer } from './unix-client-http1';
 
 interface BunUnixSocket {
@@ -57,6 +58,7 @@ function classifyTransportFailure(
   error: unknown,
   headersReceived: boolean,
   dispatched: boolean,
+  socketPath: string,
 ): UnixClientTransportError {
   if (error instanceof UnixClientTransportError) return error;
   if (headersReceived) {
@@ -64,7 +66,7 @@ function classifyTransportFailure(
       'UNIX_RESPONSE_ABORTED',
       'Unix response failed before completion',
       'response-received',
-      { cause: error },
+      { cause: error, socketPath },
     );
   }
   return new UnixClientTransportError(
@@ -73,7 +75,7 @@ function classifyTransportFailure(
       ? 'Unix request transport failed after dispatch may have begun'
       : 'Unix socket connection failed before request dispatch',
     dispatched ? 'possibly-dispatched' : 'not-dispatched',
-    { cause: error },
+    { cause: error, socketPath },
   );
 }
 
@@ -93,6 +95,23 @@ function limitError(
         `Unix response ${what} exceed the ${bytes} byte limit`,
         'response-received',
       );
+}
+
+function closedError(socketPath: string, dispatched: boolean): UnixClientTransportError {
+  return unixTransportError(
+    socketPath,
+    'UNIX_CLIENT_CLOSED',
+    'Unix client transport is closed',
+    dispatched ? 'possibly-dispatched' : 'not-dispatched',
+  );
+}
+
+function headersTimeoutError(socketPath: string, timeoutMs: number): UnixClientTransportError {
+  return unixTransportError(
+    socketPath,
+    'UNIX_HEADERS_TIMEOUT',
+    `Unix response headers did not arrive within ${timeoutMs}ms`,
+  );
 }
 
 interface SocketEvents {
@@ -167,21 +186,15 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
   });
 
   const transportFailure = (error: unknown): UnixClientTransportError =>
-    classifyTransportFailure(error, headersReceived, writeOffset > 0);
+    classifyTransportFailure(error, headersReceived, writeOffset > 0, options.socketPath);
 
-  const clearRegistration = options.registerAbort(() => {
-    fail(
-      new UnixClientTransportError('UNIX_CLIENT_CLOSED', 'Unix client transport is closed'),
-    );
-  });
-  const timer = setTimeout(() => {
-    fail(
-      new UnixClientTransportError(
-        'UNIX_HEADERS_TIMEOUT',
-        `Unix response headers did not arrive within ${options.headersTimeoutMs}ms`,
-      ),
-    );
-  }, options.headersTimeoutMs);
+  const clearRegistration = options.registerAbort(() =>
+    fail(closedError(options.socketPath, writeOffset > 0)),
+  );
+  const timer = setTimeout(
+    () => fail(headersTimeoutError(options.socketPath, options.headersTimeoutMs)),
+    options.headersTimeoutMs,
+  );
   timer.unref();
 
   const removeRequestAbort = (): void => {
@@ -205,7 +218,7 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
   }
 
   function abortRequest(): void {
-    fail(options.request.signal.reason ?? new DOMException('Request aborted', 'AbortError'));
+    fail(abortReason(options.request.signal));
   }
 
   const enqueue = (value: Uint8Array): void => {
@@ -302,7 +315,7 @@ export function bunUnixRequest(options: BunUnixRequestOptions): Promise<Response
   };
 
   if (options.request.signal.aborted) {
-    fail(options.request.signal.reason ?? new DOMException('Request aborted', 'AbortError'));
+    fail(abortReason(options.request.signal));
     return response;
   }
   options.request.signal.addEventListener('abort', abortRequest, { once: true });

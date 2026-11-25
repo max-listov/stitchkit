@@ -8,7 +8,7 @@
   <a href="https://github.com/max-listov/stitchkit/actions/workflows/ci.yml"><img src="https://github.com/max-listov/stitchkit/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/stitchkit?color=2563eb" alt="MIT license" /></a>
   <img src="https://img.shields.io/badge/runtime-Bun-fbf0df?logo=bun&logoColor=000" alt="Bun" />
-  <img src="https://img.shields.io/badge/runtime-Node%20%E2%89%A522-339933?logo=nodedotjs&logoColor=fff" alt="Node >= 22" />
+  <img src="https://img.shields.io/badge/runtime-Node%20%E2%89%A522.3-339933?logo=nodedotjs&logoColor=fff" alt="Node >= 22.3" />
 </p>
 
 <p align="center">
@@ -46,7 +46,7 @@ and the typed client move together.
 ## Status
 
 Pre-1.0. The core is stable and covered by tests, but the public API may still
-change between minor versions until 1.0. Bun is first-class; Node ≥ 22 is
+change between minor versions until 1.0. Bun is first-class; Node ≥ 22.3 is
 supported via `stitchkit/node`.
 
 ## Install
@@ -106,6 +106,8 @@ cursor but no execution, persistence or sink graph.
 Durable embedded storage is isolated behind
 `stitchkit/agent-runtime/sqlite/bun` and `stitchkit/agent-runtime/sqlite/node`;
 neither runtime-specific built-in leaks into the neutral or browser entrypoint.
+`stitchkit/agent-runtime/postgres` keeps the same store and its companions on
+Postgres, over the application's own client.
 Externally supervised sessions can compose the same runtime through
 `stitchkit/agent-runtime/harness`; optional explicit-root lazy resources, signed approval
 continuations and reconnectable control compose there. Bounded direct file, search, guarded patch,
@@ -258,6 +260,7 @@ const mcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: (req) => resolveApiKey(req),     // → identity, or null for 401
   services: [service],                   // contract endpoints with expose: ['MCP']
+  access: { gate: { beforeHandle: authHook } },
 })
 
 createServer({
@@ -274,7 +277,10 @@ createServer({
 import { mountAgent } from 'stitchkit/tools/agent'
 import { generateText } from 'ai'
 
-const tools = mountAgent(service, { context: { userId: 'agent-1' } })
+const tools = mountAgent(service, {
+  context: { userId: 'agent-1' },
+  access: { gate: { beforeHandle: authHook } },
+})
 const result = await generateText({ model, tools, prompt: 'Create a user named Max' })
 ```
 
@@ -449,14 +455,16 @@ peer — an install pulls in only what the project actually uses.
 | Agent runtime testing | optional test surface | `stitchkit/agent-runtime/testing`; peer-free local fault server, replay and race fixtures. |
 | `stitchkit-tui` | separate optional package | Renderer-neutral `./core` state, `./widgets` for terminal applications, plus a Bun/OpenTUI terminal controller, commands, model/session pickers and authenticated local attachment over a caller-composed harness. |
 | `@openrouter/ai-sdk-provider` | peer, optional | Only `stitchkit/agent-runtime/openrouter`; neutral runtime imports do not resolve it. |
+| `@anthropic-ai/claude-agent-sdk` | peer, optional | Only `stitchkit/agent-executor/claude-sdk`; the application supplies `query` and its own SDK version. |
 | SQLite | runtime built-in, optional | `bun:sqlite` through `stitchkit/agent-runtime/sqlite/bun`, or `node:sqlite` on Node ≥ 22.5 through the Node leaf. |
+| Postgres | the application's own client | `stitchkit/agent-runtime/postgres` takes a `transaction` and a `query` function (Bun SQL, Prisma, `pg`); it imports no client. |
 | `grammy` | peer, optional | Only `stitchkit/application/grammy` at run time, and the declarations of `stitchkit/telegram/screens` and `stitchkit/telegram/grammy`; the neutral application kernel does not resolve it. |
 | `@opentelemetry/api` | peer, optional | Type-only boundary for `stitchkit/application/opentelemetry`; the adapter has no runtime import and owns no SDK/exporter. |
 | `@tanstack/react-query` + `react-query-kit` | peer, optional | Only `stitchkit/react` — `createCursorQuery`, `createCacheBridge`. |
 | `react` | peer, optional | Only the React subpaths: `stitchkit/react` with the two above, and `stitchkit/react/keyboard` — keyboard layers and list zones, hooks only. |
 | `socket.io` / `@socket.io/bun-engine` / `socket.io-client` | peer, optional | Only the Socket.IO wrappers. `@socket.io/bun-engine` is Bun-only; shipping one self-contained artifact? Hand the loaders to `createSocketIOServer({ peers })`. |
 | `@socket.io/component-emitter` | peer, optional, **types only** | Referenced by the browser Socket.IO declarations. Arrives with `socket.io-client`; nothing imports it at runtime. |
-| `srvx` | peer, optional | Only `serveNode` — the Node ≥ 22 HTTP adapter. Bun uses `Bun.serve` and needs nothing. |
+| `srvx` | peer, optional | Only `serveNode` — the Node ≥ 22.3 HTTP adapter. Bun uses `Bun.serve` and needs nothing. |
 
 **Why peers, not bundled.** A peer is resolved once, by your app — framework and
 app code share a single instance. Bundled copies would double `zod`, split the

@@ -3,6 +3,7 @@ title: "ADR 0185: A served schema speaks the dialect it is stamped with"
 description: "The MCP mount emitted draft-07 definitions under a 2020-12 stamp, so our own MCP client could not resolve a single pointer; the document now matches its label, the definitions are hoisted to the root, and a round-trip test holds both halves together."
 type: decision
 status: accepted
+amendedBy: ["0270"]
 created: 2026-09-16
 updated: 2026-09-16T14:14+07:00
 ---

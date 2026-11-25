@@ -1,6 +1,13 @@
+---
+title: "ADR 0242 — The staging name of an atomic write is a public contract"
+type: decision
+status: accepted
+created: 2026-10-05
+updated: 2026-10-05
+---
+
 # 0242 — The staging name of an atomic write is a public contract
 
-**Status:** Accepted
 **Date:** 2026-10-05
 
 Invariants I8 and I14.

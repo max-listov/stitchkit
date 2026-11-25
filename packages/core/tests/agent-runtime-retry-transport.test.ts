@@ -8,6 +8,7 @@ import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
+  recordAgentRetryDecision,
 } from '../src/entrypoints/agent-runtime';
 import {
   createAgentControlView,
@@ -134,14 +135,84 @@ describe('a retry on the transport', () => {
         attempt: 1,
         stepNumber: 0,
         response: { id: 'failed-generation', provider: 'FirstProvider' },
+        usage: {
+          inputTokens: { value: 7, provenance: 'provider-reported' },
+          outputTokens: { value: 1, provenance: 'provider-reported' },
+          reasoningTokens: { provenance: 'unavailable' },
+          cacheReadTokens: { provenance: 'unavailable' },
+          cacheWriteTokens: { provenance: 'unavailable' },
+          cost: { provenance: 'unavailable' },
+        },
       },
       {
         runId: result.run.id,
         attempt: 2,
         stepNumber: 0,
         response: { id: 'recovered-generation', provider: 'SecondProvider' },
+        usage: {
+          inputTokens: { value: 3, provenance: 'provider-reported' },
+          outputTokens: { value: 1, provenance: 'provider-reported' },
+          reasoningTokens: { provenance: 'unavailable' },
+          cacheReadTokens: { provenance: 'unavailable' },
+          cacheWriteTokens: { provenance: 'unavailable' },
+          cost: { provenance: 'unavailable' },
+        },
       },
     ]);
     await runtime.close();
+  });
+});
+
+describe('the retry count', () => {
+  const unbounded = [Number.POSITIVE_INFINITY, Number.NaN, 0, -1, 1.5];
+
+  test('createAgentRuntime refuses a maxAttempts that is not a positive safe integer', () => {
+    const runtime = (maxAttempts: number) =>
+      createAgentRuntime({
+        protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+        store: createMemoryAgentRuntimeStore(),
+        models: {
+          resolve: () => {
+            throw new Error('not resolved at construction');
+          },
+        },
+        prompt: () => ({
+          instructions: 'retry',
+          sections: [],
+          instructionTokens: { provenance: 'unavailable' },
+          contextDecision: 'unavailable',
+        }),
+        tools: () => ({}),
+        loop: { retry: { maxAttempts, delayMs: () => 0 } },
+      });
+    for (const maxAttempts of unbounded) {
+      expect(() => runtime(maxAttempts)).toThrow(
+        `loop.retry.maxAttempts must be a positive safe integer, received ${maxAttempts}`,
+      );
+    }
+    expect(() => runtime(3)).not.toThrow();
+  });
+
+  test('recordAgentRetryDecision refuses such a policy before it decides or records', async () => {
+    const appended: unknown[] = [];
+    const store = {
+      ...createMemoryAgentRuntimeStore(),
+      appendEvent: async (event: unknown) => {
+        appended.push(event);
+        throw new Error('not recorded');
+      },
+    };
+    for (const maxAttempts of unbounded) {
+      await expect(
+        recordAgentRetryDecision({
+          store,
+          conversationId: 'c',
+          attempt: 1_000_000,
+          failure: { retryable: true, reason: 'rate_limited' } as never,
+          policy: { maxAttempts, delayMs: () => 0 },
+        }),
+      ).rejects.toThrow('maxAttempts must be a positive safe integer');
+    }
+    expect(appended).toEqual([]);
   });
 });

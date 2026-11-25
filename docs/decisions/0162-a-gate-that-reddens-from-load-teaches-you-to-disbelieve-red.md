@@ -2,7 +2,7 @@
 title: A gate that reddens from load teaches its reader to disbelieve red
 description: Two heavy lanes want ~7 GiB and the host had 5.8; the release gate timed out in different tests every run, and the fix was an environment variable somebody had to remember. It measures now, and says what it measured.
 type: decision
-status: active
+status: accepted
 created: 2026-09-03
 updated: 2026-09-03
 ---

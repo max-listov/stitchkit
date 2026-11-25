@@ -14,6 +14,9 @@
  * topics, 429s and the bounded way down.
  */
 
+import { abortError } from '../internal/abort-error';
+import { assertTimerMs } from '../internal/deadline';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { sleep } from '../internal/timers';
 import { callTelegramBotApi, TELEGRAM_BOT_TOKEN_PATTERN } from './bot-api';
 import { TELEGRAM_TEXT_LIMIT } from './html/nodes';
@@ -62,9 +65,17 @@ export interface TelegramOperatorDrop<TTopic extends string> {
    * Telegram said no in a way repeating will not fix; `attempts` — it kept
    * failing; `closed` — the channel closed before it was sent; `repeated`
    * — the same message was sent within the dedupe window; `over-budget` —
-   * the window's budget was spent.
+   * the window's budget was spent; `flood-wait` — Telegram's `retry_after`
+   * was longer than `maxRetryAfterMs`.
    */
-  readonly reason: 'overflow' | 'refused' | 'attempts' | 'closed' | 'repeated' | 'over-budget';
+  readonly reason:
+    | 'overflow'
+    | 'refused'
+    | 'attempts'
+    | 'closed'
+    | 'repeated'
+    | 'over-budget'
+    | 'flood-wait';
   readonly failure?: TelegramSendFailure;
 }
 
@@ -80,6 +91,13 @@ export interface TelegramOperatorChannelConfig<TTopic extends string> {
   readonly minIntervalMs?: number;
   /** Sends of one message before it is dropped. Default 3. */
   readonly maxAttempts?: number;
+  /**
+   * The longest `retry_after` the channel waits on one message, in milliseconds. Default
+   * 60 000 — the minute over which Telegram counts a group's messages. A longer flood wait
+   * would hold every message queued behind it, so that message is dropped as `flood-wait`
+   * instead and the next one is tried at the usual pace.
+   */
+  readonly maxRetryAfterMs?: number;
   /** Every message that will not arrive, with why. */
   readonly onDropped?: (drop: TelegramOperatorDrop<TTopic>) => void;
   /** Default: a timer. Rejects when `signal` aborts. */
@@ -125,12 +143,28 @@ function fitted(text: string): string {
     : `${points.slice(0, TELEGRAM_TEXT_LIMIT - 1).join('')}…`;
 }
 
+/** The pause Telegram named, in milliseconds; a value that is not a positive number is no pause. */
+function retryDelayMs(retryAfterSeconds: number): number {
+  const milliseconds = retryAfterSeconds * 1_000;
+  return Number.isNaN(milliseconds) || milliseconds <= 0 ? 0 : milliseconds;
+}
+
+/**
+ * Create the channel. `maxQueued` and `maxAttempts` must be positive safe integers
+ * (`TypeError`), `minIntervalMs` and `maxRetryAfterMs` integers from 0 to `MAX_TIMER_MS`
+ * (`RangeError`): refused here, before anything is queued, never read as "no limit".
+ */
 export function createTelegramOperatorChannel<TTopic extends string = never>(
   config: TelegramOperatorChannelConfig<TTopic>,
 ): TelegramOperatorChannel<TTopic> {
+  assertPositiveSafeInteger('maxQueued', config.maxQueued);
+  assertPositiveSafeInteger('maxAttempts', config.maxAttempts);
+  assertTimerMs('minIntervalMs', config.minIntervalMs, { min: 0 });
+  assertTimerMs('maxRetryAfterMs', config.maxRetryAfterMs, { min: 0 });
   const maxQueued = config.maxQueued ?? 200;
   const minIntervalMs = config.minIntervalMs ?? 3_000;
   const maxAttempts = config.maxAttempts ?? 3;
+  const maxRetryAfterMs = config.maxRetryAfterMs ?? 60_000;
   const pause = config.sleep ?? sleep;
   const patterns = [
     TELEGRAM_BOT_TOKEN_PATTERN,
@@ -200,7 +234,12 @@ export function createTelegramOperatorChannel<TTopic extends string = never>(
         drop(item, 'attempts', failure);
         return undefined;
       }
-      return Math.max(minIntervalMs, (failure.retryAfterSeconds ?? 0) * 1_000);
+      const retryAfterMs = retryDelayMs(failure.retryAfterSeconds ?? 0);
+      if (retryAfterMs > maxRetryAfterMs) {
+        drop(item, 'flood-wait', failure);
+        return undefined;
+      }
+      return Math.max(minIntervalMs, retryAfterMs);
     }
   };
 
@@ -280,7 +319,7 @@ export function createTelegramOperatorChannel<TTopic extends string = never>(
     },
     close() {
       closed = true;
-      lifetime.abort(new DOMException('Operator channel closed', 'AbortError'));
+      lifetime.abort(abortError('Operator channel closed'));
       lifetime = new AbortController();
       for (const item of queue.splice(0)) drop(item, 'closed');
       settleIdle();

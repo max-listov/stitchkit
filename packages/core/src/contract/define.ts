@@ -1,9 +1,11 @@
 import type { ZodType } from 'zod';
+import { assertTimerMs } from '../internal/deadline';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { resolveRouteParamsSchema } from '../internal/route-pattern';
 import type { MultipartDescriptor } from './client-types';
 import {
   assertHeadEndpoint,
+  assertInputRecursionDepth,
   assertMultipartEndpoint,
   assertNoUngroupedToolOptions,
   assertRawBodyEndpoint,
@@ -13,6 +15,7 @@ import {
   assertStreamingResponseEndpoint,
 } from './define-validation';
 import { assertEndpointExposure } from './endpoint-capabilities';
+import { assertEndpointEffect, type OperationEffect } from './operation-effect';
 import type { EndpointToolOptions } from './tool-options';
 import { assertToolView } from './tool-view';
 import { TOOL_TRANSPORTS, type Transport } from './transports';
@@ -145,6 +148,8 @@ interface EndpointRouteBase {
    * a careful transport treats it as non-idempotent.
    */
   idempotent?: boolean;
+  /** Closed side-effect tag (`'read'` or `'write'`) for read-only grant projection. */
+  effect?: OperationEffect;
   /**
    * Opaque, app-defined per-endpoint metadata. The core attaches **no** meaning
    * to it (like `scope`, it is a free escape-hatch — ADR 0002/0021): it rides
@@ -420,6 +425,7 @@ export function defineContract(
   const toolTransports = new Map<string, { key: string; transports: Set<Transport> }>();
   for (const [key, ep] of Object.entries(materializedEndpoints)) {
     assertEndpointExposure(meta.prefix, key, ep);
+    assertEndpointEffect(meta.prefix, key, ep);
     // `desc` is the description a model reads to decide whether to call the
     // tool — an empty one passes the type check but ships an unusable tool.
     if (ep.desc.trim() === '') {
@@ -431,6 +437,7 @@ export function defineContract(
       ep.maxJsonBodyBytes,
       Error,
     );
+    assertTimerMs(`Contract "${meta.prefix}": endpoint "${key}" timeout`, ep.timeout);
 
     if (ep.multipart) assertMultipartEndpoint(meta.prefix, key, ep);
 
@@ -460,6 +467,10 @@ export function defineContract(
       );
     }
     if (tool.view !== undefined) assertToolView(meta.prefix, key, ep);
+    assertInputRecursionDepth(
+      `Contract "${meta.prefix}": endpoint "${key}" tool.inputRecursionDepth`,
+      tool.inputRecursionDepth,
+    );
 
     if (!tool.name) continue;
     const existing = toolTransports.get(tool.name);

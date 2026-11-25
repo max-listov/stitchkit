@@ -44,7 +44,10 @@ export function classifyBotBroadcastFailure(error: unknown): TelegramBroadcastFa
   if (failure.retryAfterSeconds !== undefined)
     return {
       kind: 'retry-after',
-      retryAfterMs: failure.retryAfterSeconds * 1_000,
+      retryAfterMs: Math.min(
+        MAX_TIMER_MS,
+        Math.max(0, Math.ceil(failure.retryAfterSeconds * 1_000)),
+      ),
       reason: failure.reason,
     };
   if (failure.retryable) return { kind: 'transient', reason: failure.reason };

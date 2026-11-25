@@ -140,7 +140,8 @@ if (probe.status === 0) {
         attachments: { value: 0, provenance: 'measured' },
         providerOverhead: { provenance: 'unavailable' },
       }),
-      tools: () => mountAgent([], { runtimeTools: registry.tools }),
+      tools: () =>
+        mountAgent([], { access: { open: 'local-operator' }, runtimeTools: registry.tools }),
       loop: {
         toolApproval: { run_command: 'user-approval' },
         toolApprovalSecret: 'packed-sandbox-fixture',
@@ -204,6 +205,7 @@ if (probe.status === 0) {
       throw new Error('recorded command executed again');
     });
     const read = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createSandboxCodingTools(handle, { authorize: () => true }),
     }).read_file.execute;
     const result = await read(

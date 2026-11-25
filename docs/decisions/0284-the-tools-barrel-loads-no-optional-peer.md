@@ -3,6 +3,7 @@ title: "ADR 0284: The tools barrel loads no optional peer"
 description: stitchkit/tools exports only the transport-neutral tool layer; the MCP server, the AI SDK agent mount and the toolkit that composes both live on their own subpaths.
 type: decision
 status: accepted
+amends: ["0231"]
 created: 2026-11-05 08:49 +07:00
 updated: 2026-11-05 08:58 +07:00
 ---

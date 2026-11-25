@@ -122,3 +122,43 @@ describe('pollUntil — backoff & ordering', () => {
     expect(order).toEqual(['poll']); // threw on the first poll, before any sleep
   });
 });
+
+describe('pollUntil — the signal a poll runs under', () => {
+  /** A poll that never answers and settles only when its signal aborts, with that reason. */
+  const hangingPoll = (seen: unknown[]) => (signal?: AbortSignal) =>
+    new Promise<number>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => {
+        seen.push(signal.reason);
+        reject(signal.reason);
+      });
+    });
+
+  test("the caller's abort reaches the poll and ends the wait with the caller's reason", async () => {
+    const caller = new AbortController();
+    const seen: unknown[] = [];
+    const pending = pollUntil<number>({
+      poll: hangingPoll(seen),
+      done: () => false,
+      timeoutSec: 60,
+      signal: caller.signal,
+    });
+    const reason = new Error('caller left');
+    caller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+    expect(seen).toEqual([reason]);
+  });
+
+  test("the poll's share of the deadline aborts it, and the wait reports the timeout", async () => {
+    const seen: unknown[] = [];
+    await expect(
+      pollUntil<number>({
+        poll: hangingPoll(seen),
+        done: () => false,
+        timeoutSec: 0.02,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('wait deadline elapsed before the first snapshot');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeInstanceOf(Error);
+  });
+});

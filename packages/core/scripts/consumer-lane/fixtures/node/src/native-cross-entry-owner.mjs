@@ -71,6 +71,7 @@ try {
     },
   };
   const tools = mountAgent([], {
+    access: { open: 'local-operator' },
     runtimeTools: createAgentCodingTools({
       root: handle.coding.root,
       authorize: () => true,

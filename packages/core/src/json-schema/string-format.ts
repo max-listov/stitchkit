@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isRecord } from '../internal/typed';
-import { SCHEMA_KEYWORDS, SCHEMA_LIST_KEYWORDS, SCHEMA_MAP_KEYWORDS } from './dialect';
+import { SCHEMA_KEYWORDS, SCHEMA_LIST_KEYWORDS, SCHEMA_MAP_KEYWORDS } from './keywords';
 
 /** The string formats of the JSON Schema validation vocabulary (2020-12, §7.3). */
 export const STANDARD_STRING_FORMATS: ReadonlySet<string> = new Set([
@@ -45,8 +45,9 @@ const SERVED_FORMAT = 'x-stitchkit-served-format';
 export function withServedFormats(schema: Record<string, unknown>): Record<string, unknown> {
   const carried: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(schema)) {
-    if (SCHEMA_KEYWORDS.includes(key)) carried[key] = carriedSchema(child);
-    else if (SCHEMA_LIST_KEYWORDS.includes(key) && Array.isArray(child)) {
+    if (SCHEMA_KEYWORDS.includes(key)) {
+      carried[key] = Array.isArray(child) ? child.map(carriedSchema) : carriedSchema(child);
+    } else if (SCHEMA_LIST_KEYWORDS.includes(key) && Array.isArray(child)) {
       carried[key] = child.map(carriedSchema);
     } else if (SCHEMA_MAP_KEYWORDS.includes(key) && isRecord(child)) {
       carried[key] = Object.fromEntries(

@@ -2,7 +2,7 @@
 title: Remote implementation has a peer-free entrypoint
 description: implementRemote belongs to stitchkit/remote so HTTP proxy consumers never import MCP or AI peers by accident.
 type: decision
-status: active
+status: accepted
 created: 2026-08-20
 updated: 2026-08-20
 ---

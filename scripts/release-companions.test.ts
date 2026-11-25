@@ -1,10 +1,21 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   assertTrainCarriesItsCompanions,
+  missingCompanions,
   type PublishedTreeReader,
   packedRange,
+  readFromReleaseTags,
+  trainRequirements,
 } from './release-companions';
 import { ReleaseTrainSchema } from './release-train';
+
+const created: string[] = [];
+afterAll(async () => {
+  for (const path of created) await rm(path, { recursive: true, force: true });
+});
 
 const manifest = (fields: Record<string, unknown>) => JSON.stringify(fields);
 
@@ -59,6 +70,22 @@ describe('a train carries the siblings whose published range would refuse it', (
     ).rejects.toThrow('stitchkit-tui');
   });
 
+  test('a missing companion names the release that requires it, wherever that stands in the train', async () => {
+    // The starter comes first in this train; tui is needed because of core, and its changelog
+    // has to say so, not name whatever was listed first.
+    const missing = await missingCompanions(
+      train([
+        { target: 'create-stitchkit', version: '0.6.10' },
+        { target: 'core', version: '0.105.0' },
+      ]),
+      tree('0.105.0'),
+      published('dependencies'),
+    );
+    expect(missing.map(({ companion, requiredBy }) => ({ companion, requiredBy }))).toEqual([
+      { companion: 'tui', requiredBy: { target: 'core', version: '0.105.0' } },
+    ]);
+  });
+
   test('the same train with tui in it is accepted: tui is repacked from the workspace', async () => {
     await expect(
       assertTrainCarriesItsCompanions(
@@ -100,5 +127,73 @@ describe('a train carries the siblings whose published range would refuse it', (
     expect(packedRange('workspace:~', '0.94.0')).toBe('~0.94.0');
     expect(packedRange('workspace:*', '0.94.0')).toBe('0.94.0');
     expect(packedRange('workspace:>=0.90.0', '0.94.0')).toBe('>=0.90.0');
+  });
+
+  test('a repository with no release tags for a companion prefix refuses instead of silently returning empty', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'release-companions-notags-'));
+    created.push(root);
+    await writeFile(join(root, 'README.md'), 'tagless clone\n');
+    for (const args of [
+      ['init', '-q'],
+      ['config', 'user.email', 'gate@example.invalid'],
+      ['config', 'user.name', 'gate'],
+      ['add', '.'],
+      ['commit', '-qm', 'init'],
+      // Only a core tag exists; no `stitchkit-tui-v*` tags were fetched.
+      ['tag', 'v0.104.0'],
+    ]) {
+      expect(Bun.spawnSync(['git', '-C', root, ...args]).exitCode).toBe(0);
+    }
+    await expect(
+      missingCompanions(
+        train([{ target: 'core', version: '0.105.0' }]),
+        tree('0.105.0'),
+        readFromReleaseTags(root),
+      ),
+    ).rejects.toThrow(
+      /No local release tags matching "stitchkit-tui-v\*"[\s\S]*git fetch origin --tags/,
+    );
+  });
+});
+
+describe('a train publishes whole', () => {
+  const both = ReleaseTrainSchema.parse({
+    schemaVersion: 1,
+    releases: [
+      { target: 'core', version: '0.127.0' },
+      { target: 'tui', version: '0.5.0' },
+    ],
+  });
+
+  test("a package waits for the siblings of its train it publishes a range for, at the train's version", () => {
+    const tui = manifest({ version: '0.5.0', peerDependencies: { stitchkit: 'workspace:^' } });
+    expect(trainRequirements(both, 'tui', tui)).toEqual([
+      { packageName: 'stitchkit', version: '0.127.0' },
+    ]);
+    expect(
+      trainRequirements(both, 'tui', manifest({ dependencies: { stitchkit: 'workspace:*' } })),
+    ).toEqual([{ packageName: 'stitchkit', version: '0.127.0' }]);
+  });
+
+  test('nothing to wait for: the framework, a dev-only range, a sibling outside the train', () => {
+    expect(trainRequirements(both, 'core', manifest({ version: '0.127.0' }))).toEqual([]);
+    expect(
+      trainRequirements(
+        both,
+        'tui',
+        manifest({ devDependencies: { stitchkit: 'workspace:^' } }),
+      ),
+    ).toEqual([]);
+    const alone = ReleaseTrainSchema.parse({
+      schemaVersion: 1,
+      releases: [{ target: 'tui', version: '0.5.1' }],
+    });
+    expect(
+      trainRequirements(
+        alone,
+        'tui',
+        manifest({ peerDependencies: { stitchkit: 'workspace:^' } }),
+      ),
+    ).toEqual([]);
   });
 });

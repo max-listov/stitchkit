@@ -10,7 +10,7 @@
  * synthesis in flight, and nothing after that is said.
  */
 
-import { untilAborted } from '../internal/until-aborted';
+import { raceAbort } from '../internal/abort-race';
 
 export interface SpeechQueueOptions<Prepared> {
   /** Synthesise one sentence. Aborted when the queue is cancelled. */
@@ -113,7 +113,7 @@ export class SpeechQueue<Prepared> {
    */
   private async unlessStopped<T>(pending: Promise<T>): Promise<T | typeof CANCELLED> {
     try {
-      return await untilAborted(pending, this.stopped.signal);
+      return await raceAbort(pending, this.stopped.signal);
     } catch {
       return CANCELLED;
     }

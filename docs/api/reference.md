@@ -34,7 +34,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `readContractIdentity` | function | read the server's contract fingerprint in one call and return it beside the client's own — [guide](../guide/client.md#which-contract-does-the-server-speak) |
 | `ContractIdentity` | _type_ | `{ client, server }` fingerprints; `server` is `undefined` when the server answers no identity |
 | `UrlBuilderConfig` | _type_ | explicit `{ baseUrl }` source for a URL builder |
-| `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`) |
+| `ClientConfig` | _type_ | config for `createClient`'s bare-fetch mode (2nd arg, no `HttpClient`); `retry.limit` bounds how often a call that got no answer is sent again when its endpoint allows it — [details](../guide/client.md#calls-that-never-got-an-answer) |
 | `ClientFetch` | _type_ | injectable Fetch-compatible transport used by framework and application-owned adapters |
 | `ClientRequestOptions` | _type_ | per-call `{ signal?, onUploadProgress? }` passed through an endpoint callable's `.withOptions(...)`; caller abort is distinct from timeout — [guide](../guide/client.md#per-call-cancellation) |
 | `UploadProgress` | _type_ | `{ sentBytes, totalBytes, attempt }` heard by `onUploadProgress`: bytes of the encoded body handed to the network, first `0`, last `totalBytes`, counted again on each transport retry — [guide](../guide/client.md#upload-progress) |
@@ -53,7 +53,7 @@ The browser-and-server entrypoint. Re-exports everything from
 | `ConfiguredHttpClient` | _type_ | a framework-created `HttpClient` carrying its readonly `baseUrl` for URL builders |
 | `HttpClientConfig` | _type_ | config for `createHttpClient`; retry `limit` counts retries after the initial attempt (default 2 = at most 3 GET attempts), with `statusCodes: []` by default; `fetch` installs an explicit transport and is mutually exclusive with the legacy Bun-only `unix` option — [details](../guide/client.md#createhttpclient) |
 | `UnauthorizedMatcher` | _type_ | exact `(pathname) => boolean` policy accepted by `suppressUnauthorizedFor` |
-| `RequestOptions` | _type_ | per-call options — params, timeout, response type, `onUploadProgress` |
+| `RequestOptions` | _type_ | per-call options — params, timeout, response type, `onUploadProgress`, `idempotent` (whether a call that got no answer may be sent again; the typed client passes the endpoint's) |
 | `HeaderProvider` | _type_ | static or per-request headers |
 | `ApiEvent` | _type_ | a client event — `unauthorized` / `network_error` / `logout` |
 | `ApiEventListener` | _type_ | an `ApiEvent` handler |
@@ -167,16 +167,38 @@ Expired work throws `SessionExpiredError`, not a refresh instruction; when the w
 itself failed, that failure is its `cause`.
 
 `createSessionCredentials` accepts `SessionCredentialsConfig`:
-`scope`, `refresh(credentials, signal)`, `storage.write(session, credentials)`,
-`storage.clear()`, `maxPendingWrites` (128), `refreshTimeoutMs` (30000, at most one
-hour) and `storageTimeoutMs` (30000, at most one hour): a storage call past it
-rejects and frees the queue, so `logout()` still clears; when the late call settles,
-storage is written again from memory, or cleared when nobody is logged in. `SessionCredentials` provides `login`, `logout`, `read(operation)` and
-`refresh(operation)`. Concurrent refresh calls in one generation share the same
-promise. Logout invalidates memory before its returned persistence promise settles.
-Storage errors and queue-capacity refusals reject; callers must handle them. All
-writes must pass through the same instance. There is no cross-process/tab lock,
-provider error classifier or automatic retry of arbitrary application callbacks.
+`scope`, `refresh(credentials, signal)`, `storage.read()`, `storage.write(session, credentials)`,
+`storage.clear()`, `maxPendingWrites` (128, `1..65536`), `refreshTimeoutMs` (30000, `1..3600000`),
+`storageTimeoutMs` (30000, `1..3600000`), optional `refreshAhead` (`SessionRefreshAhead`:
+`expiresAt(credentials): number | null`, `leadMs` default 60000 in `1..86400000` capped at half
+the token lifetime, `cooldownMs` default 30000 in `1..3600000` on monotonic time, capped at half
+the token lifetime when that half is at least one second),
+`classifyRefreshFailure` (defaults to `defaultClassifyRefreshFailure`, returning
+`SessionRefreshFailure`: `'rejected'` for objects with numeric `status` `401` or `403`,
+`'unavailable'` otherwise; `SessionExpiredError` is never classified), `retry` (`BackoffPolicy`,
+default `{ minDelayMs: 30000, maxDelayMs: 300000, jitter: 0.5 }`), `storageRetryMs` (5000,
+`1..3600000`), `onEvent` (`SessionCredentialsEvent`: `'refreshed'`, `'refresh-unavailable'`,
+`'refresh-rejected'`, `'storage-failed'`), and `clock` (`SessionClock`: `now()`, `monotonic()`,
+`schedule(run, delayMs)` defaulting to `Date.now`, `performance.now` and unref'd `setTimeout`).
+
+`SessionCredentials` provides `login`, `logout`, `restore()` (returning `SessionRestoreResult`:
+`present` arms refresh without rewriting storage, `absent` leaves state unchanged, `unreadable`
+returns the read error without calling `storage.clear()` or `scope.clear()`), `read(operation)`,
+`refresh(operation, options?)` (accepting `SessionRefreshOptions` `{ rejected? }` to return
+already-replaced credentials without a second rotation) and `refreshIfDue(operation)` (for host
+wakeup events such as visibility/foreground/online; tokens with `expiresAt === null` never
+refresh proactively or on wakeup). Concurrent refresh calls in one generation — manual, timer
+and wakeup — share one flight. Logout invalidates memory synchronously and cancels active timers
+before its ordered clear settles. Storage errors and queue-capacity refusals reject `login()`
+and `logout()`; a storage failure or timeout after `refresh()` has already rotated credentials
+keeps the issued credentials in memory, resolves `refresh()`, emits `storage-failed`, retries
+persistence every `storageRetryMs` and refuses to rotate again until the previous rotation is
+flushed. A `'rejected'` refresh stops proactive refresh for that generation, emits
+`refresh-rejected` and rejects with `SessionRefreshRejectedError` (carrying the original `cause`)
+without clearing storage or scope. For rotating refresh tokens, keep
+`refreshTimeoutMs + retry.minDelayMs` and `storageRetryMs` below the server's replay window. All
+writes must pass through the same instance; cross-process/tab locking belongs to storage, and
+application-command error classification and one-shot retries remain with the host.
 
 ## `stitchkit/contract`
 
@@ -197,13 +219,15 @@ from the root `stitchkit`.
 | `ScopedContractDef` | _type_ | a factory-defined contract whose `meta.scope` is the required concrete literal |
 | `ScopedDefineContract` | _type_ | the `defineContract` `createContractFactory` returns — endpoint `scope` overrides join the union |
 | `ALL_TRANSPORTS` | constant | `['HTTP', 'MCP', 'AGENT', 'CLI']` |
-| `TOOL_TRANSPORTS` / `ToolTransport` | constant / _type_ | `['MCP', 'AGENT', 'CLI']` — the transports a model or tool client reads; the one name for a tool surface everywhere (runtime-tool `transports`, invoker, collector, connections) |
+| `TOOL_TRANSPORTS` / `ToolTransport` | constant / _type_ | `['MCP', 'AGENT', 'CLI']` — the transports a model or tool client reads; the one name for a tool surface everywhere (runtime-tool `expose`, invoker, collector, connections) |
 | `ContractDef` | _type_ | a defined contract |
 | `PathParams` | _type_ | infer named `:segments` and a terminal `*wildcard` from a path literal as string params |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
-| `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid); `safelistedBody: true` admits the JSON body as `text/plain` from an allow-listed `Origin` — [guide](../guide/server.md#safelisted-request-bodies-beacons) |
+| `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid); optional `effect?: OperationEffect` declares `'read' \| 'write'` side effects; `safelistedBody: true` admits the JSON body as `text/plain` from an allow-listed `Origin` — [guide](../guide/server.md#safelisted-request-bodies-beacons) |
+| `OperationEffect` / `OperationEffectSchema` | _type_ / schema | closed `'read' \| 'write'` side-effect classification declared on contract endpoints |
+| `contractOperationEffects` / `requireContractOperationEffects` | function | project declared endpoint `effect` tags from a contract; `requireContractOperationEffects` fails closed and lists every operation missing `effect` |
 | `withToolView` | function | declare an endpoint's call and answer on the tool surface (MCP, AGENT, CLI): input `defaults`, and optionally a view `output` and a `project`, typed against the endpoint's own schemas; HTTP keeps the full answer — [guide](../guide/mcp-and-agents.md#a-different-answer-for-tools--withtoolview) |
-| `EndpointToolOptions` | _type_ | an endpoint's `tool` group — `name`, `view`, `ui`, `annotations`, `mcp`: what the tool surfaces read that HTTP does not |
+| `EndpointToolOptions` | _type_ | an endpoint's `tool` group — `name`, `view`, `ui`, `annotations`, `mcp`, `inputRecursionDepth`: what the tool surfaces read that HTTP does not |
 | `EndpointToolView` | _type_ | the stored shape of a tool view (`MethodDef.toolView`) |
 | `DeclaredToolView` | _type_ | a tool view as `withToolView` produces it — the only form `tool.view` accepts |
 | `WithToolView` | _type_ | the endpoint `withToolView` returns: its own tool options plus the declared view in `tool.view` — name it when a helper returns such an endpoint |
@@ -243,7 +267,7 @@ from the root `stitchkit`.
 | `MultipartDescriptor` | _type_ | file fields, cardinality, delivery and request/text limits |
 | `MultipartFilePolicy` | _type_ | required/multiple, per-file bytes/count and declared MIME policy |
 | `MultipartBufferedFiles` | _type_ | `File` map inferred from a multipart descriptor |
-| `EndpointToolAnnotations` | _type_ | MCP behavioural hints on an endpoint (`readOnlyHint` / `destructiveHint` / `title`) |
+| `EndpointToolAnnotations` | _type_ | MCP behavioural hints on an endpoint (`readOnlyHint` / `destructiveHint` / `title`); omitted `readOnlyHint` derives `true` when `effect: 'read'` (or `GET` without `effect: 'write'`) and `destructiveHint !== true` |
 | `EndpointUiMeta` | _type_ | MCP Apps widget metadata on an endpoint |
 | `EndpointMcpInputRequired` | _type_ | typed MCP multi-round input request (`key`, message and Zod object schema) |
 | `EndpointMcpPolicy` | _type_ | MCP-only endpoint policy containing `inputRequired` |
@@ -261,7 +285,6 @@ from the root `stitchkit`.
 | `forbidden` | function | throw `403 FORBIDDEN` |
 | `conflict` | function | throw `409 CONFLICT` |
 | `rateLimited` | function | throw `429 RATE_LIMITED` |
-| `appError` | function | throw an `AppError` for any code |
 | `defineErrors` | function | declare immutable domain error definitions → typed `AppError` constructors, codes and schemas — [guide](../guide/auth-and-errors.md#domain-errors--defineerrors) |
 | `DefinedErrors` | _type_ | the `{ errors, codes, definitions, isCode, codeMap }` handle `defineErrors` returns |
 | `DefinedAppError` | _type_ | literal-code error instance with schema-refined details |
@@ -371,6 +394,8 @@ schedules, transports and file generation remain application-owned.
 | `DomainEventDeliveryPlan` / `DomainEventDispatchResult` | _types_ | transaction input and bounded dispatch summary |
 | `defineExportOperation` / `createExportResultSchema` | functions | one typed contract operation returning a ready managed file or pending operation id |
 | `scanMoneyNumberRisks` / `scanOwnerFilterRisks` | functions | source-text migration diagnostics with caller-owned identifiers |
+| `orderKeyBetween` / `isOrderKey` | functions | a fractional order key strictly between two keys (`null` is an open end), compared code unit by code unit as `COLLATE "C"` sorts; the format and keys of the `fractional-indexing` package's default alphabets; plain JavaScript |
+| `OrderKeySchema` / `OrderKeyError` / `OrderKeyRefusal` | schema / class / _type_ | a well-formed key at a boundary; a refusal with `reason` `malformed`, `order` (bounds not ascending) or `exhausted` |
 | `SourceText` / `SourceRisk` | _types_ | migration scanner input and exact path/line evidence |
 
 ---
@@ -395,6 +420,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 |--------|------|---------|
 | `createServer` | function | build the router and start `Bun.serve` — [guide](../guide/server.md#createserver) |
 | `createHandler` | function | the router as a bare `(req) => Response` — [guide](../guide/server.md#createserver) |
+| `createLocalHostGuard` / `LocalHostGuard` / `LocalHostGuardConfig` / `LocalHostRefusal` | function / _types_ | a host that serves only its own machine's windows: loopback `Host`, allowed `Origin`, a constant-time Bearer secret — as `hooks.onRequest` and as Socket.IO `allowRequest` and `handshake`, with `cors` for the same origins (`undefined` when `origins` is empty for native-only hosts) — [guide](../guide/server.md#a-host-beside-its-own-window) |
 | `implement` | function | bind a contract to typed handlers — [guide](../guide/server.md#implement) |
 | `withContractIdentity` | function | the given services plus the one answering `contractIdentityContract` with their fingerprint — the list to mount — [guide](../guide/client.md#which-contract-does-the-server-speak) |
 | `createImplement` | function | fix the handler context type once |
@@ -445,7 +471,7 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `ShutdownStateSchema` / `ShutdownState` | schema / _type_ | managed lifecycle state machine |
 | `ServiceDef` | _type_ | the result of `implement` |
 | `MethodDef` | _type_ | one resolved endpoint inside a service |
-| `OperationIdentity` | _type_ | path-free service/action/scope/method identity shared by contract and native tool operations |
+| `OperationIdentity` | _type_ | path-free service/action/scope/method/optional `effect?` identity shared by contract and native tool operations; repeatable-read derivation (`readOnlyHint` and CLI view withholding) follows explicit `annotations.readOnlyHint` → `effect: 'write'` (non-read) → `effect: 'read'` (read unless `destructiveHint: true`) → `GET` fallback (unless `destructiveHint: true`) |
 | `Handlers` | _type_ | the typed handler map `implement` expects |
 | `LifecycleHooks` | _type_ | `onRequest` / pre-body `authorize` / `beforeHandle` / `afterHandle` / `onError` |
 | `composeLifecycleHooks` | function | compose HTTP lifecycle phases in declaration order with short-circuit/fallthrough semantics |
@@ -476,6 +502,10 @@ Also re-exports the error helpers from `stitchkit/contract`.
 | `signJwt` | function | sign an HS256 JWT |
 | `VerifyJwtOptions` | _type_ | options for `verifyJwt` |
 | `verifyJwt` | function | verify an HS256 JWT |
+| `signLink` / `SignLinkOptions` | function / _type_ | a short-lived link for a request that cannot carry a header (`<audio src>`, `<img src>`): appends `expires` and an HMAC-SHA-256 `signature` over the method, path and every query parameter — [guide](../guide/auth-and-errors.md#signed-links) |
+| `verifySignedLink` / `VerifySignedLinkOptions` | function / _type_ | check a request against its link (signature compared with a constant-time comparison, then expiry); call it from `createAuthHook`'s `resolve` or a raw route |
+| `SignedLinkVerdict` / `SignedLinkRefusal` | _types_ | `{ ok: true, expiresAt }` or `{ ok: false, reason }` with `unsigned`, `malformed`, `expired` or `forged` |
+| `MAX_SIGNED_LINK_SECONDS` | constant | the longest lifetime `signLink` accepts: seven days |
 | `extractToken` | function | read a bearer token from header or cookie |
 | `deriveCodeChallenge` | function | PKCE — derive the `code_challenge` from a verifier |
 | `verifyPkce` | function | PKCE — verify a verifier against a stored challenge |
@@ -652,7 +682,8 @@ cutovers are covered by the executable
 | `lifecycleLedgerResource` / `LifecycleLedgerResource` / `LifecycleLedgerResourceConfig` | function / _type_ | managed-resource adapter that records start, readiness, admission stop (draining) and shutdown |
 | `createNotificationOutbox` / `NotificationOutbox` / `NotificationOutboxConfig` | function / _type_ | bounded at-least-once queue with durable claims, leases, retries and supersede |
 | `NotificationOutboxItem` / `NotificationOutboxReceipt` / `NotificationOutboxState` / `NotificationSend` / `NotificationFailureClassification` / `DroppedNotification` / `EnqueueNotification` | _type_ | versioned queue records, stable send identity and delivery decisions |
-| `notificationOutboxStateSchema` | function | strict persisted-state schema over an application payload schema |
+| `createNotificationOutboxStateSchema` | function | strict persisted-state schema over an application payload schema |
+| `formatDiagnosticJournalLockDiagnosis` | function | exhaustive human-readable formatter for `DiagnosticJournalLockDiagnosis` (browser-clean) |
 | `notificationOutboxResource` / `NotificationOutboxResource` / `NotificationOutboxResourceConfig` | function / _type_ | thin managed-resource scheduler over an outbox handle |
 | `DirectoryInbox` / `DirectoryInboxConfig` / `DirectoryInboxDelivery` / `DirectoryInboxResource` | _type_ | one managed directory inbox for files or durable `accept({ source, key, entry })` (`entry` is the schema's input, stored as given); a hard-linked file is set aside as `invalid`; first payload wins, bounded capacity/bytes/receipts and renewable fenced leases; delivery begins after readiness and effects remain at least once |
 | `DirectoryInboxIdentitySchema` / `DirectoryInboxIdentity` / `DirectoryInboxAccept` / `DirectoryInboxAcceptResultSchema` / `DirectoryInboxAcceptResult` | schema / _type_ | validated source/key, typed entry and durable accepted/duplicate result with filename; duplicates do not replace the first payload |
@@ -810,9 +841,8 @@ and `ApplicationEventSinkConfig`.
 
 ### Canonical application records
 
-These are also published on their own as
-[`stitchkit/application/schemas`](#stitchkitapplicationschemas), which carries
-no server runtime and can therefore be imported from a browser bundle.
+All canonical application schemas are browser-clean directly from `stitchkit/application`,
+so browser bundles import them without pulling in any server runtime.
 
 The entrypoint exports each Zod schema beside its inferred type:
 `ApplicationIdSchema` / `ApplicationId`, `ApplicationLifecycleSchema` /
@@ -857,6 +887,20 @@ vocabulary with an event topic declared `mode: 'decision'`.
 
 → [ADR 0152](../decisions/0152-a-keyspace-is-memory-that-nothing-reaches-before-it-is-durable.md),
 [ADR 0153](../decisions/0153-a-watched-read-is-one-read-per-question.md).
+
+### SQLite migrations
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `defineSqliteMigrations` / `SqliteMigrationDefinition` / `SqliteMigration` | function / _types_ | checksum each migration (32-bit FNV-1a of `statements.join('\n')`, plain JavaScript, runs in Hermes); a repeated version or name, a non-positive version or a migration without statements refuses |
+| `planSqliteMigrations` / `SqliteMigrationPlanInput` / `AppliedSqliteMigration` | function / _types_ | `planSqliteMigrations({ scope, applied, migrations })` — the migrations still to apply, in version order; every applied one is checked first, and a ledger ahead of the code is not an error |
+| `runSqliteMigrations` / `SqliteMigrationRun` / `SqliteMigrationBegin` | function / _types_ | apply what is missing on a synchronous connection (`bun:sqlite`, `node:sqlite`, synchronous `expo-sqlite` through the wrapper in the sync guide), one transaction per migration, no `await` inside it; `begin` defaults to `IMMEDIATE`; `ledger` names the table one list is recorded in (default `schema_migrations`), so independent lists share one database |
+| `runSqliteMigrationsAsync` / `AsyncSqliteConnection` | function / _type_ | the same plan through a promise-only connection; the caller gives the run the connection alone |
+| `SQLITE_MIGRATION_LEDGER_SQL` | constant | the default `schema_migrations(version, name, checksum, applied_at)` ledger; a list with its own `ledger` gets the same columns under its name |
+| `SqliteMigrationLedgerMismatchError` | class | an applied migration's name or text changed: the database is not this code's schema; `scope` and `version` name it, and what to do is the host's decision |
+| `SqliteMigrationFailedError` / `SqliteMigrationLedgerUnreadableError` | classes | a migration failed and rolled back (`scope`, `version`, the driver's error as `cause`); a ledger row that is not a migration |
+
+→ [ADR 0304](../decisions/0304-sync-is-a-client-half-a-server-half-and-the-apps-own-merge.md).
 
 ### Managed change subscriptions and scoped watches
 
@@ -961,33 +1005,6 @@ Its **contract** stays in `stitchkit/application` — every
 Zod, and a client reading a journal's status has as much right to them as the
 server writing it.
 
-## `stitchkit/application/schemas`
-
-The canonical application records — and nothing else. Every export here is also
-reachable from `stitchkit/application`; the difference is what comes with it.
-
-`stitchkit/application` is the server runtime: it reaches `node:child_process`,
-`node:fs` and `node:crypto`. A browser bundler does not omit those, it
-substitutes stubs — so a module that merely *names* an application schema fails
-while it is initialising, and the page never mounts, on every route rather than
-the one that wanted the schema. A contract whose `output` is an application
-snapshot could be declared and never consumed, which is the one thing a contract
-is for.
-
-So the same schemas ship a second way, from a module with nothing behind them:
-
-```ts
-// browser and server alike
-import { ApplicationSnapshotSchema } from 'stitchkit/application/schemas';
-```
-
-The exports are exactly those listed under
-[canonical application records](#canonical-application-records) above.
-`packages/core/scripts/check-browser-clean.mjs` holds the promise against the
-built artifact: it walks the browser lane's real `dist` output and refuses a
-`node:` import reachable from any of it, and refuses an entry built for the
-browser that no `exports` path leads to — which is how this one was missing.
-
 ---
 
 ## `stitchkit/agent-runtime`
@@ -1009,10 +1026,14 @@ Server-only optional application runtime. See the
 | `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |
 | `AgentRunQueuePrioritySchema` | schema | durable opt-in priority for queued `interrupt-next` runs |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
-| `BranchAgentConversationInputSchema` / `BranchAgentConversationInput` | schema / _type_ | strict branch request: stable request key, empty destination, settled conversation boundary or archive bytes, fresh artifact authorization, and `applicationFiles` — `{ reference, destinationReference }` pairs for file parts the application stores; an undeclared non-spill file reference refuses the branch. `applicationKeys` names keys such as `messageId` or `reference` that are the application's own data inside its JSON; a declared key still refuses when its value names a source identity |
+| `BranchAgentConversationInputSchema` / `BranchAgentConversationInput` | schema / _type_ | strict branch request: stable request key, empty destination, settled conversation boundary or archive bytes, fresh artifact authorization, and `applicationFiles` — `{ reference, destinationReference }` pairs for file parts the application stores; an undeclared non-spill file reference refuses the branch. `applicationKeys` declares, once each, runtime reference names such as `messageId` or `runId` that are the application's own data inside its JSON — `sourceIdentity: 'refuse'` (default) refuses a value naming the source, `'retain'` carries a value naming the source conversation, a run or a message byte for byte as a record of the past |
+| `AgentConversationBranchRefusedError` / `AgentBranchRefusalSchema` / `AgentBranchRefusal` / `AgentBranchRefusalCodeSchema` / `AgentBranchRefusalCode` | class / schemas / _types_ | a branch refusal: a `TypeError` whose `refusals` lists every refusal a declaration or authorization lifts (up to 100, `omittedRefusals` counts the rest), each with `code` and its address — event `seq`, `eventKind`, `messageId`, `toolName`, key `path`, attachment `reference` — never a value; `integrity` stops at once |
+| `AgentConversationBranchPlanSchema` / `AgentConversationBranchPlan` / `AgentRuntimeStore.planConversationBranch` | schema / _type_ / method | what `branchConversation` would refuse for the same input, without writing: `ready`, `refusals`, `omittedRefusals`, `applicationFiles` (every non-spill attachment reference to grant and declare), `undeclaredKeys`, `fingerprint`, `sourceArchiveDigest` |
 | `AgentConversationBranchReceiptSchema` / `AgentConversationBranchReceipt` | schema / _type_ | durable lineage: request fingerprint, source/destination identities, source sequence/version/digest and creation time |
 | `AgentConversationBranchResultSchema` / `AgentConversationBranchResult` | schema / _type_ | `created` or `duplicate` with the same durable receipt; `AgentRuntimeStore.branchConversation` is optional for hand-written stores |
-| `createAgentRuntimeStore` | function | build the aggregate store from one coherent transaction driver; framework owns every state transition |
+| `createAgentRuntimeStore` | function | build the aggregate store from one coherent transaction driver; framework owns every state transition; the store reports `capabilities` |
+| `AgentRuntimeStoreCapabilities` / `AgentStoreOptionalCapability` | _type_ | `store.capabilities`, frozen: `{ archive, historyRestore, purge }` — whether the driver has `archive`, `history.restore` and `conversations`; a driver whose `archive` lacks `export` or `import` is refused when the store is built |
+| `AgentStoreUnsupportedCapabilityError` | class | a `TypeError` with `.capability` (`'archive'` or `'historyRestore'`): `importConversation`, `branchConversation` or `planConversationBranch` got a source that needs a driver member the store lacks — without `archive`, an archive carrying spills or companion projections, or a branch source carrying spills; without `history.restore`, a compacted baseline — and refused it before writing anything |
 | `AgentRuntimeStoreDriver` | _type_ | ORM-neutral transaction over a bounded head, normalized runs/admissions, product history, a **required** `events: { append, list }` ledger table, an optional `archive: { export, import }` for driver-owned durable payloads, and indexed run recovery; optional `{ access: 'read' }` selects a coherent read transaction while absent options remain write-safe |
 | `recordAgentRetryDecision` / `AgentRetryPolicy` | function / _type_ | `loop.retry` policy and the ledger record of a retry decision: explicit retryability and backoff at a durable provider-step boundary |
 | `AgentRuntimeHeadSchema` | schema | constant-size conversation identity plus monotonic runtime version |
@@ -1073,7 +1094,9 @@ Server-only optional application runtime. See the
 | `RecordRunOperationSchema` / `RecordRunOperation` | schema / _type_ | owner/fencing/revision-checked mutation of `AgentRun.lastOperation` |
 | `createAgentObservability` | function | separate agent-run sink over the shared bounded observability lifecycle |
 | `AgentProviderResponseSchema` / `AgentProviderResponse` | schema / _type_ | provider-assigned response ID and the optional upstream provider the model's own adapter resolves, shared by `step-finished.response` and durable `provider/response` facts |
-| `AgentStepFinishedEventSchema` / `AgentStepFinishedEvent` | schema / _type_ | one completed provider step with required usage and provider response identity |
+| `AgentStepFinishedEventSchema` / `AgentStepFinishedEvent` | schema / _type_ | one completed provider step, abandoned retry attempt, or compaction call with required usage, optional provider response identity, `attempt`, `phase`, `provider`, and isolated `spendHookError` diagnostics |
+| `AgentStepSpendPhaseSchema` / `AgentStepSpendPhase` | schema / _type_ | lifecycle phase (`'step' \| 'abandoned-attempt' \| 'compaction'`) that produced a billed spend fact |
+| `AgentStepSpendSchema` / `AgentStepSpend` | schema / _type_ | canonical per-step spend fact delivered to `AgentRuntimeConfig.onStepSpend` (`conversationId`, `runId`, `step`, `attempt`, `phase`, `model?`, `provider?: { key, upstream? }`, `response?`, `usage`, `trace?`) |
 
 ### Durable capability layer
 
@@ -1084,20 +1107,21 @@ Server-only optional application runtime. See the
 | `AppendAgentStoreEventSchema` / `AppendAgentStoreEvent` / `ReadAgentStoreEventsSchema` / `ReadAgentStoreEvents` | schema / _type_ | required append and bounded-read store contracts |
 | `AgentStoreTransitionSchema` / `AgentStoreTransition` / `AgentStoreEventDraft` / `AgentStoreEventDecodeAccepted` / `AgentStoreEventDecodeIgnored` / `AgentStoreEventDecodeResult` / `decodeAgentStoreEvent` | schema / _types_ / function | normalized runtime mutations, append drafts and strict current/ignorable future-event decoding outcomes |
 | `AgentStoreTransitionRecordSchema` / `AgentStoreTransitionRecord` | schema / _type_ | persisted journal payloads: full runtime mutations or hash-only streaming checkpoint observations with numeric part/byte counts; inspection does not authorize replay |
-| `defineAgentProjection` / `AgentProjectionDefinition` / `AgentProjectionValue` / `createAgentProjectionRegistry` / `createSqliteAgentProjectionStore` | functions / _type_ | deterministic folds with persisted version and honest `uptoSeq` checkpoints |
+| `defineAgentProjection` / `AgentProjectionDefinition` / `AgentProjectionValue` / `createAgentProjectionRegistry` / `createAgentProjectionStore` | functions / _type_ | deterministic folds with persisted version and honest `uptoSeq` checkpoints |
 | `agentSummaryProjection` / `agentUsageProjection` / `agentOutlineProjection` | constants | built-in list summary, provenance-carrying usage and request outline projections |
 | `agentConversationCardProjection` / `agentStateSlotsProjection` / `agentScheduleSummaryProjection` | constants | focused card, durable-state and schedule lifecycle projections |
 | `defineStateSlot` / `AgentStateSlotDefinition` / `AgentStateSlotStore` / `AgentStateSlotValue` / `AnyAgentStateSlot` / `createAgentStateSlotStore` / `renderAgentStateSlots` | functions / _types_ | typed durable state written as ledger events and injected on every provider request |
-| `agentGoalStateSlot` / `agentTodoStateSlot` / `createAgentStateTools` | constants / function | built-in goal/todo state and bound `goal_*` / `todo_write` Agent tools |
-| `AgentSandboxGradeSchema` / `AgentSandboxGrade` / `AgentSandboxRestrictionSchema` / `AgentSandboxRestriction` / `AgentProcessSandbox` | schema / _type_ | host-provided process sandbox capability and explicit restriction vocabulary |
-| `probeAgentProcessSandbox` / `missingSandboxRestrictions` / `recordAgentSandboxProbe` | functions | probe cached per sandbox object (keep the sandbox long-lived), fail-closed required-gap calculation and durable probe record; a probe that throws or returns no valid grade resolves to `unavailable` with a fixed reason, its cause emitted as a process warning (the coding tools instead carry it as the refusal's `cause` to the mount's `onToolError` hook) |
+| `agentGoalStateSlot` / `agentTodoStateSlot` / `createAgentStateTools` / `AgentStateToolsConfig` | constants / function / _type_ | built-in goal/todo state and `goal_*` / `todo_write` Agent tools bound to the conversation of the run context `tools()` receives |
+| `AgentProcessSandbox` | _type_ | host-provided process sandbox handle accepted by agent coding tools (probe helpers and grade/restriction schemas live in `stitchkit/agent-runtime/sandbox`) |
 | `AgentSandboxProcess` / `AgentSandboxOutputStream` | _types_ | structural child/output interface for optional lifecycle-owned `AgentProcessSandbox.spawn`, without Node ambient type dependencies |
-| `AgentEventSearchResultSchema` / `AgentEventSearchResult` / `createSqliteAgentEventSearch` / `createAgentEventSearchTools` | schema / _type_ / functions | authorized FTS5 search with exact event addresses and `session_*` tools |
-| `createSqliteAgentSpillStore` | function | durable content-address-checked artifact storage, bounded read/search, retention facts and archive participation |
-| `AgentScheduleSchema` / `AgentSchedule` / `AgentScheduleService` / `AgentScheduleDeliveryOutcomeSchema` / `AgentScheduleDeliveryOutcome` / `createAgentScheduleService` / `createAgentScheduleTools` | schemas / _types_ / functions | durable `at`/`after`/timezone-explicit `every`, indexed retry eligibility, typed retry/terminal failure (any other returned value delivers), `maxAttempts` (default 1000) per occurrence — a one-off ends `failed`, a recurring schedule skips to its next slot — bounded dispatch and fenced stable occurrence identity (ADR 0202) |
+| `AgentEventSearchResultSchema` / `AgentEventSearchResult` / `createAgentEventSearch` / `createAgentEventSearchTools` / `AgentEventSearchToolsConfig` | schema / _types_ / functions | authorized event search (SQLite FTS5 or Postgres `tsvector`, ADR 0315) with exact event addresses and `session_*` tools for the conversation of the run context `tools()` receives |
+| `PostgresAgentEventSearchConfig` | _type_ | the Postgres index's options for `createAgentEventSearch({ postgres })` — `diacritics` (`preserve` / `unaccent`), `maxIndexedChars`, `maxSyncEvents` |
+| `createAgentSpillStore` | function | durable content-address-checked artifact storage, bounded read/search, retention facts and archive participation |
+| `AgentScheduleSchema` / `AgentSchedule` / `AgentScheduleService` / `AgentScheduleDeliveryOutcomeSchema` / `AgentScheduleDeliveryOutcome` / `createAgentScheduleService` / `AgentScheduleServiceConfig` / `createAgentScheduleTools` / `AgentScheduleToolsConfig` | schemas / _types_ / functions | durable `at`/`after`/timezone-explicit `every` schedules over the store's `AgentCompanionHost`, required `maxActivePerConversation` and `minIntervalMs`, indexed retry eligibility, typed retry/terminal failure (any other returned value delivers), `maxAttempts` (default 1000) per occurrence — a one-off ends `failed`, a recurring schedule skips to its next slot — bounded dispatch and fenced stable occurrence identity (ADR 0202); the tools are bound to the conversation of the run context `tools()` receives |
 | `AgentChildBudgetSchema` / `AgentChildBudget` / `AgentChildStateSchema` / `AgentChildState` / `AgentChildRecordSchema` / `AgentChildRecord` | schema / _type_ | durable child graph, bounded seed and measured budget state |
 | `AgentChildBlockingKindSchema` / `AgentChildBlockingKind` / `AgentChildBlockingSourceSchema` / `AgentChildBlockingSource` / `AgentChildBlockingEventSchema` / `AgentChildBlockingEvent` / `AgentChildBlockingDecision` | schemas / _types_ | parent-owned request identities; responses discriminate approval decisions from JSON input values |
-| `AgentChildHandle` / `AgentChildManager` / `SqliteAgentChildManagerConfig` / `createSqliteAgentChildManager` / `createAgentChildTools` / `agentChildBudgetStopPolicy` | _type_ / functions | host execution port, child lifecycle, cascade (given to `createAgentRuntime` as `children`), messaging, Agent tools, and the child runtime's own budget stop policy — `recordStepUsage` at every step boundary, `policy_stop` as `child-budget` when spent |
+| `AgentChildHandle` / `AgentChildManager` / `AgentChildManagerConfig` / `AgentChildRemainingBudget` / `createAgentChildManager` / `createAgentChildTools` / `AgentChildToolsConfig` / `agentChildBudgetStopPolicy` | _types_ / functions | host execution port, child lifecycle with required `remainingBudget` and `maxActiveChildren`, cascade (given to `createAgentRuntime` as `children`), messaging, Agent tools bound to the parent conversation of the run context `tools()` receives, and the child runtime's own budget stop policy — `recordStepUsage` at every step boundary, `policy_stop` as `child-budget` when spent |
+| `AgentCompanionHost` / `AgentCompanionScope` / `AgentSqlSession` / `AgentSqlTables` / `AgentSqlValue` | _types_ | the store's companion host — one store transaction with the purge check and the event append (`transaction(conversationId, work)`), a read transaction (`read(work)`), the companion tables — given by the SQLite and Postgres stores and taken by every companion |
 | `AgentToolDefinition` | _type_ | peer-neutral shape returned by the bound agent-only state, search, schedule and child tool factories |
 | `AgentProviderStreamCutError` | class | explicit retryable provider stream truncation evidence |
 
@@ -1281,6 +1305,10 @@ one protected artifact. See the [guide and migration example](../guide/agent-run
 | `ModelInvocationRecordSchema` / `ModelInvocationRecord` | schema/type | discriminated invocation start/finish and per-attempt requested/sent/effective evidence |
 | `ModelInvocationAttemptContext` | type | conversation, operation, invocation, attempt, step and optional agent run identity |
 | `currentModelInvocationAttempt` | function | returns causal IDs inside the provider transport; undefined outside an invocation |
+| `modelInvocationSpendAttribution` | function | the current attempt as `stitchkit/spend` attribution fields (conversation, run, invocation, attempt, step) — a spend gateway's `context` |
+| `AgentStepBarriers` / `AgentToolCallDependencies` | _type_ | `loop.stepBarriers`, guards on each model step, checked by `createAgentRuntime`: `maxToolCallsPerStep` (a call past it is refused to the model as a `STEP_TOOL_CALL_LIMIT` tool error, without asking for its approval), `toolDependencies` (in the order the model made the calls, a read of an entity waits for the step's earlier writes of it and a write for its earlier reads and writes), `maxReasoningCharsPerStep` (past it the run stops as `policy_stop`), `stepText: 'after-tools'` (a step's text is held to its end and shown only if none of its tool calls failed; held text of an interrupted step is not shown); a streaming tool still streams, a deferred tool catalog survives the wrapping |
+| `AgentStepBarrierError` | class | the run stopped at a step bound: `bound` is `reasoning` |
+| `createToolDependencyResolver` | function | `toolDependencies` from operation effects — the `effect` of each endpoint of `contracts`, under its mounted tool name, and `effects` (by tool name) for tools of no contract — and the application's `entityOf(toolName, input)`: a `write` tool writes its entity, a `read` tool reads it |
 
 The runtime `invocations` option takes this ledger and a trace callback; it requires
 the same store and preserves the existing tool loop. `AgentRuntimeStore.appendEventOnce`
@@ -1304,7 +1332,8 @@ Credential-free provider and concurrency fixtures for Bun and Node tests.
 | `createAgentRaceTrace` / `AgentRaceTrace` / `AgentRaceTraceEntry` | function / _type_ | record and assert exact event order without wall-clock guesses |
 | `createAgentRaceDriver` / `AgentRaceDriver` | function / _type_ | collect named barriers and release their teardown together |
 | `runAgentStoreConformance` | function | reusable black-box duplicate/coalescing/stale/recovery contract for durable agent-store adapters |
-| `AgentStoreConformanceConfig` | _type_ | `{ createStore(context), cleanup?(context) }` — the factory the contract runs against, plus a teardown that runs once whether the scenario passed or failed |
+| `AgentStoreConformanceConfig` | _type_ | `{ createStore(context), capabilities, commitConflict, cleanup?(context) }` — the factory the contract runs against, its declared optional members, how a commit conflict is armed, and a teardown that runs once whether the scenario passed or failed |
+| `AgentStoreConformanceCapabilities` | _type_ | `{ branch, planBranch, archive, historyRestore }`: `branch`/`planBranch` are checked against the store's methods, `archive`/`historyRestore` against `store.capabilities`, and each is proven by behaviour — an archive's spill and companion projection round trip, a compacted baseline is restored inactive and a fresh seed key does not revive it, and a store without the member refuses with `AgentStoreUnsupportedCapabilityError` and stays empty |
 | `AgentStoreConformanceContext` | _type_ | `{ conversationIds }` — every conversation the scenario will mutate, handed over **before** the first mutation so an adapter can provision application-owned parent rows; a zero-argument factory stays valid |
 
 `inspectAgentRun` takes `(snapshot, runId)` and returns `completed()`, `calledTool(name)`,
@@ -1447,10 +1476,157 @@ See [agent composition](../guide/agent-composition.md) for a complete wiring exa
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `openRouterProvider` | function | isolated `@openrouter/ai-sdk-provider` language-model factory |
-| `openRouterModelCatalog` | function | complete tool-capable text catalog plus independent weekly popularity and available benchmark observations |
+| `openRouterProvider` / `OpenRouterProviderAccess` | function / _type_ | isolated `@openrouter/ai-sdk-provider` language-model factory; the optional second argument shapes every request and is the one place a request policy is applied — `defaultPolicy`, `resolvePolicy(modelId)` from the application's own model table, and `sessionPerConversation` (`session_id` = the agent runtime attempt's conversation, keeping a thread on one upstream); a provider-level `extraBody` that would overwrite `provider`, `reasoning`, `session_id` or `usage` is refused |
+| `OpenRouterRequestPolicySchema` / `OpenRouterRequestPolicy` / `OpenRouterProviderRoutingSchema` / `OpenRouterProviderRouting` / `OpenRouterMaxPriceSchema` / `OpenRouterMaxPrice` / `OpenRouterReasoningEffortSchema` / `OpenRouterReasoningEffort` | schemas / _types_ | one request's policy: `sessionId` or `provider.order` (never both; an empty order is refused), routing (`allowFallbacks`, `requireParameters`, `dataCollection`, `zdr`, `only`, `ignore`, `sort`, `quantizations`), `maxPrice` in USD per million tokens or per request/image, `reasoning.effort` up to `max`, `looseTools` (every function tool and the response schema sent with `strict: false`; the SDK does not serialize a tool's `strict`, so `openRouterProvider` sets it on the wire); usage accounting is always on, and `effort: 'max'` and `session_id` travel in the raw body, where the SDK leaves them alone |
+| `createOpenRouterRouteResolver` / `OpenRouterRouteResolver` / `createMemoryOpenRouterRouteStore` / `OpenRouterRouteStore` / `OpenRouterRoutePinSchema` / `OpenRouterRoutePin` | functions / _types_ / schema | keep a thread on one upstream outside the agent runtime: `session-sticky` (its `session_id`; a key over 256 characters is hashed) or `provider-order` (the upstream slug that answered first, from `record`, with `allowFallbacks: false` unless the base policy says otherwise); a pin replaces the base policy's route; the memory store is least-recently-used, bounded by `maxEntries` and `ttlMs` |
+| `loadOpenRouterCatalogSnapshot` / `fetchOpenRouterModelEndpoints` / `OpenRouterSnapshotOptions` / `OpenRouterCatalogSnapshotSchema` / `OpenRouterCatalogSnapshot` / `OpenRouterSnapshotModelSchema` / `OpenRouterSnapshotModel` / `OpenRouterEndpointSchema` / `OpenRouterEndpoint` | functions / _types_ / schemas | a timestamped snapshot of `/models` (name, input modalities, prices per million — only plain non-negative decimals: OpenRouter's `-1`, an empty string or `0x…` stay absent, never zero) and, for named models, their upstreams; ids are checked as `author/slug` before the network, endpoint requests run 1–16 at once and stop at the first failure, bodies are bounded, redirects refused |
+| `evaluateOpenRouterModelAdmission` / `OpenRouterAdmissionPolicySchema` / `OpenRouterAdmissionPolicy` / `OpenRouterModelAdmissionSchema` / `OpenRouterModelAdmission` / `OpenRouterAdmissionReasonSchema` / `OpenRouterAdmissionReason` | function / schemas / _types_ | decide one model from a stored snapshot: `admitted`, `unverified` (stale or future-dated snapshot, unknown price, no endpoint list) or `rejected` with a reason (`requiredParameters`, `requiredInputModalities`, context, price, live endpoint); `~`, `-latest`, `:batch`, `stealth/`, `openrouter/auto` and an `aliasOf` model are always refused; the result is a schema, so a stored decision reads back |
+| `openRouterSpendProvider` / `createOpenRouterSpendReconciler` | functions | OpenRouter for `stitchkit/spend`: the gateway provider (origin, key read per call, usage format) and the reconciler that prices an attempt by its generation id (`GET /api/v1/generation`; a 404 is "not yet"; `apiKey` may be a function of the record, since OpenRouter prices a generation only for the key that made it) |
+| `OpenRouterHttpError` | class | a non-2xx answer from OpenRouter, with its `status` |
+| `openRouterModelCatalog` | function | complete tool-capable text catalog plus independent weekly popularity and available benchmark observations; a `timeoutMs` that is not an integer from 1 to 2147483647 ms (the timer range) is refused when the catalog is created (`RangeError`) |
 | `OpenRouterProviderSettings` | _type_ | official provider settings accepted by the factory |
 | `OpenRouterModelCatalogOptions` / `OpenRouterCatalogFetch` | _type_ | credential, timeout, clock and injected fetch boundary for catalog loading |
+
+## `stitchkit/agent-executor`
+
+The contract between an executor that drives external coding agents — Claude
+Code, Codex, ACP agents — and the server that hands it turns. Drivers are
+leaves of their own; this entrypoint knows no vendor. Evolving.
+
+| Export | Kind | Purpose |
+|--------|------|---------|
+| `defineAgentExecutorContract` / `agentExecutorRealtimeContract` | functions / contract | the operations (`hello`, `claim`, `renew`, `release`, `report`) and the events the server pushes (`turn:offer`, `turn:interrupt`, `turn:reply`) |
+| `ExecutorHelloSchema` / `ExecutorHello` / `ExecutorHelloAckSchema` / `ExecutorHelloAck` / `ExecutorEngineSchema` / `ExecutorEngine` / `ExecutorEngineInfoSchema` / `ExecutorReconcileSchema` / `ExecutorProfileSchema` / `ExecutorProfile` / `ExecutorResumableTurnSchema` | schemas / _types_ | what an executor announces — engines (their `models`: `listed` with ids, `not-asked` or `failed` with why), private profiles, resumable turns with their `turnOrdinal` — and what the server holds of each: `acked` up to `ackedSeq`, or `not-retained` |
+| `PlanLimitsSchema` / `PlanLimits` / `PlanWindowSchema` / `PlanWindow` | schemas / _types_ | a subscription's limits: `known`, `no-plan-limit` or `unpublished`, with the last read's error beside the last answer |
+| `ThreadClaimSchema` / `ThreadClaim` / `ThreadLeaseSchema` / `ThreadLease` / `ThreadRenewSchema` / `ThreadReleaseSchema` | schemas / _types_ | thread leases pinned to an executor and profile, under a fence |
+| `TurnOfferSchema` / `TurnOffer` / `TurnPhaseSchema` / `TurnPhase` / `TurnReportSchema` / `TurnReport` / `TurnReportAckSchema` / `TurnFailureKindSchema` / `TurnInterruptSchema` / `InteractionReplySchema` / `InteractionReply` / `EXECUTOR_ERRORS` | schemas / _types_ / constant | a turn offered under its thread's `turnOrdinal`, its phases and reports applied once by `executorSeq` (acknowledged `applied`, `duplicate` or `not-retained`), interrupts, answers to an engine's requests, and the refusal codes |
+| `ExecutorDeltaSchema` / `ExecutorDelta` / `ExecutorErrorKindSchema` / `ExecutorErrorKind` / `ExecutorRawSchema` | schemas / _types_ | what an engine said: `agent-parts` blocks with `turnId`, `itemId` and `raw`, plus requests, usage, the context gauge (`context-usage`), the end of the turn, errors by kind and window resets |
+| `projectExecutorDeltas` | function | fold a turn's deltas into the message parts the agent runtime stores |
+| `AgentEngineDriver` / `AgentEngineSession` / `AgentEngineTurn` / `ExecutorEngineInfo` | _types_ | one vendor's engine behind one interface: info, login status, a session per connection, turns with `interrupt` and `respond`, `findInput` for a `client-id` engine |
+| `dispatchTurn` / `DispatchOutcome` | function / _type_ | send a turn's input at most once through `LocalStepDurability.effect`: `sent`, `delivered` after a reconcile, or `unknown_after_restart` — never resent |
+| `spawnEngineProcess` / `EngineProcess` | function / _type_ | an engine process talked to by lines over `stitchkit/process`: declared environment, owner-loss termination, bounded lines (`maxLineBytes`), stderr, queued stdin (`maxPendingStdinBytes`) and stdin written over the connection's life (`maxStdinBytes`, a refused `send()` that leaves the engine running); every option checked before the spawn |
+| `createExecutorLeases` / `memoryExecutorLeaseStore` / `ExecutorLeaseStateStore` / `ExecutorLeaseState` / `ExecutorLeaseStateSchema` / `ExecutorLeaseRefusal` | functions / _types_ / class | the server's thread leases and turn receipts over one atomically updated value, bounded by threads: each thread keeps the receipts of its last `retainedTurns` turns (default 64, at most 1024) and the highest `turnOrdinal` it let go, a report of a turn at or below it is `not-retained`, and `resume(resumable)` answers a hello the same way; a `StateStore` of `stitchkit/application` fits; a refusal is an `ExecutorLeaseRefusal` — an `AppError` with status 409 and a code of `EXECUTOR_ERRORS` — so an operation returning the service's promise answers `409 { error: { code } }` |
+| `ExecutorProfileConfigSchema` / `ExecutorProfileConfig` / `engineEnvironment` / `ownCredentials` / `helloProfile` / `CREDENTIAL_VARIABLES` | schema / _type_ / functions / constant | a profile on the executor's machine, the engine's allowlisted environment with the profile's `home` as `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or (ACP) `HOME`, and `helloProfile({ profile, status, ambient })` carrying no path and no value; a driver refuses a profile whose `engine` is not its own with a `TypeError`, before it reads a file or starts the engine |
+| `mergeRateLimitEvent` / `planLimitsReadFailed` / `planLimitsDue` / `planWindowExpired` | functions | plan limits kept as three answers (`mergeRateLimitEvent`, `planLimitsReadFailed`, `planLimitsDue` take an options object), with a failed read beside the last answer |
+| `canAdvanceTurnPhase` / `isTerminalTurnPhase` | functions | the turn phase machine: a terminal phase is never left |
+| `advanceExecutorConnection` / `canAcceptTurn` / `INITIAL_EXECUTOR_CONNECTION` / `ExecutorConnectionState` / `ExecutorConnectionEvent` | functions / constant / _types_ | the executor's connection as a pure machine with generations: an answer of an earlier connection never acts on a later one |
+| `createJsonRpcPeer` / `JsonRpcPeer` / `JsonRpcPeerConfig` / `JsonRpcHeader` / `JsonRpcValue` / `JsonRpcError` / `JSON_RPC_METHOD_NOT_FOUND` / `JSON_RPC_LOCAL_TIMEOUT` | function / _types_ / class / constants | a bidirectional JSON-RPC peer over lines, with the dialect's header or without it; an unhandled request is answered `-32601` at once and local request timeouts fail with `-32099` (`JSON_RPC_LOCAL_TIMEOUT`) |
+
+---
+
+## `stitchkit/agent-executor/claude`
+
+Claude Code, unmodified, as an engine: `--print` with `stream-json` on both
+sides, permission requests asked of the host, an interrupt as a control
+request, and reconcile by the input's `uuid` in the profile's transcript.
+Evolving.
+
+| Export | Kind | Purpose |
+|--------|------|---------|
+| `createClaudeCliDriver` / `ClaudeCliDriverConfig` | function / _type_ | the driver; `permissionMode` defaults to `default`, so the server decides every tool the profile does not already allow |
+| `claudeFakeScenarios` | constant | the conformance scenarios in this dialect, for a scripted engine |
+| `claudeTranscriptPath` | function | where a profile keeps a session's transcript (`{ home, cwd, sessionId }`) |
+| `claudePlanWindows` | function | Claude's `rate_limit_event` as plan windows (`five_hour`, `seven_day`) |
+
+---
+
+## `stitchkit/agent-executor/claude-sdk`
+
+Claude through the Agent SDK. The application imports `query` from
+`@anthropic-ai/claude-agent-sdk` (an optional peer) and passes it in; the leaf
+imports only the SDK's types, so it loads without the SDK. Records are read by
+the same classifier as the CLI's, permissions arrive through `canUseTool`, an
+interrupt is `Query.interrupt()` and denies a permission still pending, and a
+query that breaks fails its turn — the next turn opens a new one that resumes
+the session. Reconcile is by the input's `uuid` in the profile's transcript.
+Evolving.
+
+| Export | Kind | Purpose |
+|--------|------|---------|
+| `createClaudeSdkDriver` / `ClaudeSdkDriverConfig` | function / _type_ | the driver: `query` and `sdkVersion` required; `model`, `permissionMode` (default `default`) and the `ambient` environment the profile's allowlist reads. `status` reports the plan windows the session's `rate_limit_event` carried and the login as `unknown`: the SDK has no status call of its own |
+| `ClaudeSdkQuery` / `ClaudeSdkRun` | _types_ | the `query` the leaf takes and the part of a running query it uses; the SDK's own `query` fits as it is |
+
+---
+
+## `stitchkit/agent-executor/acp`
+
+An agent speaking the Agent Client Protocol, version 1, over stdio
+(`agy acp`, `gemini --experimental-acp`). A session per connection;
+`session/prompt` runs a turn, `session/cancel` interrupts it and answers a
+permission request still pending with `cancelled`. A session is reopened with
+`session/resume` when the agent declares it, otherwise with `session/load`,
+whose replayed history arrives before any turn runs and is never read as one.
+ACP keeps no client id, so reconcile is `none`: a send whose outcome is
+unknown stays unknown. Unknown keys an agent adds — `_meta`, a vendor's own
+fields — are let through; the keys the driver reads are typed. Evolving.
+
+Whether an agent asks before a tool is its own setting, not the protocol's:
+`agy` 1.5.14 in its default mode wrote a file without
+`session/request_permission`, so a server that must decide every tool opens
+the agent in a mode that asks (`mode`).
+
+| Export | Kind | Purpose |
+|--------|------|---------|
+| `createAcpDriver` / `AcpDriver` / `AcpDriverConfig` | function / _types_ | the driver: `executable` and `args`; `model`, `thoughtLevel` and `mode` set at open through the option of that category, in that order, a value the agent does not offer refused; `mcpServers` on every new, loaded or resumed session; `resolveFile` and `maxImageBytes` (5 MiB, eagerly validated as a positive safe integer) for images; `maxFrameBytes` (8 MiB) for one line from the agent; `requestTimeoutMs` (60 s) for each request, also capping `session/close` to at most `min(requestTimeoutMs, 5 s)`; each numeric option is refused when the driver is created, before any agent is spawned. The agent runs with `HOME` set to the profile's `home`. `info` answers the model option's values as `models: { answer: 'listed', ids }` (empty when the agent offers none) or `{ answer: 'failed', error }`, `status` opens and closes a session without a prompt — a session refused for auth is `signed-out`; `sessions` asks `session/list` |
+| `AcpSession` / `AcpConfigOption` | _types_ | a session's settings, title and commands as the agent last reported them, and `setConfigOption(category or id, value)`, answered with every option, which may have narrowed |
+| `AcpSessionSummary` | _type_ | a session the agent keeps: id, working directory, title, last update |
+| `AcpMcpServerSchema` / `AcpMcpServer` | schema / _type_ | an MCP server as ACP v1 names it: a command with arguments and environment, or an `http`/`sse` URL with headers |
+| `ACP_PROTOCOL_VERSION` | constant | `1`; an agent answering another version is refused at hello |
+| `acpFakeScenarios` | constant | the conformance scenarios in this dialect, for a scripted agent |
+
+A turn's input is text and images: an image `file` part goes as an `image`
+block when the agent declared `promptCapabilities.image`, read through
+`resolveFile`. An image the agent did not declare, one over `maxImageBytes`,
+or a file that is not an image is refused before anything is sent, never
+dropped. `usage_update` arrives as a `context-usage` delta; the answer's
+`usage` as `usage`.
+
+OpenCode and custom harnesses are outside the module: an application drives
+them itself, or through this leaf when they speak ACP.
+
+---
+
+## `stitchkit/agent-executor/codex`
+
+Codex through `codex app-server` over stdio. Evolving.
+
+| Export | Kind | Purpose |
+|--------|------|---------|
+| `createCodexDriver` / `CodexDriverConfig` | function / _type_ | the driver: a thread per session, `turn/start` under the executor's client id, approvals and input asked of the host, limits from `account/rateLimits/read` |
+| `codexFakeScenarios` | constant | the conformance scenarios in this dialect, for a scripted app-server |
+| `codexPlanWindows` | function | Codex's `rateLimits` as plan windows (`primary`, `secondary`) |
+
+---
+
+## `stitchkit/agent-executor/testing`
+
+| Export | Kind | Purpose |
+|--------|------|---------|
+| `runAgentEngineConformance` / `AgentEngineConformanceConfig` / `AgentEngineDialectScenarios` | function / _types_ | prove a driver against its dialect's scripted engine: text and reconcile, approvals, failures by kind, interrupts (including `interruptDuringApproval`, whose request must close with `request-resolved`, and `requestAfterInterrupt`, which the driver must refuse rather than offer), a request still held when the turn ends (`requestAtTurnEnd`, closed with `request-resolved` before the end) or when the engine dies (`requestThenCrash`), neither left open to the consumer's answer, a dead or garbled engine, unknown records, and a dispatch never sent twice |
+| `FakeEngineScenarioSchema` / `FakeEngineScenario` / `FakeEngineStepSchema` / `FakeEngineStep` | schemas / _types_ | a scripted engine turn in any dialect: expect, emit, delay, crash, exit |
+| `runFakeClaudeEngine` | function | play a scenario as Claude Code does on `stream-json` — the engine side of a Claude-dialect conformance test; Codex and ACP fakes speak JSON-RPC and are not exported |
+
+---
+
+
+---
+
+## `stitchkit/agent-runtime/postgres`
+
+The agent store on Postgres, over the application's own client: the store
+opens its transactions through `transaction`, runs them SERIALIZABLE and
+retries a serialization conflict, and runs statements through `query`. It
+imports no client. Evolving.
+
+| Export | Kind | Purpose |
+|--------|------|---------|
+| `createPostgresAgentRuntimeStore` | function | the store, the conversation reader and the companion host — `{ store, conversations, host }` — over `{ transaction, query, prefix?, createTables?, maxAttempts? }` |
+| `createPostgresAgentRuntimeStoreDriver` | function | the normalized driver alone, for a caller who wraps it before `createAgentRuntimeStore` |
+| `postgresAgentRuntimeStoreDdl` | function | the version-1 tables and indexes under a prefix, for a migration that owns the schema (`createTables: false`) |
+| `PostgresAgentRuntimeStore` / `PostgresAgentRuntimeStoreConfig` | _types_ | the store handle and its configuration |
+| `PostgresQuery` / `PostgresSqlParameter` | _types_ | one statement with `$1…$n` parameters in the caller's transaction — shared with `stitchkit/sync/postgres` |
+
+---
 
 ## `stitchkit/agent-runtime/sqlite/bun`
 
@@ -1459,12 +1635,12 @@ loaded by the neutral, browser or Node runtime surfaces.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createBunSqliteAgentRuntimeStore` | function | open an owned Bun SQLite connection, initialize/validate schema v2, migrate v1 transactionally and return `{ store, conversations, database, transaction, close }` |
+| `createBunSqliteAgentRuntimeStore` | function | open an owned Bun SQLite connection, initialize/validate the schema, migrate older versions transactionally and return `{ store, conversations, host, close }` |
 | `BunSqliteAgentRuntimeStoreConfig` | _type_ | database filename plus optional create and initialization policies |
 | `createSqliteAgentRuntimeStore` | function | build the normalized store over an injected synchronous SQLite boundary |
 | `initializeAgentRuntimeSqlite` | function | initialize or validate only Stitchkit's namespaced SQLite schema |
 | `SqliteDatabase` / `SqliteStatement` / `SqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
-| `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` / `SqliteStoreTransaction` | _type_ | durable store handle — `store`, `conversations`, `database`, `transaction`, `close` — owned connection lifecycle, initialization policy, and the one write transaction the SQLite companions share |
+| `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` | _type_ | durable store handle — `store`, `conversations`, `host`, `close` — owned connection lifecycle, initialization policy, and the companion host every companion takes |
 
 ---
 
@@ -1574,11 +1750,11 @@ the Bun leaf but imports only `node:sqlite`.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createNodeSqliteAgentRuntimeStore` | function | open an owned Node `DatabaseSync`, initialize/validate schema v2, migrate v1 transactionally and return `{ store, conversations, database, transaction, close }` |
+| `createNodeSqliteAgentRuntimeStore` | function | open an owned Node `DatabaseSync`, initialize/validate the schema, migrate older versions transactionally and return `{ store, conversations, host, close }` |
 | `NodeSqliteAgentRuntimeStoreConfig` | _type_ | database filename plus optional read-only and initialization policies; read-only requires an initialized schema |
 | `createSqliteAgentRuntimeStore` / `initializeAgentRuntimeSqlite` | function | shared normalized adapter and namespaced schema lifecycle |
 | `SqliteDatabase` / `SqliteStatement` / `SqliteValue` | _type_ | minimal runtime-neutral synchronous SQLite boundary |
-| `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` / `SqliteStoreTransaction` | _type_ | durable store handle — `store`, `conversations`, `database`, `transaction`, `close` — owned connection lifecycle, initialization policy, and the one write transaction the SQLite companions share |
+| `SqliteAgentRuntimeStore` / `SqliteAgentRuntimeStoreConfig` | _type_ | durable store handle — `store`, `conversations`, `host`, `close` — owned connection lifecycle, initialization policy, and the companion host every companion takes |
 
 ## `stitchkit/observability`
 
@@ -1592,13 +1768,14 @@ audit event. See the [Observability guide](../guide/observability.md).
 |--------|------|---------|
 | `createObservability` | function | configure framework-owned request completion and canonical tool event sinks — [guide](../guide/observability.md#createobservability) |
 | `auditChanges` | function | the sink `filter` most projects write themselves — drops `GET`/`HEAD`/`OPTIONS`, keeps `401`/`403` whatever the verb, keeps an unrecognised verb |
-| `createSpooledSink` / `SpooledSink` / `SpooledSinkConfig` / `SpoolRecovery` | function / _types_ | spool the row to an append-only file before the store and replay what a previous process left undelivered — at least once, keyed on `spanId` |
+| `createSpooledSink` / `SpooledSink` / `SpooledSinkConfig` / `SpoolRecovery` | function / _types_ | spool the row to an append-only file before the store and replay what a previous process left undelivered — at least once, keyed on `spanId`; `recover()` reads the file line by line, and a debt over `maxFileBytes` goes to `<path>.<ms>.overflow`, named by `SpoolRecovery.quarantined` and reported as `SPOOL_QUARANTINED`, so new records still spool; a file that cannot be read sets `unread: true` and reports `SPOOL_UNREADABLE` with its `cause`, never `{ replayed: 0, failed: 0 }`; a row past `maxPendingEntries` or `maxFileBytes` that the store also refuses rejects `write` with `SPOOL_UNSPOOLED` (store error as `cause`) and `onSpoolError` reports `SPOOL_FULL` (ADR 0323) |
 | `createDimensionsProjector` / `DimensionsProjector` / `DimensionsProjectorConfig` / `ProjectedDimensions` | function / _type_ | typed request/result/error attribution projected into the existing request context |
 | `DimensionCollision` / `SetRequestDimensionsOptions` | _type_ | explicit overwrite, preserve or error policy for dimension keys |
 | `createBoundedLogger` | function | decorate a `StitchLogger` with request context, shared sanitisation, redaction and total bounds |
 | `DEFAULT_REDACT_PATHS` | constant | baseline credential/token paths added to the sanitizer's sensitive-key policy |
 | `createJsonLogger` | function | the process journal: one JSON line per call in pino's shape (numeric `level`, epoch `time`, `msg`) on standard output, through `createBoundedLogger` — an `Error` in any field keeps name, message, stack and cause; secrets masked; `level` threshold, static `fields`, injectable `write` |
-| `JsonLoggerOptions` / `JsonLogLevel` / `JSON_LOG_LEVELS` | _type_ / constant | the bounded-logger options plus `level`, `fields`, `write`, `now`; pino's numbers `debug` 20 … `error` 50, which a line reader matches on; `sensitiveValues` masks exact secrets in every string |
+| `JsonLoggerOptions` / `JsonLogLevel` / `JSON_LOG_LEVELS` | _type_ / constant | the bounded-logger options plus `level`, `fields`, `write`, `now`, `repeat`; pino's numbers `debug` 20 … `error` 50, which a line reader matches on; `sensitiveValues` masks exact secrets in every string |
+| `repeatLimited` / `RepeatLimitOptions` / `DEFAULT_REPEAT_WINDOW_MS` / `DEFAULT_REPEAT_MAX_KINDS` | function / _type_ / const | bounded per-kind repeat suppression for `warn`/`error`: a kind is the level, the message with numbers as `#`, the stable data fields with every number as `#`, and the `name` and `code` of `cause` and `error` (their `message` too, unless it names the code as a system error's `ENOENT: …, open '/path'` does); `kindOf(level, message, data)` replaces all but the level, for a string field such as a path; the suppressed count is written as `repeatedSinceLastWrite` at the end of its window, with the next entry of the kind, or on LRU eviction (`info`/`debug` pass through unthrottled) |
 | `secretValuesFromEnv` / `SecretValuesOptions` | function / _type_ | every secret an environment holds, for `sensitiveValues`: variables named as a token, secret, key, password or credential, the password and secret query values in any URL variable, each URL-encoded too, longest first; values under `minLength` (8) skipped |
 | `BoundedLoggerBounds` / `BoundedLoggerOptions` | _type_ | per-value and total record ceilings (`stringLengthByKey` raises the string bound for named keys such as `stack`) plus sink/redaction configuration |
 | `RequestEvent` | _type_ | the normalised audit event handed to the sink; opt-in HTTP cancellation rows carry `outcome: 'cancelled'` |
@@ -1659,6 +1836,14 @@ audit event. See the [Observability guide](../guide/observability.md).
 | `SanitizeOptions` | _type_ | tuning for `redact` / `sanitizePayload` — `maxStringLengthByKey` bounds a named key wherever it sits without changing the record-wide bound |
 | `SizeMeasure` | _type_ | the result of `measureSize` |
 
+### Windowed event-loop delay
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createEventLoopDelayMonitor` | function | sliding-window event-loop delay monitor over lazy `perf_hooks.monitorEventLoopDelay` with O(1) ring buffer, Node empty-histogram and Bun `p99 <= max` guards, and `unref()` bucket timer (→ [ADR 0312](../decisions/0312-daemon-reloader-event-loop-delay-and-lock-diagnosis.md)) |
+| `EventLoopDelayMonitor` / `EventLoopDelayMonitorOptions` / `EventLoopDelaySnapshot` / `EventLoopDelayHistogram` / `EventLoopDelayClock` | _types_ | monitor handle, options, windowed `p99Ms`/`maxMs` snapshot, structural histogram and injectable clock |
+| `DEFAULT_EVENT_LOOP_DELAY_WINDOW_MS` / `DEFAULT_EVENT_LOOP_DELAY_BUCKET_MS` / `DEFAULT_EVENT_LOOP_DELAY_RESOLUTION_MS` / `MAX_EVENT_LOOP_DELAY_BUCKETS` | const | default 5 min window, 10 s bucket, 20 ms resolution and 3,600 bucket cap |
+
 ---
 
 ## `stitchkit/remote`
@@ -1703,8 +1888,8 @@ server SDK), [`stitchkit/tools/agent`](#stitchkittoolsagent) (the `ai` peer) and
 | `RuntimeToolFactoryDefinitionWithOutput` | _type_ | factory-authored runtime tool with a validated output schema |
 | `RuntimeToolFactoryDefinitionWithoutOutput` | _type_ | factory-authored void runtime tool without presenters |
 | `RuntimeToolFactoryHandlerContext` | _type_ | parsed factory context plus parsed tool input |
-| `RuntimeToolFactoryIdentityFields` | _type_ | per-tool action, semantic method and optional identity metadata |
-| `RuntimeToolIdentity` | _type_ | `{ serviceName, action, scope?, method, meta? }` for runtime lifecycle/audit |
+| `RuntimeToolFactoryIdentityFields` | _type_ | per-tool action, semantic method, optional `effect?` and optional identity metadata |
+| `RuntimeToolIdentity` | _type_ | `{ serviceName, action, scope?, method, effect?, meta? }` for runtime lifecycle/audit and repeatable-read derivation (`readOnlyHint` → `effect: 'write'` → `effect: 'read'` → `GET`, guarded by `destructiveHint !== true`) |
 | `RuntimeToolHandlerContext` | _type_ | runtime context with the definition's parsed input |
 | `RuntimeToolOutput` | _type_ | output inferred from a runtime tool's optional Zod schema |
 | `RuntimeToolPresenters` | _type_ | optional MCP and AI SDK `toModelOutput` presentation callbacks |
@@ -1722,7 +1907,8 @@ server SDK), [`stitchkit/tools/agent`](#stitchkittoolsagent) (the `ai` peer) and
 | `AgentToolRegistry` / `AgentToolRegistryBuilder` / `AgentToolRegistryInput` | _type_ | the composed runtime surface and its builder: declared defaults, `replace`/`disable` by name, and the exact `{ tools, names }` a mount receives |
 | `defineToolRegistry` | function | compose runtime tools over one declared default set; an unknown `replace`/`disable` name is refused instead of silently leaving the default in place |
 | `ToolExtend` | _type_ | extra-args extension for `mountMcp` / `mountAgent` |
-| `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` gate for tool calls — [guide](../guide/mcp-and-agents.md#guarding-tools--lifecycle) |
+| `ToolAccess` / `ToolGate` / `ToolOpenReason` | _types_ | mandatory mount-time access policy: `{ gate: ToolGate }` (with required `beforeHandle`) or explicit `{ open: 'public' \| 'local-operator' \| 'remote', afterHandle? }` |
+| `ToolLifecycle` | _type_ | `beforeHandle` / `afterHandle` hooks composed into a `ToolGate` via `composeToolLifecycle` |
 | `ToolExecutionControlReason` | _type_ | internal managed-execution stop reason: stale run or requested interruption |
 | `ToolExecutionControlError` | class | control-flow error used to unwind a superseded managed tool call without presenting it as a model-facing tool failure |
 | `isToolExecutionControlError` | function | narrow an unknown thrown value to the managed execution control error |
@@ -1734,8 +1920,8 @@ server SDK), [`stitchkit/tools/agent`](#stitchkittoolsagent) (the `ai` peer) and
 | `ErrorHintFn` | _type_ | `(toolName, errorCode) => string \| null` — a per-tool recovery hint, shared by every mount |
 | `ToolResult` | _type_ | the result of one tool call |
 | `ToolInvoker` | _type_ | immutable compiled dispatcher (`names`, envelope `invoke`, throwing `invokeOrThrow`) |
-| `ToolInvokerConfig` | _type_ | compile-time exposure, extension and presentation options |
-| `ToolInvocationOptions` | _type_ | per-call source, context, lifecycle, hooks and output-strip reporter |
+| `ToolInvokerConfig` | _type_ | compile-time `access`, exposure, extension and presentation options |
+| `ToolInvocationOptions` | _type_ | per-call source, context, hooks and output-strip reporter |
 | `ToolCallContext` | _type_ | the context every tool hook receives — `{ source, mcp? }` plus whatever the mount's `context` added |
 | `ViewFileOptions` | _type_ | shared URL/managed-file-boundary policy for `defineViewFileTool`, `mountViewFile` and `resolveMedia` |
 | `ViewFileOutput` | _type_ | neutral managed batch result with multimodal `content` and per-item `errors` |
@@ -1752,7 +1938,7 @@ server SDK), [`stitchkit/tools/agent`](#stitchkittoolsagent) (the `ai` peer) and
 | `findNonPortableFormats` | function | deep finder for formats outside the portable MCP/AJV baseline |
 | `NonPortableFormat` | _type_ | one `{ path, format }` portability finding |
 | `PORTABLE_JSON_SCHEMA_FORMATS` | constant | portable-format baseline used by MCP validation |
-| `ToolNameEntry` | _type_ | one `listToolNames` row — `{ kind, name, service, method, transports }` |
+| `ToolNameEntry` | _type_ | one `listToolNames` row — `{ kind, name, service, method, expose }` |
 | `McpMediaContent` | _type_ | a multimodal MCP content item |
 
 ### Native tools
@@ -1838,7 +2024,10 @@ factory and `step` / `sleep` / `waitFor` appear in the handler context, backed b
 ledger the application already has.
 
 ```ts
-mountAgent(services, { durability: (toolCallId) => myLedgerFor(toolCallId) });
+mountAgent(services, {
+  access: { gate: { beforeHandle: authHook } },
+  durability: (toolCallId) => myLedgerFor(toolCallId),
+});
 ```
 
 | Export | Kind | Summary |
@@ -1871,7 +2060,7 @@ Advanced building blocks — the shared machinery the mounts are built on.
 | `TransportSummary` | _type_ | `{ contractServices, runtimeTools, totals, sources }` from `summarizeTransports` |
 | `TransportCounts` | _type_ | per-transport counts (`{ HTTP, MCP, AGENT, CLI }`) |
 | `ToolSurfaceProjection` | _type_ | the one readonly `{ services?, runtimeTools? }` container shared by full, MCP-only and introspection surfaces (`buildToolManifest`, `listToolNames`, `summarizeTransports` take `ToolSurfaceProjection<RuntimeToolDefinition>`) |
-| `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options |
+| `ToolManifestConfig` | _type_ | mixed surface plus required model-facing `transport` and presentation options (`flattenUnionInput`, `inputRecursionDepth`) |
 | `coerceJsonArgs` | function | coerce JSON-stringified array/object tool arguments, including object guards restored from JSON Schema; arbitrary transform pipes stay untouched; throws a `ZodError` naming the field when a union that keeps a string member receives a string that parses to an array its array member accepts |
 | `flattenToolJsonSchema` | function | project structurally identifiable discriminated unions into conservative object joins; scalar collisions retain provable types, object/array collisions retain structural alternatives, and field descriptions retain discriminator labels plus availability/requiredness hints; the projection never executes validation |
 | `ToolPresentationSchema` | _type_ | immutable model-facing JSON Schema document shared by tool transports |
@@ -1989,7 +2178,7 @@ needs both the `@modelcontextprotocol/server` and `ai` peers. → ADR 0284.
 Server-only subexport that consumes external MCP servers and OpenAPI specifications
 as typed tools, without adding a peer dependency to `stitchkit/tools`. Foreign
 operations mount as the same `RuntimeToolDefinition`s our own produce, so
-`mountAgent({ runtimeTools })` runs them through the canonical lifecycle, hooks
+`mountAgent([], { runtimeTools, access })` runs them through the canonical lifecycle, hooks
 and approval path.
 
 | Export | Kind | Summary |
@@ -2009,15 +2198,15 @@ and approval path.
 | `ConnectionTokenProvider` | _type_ | `() => string \| undefined \| Promise<string \| undefined>` — the lazily resolved credential |
 | `ConnectionBudget` | _type_ | `{ maxTools? }` ceiling on one `mountConnections` call |
 | `ConnectionDefinition` | _type_ | either a defined MCP client or OpenAPI connection |
-| `ConnectionMountOptions` | _type_ | shared `{ lifecycle?, budget?, onSkippedTool? }` mount policy |
+| `ConnectionMountOptions` | _type_ | shared `{ budget?, onSkippedTool? }` mount policy |
 | `ConnectionToolSkipReporter` | _type_ | `(skipped) => void` — called per discovered tool the mount could not build; defaults to a stderr line, and the rest of the surface still mounts |
 | `SkippedConnectionTool` | _type_ | `{ connection, tool, reason }` — which tool was not mounted, and why |
 | `McpClientConnection` | _type_ | a defined MCP client connection |
-| `McpClientConnectionConfig` | _type_ | name, transport, tool filter, token provider, instance key, allowed hosts, bounds, `catalog` store and `transports` — naming `['CLI']` makes the whole server's discovered tools commands, with no per-definition rewriting |
+| `McpClientConnectionConfig` | _type_ | name, transport, tool filter, token provider, instance key, allowed hosts, bounds, `catalog` store and `expose` — naming `['CLI']` makes the whole server's discovered tools commands, with no per-definition rewriting |
 | `McpConnectionTransport` | _type_ | `{ url, headers? }` for one MCP endpoint |
 | `McpToolFilter` | _type_ | `{ allow?, block? }` discovered-tool filter |
 | `OpenApiConnection` | _type_ | a defined OpenAPI connection |
-| `OpenApiConnectionConfig` | _type_ | name, spec, base URL, token provider, instance key, allowed hosts and `transports` |
+| `OpenApiConnectionConfig` | _type_ | name, spec, base URL, token provider, instance key, allowed hosts and `expose` |
 
 ---
 
@@ -2124,6 +2313,143 @@ available from `stitchkit/contract`.
 |---|---|---|
 | `AtomicFilePublicationError` | class | published=true with cleanup/directory-sync/directory-close phase |
 | `FileObservation` | type | observed descriptor dev/ino/size/nlink/mtimeMs/ctimeMs |
+| `FileStatsView` | type | the file metadata an `accept` check receives: `FileObservation` plus mode, uid, gid and the kind checks; `fs.Stats` satisfies it, so declarations need no `@types/node` |
+| `FileIdentityStats` | type | what `fileIdentity` reads: dev, ino, size and times as numbers or bigints; `fs.Stats` and `fs.BigIntStats` both satisfy it |
+| `RegularFileError` / `RegularFileRefusal` / `JsonValueRefusal` | class / _type_ / _type_ | a refused read, with the message naming the path, the original failure as `cause` and `reason` — of the file: `not-regular`, `too-large`, `symbolic-link`, `rejected`, `unsupported` or `changed` (the file kept changing across a read and its one retry); of its bytes (`JsonValueRefusal`): `encoding` (not strict UTF-8), `syntax` (not JSON, or a `__proto__` key) or `schema` (refused or thrown). A refusal of the operating system (`ENOENT`, `EACCES`) is not a `RegularFileError` |
+| `DEFAULT_JSON_FILE_BYTES` / `MAX_POLLED_JSON_CACHE_BYTES` | const | default regular-file JSON byte limit (1 MiB) and polled JSON cache memory ceiling (4 MiB) |
+| `fileIdentity` | function | stable `dev:ino:size:mtime:ctime` identity string from `Stats` or `BigIntStats` |
+| `readRegularFileSync` / `readRegularFile` | function | non-blocking (`O_NONBLOCK`) regular-file readers refusing FIFOs, directories, sockets and oversized files, retrying once on concurrent change; options `{ limit, noFollow, accept }`, plus `signal` for the async one |
+| `RegularFileReadOptions` / `RegularFileAsyncReadOptions` / `RegularFileAccept` | _type_ | `noFollow` opens with `O_NOFOLLOW`, so a symbolic link as the last path component is refused (`reason: 'symbolic-link'`), never followed — links in the directories above it still are; `accept(info)` runs on the `fstat` of the descriptor the bytes are then read from, before any byte is read and on each attempt, so replacing the file at the path after the check changes nothing; the file is read only when it returns `true` (`reason: 'rejected'` otherwise) |
+| `parseJsonBytes` / `readJsonFileSync` / `JsonValueSchema` | function / _type_ | strict fatal UTF-8 JSON parsing that refuses a `__proto__` key rather than dropping it, and schema validation (Zod and `{ safeParse }` compatible); every failure is a `RegularFileError` with reason `encoding`, `syntax` or `schema` |
+| `readJsonOnce` / `JsonFileReading` / `PolledJsonFile` / `PolledJsonFiles` / `PolledJsonOptions` | function / _type_ / class / _type_ | classified JSON polling (`missing` / `unreadable` — the operating system or a file rule refused it, with the rule's `reason` / `invalid` — the bytes are not the value, with `reason` `encoding`, `syntax` or `schema` / `read`) with bounded LRU cache and `readChanged()` returning `null` when unchanged; `noFollow` and `accept` apply to every read from disk — a file whose identity is unchanged is answered from the cache, once a read found its last change at least 3 s old (a younger file is read and compared again, since a same-length rewrite in one tick of a coarse filesystem clock keeps size, mtime and ctime) — and with `noFollow` that shortcut uses `lstat`, so a symbolic link to the cached inode is refused too; a schema that throws is an `invalid` file |
+| `PolledJsonFiles.refresh(entries)` / `PolledJsonFiles.refreshAsync(entries, { signal })` / `PolledJsonEntry` / `PolledJsonChange` / `MAX_POLLED_JSON_PATHS` | method / method / _type_ / _type_ / const | make the `{ path, options }` entries the tracked set and get its changes in their order: `changed` with the new reading for a new path or a new state, `removed` for a path that left the set. A path's own `options` replace the set's field by field (a set of explicit files that follow links and drop-ins read with `noFollow` and `accept`), and new options read the file again; a path listed twice is a `TypeError`. `refreshAsync` stats and reads asynchronously, commits nothing when aborted, and refuses every other call on the set while it runs. A declaration goes away either way: its path left the set (`removed`), or its file did (`changed` to `missing`). Tracking more than `MAX_POLLED_JSON_PATHS` (1024) throws `RangeError` — from `refresh`, `read` and `readChanged` alike — instead of evicting, since an evicted path would come back as a false change |
+| `waitForDirectory` / `WaitForDirectoryOptions` | function / _type_ | resolves once a path exists as a directory, without a polling timer: `fs.watch` on the nearest existing ancestor, moving down as components appear and back up if the watched directory is removed; each watch start is followed by one immediate and one deferred rescan (`settleMs`, default 250) for a directory created before the watch saw it, and each event re-arms the watch, so a directory removed and made again at once is followed; a symbolic link at the path counts once it resolves to a directory; `signal` rejects with its reason and closes every watcher; `keepAlive: false` unreferences the watcher and the deferred rescan, so the wait does not hold the process |
+
+## `stitchkit/spend`
+
+Peer-free, server-only spend accounting for paid model APIs (→ [guide](../guide/spend.md), [ADR 0317](../decisions/0317-spend-gateway-records-before-the-call.md)).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createSpendGateway` / `SpendGateway` / `SpendGatewayConfig` / `SpendProvider` | function / _types_ | the one door: `fetchFor(provider)` is a `fetch` an SDK takes; the attempt is recorded (`store.begin`) before the request is sent and closed (`store.settle`) on every outcome — success, HTTP error, broken or cancelled stream, transport failure; credentials only for the provider's `origin`, the caller's credential headers dropped, `redirect: 'error'`, `x-request-id` = attempt id; `context` fills attribution from the agent runtime (`modelInvocationSpendAttribution`), `admit` refuses before the call, `onLedgerError` sees a failed close without failing the call; a reader's facts are kept only when they are valid facts |
+| `SpendGatewayError` | class | `code`: `unknown-provider`, `origin-mismatch`, `no-attribution`, `intent-unrecorded`, `refused` (`admit` said no; recorded as a `refused` attempt) — every one refused before anything was sent |
+| `runWithSpendAttribution` / `getSpendAttribution` | function | the attribution of every gateway call in a call chain (AsyncLocalStorage); nested calls refine, `labels` merge |
+| `openAiCompatibleUsage` / `SpendFactsReader` | const / _type_ | reads `id`, `model` and `usage` (tokens, reasoning, cache, OpenRouter's `cost`) from a JSON body or the stream's events |
+| `createSpooledSpendStore` / `SpooledSpendStore` / `SpooledSpendStoreConfig` | function / _types_ | a ledger that survives its database: on disk first (`0o600`, bounded), delivered after; `recover()` replays in order, an attempt before its receipts — a receipt whose attempt is undelivered waits on disk with it, in the live path too; a record neither spooled nor stored refuses the call; `pendingCosts` and `openAttempts` pass through |
+| `mergeSpendReceipt` | function | the monotone merge a ledger applies: a higher rank adds what it knows, equal ranks resolve by `at`, a closed outcome never returns to `pending`, a reported cost is never erased, and an `orphaned` close never replaces a real one (a real one replaces it) |
+| `reconcilePendingSpend` / `SpendReconciler` / `ReconcilePendingSpendOptions` / `SpendReconcileResult` | function / _types_ | one pass over attempts whose cost is `pending`: each gateway's reconciler answers, rank-3 receipts are settled; `onError` sees a reconciler that threw, returned invalid facts, or failed receipt merging (while `store.settle` failures still reject) |
+| `closeOrphanedSpend` | function | closes attempts left open longer than `olderThanMs` as `orphaned` with an `unknown` cost |
+| `SpendAttributionSchema` / `SpendAttribution` / `SpendAttemptSchema` / `SpendAttempt` / `SpendReceiptSchema` / `SpendReceipt` / `SpendRecordSchema` / `SpendRecord` / `SpendFactsSchema` / `SpendFacts` / `SpendOutcomeSchema` / `SpendOutcome` / `SpendCostStatusSchema` / `SpendCostStatus` / `SpendLedgerStore` / `SpendReceiptRank` | schemas / _types_ | the records: attribution (free strings: `scope`, `purpose`, `operation`, `labels`, run/invocation/step links), the attempt, the receipt (`rank`, `outcome`, `facts`), and the ledger the application implements |
+
+## `stitchkit/spend/testing`
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `assertSpendCoverage` / `checkSpendCoverage` / `SpendCoverageReport` / `SpendCoverageError` | function / _types_ / class | scan a source tree: red on a value import of a listed model SDK (static, dynamic, `require`, re-export), a listed key name in code, a listed provider host in a string, an allowance nothing needs, or a scan of zero files; `import type` is ignored |
+| `scanSpendCoverageSource` / `SpendCoverageFinding` | function / _type_ | the same rules over one source text |
+| `SpendCoveragePolicySchema` / `SpendCoveragePolicy` | schema / _type_ | `modules` (optionally `symbols`), `envKeys`, `hosts`, `allowedFiles` with a reason each |
+
+## `stitchkit/service-host`
+
+Peer-free server-only host supervision primitives built on `stitchkit/files` and `stitchkit/process` (→ [ADR 0309](../decisions/0309-service-host-supervision-primitives.md)).
+
+### Verified artifacts & versioned activation
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `verifyArtifactDirectory` | function | verify an immutable artifact directory against `manifest.json` (no symlinks/special files, exact inventory, SHA-256 with `fileIdentity` stability check, optional domain requirements) |
+| `activateVersionedArtifact` / `rollbackVersionedArtifact` | function | install into `releases/<key>/` and atomically switch or roll back the `current` symlink with mandatory artifact verification; every release file and directory is fsynced before `current` names it, and the switch itself after |
+| `computeArtifactManifestDigest` | function | compute canonical SHA-256 digest of a verified manifest |
+| `ArtifactManifestSchema` / `ArtifactManifest` / `ArtifactFileEntrySchema` / `ArtifactFileEntry` | schema / _type_ | strict Zod v4 schemas and types for `manifest.json` and file inventory entries |
+| `ArtifactVerificationError` / `ArtifactErrorCode` | class / _type_ | typed verification, activation and rollback error with closed error codes |
+| `ARTIFACT_MANIFEST_FILENAME` / `DEFAULT_ARTIFACT_MAX_FILE_BYTES` / `DEFAULT_ARTIFACT_MAX_FILES` | const | default manifest filename and read/file count ceilings |
+| `VerifyArtifactOptions` / `VerifiedArtifact` / `VerifiedArtifactFile` / `ActivateVersionedArtifactOptions` / `ActivatedArtifactResult` / `RollbackVersionedArtifactOptions` / `RollbackArtifactResult` | _types_ | verification, activation and rollback configuration and result shapes |
+
+### Linux `systemd` supervision
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `renderSystemdServiceUnit` | function | render strictly escaped `.service` unit (`%`, `$`, `\`, `"`, injection rejection, explicit `allowHomeSpecifier`) |
+| `checkSystemdUnit` / `systemdUnitActive` / `systemdMainPid` | function | inspect unit digest, `systemctl show` state, active status, MainPID and foreign `<unit>.d/*.conf` drop-ins across `UnitPath` even when `LoadState=not-found`; `missing` only when nothing else answers for the name — a vendor, transient or generated unit loaded with no file at `unitPath` is `fragment-mismatch`; `FragmentPath` is compared with `unitPath` after resolving links in their directories (`fragmentIsUnitPath`), so a unit under a linked directory is ours |
+| `installAndStartSystemdUnit` / `reloadSystemdUnit` | function | apply, enable and reload units with stability-window MainPID monitoring and automatic rollback (refused with `FOREIGN_FRAGMENT` before any write when systemd loads the name from elsewhere; `rolledBack: true` only when every rollback step succeeded, enablement included: `disable` or, for a unit `enabled` under another `[Install]`, `reenable`, then `is-enabled` must read the state found before; a relative or unnormalised `unitPath` is `INVALID_CONFIG`) |
+| `createDefaultSystemdHostAdapter` | function | default Linux adapter backed by `runNativeCommand`, `readRegularFile` and `writeFileAtomic`; runs `/usr/bin/systemctl` with a declared environment (`PATH=/usr/sbin:/usr/bin:/sbin:/bin`, `HOME`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`) |
+| `SystemdScopeSchema` / `SystemdScope` / `SystemdServiceUnitConfigSchema` / `SystemdServiceUnitConfig` | schema / _type_ | strict Zod v4 schemas and types for `system`/`user` `.service` configuration |
+| `SystemdUnitError` / `SystemdUnitErrorCode` | class / _type_ | typed systemd inspection/apply/rollback error |
+| `SystemdCommandResult` / `SystemdHostAdapter` / `CheckSystemdUnitOptions` / `SystemdUnitCheckStatus` / `SystemdUnitCheckResult` / `SystemdUnitQueryOptions` / `ApplySystemdUnitOptions` / `SystemdApplyResult` | _types_ | adapter, inspection, query and apply contracts |
+| `ServiceHostPathState` | _type_ | what `inspectPath` of a `SystemdHostAdapter` or `LaunchdHostAdapter` finds at a path by `lstat`: `missing`, `file` with its `mode`, `symlink` with its `target`, or `other`. An apply or reload refuses a link or a non-regular node at `unitPath`/`plistPath` with `FOREIGN_FRAGMENT` before any write, and a rollback restores the file's previous mode; `canonicalPath(path)` resolves the links in a path's directories (last component as given) for the comparison with the path a manager reports |
+
+### macOS `launchd` supervision
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `renderLaunchdPlist` | function | render XML-escaped LaunchAgent `.plist` rejecting NUL/control characters and malformed env keys, including `AssociatedBundleIdentifiers` and `LimitLoadToSessionType` |
+| `lintLaunchdPlist` / `readLaunchdPlist` / `PLUTIL_PATH` | function / const | validate plist XML via `/usr/bin/plutil -lint` and read plist dictionaries via `/usr/bin/plutil -convert json` (guarding `Code=257` permission errors) |
+| `parseLaunchctlPrint` / `inspectLaunchdJob` / `bootoutLaunchdJob` | function | parse top-level `launchctl print` properties (`state`, `program`, `pid`, `path`, `lastExitCode`) and unload jobs via `launchctl bootout` with settle polling |
+| `reloadLaunchdJob` | function | reload via optional `plutil -lint` + `bootout` + settle + `bootstrap` (never `kickstart -k`), checking `expectedProgram` and stability with automatic rollback; a job of the label loaded from another plist is refused with `FOREIGN_FRAGMENT` before `bootout`, and a relative or unnormalised `plistPath` with `INVALID_CONFIG`; the plist launchd names is compared with `plistPath` after resolving links in their directories (`/private/tmp` for `/tmp` on macOS); a link at `plistPath` itself is still refused |
+| `createDefaultLaunchdHostAdapter` | function | default macOS adapter backed by `runNativeCommand`, `readRegularFile` and `writeFileAtomic` |
+| `LaunchdKeepAliveSchema` / `LaunchdSessionTypeSchema` / `LaunchdSessionType` / `LaunchdPlistConfigSchema` / `LaunchdPlistConfig` | schema / _type_ | strict Zod v4 schemas and types for LaunchAgent plist configuration |
+| `LaunchdJobError` / `LaunchdJobErrorCode` | class / _type_ | typed launchd error with rollback metadata |
+| `LaunchdJobInspection` / `LaunchdCommandResult` / `LaunchdHostAdapter` / `InspectLaunchdJobOptions` / `BootoutLaunchdJobOptions` / `LintLaunchdPlistOptions` / `ReadLaunchdPlistOptions` / `ReloadLaunchdJobOptions` / `LaunchdReloadResult` | _types_ | adapter, plist lint/read, bootout, inspection and reload contracts |
+
+### Live process & Unix-socket identity
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `verifySupervisedProcess` | function | verify live PID birth identity, `exe`/`argv` and optional listening Unix socket ownership (the listener bound to the path's filesystem node, read with `ss`, among the sockets in `/proc/<pid>/fd/*`; an unlinked name another process took over, or a socket published by hard link under a second name, is judged by the node, not the name), re-confirming `probeProcessOwner` and re-snapshotting `/proc/net/unix` across in-process reloads to close PID-reuse TOCTOU races; `expectedExe` matches the kernel's fully resolved executable path (`resolveExecutablePath` of the adapter), so a path through a link names the same program |
+| `parseProcNetUnixListeningSockets` | function | extract listening Unix sockets (`St=01`, `SO_ACCEPTCON`, non-zero inode) preserving spaces and `@abstract` names |
+| `createDefaultProcessIdentityAdapter` | function | default Linux `/proc` adapter backed by `observeProcessInstance` and `probeProcessOwner`; a `socketPath` check requires iproute2 `ss` at `/usr/bin/ss` or `/usr/sbin/ss` (never looked up on `PATH`) and answers `socket-unverifiable` without it; a socket counts only where `/proc/net/unix` and `ss` agree on it (an `@abstract` name too), and a line of either table that is not a record — a socket name holding a line break — makes the check `socket-unverifiable` |
+| `ProcNetUnixSocket` / `ProcessIdentityAdapter` / `ArgvMatchMode` / `VerifySupervisedProcessOptions` / `SupervisedProcessUnavailableReason` / `SupervisedProcessConflictReason` / `SupervisedProcessVerification` | _types_ | socket record, adapter, options and `verified` / `runtime-unavailable` / `runtime-conflict` discriminated union |
+
+### In-process config reloader
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `startConfigReloader` / `createPolledJsonConfigSource` | function | config-watched in-process supervisor validating new config before stopping the active handle, with 1-slot coalescing, broken-digest deduplication, rollback on start failure, a retry on every poll while nothing is running, one `stop` per handle even when it outlives its timeout, and `ShutdownTarget` compatibility for `bindProcessSignals` (→ [ADR 0312](../decisions/0312-daemon-reloader-event-loop-delay-and-lock-diagnosis.md)) |
+| `ConfigReloader` / `ConfigReloaderOptions` / `ConfigReloaderShutdownOptions` / `ConfigReloaderShutdownResult` / `ConfigReloaderStatus` / `ConfigReloaderState` / `ConfigReloaderPhase` / `ConfigReloaderError` / `ConfigReloaderClock` / `ConfigSource` / `ConfigSourceReading` / `PolledJsonConfigSourceOptions` | _types_ | reloader handle, options, source contract, status, phase, error and shutdown types |
+| `DEFAULT_CONFIG_POLL_INTERVAL_MS` / `DEFAULT_CONFIG_START_TIMEOUT_MS` / `DEFAULT_CONFIG_STOP_TIMEOUT_MS` | const | default 2 s poll interval, 30 s start timeout and 10 s stop timeout |
+
+## `stitchkit/service-host/macos`
+
+Peer-free server-only evolving entrypoint for macOS signed `.app` launcher bundles, LaunchServices maintenance, and TCC responsibility inspection (→ [ADR 0313](../decisions/0313-service-host-macos-signed-bundles-and-launch-services.md)).
+
+### Code signing & verification
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `findDeveloperIds` / `resolveSigningIdentity` / `signBundle` / `verifySignedBundle` | function | fail-closed Developer ID Application discovery, signing (hardened runtime + timestamp by default, refusing ad-hoc `'-'`), and full-chain `codesign --verify --strict` + `-dvvv` verification |
+| `parseDeveloperIdsOutput` / `parseCodesignDetails` | function | pure parsers for `security find-identity` and `codesign -dvvv` stderr metadata |
+| `MacosCodesignError` / `MacosCodesignErrorCode` | class / _type_ | typed signing and verification error |
+| `DeveloperIdIdentity` / `ParsedCodesignDetails` / `VerifiedBundleSignature` / `FindDeveloperIdsOptions` / `ResolveSigningIdentityOptions` / `SignBundleOptions` / `VerifySignedBundleOptions` | _types_ | identity, parsed details, verified signature and options |
+
+### Hardened C11 `.app` launcher & bundle install
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `renderMacosLauncherSource` / `compileMacosLauncher` | function | generate C11 launcher source (byte-array encoded parameters, `posix_spawn`, `getppid() == 1`, strict syscall checks) and compile via `/usr/bin/clang` |
+| `LAUNCHER_EXIT_NOT_LAUNCHD` / `MacosLauncherConfigSchema` / `MacosLauncherConfig` / `MacosLauncherError` / `MacosLauncherErrorCode` / `CompileMacosLauncherOptions` / `CompileMacosLauncherResult` | const / schema / class / _types_ | exit code `78`, launcher config schema, error and compiler options/result |
+| `renderBundleInfoPlist` / `computeBundleSpecDigest` / `BUNDLE_SPEC_DIGEST_PLIST_KEY` | function / const | render bundle `Contents/Info.plist` with canonical `StitchkitBundleSpecDigest` for drift detection |
+| `MacosBundleInfoPlistConfigSchema` / `MacosBundleInfoPlistConfig` / `MacosBundleDigestInput` | schema / _types_ | strict bundle Info.plist schema and digest input |
+| `ensureSignedBundle` / `swapDirectoriesDarwin` / `createDefaultMacosBundleHostAdapter` | function | idempotent signed `.app` staging in `*.install.noindex`, pre-swap verification, atomic `renameatx_np(..., RENAME_SWAP)` via Darwin N-API, and rollback preserving the previous bundle on rollback failure |
+| `MacosBundleInstallError` / `MacosBundleInstallErrorCode` / `MacosBundleHostAdapter` / `EnsureSignedBundleOptions` / `EnsureSignedBundleResult` | class / _types_ | install/rollback error, injectable adapter, options and result |
+
+### Apple squircle `AppIcon.icns`
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `assertSafeSvg` / `renderAppleSquircleSvg` / `assertValidIcnsBytes` / `generateAppIconIcns` | function | strict SVG allowlist validation, Apple 824×824 squircle framing, `.icns` validation and 10-slot iconset generation via `qlmanage`/`sips`/`iconutil` |
+| `APPLE_ICON_CANVAS_PX` / `APPLE_ICON_TILE_PX` / `APPLE_ICON_INSET_PX` / `APPLE_ICON_CORNER_RADIUS_PX` / `APPLE_ICONSET_SLOTS` | const | Apple icon grid geometry constants and `.iconset` slot definitions |
+| `AppleIconsetSlot` / `MacosIconSourceSchema` / `MacosIconSource` / `RenderAppleSquircleSvgOptions` / `GenerateAppIconIcnsOptions` / `GenerateAppIconIcnsResult` / `MacosIconError` / `MacosIconErrorCode` | schema / class / _types_ | icon source schema, options, result and error |
+
+### LaunchServices (`lsregister`) & TCC responsibility
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `registerBundle` / `forgetRegistration` / `scanLsregisterDump` / `forgetStaleRegistrations` / `forgetBuildTree` / `createLsregisterDumpParser` / `parseLsregisterDump` | function | `lsregister` registration, `-10814`-aware unregistration, streaming O(1)-RAM dump scanning, and protected stale/build-tree cleanup |
+| `LSREGISTER_PATH` / `KLS_APPLICATION_NOT_FOUND_ERR` / `DEFAULT_LSREGISTER_DUMP_MAX_BYTES` / `DEFAULT_MAX_UNREGISTRATIONS` | const | `lsregister` binary path, `-10814` code and safety ceilings |
+| `LsregisterBundleRecord` / `ForgetRegistrationResult` / `ForgetStaleRegistrationsResult` / `LaunchServicesBundleOptions` / `ScanLsregisterDumpOptions` / `ForgetStaleRegistrationsOptions` / `ForgetBuildTreeOptions` / `MacosLaunchServicesError` / `MacosLaunchServicesErrorCode` | class / _types_ | LaunchServices record, options, results and errors |
+| `inspectResponsibleProcess` / `verifyProcessSubtreeResponsibility` / `collectProcessSubtreePids` / `parsePsPidPpidTable` / `isExecutableInsideBundle` / `createDefaultMacosResponsibilityAdapter` | function | macOS TCC responsibility inspection via Darwin N-API (`responsibility_get_pid_responsible_for_pid` + `proc_pidpath`) with `observeProcessInstance` TOCTOU re-check and BFS process subtree verification |
+| `PsProcessEntry` / `MacosResponsibilityStatus` / `MacosResponsibilityReason` / `ResponsibleProcessInspection` / `SubtreeResponsibilityVerification` / `MacosResponsibilityAdapter` / `InspectResponsibleProcessOptions` / `VerifyProcessSubtreeResponsibilityOptions` | _types_ | responsibility inspection and subtree verification contracts |
+| `CLANG_PATH` / `CODESIGN_PATH` / `ICONUTIL_PATH` / `PS_PATH` / `QLMANAGE_PATH` / `SECURITY_PATH` / `SIPS_PATH` / `canonicalizeMacosPath` / `normalizeMacosSyntheticPath` / `isPathWithinDirectory` / `createDefaultMacosCommandRunner` / `MacosCommandOptions` / `MacosCommandResult` / `MacosCommandRunner` | const / function / _types_ | absolute macOS utility paths, synthetic `/var`/`/tmp` path helpers and injectable command runner; the default runner passes a declared environment only (fixed `PATH`; `HOME`, `TMPDIR`, `DEVELOPER_DIR`, `SDKROOT`, `TOOLCHAINS` when set; the call's `env` on top) |
 
 
 ## `stitchkit/telegram`
@@ -2147,13 +2473,13 @@ injected grammY bot. → ADR 0143, ADR 0201, ADR 0274 — [guide](../guide/teleg
 | `TelegramFetch` / `TelegramBotTransportOpen` / `TelegramBotTransportResolve` / `TelegramBotTransportSocket` | _types_ | the `(url, init) => Promise<Response>` the senders take; the transport's socket factory, resolver and the structural socket it needs (a Node `net.Socket` or `tls.TLSSocket` fits) |
 | `TelegramNotDispatchedError` / `TelegramNotDispatchedStage` | class / _type_ | a request that provably never left (`lookup`, `connect` or `request`), so repeating it cannot duplicate a message |
 | `TelegramSendFailureReason` / `TELEGRAM_SEND_FAILURE_REASONS` | _type_ / constant | `blocked-by-user` / `user-deactivated` / `chat-not-found` / `not-started` / `bot-to-bot-disabled` / `rate-limited` / `message-invalid` / `server-error` / `not-dispatched` / `unknown`, and the same as a list; a `Record<TelegramSendFailureReason, …>` over them fails to compile when a reason is added |
-| `telegramOutboundBudget` / `TelegramOutboundBudget` / `TelegramOutboundBudgetConfig` / `TelegramOutboundBudgetStats` / `TelegramOutboundCallOptions` / `TelegramOutboundChatOptions` / `TelegramOutboundLane` | function / _type_ | one token-wide outbound budget: one object per token in the process, strict 24 messages/s by default, weighted albums and multi-message copies, an `interactive` lane granted before `bulk`, `run(method, payload, signal, send, { lane, maxWaitMs })` as the transformer adapter (a 429 on a send pauses its `chat_id` whether `send` throws it or resolves with the Bot API's `{ ok: false, … }` body, and refusals from `tokenPauseChats` chats pause the token), `pause`/`pauseAfter` for 429, `waitUntilResumed` for non-send retries and `stats`; it paces and never retries, and no public value carries the token |
+| `telegramOutboundBudget` / `TelegramOutboundBudget` / `TelegramOutboundBudgetConfig` / `TelegramOutboundBudgetStats` / `TelegramOutboundCallOptions` / `TelegramOutboundChatOptions` / `TelegramOutboundLane` | function / _type_ | one token-wide outbound budget: one object per token in the process, strict 24 messages/s by default, weighted albums and multi-message copies, fail-closed method costing (only methods classified in `FREE_METHODS` cost zero; every unknown Bot API method costs one message and on 429 pauses its `chat_id` or the token), an `interactive` lane granted before `bulk`, `run(method, payload, signal, send, { lane, maxWaitMs })` as the transformer adapter (a 429 on a counted call pauses its `chat_id` whether `send` throws it or resolves with the Bot API's `{ ok: false, … }` body, and refusals from `tokenPauseChats` chats pause the token), `pause`/`pauseAfter` for 429, `waitUntilResumed` for non-send retries and `stats`; it paces and never retries, and no public value carries the token |
 | `runTelegramBroadcast` | function | a resumable broadcast by `name` under a state `directory`: audience and journal durably recorded, pacing at `ratePerSecond` (25), exact retry delays within the finite declared budget, injected classifier, uncertain send outcomes never replayed, `dryRun`, one fenced runner per name |
 | `TelegramBroadcastConfig` / `TelegramBroadcastSend` / `TelegramBroadcastReport` / `TelegramBroadcastRunOutcome` / `TelegramBroadcastOutcome` / `TelegramBroadcastRecipient` | _type_ | `name`, `directory`, `recipients()`, `send({ recipient, attempt })`, `maxAttempts`, `signal`, `onProgress`; counts `delivered` / `unreachable` / `failed` / `uncertain` / `pending` and `finished` / `stopped` / `halted` / `dry-run` |
 | `TelegramBroadcastFailureSchema` / `TelegramBroadcastFailure` | schema / _type_ | injected `classify` answers retry-after/transient/permanent/ambiguous; exact provider delay is bounded by `maxRetryDelayMs` without shortening, unknown outcome remains uncertain and is never replayed |
 | `telegramBroadcastSender` / `TelegramBroadcastSenderConfig` / `TelegramBroadcastMessage` | function / _type_ | the standard `send`: `sendMessage` with a text or `copyMessage` of a prepared message, through the Bot API |
-| `createTelegramOperatorChannel` | function | the operator chat, apart from the journal: `post(text, topic?)` returns at once and never throws; paced sends into forum topics, 429 honoured, oldest dropped on overflow, `drain(signal)` and `close()` for the way down |
-| `TelegramOperatorChannelConfig` / `TelegramOperatorChannel` / `TelegramOperatorMessage` / `TelegramOperatorDrop` / `TelegramChatId` | _type_ | `chatId`, `topics`, `send`, `maxQueued`, `minIntervalMs`, `maxAttempts`, `onDropped`, `sensitivePatterns` and `sensitiveValues` (a bot token is always masked), `dedupe`; a drop is `overflow` / `refused` / `attempts` / `closed` / `repeated` / `over-budget` with its classification |
+| `createTelegramOperatorChannel` | function | the operator chat, apart from the journal: `post(text, topic?)` returns at once and never throws; paced sends into forum topics, 429 honoured, oldest dropped on overflow, `drain(signal)` and `close()` for the way down; `maxQueued`/`maxAttempts` that are not positive safe integers (`TypeError`) and a `minIntervalMs` outside 0…2147483647 ms (`RangeError`) are refused at creation |
+| `TelegramOperatorChannelConfig` / `TelegramOperatorChannel` / `TelegramOperatorMessage` / `TelegramOperatorDrop` / `TelegramChatId` | _type_ | `chatId`, `topics`, `send`, `maxQueued`, `minIntervalMs`, `maxAttempts`, `maxRetryAfterMs` (the longest `retry_after` waited, default 60 000 ms), `onDropped`, `sensitivePatterns` and `sensitiveValues` (a bot token is always masked), `dedupe`; a drop is `overflow` / `refused` / `attempts` / `closed` / `repeated` / `over-budget` / `flood-wait` with its classification |
 | `createTelegramOperatorDedupe` / `TelegramOperatorDedupeVerdict` | function / _type_ | the channel's dedupe window alone, for a sender with its own bot and retry: `(text, topic?)` → `{ send: true, text }` with the held-back counts, or `{ send: false, reason: 'repeated' \| 'over-budget' }` |
 | `TelegramOperatorDedupe` | _type_ | `windowMs` (10 min): one message per `fingerprint` per window, the next one sent carries `repeatedLine(count)`; `maxPerWindow` (20) across fingerprints, the overflow counted onto the next one sent with `overBudgetLine(count)`; `now` |
 | `telegramOperatorSender` / `TelegramOperatorSenderConfig` | function / _type_ | the standard `send`: `sendMessage` into the chat and topic, plain text unless `parseMode`; with `'HTML'` the markup is cleaned and cut by what it shows, so the channel's cut never leaves a tag open |
@@ -2177,7 +2503,7 @@ injected grammY bot. → ADR 0143, ADR 0201, ADR 0274 — [guide](../guide/teleg
 | `memoryTelegramUpdateStore` | function | the store in this process's memory — tests, or a bot that accepts losing unhandled updates to a restart |
 | `sqliteTelegramUpdateStore` / `SqliteTelegramUpdateStoreConfig` / `TelegramSqliteDatabase` | function / _type_ | the store in SQLite over the handle the application opened — `bun:sqlite` `Database` or `node:sqlite` `DatabaseSync`; `table` (default `telegram_updates`) created when missing |
 | `postgresTelegramUpdateStore` / `PostgresTelegramUpdateStoreConfig` / `TelegramPostgresQuery` | function / _type_ | the store in Postgres over the client the application holds, as one `query(text, parameters)` returning rows — Bun `sql.unsafe`, Prisma `$queryRawUnsafe`, `pg` `pool.query`; each rule one conditional statement; `table`, `createTable` (default `true`) |
-| `postgresTelegramUpdateStoreSchema` | function | the table, idempotent `claim_id` upgrade and index as a statement for a migration, safe to run twice; required before fenced methods when `createTable: false`, while legacy base methods remain compatible with the prior table |
+| `postgresTelegramUpdateStoreDdl` | function | the table, idempotent `claim_id` upgrade and index as a DDL statement for a migration, safe to run twice; required before fenced methods when `createTable: false`, while legacy base methods remain compatible with the prior table |
 | `checkTelegramUpdateStore` | function | put any store through every rule, each on a fresh store from `make`, concurrent claims included; resolves with the violations, empty when it keeps them |
 | `TELEGRAM_WIDGET_LIMITS` | constant | Bot API 10.4 widget limits, sizes in UTF-8 bytes: `htmlBytes` 32768, `compressedHtmlBytes` 4096 after zlib level 9 (checked with the runtime's zlib, an estimate of Telegram's), `dataBytes` 1024 for `chat_data`, `public_data` and an answer, `queryDataBytes` 64, `answerWindowMs` 15 000 — [guide](../guide/telegram.md#widgets) |
 | `TelegramWidgetHtmlSchema` / `TelegramWidgetDataSchema` | schema | widget HTML (1–32768 bytes, at most 4096 compressed) and widget data (0–1024 bytes), counted in UTF-8 bytes; NUL and an unpaired surrogate are refused, an empty data string is a value |
@@ -2216,12 +2542,15 @@ parse serves a server send and a browser preview. → ADR 0213 —
 | `TelegramHtmlNode` / `TelegramHtmlElement` / `TelegramHtmlTextNode` / `TelegramHtmlTag` / `TelegramHtmlStyle` | _type_ | text nodes hold decoded text; elements `b` `i` `u` `s` `tg-spoiler` `code`, `a` with `href`, `pre` with `language`, `blockquote` with `expandable`, `tg-emoji` with `emojiId`, `tg-time` with `unix` and `format` |
 | `renderTelegramHtml` | function | nodes back to markup Telegram parses into exactly them |
 | `sanitizeTelegramHtml` | function | any markup as markup Telegram accepts — `renderTelegramHtml(parseTelegramHtml(markup))` |
-| `splitTelegramHtml` / `TelegramHtmlLimitOptions` | function / _type_ | parts within `limit` visible characters (default 4096), cut at a paragraph, a line, a space, else anywhere but inside a character or a custom emoji; an element across a cut is closed and reopened with its attributes; nothing visible is no parts |
+| `splitTelegramHtml` / `TelegramHtmlLimitOptions` | function / _type_ | parts within `limit` visible characters (default 4096), cut at a paragraph, a line, a space, else anywhere but inside a character or a custom emoji; an element across a cut is closed and reopened with its attributes; nothing visible is no parts; a custom emoji or time longer than `limit` is a `RangeError` |
 | `truncateTelegramHtml` / `TelegramHtmlTruncateOptions` | function / _type_ | one part: cut to `limit` with `ellipsis` (`…`) inside it, still valid |
 | `telegramHtmlText` | function | the text a reader sees, entities decoded |
 | `checkTelegramHtml` / `TelegramHtmlCheck` / `TelegramHtmlProblem` | function / _type_ | the first thing Telegram would refuse, unrepaired — `bare-character` / `unsupported-tag` / `unmatched-end-tag` / `unclosed-tag` — and the visible text before it |
 | `escapeTelegramHtml` | function | `&`, `<`, `>` and `"` escaped for Telegram's HTML |
 | `TELEGRAM_TEXT_LIMIT` / `TELEGRAM_CAPTION_LIMIT` | constant | 4096 and 1024, counted after the markup is parsed, in UTF-16 code units |
+| `markdownToTelegramHtml` | function | GitHub-flavored Markdown into canonical Telegram HTML (`b`/`i`/`u`/`s`/`tg-spoiler`/`code`/`pre`/`blockquote`/`a`), GFM tables in `<pre>`, headings, lists/checkboxes, `<details>`/`<summary>`, valid Telegram entities, unclosed fences as plain text; emphasis keeps to word boundaries (`2*3*4`, `snake_case` stay text), a refused link stays its source text; every output passes `checkTelegramHtml` and is a `sanitizeTelegramHtml` fixed point |
+| `splitTelegramMarkdown` / `TelegramMarkdownSplitOptions` | function / _type_ | splits text that stays Markdown along line boundaries within `limit` UTF-16 code units of Markdown (default `TELEGRAM_TEXT_LIMIT`), closing and reopening fenced code blocks and repeating a table's header across chunks without empty orphan fences; for Telegram HTML convert first and cut with `splitTelegramHtml` |
+| `TelegramMarkdownSplitError` / `TelegramMarkdownSplitRefusal` | class / _type_ | typed refusal (`invalid-limit` / `line-exceeds-limit`) carrying `reason`, `limit` and optional `lineLength` |
 
 ---
 
@@ -2397,6 +2726,54 @@ providers, the microphone and the player remain application-owned. See the
 | `XlsxCellError` | class | a value of the wrong type, or one Excel cannot hold exactly, with the cell's address |
 | `XlsxWorkbookSchema` / `XlsxWorkbook` / `XlsxSheetSchema` / `XlsxColumnSchema` / `XlsxColumn` | schemas / _types_ | the workbook, its sheets and the six column types |
 
+## `stitchkit/sync`
+
+The client half of an offline-first sync, with no driver and no domain: it runs in a browser, in
+Hermes and in Bun. What an entity contains and how it merges stays with the application. See the
+[sync guide](../guide/sync.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `decideOutboxBatch` / `OutboxPage` / `OutboxPolicy` / `OutboxRow` / `OutboxBatchDecision` | function / _types_ | `decideOutboxBatch(rows, { now, policy, previous })` — which outbox rows leave next: FIFO across pages through `previous`, a row ripe when no earlier unresolved row shares one of its `keysOf(row)` (default entity and id) and a waiting row holding all its keys, `confirmed` rows skipped, a sent row again after `retryAfterMs`, exact UTF-8 bytes of the message, `blockedKeys`, `full` and `nextWakeMs` |
+| `OutboxSetAside` | _type_ | what a `quarantined` or `held` row does to the rows after it: `holds-keys` (default) keeps them waiting for a person, `releases-keys` lets them go |
+| `OutboxQuarantine` / `OutboxQuarantineReason` | _types_ | a row that cannot be sent: `invalid_json`, `invalid_change`, `payload_too_large`; it holds its keys unless the policy releases them |
+| `acknowledgeableOutboxIds` | function | the attempted rows a late acknowledgement may settle — not set aside, not already confirmed |
+| `replaceableOutboxRow` | function | a row may be replaced (another edit folded in) only while it never left: `pending`, no `sentAt`, no attempt |
+| `coveredOutboxIds` | function | `coveredOutboxIds(rows, cursor)` — confirmed rows the cursor now covers, which leave the outbox and the overlay; one without a version leaves at once |
+| `deriveOverlay` / `applyOverlay` / `OverlayInput` / `OverlaySpec` / `Overlay` / `PendingUpdate` | functions / _types_ | `deriveOverlay(pending, { current, spec })` — pending local edits on top of a remote row until acknowledged; a key without a value erases nothing: with a local row its current values of the touched fields win, without one the payload does |
+| `decideRemoteRow` / `TombstoneSource` / `RemoteRowDecision` | function / _types_ | a local delete wins (`skip`), a remote one yields to a live row (`resurrect`) |
+| `staleAfterFullSync` / `FullSyncSets` / `orphansOf` | functions / _type_ | `staleAfterFullSync({ local, server, protectedIds })` — what a completed snapshot makes stale, minus what is protected; `server` is the rows marked with the snapshot's id in `apply`, kept with the rows so a snapshot continued after a restart names them all; `orphansOf(children, { ids, of })` — children whose parent is gone |
+| `dependentRowVisible` | function | a child of a parent deleted in this page, or tombstoned and not brought back by it, is hidden |
+| `createSyncSession` / `SyncSessionPorts` / `SyncSession` | function / _types_ | the cursor session: one at a time, paging by `nextCursor` or, in a full snapshot, by `nextToken`, catch-up, a deferred or server-forced full snapshot that saves where it began and catches up from there, `rebasePending` after it, a full snapshot at once on `stale_cursor`, the same page again after a dropped transport, a generation check after every wait; ports may be synchronous or asynchronous |
+| `SyncSnapshotResume` | _type_ | `{ snapshot, token, from }` or `{ snapshot, after, from }` — where an interrupted full snapshot stands, by token or by version, the version it began at and its id, which `apply` and `rebasePending` name; `saveProgress` saves it and `readCursor` returns it to continue the snapshot after a restart |
+| `SYNC_STALE_CURSOR` | constant | `'stale_cursor'`, the refusal code that makes the session load a full snapshot and keep the outbox |
+| `Eventually` | _type_ | a result now or later |
+| `SyncSessionLog` / `SyncSessionDiagnostics` / `SyncFailure` | _types_ | the log port, the readiness view and the last failure with its count |
+| `DEFAULT_SYNC_RETRY` | constant | the pause between failed sessions: 2 s doubling to 60 s, no jitter |
+| `SYNC_CHANGE_OUTCOMES` / `SyncChangeOutcome` | constant / _type_ | `applied`, `replayed`, `terminal_rejected`, `retryable_failed` |
+| `classifyChangeResults` / `ClassifiedChangeResult` / `SyncChangeAction` / `SyncResultReading` | function / _types_ | each push result read on its own, with an `action`: `acknowledge` an applied or replayed change (with the `version` it got, when the server names it), `retry` a failure, `hold` a rejection (unless `rejected: 'acknowledge'`), a failure after `holdAfterFailures` (`failuresOf` gives the count) and an unknown outcome once it came back `holdAfter` times (`unknownOutcomesOf`) |
+| `SyncChangeResultSchema` / `SyncChangeResult` / `SyncPushResultSchema` / `syncPushRequestSchema` / `SyncPushLimits` | schemas / _types_ / function | the push wire: any outcome string and code, results read one by one, the request around the app's change schema with required `maxChanges` and `maxBytes` |
+| `SyncPageRequestSchema` / `SyncPageRequest` / `SyncPageHeaderSchema` / `SyncPageHeader` | schemas / _types_ | the page wire and the types inferred from it; the header is extended by the app with its rows |
+| `mergeStreamCursors` / `SyncStreamPage` | function / _type_ | one cursor over several streams: the lowest last version of a stream that was cut; spreads into a page header, and a stream cut without a version is refused |
+
+## `stitchkit/sync/postgres`
+
+The server half, inside the application's own transaction. See the [sync guide](../guide/sync.md).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `postgresSyncStore` / `PostgresSyncStoreConfig` / `PostgresQuery` / `PostgresSqlParameter` | function / _types_ | the store over the app's `transaction` and `query(tx, text, parameters)`; `prefix`, `createTables`, `startAfter`, `lockTimeoutMs` |
+| `postgresSyncStoreDdl` | function | the counters, feed and ledger tables for a migration; safe to run twice |
+| `memorySyncStore` / `MemorySyncStoreConfig` / `MemorySyncTransaction` | function / _types_ | the same rules in one process: transactions one at a time on a working copy, readers see only what committed, a nested transaction is refused |
+| `SyncServerStore` / `SyncPrune` | _types_ | `transaction`, `allocateVersions`, `publish`, `push`, `changesAfter`, `prune({ before, scope? })` |
+| `SyncPushRequest` / `SyncPushOutcome` / `SyncPushChangeResult` / `SyncApply` / `SyncApplyDecision` | _types_ | a push from an authenticated replica, the app's decision per change (a rejection rolls back what `apply` wrote and is recorded on its own), the results with the newest `version` an applied or replayed change took, the effects returned after commit, and the `failures` with their causes for the server's log |
+| `SyncFeedEntry` / `SyncFeedChange` / `SyncFeedPage` / `SyncFeedRead` | _types_ | one feed row per entity, a page, and a read (`limit`, `full`) |
+| `createSyncServerStore` / `SyncStoreBackend` / `SyncLedgerKey` / `SyncLedgerRecord` | function / _types_ | the rules built once over a store an app writes for another database |
+| `syncChangeFingerprint` | function | SHA-256 over a change's canonical JSON |
+| `checkSyncStore` | function | the rules every store keeps; `[]` when all hold |
+
+---
+
 ## `stitchkit/geo`
 
 Server-only managed GeoIP generations. Applications own database acquisition,
@@ -2490,7 +2867,7 @@ is how a partially understood declaration becomes a running, wrong deployment.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `ProjectDeclarationSchema` / `ProjectDeclaration` | schema / _type_ | the declaration: `schemaVersion`, `kind`, `identity`, `roles`, `build`, `requires`, `release`, `env` |
+| `ProjectDeclarationSchema` / `ProjectDeclaration` | schema / _type_ | the declaration: `schemaVersion`, `kind`, `identity`, optional `starter: { version }`, `roles`, `build`, `requires`, `release`, `env` |
 | `parseProjectDeclaration` | function | parse a declaration, refusing an unrecognised `schemaVersion` **before** any field is read |
 | `PROJECT_DECLARATION_SCHEMA_VERSION` | constant | the declaration format this build understands — the number a reader refuses on |
 | `namesAMachine` | function | why a string names a particular machine, or `undefined` — the one predicate every free string is checked against |
@@ -2525,7 +2902,7 @@ it by replacing the field rather than extending it.
 
 ## `stitchkit/node`
 
-Server-only, for Node ≥ 22 (Bun uses `stitchkit/server`). The runtime-agnostic
+Server-only, for Node ≥ 22.3 (Bun ≥ 1.4 uses `stitchkit/server`). The runtime-agnostic
 core plus a Node HTTP adapter — [ADR 0013](../decisions/0013-runtime-agnostic-core.md),
 [deployment guide](../guide/testing-and-deployment.md#deploy-on-node). Re-exports the
 runtime-agnostic pieces of `stitchkit/server` and the error helpers.
@@ -2534,6 +2911,7 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 |--------|------|---------|
 | `serveNode` | function | build the router and start a Node HTTP server (via `srvx`) |
 | `createHandler` | function | the router as a bare `(req) => Response` (same as `/server`) |
+| `createLocalHostGuard` / `LocalHostGuard` / `LocalHostGuardConfig` / `LocalHostRefusal` | function / _types_ | the local-host guard for `serveNode` (same as `/server`) |
 | `createSocketIOServer` | function | the typed Node Socket.IO server (`io` + `attach`; no Bun engine declarations) |
 | `createUnixClientTransport` | function | the same fail-closed Bun/Node Unix client adapter exported by `stitchkit/server` |
 | `implement` / `createImplement` / `createScopedImplement` / `createScopedImplementRegistry` / `createMultipartStream` | function | bind a contract to typed handlers, optionally typed per endpoint scope (same as `/server`) |
@@ -2546,7 +2924,7 @@ runtime-agnostic pieces of `stitchkit/server` and the error helpers.
 | `UnixClientTransportConfig` / `UnixClientTransport` | _type_ | Unix socket bounds, explicit response-body mode and owned Fetch-compatible handle |
 | `UnixResponseBodyMode` | _type_ | finite cumulative `bounded` mode or explicit pull-driven `streaming` mode |
 | `UnixClientTransportError` / `UnixClientTransportErrorCode` / `UnixClientDeliveryState` | class / _type_ | stable failure plus dispatch certainty; no cross-transport fallback |
-| `AppError` + `appError` / `badRequest` / `unauthorized` / `forbidden` / `notFound` / `conflict` / `rateLimited` | — | error helpers (same as `/contract`) |
+| `AppError` + `badRequest` / `unauthorized` / `forbidden` / `notFound` / `conflict` / `rateLimited` | — | error helpers (same as `/contract`) |
 
 ---
 
@@ -2561,9 +2939,10 @@ SDK nor the `ai` peer.
 | `createCli` | function | build and run a CLI from contracts; a runtime catalogue field conflicting with reserved/global argv options disables only that entry, retained in help with its reason; invocation returns `CLI_COMMAND_UNAVAILABLE` before side effects — [guide](../guide/cli.md#when-one-runtime-command-cannot-be-represented-in-argv) |
 | `defineCliCommand` | function | define one Zod-typed CLI-only executable command with optional validated-result presentation/exit policy |
 | `defineCliResult` | function | type a managed command's `present` / `exitCode` policy against its output schema, for `CliConfig.results` — [guide](../guide/cli.md#the-same-policy-for-a-managed-command) |
-| `parseCliArgs` | function | argv → typed tool args against a schema; inline `--field:=JSON` assigns a whole JSON value, including null, while ordinary string flags remain lexical; named array options together with bare positionals require an explicit `positionals` policy (advanced) |
-| `routeCliArgv` | function | select the command using the framework's option grammar before catalogue discovery. `createCli` also checks declared names and offline native dispatch — [guide](../guide/cli.md#global-flags) |
-| `extractCliGlobalOptions` | function | lift the application's own global options out of argv before routing (advanced) |
+| `parseCliArgs` | function | argv → typed tool args against a schema, in the grammar `createCli` reads a command with (`--bool=maybe` on a pure boolean is a `CliArgumentError`; a line asking for help or `--schema` is answered before arguments it cannot read, with empty `toolArgs`); inline `--field:=JSON` assigns a whole JSON value, including null, while ordinary string flags remain lexical; optional `separatedBefore` marks token boundaries left by stripped options so surrounding tokens are never glued; named array options together with bare positionals require an explicit `positionals` policy (advanced) |
+| `scanCliInvocation` | function | single-pass CLI invocation scanner returning framework flags, application globals, selected command, command tokens and top-level help/version state — [guide](../guide/cli.md#global-flags) |
+| `routeCliArgv` | function | select the command using the framework's option grammar before catalogue discovery (thin projection over `scanCliInvocation`); takes `{ defaultCommand?, separatedBefore? }` and carries `separatedBefore` onto `commandArgv`; a line `createCli` refuses before a command runs (`--` before the command, `--json=maybe`, a repeated framework option) comes back with `error` and an empty `commandArgv`, unless help, `--version` or `--schema` answers it — [guide](../guide/cli.md#global-flags) |
+| `extractCliGlobalOptions` | function | lift the application's own global options out of argv before routing (thin projection over `scanCliInvocation`); `globals` is always readable, and reading `argv` throws `CliArgumentError` when a lifted global separated a bare framework boolean from `true` or `false` (non-framework option boundaries return in `separatedBefore`) |
 | `coerceJsonArgs` | function | the second half of `parseCliArgs` — parse array/object values a consumer sends itself, including discovered MCP object guards restored from JSON Schema, without the `stitchkit/tools` barrel |
 | `CliArgumentError` | class | the refusal `parseCliArgs` and the view flags raise; a CLI reports it and exits `2` |
 | `renderCliView` | function | compute an aggregate over a result (`--count-by`, `--sum`, `--top`, `--table`) — [guide](../guide/cli.md#aggregate-views) |
@@ -2591,8 +2970,10 @@ SDK nor the `ai` peer.
 | `CliProfileStore` / `CliProfileStoreConfig` / `ResolvedCliProfile` | _type_ | the profile store, its directory/schema/hint config, and one resolution |
 | `CliResultView` | _type_ | the requested view — `count`, `sum`, or `records` (ordered and/or table-rendered) |
 | `CliViewOutput` | _type_ | a JSON value, or the one human-facing text shape |
-| `CliGlobalOptionsParse` | _type_ | `{ argv, globals }` returned by `extractCliGlobalOptions` |
-| `CliArgvRoute` | _type_ | `{ command, commandArgv, topLevelHelp, version, error? }` returned by `routeCliArgv` |
+| `CliGlobalOptionsParse` | _type_ | `{ argv, globals, separatedBefore? }` returned by `extractCliGlobalOptions` (`separatedBefore` present when a lifted global separated an option from a value-shaped token; a `--` before the command stays in `argv`) |
+| `CliArgvRoute` | _type_ | `{ command, commandArgv, topLevelHelp, version, error?, separatedBefore? }` returned by `routeCliArgv` (`separatedBefore` indexes `commandArgv`, for `parseCliArgs`) |
+| `CliRouteOptions` | _type_ | `{ defaultCommand?, separatedBefore? }` accepted by `routeCliArgv`; `separatedBefore` is the set `extractCliGlobalOptions` returned |
+| `CliInvocationScanOptions` / `CliInvocationScan` / `CliFrameworkOptions` | _types_ | options (`appGlobals`, `defaultCommand`), full scan output (`framework`, `globals`, `command`, `commandTokens`, `separatedBefore`, `topLevelHelp`, `helpFilter`, `version`), and parsed framework flags returned by `scanCliInvocation` |
 | `pollUntilDone` | function | the generic `--wait` poller (advanced) |
 | `emitResult` | function | write a pretty or compact `ToolResult` record to stdout/stderr + exit code (advanced) |
 | `cliExitCode` | function | the exit code a result earns, from the same table, without writing anything — so an in-process run and the printed path cannot disagree |
@@ -2601,9 +2982,10 @@ SDK nor the `ai` peer.
 | `defineCliBatchCommand` / `CliBatchCommandConfig` | function / _type_ | the same loop, resumable: a recorded line replays, a line whose content changed under the same id is refused |
 | `readCliCheckpoint` / `writeCliCheckpoint` / `CliCheckpoint` / `CliCheckpointEntry` | function / _types_ | the batch's record — id plus a digest of the line, written by atomic rename after every line |
 | `DEFAULT_EXIT_CODES` | const | the default `ToolResult.code` → exit-code map |
-| `CliConfig` | _type_ | config for `createCli`; `defaultCommand`, `globalOptions`, `optionAliases` and `positionals` define the shared command presentation policy |
+| `CliConfig` | _type_ | config for `createCli`; `defaultCommand`, `globalOptions`, and `commandSettings` define the shared command presentation and result policy |
+| `CliCommandName` / `CliCommandSettings` | _types_ | command identifier key and per-command `{ aliases?, positionals?, wait?, result?, passthrough? }` settings map for `CliConfig.commandSettings` |
 | `CliPresentationPolicyConfig` | _type_ | shared command presentation-policy subset of `CliConfig` |
-| `CliSurfaceSource` | _type_ | static service/runtime array or identity-dependent factory |
+| `CliSurfaceSource` | _type_ | static service/runtime array or `(auth, globals) => TValue[]` factory receiving parsed auth and application globals |
 | `RuntimeToolDefinition` | _type_ | neutral heterogeneous runtime-tool registration; an inline handler is contextually typed, and handlers execute through the schema-validating managed runner |
 | `RuntimeToolDefinitionWithOutput` | _type_ | strict neutral managed definition with schema-derived handler input/output, the same declaration `stitchkit/tools` constructs with presenters |
 | `RuntimeToolDefinitionWithoutOutput` | _type_ | strict neutral managed void definition without an output contract or transport presenters |
@@ -2613,7 +2995,7 @@ SDK nor the `ai` peer.
 | `CliCommandDefinitionWithoutOutput` | _type_ | native void command without an output contract |
 | `CliResultPolicy` | _type_ | `present` / successful `exitCode` callbacks of one command, typed against its validated result; `CliConfig.results` holds one per managed command |
 | `CliCommandContext` | _type_ | parsed input, framework run options, the application's `globals` and stdout/stderr writers |
-| `CliRunOptions` | _type_ | parsed global flags (`--json` compacts success/error records, `--wait`, …) |
+| `CliRunOptions` | _type_ | parsed global flags (`--json` compacts success/error records, `--wait`, `--schema`, …) |
 | `ParsedCliArgs` | _type_ | result of `parseCliArgs` |
 | `CliWaitConfig` | _type_ | per-command `--wait` polling config; optional `failed(result)` maps a terminal domain failure to `WAIT_FAILED` and a non-zero exit |
 | `ExitCodeMap` | _type_ | `ToolResult.code` → process exit code |
@@ -2738,8 +3120,10 @@ Optional server-only namespace sandbox. Exports:
 `createSandboxCodingTools` composes the existing coding profile over a handle's
 host-only `SandboxCodingBinding`, with shared authorization, command collection and lifecycle.
 `createBubblewrapSandboxBackend`, `createSandboxSession`, `SandboxError`,
-`SandboxCommandSchema`, `SandboxNetworkPolicySchema`, `SandboxStateSchema`.
-Its types are `BubblewrapSandboxConfig`, `SandboxBackend`, `SandboxCommand`,
+`SandboxCommandSchema`, `SandboxNetworkPolicySchema`, `SandboxStateSchema`,
+`AgentSandboxGradeSchema`, `AgentSandboxRestrictionSchema`,
+`probeAgentProcessSandbox`, `missingSandboxRestrictions`, `recordAgentSandboxProbe`.
+Its types are `AgentSandboxGrade`, `AgentSandboxRestriction`, `BubblewrapSandboxConfig`, `SandboxBackend`, `SandboxCommand`,
 `SandboxCreateInput`, `SandboxDriver`, `SandboxHandle`, `SandboxNetworkPolicy`,
 `SandboxPrewarmInput`, `SandboxProcess`, `SandboxRunOptions`, `SandboxSession`,
 and `SandboxState`. The [sandbox guide](../guide/sandbox.md) specifies lifecycle,
@@ -2747,7 +3131,7 @@ network enforcement, gateway credentials and platform/resource boundaries.
 
 ## `stitchkit/agent-runtime/realtime`
 
-Optional evolving Socket.IO server binding, experimental: no committed consumer yet.
+Optional evolving Socket.IO server binding.
 `bindAgentHarnessRealtime` takes `(harness, socket, config)` and returns an
 `AgentHarnessRealtimeBinding`: `close()` for its subscriptions and control connections, without closing
 socket or harness, and `revoke(conversationId, matches?)`. `AgentHarnessRealtimeConfig` requires
@@ -2772,7 +3156,7 @@ application transport. A transport's Engine.IO payload limit remains application
 
 ## `stitchkit/agent-runtime/react`
 
-Optional evolving React peer leaf, experimental: no committed consumer yet. `useAgent` takes a controller and subscribes through
+Optional evolving React peer leaf. `useAgent` takes a controller and subscribes through
 `useSyncExternalStore`, returning the same `AgentControllerState` as `getSnapshot()`.
 Create and close the controller at application/session scope. Multiple components can
 observe it; StrictMode and unmount release only the component's own subscription.
@@ -2794,10 +3178,10 @@ Native POSIX Bun/Node one-shot command execution. See [native IO](../guide/nativ
 | `streamNativeCommand` | function | starts a command under the same group ownership, stop policy and bounds as `runNativeCommand` and returns `stdout` / `stderr` as `ReadableStream<Uint8Array>`, `result` and `stop()`; a slow reader slows the child, a cancelled stream drops its bytes, a failed command errors both streams |
 | `NativeCommandStream` | type | what `streamNativeCommand` returns: `stdout`, `stderr`, `result` (its buffers are empty) and `stop()` |
 | `NativeCommandStreamOptions` | type | `NativeCommandOptions` without `capture`, `onOutput` and `stdio`, which the streams own |
-| `NativeCommandOptions` | type | executable/args, env policy, signal/deadline, bytes sink, finite cleanup limits, the `stop` policy and `descendants` (`'terminate-after-leader'`, the default: stop the group after the leader exits, or `'leave'`); `stdio` (`'pipe'`, or `'inherit'` for the caller's descriptors, refusing the pipe-only options) and `group` (`'own'`, or `'caller'`: joins the caller's process group, stops only the leader, refuses `descendants`, `ownerLoss` and a group stop); `ownerLoss: 'terminate'` (optional Linux/Darwin Bun/Node guard: kernel channel EOF after abrupt caller death KILLs its owned group, unsupported platforms refuse); `onLeaderStarted({ pid })` (once after the group leader exists; the package guard's PID under `ownerLoss`), `drainTimeoutMs` (bound on the pipes staying open after the leader exited, `COMMAND_CLEANUP`); an unknown key is refused by name, a removed one (`killGraceMs`) with its replacement |
+| `NativeCommandOptions` | type | executable/args, env policy, signal/deadline, `stdin` (`Uint8Array \| ReadableStream<Uint8Array>`) bounded by `maxStdinBytes` (default 1 MiB), bytes sink, finite cleanup limits, the `stop` policy and `descendants` (`'terminate-after-leader'`, the default: stop the group after the leader exits, or `'leave'`); `stdio` (`'pipe'`, or `'inherit'` for the caller's descriptors, refusing the pipe-only options) and `group` (`'own'`, or `'caller'`: joins the caller's process group, stops only the leader, refuses `descendants`, `ownerLoss` and a group stop); `ownerLoss: 'terminate'` (optional Linux/Darwin Bun/Node guard: kernel channel EOF after abrupt caller death KILLs its owned group, unsupported platforms refuse); `onLeaderStarted({ pid })` (once after the group leader exists; the package guard's PID under `ownerLoss`), `drainTimeoutMs` (bound on the pipes staying open after the leader exited, `COMMAND_CLEANUP`); an unknown key is refused by name, a removed one (`killGraceMs`) with its replacement |
 | `NativeCommandStopPolicy` | type | how a cancelled command stops: `target` `'group'` (signal every member) or `'leader'` (signal only the leader; its exit ends the grace), `signal` (default `SIGTERM`), `graceMs` (at most one hour) before KILL to the group, and `killOn`, an `AbortSignal` that skips the grace; default `{ target: 'group', signal: 'SIGTERM', graceMs: 100 }` |
 | `NativeCommandResult` | type | observed nullable exit code/signal, `descendantsStopped` (members left in the group after the leader exited were stopped) and captured stdout/stderr bytes |
-| `NativeCommandError` | class | COMMAND_LIMIT with machine reason `deadline` or `output-budget`; COMMAND_UNAVAILABLE / COMMAND_CLEANUP have no limit reason; COMMAND_CLEANUP means the command's resources were not proven closed, either past `cleanupTimeoutMs` after a stop or past `drainTimeoutMs` after the leader exited, and `cause` holds that bound's failure. Preserves internal cause and existing constructor; caller-created limits without supplied reason remain unclassified |
+| `NativeCommandError` | class | COMMAND_LIMIT with machine reason `deadline`, `output-budget` or `stdin-budget`; COMMAND_UNAVAILABLE / COMMAND_CLEANUP have no limit reason; COMMAND_CLEANUP means the command's resources were not proven closed, either past `cleanupTimeoutMs` after a stop or past `drainTimeoutMs` after the leader exited, and `cause` holds that bound's failure. Preserves internal cause and existing constructor; caller-created limits without supplied reason remain unclassified |
 
 | `NativeCommandSettlement` | type | `exit` (the leader ended on its own), `stopped` (the command was stopped and the leader's exit after the stop observed: the stop's `cause` with `exitCode`/`signal`) or `error` (no exit observed), including synchronous native launch failure; `onLeaderSettled` runs once before drain, bounded by cleanupTimeoutMs, with a cancellable settlement signal; schema/pre-abort refusal creates no settlement obligation |
 | `observeProcessInstance` / `ProcessInstanceObservation` | function / type | Linux/Darwin lifetime observation; observed identity or unavailable with its original cause, never guessed absence |
@@ -2860,14 +3244,46 @@ It also owns the build of a client into one self-contained file:
 | `ForbiddenModule` | _type_ | a package name, a source path fragment or a `RegExp` over module paths |
 | `ForbiddenModuleError` | class | the refusal of a bundle that reaches a forbidden module: `module` and `importedBy` |
 
+## `stitchkit/handler`
+
+Portable Fetch handler and `postMessage` bridge host without Node built-ins; usable in browsers, edge runtimes and React Native / Hermes (→ [A host inside React Native](../guide/server.md#a-host-inside-react-native), [ADR 0307](../decisions/0307-a-handler-runs-without-node-and-a-bridge-carries-requests.md)).
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createHandler` | function | build a Fetch `(req) => Promise<Response>` contract router without Node built-ins |
+| `implement` / `createImplement` | function | bind typed contract handlers (`ImplementOptions`, `MissingHandlerPolicy`) |
+| `createErrorHook` | function | build a composable error hook (`ErrorHookBase`, `ErrorHookConfig`, `ErrorHookMapping`, `ResolvedError`) |
+| `serveBridge` | function | serve a `FetchHandler` over a string-only `postMessage` bridge port with origin trust, optional constant-time secret, `maxFrameBytes` before `JSON.parse` and `maxInFlight` |
+| `BridgeHostConfig` / `BridgeHostHandle` / `BridgeHostPort` / `BridgeHostStats` / `BridgeInboundMessage` | _types_ | configuration, handle, port, diagnostic counters and inbound container message for `serveBridge` |
+| `AppError` / `badRequest` / `unauthorized` / `forbidden` / `notFound` / `conflict` / `rateLimited` / `isStitchErrorCode` / `STITCH_ERROR_STATUS` / `StitchErrorCode` | class / function / const / _type_ | shared error vocabulary re-exported for portable handlers |
+| `CorsConfig` / `CorsOriginDecision` / `CorsOriginPolicy` | _types_ | CORS configuration and per-request origin decision types |
+| `FetchHandler` / `HandlerConfig` / `Handlers` / `LifecycleHooks` / `LoggingConfig` / `LogOutcome` / `RawRoute` / `RawRouteContext` / `RouteGroup` / `RouteGroupHooks` / `ServiceDef` / `StitchLogger` | _types_ | portable handler, lifecycle hook, raw route and logger types |
+
 ## `stitchkit/http`
 
-An HTTP-only entrypoint for browsers, React Native/Hermes and servers. It exports the same `createClient`, `createClients`, `createHttpClient`, URL builders, client configuration types and `ApiError` as the root, without loading its optional Socket.IO graph. Import shared contracts from `stitchkit/contract`.
+An HTTP-only entrypoint for browsers, React Native/Hermes and servers. It exports the same `createClient`, `createClients`, `createHttpClient`, URL builders, client configuration types and `ApiError` as the root, without loading its optional Socket.IO graph, plus the `postMessage` bridge `ClientFetch` adapter and envelope schemas. Import shared contracts from `stitchkit/contract`.
 
 ```ts
 import { createClients, createHttpClient } from 'stitchkit/http';
 import { defineContract } from 'stitchkit/contract';
 ```
+
+### Bridge client & wire envelope
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createBridgeFetch` | function | adapt a string-only `BridgeClientPort` or Expo DOM `BridgeInvoke` function into a `BridgeFetch` (`ClientFetch & { close() }`) for `createClient` / `createHttpClient` — [guide](../guide/server.md#a-host-inside-react-native) |
+| `BridgeFailureError` | class | transport-level `TypeError` with `code: BridgeFailureCode` raised when the host replies with a `failure` frame |
+| `BRIDGE_ORIGIN` / `DEFAULT_BRIDGE_MAX_FRAME_BYTES` | const | synthetic bridge base origin (`http://bridge.invalid`) and default 1 MiB frame byte limit |
+| `BridgeClientPort` / `BridgeInvoke` / `BridgeFetch` / `BridgeFetchOptions` / `BridgeDropReason` | _types_ | window-side port, async invoke seam, closeable fetch handle, options and dropped-frame reasons |
+| `BridgeFrameSchema` / `BridgeFrame` | schema / _type_ | discriminated union of v1 bridge wire frames (`request`, `abort`, `response`, `failure`, `hello`) |
+| `BridgeRequestFrameSchema` / `BridgeRequestFrame` | schema / _type_ | window-to-host request frame |
+| `BridgeAbortFrameSchema` / `BridgeAbortFrame` | schema / _type_ | window-to-host cancellation frame |
+| `BridgeResponseFrameSchema` / `BridgeResponseFrame` | schema / _type_ | host-to-window response frame |
+| `BridgeFailureFrameSchema` / `BridgeFailureFrame` | schema / _type_ | host-to-window transport failure frame |
+| `BridgeHelloFrameSchema` / `BridgeHelloFrame` | schema / _type_ | host-to-window startup / restart announcement frame |
+| `BridgeFailureCodeSchema` / `BridgeFailureCode` | schema / _type_ | closed failure codes (`refused`, `unsupported`, `frame-too-large`, `host-busy`, `duplicate-id`, `host-error`) |
+| `BridgeHeaderEntrySchema` / `BridgeHeaderEntry` | schema / _type_ | `[name, value]` header pair preserving repeated `Set-Cookie` entries |
 
 ## `stitchkit/realtime`
 
@@ -2881,6 +3297,17 @@ const client = createRealtimeClient(contract, {
   url,
   peers: { client: () => import('socket.io-client') },
 });
+```
+
+`bindRealtimeClient`, `RealtimeClientTransport`, `BoundRealtimeClient` and
+`BindRealtimeClientOptions` are the root's one binding, exported here too: a native app
+binds a contract to a socket it already holds, so watched reads and an agent controller
+share one connection without the root entry entering the bundle.
+
+```ts
+import { bindRealtimeClient, createSocketIOClient } from 'stitchkit/realtime';
+const socket = createSocketIOClient({ url, peers: { client: () => import('socket.io-client') } });
+const watch = bindRealtimeClient(watchContract, socket);
 ```
 
 Native consumers import HTTP factories, `ApiError`, `createUrlBuilder`,

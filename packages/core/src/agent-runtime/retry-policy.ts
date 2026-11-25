@@ -1,3 +1,5 @@
+import { assertTimerMs } from '../internal/deadline';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import type { AgentProviderFailure } from './provider-failure';
 import type { AgentRuntimeStore } from './store';
 
@@ -13,6 +15,17 @@ export interface AgentRetryPolicy {
   delayMs(input: { attempt: number; failure: AgentProviderFailure }): number;
 }
 
+/**
+ * Refuse a policy whose `maxAttempts` is not a positive safe integer. `Infinity`
+ * would retry a retryable failure, paid, without end; `NaN`, `0` or a fraction
+ * would silently mean "never retry". `subject` names where the policy was given.
+ */
+export function assertAgentRetryPolicy(subject: string, policy: AgentRetryPolicy): void {
+  assertPositiveSafeInteger(`${subject}.maxAttempts`, policy.maxAttempts, TypeError, {
+    absent: 'refused',
+  });
+}
+
 export async function recordAgentRetryDecision(input: {
   store: AgentRuntimeStore;
   conversationId: string;
@@ -20,13 +33,12 @@ export async function recordAgentRetryDecision(input: {
   failure: AgentProviderFailure;
   policy: AgentRetryPolicy;
 }): Promise<{ retry: boolean; delayMs: number }> {
+  assertAgentRetryPolicy('Retry policy', input.policy);
   const retry = input.failure.retryable && input.attempt < input.policy.maxAttempts;
   const delayMs = retry
     ? input.policy.delayMs({ attempt: input.attempt, failure: input.failure })
     : 0;
-  if (!Number.isInteger(delayMs) || delayMs < 0) {
-    throw new TypeError('Retry delay must be a non-negative integer');
-  }
+  assertTimerMs('Retry delayMs', delayMs, { min: 0, absent: 'refused' });
   if (retry) {
     await input.store.appendEvent({
       conversationId: input.conversationId,

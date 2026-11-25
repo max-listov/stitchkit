@@ -44,6 +44,7 @@ const onError = createErrorHook({
     CONNECTION_RESPONSE_TOO_LARGE: 'too_large',
     CONNECTION_REQUEST_FAILED: 'upstream',
     UPSTREAM_TOOL_ERROR: 'upstream',
+    MCP_STRUCTURED_CONTENT_MISSING: 'upstream',
     REQUEST_ABORTED: 'cancelled',
     REQUEST_TIMEOUT: 'timeout',
     OPERATION_NOT_SUCCEEDED: 'conflict',

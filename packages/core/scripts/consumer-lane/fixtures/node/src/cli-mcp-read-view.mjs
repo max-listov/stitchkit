@@ -39,6 +39,7 @@ const contract = defineContract(
   },
 );
 const handler = createMcpHandler({
+  access: { open: 'local-operator' },
   serverInfo: { name: 'bots', version: '1' },
   auth: () => ({}),
   context: () => ({}),
@@ -69,7 +70,7 @@ async function run(argv) {
   const runtimeTools = await mountConnections([
     defineMcpClientConnection({
       name: 'bots',
-      transports: ['CLI'],
+      expose: ['CLI'],
       transport: { url: `http://127.0.0.1:${port}/mcp` },
     }),
   ]);
@@ -77,6 +78,7 @@ async function run(argv) {
   let err = '';
   let code = -1;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'bots',
     version: '1.0.0',
     runtimeTools,

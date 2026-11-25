@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { jsonResponse } from '../internal/json-response';
 import type { ApplicationHandle } from './kernel-contract';
 import { projectApplicationStatus } from './schemas';
 
@@ -43,7 +44,7 @@ export function createApplicationHealthHandler(
       parsed.kind === 'readiness'
         ? snapshot.ready
         : snapshot.lifecycle !== 'failed' && snapshot.lifecycle !== 'stopped';
-    return Response.json(projectApplicationStatus(snapshot), {
+    return jsonResponse(projectApplicationStatus(snapshot), {
       status: healthy ? 200 : 503,
       ...(healthy ? {} : { headers: { 'Retry-After': String(parsed.retryAfterSeconds) } }),
     });
@@ -57,7 +58,7 @@ export function createApplicationOperationalHandlers(
 ): ApplicationOperationalHandlers {
   const parsed = ApplicationOperationalHandlersOptionsSchema.parse(options);
   return {
-    status: () => Response.json(projectApplicationStatus(application.getSnapshot())),
+    status: () => jsonResponse(projectApplicationStatus(application.getSnapshot())),
     readiness: createApplicationHealthHandler(application, {
       kind: 'readiness',
       retryAfterSeconds: parsed.retryAfterSeconds,

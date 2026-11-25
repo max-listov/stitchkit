@@ -871,7 +871,7 @@ describe('agent runtime terminalization', () => {
     });
 
     const first = runtime.submit({
-      conversationId: 'a\u0000b',
+      conversationId: 'a\u001fb',
       idempotencyKey: 'c',
       context: {},
       parts: [{ type: 'text', text: 'one' }],
@@ -884,7 +884,7 @@ describe('agent runtime terminalization', () => {
     });
     const second = runtime.submit({
       conversationId: 'a',
-      idempotencyKey: 'b\u0000c',
+      idempotencyKey: 'b\u001fc',
       context: {},
       parts: [{ type: 'text', text: 'two' }],
       metadata: {},

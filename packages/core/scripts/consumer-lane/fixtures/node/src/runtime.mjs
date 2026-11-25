@@ -25,7 +25,11 @@ const agentStore = createMemoryAgentRuntimeStore();
 assert.equal(new AgentContextOverflowError().name, 'AgentContextOverflowError');
 const agentSnapshot = await agentStore.loadSnapshot('packed-node-agent');
 assert.equal(agentSnapshot.version, 0);
-await runAgentStoreConformance({ createStore: () => createMemoryAgentRuntimeStore() });
+await runAgentStoreConformance({
+  createStore: () => createMemoryAgentRuntimeStore(),
+  capabilities: { branch: true, planBranch: true, archive: true, historyRestore: true },
+  commitConflict: { impossible: 'single-writer' },
+});
 const agentTrace = createAgentRaceTrace();
 agentTrace.record('admission');
 agentTrace.record('terminal');
@@ -47,8 +51,7 @@ await createCli({
   version: '1',
   commands: [inspect],
   defaultCommand: 'inspect',
-  optionAliases: { inspect: { v: 'verbose' } },
-  positionals: { inspect: ['target'] },
+  commandSettings: { inspect: { aliases: { v: 'verbose' }, positionals: ['target'] } },
   argv: ['inspect', 'packed', '-v'],
   stdout: (text) => {
     cliOutput += text;
@@ -78,6 +81,7 @@ const contract = defineContract(
 );
 const service = implement(contract, { echo: ({ input }) => input });
 const handler = createMcpHandler({
+  access: { open: 'local-operator' },
   serverInfo: { name: 'packed-node-http', version: '1' },
   auth: () => ({}),
   security: { allowedHosts: ['consumer.test'] },

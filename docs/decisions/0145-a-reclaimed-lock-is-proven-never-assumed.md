@@ -2,7 +2,7 @@
 title: A reclaimed lock is proven, never assumed
 description: The diagnostic journal may reclaim an abandoned lock only from a liveness check on the recorded owner, and no age-based reclaim is offered at any price.
 type: decision
-status: active
+status: accepted
 created: 2026-09-01
 updated: 2026-09-01
 ---

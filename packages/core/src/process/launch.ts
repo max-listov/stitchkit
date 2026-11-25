@@ -1,4 +1,5 @@
-import { Readable } from 'node:stream';
+import { Readable, type Writable } from 'node:stream';
+import { errnoOf } from '../internal/errno';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import type { OwnedChild } from './bun-child';
 import { NativeCommandError, type ParsedNativeCommandOptions } from './contract';
@@ -143,10 +144,110 @@ function outputStream(
   };
 }
 
+/**
+ * Write a stream into the child's stdin as it yields, waiting for the pipe
+ * to drain, and close stdin when the stream ends. A stream past `max` bytes,
+ * or one that fails, ends the input with a failure; a child that closed its
+ * stdin ends it quietly, as a closed pipe does for a buffer.
+ */
+async function pumpStdin(
+  source: ReadableStream<Uint8Array>,
+  stdin: Writable,
+  max: number,
+  onFailure: (error: Error) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let reader: ReturnType<typeof source.getReader> | undefined;
+  let readPending = false;
+  let endedNaturally = false;
+  let written = 0;
+  let stopListener: (() => void) | undefined;
+  let closeListener: (() => void) | undefined;
+  const closed = new Promise<'closed'>((resolve) => {
+    if (stdin.closed || stdin.destroyed || signal?.aborted) {
+      resolve('closed');
+      return;
+    }
+    const done = () => resolve('closed');
+    closeListener = done;
+    stdin.once('close', done);
+    if (signal) {
+      stopListener = done;
+      signal.addEventListener('abort', done, { once: true });
+    }
+  });
+  try {
+    const activeReader = source.getReader();
+    reader = activeReader;
+    for (;;) {
+      if (stdin.closed || stdin.destroyed || signal?.aborted) break;
+      const readPromise = activeReader.read();
+      readPending = true;
+      void readPromise.then(
+        () => {
+          readPending = false;
+        },
+        () => {
+          readPending = false;
+        },
+      );
+      const next = await Promise.race([readPromise, closed]);
+      if (next === 'closed') break;
+      if (next.done) {
+        endedNaturally = true;
+        break;
+      }
+      const chunk: unknown = next.value;
+      if (!(chunk instanceof Uint8Array)) {
+        throw new TypeError('Streamed stdin chunks must be Uint8Array');
+      }
+      if (chunk.byteLength > max - written) {
+        throw new NativeCommandError('COMMAND_LIMIT', 'stdin exceeds maxStdinBytes', {
+          reason: 'stdin-budget',
+        });
+      }
+      if (chunk.byteLength === 0) continue;
+      written += chunk.byteLength;
+      if (stdin.closed || stdin.destroyed || signal?.aborted) break;
+      if (!stdin.write(chunk)) {
+        if (stdin.closed || stdin.destroyed || signal?.aborted) break;
+        let onDrain: (() => void) | undefined;
+        try {
+          const drained = new Promise<'drained'>((resolve) => {
+            onDrain = () => resolve('drained');
+            stdin.once('drain', onDrain);
+          });
+          if ((await Promise.race([drained, closed])) === 'closed') break;
+        } finally {
+          if (onDrain) stdin.off('drain', onDrain);
+        }
+      }
+    }
+    if (endedNaturally && !stdin.closed && !stdin.destroyed) stdin.end();
+  } catch (error) {
+    if (!stdin.destroyed) stdin.destroy();
+    onFailure(error instanceof Error ? error : new Error(String(error)));
+  } finally {
+    if (closeListener) stdin.off('close', closeListener);
+    if (stopListener && signal) signal.removeEventListener('abort', stopListener);
+    if (reader) {
+      if (readPending || !endedNaturally) {
+        void reader.cancel().catch(() => undefined);
+      }
+      try {
+        reader.releaseLock();
+      } catch {
+        // Ignore if stream runtime refuses releaseLock while a read is pending.
+      }
+    }
+  }
+}
+
 /** Install every observation before starting stdin or invoking an admission callback. */
 export function launchNativeCommand({
   options,
   driver,
+  signal,
   onSpawn,
   onFailure,
   onInputFailure,
@@ -154,6 +255,8 @@ export function launchNativeCommand({
 }: {
   options: ParsedNativeCommandOptions;
   driver: NativeCommandLaunchDriver | undefined;
+  /** Command lifetime signal: aborts stdin pumping when the command ends. */
+  signal?: AbortSignal;
   /** Called once the real child exists, when the command starts. */
   onSpawn?: (child: OwnedChild) => void;
   /** The process failed to start or reported an error. */
@@ -213,7 +316,7 @@ export function launchNativeCommand({
   transport.pipeDestructor('stderr', () => stderr.destroy());
   const stdin = transport.stdin;
   stdin?.on('error', (error) => {
-    if (!('code' in error && error.code === 'EPIPE')) onInputFailure(error);
+    if (errnoOf(error) !== 'EPIPE') onInputFailure(error);
   });
   return {
     ...transport,
@@ -222,7 +325,12 @@ export function launchNativeCommand({
     async start() {
       if (native) onSpawn?.(native);
       const pid = await awaitCommandStart(child);
-      stdin?.end(options.stdin);
+      if (options.stdin instanceof ReadableStream) {
+        if (stdin)
+          void pumpStdin(options.stdin, stdin, options.maxStdinBytes, onInputFailure, signal);
+      } else {
+        stdin?.end(options.stdin);
+      }
       return pid;
     },
   };

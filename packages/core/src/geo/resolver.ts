@@ -1,3 +1,4 @@
+import { assertTimerMs } from '../internal/deadline';
 import { messageOf } from '../internal/error-message';
 import { isPublicIp } from '../internal/request';
 import { mapGeoIpRecord } from './record';
@@ -22,6 +23,8 @@ const errorMessage = (error: unknown): string => messageOf(error) || 'unknown re
 export function createGeoIpResolver<TPaths>(
   options: GeoIpResolverOptions<TPaths>,
 ): GeoIpResolver {
+  // Taken here; the reload timer it paces starts only at `activate()`.
+  if (options.reload) assertTimerMs('GeoIP reload intervalMs', options.reload.intervalMs);
   const clock = options.clock ?? Date.now;
   const map = options.map ?? mapGeoIpRecord;
   let generation: ReaderGeneration | null = null;
@@ -117,7 +120,7 @@ export function createGeoIpResolver<TPaths>(
     },
     activate() {
       const intervalMs = options.reload === false ? undefined : options.reload?.intervalMs;
-      if (intervalMs !== undefined && intervalMs > 0 && !timer) {
+      if (intervalMs !== undefined && !timer) {
         timer = setInterval(() => void reload(), intervalMs);
         timer.unref?.();
       }

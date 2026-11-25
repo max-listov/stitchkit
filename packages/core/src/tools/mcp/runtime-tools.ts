@@ -11,7 +11,7 @@ import type { McpRoundRuntime } from './round';
 interface NativeMcpRuntimeConfig {
   context?: Record<string, unknown>;
   hooks?: ToolCallHooks;
-  lifecycle?: ToolLifecycle;
+  lifecycle: ToolLifecycle;
   coerceJsonArgs?: boolean;
   onOutputStrip?: (toolName: string, paths: string[]) => void;
   multiRoundRuntime?: McpRoundRuntime;

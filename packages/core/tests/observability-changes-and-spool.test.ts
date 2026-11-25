@@ -5,8 +5,8 @@
  * lived here: the filter disagreed with itself on `OPTIONS`, and five of the six
  * lost the event whenever the store was down.
  */
-import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { auditChanges } from '../src/observability/changes';
@@ -62,8 +62,17 @@ describe('the filter every project was writing itself', () => {
 });
 
 describe('an audit row survives the store being down', () => {
-  function spoolPath(): string {
-    return join(mkdtempSync(join(tmpdir(), 'stitchkit-spool-')), 'audit.ndjson');
+  const directories: string[] = [];
+  afterEach(() => {
+    for (const directory of directories.splice(0))
+      rmSync(directory, { recursive: true, force: true });
+  });
+
+  /** A spool file under a fresh directory this file removes after each test; `under` nests it. */
+  function spoolPath(...under: string[]): string {
+    const directory = mkdtempSync(join(tmpdir(), 'stitchkit-spool-'));
+    directories.push(directory);
+    return join(directory, ...under, 'audit.ndjson');
   }
 
   test('what the store refused is replayed by the next process', async () => {
@@ -113,6 +122,47 @@ describe('an audit row survives the store being down', () => {
     const next = createSpooledSink({ path, write: (value) => void second.push(value) });
     expect(await next.recover()).toEqual({ replayed: 0, failed: 0 });
     expect(second).toEqual([]);
+  });
+
+  test('the spool is bounded by maxPendingEntries and maxFileBytes, and says so', async () => {
+    const reasons: string[] = [];
+    const byCount = createSpooledSink({
+      path: spoolPath(),
+      write: () => {
+        throw new Error('down');
+      },
+      maxPendingEntries: 1,
+      onSpoolError: (failure) => reasons.push(String(failure.error)),
+    });
+    // Spooled and refused: the store's own error, and `recover` offers the row again.
+    await expect(byCount.write(event({ spanId: 'one', method: 'POST' }))).rejects.toThrow(
+      'down',
+    );
+    // Kept nowhere (ADR 0323): the writer learns it, with the store's refusal as the cause.
+    await expect(
+      byCount.write(event({ spanId: 'two', method: 'POST' })),
+    ).rejects.toMatchObject({
+      code: 'SPOOL_UNSPOOLED',
+      cause: expect.objectContaining({ message: 'down' }),
+    });
+    expect(byCount.pending()).toBe(1);
+    const bySize = createSpooledSink({
+      path: spoolPath(),
+      write: () => {
+        throw new Error('down');
+      },
+      maxFileBytes: 32,
+      onSpoolError: (failure) => reasons.push(String(failure.error)),
+    });
+    await expect(
+      bySize.write(event({ spanId: 'three', method: 'POST' })),
+    ).rejects.toMatchObject({
+      code: 'SPOOL_UNSPOOLED',
+      cause: expect.objectContaining({ message: 'down' }),
+    });
+    expect(bySize.pending()).toBe(0);
+    expect(reasons.some((reason) => reason.includes('bound of 1'))).toBe(true);
+    expect(reasons.some((reason) => reason.includes('32-byte bound'))).toBe(true);
   });
 
   test('a store still refusing keeps the row for the process after this one', async () => {
@@ -182,7 +232,7 @@ describe('an audit row survives the store being down', () => {
   test('recovering a path that was never written is zero, not a failure', async () => {
     const failures: unknown[] = [];
     const sink = createSpooledSink({
-      path: join(mkdtempSync(join(tmpdir(), 'stitchkit-spool-')), 'nested', 'audit.ndjson'),
+      path: spoolPath('nested'),
       write: () => undefined,
       onSpoolError: (failure) => failures.push(failure.error),
     });
@@ -191,7 +241,7 @@ describe('an audit row survives the store being down', () => {
   });
 
   test('a missing directory is created rather than losing the row', async () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'stitchkit-spool-')), 'deep', 'audit.ndjson');
+    const path = spoolPath('deep');
     const stored: RequestEvent[] = [];
     const sink = createSpooledSink({ path, write: (value) => void stored.push(value) });
     await sink.write(event({ spanId: 'gggg', method: 'POST' }));

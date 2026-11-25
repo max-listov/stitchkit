@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { AgentMessageSchema, AgentRecordIdSchema, AgentRecordVersionSchema } from './schemas';
+import { AgentRecordIdSchema } from '../durability/events';
+import { AgentMessageSchema, AgentRecordVersionSchema } from './schemas';
 
 export const AgentConversationSummarySchema = z
   .object({

@@ -2,7 +2,8 @@
 title: The official starter advances independently from framework HEAD
 description: Pin the generated application to one validated Stitchkit catalog range and release the scaffolder on its own tag line
 type: decision
-status: active
+status: accepted
+amendedBy: ["0311"]
 created: 2026-08-08
 updated: 2026-08-08
 ---
@@ -29,7 +30,9 @@ what newly generated projects install.
 
 The canonical template is an autonomous Bun workspace with its own committed
 lockfile. Its root `catalog.stitchkit` entry is the single source of the
-published framework range; child workspaces reference it with `catalog:`.
+published framework range; child workspaces reference it with `catalog:` (amended by [ADR 0311](0311-planned-breaking-release-access-expose-and-clean-boundaries.md):
+starter templates import surface manifest/conformance helpers from `stitchkit/testing`
+instead of carrying local copies, and record `starter.version` in `project.json`).
 
 `stitchkit` and `create-stitchkit` use independent package versions, changelogs
 and tags. The static starter lane is authoritative for the generated product. A

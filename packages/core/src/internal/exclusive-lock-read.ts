@@ -2,7 +2,7 @@ import { BoundedFileReadError, readBoundedFile } from './bounded-file-read';
 import type { FileObservation } from './file-observation';
 
 /** Owner records are small JSON objects; one byte past the cap would already be refused. */
-const OWNER_RECORD_BYTES = 16 * 1024;
+export const OWNER_RECORD_BYTES = 16 * 1024;
 
 export class LockRecordError extends Error {
   override name = 'LockRecordError';

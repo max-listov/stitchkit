@@ -3,8 +3,10 @@ title: "ADR 0298: An application file crosses a branch by declaration"
 description: A file part reference the application stores is carried into a branch only under the destination reference the host declares; an undeclared one still refuses the branch.
 type: decision
 status: accepted
+amends: ["0258"]
+amendedBy: ["0300"]
 created: 2026-11-21 19:49 +08:00
-updated: 2026-11-21 19:49 +08:00
+updated: 2026-11-22 00:28 +08:00
 ---
 
 # ADR 0298 — An application file crosses a branch by declaration
@@ -51,10 +53,14 @@ reference; anything else refuses the branch before any write, with
 
 The same declaration answers the same question for application JSON. Message
 metadata, an application tool's input and output and provider options are
-carried unrewritten, and a key in them named like a runtime reference refuses
+carried unrewritten (amended by ADR 0300: records the runtime's own tools wrote —
+a deferred tool selection receipt, event search calls and answers — cross by
+their type), and a key in them named like a runtime reference refuses
 the branch. `applicationKeys` lists the names the host uses for data of its own;
 a declared key still refuses when its value names an identity of the source
-conversation, so a real reference is caught whatever it is called. Declarations
+conversation, so a real reference is caught whatever it is called (amended by ADR 0300:
+a key declared `sourceIdentity: 'retain'` carries a value naming the source
+conversation, a run or a message as a record of the past). Declarations
 are sets: their order is not part of the request fingerprint.
 
 ## Consequences

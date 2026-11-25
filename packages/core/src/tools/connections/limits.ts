@@ -1,8 +1,7 @@
 import { raceAbort } from '../../internal/abort-race';
 import { concatChunks, readBoundedChunks } from '../../internal/bounded-body';
-import { withIdleDeadline, withSignalDeadline } from '../../internal/deadline';
+import { assertTimerMs, withIdleDeadline, withSignalDeadline } from '../../internal/deadline';
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
-import { MAX_TIMER_MS } from '../../internal/timers';
 import { ConnectionResponseTooLargeError, ConnectionTimeoutError } from './errors';
 import type { ConnectionReadContext } from './operation-limits';
 
@@ -19,19 +18,12 @@ export const DEFAULT_DISCOVERY_IDLE_TIMEOUT_MS = 30_000;
 
 export function connectionTimeoutMs(value: number | undefined): number {
   if (value === undefined) return DEFAULT_CONNECTION_TIMEOUT_MS;
-  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMER_MS) {
-    throw new RangeError('Connection timeoutMs must be a positive integer within timer range');
-  }
+  assertTimerMs('Connection timeoutMs', value);
   return value;
 }
 
 export function connectionIdleTimeoutMs(value: number | undefined): number | undefined {
-  if (value === undefined) return undefined;
-  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMER_MS) {
-    throw new RangeError(
-      'Connection idleTimeoutMs must be a positive integer within timer range',
-    );
-  }
+  assertTimerMs('Connection idleTimeoutMs', value);
   return value;
 }
 
@@ -95,7 +87,7 @@ export function withConnectionDeadline<T>(
 }
 
 /** Count raw bytes; Content-Length is deliberately not a trust boundary. */
-export async function readBoundedText(
+export async function readBoundedConnectionText(
   response: Response,
   maxBytes: number,
   connectionName: string,
@@ -123,7 +115,9 @@ export async function readBoundedJson(
   connectionName: string,
   context?: ConnectionReadContext,
 ): Promise<unknown> {
-  return JSON.parse(await readBoundedText(response, maxBytes, connectionName, context));
+  return JSON.parse(
+    await readBoundedConnectionText(response, maxBytes, connectionName, context),
+  );
 }
 
 /** Diagnostics are best effort; cancellation and declared bounds always win. */
@@ -134,7 +128,12 @@ export async function readConnectionErrorText(
 ): Promise<string> {
   try {
     return (
-      await readBoundedText(response, context.maxResponseBytes, connectionName, context)
+      await readBoundedConnectionText(
+        response,
+        context.maxResponseBytes,
+        connectionName,
+        context,
+      )
     ).slice(0, 512);
   } catch (error) {
     context.signal?.throwIfAborted();

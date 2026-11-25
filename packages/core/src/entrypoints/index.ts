@@ -80,6 +80,16 @@ export {
   type SessionCredentials,
   type SessionCredentialsConfig,
 } from '../browser/session-credentials';
+export {
+  defaultClassifyRefreshFailure,
+  type SessionClock,
+  type SessionCredentialsEvent,
+  type SessionRefreshAhead,
+  type SessionRefreshFailure,
+  type SessionRefreshOptions,
+  SessionRefreshRejectedError,
+  type SessionRestoreResult,
+} from '../browser/session-refresh-policy';
 export type {
   RealtimeClient,
   RealtimeClientOptions,
@@ -113,6 +123,14 @@ export type { StitchLogger } from '../internal/logger';
 // rendering `ApiError.details.issues` had to hand-write the shape, because the only
 // door to it was `stitchkit/server`, which a browser must not import.
 export { formatZodError, type ZodIssueSummary, zodIssues } from '../internal/zod-issues';
+// Windowed repeat suppression for StitchLogger — browser-safe (no Node built-ins),
+// shared with `stitchkit/observability` so browser and server log throttling use one implementation.
+export {
+  DEFAULT_REPEAT_MAX_KINDS,
+  DEFAULT_REPEAT_WINDOW_MS,
+  type RepeatLimitOptions,
+  repeatLimited,
+} from '../observability/log-repeat';
 // W3C trace helpers — browser-safe (Web Crypto only), shared with the server's
 // `stitchkit/observability` entry so client and server speak one format.
 export {

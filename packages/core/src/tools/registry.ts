@@ -1,3 +1,4 @@
+import { assertNoLegacyTransports } from './internal/expose';
 import type { RuntimeToolDefinition } from './runtime-tool-declaration';
 
 /**
@@ -43,6 +44,7 @@ export function defineToolRegistry(input: AgentToolRegistryInput): AgentToolRegi
   const slots = new Set<string>();
   for (const tool of defaults) {
     if (!tool.name) throw new Error('A default tool must carry a non-empty name');
+    assertNoLegacyTransports(tool, `Runtime tool "${tool.name}"`);
     if (slots.has(tool.name)) throw new Error(`Duplicate default tool name: ${tool.name}`);
     slots.add(tool.name);
   }
@@ -62,6 +64,7 @@ export function defineToolRegistry(input: AgentToolRegistryInput): AgentToolRegi
   const builder: AgentToolRegistryBuilder = {
     replace(name, tool) {
       assertKnown(name, 'replace');
+      assertNoLegacyTransports(tool, `Runtime tool "${tool.name}"`);
       if (disabled.has(name)) {
         throw new Error(`Tool registry cannot replace "${name}": it is disabled`);
       }

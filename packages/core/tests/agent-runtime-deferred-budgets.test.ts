@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import type { ToolSet } from 'ai';
+import { asSchema, type ToolSet } from 'ai';
 import { z } from 'zod';
 import {
   AgentContextOverflowError,
   AgentRunSchema,
   createDeferredAgentToolSurface,
 } from '../src/entrypoints/agent-runtime';
+import { defineContract, type RuntimeContext } from '../src/entrypoints/contract';
+import { createImplement } from '../src/entrypoints/server';
 import { defineRuntimeTool } from '../src/entrypoints/tools';
 
 function definition(name: string, description = name) {
@@ -36,7 +38,7 @@ const runContext = {
   context: {},
   run,
   signal: new AbortController().signal,
-  toolFenceLifecycle: {},
+  toolFenceLifecycle: { beforeHandle: () => undefined },
 };
 
 function searchExecutor(tools: ToolSet) {
@@ -64,7 +66,9 @@ describe('deferred Agent tool ceilings', () => {
       activation: { maxSelectedTools: 2, maxActiveTools: 4, maxSchemaBytes: 4_096 },
       observe: (event) => events.push(event),
     });
-    const search = searchExecutor(deferred.mount(runContext));
+    const search = searchExecutor(
+      deferred.mount(runContext, { access: { open: 'local-operator' } }),
+    );
     const selected = await search(
       { query: 'private-query' },
       { toolCallId: 'one', messages: [], context: undefined },
@@ -96,10 +100,9 @@ describe('deferred Agent tool ceilings', () => {
       search: { name: 'tool_search', maxQueryBytes: 32, maxResults: 1, maxResultBytes: 512 },
       activation: { maxSelectedTools: 1, maxActiveTools: 1, maxSchemaBytes: 4_096 },
     });
-    const receipt = await searchExecutor(searchOnly.mount(runContext))(
-      { query: 'target' },
-      { toolCallId: 'search', messages: [], context: undefined },
-    );
+    const receipt = await searchExecutor(
+      searchOnly.mount(runContext, { access: { open: 'local-operator' } }),
+    )({ query: 'target' }, { toolCallId: 'search', messages: [], context: undefined });
     expect(receipt).toMatchObject({ status: 'SELECTION_REFUSED', selected: [] });
 
     const pinned = createDeferredAgentToolSurface({
@@ -115,5 +118,134 @@ describe('deferred Agent tool ceilings', () => {
         responseMessages: [],
       } as never),
     ).rejects.toBeInstanceOf(AgentContextOverflowError);
+  });
+
+  test('the schema-byte ceiling measures every schema as the mount advertises it', async () => {
+    interface Expression {
+      field?: string;
+      fn?: 'add' | 'sub';
+      args?: Expression[];
+    }
+    const Expression: z.ZodType<Expression> = z.lazy(() =>
+      z.union([
+        z.object({ field: z.string().min(1) }),
+        z.object({ fn: z.enum(['add', 'sub']), args: z.array(Expression).min(1) }),
+      ]),
+    );
+    const compute = defineRuntimeTool({
+      name: 'compute',
+      description: 'compute',
+      identity: { serviceName: 'bounded', action: 'compute', method: 'POST' },
+      input: z.object({ a: Expression, b: Expression, c: Expression }),
+      output: z.object({ ok: z.boolean() }),
+      handler: () => ({ ok: true }),
+    });
+    const events: { activeSchemaBytes: number }[] = [];
+    const surface = (maxSchemaBytes: number) =>
+      createDeferredAgentToolSurface({
+        runtimeTools: [compute],
+        alwaysOn: ['compute'],
+        inputRecursionDepth: 6,
+        search: { name: 'tool_search', maxQueryBytes: 64, maxResults: 1, maxResultBytes: 512 },
+        activation: { maxSelectedTools: 1, maxActiveTools: 2, maxSchemaBytes },
+        observe: (event) => events.push(event),
+      });
+    const deferred = surface(100_000);
+    const tools = deferred.mount(runContext, { access: { open: 'local-operator' } });
+    const mountedTool = tools.compute;
+    if (!mountedTool) throw new Error('expected the compute tool');
+    const mounted = JSON.stringify(await asSchema(mountedTool.inputSchema).jsonSchema);
+    expect(mounted).not.toContain('$ref');
+    const mountedBytes = new TextEncoder().encode(mounted).byteLength;
+    await deferred.prepareStep()({
+      ...runContext,
+      messages: [],
+      responseMessages: [],
+    } as never);
+    expect(events.at(-1)?.activeSchemaBytes).toBeGreaterThan(mountedBytes);
+    expect(() => surface(mountedBytes)).toThrow('base tools exceed maxSchemaBytes');
+  });
+
+  test('a mount refuses the projection options the surface owns', () => {
+    const deferred = createDeferredAgentToolSurface({
+      runtimeTools: [definition('target')],
+      search: { name: 'tool_search', maxQueryBytes: 32, maxResults: 1, maxResultBytes: 512 },
+      activation: { maxSelectedTools: 1, maxActiveTools: 2, maxSchemaBytes: 4_096 },
+    });
+    for (const option of ['extend', 'flattenUnionInput', 'inputRecursionDepth']) {
+      // An untyped caller: the option moved to `createDeferredAgentToolSurface`.
+      const mountConfig = JSON.parse(
+        `{ "access": { "open": "local-operator" }, "${option}": 2 }`,
+      );
+      expect(() => deferred.mount(runContext, mountConfig)).toThrow(
+        `${option} belongs to createDeferredAgentToolSurface`,
+      );
+    }
+  });
+
+  test("the surface's extend and flattenUnionInput shape the manifest the selector ranks and the tools it mounts", async () => {
+    const contract = defineContract(
+      { prefix: 'projected', scope: 'public' },
+      {
+        act: {
+          method: 'POST',
+          path: '/act',
+          desc: 'Act on one kind',
+          input: z.discriminatedUnion('kind', [
+            z.object({ kind: z.literal('a'), a: z.string() }),
+            z.object({ kind: z.literal('b'), b: z.number() }),
+          ]),
+          output: z.object({ ok: z.boolean() }),
+          tool: { name: 'act_tool' },
+        },
+      },
+    );
+    const service = createImplement<RuntimeContext>()(contract, { act: () => ({ ok: true }) });
+    const extend = { schema: { tenant: z.string().describe('Tenant') }, resolve: () => ({}) };
+    const shapes = async (projection: {
+      extend?: typeof extend;
+      flattenUnionInput?: boolean;
+    }) => {
+      let ranked: readonly { name: string; inputSchema: Record<string, unknown> }[] = [];
+      const deferred = createDeferredAgentToolSurface({
+        services: [service],
+        ...projection,
+        search: {
+          name: 'tool_search',
+          maxQueryBytes: 32,
+          maxResults: 1,
+          maxResultBytes: 512,
+          select: ({ manifest }) => {
+            ranked = manifest;
+            return [];
+          },
+        },
+        activation: { maxSelectedTools: 1, maxActiveTools: 2, maxSchemaBytes: 8_192 },
+      });
+      const tools = deferred.mount(runContext, { access: { open: 'local-operator' } });
+      await searchExecutor(tools)(
+        { query: 'act' },
+        { toolCallId: 'search', messages: [], context: undefined },
+      );
+      const mountedTool = tools.act_tool;
+      if (!mountedTool) throw new Error('expected the act tool');
+      const mounted = await asSchema(mountedTool.inputSchema).jsonSchema;
+      const listed = ranked.find((entry) => entry.name === 'act_tool')?.inputSchema;
+      return [mounted, listed].map((schema) => ({
+        tenant: JSON.stringify(schema).includes('"tenant"'),
+        flat:
+          !JSON.stringify(schema).includes('anyOf') &&
+          !JSON.stringify(schema).includes('oneOf'),
+      }));
+    };
+    expect(await shapes({ extend, flattenUnionInput: true })).toEqual([
+      { tenant: true, flat: true },
+      { tenant: true, flat: true },
+    ]);
+    // Without them neither the manifest nor the mount changes.
+    expect(await shapes({})).toEqual([
+      { tenant: false, flat: false },
+      { tenant: false, flat: false },
+    ]);
   });
 });

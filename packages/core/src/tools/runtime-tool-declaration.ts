@@ -1,5 +1,6 @@
 import type { ZodObject, ZodType, z } from 'zod';
 import type { HttpMethod, ToolTransport } from '../contract/define';
+import type { OperationEffect } from '../contract/operation-effect';
 import type { McpCallContext, RuntimeContext } from '../contract/runtime-context';
 import type {
   EndpointMcpPolicy,
@@ -14,6 +15,8 @@ export interface RuntimeToolIdentity {
   scope?: string;
   /** Semantic operation verb for lifecycle and RequestEvent attribution. */
   method: HttpMethod;
+  /** Closed side-effect classification (`'read'` or `'write'`) for gates and read-only hints. */
+  effect?: OperationEffect;
   meta?: Record<string, unknown>;
 }
 
@@ -62,7 +65,7 @@ export interface RuntimeToolDefinitionBase<
   identity: RuntimeToolIdentity;
   input: TInput;
   /** Default: MCP and AGENT. CLI is always explicit opt-in. */
-  transports?: readonly ToolTransport[];
+  expose?: readonly ToolTransport[];
   annotations?: EndpointToolAnnotations;
   ui?: EndpointUiMeta;
   /** Opt-in multi-round input gate on the MCP transport only. */

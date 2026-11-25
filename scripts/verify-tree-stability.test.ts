@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { copyCoreSourceFixture } from './core-source-fixture';
 import { readGreenGates } from './gate-memo';
+import { FAST_STEPS } from './verify-profiles';
 
 test('the actual runner never certifies a mixed tree, including mutation then restoration', async () => {
   for (const mode of [
@@ -47,10 +48,7 @@ test('the actual runner never certifies a mixed tree, including mutation then re
         join(root, 'package.json'),
         JSON.stringify({
           scripts: Object.fromEntries(
-            ['lockfile', 'lint', 'check', 'test'].map((step) => [
-              step,
-              `bun fixture.ts ${step}`,
-            ]),
+            FAST_STEPS.map((step) => [step, `bun fixture.ts ${step}`]),
           ),
         }),
       );
@@ -74,21 +72,17 @@ test('the actual runner never certifies a mixed tree, including mutation then re
         return output;
       }
       await run();
-      expect(await readFile(join(root, '.runs'), 'utf8')).toBe(
-        'lockfile\nlint\ncheck\ntest\n',
-      );
+      expect(await readFile(join(root, '.runs'), 'utf8')).toBe(`${FAST_STEPS.join('\n')}\n`);
       const history = await readGreenGates('verify:fast', join(memo, 'green-gates.json'));
       expect(history.length).toBe(['stable', 'ignored-churn'].includes(mode) ? 1 : 0);
       if (['stable', 'ignored-churn'].includes(mode)) {
         expect(await run()).toContain('skipping');
-        expect(await readFile(join(root, '.runs'), 'utf8')).toBe(
-          'lockfile\nlint\ncheck\ntest\n',
-        );
+        expect(await readFile(join(root, '.runs'), 'utf8')).toBe(`${FAST_STEPS.join('\n')}\n`);
       } else if (mode === 'restore') {
         expect(await run()).not.toContain('skipping');
         expect(
           (await readFile(join(root, '.runs'), 'utf8')).split('\n').filter(Boolean),
-        ).toHaveLength(8);
+        ).toHaveLength(2 * FAST_STEPS.length);
       }
     } finally {
       await rm(scratch, { recursive: true, force: true });

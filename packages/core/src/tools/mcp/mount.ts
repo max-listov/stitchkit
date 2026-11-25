@@ -6,7 +6,8 @@ import {
 } from '@modelcontextprotocol/server';
 import { isRecord } from '../../internal/typed';
 import type { ServiceDef, StitchLogger } from '../../server/types';
-import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute-hooks';
+import { resolveToolAccess, type ToolAccess } from '../access';
+import type { ErrorHintFn, ToolCallHooks } from '../execute-hooks';
 import { createToolRunner, type ToolExtend } from '../mount';
 import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
 import { type McpResourceDef, RESOURCE_MIME_TYPE } from './app';
@@ -28,20 +29,19 @@ import type { McpRoundRuntime, McpRoundState } from './round';
 import { mountPreparedRuntimeMcp } from './runtime-tools';
 
 /**
- * Options for `mountMcp`; pass the same auth lifecycle you use on the HTTP server, or tool
- * calls skip that auth gate.
+ * Options for `mountMcp`; `access` is required — pass `{ gate }` with your auth
+ * `beforeHandle` hook or explicitly declare `{ open }`.
  */
 export interface McpMountConfig {
   context?: Record<string, unknown>;
   /** Tool-call observability hooks. */
   hooks?: ToolCallHooks;
   /**
-   * Auth / scope gate and result transform for every tool call — the tool-side
-   * twin of `createServer`'s `beforeHandle` / `afterHandle`. Pass the same
-   * `createAuthHook` result here as on the HTTP server to guard tools too;
-   * without it a tool call bypasses the HTTP `beforeHandle` auth gate.
+   * Required access policy for every mounted tool call — pass `{ gate }` with
+   * `beforeHandle` (for example from `createAuthHook`) or explicitly mark the
+   * surface `{ open: 'public' | 'local-operator' | 'remote' }`.
    */
-  lifecycle?: ToolLifecycle;
+  access: ToolAccess;
   extend?: ToolExtend;
   /** Validation policy applied to the exact advertised MCP schemas. */
   schemaValidation?: McpSchemaValidationConfig;
@@ -51,6 +51,12 @@ export interface McpMountConfig {
   coerceJsonArgs?: boolean;
   /** Flatten discriminated union inputs into a single object. Default: false. */
   flattenUnionInput?: boolean;
+  /**
+   * Advertise every input, runtime tools included, with no `$ref`: references
+   * written out, each recursive definition unrolled this many levels. A tool's
+   * `tool.inputRecursionDepth` wins. Absent: references stay.
+   */
+  inputRecursionDepth?: number;
   /** Global error hint injected into every failed tool result. */
   errorHint?: ErrorHintFn;
   /** Report output keys the contract schema removed — → ADR 0037. */
@@ -74,6 +80,7 @@ export function validateMcpSchemas(config: ValidateMcpSchemasConfig): void {
   prepareMcpSurface(config.services, {
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
+    inputRecursionDepth: config.inputRecursionDepth,
     schemaValidation: config,
     logger: config.logger,
   });
@@ -86,11 +93,13 @@ export function validateMcpSchemas(config: ValidateMcpSchemasConfig): void {
 export function mountMcp(
   mcpServer: McpServer,
   services: ServiceDef | ServiceDef[],
-  config: McpMountConfig = {},
+  config: McpMountConfig,
 ): void {
+  resolveToolAccess('mountMcp', config);
   const prepared = prepareMcpSurface(services, {
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
+    inputRecursionDepth: config.inputRecursionDepth,
     schemaValidation: config.schemaValidation,
     logger: config.logger,
   });
@@ -104,15 +113,16 @@ export function mountMcp(
 export function mountPreparedMcp(
   mcpServer: McpServer,
   prepared: PreparedMcpSurface,
-  config: PreparedMcpMountConfig = {},
+  config: PreparedMcpMountConfig,
 ): void {
+  const lifecycle = resolveToolAccess('mountPreparedMcp', config);
   const runTool = createToolRunner({
     source: 'mcp',
     toolSurface: true,
     extend: config.extend,
     context: config.context,
     hooks: config.hooks,
-    lifecycle: config.lifecycle,
+    lifecycle,
     coerceJsonArgs: config.coerceJsonArgs,
     onOutputStrip: config.onOutputStrip,
   });
@@ -155,10 +165,10 @@ export interface McpServerSharedConfig<TAuth> {
    *  (success and error), so the consuming app can log MCP tool outcomes;
    *  `onToolError` adds the raw thrown value behind a failed one. */
   hooks?: ToolCallHooks;
-  /** Auth / scope gate and result transform for every tool call — pass the
-   *  same `createAuthHook` result used for the HTTP `beforeHandle` to guard
-   *  tools with the identical rules. */
-  lifecycle?: ToolLifecycle;
+  /** Required access policy for every tool call — pass `{ gate }` with
+   *  `beforeHandle` (for example from `createAuthHook`) or explicitly mark the
+   *  surface `{ open: 'public' | 'local-operator' | 'remote' }`. */
+  access: ToolAccess;
   /** Add extra tool arguments resolved into handler context (e.g. a `tenantId`
    *  for one API key serving many tenants). Same `ToolExtend` accepted by
    *  `mountMcp` — without this, the batteries-path (`createMcpHandler`) could not
@@ -197,6 +207,12 @@ export interface McpServerSharedConfig<TAuth> {
   coerceJsonArgs?: boolean;
   /** Flatten discriminated union inputs into a single object. Default: false. */
   flattenUnionInput?: boolean;
+  /**
+   * Advertise every input, runtime tools included, with no `$ref`: references
+   * written out, each recursive definition unrolled this many levels. A tool's
+   * `tool.inputRecursionDepth` wins. Absent: references stay.
+   */
+  inputRecursionDepth?: number;
   /** Global error hint injected into every failed tool result. */
   errorHint?: ErrorHintFn;
   /** Report output keys the contract schema removed — → ADR 0037. */
@@ -251,6 +267,7 @@ export function buildMcpServer<TAuth>(
   auth: TAuth,
 ): McpServer;
 export function buildMcpServer(config: unknown, auth?: unknown): McpServer {
+  resolveToolAccess('buildMcpServer', config);
   if (!isMcpServerBuildConfig(config)) {
     throw new TypeError('[stitchkit] buildMcpServer requires a valid config object');
   }
@@ -275,6 +292,7 @@ export function buildMcpServer(config: unknown, auth?: unknown): McpServer {
   const prepared = prepareMcpServerSurface(surface, {
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
+    inputRecursionDepth: config.inputRecursionDepth,
     schemaValidation: config.schemaValidation,
     logger: config.logger,
     multiRound: {
@@ -305,6 +323,7 @@ export function buildMcpServerFromPrepared<TAuth>(
   auth: TAuth,
   prepared: PreparedMcpServerSurface,
 ): McpServer {
+  const lifecycle = resolveToolAccess('buildMcpServerFromPrepared', config);
   let roundCodec: RequestStateCodec<McpRoundState> | undefined;
   if (config.multiRound) {
     const principal = config.multiRound.state.principal(auth);
@@ -340,12 +359,13 @@ export function buildMcpServerFromPrepared<TAuth>(
     catalog,
     context,
     hooks: config.hooks,
-    lifecycle: config.lifecycle,
+    access: config.access,
     extend: config.extend,
     schemaValidation: config.schemaValidation,
     logger: config.logger,
     coerceJsonArgs: config.coerceJsonArgs,
     flattenUnionInput: config.flattenUnionInput,
+    inputRecursionDepth: config.inputRecursionDepth,
     errorHint: config.errorHint,
     onOutputStrip: config.onOutputStrip,
     ...(roundCodec !== undefined && {
@@ -359,7 +379,7 @@ export function buildMcpServerFromPrepared<TAuth>(
     catalog,
     context,
     hooks: config.hooks,
-    lifecycle: config.lifecycle,
+    lifecycle,
     coerceJsonArgs: config.coerceJsonArgs,
     onOutputStrip: config.onOutputStrip,
     formatResult: (result, mode, toolName) =>

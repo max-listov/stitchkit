@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { untilAborted } from '../internal/abort-race';
+import { assertTimerMs } from '../internal/deadline';
 import {
   type KeyRecord,
   pruneExpired,
@@ -246,24 +248,16 @@ async function waitForDrain(
   const abort = (): void => controller.abort();
   if (options.signal?.aborted) abort();
   else options.signal?.addEventListener('abort', abort, { once: true });
-  if (options.timeoutMs !== undefined) {
-    if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 0) {
-      throw new TypeError('drain timeoutMs must be a non-negative safe integer');
-    }
-    timer = setTimeout(abort, options.timeoutMs);
-  }
+  if (options.timeoutMs !== undefined) timer = setTimeout(abort, options.timeoutMs);
   let resolveDrained: (() => void) | undefined;
   try {
-    await Promise.race([
+    await untilAborted(
       new Promise<void>((resolve) => {
         resolveDrained = resolve;
         drainWaiters.add(resolve);
       }),
-      new Promise<void>((resolve) => {
-        if (controller.signal.aborted) resolve();
-        else controller.signal.addEventListener('abort', () => resolve(), { once: true });
-      }),
-    ]);
+      controller.signal,
+    );
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     options.signal?.removeEventListener('abort', abort);
@@ -442,6 +436,8 @@ export function createBoundedAdmission(config: BoundedAdmissionConfig): BoundedA
   const drain = async (
     options: BoundedAdmissionDrainOptions = {},
   ): Promise<BoundedAdmissionDrainResult> => {
+    // Before admission stops: a refused drain leaves the admission accepting.
+    assertTimerMs('drain timeoutMs', options.timeoutMs, { min: 0 });
     stopAdmission();
     if (active === 0) return { drained: true, remaining: 0 };
     await waitForDrain(drainWaiters, options);

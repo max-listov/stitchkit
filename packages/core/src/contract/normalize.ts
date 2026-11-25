@@ -140,7 +140,7 @@ export function validateHandlerOutput(
   schema: ZodType,
   data: unknown,
   onStripped?: (paths: string[]) => void,
-): { ok: true; data: unknown } | { ok: false; message: string } {
+): { ok: true; data: unknown } | { ok: false; message: string; error?: z.ZodError } {
   const parsed = schema.safeParse(data);
   if (parsed.success) {
     // The diff runs ONLY when a diagnostic is attached — with the flag off there
@@ -154,6 +154,7 @@ export function validateHandlerOutput(
   return {
     ok: false,
     message: `Handler output does not match the contract: ${formatZodError(parsed.error)}`,
+    error: parsed.error,
   };
 }
 
@@ -167,7 +168,7 @@ export function validateDeclaredOutput(
   schema: ZodType | undefined,
   data: unknown,
   onStripped?: (paths: string[]) => void,
-): { ok: true; data: unknown } | { ok: false; message: string } {
+): { ok: true; data: unknown } | { ok: false; message: string; error?: z.ZodError } {
   if (!schema) {
     if (data === undefined || data === null) return { ok: true, data };
     return {

@@ -59,7 +59,10 @@ async function callTool(
   name: string,
   input: Record<string, unknown>,
 ): Promise<unknown> {
-  const tools = mountAgent([], { runtimeTools: definitions });
+  const tools = mountAgent([], {
+    access: { open: 'local-operator' },
+    runtimeTools: definitions,
+  });
   const entry = tools[name];
   if (!entry?.execute) throw new Error(`tool ${name} was not mounted`);
   const execute = entry.execute as unknown as (

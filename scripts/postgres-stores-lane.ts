@@ -1,24 +1,54 @@
 /**
  * The stores stitchkit ships for Postgres, against a real one: the agent store
- * through its Prisma example, the Telegram update store through Bun's SQL
- * client. One throwaway database for both; each store keeps to its own tables.
+ * and its companions through Bun's SQL client and through the Prisma example,
+ * the Telegram update store and the sync server store through Bun's SQL
+ * client. One throwaway database for all; each store keeps to its own tables.
  */
 import { createStarterLaneDatabase } from './starter-database';
+
+function laneEnv(databaseUrl: string) {
+  return {
+    ...Bun.env,
+    AGENT_STORE_DATABASE_URL: databaseUrl,
+    TELEGRAM_STORE_DATABASE_URL: databaseUrl,
+    SYNC_STORE_DATABASE_URL: databaseUrl,
+  };
+}
 
 async function run(command: string[], databaseUrl: string): Promise<void> {
   const child = Bun.spawn(command, {
     cwd: `${import.meta.dir}/..`,
-    env: {
-      ...Bun.env,
-      AGENT_STORE_DATABASE_URL: databaseUrl,
-      TELEGRAM_STORE_DATABASE_URL: databaseUrl,
-    },
+    env: laneEnv(databaseUrl),
     stdin: 'inherit',
     stdout: 'inherit',
     stderr: 'inherit',
   });
   const exitCode = await child.exited;
   if (exitCode !== 0) throw new Error(`${command.join(' ')} failed with ${exitCode}`);
+}
+
+/**
+ * One test file, refused when it ran no test.
+ *
+ * Every file here skips itself without its database URL, and a skipped file
+ * exits 0: a lane that lost the variable, or a file whose `describe.skipIf`
+ * misfired, would pass having proven nothing. Bun prints its summary on
+ * stderr; the count of passed tests is read from there.
+ */
+async function testFile(file: string, databaseUrl: string): Promise<void> {
+  const child = Bun.spawn(['bun', 'test', file], {
+    cwd: `${import.meta.dir}/..`,
+    env: laneEnv(databaseUrl),
+    stdin: 'inherit',
+    stdout: 'inherit',
+    stderr: 'pipe',
+  });
+  const errors = await new Response(child.stderr).text();
+  process.stderr.write(errors);
+  const exitCode = await child.exited;
+  if (exitCode !== 0) throw new Error(`bun test ${file} failed with ${exitCode}`);
+  const passed = Number(/^\s*(\d+) pass$/m.exec(errors)?.[1] ?? 0);
+  if (passed === 0) throw new Error(`bun test ${file} ran no test against Postgres`);
 }
 
 const database = await createStarterLaneDatabase('stores');
@@ -30,25 +60,19 @@ try {
     database.url,
   );
   await run(
-    [
-      'bunx',
-      'prisma',
-      'db',
-      'push',
-      '--config',
-      'examples/agent-store-prisma/prisma.config.ts',
-    ],
-    database.url,
-  );
-  await run(
     ['bun', 'x', 'tsc', '-p', 'examples/agent-store-prisma/tsconfig.json'],
     database.url,
   );
-  await run(['bun', 'test', 'examples/agent-store-prisma/adapter.test.ts'], database.url);
-  await run(
-    ['bun', 'test', 'packages/core/tests/telegram-update-store.test.ts'],
-    database.url,
-  );
+  for (const file of [
+    'examples/agent-store-prisma/adapter.test.ts',
+    'packages/core/tests/agent-runtime-store-postgres.test.ts',
+    'packages/core/tests/agent-runtime-companions-postgres.test.ts',
+    'packages/core/tests/agent-runtime-event-search-backends.test.ts',
+    'packages/core/tests/telegram-update-store.test.ts',
+    'packages/core/tests/sync-server-store.test.ts',
+  ]) {
+    await testFile(file, database.url);
+  }
 } catch (error) {
   laneFailure = { error };
 }

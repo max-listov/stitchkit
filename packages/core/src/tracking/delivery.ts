@@ -1,4 +1,5 @@
 import { ApiError } from '../browser/api-error';
+import { assertTimerMs } from '../internal/deadline';
 
 export type TrackingDeliveryOutcome = 'delivered' | 'failed' | 'auth-invalidated';
 
@@ -39,6 +40,8 @@ export async function deliverTrackingBatch({
   wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
   retryDelayMs = 250,
 }: TrackingDeliveryOptions): Promise<TrackingDeliveryOutcome> {
+  // Before the first request: the retry pause is an option of this batch, not of its failure.
+  assertTimerMs('Tracking retryDelayMs', retryDelayMs, { min: 0 });
   let recovered = false;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {

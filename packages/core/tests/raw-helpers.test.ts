@@ -67,7 +67,7 @@ describe('errorResponse', () => {
   test('stamps x-request-id with the trace id when in a request context', () => {
     const trace = createTraceContext();
     const res = runWithRequestContext(
-      { trace, source: 'http', method: 'GET', path: '/x', startedAt: 0n },
+      { trace, source: 'http', method: 'GET', path: '/x', startedAt: 0 },
       () => errorResponse(new AppError('CONFLICT', { message: 'dup', status: 409 })),
     );
     expect(res.headers.get('x-request-id')).toBe(trace.traceId);

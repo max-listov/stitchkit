@@ -55,6 +55,7 @@ export {
   type RegisteredClient,
 } from '../server/oauth/provider';
 export type { OperationIdentity } from '../server/types';
+export type { ToolAccess, ToolGate, ToolOpenReason } from '../tools/access';
 export { AgentToolError, isAgentToolError } from '../tools/agent-tool-error';
 export type {
   DurableJsonValue,
@@ -201,11 +202,11 @@ export {
 export { type DownloadToolConfig, mountDownload } from '../tools/transfer/mount-download';
 export { mountUpload, type UploadToolConfig } from '../tools/transfer/mount-upload';
 export {
-  MCP_FILE_NAME_META_KEY,
   mountViewFile,
   resolveMedia,
   type ViewFileOptions,
 } from '../tools/transfer/view-file';
+export { MCP_FILE_NAME_META_KEY } from '../tools/transfer/view-file-contract';
 export {
   summarizeTransports,
   type TransportCounts,

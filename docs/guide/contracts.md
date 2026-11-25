@@ -64,7 +64,7 @@ export const users = defineContract({ prefix: 'users' }, {
 | `multipart` | no | typed file fields, cardinality, delivery and upload policy — see [below](#file-uploads) |
 | `maxJsonBodyBytes` | no | per-route JSON body ceiling; overrides the server default |
 | `timeout` | no | per-endpoint client timeout in ms, for slow endpoints |
-| `idempotent` | no | safe to call twice with the same input (like `PUT`/`DELETE`); a retrying transport reads it — see [Realtime](./realtime.md#bring-your-own-transport) |
+| `idempotent` | no | safe to call twice with the same input (like `PUT`/`DELETE`); the typed client repeats a call that got no answer only when it is set, or for a `GET`/`HEAD` without `idempotent: false` or `effect: 'write'` — see [Client](./client.md#calls-that-never-got-an-answer); a retrying transport reads it too — see [Realtime](./realtime.md#bring-your-own-transport) |
 | `meta` | no | opaque app metadata — read in hooks / on tool mounts, never in OpenAPI ([below](#endpoint-metadata-meta)) |
 | `rawResponse` | no | the handler returns the `Response` itself — a download, a file, an SSE stream. HTTP-only, never a tool, no `output`. See [Raw-response endpoints](./server.md#raw-response-endpoints) |
 | `rawBody` | no | retain original JSON text for a signed HTTP webhook. See [Signed JSON webhooks](./server.md#signed-json-webhooks) |

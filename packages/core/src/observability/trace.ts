@@ -90,7 +90,12 @@ export function childSpan(parent: TraceContext): TraceContext {
   };
 }
 
-const encoder = new TextEncoder();
+let cachedEncoder: TextEncoder | undefined;
+
+function getEncoder(): TextEncoder {
+  cachedEncoder ??= new TextEncoder();
+  return cachedEncoder;
+}
 
 function boundedPropagationValue(
   value: unknown,
@@ -99,7 +104,7 @@ function boundedPropagationValue(
 ): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
-  if (!trimmed || encoder.encode(trimmed).byteLength > maxBytes) return undefined;
+  if (!trimmed || getEncoder().encode(trimmed).byteLength > maxBytes) return undefined;
   for (const character of trimmed) {
     const code = character.charCodeAt(0);
     if (code <= 31 || code === 127) return undefined;

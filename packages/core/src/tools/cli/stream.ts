@@ -15,6 +15,7 @@
 import { z } from 'zod';
 import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
+import { stringifyJsonSafe } from '../internal/json-projection';
 import { readCliCheckpoint, writeCliCheckpoint } from './checkpoint';
 import { defineCliCommand } from './command';
 import type { CliInvocationResult, CliInvoker } from './invoke';
@@ -176,7 +177,7 @@ export function defineCliStreamCommand(config: CliStreamCommandConfig) {
       const invoker =
         typeof config.invoker === 'function' ? await config.invoker() : config.invoker;
       await runCliStream(invoker, (config.readLines ?? readStdinLines)(), (answer) => {
-        context.stdout(`${JSON.stringify(answer)}\n`);
+        context.stdout(`${stringifyJsonSafe(answer)}\n`);
       });
     },
   });
@@ -215,7 +216,7 @@ export function defineCliBatchCommand(config: CliBatchCommandConfig) {
         invoker,
         (config.readLines ?? readStdinLines)(),
         (answer) => {
-          context.stdout(`${JSON.stringify(answer)}\n`);
+          context.stdout(`${stringifyJsonSafe(answer)}\n`);
         },
         {
           // The batch differs from the stream in one decision per line — has

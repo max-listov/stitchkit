@@ -3,6 +3,7 @@ title: "ADR 0200: An effect is recorded before it runs, and settled only by its 
 description: "durability.effect records the intent before an external effect and its outcome after; an intent found without an outcome is reconciled with the recipient, never run again, and 'uncertain' is a recorded third answer."
 type: decision
 status: accepted
+amends: ["0182"]
 created: 2026-09-23
 updated: 2026-09-23T12:31+07:00
 ---

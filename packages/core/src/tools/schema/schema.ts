@@ -1,9 +1,23 @@
 import { z } from 'zod';
 import { toJsonSchema } from '../../json-schema/json-schema';
 
+/** Strip `.optional()`, `.nullable()`, `.default()` and `.readonly()` wrappers to the base type. */
+export function unwrapZodWrappers(field: z.core.$ZodType): z.core.$ZodType {
+  if (
+    field instanceof z.ZodOptional ||
+    field instanceof z.ZodNullable ||
+    field instanceof z.ZodDefault ||
+    field instanceof z.ZodReadonly
+  ) {
+    return unwrapZodWrappers(field.unwrap());
+  }
+  return field;
+}
+
 /** Keys of a Zod object schema's shape — `[]` for a non-object or absent schema. */
 export function objectShapeKeys(schema?: z.ZodType): string[] {
-  return schema instanceof z.ZodObject ? Object.keys(schema.shape) : [];
+  const base = schema ? unwrapZodWrappers(schema) : undefined;
+  return base instanceof z.ZodObject ? Object.keys(base.shape) : [];
 }
 
 /**

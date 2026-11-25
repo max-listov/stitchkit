@@ -12,8 +12,9 @@
  *
  * The nesting rules are Telegram's (Bot API, "Formatting options"): bold,
  * italic, underline, strikethrough and spoiler may contain and be contained by
- * anything except `pre` and `code`; a block quotation is never inside another;
- * all other entities never contain each other.
+ * anything except `pre` and `code`; a block quotation may hold styles, links,
+ * code, pre and atomic entities, never another block quotation; links, code,
+ * pre and atomic entities never contain each other.
  */
 
 /** Text formatting that nests freely, except inside `pre` and `code`. */
@@ -51,6 +52,49 @@ export const TELEGRAM_TEXT_LIMIT = 4_096;
 /** Telegram's limit for a media caption, after its markup is parsed. */
 export const TELEGRAM_CAPTION_LIMIT = 1_024;
 
+/** URL schemes Telegram opens as clickable links in HTML messages. */
+export const TELEGRAM_LINK_SCHEMES: ReadonlySet<string> = new Set([
+  'http:',
+  'https:',
+  'tg:',
+  'mailto:',
+]);
+
+/** Valid `class="language-..."` token for fenced `<pre><code>` blocks. */
+export const TELEGRAM_CODE_LANGUAGE_PATTERN = /^[\w+#.-]{1,64}$/;
+
+const LINK_SCHEME = /^([a-zA-Z][a-zA-Z\d+.-]*):/;
+/** A web link's host: a bracketed IPv6 address, or a name without the characters a host forbids. */
+const WEB_HOST =
+  /^(?:\[[\da-fA-F:.]+\]|(?:[^\s#/:<>?@[\\\]^|%]|%[\da-fA-F]{2})+)(?::(\d{0,5}))?$/;
+
+/**
+ * The `href` Telegram may open, or `undefined`. Decided by fixed rules, the same
+ * in every realm — no `URL`, whose parser differs between engines (React
+ * Native's accepts what a WHATWG parser refuses): the value is trimmed and holds
+ * no whitespace or control character, its scheme is one of
+ * `TELEGRAM_LINK_SCHEMES`, an `http:`/`https:` link names a host (optional
+ * user info, optional port up to 65535), and a `tg:`/`mailto:` link has
+ * something after its scheme. The value is kept as written.
+ */
+export function safeTelegramLinkHref(raw: string | undefined): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x20 || code === 0x7f || /\s/.test(value[index] ?? '')) return undefined;
+  }
+  const scheme = LINK_SCHEME.exec(value);
+  const protocol = `${(scheme?.[1] ?? '').toLowerCase()}:`;
+  if (scheme === null || !TELEGRAM_LINK_SCHEMES.has(protocol)) return undefined;
+  const rest = value.slice(scheme[0].length);
+  if (protocol !== 'http:' && protocol !== 'https:') return rest === '' ? undefined : value;
+  const authority = /^[/\\]*([^/\\?#]*)/.exec(rest)?.[1] ?? '';
+  const host = WEB_HOST.exec(authority.slice(authority.lastIndexOf('@') + 1));
+  if (host === null) return undefined;
+  return Number(host[1] ?? '0') <= 65_535 ? value : undefined;
+}
+
 const STYLES: ReadonlySet<string> = new Set<TelegramHtmlStyle>([
   'b',
   'i',
@@ -75,15 +119,18 @@ export function isAtomic(tag: TelegramHtmlTag): boolean {
 
 /**
  * Whether an element of `tag` may open inside `ancestors` (outermost first).
- * A style is refused only under an element that holds text alone; any other
- * element is refused under any element that is not a style.
+ * A style is refused only under an element that holds text alone; a block
+ * quotation opens only under styles; links, code, pre and atomic entities may
+ * open under styles and block quotations, never under each other or text-only
+ * elements.
  */
 export function mayOpenInside(
   tag: TelegramHtmlTag,
   ancestors: readonly TelegramHtmlTag[],
 ): boolean {
   if (isStyle(tag)) return !ancestors.some(holdsOnlyText);
-  return ancestors.every(isStyle);
+  if (tag === 'blockquote') return ancestors.every(isStyle);
+  return ancestors.every((ancestor) => isStyle(ancestor) || ancestor === 'blockquote');
 }
 
 /** The visible text of nodes: what Telegram counts against its limits. */
@@ -99,4 +146,29 @@ export function withChildren(
   children: readonly TelegramHtmlNode[],
 ): TelegramHtmlElement {
   return { ...element, children };
+}
+
+/**
+ * Merge adjacent text nodes, drop empty text nodes, and drop elements left
+ * with no children — they carry no visible content and Telegram renders nothing for them.
+ */
+export function normalizeTelegramHtmlNodes(
+  nodes: readonly TelegramHtmlNode[],
+): TelegramHtmlNode[] {
+  const result: TelegramHtmlNode[] = [];
+  for (const node of nodes) {
+    if (node.kind === 'text') {
+      if (node.text === '') continue;
+      const last = result.at(-1);
+      if (last?.kind === 'text') {
+        result[result.length - 1] = { kind: 'text', text: last.text + node.text };
+      } else {
+        result.push(node);
+      }
+      continue;
+    }
+    const children = normalizeTelegramHtmlNodes(node.children);
+    if (children.length > 0) result.push(withChildren(node, children));
+  }
+  return result;
 }

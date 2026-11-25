@@ -85,30 +85,31 @@ import { createToolInvoker } from 'stitchkit/tools/invoker'
 
 const invoker = createToolInvoker(services, {
   transport: 'AGENT',       // required exposure policy
+  access: { gate: { beforeHandle: authHook } },
 })
 
 const result = await invoker.invoke('update_entity', args, {
   source: 'internal',       // default; audit names the real call source
   context: { identity },
-  lifecycle,
   hooks,
 })
 
 // Composition path: validated data or the exact normalized AppError.
 const data = await invoker.invokeOrThrow('update_entity', args, {
   context: { identity },
-  lifecycle,
   hooks,
 })
 ```
 
-`transport` is required and uses the exact existing `MCP`, `AGENT` or `CLI`
-exposure rules; there is no internal bypass mode. The immutable name lookup is
-compiled once. Call-specific identity, context, lifecycle and hooks are passed
-to `invoke` / `invokeOrThrow`, so one registry can safely serve parallel and
-recursive calls without retaining request state. Every invocation gets a fresh
-tool-call context and runs the same extension resolution, input/output
-validation, lifecycle, hooks and output-strip reporter as mounted tools.
+`transport` and `access` are both required: `transport` applies the exact
+existing `MCP`, `AGENT` or `CLI` exposure rules, and `access` fixes the auth
+gate (or explicit `{ open }` policy) once on the invoker rather than per call.
+The immutable name lookup is compiled once. Call-specific identity, context and
+hooks are passed to `invoke` / `invokeOrThrow`, so one registry can safely serve
+parallel and recursive calls without retaining request state. Every invocation
+gets a fresh tool-call context and runs the same extension resolution,
+input/output validation, access gate, hooks and output-strip reporter as mounted
+tools.
 
 The dedicated entrypoint needs only the normal `stitchkit`/`zod` install, and so does
 `stitchkit/tools`, which exports the same invoker beside the rest of the tool layer. Both
@@ -151,6 +152,7 @@ const mcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: (req) => resolveApiKey(req),   // → an identity, or null for 401
   services: [usersService, catalogService],
+  access: { gate: { beforeHandle: authHook } },
 })
 
 createServer({
@@ -173,7 +175,7 @@ await mcp.close()
 | `surfaces` | finite `{ key: { services, runtimeTools } }` registry prepared eagerly |
 | `selectSurface` | `(auth) => declaredKey` — required with `surfaces` |
 | `context` | `(auth) => {…}` — values merged into every tool handler's `ctx` |
-| `lifecycle` | `beforeHandle` / `afterHandle` — the tool-side auth gate (see below) |
+| `access` | **required** — `{ gate: { beforeHandle, afterHandle? } }` or `{ open: 'public' \| 'local-operator' \| 'remote', afterHandle? }` (see below) |
 | `multiRound` | Typed MRTR state policy for guarded multi-round tool calls |
 | `hooks` | tool-call observability hooks — `afterToolCall` fires on every result |
 | `extend` | extra advertised arguments resolved into handler context |
@@ -184,6 +186,7 @@ await mcp.close()
 | `instructions` | a short host-facing usage hint, surfaced to MCP tool-search |
 | `coerceJsonArgs` | coerce JSON-stringified object/array arguments (default `true`) |
 | `flattenUnionInput` | advertise discriminated unions as one object (default `false`) |
+| `inputRecursionDepth` | advertise inputs with no `$ref`, recursion unrolled this many levels (default: references stay) |
 | `errorHint` | add a project-owned hint to failed tool results |
 | `onOutputStrip` | observe output keys removed by contract validation |
 | `protectedResource` | RFC 9728 metadata used by HTTP `401` responses |
@@ -209,6 +212,7 @@ const handleMcp = createMcpHandler({
   },
   selectSurface: (identity) => identity.isAdmin ? 'admin' : 'member',
   context: (identity) => ({ identity }),
+  access: { gate: { beforeHandle: authHook } },
 })
 ```
 
@@ -320,18 +324,19 @@ declared none:
 | The tool | Published `readOnlyHint` |
 |---|---|
 | declares `readOnlyHint`, either way | as declared |
-| `GET` with no `readOnlyHint` | `true` |
-| `GET` declaring `destructiveHint: true` and no `readOnlyHint` | none |
-| any other method with no `readOnlyHint` | none |
+| `effect: 'write'` with no `readOnlyHint` (even on `GET`) | none |
+| `effect: 'read'` with no `readOnlyHint` and `destructiveHint !== true` (even on non-`GET`) | `true` |
+| `GET` with no `readOnlyHint`, no `effect: 'write'`, and `destructiveHint !== true` | `true` |
+| any other method, or `destructiveHint: true` with no `readOnlyHint` | none |
 
-A runtime tool follows the same rule by its `identity.method`. A raw SDK
+A runtime tool follows the same rule by its `identity.effect` and `identity.method`. A raw SDK
 registration (`mountWait`, `mountViewFile` and the like) publishes only what it
 passes. The catalog digest hashes the published annotations, so it moves once
 when a server starts publishing the derived hint.
 
-> **A `GET` with an effect must say so.** Hosts may run a tool that publishes
+> **A `GET` with a write effect must say so.** Hosts may run a tool that publishes
 > `readOnlyHint: true` without asking. An endpoint that changes something on
-> `GET` — marks as seen, rotates a token — declares
+> `GET` — marks as seen, rotates a token — declares `effect: 'write'` or
 > `tool: { annotations: { readOnlyHint: false } }`.
 
 A client connection (`defineMcpClientConnection`) carries the hints a server
@@ -357,7 +362,7 @@ shapes a call and never bypasses the schema — a hook returning something the
 contract refuses produces an ordinary `VALIDATION_ERROR`. It runs before the
 params/input split, before argument coercion and before both schemas, which is
 why a field declared `z.string()` can receive a reference and still be a string by
-the time it is checked. `lifecycle.beforeHandle` is too late for this: the schemas
+the time it is checked. `access.gate.beforeHandle` is too late for this: the schemas
 have already answered.
 
 The audit trail is unaffected. `afterToolCall` reports what the caller sent as
@@ -395,6 +400,7 @@ restart, can keep that bookkeeping **inside** the tool:
 
 ```ts
 mountAgent(services, {
+  access: { gate: { beforeHandle: authHook } },
   durability: (toolCallId, signal) => myLedgerFor(toolCallId, signal),
 });
 
@@ -416,6 +422,7 @@ const ledger: StepDurabilityLedger = {
 };
 
 mountAgent(services, {
+  access: { gate: { beforeHandle: authHook } },
   durability: (toolCallId, signal) =>
     createLocalStepDurability({ store: ledger, conversationId, runId: toolCallId, signal }),
 });
@@ -639,7 +646,7 @@ that moved is refused, not asked. A resolver that reads only its arguments never
 sees this.
 
 **What a dynamic declaration costs.** One extra pass through the contract
-pipeline per round — `lifecycle.beforeHandle` runs once more and one more
+pipeline per round — `access.gate.beforeHandle` runs once more and one more
 `toolPhase: 'input-round'` audit row is written. That is the price of ordering:
 the resolver is your code and may reach a network, so it runs **after**
 authorisation, never before, and the only thing that can authorise is a pipeline
@@ -653,21 +660,28 @@ conversation already in flight when you deploy this has no fingerprint in its
 state and is refused once with `INVALID_REQUEST_STATE`; the host re-asks and the
 retry succeeds.
 
-### Guarding tools — `lifecycle`
+### Guarding tools — `access`
 
-A tool call runs the same handler an HTTP request would. `lifecycle` makes it
-run the same gate: a `beforeHandle` (throw to reject) and an `afterHandle`
-(transform the result). Pass the **same**
-[`createAuthHook`](./auth-and-errors.md#createauthhook) result used as the HTTP
-server's `authorize` hook and tool calls are scope-checked by identical rules:
+A tool call runs the same handler an HTTP request would. Every tool mount
+(`createMcpHandler`, `createStdioMcpServer`, `buildMcpServer`, `mountMcp`,
+`mountAgent`, `createToolInvoker`, managed `createCli` / `createCliInvoker`, and
+`createDeferredAgentToolSurface().mount`) requires an explicit `access` policy
+at compile time and at runtime before the first call (→ [ADR 0311](../decisions/0311-planned-breaking-release-access-expose-and-clean-boundaries.md)):
+
+- **`{ gate: { beforeHandle, afterHandle? } }`** — enforces a mandatory
+  `beforeHandle` gate (pass the **same**
+  [`createAuthHook`](./auth-and-errors.md#createauthhook) result used as the
+  HTTP server's `authorize` hook, or compose multiple lifecycles with
+  `composeToolLifecycle(authGate, ...)`).
+- **`{ open: 'public' | 'local-operator' | 'remote', afterHandle? }`** —
+  explicitly declares why no `beforeHandle` gate runs on this surface.
 
 ```ts
-createMcpHandler({ serverInfo, auth, services, lifecycle: { beforeHandle: authHook } })
+createMcpHandler({ serverInfo, auth, services, access: { gate: { beforeHandle: authHook } } })
 ```
 
-Without it, a tool call bypasses the HTTP `authorize` gate — the contract's
-`scope` is not enforced on the MCP / agent surface. `mountMcp`, `mountAgent` and
-`buildMcpServer` take `lifecycle` too.
+Omitting `access`, passing `{}` / `{ gate: {} }`, or passing the removed
+`lifecycle` key throws a `TypeError` naming the mount entrypoint at startup.
 
 The observability `hooks` are symmetric with the HTTP side too: `beforeToolCall`
 and `afterToolCall` receive the resolved **`MethodDef`** as `endpoint` —
@@ -739,7 +753,8 @@ validateMcpSchemas({
 
 For an arbitrary **JSON value**, declare `z.json()`: its recursive JSON Schema
 describes strings, numbers, booleans, null, arrays and objects, so strict schema
-validation needs no exception. `z.unknown()` means an unknown runtime value —
+validation needs no exception. The schema refers to itself, so where a model
+provider refuses recursive schemas set `inputRecursionDepth` as well (below). `z.unknown()` means an unknown runtime value —
 including values JSON cannot represent — and therefore gives a model no usable
 shape. The guard is off by default for existing contracts. `allowUntyped` takes
 dotted `tool.property` paths and is reserved for a presentation value that is
@@ -824,6 +839,45 @@ coercions and transforms cannot run before Stitchkit. Strict violations return
 the normal `VALIDATION_ERROR` tool envelope and fire `beforeToolCall` /
 `afterToolCall`. → [ADR 0050](../decisions/0050-presentation-schema-is-not-a-parser.md).
 
+### Recursive inputs without references — `inputRecursionDepth`
+
+A recursive input (`z.lazy`, `z.json()`) is advertised as a definition that
+refers to itself. Some model providers refuse the whole request when one tool
+carries such a cycle; others accept it and never read a definition reached
+through `allOf: [{ $ref }]`. `inputRecursionDepth` advertises every input with
+no `$ref`, `definitions` or `$defs`:
+
+```ts
+const projection = { flattenUnionInput: true, inputRecursionDepth: 1 } as const
+
+mountAgent(services, { access, runtimeTools, ...projection })
+createMcpHandler({ access, services, runtimeTools, ...projection, /* … */ })
+buildToolManifest({ services, runtimeTools, transport: 'AGENT', ...projection })
+
+// a tool whose model needs to see deeper nesting says so beside its name
+formula: { method: 'POST', path: '/formula', input, tool: { name: 'formula_create', inputRecursionDepth: 3 } }
+```
+
+- Every reference is written out in place; the `allOf` wrapper beside a
+  described reference merges into one node.
+- Each **recursive** definition is written out at most `N` times along any path;
+  a reference without a cycle is always written out. Depth 1 shows one level of a
+  formula, depth 3 a formula of three nested calls.
+- The reference past the last level becomes an **open node** typed by every JSON
+  type the definition can take (`{ type: 'object' }`, `{ type: 'array', items: {} }`,
+  or an `anyOf` of them). It accepts every value the definition accepts, so a
+  deeper argument is never refused by the document — the handler still parses the
+  contract's own recursive schema.
+- `tool.inputRecursionDepth` wins over the surface's value and projects that tool
+  even where the surface sets none. Runtime tools, including tools discovered from
+  a server, take the surface's `inputRecursionDepth` and `flattenUnionInput`.
+- Without the option the document is unchanged. With it, an `allowUntyped` path
+  for a property inside a definition is reported from its full path.
+
+The depth is a number, not a size: a provider may limit nesting from above, and a
+model forced to call the tool may need more levels from below. Measure the cost
+with `describeToolCatalog({ …, maxSchemaBytes })`. → [ADR 0319](../decisions/0319-a-tool-input-can-be-advertised-without-references.md).
+
 ## `mountMcp`
 
 If you already run an `McpServer` from the SDK, `mountMcp` adds contract tools
@@ -832,7 +886,10 @@ to it instead of owning the lifecycle:
 ```ts
 import { mountMcp } from 'stitchkit/tools/mcp'
 
-mountMcp(mcpServer, [usersService], { context: { source: 'mcp' } })
+mountMcp(mcpServer, [usersService], {
+  context: { source: 'mcp' },
+  access: { gate: { beforeHandle: authHook } },
+})
 ```
 
 `createMcpHandler` is the batteries-included path; `mountMcp` is the building
@@ -852,6 +909,7 @@ const stdio = await createStdioMcpServer({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: resolveIdentity(),          // resolved once at startup, not per request
   services: [usersService],
+  access: { gate: { beforeHandle: authHook } },
 })
 
 const signals = bindStdioProcessSignals(stdio, {
@@ -912,6 +970,7 @@ const mcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: resolveOAuthToken,        // validate the Bearer JWT (verifyJwt + audience)
   services,
+  access: { gate: { beforeHandle: authHook } },
   protectedResource: { resource, authorizationServers: [issuer] },
 })
 
@@ -1017,6 +1076,7 @@ const stdio = await createStdioMcpServer({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth: null,
   services: contracts.map((c) => implementRemote(c, http)),
+  access: { open: 'remote' },
 })
 
 // During graceful shutdown:
@@ -1035,12 +1095,12 @@ no duplicated business logic.
 The call's signal reaches the existing typed HTTP client's request options, for endpoints
 with or without arguments. An already cancelled call, including cancellation while an async
 argument transform runs, dispatches no request. Bind your process signal to `createCli` or
-`createCliInvoker`; `REQUEST_ABORTED` is a safe nonretryable failure with CLI exit130.
+`createCliInvoker`; `REQUEST_ABORTED` is a safe nonretryable failure with CLI exit `130`.
 Cooperative origins observe `ctx.signal` and release resources when their work ends. An
 origin or provider ignoring cancellation may continue after the local wait stops.
 
-An explicit `AppError.retryable` boolean also survives this remote hop. `false` on502 and
-`true` on409 remain the application's recommendation through HTTP, CLI, MCP and AI tools.
+An explicit `AppError.retryable` boolean also survives this remote hop. `false` on `502` and
+`true` on `409` remain the application's recommendation through HTTP, CLI, MCP and AI tools.
 Absent metadata keeps the previous defaults and does not alter HTTP transport retries.
 
 A remote failure that carries no stitchkit error envelope — an HTML `503` from a proxy
@@ -1165,7 +1225,10 @@ see [Agent application runtime](./agent-runtime.md).
 import { mountAgent } from 'stitchkit/tools/agent'
 import { generateText } from 'ai'
 
-const tools = mountAgent(usersService, { context: { userId: 'agent-1' } })
+const tools = mountAgent(usersService, {
+  context: { userId: 'agent-1' },
+  access: { gate: { beforeHandle: authHook } },
+})
 
 const result = await generateText({
   model,
@@ -1183,13 +1246,13 @@ the merged `params` + `input`. `context` is merged into every tool handler's
 | Field | Purpose |
 |-------|---------|
 | `context` | values merged into every tool handler's `ctx` |
-| `lifecycle` | `beforeHandle` / `afterHandle` — the tool-side auth gate (see [Guarding tools](#guarding-tools--lifecycle)) |
+| `access` | **required** — `{ gate: { beforeHandle, afterHandle? } }` or `{ open, afterHandle? }` (see [Guarding tools](#guarding-tools--access)) |
 | `hooks` | tool-call observability hooks — `afterToolCall` fires on every result |
 | `extend` | add extra args resolved before the handler runs (see below) |
 | `runtimeTools` | framework-managed pathless operations from `defineRuntimeTool` |
 
-`lifecycle` works the same as on the MCP server — without it an agent tool call
-bypasses the HTTP `authorize` gate. Pass your `createAuthHook` result.
+`access` works the same as on the MCP server — pass `{ gate: { beforeHandle: authHook } }`
+(or an explicit `{ open }` reason when unguarded).
 
 ### Adding tool-only args — `extend`
 
@@ -1218,6 +1281,7 @@ inject the resolved tenant into `ctx`, and `filter` to the tenant-scoped tools:
 createMcpHandler({
   serverInfo, auth,
   services: [widgetsService],
+  access: { gate: { beforeHandle: authHook } },
   extend: {
     schema: { tenantId: z.string().describe('Tenant to act on') },
     resolve: async ({ tenantId }) => {
@@ -1234,8 +1298,8 @@ The model calls `widgets_list({ tenantId: 't_123' })`; `resolve` checks access a
 puts `tenantId` on `ctx`; the contract handler reads `ctx.tenantId` (same place
 as the HTTP prefix param — see
 [Route groups → param prefixes](./server.md#param-prefixes-resource-scoped-paths)),
-so one handler serves both surfaces. Pair `extend` with `lifecycle` (your
-`createAuthHook`) so the tool call is still scope-gated.
+so one handler serves both surfaces. Pair `extend` with `access: { gate: { beforeHandle: authHook } }`
+so the tool call is still scope-gated.
 
 ## Pathless runtime tools and multimodal results
 
@@ -1287,13 +1351,13 @@ const handleMcp = createMcpHandler({
   auth,
   services: [service],
   runtimeTools: [renderPreview],
-  lifecycle: { beforeHandle: authHook },
+  access: { gate: { beforeHandle: authHook } },
   hooks: audit.toolCall,
 })
 
 const agentTools = mountAgent([service], {
   runtimeTools: [renderPreview],
-  lifecycle: { beforeHandle: authHook },
+  access: { gate: { beforeHandle: authHook } },
   hooks: audit.toolCall,
 })
 ```
@@ -1325,9 +1389,9 @@ const countRecords = knowledgeTools.define({
 `serviceName` and `scope` cannot be overridden by one definition. Use standalone
 `defineRuntimeTool` when tools do not share a context schema or identity.
 
-`transports` defaults to `['MCP', 'AGENT']`; set an explicit subset when an
+`expose` defaults to `['MCP', 'AGENT']`; set an explicit subset when an
 operation belongs on only one surface. Include `'CLI'` explicitly to reuse the
-definition through `createCli({ runtimeTools })`; adding CLI support never
+definition through `createCli({ runtimeTools, access })`; adding CLI support never
 widens existing definitions silently. The configured identity becomes the
 hook/lifecycle `OperationIdentity` and the tool `RequestEvent`
 (`serviceName`, `action`, `httpMethod`). A runtime operation has no HTTP route,
@@ -1632,6 +1696,7 @@ const handleMcp = createMcpHandler({
   serverInfo: { name: 'my-app', version: '1.0.0' },
   auth,
   services: [service],
+  access: { gate: { beforeHandle: authHook } },
   rawTools: (server) => mountViewFile(server, { files }),
 })
 ```
@@ -1685,10 +1750,10 @@ and ADR 0129. Raw `mountAgent`, `mountMcp` and `buildToolManifest` behavior is
 unchanged.
 
 `listToolNames` remains diagnostic and reports `kind: 'contract' | 'runtime'`
-for every identity. `summarizeTransports` returns `contractServices`,
+for every identity (with `expose` listing its resolved transports). `summarizeTransports` returns `contractServices`,
 `runtimeTools`, aggregate `totals`, and a `sources` breakdown. Runtime tools
-contribute only to MCP/Agent according to their `transports`; they never inflate
-HTTP or CLI counts.
+contribute only to MCP/Agent/CLI according to their `expose`; they never inflate
+HTTP counts.
 
 ## Logging tool calls — `createToolLogger`
 
@@ -1699,7 +1764,10 @@ keyed by the endpoint's stable `serviceName` / `key` identity):
 ```ts
 import { createToolLogger } from 'stitchkit/tools'
 
-mountMcp(server, services, { hooks: createToolLogger() })
+mountMcp(server, services, {
+  access: { gate: { beforeHandle: authHook } },
+  hooks: createToolLogger(),
+})
 // [tool] ok list_widgets (widgets.list) 12ms
 // [tool] warn get_widget (widgets.get) NOT_FOUND 4ms
 ```

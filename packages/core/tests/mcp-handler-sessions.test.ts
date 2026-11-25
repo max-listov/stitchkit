@@ -41,6 +41,7 @@ function legacyRequest(method: string, params?: unknown): Request {
 describe('createMcpHandler v2 stateless transport', () => {
   test('serves legacy-stateless traffic without protocol sessions', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => ({ owner: 'alpha' }),
       context: (auth) => auth,
@@ -65,6 +66,7 @@ describe('createMcpHandler v2 stateless transport', () => {
 
   test('resolves auth independently for parallel requests', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: (request) => ({ owner: request.headers.get('authorization') ?? 'none' }),
       context: (auth) => auth,
@@ -85,6 +87,7 @@ describe('createMcpHandler v2 stateless transport', () => {
   test('applies Host and Origin validation before auth', async () => {
     let authCalls = 0;
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => {
         authCalls += 1;
@@ -107,6 +110,7 @@ describe('createMcpHandler v2 stateless transport', () => {
   test('enforces same URL/Host/Origin boundaries without explicit allowlists', async () => {
     let authCalls = 0;
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => {
         authCalls += 1;
@@ -131,6 +135,7 @@ describe('createMcpHandler v2 stateless transport', () => {
 
   test('accepts falsy identities because only null means unauthorized', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => 0,
       services: [],
@@ -141,6 +146,7 @@ describe('createMcpHandler v2 stateless transport', () => {
 
   test('treats undefined auth as unauthorized', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => undefined,
       services: [],
@@ -151,6 +157,7 @@ describe('createMcpHandler v2 stateless transport', () => {
 
   test('rejects legacy traffic when the endpoint is modern-only', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => ({}),
       services: [],
@@ -168,6 +175,7 @@ describe('createMcpHandler v2 stateless transport', () => {
       resolveAuth = resolve;
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => auth,
       services: [],
@@ -181,6 +189,7 @@ describe('createMcpHandler v2 stateless transport', () => {
 
   test('rejects malformed content and unsupported protocol versions at the wire boundary', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => ({}),
       services: [],
@@ -221,6 +230,7 @@ describe('createMcpHandler v2 stateless transport', () => {
 
   test('route adapter delegates to the handler fetch face', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => null,
       services: [],

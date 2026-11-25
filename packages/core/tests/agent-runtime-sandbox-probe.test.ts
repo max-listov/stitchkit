@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { once } from 'node:events';
+import type { AgentProcessSandbox } from '../src/entrypoints/agent-runtime';
+import * as agentRuntime from '../src/entrypoints/agent-runtime';
+import * as agentRuntimeSandbox from '../src/entrypoints/agent-runtime/sandbox';
 import {
-  type AgentProcessSandbox,
   type AgentSandboxGrade,
   probeAgentProcessSandbox,
-} from '../src/entrypoints/agent-runtime';
+} from '../src/entrypoints/agent-runtime/sandbox';
 
 const SECRET_PATH = '/opt/private/launcher-bin';
 const FULL: AgentSandboxGrade = { grade: 'full', restrictions: ['network-denied'] };
@@ -84,5 +86,18 @@ describe('probeAgentProcessSandbox on a failing adapter', () => {
     expect(sandbox.calls()).toBe(2);
     expect(await probeAgentProcessSandbox(sandbox)).toEqual(FULL);
     expect(sandbox.calls()).toBe(2);
+  });
+
+  test('sandbox probe exports live on stitchkit/agent-runtime/sandbox, not the root agent-runtime barrel', () => {
+    for (const name of [
+      'AgentSandboxGradeSchema',
+      'AgentSandboxRestrictionSchema',
+      'missingSandboxRestrictions',
+      'probeAgentProcessSandbox',
+      'recordAgentSandboxProbe',
+    ]) {
+      expect(name in agentRuntimeSandbox).toBeTrue();
+      expect(name in agentRuntime).toBeFalse();
+    }
   });
 });

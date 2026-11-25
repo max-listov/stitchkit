@@ -1,3 +1,4 @@
+import { assertTimerMs } from '../internal/deadline';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { isUnsafeKey } from '../internal/safe-json';
 import type { EndpointDef } from './define';
@@ -81,8 +82,8 @@ export function assertStreamingResponseEndpoint(
     throw new Error(`${where} finalLine applies only to ndjson`);
   }
   assertPositiveSafeInteger(`${where} maxFrameBytes`, ep.stream.maxFrameBytes, Error);
-  assertPositiveSafeInteger(`${where} lifetimeMs`, ep.stream.lifetimeMs, Error);
-  assertPositiveSafeInteger(`${where} heartbeatMs`, ep.stream.heartbeatMs, Error);
+  assertTimerMs(`${where} lifetimeMs`, ep.stream.lifetimeMs);
+  assertTimerMs(`${where} heartbeatMs`, ep.stream.heartbeatMs);
   if (
     ep.stream.idleTimeoutSeconds !== undefined &&
     (!Number.isSafeInteger(ep.stream.idleTimeoutSeconds) || ep.stream.idleTimeoutSeconds < 0)
@@ -119,6 +120,7 @@ const TOOL_OPTION_KEYS = {
   ui: true,
   annotations: true,
   mcp: true,
+  inputRecursionDepth: true,
 } as const satisfies Record<keyof EndpointToolOptions, true>;
 
 export function assertNoUngroupedToolOptions(
@@ -144,6 +146,16 @@ export function assertNoUngroupedToolOptions(
         `${where} sets \`tool.${name}\`, which is not a tool option — \`tool\` accepts ${Object.keys(TOOL_OPTION_KEYS).join(', ')}`,
       );
     }
+  }
+}
+
+/** Refuse a recursion depth that cannot be honoured, naming the option where it was declared. */
+export function assertInputRecursionDepth(where: string, depth: unknown): void {
+  if (depth === undefined) return;
+  if (typeof depth !== 'number' || !Number.isSafeInteger(depth) || depth < 1) {
+    throw new Error(
+      `${where} must be a positive integer — the number of levels each recursive input definition is written out (got ${String(depth)})`,
+    );
   }
 }
 

@@ -48,6 +48,7 @@ async function run(argv: string[], config: RunConfig) {
     name: 'records',
     version: '1.0.0',
     ...config,
+    access: { open: 'local-operator' },
     argv,
     stdout: (text) => {
       out += text;
@@ -81,7 +82,7 @@ function fixture() {
     identity: { serviceName: 'remote', action: 'create', method: 'POST' },
     input: CreateInput,
     output: CreateOutput,
-    transports: ['CLI'],
+    expose: ['CLI'],
     handler: ({ input }) => create(input),
   });
   return { service, runtime, calls: () => calls, mutations: () => mutations };
@@ -194,8 +195,10 @@ describe('a successful call survives a failed CLI presentation', () => {
   }
 });
 
+// Open record schema: unknown columns are only discoverable from runtime data,
+// exercising post-execution CLI_PRESENTATION_FAILED withholding on reads.
 const ListOutput = z.object({
-  items: z.array(z.object({ id: z.string(), name: z.string() })),
+  items: z.array(z.looseObject({ id: z.string(), name: z.string() })),
 });
 const listed = { items: [{ id: 'a', name: 'Alpha' }] };
 
@@ -285,7 +288,7 @@ describe('a read withholds its result when the requested view is refused', () =>
       identity: { serviceName: 'remote', action: 'list', method: 'GET' },
       input: z.object({}),
       output: ListOutput,
-      transports: ['CLI'],
+      expose: ['CLI'],
       handler: () => listed,
     });
     const result = await run(['remote_list', '--count-by', 'nosuchcolumn'], {

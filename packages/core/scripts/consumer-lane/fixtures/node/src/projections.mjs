@@ -1,7 +1,7 @@
 /** A projection read from the packed store is honest about how far it got. */
 import {
   agentConversationCardProjection,
-  createSqliteAgentProjectionStore,
+  createAgentProjectionStore,
 } from 'stitchkit/agent-runtime';
 import { packedSqlite, proof } from './packed-sqlite.mjs';
 
@@ -12,7 +12,7 @@ try {
     kind: 'state/set',
     payload: { first: true },
   });
-  const projections = createSqliteAgentProjectionStore({ sqlite: handle });
+  const projections = createAgentProjectionStore({ store: handle.store, host: handle.host });
   const first = await projections.advance('p', agentConversationCardProjection);
   await handle.store.appendEvent({
     conversationId: 'p',

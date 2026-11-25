@@ -43,6 +43,7 @@ export const ENTRYPOINTS = [
   { subpath: './remote', source: 'src/entrypoints/remote.ts', browser: true },
   { subpath: './contract', source: 'src/entrypoints/contract.ts', browser: true },
   { subpath: './primitives', source: 'src/entrypoints/primitives.ts', browser: true },
+  { subpath: './handler', source: 'src/entrypoints/handler.ts', browser: true },
   { subpath: './server', source: 'src/entrypoints/server.ts', browser: false },
   { subpath: './observability', source: 'src/entrypoints/observability.ts', browser: false },
   { subpath: './agent-runtime', source: 'src/entrypoints/agent-runtime.ts', browser: false },
@@ -87,6 +88,41 @@ export const ENTRYPOINTS = [
     browser: false,
   },
   {
+    subpath: './agent-executor',
+    source: 'src/entrypoints/agent-executor.ts',
+    browser: false,
+  },
+  {
+    subpath: './agent-executor/acp',
+    source: 'src/entrypoints/agent-executor/acp.ts',
+    browser: false,
+  },
+  {
+    subpath: './agent-executor/claude',
+    source: 'src/entrypoints/agent-executor/claude.ts',
+    browser: false,
+  },
+  {
+    subpath: './agent-executor/claude-sdk',
+    source: 'src/entrypoints/agent-executor/claude-sdk.ts',
+    browser: false,
+  },
+  {
+    subpath: './agent-executor/codex',
+    source: 'src/entrypoints/agent-executor/codex.ts',
+    browser: false,
+  },
+  {
+    subpath: './agent-executor/testing',
+    source: 'src/entrypoints/agent-executor/testing.ts',
+    browser: false,
+  },
+  {
+    subpath: './agent-runtime/postgres',
+    source: 'src/entrypoints/agent-runtime/postgres.ts',
+    browser: false,
+  },
+  {
     subpath: './agent-runtime/sqlite/bun',
     source: 'src/entrypoints/agent-runtime/sqlite/bun.ts',
     browser: false,
@@ -117,11 +153,6 @@ export const ENTRYPOINTS = [
     source: 'src/entrypoints/application/diagnostic-journal.ts',
     browser: false,
   },
-  {
-    subpath: './application/schemas',
-    source: 'src/entrypoints/application/schemas.ts',
-    browser: true,
-  },
   { subpath: './testing', source: 'src/entrypoints/testing.ts', browser: false },
   { subpath: './process', source: 'src/entrypoints/process.ts', browser: false },
   {
@@ -135,6 +166,18 @@ export const ENTRYPOINTS = [
     browser: false,
   },
   { subpath: './files', source: 'src/entrypoints/files.ts', browser: false },
+  { subpath: './spend', source: 'src/entrypoints/spend.ts', browser: false },
+  {
+    subpath: './spend/testing',
+    source: 'src/entrypoints/spend/testing.ts',
+    browser: false,
+  },
+  { subpath: './service-host', source: 'src/entrypoints/service-host.ts', browser: false },
+  {
+    subpath: './service-host/macos',
+    source: 'src/entrypoints/service-host/macos.ts',
+    browser: false,
+  },
   { subpath: './telegram', source: 'src/entrypoints/telegram.ts', browser: false },
   {
     subpath: './telegram/grammy',
@@ -170,6 +213,8 @@ export const ENTRYPOINTS = [
   { subpath: './xlsx', source: 'src/entrypoints/xlsx.ts', browser: true },
   { subpath: './oauth', source: 'src/entrypoints/oauth.ts', browser: true },
   { subpath: './voice', source: 'src/entrypoints/voice.ts', browser: true },
+  { subpath: './sync', source: 'src/entrypoints/sync.ts', browser: true },
+  { subpath: './sync/postgres', source: 'src/entrypoints/sync/postgres.ts', browser: false },
   { subpath: './google', source: 'src/entrypoints/google.ts', browser: false },
   { subpath: './declaration', source: 'src/entrypoints/declaration.ts', browser: true },
   { subpath: './node', source: 'src/entrypoints/node.ts', browser: false },

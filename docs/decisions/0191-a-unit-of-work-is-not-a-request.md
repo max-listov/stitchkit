@@ -1,6 +1,13 @@
+---
+title: "ADR 0191 — A unit of work is not a request, and must not have to pretend"
+type: decision
+status: accepted
+created: 2026-09-22
+updated: 2026-09-22
+---
+
 # 0191 — A unit of work is not a request, and must not have to pretend
 
-**Status:** Accepted
 **Date:** 2026-09-22
 
 ## Context

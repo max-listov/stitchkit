@@ -8,9 +8,10 @@ updated: 2026-08-06
 
 # ADR 0042 — The audit row may name the cause, the caller may not
 
-- **Status:** Accepted — completes [ADR 0041](0041-tool-error-cause-is-observable.md)
-  and makes [ADR 0030](0030-audit-verb-and-json-error-details.md)'s "complete
-  error logging" true on the tool path
+**Relations:** completes [ADR 0041](0041-tool-error-cause-is-observable.md) and makes
+[ADR 0030](0030-audit-verb-and-json-error-details.md)'s "complete error logging" true on the tool
+path
+
 - **Date:** 2026-08-06
 
 ## Context

@@ -64,7 +64,8 @@ export const DEFAULT_PUBLICATION_CONVENTIONS: PublicationPrivacyConventions = {
   packageName: 'example-package',
 };
 
-const TEXT_FILE = /\.(?:cjs|css|grit|html|js|json|jsonc|md|mjs|sh|ts|tsx|txt|ya?ml)$/i;
+const TEXT_FILE =
+  /\.(?:cjs|css|grit|html|js|json|jsonc|jsonl|md|mjs|ndjson|sh|ts|tsx|txt|ya?ml)$/i;
 
 export function isPublicationTextPath(file: string): boolean {
   return TEXT_FILE.test(file) || /(?:^|\/)LICENSE(?:\.[a-z0-9]+)?$/i.test(file);
@@ -450,12 +451,12 @@ export async function trackedPublicationBlobs(
     stderr: 'pipe',
     stdin: 'pipe',
   });
+  // Drain stdout and stderr concurrently with stdin writes so large blob lists never deadlock the pipe.
+  const stdoutPromise = new Response(batch.stdout).arrayBuffer();
+  const stderrPromise = new Response(batch.stderr).text();
   batch.stdin.write(`${wanted.map((entry) => entry.sha).join('\n')}\n`);
   await batch.stdin.end();
-  const [batchExit, buffer] = await Promise.all([
-    batch.exited,
-    new Response(batch.stdout).arrayBuffer(),
-  ]);
+  const [batchExit, buffer] = await Promise.all([batch.exited, stdoutPromise, stderrPromise]);
   const raw = new Uint8Array(buffer);
   if (batchExit !== 0) throw new Error('Tracked blobs unreadable');
 

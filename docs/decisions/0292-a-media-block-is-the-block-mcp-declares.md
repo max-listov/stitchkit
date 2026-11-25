@@ -3,6 +3,7 @@ title: "ADR 0292: A media block is the block MCP declares"
 description: McpMediaContentSchema holds exactly the fields of MCP's image and audio content, and the file name of a block's source lives in its _meta, so one block has one shape on every surface.
 type: decision
 status: accepted
+amends: ["0291"]
 created: 2026-11-17 15:49 +07:00
 updated: 2026-11-17 15:49 +07:00
 ---

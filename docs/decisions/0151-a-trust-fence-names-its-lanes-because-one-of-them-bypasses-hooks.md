@@ -2,7 +2,7 @@
 title: A trust fence names its lanes, because one of them bypasses hooks entirely
 description: createTrustFence compares the requested authority against a declared list at two admission points — the HTTP onRequest hook and the Socket.IO allowRequest policy — because the socket lane never reaches the hook on either runtime.
 type: decision
-status: active
+status: accepted
 created: 2026-09-02
 updated: 2026-09-02
 ---

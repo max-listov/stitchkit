@@ -1,6 +1,14 @@
+---
+title: "ADR 0204 — Release cadence is observation, not a gate"
+type: decision
+status: accepted
+amends: ["0103", "0198", "0203"]
+created: 2026-09-26
+updated: 2026-09-26
+---
+
 # 0204 — Release cadence is observation, not a gate
 
-**Status:** Accepted
 **Date:** 2026-09-26
 
 Amends ADR 0198 and the release consequence in ADR 0203. Invariant I14.

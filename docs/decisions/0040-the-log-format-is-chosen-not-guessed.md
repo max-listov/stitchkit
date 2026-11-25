@@ -8,9 +8,10 @@ updated: 2026-08-06
 
 # ADR 0040 — The log format is chosen, not guessed
 
-- **Status:** Accepted — repairs the delivery of
-  [ADR 0039](0039-request-logging-reads-the-request-context.md); upholds
-  [ADR 0013](0013-runtime-agnostic-core.md)
+**Relations:** repairs the delivery of
+[ADR 0039](0039-request-logging-reads-the-request-context.md); upholds
+[ADR 0013](0013-runtime-agnostic-core.md)
+
 - **Date:** 2026-08-06
 
 ## Context

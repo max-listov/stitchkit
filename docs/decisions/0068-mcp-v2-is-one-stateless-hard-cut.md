@@ -2,7 +2,8 @@
 title: MCP SDK v2 is one stateless hard cut
 description: Adopt split SDK v2 packages, one stateless transport and explicit modern protocol policies.
 type: decision
-status: active
+status: accepted
+supersedes: ["0015", "0049"]
 created: 2026-08-09
 updated: 2026-08-09
 ---

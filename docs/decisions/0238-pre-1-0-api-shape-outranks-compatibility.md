@@ -1,6 +1,13 @@
+---
+title: "ADR 0238 — Before 1.0 the shape of the API outranks compatibility"
+type: decision
+status: accepted
+created: 2026-10-05
+updated: 2026-10-05
+---
+
 # 0238 — Before 1.0 the shape of the API outranks compatibility
 
-**Status:** Accepted
 **Date:** 2026-10-05
 
 Builds on ADR 0198 and ADR 0204. Invariants I8 and I14.

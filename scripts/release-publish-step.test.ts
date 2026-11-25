@@ -101,3 +101,70 @@ echo '${sha}  fixture'
     rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+test('a package waits on npm for the siblings of its train before it is published', () => {
+  const { steps } = WorkflowSchema.parse(
+    Bun.YAML.parse(
+      readFileSync(`${import.meta.dir}/../.github/workflows/release.yml`, 'utf8'),
+    ),
+  ).jobs.publish;
+  const names = steps.map((step) => step.name);
+  const wait = names.indexOf(
+    'Wait for the packages of this train that this one publishes a range for',
+  );
+  expect(wait).toBeGreaterThan(
+    names.indexOf('Validate tag, package version and release notes'),
+  );
+  expect(wait).toBeLessThan(names.indexOf('Publish the validated tarball'));
+  const run = steps[wait]?.run ?? '';
+  expect(run).toContain('bun scripts/release-plan.ts train-requirements "$GITHUB_REF_NAME"');
+  expect(run).toContain('bun scripts/wait-for-npm-publication.ts "$NAME" "$VERSION"');
+});
+
+test('the wait step waits for every line train-requirements prints, and fails when a wait fails', () => {
+  const { steps } = WorkflowSchema.parse(
+    Bun.YAML.parse(
+      readFileSync(`${import.meta.dir}/../.github/workflows/release.yml`, 'utf8'),
+    ),
+  ).jobs.publish;
+  const run = steps.find(
+    (step) =>
+      step.name === 'Wait for the packages of this train that this one publishes a range for',
+  )?.run;
+  if (!run) throw new Error('Missing wait step');
+  const scratch = mkdtempSync(join(tmpdir(), 'stitchkit-train-wait-'));
+  try {
+    const tools = join(scratch, 'tools');
+    mkdirSync(tools);
+    const log = join(scratch, 'waits.log');
+    writeFileSync(
+      join(tools, 'bun'),
+      `#!/bin/sh
+case "$1 $2" in
+  "scripts/release-plan.ts train-requirements") printf 'stitchkit 0.127.0\\nother 1.0.0\\n' ;;
+  "scripts/wait-for-npm-publication.ts "*) printf '%s %s\\n' "$2" "$3" >> "$WAITS_LOG"; [ "$2" != "$FAIL_ON" ] ;;
+  *) exit 93 ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    const shell = (failOn: string) =>
+      spawnSync('bash', ['-e', '-c', run], {
+        cwd: scratch,
+        env: {
+          PATH: `${tools}:/usr/bin:/bin`,
+          RUNNER_TEMP: scratch,
+          GITHUB_REF_NAME: 'stitchkit-tui-v0.5.0',
+          WAITS_LOG: log,
+          FAIL_ON: failOn,
+        },
+      });
+    expect(shell('none').status).toBe(0);
+    expect(readFileSync(log, 'utf8')).toBe('stitchkit 0.127.0\nother 1.0.0\n');
+    rmSync(log);
+    expect(shell('stitchkit').status).not.toBe(0);
+    expect(readFileSync(log, 'utf8')).toBe('stitchkit 0.127.0\n');
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});

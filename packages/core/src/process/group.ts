@@ -1,51 +1,43 @@
+import { abortError } from '../internal/abort-error';
 import { raceAbort } from '../internal/abort-race';
 import { errnoOf } from '../internal/errno';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
-import { MAX_TIMER_MS, sleep } from '../internal/timers';
+import { monotonicTimerClock, scheduleAt, sleep } from '../internal/timers';
 import { NativeCommandError, type ParsedNativeCommandStopPolicy } from './contract';
 import { groupSettlementDiagnostics } from './group-diagnostics';
 import { processGroupExists } from './group-presence';
 import { waitForProcessGroupExit } from './group-settlement';
 
-/** Chain native-sized timers; internal callers retain their declared safe-integer deadline. */
+/**
+ * A command's deadline on the monotonic clock, through `scheduleAt`: a budget past the timer
+ * ceiling is waited in steps rather than fired at once. Internal callers keep their declared
+ * safe-integer budget.
+ */
 export function createCommandDeadline(timeoutMs: number, reason: unknown) {
   assertPositiveSafeInteger('Command deadline', timeoutMs, RangeError);
   const controller = new AbortController();
-  let deadline = performance.now() + timeoutMs;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const schedule = () => {
-    const remaining = deadline - performance.now();
-    if (remaining <= 0) controller.abort(reason);
-    else timer = setTimeout(schedule, Math.min(remaining, MAX_TIMER_MS));
-  };
-  schedule();
+  const arm = (ms: number) =>
+    scheduleAt(monotonicTimerClock, monotonicTimerClock.now() + ms, () =>
+      controller.abort(reason),
+    );
+  let timer = arm(timeoutMs);
   return {
     signal: controller.signal,
     cancel() {
-      if (timer !== undefined) clearTimeout(timer);
+      timer.cancel();
     },
     /** Grant `nextMs` from now instead; an expired deadline stays expired. */
     restart(nextMs: number) {
       assertPositiveSafeInteger('Command deadline', nextMs, RangeError);
       if (controller.signal.aborted) return;
-      if (timer !== undefined) clearTimeout(timer);
-      deadline = performance.now() + nextMs;
-      schedule();
+      timer.cancel();
+      timer = arm(nextMs);
     },
   };
 }
 
 function deniedOnDarwin(error: unknown): boolean {
-  return (
-    process.platform === 'darwin' &&
-    error instanceof Error &&
-    'code' in error &&
-    error.code === 'EPERM'
-  );
-}
-
-function isErrno(error: unknown, code: string): boolean {
-  return errnoOf(error) === code;
+  return process.platform === 'darwin' && errnoOf(error) === 'EPERM';
 }
 
 /** Send `signal` to the group. `false` is `ESRCH`: the kernel found no member to receive it. */
@@ -55,7 +47,7 @@ export function signalGroup(pid: number | undefined, signal: NodeJS.Signals): bo
     process.kill(-pid, signal);
     return true;
   } catch (error) {
-    if (isErrno(error, 'ESRCH')) return false;
+    if (errnoOf(error) === 'ESRCH') return false;
     throw error;
   }
 }
@@ -168,7 +160,7 @@ export async function stopCommandLeader(
       process.kill(pid, policy.signal);
       signalled = true;
     } catch (error) {
-      if (!isErrno(error, 'ESRCH')) throw error;
+      if (errnoOf(error) !== 'ESRCH') throw error;
     }
     const grace = new AbortController();
     const end = () => grace.abort();
@@ -202,7 +194,7 @@ export async function stopLeaderAlone(stop: {
       process.kill(leader.pid, signal);
       return true;
     } catch (error) {
-      if (isErrno(error, 'ESRCH')) return false;
+      if (errnoOf(error) === 'ESRCH') return false;
       throw error;
     }
   };
@@ -233,7 +225,7 @@ export function commandCleanupError(cause: unknown): NativeCommandError {
 export function waitForCommandClose<T>(closed: Promise<T>, timeoutMs: number): Promise<T> {
   const deadline = createCommandDeadline(
     timeoutMs,
-    new DOMException('Command settlement timed out', 'TimeoutError'),
+    abortError('Command settlement timed out', 'TimeoutError'),
   );
   return raceAbort(closed, deadline.signal).finally(() => deadline.cancel());
 }

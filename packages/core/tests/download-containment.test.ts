@@ -308,6 +308,7 @@ test('an unsupported backend refuses downloads while ordinary public CLI command
   let calls = 0;
   const run = (download: boolean) =>
     createCli({
+      access: { open: 'local-operator' },
       name: 'portable',
       version: '1',
       runtimeTools: [
@@ -315,7 +316,7 @@ test('an unsupported backend refuses downloads while ordinary public CLI command
           name: 'media',
           description: 'Media',
           identity: { serviceName: 'media', action: 'get', method: 'GET' },
-          transports: ['CLI'],
+          expose: ['CLI'],
           input: z.object({}),
           output: z.object({ ok: z.boolean() }),
           handler: () => {

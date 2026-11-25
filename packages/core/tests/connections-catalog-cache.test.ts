@@ -88,6 +88,7 @@ function handler(options: { surfaces?: 'role'; extra?: boolean; raw?: boolean } 
   const security = { allowedHosts: ['127.0.0.1', 'localhost'] };
   if (options.surfaces === 'role') {
     return createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'catalog', version: '1.0.0' },
       security,
       auth: (request: Request) => ({
@@ -102,6 +103,7 @@ function handler(options: { surfaces?: 'role'; extra?: boolean; raw?: boolean } 
   }
   return createMcpHandler({
     serverInfo: { name: 'catalog', version: '1.0.0' },
+    access: { open: 'local-operator' },
     security,
     auth: () => ({}),
     services: options.extra ? [MEMBER, ADMIN] : [MEMBER],

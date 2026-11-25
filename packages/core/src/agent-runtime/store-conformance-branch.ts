@@ -1,16 +1,23 @@
+import { AgentConversationBranchRefusedError } from './branch-refusal';
 import { AgentMessageSchema } from './schemas';
 import type { AgentRuntimeStore } from './store';
 import { queuedRun, requireOutcome, userMessage } from './store-conformance-support';
 import { canonicalAgentJson, decodeAgentConversationArchive } from './store-events';
 
-/** Optional capabilities are exercised when the tested adapter advertises them. */
+/** Branch capabilities declared by the conformance caller. */
 export async function branchConformance(
   store: AgentRuntimeStore,
   source: string,
   destination: string,
   restored: string,
+  capabilities: { readonly branch: boolean; readonly planBranch: boolean },
 ) {
-  if (!store.branchConversation) return;
+  if (!capabilities.branch) return;
+  if (!store.branchConversation) {
+    throw new Error(
+      'Agent store conformance: capabilities.branch is true, but store.branchConversation is missing',
+    );
+  }
   // An attachment the application stored itself: the branch carries it only by declaration.
   const attachment = `attachments/${source}/image.png`;
   const input = AgentMessageSchema.parse({
@@ -63,13 +70,34 @@ export async function branchConformance(
     ],
   } satisfies Parameters<NonNullable<AgentRuntimeStore['branchConversation']>>[0];
   const undeclared = await store.branchConversation({ ...request, applicationFiles: [] }).then(
-    () => 'created',
-    () => 'refused',
+    () => undefined,
+    (error: unknown) => error,
   );
-  if (undeclared !== 'refused')
+  if (undeclared === undefined)
     throw new Error(
       'Branch conformance: an undeclared application file reference was not refused',
     );
+  if (capabilities.planBranch) {
+    if (!store.planConversationBranch) {
+      throw new Error(
+        'Agent store conformance: capabilities.planBranch is true, but store.planConversationBranch is missing',
+      );
+    }
+    if (!(undeclared instanceof AgentConversationBranchRefusedError))
+      throw new Error(
+        'Branch conformance: a store that plans branches refuses with AgentConversationBranchRefusedError',
+      );
+    // A plan reads the same source the same way: one list, and nothing written.
+    const planned = await store.planConversationBranch({ ...request, applicationFiles: [] });
+    if (
+      planned.ready ||
+      canonicalAgentJson(planned.refusals) !== canonicalAgentJson(undeclared.refusals) ||
+      !planned.applicationFiles.includes(attachment)
+    )
+      throw new Error('Branch conformance: a plan disagrees with the refusal it predicts');
+    if (!(await store.planConversationBranch(request)).ready)
+      throw new Error('Branch conformance: a plan refused a fully declared branch');
+  }
   if ((await store.loadSnapshot(destination)).version !== 0)
     throw new Error('Branch conformance: a refused branch wrote its destination');
   const created = await store.branchConversation(request);

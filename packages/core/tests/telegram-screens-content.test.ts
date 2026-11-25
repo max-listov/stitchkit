@@ -171,6 +171,11 @@ describe('telegram screens: limits held before anything is sent', () => {
     expect(() => new ScreenOutcome().notice('x', { expiresInMs: 2_147_483_648 })).toThrow(
       RangeError,
     );
+    for (const bad of [0, 1.5, 2_147_483_648]) {
+      expect(() => new ScreenOutcome().notice('x', { expiresInMs: bad })).toThrow(
+        `expiresInMs must be an integer from 1 to 2147483647 milliseconds, received ${bad}`,
+      );
+    }
   });
 
   test('markup is made by html, never by constructing it', () => {

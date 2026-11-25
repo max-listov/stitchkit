@@ -35,7 +35,9 @@ function fixture(
   let current = new Date('2026-09-08T01:00:00.000Z');
   let armed = 0;
   const schedules = createAgentScheduleService({
-    sqlite: runtime,
+    maxActivePerConversation: 100,
+    minIntervalMs: 1,
+    host: runtime.host,
     dispatch,
     now: () => current,
     setTimer: () => {
@@ -96,7 +98,9 @@ describe('schedule delivery', () => {
     const gate = Promise.withResolvers<void>();
     const service = (name: string) =>
       createAgentScheduleService({
-        sqlite: runtime,
+        maxActivePerConversation: 100,
+        minIntervalMs: 1,
+        host: runtime.host,
         dispatch: async (delivery) => {
           deliveries.push(`${name}:${delivery.schedule.occurrence}`);
           await gate.promise;
@@ -159,7 +163,7 @@ describe('schedule delivery', () => {
     f.advance(3_500);
     await f.schedules.tick();
     expect(deliveries).toEqual([1]);
-    const [schedule] = f.schedules.listSchedules('s');
+    const [schedule] = await f.schedules.listSchedules('s');
     expect(new Date(schedule?.nextAt ?? 0).getTime()).toBeGreaterThan(
       new Date('2026-09-08T01:00:03.500Z').getTime(),
     );
@@ -184,7 +188,7 @@ describe('schedule delivery', () => {
     expect(await service.cancelSchedule('s', recurring.id)).toBeTrue();
     gate.resolve();
     await firing;
-    expect(service.listSchedules('s').map((schedule) => schedule.state)).toEqual([
+    expect((await service.listSchedules('s')).map((schedule) => schedule.state)).toEqual([
       'cancelled',
     ]);
     const fired = (
@@ -203,7 +207,9 @@ describe('schedule delivery', () => {
     const gate = Promise.withResolvers<void>();
     const service = (dispatch: () => Promise<void>) =>
       createAgentScheduleService({
-        sqlite: runtime,
+        maxActivePerConversation: 100,
+        minIntervalMs: 1,
+        host: runtime.host,
         dispatch,
         now: () => current,
         setTimer: (_callback, delayMs) => {
@@ -251,7 +257,9 @@ describe('schedule delivery', () => {
     let armed = 0;
     const deliveries: number[] = [];
     const schedules = createAgentScheduleService({
-      sqlite: runtime,
+      maxActivePerConversation: 100,
+      minIntervalMs: 1,
+      host: runtime.host,
       dispatch: (delivery) => {
         deliveries.push(delivery.schedule.occurrence);
       },

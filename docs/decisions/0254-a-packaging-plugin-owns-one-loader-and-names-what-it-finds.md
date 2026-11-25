@@ -3,6 +3,7 @@ title: "ADR 0254: A packaging plugin owns one loader and names what it finds"
 description: "Generated Darwin loaders carry a marker that inspectNativeArtifact reads to classify an artifact as packaged, unpackaged or loader-free; the packaging plugin fails a build that carries another installation's loader."
 type: decision
 status: accepted
+amends: ["0252"]
 created: 2026-10-06
 updated: 2026-10-06
 ---

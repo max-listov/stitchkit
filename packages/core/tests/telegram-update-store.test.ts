@@ -12,7 +12,7 @@ import {
   checkTelegramUpdateStore,
   memoryTelegramUpdateStore,
   postgresTelegramUpdateStore,
-  postgresTelegramUpdateStoreSchema,
+  postgresTelegramUpdateStoreDdl,
   sqliteTelegramUpdateStore,
   type TelegramPostgresQuery,
   type TelegramUpdateAttemptIdentity,
@@ -371,13 +371,13 @@ describe.skipIf(postgresUrl === undefined)('postgres', () => {
     expect(await store.due({ now: 100, pendingBefore: 100, limit: 10 })).toEqual([]);
   });
 
-  test('the schema for a migration is the table the store uses, and runs twice', async () => {
+  test('the DDL for a migration is the table the store uses, and runs twice', async () => {
     const sql = client();
     const table = `telegram_updates_migrated_${process.pid}`;
     tables.push(table);
-    const schema = postgresTelegramUpdateStoreSchema(table);
-    await sql.unsafe(schema);
-    await sql.unsafe(schema);
+    const ddl = postgresTelegramUpdateStoreDdl(table);
+    await sql.unsafe(ddl);
+    await sql.unsafe(ddl);
     const store = postgresTelegramUpdateStore({
       query: query(sql),
       table,
@@ -399,9 +399,13 @@ describe.skipIf(postgresUrl === undefined)('postgres', () => {
 });
 
 test('a table name is checked before it reaches SQL', () => {
-  expect(() => postgresTelegramUpdateStoreSchema('updates; DROP TABLE users')).toThrow(
-    TypeError,
+  expect(postgresTelegramUpdateStoreDdl()).toContain(
+    'CREATE TABLE IF NOT EXISTS telegram_updates',
   );
+  expect(postgresTelegramUpdateStoreDdl('custom_updates')).toContain(
+    'CREATE INDEX IF NOT EXISTS custom_updates_due ON custom_updates',
+  );
+  expect(() => postgresTelegramUpdateStoreDdl('updates; DROP TABLE users')).toThrow(TypeError);
   expect(() => postgresTelegramUpdateStore({ query: async () => [], table: 'a-b' })).toThrow(
     TypeError,
   );

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -57,8 +58,13 @@ type ClientFactory = (
 const OPEN_TIMEOUT_MS = 250;
 const AFTER_HEADERS_RETENTION_MS = OPEN_TIMEOUT_MS + 50;
 
+const socketRoot = mkdtempSync(join(tmpdir(), 'sks-'));
 let socketCounter = 0;
 const servers: Server[] = [];
+
+afterAll(() => {
+  rmSync(socketRoot, { recursive: true, force: true });
+});
 
 afterEach(async () => {
   for (const server of servers.splice(0).reverse()) {
@@ -75,10 +81,7 @@ function startServer(): Promise<{
   active: ReadonlySet<string>;
 }> {
   socketCounter += 1;
-  const socketPath = join(
-    tmpdir(),
-    `stitchkit-http-stream-cancellation-${process.pid}-${socketCounter}.sock`,
-  );
+  const socketPath = join(socketRoot, `${socketCounter}.sock`);
   const active = new Set<string>();
   const server = createServer((request, response) => {
     const path = request.url ?? '/';

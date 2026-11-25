@@ -3,15 +3,16 @@ title: "ADR 0074 — Server-owned managed shutdown"
 description: Make admission, HTTP drain, realtime closure and runtime stop one bounded Bun/Node lifecycle.
 type: decision
 status: accepted
+amendedBy: ["0076"]
 created: 2026-08-14
 updated: 2026-08-15
 ---
 
 # ADR 0074 — Server-owned managed shutdown
 
-- **Status:** Accepted — extends [ADR 0008](0008-thin-wrappers.md),
-  [ADR 0013](0013-runtime-agnostic-core.md) and
-  [ADR 0020](0020-raw-websocket-lane.md).
+**Relations:** extends [ADR 0008](0008-thin-wrappers.md), [ADR 0013](0013-runtime-agnostic-core.md)
+and [ADR 0020](0020-raw-websocket-lane.md).
+
 - **Date:** 2026-08-14
 
 ## Context

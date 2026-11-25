@@ -38,6 +38,7 @@
  */
 
 import { z } from 'zod';
+import { abortReason } from '../internal/abort-race';
 import { argumentsDigest } from '../internal/stable-digest';
 import { MAX_TIMER_MS, sleep } from '../internal/timers';
 import { isRecord } from '../internal/typed';
@@ -222,11 +223,13 @@ function createBudget(
     options?: TelegramOutboundChatOptions,
   ): Promise<void> => {
     const chat = options?.chatId === undefined ? undefined : String(options.chatId);
+    // The pause may grow while it is waited for — a later 429 lengthens it — so the deadline is
+    // read again once it is reached; how far it lies is `waitUntil`'s.
     while (true) {
-      if (signal?.aborted) throw signal.reason;
-      const remaining = pauses.resumesAt(chat) - now();
-      if (remaining <= 0) return;
-      await queue.wait(Math.min(remaining, MAX_TIMER_MS), signal);
+      if (signal?.aborted) throw abortReason(signal);
+      const at = pauses.resumesAt(chat);
+      if (at <= now()) return;
+      await queue.waitUntil(at, signal);
     }
   };
 
@@ -237,12 +240,12 @@ function createBudget(
     send: () => Promise<T>,
     options?: TelegramOutboundCallOptions,
   ): Promise<T> => {
-    if (signal?.aborted) throw signal.reason;
+    if (signal?.aborted) throw abortReason(signal);
     const cost = sendCost(method, payload);
     const chatId = options?.chatId ?? chatOf(payload);
     const call = chatId === undefined ? {} : { chatId };
     if (cost > 0) await queue.acquire(cost, signal, { ...options, ...call });
-    if (signal?.aborted) throw signal.reason;
+    if (signal?.aborted) throw abortReason(signal);
     // Only a call counted as a sent message can pause the outbound budget.
     const pauseOnRefusal = (refusal: unknown): void => {
       if (cost > 0 && options?.refusal !== 'call') pauseAfter(refusal, call);

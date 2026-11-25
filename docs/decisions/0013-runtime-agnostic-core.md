@@ -2,13 +2,16 @@
 title: "ADR 0013 — Runtime-agnostic core, Bun as first-class adapter"
 type: decision
 status: accepted
+amends: ["0011"]
+amendedBy: ["0281"]
 created: 2026-05-20
 updated: 2026-05-20
 ---
 
 # ADR 0013 — Runtime-agnostic core, Bun as first-class adapter
 
-- **Status:** Accepted — supersedes the Bun-only clause of ADR 0011
+**Relations:** supersedes the Bun-only clause of ADR 0011
+
 - **Date:** 2026-05-20
 
 ## Context

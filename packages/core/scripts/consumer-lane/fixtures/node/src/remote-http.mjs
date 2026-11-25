@@ -151,10 +151,19 @@ const http = createHttpClient({ baseUrl: origin.url, retry: { limit: 0 } });
 const remote = implementRemote(contract, http);
 
 async function metadataProof() {
-  const direct = await createCliInvoker({ name: 'direct', services: [originService] });
-  const proxy = await createCliInvoker({ name: 'proxy', services: [remote] });
-  const agents = mountAgent([remote]);
+  const direct = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'direct',
+    services: [originService],
+  });
+  const proxy = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'proxy',
+    services: [remote],
+  });
+  const agents = mountAgent([remote], { access: { open: 'local-operator' } });
   const mcp = createMcpHandler({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'remote', version: '1' },
     services: [remote],
     auth: () => ({ id: 'reader' }),
@@ -225,6 +234,7 @@ async function inProcessProof() {
     current = active;
     const controller = new AbortController();
     const invoker = await createCliInvoker({
+      access: { open: 'local-operator' },
       name: 'cancel',
       services: [remote],
       signal: controller.signal,
@@ -244,6 +254,7 @@ async function inProcessProof() {
   current = active;
   const controller = new AbortController();
   const invoker = await createCliInvoker({
+    access: { open: 'local-operator' },
     name: 'noncooperative',
     services: [remote],
     signal: controller.signal,

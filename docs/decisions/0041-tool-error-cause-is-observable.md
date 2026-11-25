@@ -2,15 +2,17 @@
 title: "ADR 0041 — The cause of a failed tool call is observable"
 type: decision
 status: accepted
+amendedBy: ["0045"]
 created: 2026-08-06
 updated: 2026-08-06
 ---
 
 # ADR 0041 — The cause of a failed tool call is observable
 
-- **Status:** Accepted — closes an asymmetry between the HTTP and tool paths of
-  [ADR 0007](0007-mcp-agent-tools.md) / [ADR 0014](0014-tool-http-parity.md);
-  extends the raw hooks of [ADR 0012](0012-observability-module.md)
+**Relations:** closes an asymmetry between the HTTP and tool paths of
+[ADR 0007](0007-mcp-agent-tools.md) / [ADR 0014](0014-tool-http-parity.md); extends the raw hooks of
+[ADR 0012](0012-observability-module.md)
+
 - **Date:** 2026-08-06
 
 ## Context

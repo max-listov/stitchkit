@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { AgentRecordIdSchema } from '../durability/events';
+import { type AgentDurableRuntimeEvent, isDurableAgentRuntimeEvent } from './event-durability';
 import {
   AgentAssistantPlaceholderSchema,
   AgentMessageSchema,
   AgentProviderEnvelopeSchema,
-  AgentRecordIdSchema,
   AgentRecordVersionSchema,
   AgentRunMetricsSchema,
   AgentRunOperationSchema,
@@ -84,10 +85,15 @@ export const AgentRunOperationEventSchema = EventIdentitySchema.extend({
   snapshotVersion: AgentRecordVersionSchema,
   operation: AgentRunOperationSchema,
 });
+/**
+ * A tool call started or settled. Durable: published only after the checkpoint
+ * that put the call (and its result) in the assistant message, so a reader that
+ * reconnects finds the same status in the snapshot and never loses one.
+ */
 export const AgentToolStatusEventSchema = EventIdentitySchema.extend({
   type: z.literal('tool-status'),
-  runtimeEpoch: z.string().min(1),
-  sequence: z.int().nonnegative(),
+  eventId: AgentRecordIdSchema,
+  snapshotVersion: AgentRecordVersionSchema,
   callId: AgentRecordIdSchema,
   toolName: z.string().min(1),
   status: z.enum(['started', 'completed', 'failed', 'interrupted']),
@@ -152,28 +158,13 @@ export interface AgentRuntimeCursorAdvance {
   cursor: AgentRuntimeEventCursor;
 }
 
-function isDurableEvent(event: AgentRuntimeEvent): event is Extract<
-  AgentRuntimeEvent,
-  {
-    type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'run-operation' | 'terminal';
-  }
-> {
-  return (
-    event.type === 'admission' ||
-    event.type === 'assistant-checkpoint' ||
-    event.type === 'run-state' ||
-    event.type === 'run-operation' ||
-    event.type === 'terminal'
-  );
-}
-
 /** Detect duplicate or missing delivery so reconnect can reload the durable snapshot. */
 export function advanceAgentRuntimeEventCursor(
   rawCursor: AgentRuntimeEventCursor,
   event: AgentRuntimeEvent,
 ): AgentRuntimeCursorAdvance {
   const cursor = AgentRuntimeEventCursorSchema.parse(rawCursor);
-  if (isDurableEvent(event)) {
+  if (isDurableAgentRuntimeEvent(event)) {
     const previous = cursor.snapshotVersion;
     const durableEventIds =
       previous === event.snapshotVersion ? (cursor.durableEventIds ?? []) : [];
@@ -208,9 +199,13 @@ export function advanceAgentRuntimeEventCursor(
 
 /** Stable identity for a post-CAS event; safe for outbox/dedup keys. */
 export function agentDurableEventId(
-  type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'run-operation' | 'terminal',
+  type: AgentDurableRuntimeEvent['type'],
   runId: string,
   snapshotVersion: number,
+  /** What tells two events of one type and version apart (a tool status: its call and status). */
+  subject?: string,
 ): string {
-  return `${runId}:${type}:${snapshotVersion}`;
+  return subject === undefined
+    ? `${runId}:${type}:${snapshotVersion}`
+    : `${runId}:${type}:${subject}:${snapshotVersion}`;
 }

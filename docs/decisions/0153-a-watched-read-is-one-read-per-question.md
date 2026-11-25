@@ -2,7 +2,8 @@
 title: A watched read is one read per question, and the question is not a function
 description: The watch hub shares one single-flight read per (operation, arguments) across every subscriber, and the client is built from the contract because a client method carries no identity a server could act on.
 type: decision
-status: active
+status: accepted
+amendedBy: ["0297"]
 created: 2026-09-02
 updated: 2026-09-02
 ---

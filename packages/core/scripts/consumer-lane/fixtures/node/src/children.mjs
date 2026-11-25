@@ -1,5 +1,5 @@
 /** A child gets only the parent's history up to the seed, and its budget stops it. */
-import { createSqliteAgentChildManager } from 'stitchkit/agent-runtime';
+import { createAgentChildManager } from 'stitchkit/agent-runtime';
 import { packedSqlite, proof } from './packed-sqlite.mjs';
 
 const { handle } = packedSqlite();
@@ -16,8 +16,11 @@ try {
   });
   let seedText = '';
   let policy;
-  const children = createSqliteAgentChildManager({
-    sqlite: handle,
+  const children = createAgentChildManager({
+    store: handle.store,
+    host: handle.host,
+    remainingBudget: () => ({ usd: 1 }),
+    maxActiveChildren: 2,
     spawn: ({ seedArchive }) => {
       seedText = new TextDecoder().decode(seedArchive);
       return {

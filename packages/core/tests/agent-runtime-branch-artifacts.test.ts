@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { createSqliteAgentSpillStore } from '../src/agent-runtime/spill';
+import { createAgentSpillStore } from '../src/agent-runtime/spill';
 import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   createMemoryAgentRuntimeStore,
@@ -14,16 +14,16 @@ import { branchRuntime } from './support/agent-branch-runtime-fixture';
 test('spills rekey once, use fresh policy and stay private to the destination in SQLite and memory archives', async () => {
   const sqlite = createBunSqliteAgentRuntimeStore({ filename: ':memory:' });
   try {
-    const sourceSpills = createSqliteAgentSpillStore({
-      sqlite,
+    const sourceSpills = createAgentSpillStore({
+      host: sqlite.host,
       conversationId: 'source',
       runId: 'first',
-      toolCallId: 'call',
     });
     const { reference } = await sourceSpills.write({
       data: new TextEncoder().encode('full artifact payload'),
       mediaType: 'text/plain',
       authorization: { operation: 'read', path: 'source-only' },
+      toolCallId: 'call',
     });
     await branchTurn(sqlite.store, 'source', 'first', [
       { type: 'tool-call', callId: 'call', toolName: 'run_command', input: {} },
@@ -101,7 +101,7 @@ test('spills rekey once, use fresh policy and stay private to the destination in
         artifactAuthorization: { operation: 'read', path: 'another-policy' },
       });
     }
-    const copied = createSqliteAgentSpillStore({ sqlite, conversationId: 'copy' });
+    const copied = createAgentSpillStore({ host: sqlite.host, conversationId: 'copy' });
     await expect(copied.read({ reference, offset: 0, maxBytes: 100 })).rejects.toThrow();
     const snapshot = await sqlite.store.loadSnapshot('copy');
     const file = snapshot.messages

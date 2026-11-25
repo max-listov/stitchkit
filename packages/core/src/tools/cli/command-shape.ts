@@ -1,16 +1,54 @@
 import { jsonSchemaFields } from '../../json-schema/json-schema';
 import type { ServiceDef } from '../../server/types';
+import { assertNoLegacyTransports } from '../internal/expose';
 import { projectedContractToolName } from '../internal/surface-projector';
 import { assertUniqueToolName } from '../names';
 import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
-import { isReservedCliCommandName, RESERVED_CLI_OPTIONS } from './args-route';
+import { isReservedCliCommandName, RESERVED_CLI_OPTIONS } from './args-classify';
+import { type CliCommandDefinition, cliCommandPresentationSchema } from './command';
 import type { CliCommandPresentation } from './policy';
 import { cliStreamIdentity } from './stream-surface';
+
+/** How a native command presents itself — shared by `createCliSession` and `createCliInvoker`. */
+export function nativeCliDescriptor(
+  definition: CliCommandDefinition,
+): Omit<CliCommandPresentation, 'aliases' | 'positionals'> {
+  return {
+    description: definition.description,
+    argumentSchema: definition.input,
+    presentationSchema: cliCommandPresentationSchema(definition),
+    outputSchema: definition.output,
+  };
+}
+
+function assertNoPassthroughAlias(
+  name: string,
+  descriptor: CliCommandPresentation,
+  passthroughField?: string,
+): void {
+  if (passthroughField !== undefined && descriptor.aliases.has(passthroughField)) {
+    throw new Error(
+      `[stitchkit] CLI command "${name}" cannot alias passthrough field "${passthroughField}"`,
+    );
+  }
+}
+
+/** In-process invoker enforces unique command names and passthrough-alias rules without shell syntax checks. */
+export function invokerCommandShapeIssue(
+  name: string,
+  descriptor: CliCommandPresentation,
+  exists: boolean,
+  passthroughField?: string,
+): undefined {
+  assertUniqueToolName(name, exists, 'CLI command');
+  assertNoPassthroughAlias(name, descriptor, passthroughField);
+  return undefined;
+}
 
 function assertCliCommandName(name: string): void {
   if (isReservedCliCommandName(name)) {
     throw new Error(
-      `[stitchkit] CLI command "${name}" is reserved. Rename the command to a word outside the framework option syntax.`,
+      `[stitchkit] CLI command "${name}" is reserved. Rename the command to a word outside the option syntax.`,
     );
   }
 }
@@ -21,7 +59,8 @@ export function assertStaticCliCommandNames(
   runtimeTools: readonly RuntimeToolDefinition[],
 ): void {
   for (const tool of runtimeTools) {
-    if (tool.transports?.includes('CLI')) assertCliCommandName(tool.name);
+    assertNoLegacyTransports(tool, `Runtime tool "${tool.name}"`);
+    if (tool.expose?.includes('CLI')) assertCliCommandName(tool.name);
   }
   for (const service of services) {
     for (const [key, method] of Object.entries(service.methods)) {
@@ -43,11 +82,7 @@ export function commandShapeIssue(
 ): string | undefined {
   assertUniqueToolName(name, exists, 'CLI command');
   assertCliCommandName(name);
-  if (passthroughField !== undefined && descriptor.aliases.has(passthroughField)) {
-    throw new Error(
-      `[stitchkit] CLI command "${name}" cannot alias passthrough field "${passthroughField}"`,
-    );
-  }
+  assertNoPassthroughAlias(name, descriptor, passthroughField);
   const fieldNames = jsonSchemaFields(descriptor.presentationSchema).map(
     (field) => field.name,
   );

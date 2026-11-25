@@ -7,7 +7,8 @@
  * held per suite and printed whole when that suite ends, so parallel runs stay readable; any suite
  * that fails fails the step, and the summary names it.
  *
- * Usage: `bun scripts/test-suites.ts` (the root `test` script).
+ * Usage: `bun scripts/test-suites.ts` (the root `test` script); `bun scripts/test-suites.ts scripts
+ * 'scripts orphans'` runs the named suites only, as CI runs the repository scripts.
  */
 import { availableParallelism } from 'node:os';
 
@@ -18,6 +19,33 @@ export interface Suite {
   readonly command: readonly string[];
 }
 
+/**
+ * The script tests that run without the process half of the leak gate: they prove that a
+ * lane's orphans die once their parent is killed, by `kill(pid, 0)`, and under a subreaper a
+ * dead orphan waits as the gate's unreaped child, which that probe still finds alive. Every
+ * other script test keeps the whole gate.
+ */
+export const ORPHAN_LANE_TESTS: readonly string[] = [
+  'scripts/lane-processes.test.ts',
+  'scripts/load-lane.test.ts',
+];
+
+const SCRIPT_TESTS = [
+  ...new Bun.Glob('scripts/*.test.ts').scanSync({ cwd: `${import.meta.dir}/..` }),
+]
+  .sort()
+  .filter((file) => !ORPHAN_LANE_TESTS.includes(file));
+
+const gatedScriptTests = (options: readonly string[], files: readonly string[]) => [
+  'bun',
+  'scripts/test-leak-gate.ts',
+  ...options,
+  '--',
+  'bun',
+  'test',
+  ...files.map((file) => `./${file}`),
+];
+
 export function suites(shards = CORE_SHARDS): readonly Suite[] {
   return [
     ...Array.from({ length: shards }, (_, index) => ({
@@ -27,14 +55,12 @@ export function suites(shards = CORE_SHARDS): readonly Suite[] {
     { name: 'stitchkit-tui', command: ['bun', '--filter', 'stitchkit-tui', 'test'] },
     { name: 'create-stitchkit', command: ['bun', '--filter', 'create-stitchkit', 'test'] },
     // Explicit files: `bun test scripts/` is a substring filter and also matches the starter
-    // template's own `scripts/` tests, which run in their template lane.
+    // template's own `scripts/` tests, which run in their template lane. Through the same leak
+    // gate as the package suites, whose `test` scripts call it themselves.
+    { name: 'scripts', command: gatedScriptTests(['--tmpdir'], SCRIPT_TESTS) },
     {
-      name: 'scripts',
-      command: [
-        'bun',
-        'test',
-        ...[...new Bun.Glob('scripts/*.test.ts').scanSync()].sort().map((file) => `./${file}`),
-      ],
+      name: 'scripts orphans',
+      command: gatedScriptTests(['--tmpdir', '--no-process-check'], ORPHAN_LANE_TESTS),
     },
   ];
 }
@@ -76,9 +102,24 @@ export async function runSuites(
   return results;
 }
 
+/** The suites named on the command line, every suite without names; an unknown name is refused. */
+export function selectSuites(
+  all: readonly Suite[],
+  names: readonly string[],
+): readonly Suite[] {
+  if (names.length === 0) return all;
+  const unknown = names.filter((name) => !all.some((suite) => suite.name === name));
+  if (unknown.length > 0)
+    throw new Error(
+      `[test] no suite named ${unknown.join(', ')}; suites: ${all.map((suite) => suite.name).join(', ')}`,
+    );
+  return all.filter((suite) => names.includes(suite.name));
+}
+
 if (import.meta.main) {
   const root = `${import.meta.dir}/..`;
-  const results = await runSuites(suites(), availableParallelism(), (suite) =>
+  const chosen = selectSuites(suites(), process.argv.slice(2));
+  const results = await runSuites(chosen, availableParallelism(), (suite) =>
     runSuite(suite, root),
   );
   const failed = results.filter((result) => result.code !== 0);

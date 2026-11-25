@@ -222,7 +222,7 @@ export function runtimeOperationSource(source: SurfaceRuntimeToolDefinition): Op
     inputSchema: source.input,
     ...(source.output !== undefined && { outputSchema: source.output }),
     toolName: source.name,
-    expose: source.transports,
+    expose: source.expose,
     ...(source.annotations !== undefined && { annotations: source.annotations }),
     ...(source.ui !== undefined && { ui: source.ui }),
     ...(source.identity.meta !== undefined && { meta: source.identity.meta }),

@@ -14,6 +14,7 @@
 import type { MultipartDescriptor } from '../contract/client-types';
 import { DEFAULT_CONTRACT_STREAM_FRAME_BYTES } from '../contract/stream';
 import { inputIsQuery } from '../internal/http-input';
+import { jsonResponse } from '../internal/json-response';
 import { joinRoutePath, parseTrailingWildcard } from '../internal/route-pattern';
 import { isRecord } from '../internal/typed';
 import { jsonSchemaFields, toJsonSchema } from '../json-schema/json-schema';
@@ -366,6 +367,6 @@ export function openApiRoute(path: string, document: OpenApiDocument): RawRoute 
   return {
     method: 'GET',
     path,
-    handler: () => Response.json(document),
+    handler: () => jsonResponse(document),
   };
 }

@@ -17,6 +17,7 @@
  */
 
 import type { Transformer } from 'grammy';
+import { abortReason } from '../internal/abort-race';
 import { TelegramNotDispatchedError } from './not-dispatched';
 import type { TelegramOutboundBudget, TelegramOutboundCallOptions } from './outbound-budget';
 
@@ -34,10 +35,7 @@ function platformSignal(signal: Parameters<Transformer>[3]): PlatformSignal {
   if (signal === undefined) return { signal: undefined, release: () => undefined };
   if (signal instanceof AbortSignal) return { signal, release: () => undefined };
   const controller = new AbortController();
-  const abort = (): void => {
-    const reason: unknown = Reflect.get(signal, 'reason');
-    controller.abort(reason ?? new DOMException('This operation was aborted', 'AbortError'));
-  };
+  const abort = (): void => controller.abort(abortReason(signal));
   if (signal.aborted) abort();
   else signal.addEventListener('abort', abort);
   return {

@@ -92,7 +92,18 @@ export const NativeCommandOptionsSchema = z
       timeoutMs: z.number().int().positive().max(MAX_TIMER_MS).optional(),
       maxOutputBytes: z.number().int().positive().optional(),
       capture: z.boolean().default(false),
-      stdin: z.custom<Uint8Array>((v) => v instanceof Uint8Array).optional(),
+      /**
+       * Bytes written to the command's stdin, then closed: a buffer written at
+       * once, or a stream written as it yields — for a command that is talked
+       * to while it runs — with the pipe's backpressure, and closed when the
+       * stream ends. `maxStdinBytes` bounds either.
+       */
+      stdin: z
+        .union([
+          z.custom<Uint8Array>((v) => v instanceof Uint8Array),
+          z.custom<ReadableStream<Uint8Array>>((v) => v instanceof ReadableStream),
+        ])
+        .optional(),
       maxStdinBytes: z
         .number()
         .int()
@@ -161,7 +172,7 @@ export const NativeCommandOptionsSchema = z
         input: ctx.value,
         message: 'Capture requires a finite combined output budget',
       });
-    if (input.stdin && input.stdin.byteLength > input.maxStdinBytes)
+    if (input.stdin instanceof Uint8Array && input.stdin.byteLength > input.maxStdinBytes)
       ctx.issues.push({
         code: 'custom',
         input: ctx.value,
@@ -231,7 +242,7 @@ const NativeCommandResultSchema = z.object({
  */
 export type NativeCommandResult = z.infer<typeof NativeCommandResultSchema>;
 
-const NativeCommandLimitReasonSchema = z.enum(['deadline', 'output-budget']);
+const NativeCommandLimitReasonSchema = z.enum(['deadline', 'output-budget', 'stdin-budget']);
 
 /**
  * Thrown by `runNativeCommand`; `code` is `COMMAND_LIMIT` (see `reason`),

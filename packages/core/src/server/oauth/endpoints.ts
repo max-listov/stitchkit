@@ -4,7 +4,7 @@
  * client id is resolved, and how a response goes back to the client.
  */
 import { randomUUID } from 'node:crypto';
-import { concatChunks, readBoundedChunks } from '../../internal/bounded-body';
+import { readBoundedText } from '../../internal/bounded-body';
 import { isRecord } from '../../internal/typed';
 import { DEFAULT_CORS_ALLOW_HEADERS } from '../middleware/cors';
 import { verifyPkce } from '../middleware/pkce';
@@ -103,13 +103,11 @@ async function readBodyText(
   req: Request,
   config: OAuthProviderConfig,
 ): Promise<string | undefined> {
-  const result = await readBoundedChunks(req.body, {
+  const result = await readBoundedText(req, {
     maxBytes: config.maxRequestBodyBytes ?? DEFAULT_OAUTH_BODY_BYTES,
     signal: req.signal,
   });
-  return result.kind === 'over-limit'
-    ? undefined
-    : new TextDecoder().decode(concatChunks(result.chunks, result.total));
+  return result.kind === 'over-limit' ? undefined : result.text;
 }
 
 function parseJson(text: string): unknown {

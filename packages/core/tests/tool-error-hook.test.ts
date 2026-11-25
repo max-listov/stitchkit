@@ -436,7 +436,7 @@ describe('onToolError — reaches the real mounts', () => {
           }),
         },
       },
-      { hooks },
+      { access: { open: 'local-operator' }, hooks },
     );
 
     const execute = tools.update_widget?.execute;

@@ -6,11 +6,7 @@ import {
 } from '../internal/bounded-lines';
 import type { StreamByteSource } from '../internal/stream-chunks';
 
-export {
-  DEFAULT_STREAM_LINE_BYTES,
-  StreamLineLimitError,
-  StreamTruncatedLineError,
-} from '../internal/bounded-lines';
+export { StreamLineLimitError, StreamTruncatedLineError } from '../internal/bounded-lines';
 export type { StreamByteSource } from '../internal/stream-chunks';
 
 /** Options for `parseNDJSON` and `createNDJSONDecoder`. */

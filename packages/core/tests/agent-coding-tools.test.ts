@@ -63,6 +63,7 @@ describe('host-authorized Agent coding tools', () => {
       ),
     );
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -88,6 +89,7 @@ describe('host-authorized Agent coding tools', () => {
     await writeFile(path.join(root, 'ascii.txt'), 'abcde');
     await writeFile(path.join(root, 'invalid.txt'), Buffer.from([255, 255]));
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
     });
     const options = { toolCallId: 'contracts', messages: [], context: undefined };
@@ -120,6 +122,7 @@ describe('host-authorized Agent coding tools', () => {
     roots.push(root);
     const authorizations: AgentCodingToolAuthorization[] = [];
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: (request) => {
@@ -195,6 +198,7 @@ describe('host-authorized Agent coding tools', () => {
     const authorizations: AgentCodingToolAuthorization[] = [];
     await writeFile(path.join(root, 'source.txt'), 'x x');
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: (request) => {
@@ -254,7 +258,10 @@ describe('host-authorized Agent coding tools', () => {
     expect(inputSchema).toContain('`**/`');
     expect(outputSchema).toContain('admitted by include and host authorization');
 
-    const tools = mountAgent([], { runtimeTools: definitions });
+    const tools = mountAgent([], {
+      access: { open: 'local-operator' },
+      runtimeTools: definitions,
+    });
     const options = { toolCallId: 'include-coverage', messages: [], context: undefined };
     for (const mode of ['content', 'path']) {
       const query = mode === 'content' ? 'needle' : 'match.ts';
@@ -286,6 +293,7 @@ describe('host-authorized Agent coding tools', () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-empty-'));
     roots.push(root);
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
     });
     const options = { toolCallId: 'include-empty', messages: [], context: undefined };
@@ -302,6 +310,7 @@ describe('host-authorized Agent coding tools', () => {
     roots.push(guarded);
     await writeFile(path.join(guarded, 'secret.ts'), 'export const needle = true;\n');
     const refusing = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root: guarded,
         authorize: () => true,
@@ -321,6 +330,7 @@ describe('host-authorized Agent coding tools', () => {
     roots.push(root);
     await writeFile(path.join(root, 'source.txt'), 'alpha\nbeta\n');
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
     });
     const options = { toolCallId: 'patch', messages: [], context: undefined };
@@ -386,6 +396,7 @@ describe('host-authorized Agent coding tools', () => {
     await symlink('/usr/bin/printf', path.join(root, 'node_modules', '.bin', 'printf'));
     await symlink('/etc/passwd', path.join(root, 'outside-link'));
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
     });
 
@@ -431,6 +442,7 @@ describe('host-authorized Agent coding tools', () => {
 
     const asked: string[] = [];
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -529,6 +541,7 @@ describe('host-authorized Agent coding tools', () => {
 
     const asked: string[] = [];
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -560,6 +573,7 @@ describe('host-authorized Agent coding tools', () => {
     await mkdir(path.join(root, 'work'));
 
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -596,6 +610,7 @@ describe('host-authorized Agent coding tools', () => {
 
     const admitted: string[] = [];
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -693,6 +708,7 @@ describe('host-authorized Agent coding tools', () => {
     await writeFile(path.join(root, 'source.txt'), 'base');
     const authorizations: AgentCodingToolAuthorization[] = [];
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: (request) => {
@@ -770,6 +786,7 @@ describe('host-authorized Agent coding tools', () => {
         const entered = Promise.withResolvers<void>();
         const release = Promise.withResolvers<void>();
         const tools = mountAgent([], {
+          access: { open: 'local-operator' },
           runtimeTools: createAgentCodingTools({
             root,
             authorize: async () => {
@@ -841,6 +858,7 @@ describe('host-authorized Agent coding tools', () => {
       await writeFile(path.join(nested, 'inside.txt'), 'inside-only');
       await writeFile(path.join(outside, 'outside.txt'), 'outside-secret');
       const tools = mountAgent([], {
+        access: { open: 'local-operator' },
         runtimeTools: createAgentCodingTools({
           root,
           authorize: async (request) => {
@@ -865,13 +883,16 @@ describe('host-authorized Agent coding tools', () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-artifact-'));
     roots.push(root);
     const artifacts = new Map<string, Uint8Array>();
+    const spilledBy: (string | undefined)[] = [];
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
         executables: { printf: '/usr/bin/printf' },
         artifacts: {
-          write: ({ data }) => {
+          write: ({ data, toolCallId }) => {
+            spilledBy.push(toolCallId);
             artifacts.set('artifact-1', data);
             return { reference: 'artifact-1' };
           },
@@ -898,6 +919,8 @@ describe('host-authorized Agent coding tools', () => {
       artifact: { reference: 'artifact-1', truncated: false },
     });
     expect(artifacts.get('artifact-1')?.byteLength).toBeLessThanOrEqual(128);
+    // The spill records the call whose output it holds, not one fixed on the store.
+    expect(spilledBy).toEqual(['artifact']);
     expect(
       await executable(tools, 'read_output')(
         { reference: 'artifact-1', offset: 0, maxBytes: 64 },
@@ -930,10 +953,12 @@ describe('host-authorized Agent coding tools', () => {
     });
     const tools = mountAgent([], {
       runtimeTools: definitions,
-      lifecycle: {
-        beforeHandle: (_context, operation) => {
-          if (!operation.toolName) throw new Error('expected direct coding tool identity');
-          lifecycle.push(operation.toolName);
+      access: {
+        gate: {
+          beforeHandle: (_context, operation) => {
+            if (!operation.toolName) throw new Error('expected direct coding tool identity');
+            lifecycle.push(operation.toolName);
+          },
         },
       },
     });
@@ -1000,6 +1025,7 @@ describe('host-authorized Agent coding tools', () => {
     await writeFile(path.join(outside, 'secret.txt'), 'outside');
     await symlink(path.join(outside, 'secret.txt'), path.join(root, 'escape.txt'));
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: (request) => request.operation === 'read',
@@ -1031,6 +1057,7 @@ describe('host-authorized Agent coding tools', () => {
     roots.push(root);
     const shellTools = (shellTimeoutMs: number) =>
       mountAgent([], {
+        access: { open: 'local-operator' },
         runtimeTools: createAgentCodingTools({
           root,
           authorize: () => true,
@@ -1075,6 +1102,7 @@ describe('host-authorized Agent coding tools', () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-shell-utf8-'));
     roots.push(root);
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -1098,6 +1126,7 @@ describe('host-authorized Agent coding tools', () => {
     roots.push(root);
     const marker = path.join(root, 'spawned.txt');
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -1119,6 +1148,7 @@ describe('host-authorized Agent coding tools', () => {
     expect(existsSync(marker)).toBeFalse();
 
     const brokenTools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -1155,9 +1185,11 @@ describe('host-authorized Agent coding tools', () => {
     });
 
     test('kills owned descendants and bounds retained pipes on exit, timeout, abort and output limit', async () => {
+      const GRACE_MS = 250;
       const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-process-group-'));
       roots.push(root);
       const tools = mountAgent([], {
+        access: { open: 'local-operator' },
         runtimeTools: createAgentCodingTools({
           root,
           authorize: () => true,
@@ -1167,7 +1199,10 @@ describe('host-authorized Agent coding tools', () => {
             // The descendant must become ready before the execution deadline;
             // process launch scheduling is part of that deadline's budget.
             shellTimeoutMs: 1_000,
-            shellTerminationGraceMs: 80,
+            // The product's own grace. 80 ms held on an idle machine and failed one run in
+            // fifteen to sixty under load (`bun run load-lane`); the bound this test proves is
+            // the one a host gets, not a tighter one.
+            shellTerminationGraceMs: GRACE_MS,
           },
         }),
       });
@@ -1213,7 +1248,7 @@ describe('host-authorized Agent coding tools', () => {
       const abortStartedAt = performance.now();
       controller.abort();
       const cancelledResult = ShellOutputSchema.parse(await cancelled);
-      expect(performance.now() - abortStartedAt).toBeLessThan(500);
+      expect(performance.now() - abortStartedAt).toBeLessThan(GRACE_MS + 420);
       expect(cancelledResult).toMatchObject({ executable: 'bash', outcome: 'cancelled' });
       await expectProcessGone(cancelledPid);
 
@@ -1228,12 +1263,13 @@ describe('host-authorized Agent coding tools', () => {
           options,
         ),
       );
-      expect(performance.now() - exitedAt).toBeLessThan(500);
+      expect(performance.now() - exitedAt).toBeLessThan(GRACE_MS + 420);
       expect(exited).toMatchObject({ executable: 'bash', outcome: 'exited', exitCode: 0 });
       const exitedPid = await waitForDescendant(exitMarker);
       await expectProcessGone(exitedPid);
 
       const limitedTools = mountAgent([], {
+        access: { open: 'local-operator' },
         runtimeTools: createAgentCodingTools({
           root,
           authorize: () => true,
@@ -1241,7 +1277,7 @@ describe('host-authorized Agent coding tools', () => {
           limits: {
             maxShellOutputBytes: 4,
             shellTimeoutMs: 2_000,
-            shellTerminationGraceMs: 80,
+            shellTerminationGraceMs: GRACE_MS,
           },
         }),
       });
@@ -1261,16 +1297,17 @@ describe('host-authorized Agent coding tools', () => {
           options,
         ),
       );
-      expect(performance.now() - limitedAt).toBeLessThan(500);
+      expect(performance.now() - limitedAt).toBeLessThan(GRACE_MS + 420);
       expect(limited).toMatchObject({ executable: 'bash', outcome: 'output-limit' });
       await expectProcessGone(await waitForDescendant(limitedMarker));
-    });
+    }, 15_000);
   }
 
   test('rejects shell arguments whose aggregate encoding exceeds its byte budget', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-coding-args-'));
     roots.push(root);
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -1297,6 +1334,7 @@ describe('host-authorized Agent coding tools', () => {
     const content = '€'.repeat(6);
     await writeFile(path.join(root, 'euro.txt'), content);
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
     });
     const options = { toolCallId: 'utf8', messages: [], context: undefined };
@@ -1335,6 +1373,7 @@ describe('host-authorized Agent coding tools', () => {
     const content = '€€€';
     await writeFile(path.join(root, 'euro.txt'), content);
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
     });
     const options = { toolCallId: 'utf8-start', messages: [], context: undefined };
@@ -1359,6 +1398,7 @@ describe('host-authorized Agent coding tools', () => {
     await mkdir(path.join(root, 'private'));
     await writeFile(path.join(root, 'private', 'token.txt'), 'SECRET_MARKER=2\n');
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -1404,6 +1444,7 @@ describe('host-authorized Agent coding tools', () => {
     await writeFile(path.join(root, 'src', 'secret.env'), 'SECRET_MARKER=inner\n');
     await writeFile(path.join(root, 'src', 'allowed.ts'), 'export const allowed = true;\n');
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,

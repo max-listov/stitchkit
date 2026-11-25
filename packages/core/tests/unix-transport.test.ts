@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -8,11 +8,12 @@ import { createClient, createHttpClient } from '../src/entrypoints';
 import { defineContract } from '../src/entrypoints/contract';
 import { createServer, implement } from '../src/entrypoints/server';
 
-// sun_path is ~104-108 bytes — keep socket paths short and unique.
+// sun_path is ~104-108 bytes — keep socket paths short and inside a private 0700 dir.
+const socketRoot = mkdtempSync(join(tmpdir(), 'skt-'));
 let socketCounter = 0;
 function socketPath(): string {
   socketCounter += 1;
-  return join(tmpdir(), `sk-${process.pid}-${socketCounter}.sock`);
+  return join(socketRoot, `${socketCounter}.sock`);
 }
 
 const echo = defineContract(
@@ -51,6 +52,7 @@ const echoService = implement(echo, {
 const cleanups: Array<() => Promise<void> | void> = [];
 afterAll(async () => {
   for (const cleanup of cleanups.reverse()) await cleanup();
+  rmSync(socketRoot, { recursive: true, force: true });
 });
 
 function serveUnix(unix: Parameters<typeof createServer>[0]['unix']) {

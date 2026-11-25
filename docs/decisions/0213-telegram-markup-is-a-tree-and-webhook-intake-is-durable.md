@@ -3,6 +3,7 @@ title: "ADR 0213: Telegram markup is a tree, and webhook intake is durable"
 description: "Telegram HTML is parsed into a tree that can only express what Telegram accepts, in a peer-free browser-safe subpath; a webhook is set only where it is already this process's or by naming its owner; an update is recorded before Telegram is answered and handled from a store after; the operator channel deduplicates; a journal masks the exact secrets the environment names."
 type: decision
 status: accepted
+amendedBy: ["0256"]
 created: 2026-09-29
 updated: 2026-09-29
 ---
@@ -21,7 +22,8 @@ already holds — facts about Telegram's protocols rather than about any product
   and every splitter measured the *markup* against 4096, while Telegram counts
   the text *after* parsing. The Bot API's own rules (Formatting options) are
   what none of the copies held completely: formatting may not appear inside
-  `pre` or `code`, a quotation never inside a quotation, and links, code, quotes,
+  `pre` or `code`, a block quotation may contain styles, links, code, `pre`,
+  custom emoji and times (never another quotation), and links, code, `pre`,
   custom emoji and times never contain each other.
 - **`setWebhook` takes the bot from whoever held it.** A rehearsal started with
   the production token takes the production bot in one call; a start with the

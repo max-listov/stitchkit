@@ -20,6 +20,7 @@ const contract = defineContract(
 const service = implement(contract, { echo: ({ input }) => input });
 
 await createStdioMcpServer({
+  access: { open: 'local-operator' },
   serverInfo: { name: 'packed-bun-stdio', version: '1' },
   auth: {},
   services: [service],

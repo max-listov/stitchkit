@@ -1,5 +1,1054 @@
 # Upgrading stitchkit
 
+## Unreleased migration: 0.127.0
+
+### branch-application-key-modes
+
+**Who must act:** every caller of `branchConversation` from `stitchkit/agent-runtime`
+that passes `applicationKeys`.
+
+Each key becomes one declaration. A name that was data keeps refusing a source
+identity under the default mode; a record of the past that names the source
+conversation, its runs or its messages takes `sourceIdentity: 'retain'`:
+
+```ts
+// before
+store.branchConversation({ …, applicationKeys: ['messageId', 'reference'] })
+
+// after
+store.branchConversation({
+  …,
+  applicationKeys: [
+    { key: 'messageId' },
+    { key: 'reference' },
+    { key: 'runId', sourceIdentity: 'retain' },
+  ],
+})
+```
+
+A key repeated in the list, or a name outside `reference`, `conversationId`,
+`runId`, `messageId`, `callId`, `toolCallId`, `approvalId`, `operationId` and
+`artifactId`, is now refused by the schema: drop the repeat, and drop a name the
+branch never reads. A declared application file reference under a key now
+refuses like any other source identity.
+
+### runtime-tools-take-the-run
+
+**Who must act:** every host that calls `createAgentChildTools`,
+`createAgentScheduleTools`, `createAgentStateTools`, `createAgentEventSearchTools`,
+`createSqliteAgentChildManager`, `createAgentScheduleService` or
+`createSqliteAgentSpillStore` with `toolCallId` from `stitchkit/agent-runtime`.
+
+Create the built-in tools inside `tools()`, from the run context it receives:
+
+```ts
+// before
+const tools = [
+  ...createAgentChildTools(manager),
+  ...createAgentScheduleTools(service),
+  ...createAgentStateTools({ conversationId, state }),
+  ...createAgentEventSearchTools({ conversationId, search, store }),
+]
+createAgentRuntime({ ...config, tools: () => mountAgent([], { runtimeTools: tools }) })
+
+// after
+createAgentRuntime({
+  ...config,
+  tools: (run) =>
+    mountAgent([], {
+      access: { gate: run.toolFenceLifecycle },
+      runtimeTools: [
+        ...createAgentChildTools({ manager, run }),
+        ...createAgentScheduleTools({ service, run }),
+        ...createAgentStateTools({ state, run }),
+        ...createAgentEventSearchTools({ run, search, store }),
+      ],
+    }),
+})
+```
+
+Every tool acts for the conversation of the run that called it. The tools' input
+schemas have no `parentConversationId` or `conversationId`; a model that sends one
+is refused by the schema. A factory refuses a run context that no runtime issued,
+so a tool set built once outside `tools()` and shared between conversations no
+longer exists; build it per run.
+
+Give the child manager and the schedule service their limits and the store's
+companion host, and rename the child manager:
+
+```ts
+// before
+createSqliteAgentChildManager({ sqlite, spawn })
+createAgentScheduleService({ sqlite, dispatch })
+
+// after
+createAgentChildManager({
+  store: sqlite.store,
+  host: sqlite.host,
+  spawn,
+  remainingBudget: (parentConversationId) => ({ usd: budgetLeft(parentConversationId) }),
+  maxActiveChildren: 4,
+})
+createAgentScheduleService({
+  host: sqlite.host,
+  dispatch,
+  maxActivePerConversation: 20,
+  minIntervalMs: 60_000,
+})
+```
+
+`remainingBudget` is what the parent may still give: a child's budget is the
+requested one clamped to it, a dimension the model leaves out takes it, and a
+budget that names no limit or a dimension at `0` refuses the spawn. A child past
+`maxActiveChildren`, a repeat shorter than `minIntervalMs` and a schedule past
+`maxActivePerConversation` refuse with the limit in the message. The tool
+factories take no limits: the manager and the service own them.
+
+Drop `toolCallId` from `createSqliteAgentSpillStore` (now `createAgentSpillStore`): each spill now records the
+call whose output it holds. A hand-written `AgentCodingArtifactStore` may read the
+new `toolCallId` field of `write`.
+
+### companions-take-the-host
+
+**Who must act:** every host that calls `createSqliteAgentProjectionStore`,
+`createSqliteAgentEventSearch`, `createSqliteAgentChildManager` or
+`createSqliteAgentSpillStore`, reads `database` or calls `transaction` on a
+SQLite store handle, or calls `listChildren`, a projection store's `load` /
+`list`, a spill store's `authorization` / `search` or a schedule service's
+`start` without awaiting it.
+
+The companions take the store's companion host, and run on the SQLite and the
+Postgres store alike:
+
+```ts
+// before
+createSqliteAgentProjectionStore({ sqlite })
+createSqliteAgentEventSearch({ database: sqlite.database })
+createSqliteAgentSpillStore({ sqlite, conversationId })
+await sqlite.transaction(async (scope) => {
+  scope.database.prepare(sql).run(...values)
+  await scope.appendEvent(event)
+})
+const children = manager.listChildren(parentConversationId)
+
+// after
+createAgentProjectionStore({ store: sqlite.store, host: sqlite.host })
+createAgentEventSearch({ host: sqlite.host })
+createAgentSpillStore({ host: sqlite.host, conversationId })
+await sqlite.host.transaction(conversationId, async (scope) => {
+  await scope.run(sql, values)
+  await scope.appendEvent(event)
+})
+const children = await manager.listChildren(parentConversationId)
+```
+
+`SqliteAgentChildManagerConfig` is `AgentChildManagerConfig`. A test that
+inspects the SQLite file opens the connection itself and passes it to
+`createSqliteAgentRuntimeStore({ database })`; the store no longer hands its
+connection out. A record id containing NUL (`\0`) is now refused by the schema
+on every store; choose another id.
+
+### child-blocking-unavailable
+
+**Who must act:** every caller of `listChildBlocking` on a child manager from
+`stitchkit/agent-runtime`, every caller of `respondToChildBlocking` or `sendMessage` whose
+child host can take longer than 10 s, and code that spawns one child id twice at once.
+
+`listChildBlocking(parentConversationId)` resolves `{ pending, unavailable }`.
+Read the pending requests from `pending`; `unavailable` lists the live children
+whose host did not say what it has pending — `reason: 'timeout'` when it did not
+answer within the stop bound, `reason: 'failed'` with its `cause` when it threw,
+rejected or reported a malformed request. Their pending set is unknown, not empty:
+ask again, or treat the child as unreachable.
+
+```ts
+// before
+const requests = await children.listChildBlocking(parentId)
+
+// after
+const { pending: requests, unavailable } = await children.listChildBlocking(parentId)
+```
+
+`respondToChildBlocking` and `sendMessage` reject when the child's host does not answer within
+10 s, the bound a stop has; they waited without end. The bound ends the wait, not the host's
+work: a rejected response leaves its request pending, and a rejected message is journaled as
+`message-sent` if the host takes it late. While that answer or message is still with the host,
+a second answer to the request, or another message to the child, is a `TypeError`: answer again
+once the first has settled, or treat the child as unreachable.
+A second `spawnChild` of an id still being spawned is a `TypeError`; await the first spawn.
+
+```ts
+// before
+await children.sendMessage(parentId, childId, text)
+
+// after
+await children.sendMessage(parentId, childId, text).catch(reportUnreachableChild)
+```
+
+### agent-usage-projection-v2
+
+**Who must act:** every caller that reads `agentUsageProjection` from
+`stitchkit/agent-runtime`.
+
+`agentUsageProjection` is bumped to `version: 2` and now folds canonical
+`AgentUsage` records instead of flat numbers that always summed to zero. Read
+token counts and cost through `value.usage` and check `provenance`:
+
+```ts
+// before
+const { inputTokens, outputTokens, cost } = projected.value
+
+// after
+const { records, usage } = projected.value
+const inputTokens = usage.inputTokens.value
+const outputTokens = usage.outputTokens.value
+const costUsd = usage.cost?.provenance === 'unavailable' ? undefined : usage.cost?.value
+```
+
+Existing `version: 1` rows stored in SQLite are ignored on `load()` and
+automatically re-folded from sequence 1 on the next `advance()`.
+
+`usage.cost` is `unavailable` when a provider answered without a price. A run that
+ended without an answer, measured nothing and holds no provider output is not counted
+in `records` and does not make the cost of other runs `unavailable`.
+
+### session-credentials-refresh-ahead
+
+**Who must act:** every project calling `createSessionCredentials` from `stitchkit`.
+
+1. Add `read(): Promise<{ session: TSession; credentials: TCredentials } | null>` to the `storage` object passed to `createSessionCredentials`. Return `null` when no session is stored and throw when the store cannot be read (such as a locked keychain); `restore()` reports `'unreadable'` without calling `storage.clear()` or `scope.clear()`.
+2. Update any caller or test expecting `refresh(operation)` to reject on a storage write failure or `storageTimeoutMs`: once the server has rotated credentials, `refresh()` resolves with the new credentials, emits `{ type: 'storage-failed', ... }` through `onEvent`, retries persistence every `storageRetryMs` and blocks further rotations until flushed. `login()` and `logout()` still reject on storage errors.
+
+### portable-handler-and-runtime-floor
+
+**Who must act:** every server reading `RequestContext.startedAt` from
+`stitchkit/observability` or running on Node `< 22.3.0` / Bun `< 1.4.0`.
+
+1. Upgrade Node.js to `>= 22.3.0` or Bun to `>= 1.4.0` so
+   `process.getBuiltinModule('async_hooks')` is available.
+2. Replace nanosecond `bigint` arithmetic on `RequestContext.startedAt` with
+   millisecond `number` arithmetic against `performance.now()`:
+
+```ts
+// before
+const durationMs = Number(process.hrtime.bigint() - ctx.startedAt) / 1_000_000
+
+// after
+const durationMs = performance.now() - ctx.startedAt
+```
+
+### step-spend-and-child-budget-policy
+
+**Who must act:** applications passing `cost` to `agentChildBudgetStopPolicy(...)` or
+reading `event.response` unconditionally on `AgentStepFinishedEvent` from
+`stitchkit/agent-runtime`.
+
+1. Remove the `cost` callback from `agentChildBudgetStopPolicy({ manager, childConversationId })`.
+   Provide per-step usage/cost normalization once on the model provider's `normalizeUsage` hook
+   (for example via `openRouterProvider` or a custom `AgentLanguageModelProvider`), which now feeds
+   `onStepSpend`, `observe`, run totals and child USD budgets together.
+2. Branch on `event.phase` in `step-finished` observability events. `'step'` and
+   `'abandoned-attempt'` always carry `modelId`, `provider` and `response`; `'compaction'` is billed
+   spend without a provider answer and carries none of them, with the number of the step it
+   prepared. A consumer that counted model steps by `step-finished` counts `phase === 'step'`.
+   `AgentStepSpend`, the fact `onStepSpend` receives, is a union on the same `phase`: read `model`,
+   `provider` and `response` after narrowing it.
+
+```ts
+// before
+observe.write = (event) => {
+  if (event.type === 'step-finished') record(event.step, event.response.id)
+}
+
+// after
+observe.write = (event) => {
+  if (event.type === 'step-finished' && event.phase === 'step') record(event.step, event.response?.id)
+}
+```
+
+### cli-broken-boolean-boundary
+
+**Who must act:** scripts or tests that place a bare boolean framework flag before a
+stripped command name or application option followed by a positional `true` or `false`
+(e.g. `app --dry-run inspect false` or `app inspect --dry-run --profile demo false`).
+
+Pass either an explicit inline value or `--` before the positional:
+
+```sh
+# before (silently rewrote the boundary)
+app --dry-run inspect false
+app inspect --dry-run --profile demo false
+
+# after
+app --dry-run=true inspect false
+app inspect --dry-run --profile demo -- false
+```
+
+Adjacent `app inspect --dry-run false` continues to set `dryRun = false` and execute
+the command.
+
+An entry point that parses argv itself reads the same refusal from the projection it calls:
+
+```ts
+// extractCliGlobalOptions: `globals` is always readable; reading `argv` throws
+// CliArgumentError when a lifted global stood between a bare framework boolean
+// and true/false. Other boundaries it lifted travel in `separatedBefore`.
+try {
+  const lifted = extractCliGlobalOptions(argv, GlobalsSchema)
+  // routeCliArgv: the refusal is in `error`, and `commandArgv` is empty.
+  const route = routeCliArgv(lifted.argv, {
+    defaultCommand: 'help',
+    separatedBefore: lifted.separatedBefore,
+  })
+  if (route.error !== undefined) return refuse(route.error) // exit 2
+  if (route.command === undefined || route.topLevelHelp) return showHelp()
+  const parsed = parseCliArgs(route.commandArgv, inputFor(route.command), {
+    separatedBefore: route.separatedBefore,
+  })
+  return run(route.command, parsed)
+} catch (error) {
+  if (!(error instanceof CliArgumentError)) throw error
+  return refuse(error.message) // exit 2
+}
+```
+
+An entry point that only needs the globals and then hands the whole argv to `createCli` with
+`globalOptions` reads `lifted.globals` and passes `argv`, not `lifted.argv`: `createCli` reports the
+refusal and exits `2` itself.
+
+### cli-pre-call-view-columns
+
+**Who must act:** CLI callers and tests invoking `--table`, `--sort`, `--sum`,
+`--count-by`, or `--top --by` with an unknown column name against a command whose
+output schema defines an unambiguous object collection (including empty results).
+
+Fix the column name (the error lists `available: ...`). Commands with an unambiguous
+output collection now fail with exit code `2` before calling the handler, including when
+the collection would have been empty (previously exit code `0`).
+
+### cli-native-views
+
+**Who must act:** callers passing `--table`, `--sort`, `--sum`, `--count-by`, or `--top`
+to native `defineCliCommand` commands.
+
+Native commands with an `output` schema now apply the requested view; native commands
+without an `output` schema now refuse view flags with exit code `2` instead of silently
+ignoring them. Declare an `output` schema on the command or drop the view flag.
+
+### cli-unix-delivery-exit-codes
+
+**Who must act:** scripts that branch on the exit code of a `stitchkit/cli` command that calls
+its application through `createUnixClientTransport`.
+
+Such a command exited `1` for every transport failure. It now exits `9` when the request never
+left (the application is not listening, or the socket was refused), `10` when it may have reached
+the application before the connection dropped, and `1` when an answer came back
+([ADR 0325](../decisions/0325-a-local-cli-exit-code-says-whether-the-request-left.md)). Branch on
+the new codes, or keep `1`:
+
+```ts
+createCli({
+  …,
+  exitCodes: { UNIX_CONNECT_FAILED: 1, UNIX_TARGET_REFUSED: 1, UNIX_DELIVERY_UNCERTAIN: 1 },
+})
+```
+
+### cli-invoker-global-errors
+
+**Who must act:** callers of `createCliInvoker` from `stitchkit/cli` that catch `ZodError`
+on invalid global options or pre-parse JSON strings for structured global options.
+
+Catch `CliArgumentError` instead of `ZodError` when validating global options through
+`createCliInvoker`. JSON-encoded strings for structured global options now parse using
+the same coercer as `createCli`.
+
+### cli-public-projections
+
+**Who must act:** entry points from `stitchkit/cli` that call `routeCliArgv` with a default
+command, that rely on `parseCliArgs` leaving `--flag=<not a boolean>` to Zod, that branch on
+exit code `1` for an unknown command, or that pass `createCliInvoker` native commands
+`createCli` refuses.
+
+1. Pass the default command by name. Search `routeCliArgv(` with a second argument:
+
+   ```ts
+   // before
+   routeCliArgv(argv, 'help')
+   // after
+   routeCliArgv(argv, { defaultCommand: 'help' })
+   ```
+
+2. Carry lifted boundaries through the route instead of shifting indices by hand:
+
+   ```ts
+   const lifted = extractCliGlobalOptions(argv, Globals)
+   const route = routeCliArgv(lifted.argv, { separatedBefore: lifted.separatedBefore })
+   parseCliArgs(route.commandArgv, schema, { separatedBefore: route.separatedBefore })
+   ```
+
+3. `parseCliArgs(['--verbose=maybe'], schema)` throws `CliArgumentError` for a pure boolean field;
+   catch it where `createCli`'s exit `2` is expected. A field that is a union of boolean and string
+   still takes the word.
+
+4. An unknown command exits `4` (`UNKNOWN_OPERATION`) from `createCli`, as from `createCliInvoker`.
+   Keep `1` with `exitCodes: { UNKNOWN_OPERATION: 1 }`.
+
+5. `extractCliGlobalOptions(['--profile', 'a', '--', 'inspect'], Globals).argv` is now
+   `['--', 'inspect']`; `routeCliArgv` refuses it with `A command is required before "--"`.
+
+6. `createCliInvoker` throws when it is created for a native command `createCli` would refuse: a
+   name declared twice or shared with a managed command, `commandSettings` aliases or positionals
+   naming a field the command does not have, an alias of the passthrough field. Fix the
+   declaration the error names. `invoker.commands` no longer lists a managed command with an
+   `unavailableReason`; it was never invocable.
+
+### cli-option-before-command
+
+**Who must act:** a script that writes a command option before the command name on a
+`stitchkit/cli` CLI without a default command, or a CLI that declares a command named in
+option syntax.
+
+1. Move the option after the command name; framework options (`--json`, `--quiet`, …) may
+   stay before it:
+
+   ```sh
+   # before
+   myapp --verbose inspect
+   # after
+   myapp inspect --verbose
+   ```
+
+2. Rename a command whose name starts with `-` (`--custom` → `custom`).
+3. A script that branched on exit `4` for such a line reads exit `2`.
+
+### connections-top-level-union
+
+**Who must act:** callers of discovered MCP or OpenAPI tools whose top-level input schema
+uses `oneOf` or `anyOf`.
+
+Top-level `oneOf`/`anyOf` object schemas are now merged (together with any root
+`properties`/`required`) and validated locally instead of accepting arbitrary objects.
+Pass fields matching one of the declared object branches; non-object top-level branches
+are skipped with an explicit reason in `onSkippedTool`. A root object schema with `allOf`,
+`minProperties`, `maxProperties`, `propertyNames` or `patternProperties` keeps those
+constraints: an argument that breaks one is refused before the call leaves, and a root that is
+not one object is refused at discovery. Pass arguments the server's schema allows.
+
+### connections-unknown-schema-keywords
+
+**Who must act:** every host that mounts discovered MCP or OpenAPI tools
+(`mountConnections`, `defineMcpClientConnection`, `defineOpenApiConnection`) from servers whose
+input or output schemas carry keywords outside JSON Schema draft-07, draft 2020-12 and the
+OpenAPI 3.0 Schema Object.
+
+Such a tool is no longer mounted. Vendor annotations — `enumNames`, `markdownDescription`,
+`propertyOrdering` — count, as do `$anchor`, `$dynamicRef` and `$dynamicAnchor`; `x-*` extensions
+do not. `onSkippedTool` names each skipped tool with the keyword that refused it; without it the
+same line goes to stderr.
+
+```ts
+await mountConnections(connections, {
+  onSkippedTool: (skipped) => logger.warn('connection tool skipped', skipped),
+})
+```
+
+Where the server is yours, write the annotation as an `x-*` extension (`x-enumNames`) or drop it.
+Where it is not, the tool stays out until its author does; nothing on the consuming side turns the
+check off.
+
+### unix-socket-ownership-checks
+
+**Who must act:** every `createServer({ unix })` whose socket stands in a directory other users
+can write (`/tmp`), and every `createUnixClientTransport` that dials a socket or a directory owned
+by another user — a system daemon under `/run`, another service account's socket.
+
+The server refuses to bind and the client refuses to connect (`UNIX_TARGET_REFUSED`,
+`delivery: 'not-dispatched'`) unless the directory is a real directory owned by the calling user
+with no group or world write, and — for the client — the socket has the same owner. Put the socket
+in a directory that user owns:
+
+```ts
+// before
+createServer({ unix: '/tmp/app.sock', services })
+
+// after — $XDG_RUNTIME_DIR, or a directory the service creates with mode 0700
+createServer({ unix: join(runtimeDir, 'app.sock'), services })
+```
+
+A client that has to reach a socket owned by another user cannot use `createUnixClientTransport`:
+the check has no switch. A path longer than 103 UTF-8 bytes is refused on every platform.
+
+An exhaustive `switch` or `satisfies Record<UnixClientTransportErrorCode, …>` map adds the new code:
+
+```ts
+// before
+const hint = { …, UNIX_CONNECT_FAILED: 'start the server' } satisfies Record<UnixClientTransportErrorCode, string>;
+
+// after
+const hint = {
+  …,
+  UNIX_CONNECT_FAILED: 'start the server',
+  UNIX_TARGET_REFUSED: 'move the socket into a directory you own',
+} satisfies Record<UnixClientTransportErrorCode, string>;
+```
+
+### application-schemas-and-renames
+
+**Who must act:** projects importing from `stitchkit/application/schemas`, calling
+`notificationOutboxStateSchema` from `stitchkit/application`, or calling
+`postgresTelegramUpdateStoreSchema` from `stitchkit/telegram`.
+
+1. Replace `stitchkit/application/schemas` imports with `stitchkit/application`
+   (already browser-clean since ADR 0157):
+
+```ts
+// before
+import { ApplicationSnapshotSchema } from 'stitchkit/application/schemas'
+
+// after
+import { ApplicationSnapshotSchema } from 'stitchkit/application'
+```
+
+2. Rename the two schema/DDL factories:
+   - `notificationOutboxStateSchema` → `createNotificationOutboxStateSchema`
+   - `postgresTelegramUpdateStoreSchema` → `postgresTelegramUpdateStoreDdl`
+
+### agent-sandbox-probes-relocated
+
+**Who must act:** projects importing process-sandbox probe helpers or schemas from
+`stitchkit/agent-runtime`.
+
+Import `AgentSandboxGradeSchema`, `AgentSandboxGrade`, `AgentSandboxRestrictionSchema`,
+`AgentSandboxRestriction`, `probeAgentProcessSandbox`, `missingSandboxRestrictions`,
+and `recordAgentSandboxProbe` from `stitchkit/agent-runtime/sandbox`:
+
+```ts
+// before
+import { probeAgentProcessSandbox } from 'stitchkit/agent-runtime'
+
+// after
+import { probeAgentProcessSandbox } from 'stitchkit/agent-runtime/sandbox'
+```
+
+### remove-app-error-helper
+
+**Who must act:** every project calling `appError(...)` from `stitchkit`,
+`stitchkit/contract`, `stitchkit/server`, or `stitchkit/node`, or
+relying on `new AppError(code)` defaulting to HTTP `500` for codes listed in
+`STITCH_ERROR_STATUS`.
+
+`new AppError(code, options?)` now derives its default `status` from
+`STITCH_ERROR_STATUS[code]` (falling back to `500` for custom codes; an explicit
+`status` still wins), and the redundant `appError(...)` helper is removed.
+
+```ts
+// before
+appError('CONFLICT', 'Already exists', { id })
+
+// after
+throw new AppError('CONFLICT', { message: 'Already exists', details: { id } })
+```
+
+`appError` returned `never`, so it also stood where an expression is expected, and `throw` is a
+statement. Each position has its own rewrite:
+
+```ts
+// a statement, or a returned call: throw instead
+appError('CONFLICT', 'Already exists')
+return appError('CONFLICT', 'Already exists')
+// →
+throw new AppError('CONFLICT', { message: 'Already exists' })
+
+// an arrow body: give it a block
+const refuse = () => appError('FORBIDDEN', 'Not yours')
+// →
+const refuse = () => {
+  throw new AppError('FORBIDDEN', { message: 'Not yours' })
+}
+
+// the right side of ??, ||, or a ternary branch: test first, then use the value
+const user = found ?? appError('NOT_FOUND', 'No such user')
+// →
+if (found === undefined || found === null) {
+  throw new AppError('NOT_FOUND', { message: 'No such user' })
+}
+const user = found
+```
+
+A mechanical starting point for calls that are statements (`^\s*` anchors the match to the start
+of a line, so an expression position is left for the rewrites above; a message that itself holds a
+comma or a parenthesis needs a hand edit; review custom domain codes and consider `defineErrors`):
+
+```text
+Regex (1 arg):  ^(\s*)(?:return\s+)?appError\(\s*([^,()]+)\s*\)
+Replace:        $1throw new AppError($2)
+Regex (2 args): ^(\s*)(?:return\s+)?appError\(\s*([^,()]+)\s*,\s*([^,()]+)\s*\)
+Replace:        $1throw new AppError($2, { message: $3 })
+Regex (3 args): ^(\s*)(?:return\s+)?appError\(\s*([^,()]+)\s*,\s*([^,()]+)\s*,\s*([^()]+)\)
+Replace:        $1throw new AppError($2, { message: $3, details: $4 })
+```
+
+### store-driver-contract-step-1
+
+**Who must act:** authors of custom `AgentRuntimeStore` drivers and callers of
+`runAgentStoreConformance` from `stitchkit/agent-runtime/testing`.
+
+1. Implement required `history.hasMessage(tx, { conversationId, messageId })` and
+   `events.find(tx, { conversationId, eventId })` on your driver (backed by a unique
+   index on `(conversation_id, event_id)`). Fallback scans have been removed.
+2. Pass required `capabilities: { branch, planBranch }` and
+   `commitConflict: { arm() } | { impossible: 'single-writer' }` to
+   `runAgentStoreConformance` (replacing optional `armCommitConflict`).
+
+### durable-tool-status
+
+**Who must act:** code that reads `tool-status` events from `stitchkit/agent-runtime`
+or `stitchkit/agent-runtime/browser` (a custom view reducer, a cursor of its own).
+
+A `tool-status` event now carries `eventId` and `snapshotVersion`, like
+`assistant-checkpoint`, and no longer `runtimeEpoch` or `sequence`. Treat it as
+durable: deduplicate by `eventId`, and after a reconnect read the call's status from
+the snapshot's assistant message parts. The built-in controller and
+`advanceAgentRuntimeEventCursor` already do.
+
+### store-driver-contract-step-2
+
+**Who must act:** callers of `runAgentStoreConformance` from
+`stitchkit/agent-runtime/testing`, and code that catches the refusals of
+`importConversation`, `branchConversation` or `planConversationBranch`.
+
+1. Declare the two driver members in `capabilities`: `archive` (the driver has
+   `archive.export` and `archive.import`) and `historyRestore` (it has
+   `history.restore`). Read the answer from `store.capabilities` when unsure; the
+   kit fails when the declaration and the store disagree.
+2. A store without one of them now refuses an archive or a branch source that
+   needs it with `AgentStoreUnsupportedCapabilityError` (still a `TypeError`;
+   `.capability` is `'archive'` or `'historyRestore'`) instead of dropping spills
+   and companion projections or reviving compacted history. Implement the member,
+   or keep such archives away from that store.
+
+### async-list-schedules
+
+**Who must act:** implementations and callers of `AgentScheduleService.listSchedules`
+from `stitchkit/agent-runtime`.
+
+`listSchedules(conversationId)` now returns `Promise<readonly AgentSchedule[]>`. Mark
+custom implementations `async` and `await` every call site.
+
+### tool-expose-rename
+
+**Who must act:** definitions of runtime tools (`defineRuntimeTool`), native tools
+(`defineDownloadTool`, `defineUploadTool`, `defineWaitTool`, `defineViewFileTool`),
+client connections (`defineMcpClientConnection`, `defineOpenApiConnection`), async
+operation capability maps, and readers of `ToolNameEntry.transports`.
+
+Rename `transports` to `expose`. Passing the old `transports` key now throws a
+`TypeError` at definition/mount time. (`SocketIOServerConfig.transports`,
+`SurfaceProbe.transports` and `summarizeTransports` are unrelated and unchanged.)
+
+```ts
+// before
+defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] })
+const names = listToolNames(surface).filter((entry) => entry.transports.includes('MCP'))
+
+// after
+defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] })
+const names = listToolNames(surface).filter((entry) => entry.expose.includes('MCP'))
+```
+
+### cli-command-settings
+
+**Who must act:** every `createCli` and `createCliInvoker` caller passing top-level
+`optionAliases`, `positionals`, `results`, `passthrough`, or `wait`, and code typed against
+`CliPresentationPolicyConfig`, which keeps only `commandSettings` for them.
+
+Move per-command settings into the single typed `commandSettings` map (legacy top-level
+keys throw `TypeError` at startup):
+
+```ts
+// before
+createCli({
+  name: 'app',
+  version: '1.0.0',
+  services,
+  optionAliases: { logs: { f: 'follow' } },
+  positionals: { logs: ['target'] },
+  results: { logs: defineCliResult(LogsOutput, { present }) },
+})
+
+// after
+createCli({
+  name: 'app',
+  version: '1.0.0',
+  services,
+  access: { gate: { beforeHandle: authHook } },
+  commandSettings: {
+    logs: {
+      aliases: { f: 'follow' },
+      positionals: ['target'],
+      result: defineCliResult(LogsOutput, { present }),
+    },
+  },
+})
+```
+
+A direct `parseCliArgs` caller renames the same option: `parseCliArgs(argv, schema, { optionAliases })`
+becomes `parseCliArgs(argv, schema, { aliases })`, with the same `Map` of letter to field.
+
+### discovered-mcp-structured-content
+
+**Who must act:** MCP client connections (`stitchkit/tools/connections`) calling remote
+MCP servers that advertise `outputSchema`, and code that maps every `StitchErrorCode`
+(`satisfies Record<StitchErrorCode, …>`, an exhaustive `switch`).
+
+Discovered tools with an object `outputSchema` now validate and return
+`result.structuredContent` across MCP, Agent and CLI mounts (and count `outputSchema`
+bytes toward `maxSchemaBytes`). For such a tool the structured value is the whole answer
+on every transport: any sibling `content` parts (text, images) sent beside it are no
+longer passed through. If an upstream server declares `outputSchema` but omits
+`structuredContent` on a non-error call, the call fails loudly with
+`MCP_STRUCTURED_CONTENT_MISSING` (`502`). The code is in `StitchErrorCode` and
+`STITCH_ERROR_STATUS`; a map over every code adds it:
+
+```ts
+// before
+const kind = { …, INTERNAL_SERVER_ERROR: 'internal' } satisfies Record<StitchErrorCode, string>;
+
+// after
+const kind = {
+  …,
+  INTERNAL_SERVER_ERROR: 'internal',
+  MCP_STRUCTURED_CONTENT_MISSING: 'upstream',
+} satisfies Record<StitchErrorCode, string>;
+```
+
+### mandatory-tool-access
+
+**Who must act:** every caller of `mountAgent`, `mountMcp`, `buildMcpServer`,
+`createMcpHandler`, `createStdioMcpServer`, `createToolInvoker`,
+`createDeferredAgentToolSurface().mount`,
+`createToolkit().{mountMcp,mountAgent,createCli}`, `composeToolLifecycle`, and any
+managed `createCli` / `createCliInvoker` (with `services` or `runtimeTools`).
+
+Replace optional `lifecycle` with mandatory `access` — either `{ gate }` with a
+required `beforeHandle` auth hook, or an explicit `{ open: 'public' | 'local-operator' | 'remote', afterHandle? }`:
+
+```ts
+// before
+createMcpHandler({ serverInfo, auth, services, lifecycle: { beforeHandle: authHook } })
+mountAgent(services, { context })
+const invoker = createToolInvoker(services, { transport: 'AGENT' })
+await invoker.invoke('op', args, { lifecycle: { beforeHandle: authHook } })
+
+// after
+createMcpHandler({ serverInfo, auth, services, access: { gate: { beforeHandle: authHook } } })
+mountAgent(services, { context, access: { gate: { beforeHandle: authHook } } })
+const invoker = createToolInvoker(services, {
+  transport: 'AGENT',
+  access: { gate: { beforeHandle: authHook } },
+})
+await invoker.invoke('op', args)
+```
+
+`composeToolLifecycle(gate, ...rest)` now requires a `ToolGate` first and refuses
+`undefined` at compile time and at runtime. Native-only CLIs (`commands` only, no
+`services` or `runtimeTools`) take no `access`.
+
+### openrouter-extra-body-policy-keys
+
+**Who must act:** callers of `openRouterProvider` (`stitchkit/agent-runtime/openrouter`)
+that pass `provider`, `reasoning`, `session_id` or `usage` inside `settings.extraBody`.
+
+Move those keys into the request policy (`defaultPolicy` or `resolvePolicy`) passed as the
+second argument to `openRouterProvider`, so per-request routing, reasoning and usage
+policies are never silently overwritten by provider-level `extraBody`:
+
+```ts
+// before
+openRouterProvider({
+  apiKey,
+  extraBody: { provider: { order: ['anthropic'] }, usage: { include: true } },
+})
+
+// after
+openRouterProvider(
+  { apiKey },
+  { defaultPolicy: { provider: { order: ['anthropic'] } } },
+)
+```
+
+### native-command-stdin-budget-reason
+
+**Who must act:** callers of `stitchkit/process` that exhaustively switch on
+`NativeCommandError.reason` when `code === 'COMMAND_LIMIT'`.
+
+Streamed `stdin` (`ReadableStream<Uint8Array>`) in both `runNativeCommand` and
+`streamNativeCommand` now enforces `maxStdinBytes` with
+`NativeCommandError('COMMAND_LIMIT', ..., { reason: 'stdin-budget' })` instead of an
+untyped `Error`. Handle the new `'stdin-budget'` member alongside `'deadline'` and
+`'output-budget'`:
+
+```ts
+// before
+switch (error.reason) {
+  case 'deadline':
+  case 'output-budget':
+    break;
+}
+
+// after
+switch (error.reason) {
+  case 'deadline':
+  case 'output-budget':
+  case 'stdin-budget':
+    break;
+}
+```
+
+### telegram-html-link-rules
+
+**Who must act:** every caller of `sanitizeTelegramHtml`, `parseTelegramHtml`,
+`splitTelegramHtml` or `truncateTelegramHtml` from `stitchkit/telegram/html` whose
+links can hold a raw space or tab, or a bare `tg:` / `mailto:`.
+
+An `href` with whitespace or a control character anywhere, or a `tg:` / `mailto:`
+with nothing after the scheme, is no longer a link: its words stay, the `<a>`
+goes. Encode the space before the markup reaches the parser.
+
+```ts
+// before
+sanitizeTelegramHtml('<a href="https://x.test/a b">docs</a>') // <a href="https://x.test/a b">docs</a>
+// after
+sanitizeTelegramHtml('<a href="https://x.test/a b">docs</a>') // docs
+sanitizeTelegramHtml('<a href="https://x.test/a%20b">docs</a>') // <a href="https://x.test/a%20b">docs</a>
+```
+
+### telegram-html-split-atom
+
+**Who must act:** every caller of `splitTelegramHtml` from `stitchkit/telegram/html` whose markup
+can hold a custom emoji (`<tg-emoji>`) or a `<tg-time>` with more visible characters than `limit`.
+
+Such an atom cannot be cut. `splitTelegramHtml` returned it as a part over the limit, followed by an
+empty part — both refused by Telegram; it now throws `RangeError`. Pass a `limit` the longest atom
+fits in, or catch the `RangeError` where the markup comes from outside. `truncateTelegramHtml` is
+unchanged: it cuts before the atom.
+
+An atom whose text begins with a space or a line break was dropped with the break a cut was made at,
+leaving an empty part. The cut now goes before it, so the atom is sent, and no part is empty: code
+that skipped empty parts of `splitTelegramHtml` before sending can drop that filter.
+
+```ts
+// before
+splitTelegramHtml('ab <tg-emoji emoji-id="1">abcdefghij</tg-emoji> cd', { limit: 5 })
+// ['ab', '<tg-emoji emoji-id="1">abcdefghij</tg-emoji>', '', 'cd']
+// after: RangeError — a custom emoji or a time is longer than the limit
+```
+
+### operator-channel-flood-wait
+
+**Who must act:** a reader of `TelegramOperatorDrop.reason` from `stitchkit/telegram` with an
+exhaustive `switch`, or a bot that must wait out a long flood wait on its operator chat.
+
+1. Add a `'flood-wait'` case where drops are switched on:
+
+   ```ts
+   // before
+   case 'over-budget':
+   // after
+   case 'over-budget':
+   case 'flood-wait':
+   ```
+
+2. To wait longer than a minute, pass `maxRetryAfterMs` (at most 2147483647 ms) to
+   `createTelegramOperatorChannel`.
+
+### timer-options-one-rule
+
+**Who must act:** code that catches the refusal of a timer option by its error class:
+`reconcileTimeoutMs` (`stitchkit/tools`), a connection's `timeoutMs` / `idleTimeoutMs`
+(`stitchkit/tools/connections`), a streaming route's `heartbeatMs` (`stitchkit/server`), an
+observability drain `timeoutMs` (`stitchkit/observability`), `watchdogTimeoutMs` and
+`runSurfaceProbes`' `timeoutMs` (`stitchkit/testing`), a realtime request `timeoutMs` (`stitchkit`),
+`authorizationTimeoutMs` (`stitchkit/agent-runtime/realtime`), `expiresInMs`
+(`stitchkit/telegram/screens`), `maxWaitMs` (`stitchkit/telegram`), `verifyTimeoutMs`
+(`stitchkit/cli`), the `timeoutMs` of `openRouterModelCatalog` and
+`createOpenRouterSpendReconciler` (`stitchkit/agent-runtime/openrouter`), and the timer options of
+`createBoundedAdmission`, the diagnostic journal, `createTelegramBotTransport`,
+`createAgentRuntime`, `createAgentController` and `createAgentRaceBarrier`; `createManagedFileBoundary`'s
+`inspectionTimeoutMs` (`stitchkit/files`), `createUnixClientTransport`'s `headersTimeoutMs`
+(`stitchkit/server`, `stitchkit/node`), the `close()` budgets of `AgentRuntime` and
+`createAgentSessionCoordinator` (`stitchkit/agent-runtime`), `createCacheBridge`'s `freshWindow`
+(`stitchkit/react`), a credit window's `acquire` `timeoutMs` (`stitchkit/application`),
+`createTelegramUpdateIntake`'s `leaseMs` / `sweepEveryMs` (`stitchkit/telegram`); and code that passes an
+HTTP client, endpoint or request `timeout`, `reconnectOnServerDisconnect`, `uploadInChunks`'
+`retryDelayMs`, a `BackoffPolicy` delay (`stitchkit`, `stitchkit/http`, `stitchkit/realtime`), or a wait
+tool `defaultTimeout` / wait `timeoutSec` (`stitchkit/tools`, `stitchkit/cli`) outside the timer range;
+code that catches the plain `Error` of a download or view-file tool `timeoutMs`,
+`createSecureClientMetadataFetcher`, a stream endpoint, a `defineEvents` topic or
+`createDecisionPipeline` (`stitchkit/tools`, `stitchkit/contract`, `stitchkit/live`,
+`stitchkit/application`); and code that passes a watch, GeoIP reload, release-watcher, tracking,
+`applyCliUpdate` or shutdown/restart schema delay (`stitchkit/live`, `stitchkit/application`,
+`stitchkit/geo`, `stitchkit/release`, `stitchkit/tracking`, `stitchkit/cli`, `stitchkit/server`,
+`stitchkit/node`) outside the timer range; and code that passes a fractional, negative or `NaN`
+`maxFileBytes` / `staleAfterMs` to `createChunkSpool` (`stitchkit/files`) or `maxQueued` /
+`maxAttempts` / `minIntervalMs` to `createTelegramOperatorChannel` (`stitchkit/telegram`).
+
+1. Search for `reconcileTimeoutMs` next to `instanceof TypeError`; branch on `RangeError`
+   instead. A fractional value (`1.5`) is now refused too — pass an integer.
+2. A connection `timeoutMs` / `idleTimeoutMs` that is not a number (read from JSON as a string)
+   now throws `TypeError`; parse it to a number before defining the connection.
+3. Every other timer option answers the same way: a value that is not a number is a `TypeError`; a
+   number that is not an integer from 1 (0 for a drain bound, a run timeout or a retry delay) to
+   2147483647 is a `RangeError`. Where you branch on `TypeError` for `heartbeatMs: 0` or a drain
+   `timeoutMs: -1`, branch on `RangeError`. Where you branch on `RangeError` for a value that is not
+   a number — a realtime request `timeoutMs`, `expiresInMs`, `maxWaitMs`, `verifyTimeoutMs` — branch
+   on `TypeError`. A value above 2147483647 used to pass and end the wait at once; pass at most
+   2147483647 (about 24.8 days).
+4. The same `TypeError` → `RangeError` move covers `inspectionTimeoutMs`, `headersTimeoutMs` and the
+   `gracePeriodMs` / `forceTimeoutMs` of `AgentRuntime.close()` / `createAgentSessionCoordinator().close()`
+   (a `NaN`, a negative or a fraction; 0 stays valid). A `leaseMs` / `sweepEveryMs` of
+   `createTelegramUpdateIntake` that is not a number is now a `TypeError` (it was a `RangeError`).
+5. `createCacheBridge`'s `freshWindow` answered with a plain `Error` and a credit window's
+   `acquire(bytes, { timeoutMs })` with a `ZodError`; both are now the timer rule's `RangeError` /
+   `TypeError`. `instanceof Error` still holds for both; a message match or an `instanceof ZodError` does
+   not.
+6. Newly refused, where nothing checked them: `createHttpClient` / `createClient` / endpoint / request
+   `timeout`, `createSocketIOClient`'s `reconnectOnServerDisconnect`, `uploadInChunks`' `retryDelayMs`
+   (0, a negative, `NaN` or past 2147483647 — such a value fired at once), and a `BackoffPolicy`'s
+   delays past 2147483647 (`ZodError`). Pass the delay you meant, at most 2147483647.
+7. A wait tool's `defaultTimeout` and a wait's `timeoutSec` are seconds: negative, not finite, or past
+   2147483.647 (the timer ceiling in seconds) they are a `RangeError` when the tool is defined or before
+   the first poll; pass at most that, or a `--wait-timeout` within it.
+8. A plain `Error` became the timer rule's `RangeError` (a `TypeError` when not a number), and a fraction
+   is refused too: the `timeoutMs` of `defineDownloadTool`, `mountDownload`, `defineViewFileTool` and
+   `mountViewFile` (now when the tool is defined, not at the first fetch), of
+   `createSecureClientMetadataFetcher`, a stream endpoint's `lifetimeMs` / `heartbeatMs`, a
+   `defineEvents` topic's `listenerTimeoutMs` and `createDecisionPipeline`'s `policyTimeoutMs`.
+   `instanceof Error` still holds; a message match does not.
+9. Newly refused where they are taken: `createWatchClient`'s `holdMs` / `openTimeoutMs`,
+   `createWatchHub`'s `holdMs` and `backoff`, `createGeoIpResolver`'s `reload.intervalMs` (turn reloading
+   off with `reload: false`, not `intervalMs: 0`), `createReleaseWatcher`'s `maxDeferMs`,
+   `createTrackingClient`'s `heartbeatMs`, `deliverTrackingBatch`'s `retryDelayMs`,
+   `createPerformanceCollector`'s `earlyDelayMs` and `applyCliUpdate`'s `timeoutMs` / `idleTimeoutMs`
+   (before the download). `ShutdownOptionsSchema`, `ApplicationRestartInputSchema`,
+   `createNotificationOutbox`'s `pollIntervalMs` and a fault plan's `timeout-before-first-byte`
+   `milliseconds` refuse a value past 2147483647 with their `ZodError`. Pass the delay you meant, at
+   most 2147483647.
+10. A count, a byte size or an age is a safe integer, refused when the factory is created
+    ([ADR 0324](../decisions/0324-a-count-a-size-or-an-age-is-a-safe-integer-refused-where-it-is-taken.md)):
+    `createChunkSpool`'s `maxFileBytes` (positive) and `staleAfterMs` (0 allowed), and
+    `createTelegramOperatorChannel`'s `maxQueued` and `maxAttempts` (positive) are a `TypeError`
+    when fractional, negative or `NaN`; its `minIntervalMs` follows the timer rule (0 allowed).
+    Round a computed value: `staleAfterMs: Math.round(hours * 3.6e6)`.
+
+### deferred-surface-projection
+
+**Who must act:** every caller of `createDeferredAgentToolSurface().mount` from `stitchkit/agent-runtime`
+that passes `extend` or `flattenUnionInput`.
+
+1. Move both keys, unchanged, from the `mount` config into the `createDeferredAgentToolSurface({ … })`
+   config — one value for every surface of the registry. A `mount` that still names one throws
+   `TypeError`.
+
+   ```ts
+   // before
+   const deferred = createDeferredAgentToolSurface({ runtimeTools, search, activation })
+   deferred.mount(runContext, { access, extend, flattenUnionInput: true })
+   // after
+   const deferred = createDeferredAgentToolSurface({
+     runtimeTools, search, activation, extend, flattenUnionInput: true,
+   })
+   deferred.mount(runContext, { access })
+   ```
+
+2. `activation.maxSchemaBytes` now measures the projected schemas. A ceiling sized against the old,
+   unprojected manifest may be refused at creation (`base tools exceed maxSchemaBytes`) or per step
+   (`AgentContextOverflowError`): raise it to the `activeSchemaBytes` that `observe` reports.
+
+### retry-max-attempts
+
+**Who must act:** a runtime from `stitchkit/agent-runtime` whose `loop.retry.maxAttempts` is `0`, negative,
+a fraction, `NaN` or `Infinity`, and a caller of `recordAgentRetryDecision` with such a policy.
+
+Write the number of attempts as a positive integer: `1` for no retry, a finite ceiling instead of
+`Infinity`. Any other value is refused with `TypeError` when the runtime is created.
+
+### spool-file-over-its-bound
+
+**Who must act:** every `createSpooledSink` from `stitchkit/observability` whose spool file is
+larger than its `maxFileBytes` (default 64 MiB) — one a long outage left under 0.126, which read
+the file whole, or one whose bound was lowered — anything that watches `recover()`, and every
+writer whose store can be down for longer than `maxPendingEntries` (default 10 000) records or
+`maxFileBytes` of them: 0.126 spooled every one, 0.127 keeps the bound (ADR 0323).
+
+`recover()` reads the file line by line. A debt that fits the bound is replayed and the file
+compacted as before. A debt that does not fit is moved beside the file,
+`<path>.<milliseconds>.overflow`, and `recover()` names it in `quarantined`; the spool goes on with
+an empty file, so new records are spooled while the store is down. `onSpoolError` reports it as
+`SPOOL_QUARANTINED`. Records the replay offered and left owed are counted in `failed`; records of a
+file too large to read within the bound are not offered, so treat `quarantined` as owed work. A file
+that cannot be read at all (a permission, a directory in its place) is not an empty debt either:
+`recover()` sets `unread: true`, reports `SPOOL_UNREADABLE` with the read error as `cause`, and
+leaves the file as it is:
+
+```ts
+// before
+const { failed } = await sink.recover();
+if (failed > 0) alert(`${failed} audit rows are still owed`);
+
+// after
+const { failed, quarantined, unread } = await sink.recover();
+if (failed > 0 || quarantined || unread) alert(`audit rows are still owed${quarantined ? ` in ${quarantined}` : ''}`);
+// The moved file is a spool of its own: replay it with a bound it fits.
+if (quarantined)
+  await createSpooledSink({ path: quarantined, maxFileBytes: 1024 * 1024 * 1024, write }).recover();
+```
+
+A record past `maxPendingEntries` or `maxFileBytes` is not spooled. It is still offered to the store;
+when the store refuses it too, it is kept nowhere and `write` says so: it rejects with code
+`SPOOL_UNSPOOLED` and the store's error as `cause`, where a row on disk rejects with the store's own
+error. `onSpoolError` reports `SPOOL_FULL` with the bound (`entries` or `bytes`). Size the bounds for
+the longest outage the audit must survive, and keep or alert on a row it could not hold:
+
+```ts
+// before — every rejection meant "on disk, replayed by recover()"
+try { await sink.write(event); } catch { /* recover() will deliver it */ }
+
+// after
+const sink = createSpooledSink({ path, write, maxPendingEntries: 100_000, maxFileBytes: 512 * 1024 * 1024 });
+try {
+  await sink.write(event);
+} catch (error) {
+  if (error instanceof Error && 'code' in error && error.code === 'SPOOL_UNSPOOLED')
+    keepElsewhere(event); // not saved anywhere
+}
+```
+
+### double-failure-aggregate-error
+
+**Who must act:** code that branches on the class of a rejection from a SQLite agent store
+(`stitchkit/agent-runtime/sqlite/bun`, `stitchkit/agent-runtime/sqlite/node`) or from
+`createSessionCredentials().login()` (`stitchkit`).
+
+When an operation fails and its cleanup fails too, the rejection is one `AggregateError`: `errors`
+holds the first failure, then the cleanup's, and `cause` is the first failure. A SQLite transaction
+or schema initialization whose `ROLLBACK` fails (other than "no transaction is active") threw the
+rollback's error before and lost the failure that ended the transaction. A `login()` whose storage
+write fails and whose clear of the stored session fails too rejected with the write failure.
+
+```ts
+// before
+catch (error) {
+  if (error instanceof StorageQuotaError) showQuotaHint()
+}
+
+// after
+catch (error) {
+  const first = error instanceof AggregateError ? error.cause : error
+  if (first instanceof StorageQuotaError) showQuotaHint()
+}
+```
+
 ## Released migration: 0.126.0
 
 ### watch-read-request

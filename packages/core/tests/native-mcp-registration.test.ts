@@ -84,6 +84,7 @@ describe('framework-owned native MCP registration', () => {
     const structured = { assetId: 'asset-1', internal: 'stripped' };
     const server = buildMcpServer(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 'native', version: '1' },
         services: [],
         runtimeTools: [
@@ -127,6 +128,7 @@ describe('framework-owned native MCP registration', () => {
     const completed: boolean[] = [];
     const server = buildMcpServer(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 'native', version: '1' },
         services: [],
         hooks: {
@@ -177,6 +179,7 @@ describe('framework-owned native MCP registration', () => {
     // `isError` with the framework's code, as a contract endpoint always did.
     const server = buildMcpServer(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 'native', version: '1' },
         services: [],
         multiRound: { state: { key: ROUND_KEY, principal: () => 'alpha' } },
@@ -218,18 +221,20 @@ describe('framework-owned native MCP registration', () => {
       {
         serverInfo: { name: 'native', version: '1' },
         services: [],
-        lifecycle: {
-          beforeHandle: (_context, endpoint) => {
-            order.push('beforeHandle');
-            endpoints.push({
-              serviceName: endpoint.serviceName,
-              action: endpoint.key,
-              scope: endpoint.scope,
-            });
-          },
-          afterHandle: (_context, result) => {
-            order.push('afterHandle');
-            return result;
+        access: {
+          gate: {
+            beforeHandle: (_context, endpoint) => {
+              order.push('beforeHandle');
+              endpoints.push({
+                serviceName: endpoint.serviceName,
+                action: endpoint.key,
+                scope: endpoint.scope,
+              });
+            },
+            afterHandle: (_context, result) => {
+              order.push('afterHandle');
+              return result;
+            },
           },
         },
         hooks: {
@@ -298,9 +303,11 @@ describe('framework-owned native MCP registration', () => {
             results.push(result.ok ? { ok: true } : { ok: false, code: result.code });
           },
         },
-        lifecycle: {
-          beforeHandle: (_context, endpoint) => {
-            if (endpoint.key === 'throw') failureOrder.push('beforeHandle');
+        access: {
+          gate: {
+            beforeHandle: (_context, endpoint) => {
+              if (endpoint.key === 'throw') failureOrder.push('beforeHandle');
+            },
           },
         },
         runtimeTools: [
@@ -355,6 +362,7 @@ describe('framework-owned native MCP registration', () => {
     expect(() =>
       buildMcpServer(
         {
+          access: { open: 'local-operator' },
           serverInfo: { name: 'native', version: '1' },
           services: [],
           schemaValidation: { requirePortableFormats: true },
@@ -379,6 +387,7 @@ describe('framework-owned native MCP registration', () => {
     let handlerCalls = 0;
     const server = buildMcpServer(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 'native', version: '1' },
         services: [],
         hooks: {
@@ -422,10 +431,12 @@ describe('framework-owned native MCP registration', () => {
       {
         serverInfo: { name: 'native', version: '1' },
         services: [],
-        lifecycle: {
-          beforeHandle: (_context, endpoint) => {
-            if (endpoint.scope === 'admin')
-              throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
+        access: {
+          gate: {
+            beforeHandle: (_context, endpoint) => {
+              if (endpoint.scope === 'admin')
+                throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
+            },
           },
         },
         runtimeTools: [
@@ -462,6 +473,7 @@ describe('native registration transport parity', () => {
     const directClient = await connect(
       buildMcpServer(
         {
+          access: { open: 'local-operator' },
           serverInfo: { name: 'native', version: '1' },
           services: [],
           runtimeTools: [transportProbe],
@@ -472,6 +484,7 @@ describe('native registration transport parity', () => {
     const directNames = (await directClient.listTools()).tools.map((tool) => tool.name);
 
     const stateless = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'native', version: '1' },
       auth: () => ({ id: 'stateless' }),
       services: [],
@@ -498,10 +511,12 @@ describe('native call isolation and audit', () => {
         serverInfo: { name: 'native', version: '1' },
         services: [],
         hooks: audit.toolCall,
-        lifecycle: {
-          beforeHandle: (context) => {
-            const id = z.object({ id: z.string() }).parse(context.input).id;
-            setRequestDimensions({ entityId: id });
+        access: {
+          gate: {
+            beforeHandle: (context) => {
+              const id = z.object({ id: z.string() }).parse(context.input).id;
+              setRequestDimensions({ entityId: id });
+            },
           },
         },
         runtimeTools: [
@@ -534,7 +549,7 @@ describe('native call isolation and audit', () => {
         source: 'http',
         method: 'POST',
         path: '/mcp',
-        startedAt: process.hrtime.bigint(),
+        startedAt: performance.now(),
       },
       () =>
         Promise.all([
@@ -593,9 +608,11 @@ describe('raw native escape hatch', () => {
       {
         serverInfo: { name: 'native', version: '1' },
         services: [],
-        lifecycle: {
-          beforeHandle: () => {
-            protectedCalls += 1;
+        access: {
+          gate: {
+            beforeHandle: () => {
+              protectedCalls += 1;
+            },
           },
         },
         rawTools: (rawServer) => {

@@ -119,6 +119,8 @@ export interface RuntimeContext {
   userAgent?: string;
   /** Transport cancellation for the active call (MCP and future cancellable lanes). */
   signal?: AbortSignal;
+  /** The provider's id of the call on the agent transport; absent on every other one. */
+  toolCallId?: string;
   /** Validated metadata for an MCP call; absent on every other transport. */
   mcp?: McpCallContext;
   /**

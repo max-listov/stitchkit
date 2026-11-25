@@ -3,6 +3,7 @@ title: "ADR 0101: Agent runtime persistence is bounded and normalized"
 description: The reducer linearizes transitions through a constant-size head while runs and admissions remain addressable durable records.
 type: decision
 status: accepted
+amends: ["0100"]
 created: 2026-08-23
 updated: 2026-08-23
 ---

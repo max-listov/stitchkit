@@ -1,10 +1,73 @@
 import { z } from 'zod';
 import { defineAgentTool } from './agent-tool';
+import { conversationOfRun } from './context-issue';
 import { AgentEventSearchResultSchema } from './event-search';
+import type { AgentRuntimeRunContext } from './runtime';
 import type { AgentRuntimeStore } from './store';
 
-export function createAgentEventSearchTools(input: {
-  conversationId: string;
+const AGENT_EVENT_SEARCH_TOOL_NAMES = {
+  search: 'session_search',
+  trace: 'session_trace',
+  event: 'session_event',
+} as const;
+
+const EventAddressSchema = z
+  .object({ conversationId: z.string(), seq: z.int().positive() })
+  .strict();
+const EventOutputSchema = z
+  .object({
+    conversationId: z.string(),
+    seq: z.int().positive(),
+    kind: z.string(),
+    occurredAt: z.string(),
+    payload: z.json(),
+  })
+  .strict();
+const SearchInputSchema = z
+  .object({
+    query: z.string().min(1),
+    conversationId: z.string().min(1).optional(),
+    since: z.iso.datetime({ offset: true }).optional(),
+    limit: z.int().positive().max(200).optional(),
+  })
+  .strict();
+const SearchOutputSchema = z
+  .object({ results: z.array(AgentEventSearchResultSchema) })
+  .strict();
+const TraceInputSchema = z
+  .object({
+    fromSeq: z.int().positive().optional(),
+    toSeq: z.int().positive().optional(),
+    limit: z.int().positive().max(1_000).default(100),
+  })
+  .strict();
+const TraceOutputSchema = z
+  .object({ events: z.array(EventOutputSchema), nextSeq: z.number().optional() })
+  .strict();
+
+/**
+ * What each event search tool takes and answers, by tool name. A branch reads
+ * these to recognise the tools' records in a conversation's history.
+ */
+export const AGENT_EVENT_SEARCH_TOOL_SCHEMAS = {
+  [AGENT_EVENT_SEARCH_TOOL_NAMES.search]: {
+    input: SearchInputSchema,
+    output: SearchOutputSchema,
+  },
+  [AGENT_EVENT_SEARCH_TOOL_NAMES.trace]: {
+    input: TraceInputSchema,
+    output: TraceOutputSchema,
+  },
+  [AGENT_EVENT_SEARCH_TOOL_NAMES.event]: {
+    input: EventAddressSchema,
+    output: EventOutputSchema,
+  },
+} as const;
+
+/** Configuration binding conversation event-search agent tools to a run and search backend. */
+export interface AgentEventSearchToolsConfig {
+  /** The run context `tools()` received: the tools read for its conversation. */
+  run: AgentRuntimeRunContext<unknown>;
   search(request: {
     requestingConversationId: string;
     query: string;
@@ -17,20 +80,17 @@ export function createAgentEventSearchTools(input: {
     requestingConversationId: string;
     targetConversationId: string;
   }): boolean | Promise<boolean>;
-}) {
-  const EventAddressSchema = z
-    .object({ conversationId: z.string(), seq: z.int().positive() })
-    .strict();
-  const EventOutputSchema = z
-    .object({
-      conversationId: z.string(),
-      seq: z.int().positive(),
-      kind: z.string(),
-      occurredAt: z.string(),
-      payload: z.json(),
-    })
-    .strict();
+}
 
+/**
+ * Event search bound to the conversation of one run. Another conversation is
+ * read only when `authorizeConversation` approves it for this one.
+ */
+export function createAgentEventSearchTools(config: AgentEventSearchToolsConfig) {
+  const input = {
+    ...config,
+    conversationId: conversationOfRun(config.run, 'createAgentEventSearchTools'),
+  };
   const readExact = async (address: z.infer<typeof EventAddressSchema>) => {
     if (address.conversationId !== input.conversationId) {
       const allowed = await input.authorizeConversation?.({
@@ -59,19 +119,12 @@ export function createAgentEventSearchTools(input: {
 
   return [
     defineAgentTool({
-      name: 'session_search',
+      name: AGENT_EVENT_SEARCH_TOOL_NAMES.search,
       description: 'Search authorized durable conversation events and return exact addresses.',
       identity: { serviceName: 'agent-events', action: 'search', method: 'POST' },
-      input: z
-        .object({
-          query: z.string().min(1),
-          conversationId: z.string().min(1).optional(),
-          since: z.iso.datetime({ offset: true }).optional(),
-          limit: z.int().positive().max(200).optional(),
-        })
-        .strict(),
-      output: z.object({ results: z.array(AgentEventSearchResultSchema) }).strict(),
-      transports: ['AGENT'],
+      input: SearchInputSchema,
+      output: SearchOutputSchema,
+      expose: ['AGENT'],
       handler: async ({ input: request }) => ({
         results: [
           ...(await input.search({
@@ -82,18 +135,12 @@ export function createAgentEventSearchTools(input: {
       }),
     }),
     defineAgentTool({
-      name: 'session_trace',
+      name: AGENT_EVENT_SEARCH_TOOL_NAMES.trace,
       description: 'Read a bounded contiguous slice of this conversation event trace.',
       identity: { serviceName: 'agent-events', action: 'trace', method: 'GET' },
-      input: z
-        .object({
-          fromSeq: z.int().positive().optional(),
-          toSeq: z.int().positive().optional(),
-          limit: z.int().positive().max(1_000).default(100),
-        })
-        .strict(),
-      output: z.object({ events: z.array(EventOutputSchema), nextSeq: z.number().optional() }),
-      transports: ['AGENT'],
+      input: TraceInputSchema,
+      output: TraceOutputSchema,
+      expose: ['AGENT'],
       handler: async ({ input: request }) => {
         const page = await input.store.readEvents({
           conversationId: input.conversationId,
@@ -112,12 +159,12 @@ export function createAgentEventSearchTools(input: {
       },
     }),
     defineAgentTool({
-      name: 'session_event',
+      name: AGENT_EVENT_SEARCH_TOOL_NAMES.event,
       description: 'Read one durable event by exact conversation and sequence address.',
       identity: { serviceName: 'agent-events', action: 'read', method: 'GET' },
       input: EventAddressSchema,
       output: EventOutputSchema,
-      transports: ['AGENT'],
+      expose: ['AGENT'],
       handler: ({ input: request }) => readExact(request),
     }),
   ] as const;

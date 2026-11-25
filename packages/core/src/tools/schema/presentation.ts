@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assertInputRecursionDepth } from '../../contract/define-validation';
 import { isRecord } from '../../internal/typed';
 import { withDraft2020Keywords } from '../../json-schema/dialect';
 import { toJsonSchema } from '../../json-schema/json-schema';
@@ -7,12 +8,19 @@ import {
   freezeToolJsonSchema,
   type ToolPresentationSchema,
 } from './flatten';
+import { inlineSchemaReferences } from './inline-references';
 
 export interface ToolPresentationConfig {
   paramsSchema?: z.ZodType;
   inputSchema?: z.ZodType;
   extendSchema?: Record<string, z.ZodType>;
   flattenUnionInput?: boolean;
+  /**
+   * Write every `$ref` out in place and unroll each recursive definition this
+   * many levels, so the document carries no reference at all. Absent: the
+   * document keeps its `definitions` and references.
+   */
+  inputRecursionDepth?: number;
   unrepresentable?: 'throw' | 'any';
   /** A tool view's input defaults — what the model is told it gets by omitting a key. */
   defaults?: Readonly<Record<string, unknown>>;
@@ -181,30 +189,39 @@ function mergeObjectSchemas(
   return merged;
 }
 
+interface ProjectionSteps {
+  unrepresentable: 'throw' | 'any';
+  flatten: boolean;
+  recursionDepth: number | undefined;
+}
+
 function schemaFromZod(
   schema: z.ZodType | undefined,
-  unrepresentable: 'throw' | 'any',
-  flatten: boolean,
+  steps: ProjectionSteps,
 ): ToolPresentationSchema | undefined {
   if (!schema) return undefined;
-  const json = toJsonSchema(schema, 'input', unrepresentable, 'draft-07');
-  return flatten ? flattenToolJsonSchema(json) : json;
+  const json = toJsonSchema(schema, 'input', steps.unrepresentable, 'draft-07');
+  // References are written out before the flattening: a discriminated union
+  // reached through a reference is only visible to it once it stands in place.
+  const inlined =
+    steps.recursionDepth === undefined
+      ? json
+      : inlineSchemaReferences(json, steps.recursionDepth);
+  return steps.flatten ? flattenToolJsonSchema(inlined) : inlined;
 }
 
 /** Build the one model-facing document shared by MCP, agents and manifests. */
 export function buildToolPresentationSchema(
   config: ToolPresentationConfig,
 ): ToolPresentationSchema {
-  const unrepresentable = config.unrepresentable ?? 'any';
-  const flatten = config.flattenUnionInput ?? false;
-  const params = namespaceLocalReferences(
-    schemaFromZod(config.paramsSchema, unrepresentable, flatten),
-    'params',
-  );
-  const input = namespaceLocalReferences(
-    schemaFromZod(config.inputSchema, unrepresentable, flatten),
-    'input',
-  );
+  assertInputRecursionDepth('inputRecursionDepth', config.inputRecursionDepth);
+  const steps: ProjectionSteps = {
+    unrepresentable: config.unrepresentable ?? 'any',
+    flatten: config.flattenUnionInput ?? false,
+    recursionDepth: config.inputRecursionDepth,
+  };
+  const params = namespaceLocalReferences(schemaFromZod(config.paramsSchema, steps), 'params');
+  const input = namespaceLocalReferences(schemaFromZod(config.inputSchema, steps), 'input');
 
   let presentation: ToolPresentationSchema;
   if (params && input) {
@@ -223,7 +240,7 @@ export function buildToolPresentationSchema(
 
   if (config.extendSchema) {
     const extra = namespaceLocalReferences(
-      schemaFromZod(z.object(config.extendSchema), unrepresentable, flatten),
+      schemaFromZod(z.object(config.extendSchema), steps),
       'extend',
     );
     if (extra) {

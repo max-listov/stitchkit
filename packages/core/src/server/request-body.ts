@@ -1,7 +1,7 @@
 import { badRequest } from '../contract/errors';
-import { concatChunks, readBoundedChunks } from '../internal/bounded-body';
+import { abortReason } from '../internal/abort-race';
+import { readBoundedText } from '../internal/bounded-body';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
-import { abortReason } from '../internal/until-aborted';
 
 /** Read UTF-8 request text, optionally stopping before a configured byte cap is exceeded. */
 export async function readRequestText(req: Request, maxBytes?: number): Promise<string> {
@@ -12,7 +12,7 @@ export async function readRequestText(req: Request, maxBytes?: number): Promise<
   if (maxBytes === undefined) return req.text();
   assertPositiveSafeInteger('maxJsonBodyBytes', maxBytes, Error);
 
-  const result = await readBoundedChunks(req.body, { maxBytes, signal: req.signal });
+  const result = await readBoundedText(req, { maxBytes, signal: req.signal });
   if (result.kind === 'over-limit') badRequest(`JSON body exceeds the ${maxBytes}-byte limit`);
-  return new TextDecoder().decode(concatChunks(result.chunks, result.total));
+  return result.text;
 }

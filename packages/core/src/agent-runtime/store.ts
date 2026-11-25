@@ -1,18 +1,19 @@
 import { z } from 'zod';
-import type {
-  AgentStoreEventEnvelope,
-  AgentStoreEventPage,
-  AppendAgentStoreEvent,
-  ReadAgentStoreEvents,
+import {
+  AgentRecordIdSchema,
+  type AgentStoreEventEnvelope,
+  type AgentStoreEventPage,
+  type AppendAgentStoreEvent,
+  type ReadAgentStoreEvents,
 } from '../durability/events';
 import type {
+  AgentConversationBranchPlan,
   AgentConversationBranchResult,
   BranchAgentConversationInput,
 } from './branch-contract';
 import type { AgentConversationPurgeInput, AgentConversationPurgeResult } from './purge';
 import {
   AgentMessageSchema,
-  AgentRecordIdSchema,
   AgentRecordVersionSchema,
   type AgentRun,
   AgentRunOperationSchema,
@@ -22,6 +23,7 @@ import {
   AgentTerminalReasonSchema,
   AgentUsageSchema,
 } from './schemas';
+import type { AgentRuntimeStoreCapabilities } from './store-capabilities';
 
 export const AgentStoreConflictSchema = z.object({
   outcome: z.literal('conflict'),
@@ -216,10 +218,24 @@ export type AgentRecoverableDescriptor = z.infer<typeof AgentRecoverableDescript
 export type AgentRecoverablePage = z.infer<typeof AgentRecoverablePageSchema>;
 
 export interface AgentRuntimeStore {
+  /**
+   * What the driver under the store implements beyond the required contract, as
+   * `createAgentRuntimeStore` reads it. Optional for a hand-written store the
+   * runtime is given; the conformance kit requires it and compares it with the
+   * adapter's declaration.
+   */
+  readonly capabilities?: Readonly<AgentRuntimeStoreCapabilities>;
   /** Atomic independent identity from a settled prefix or validated archive. */
   branchConversation?(
     input: BranchAgentConversationInput,
   ): Promise<AgentConversationBranchResult>;
+  /**
+   * What `branchConversation` would refuse for the same input, and which
+   * attachments it needs declared, without writing anything.
+   */
+  planConversationBranch?(
+    input: BranchAgentConversationInput,
+  ): Promise<AgentConversationBranchPlan>;
   /** Optional atomic deletion. Active runs refuse deletion; purged IDs cannot be reused. */
   purgeConversation?(
     input: AgentConversationPurgeInput,

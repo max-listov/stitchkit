@@ -8,9 +8,9 @@ updated: 2026-08-05
 
 # ADR 0038 — Raw-response endpoints (the handler owns the `Response`)
 
-- **Status:** Accepted — carves a documented, HTTP-only exception out of
-  [ADR 0027](0027-transport-neutral-contract-execution.md); upholds
-  [ADR 0002](0002-generic-core.md)
+**Relations:** carves a documented, HTTP-only exception out of
+[ADR 0027](0027-transport-neutral-contract-execution.md); upholds [ADR 0002](0002-generic-core.md)
+
 - **Date:** 2026-08-05
 
 ## Context

@@ -3,6 +3,8 @@ title: "ADR 0252: A bundle carries no build-machine path"
 description: "The default Darwin loader locates itself through module.filename, never __dirname, and refuses inside a bundle with a named stage; the package declares no import side effects; embedded native packaging names no output layout."
 type: decision
 status: accepted
+amends: ["0233", "0235"]
+amendedBy: ["0254"]
 created: 2026-10-06
 updated: 2026-10-06
 ---

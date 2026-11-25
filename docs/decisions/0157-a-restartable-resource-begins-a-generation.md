@@ -2,7 +2,8 @@
 title: A resource that can be restarted is a resource that can begin a generation
 description: Restart was built as a graph operation over resources that had never been told `start` could be called twice, so none of the three the framework ships survived it; `start` is now the beginning of a generation, and the result agrees with the snapshot.
 type: decision
-status: active
+status: accepted
+amends: ["0154", "0156"]
 created: 2026-09-03
 updated: 2026-09-03
 ---

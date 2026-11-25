@@ -5,8 +5,9 @@
  * part of it, so every test of it runs the whole thing; a file of two thousand
  * lines is read by nobody end to end. The limits are the repository's own
  * (a function of 200 lines, a file of 500), and what is over them is named in
- * `code-size-exceptions.json` with the reason it stays — so the list shrinks by
- * review, and a new offender is a red test rather than a slow drift.
+ * `code-size-exceptions.json` with the reason it stays and the line ceiling it
+ * may not pass — so the list shrinks by review, an exception cannot keep growing
+ * behind its entry, and a new offender is a red test rather than a slow drift.
  */
 import { describe, expect, test } from 'bun:test';
 import {
@@ -29,12 +30,34 @@ const SCRIPT_ROOTS = [join(REPOSITORY, 'scripts'), join(REPOSITORY, 'packages/co
 export const MAX_FUNCTION_LINES = 200;
 export const MAX_FILE_LINES = 500;
 
-const ExceptionsSchema = z.object({
-  files: z.record(z.string(), z.string().min(10)),
-  functions: z.record(z.string(), z.string().min(10)),
-  /** Oversized tooling files, keyed by repository-relative path. */
-  scriptFiles: z.record(z.string(), z.string().min(10)),
+/** One reviewed exception: why it stays over the limit, and the size it may not pass. */
+const ExceptionSchema = z.strictObject({
+  maxLines: z.number().int().positive(),
+  reason: z.string().min(10),
 });
+type Exception = z.infer<typeof ExceptionSchema>;
+
+const ExceptionsSchema = z.strictObject({
+  files: z.record(z.string(), ExceptionSchema),
+  functions: z.record(z.string(), ExceptionSchema),
+  /** Oversized tooling files, keyed by repository-relative path. */
+  scriptFiles: z.record(z.string(), ExceptionSchema),
+  /** Oversized tooling functions, keyed by repository-relative `path#name`. */
+  scriptFunctions: z.record(z.string(), ExceptionSchema),
+});
+
+/** Exceptions whose measured size passed their reviewed ceiling, as `key (lines > maxLines)`. */
+export function overCeiling(
+  measured: ReadonlyArray<{ key: string; lines: number }>,
+  declared: Readonly<Record<string, Exception>>,
+): string[] {
+  return measured.flatMap(({ key, lines }) => {
+    const exception = declared[key];
+    return exception && lines > exception.maxLines
+      ? [`${key} (${lines} > ${exception.maxLines})`]
+      : [];
+  });
+}
 
 function* sources(dir: string, pattern = /\.tsx?$/): Generator<string> {
   for (const name of readdirSync(dir)) {
@@ -53,11 +76,15 @@ export function lineCount(text: string): number {
   return text.endsWith('\n') ? lines - 1 : lines;
 }
 
-/** Files under `directory` longer than the file limit, as `directory`-relative paths. */
-export function oversizedFiles(directory: string, pattern: RegExp): string[] {
-  return [...sources(directory, pattern)]
-    .filter((file) => lineCount(readFileSync(file, 'utf8')) > MAX_FILE_LINES)
-    .map((file) => relative(directory, file));
+/** Files under `directory` longer than the file limit, keyed by `directory`-relative path. */
+export function oversizedFiles(
+  directory: string,
+  pattern: RegExp,
+): Array<{ key: string; lines: number }> {
+  return [...sources(directory, pattern)].flatMap((file) => {
+    const lines = lineCount(readFileSync(file, 'utf8'));
+    return lines > MAX_FILE_LINES ? [{ key: relative(directory, file), lines }] : [];
+  });
 }
 
 function functionName(node: ts.Node): string | undefined {
@@ -74,6 +101,18 @@ function functionName(node: ts.Node): string | undefined {
       return parent.name.text;
     if (ts.isPropertyAssignment(parent) && ts.isIdentifier(parent.name))
       return parent.name.text;
+    // A callback has no name of its own — `describe('x', () => …)`, `items.map((item) => …)` —
+    // so it is named by the call it is passed to and, when there is one, that call's label.
+    if (
+      ts.isCallExpression(parent) &&
+      parent.arguments.some((argument) => argument === node)
+    ) {
+      const label = parent.arguments[0];
+      const callee = parent.expression.getText();
+      return label && ts.isStringLiteralLike(label)
+        ? `${callee}(${label.text})`
+        : `${callee}(…)`;
+    }
   }
   return undefined;
 }
@@ -82,7 +121,10 @@ function functionName(node: ts.Node): string | undefined {
 export function oversized(
   path: string,
   text: string,
-): { files: string[]; functions: Array<{ key: string; lines: number }> } {
+): {
+  files: Array<{ key: string; lines: number }>;
+  functions: Array<{ key: string; lines: number }>;
+} {
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   const lineOf = (position: number) => source.getLineAndCharacterOfPosition(position).line;
   const functions: Array<{ key: string; lines: number }> = [];
@@ -95,17 +137,26 @@ export function oversized(
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return { files: lineCount(text) > MAX_FILE_LINES ? [path] : [], functions };
+  const lines = lineCount(text);
+  return { files: lines > MAX_FILE_LINES ? [{ key: path, lines }] : [], functions };
 }
 
 const exceptions = ExceptionsSchema.parse(
   JSON.parse(readFileSync(`${import.meta.dir}/fixtures/code-size-exceptions.json`, 'utf8')),
 );
 const found = {
-  files: [] as string[],
+  files: [] as Array<{ key: string; lines: number }>,
   functions: [] as Array<{ key: string; lines: number }>,
   scriptFiles: SCRIPT_ROOTS.flatMap((root) =>
-    oversizedFiles(root, SCRIPT_SOURCE).map((file) => relative(REPOSITORY, join(root, file))),
+    oversizedFiles(root, SCRIPT_SOURCE).map(({ key, lines }) => ({
+      key: relative(REPOSITORY, join(root, key)),
+      lines,
+    })),
+  ),
+  scriptFunctions: SCRIPT_ROOTS.flatMap((root) =>
+    [...sources(root, SCRIPT_SOURCE)].flatMap(
+      (file) => oversized(relative(REPOSITORY, file), readFileSync(file, 'utf8')).functions,
+    ),
   ),
 };
 for (const file of sources(SRC)) {
@@ -124,24 +175,55 @@ describe('code size', () => {
   });
 
   test(`no file over ${MAX_FILE_LINES} lines outside the declared exceptions`, () => {
-    expect(found.files.filter((file) => !(file in exceptions.files))).toEqual([]);
+    expect(
+      found.files.filter(({ key }) => !(key in exceptions.files)).map(({ key }) => key),
+    ).toEqual([]);
+  });
+
+  test(`no script or fixture function over ${MAX_FUNCTION_LINES} lines outside the declared exceptions`, () => {
+    expect(
+      found.scriptFunctions
+        .filter(({ key }) => !(key in exceptions.scriptFunctions))
+        .map(({ key, lines }) => `${key} (${lines} lines)`),
+    ).toEqual([]);
   });
 
   test(`no script or fixture file over ${MAX_FILE_LINES} lines outside the declared exceptions`, () => {
-    expect(found.scriptFiles.filter((file) => !(file in exceptions.scriptFiles))).toEqual([]);
+    expect(
+      found.scriptFiles
+        .filter(({ key }) => !(key in exceptions.scriptFiles))
+        .map(({ key }) => key),
+    ).toEqual([]);
+  });
+
+  test('no exception grows past its reviewed ceiling', () => {
+    expect([
+      ...overCeiling(found.functions, exceptions.functions),
+      ...overCeiling(found.files, exceptions.files),
+      ...overCeiling(found.scriptFiles, exceptions.scriptFiles),
+      ...overCeiling(found.scriptFunctions, exceptions.scriptFunctions),
+    ]).toEqual([]);
   });
 
   test('every exception is still needed, so the list only shrinks by review', () => {
-    const functionKeys = new Set(found.functions.map(({ key }) => key));
-    expect(Object.keys(exceptions.functions).filter((key) => !functionKeys.has(key))).toEqual(
-      [],
-    );
-    expect(
-      Object.keys(exceptions.files).filter((file) => !found.files.includes(file)),
-    ).toEqual([]);
-    expect(
-      Object.keys(exceptions.scriptFiles).filter((file) => !found.scriptFiles.includes(file)),
-    ).toEqual([]);
+    const unused = (
+      measured: ReadonlyArray<{ key: string }>,
+      declared: Readonly<Record<string, Exception>>,
+    ): string[] => {
+      const keys = new Set(measured.map(({ key }) => key));
+      return Object.keys(declared).filter((key) => !keys.has(key));
+    };
+    expect(unused(found.functions, exceptions.functions)).toEqual([]);
+    expect(unused(found.files, exceptions.files)).toEqual([]);
+    expect(unused(found.scriptFiles, exceptions.scriptFiles)).toEqual([]);
+    expect(unused(found.scriptFunctions, exceptions.scriptFunctions)).toEqual([]);
+  });
+
+  test('an exception one line over its ceiling is reported and one at it is not (negative control)', () => {
+    const declared = { 'a.ts': { maxLines: 600, reason: 'a reviewed exception' } };
+    expect(overCeiling([{ key: 'a.ts', lines: 600 }], declared)).toEqual([]);
+    expect(overCeiling([{ key: 'a.ts', lines: 601 }], declared)).toEqual(['a.ts (601 > 600)']);
+    expect(overCeiling([{ key: 'b.ts', lines: 9_999 }], declared)).toEqual([]);
   });
 
   test('a planted file of 501 lines is found and one of 500 is not (negative control)', () => {
@@ -151,7 +233,9 @@ describe('code size', () => {
       writeFileSync(join(directory, 'at-limit.ts'), lines(MAX_FILE_LINES));
       writeFileSync(join(directory, 'over-limit.mjs'), lines(MAX_FILE_LINES + 1));
       writeFileSync(join(directory, 'over-limit.json'), lines(MAX_FILE_LINES + 1));
-      expect(oversizedFiles(directory, SCRIPT_SOURCE)).toEqual(['over-limit.mjs']);
+      expect(oversizedFiles(directory, SCRIPT_SOURCE)).toEqual([
+        { key: 'over-limit.mjs', lines: MAX_FILE_LINES + 1 },
+      ]);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -169,7 +253,23 @@ describe('code size', () => {
       ...Array(MAX_FILE_LINES).fill(''),
     ].join('\n');
     const result = oversized('synthetic.ts', text);
-    expect(result.files).toEqual(['synthetic.ts']);
+    expect(result.files.map(({ key }) => key)).toEqual(['synthetic.ts']);
     expect(result.functions.map(({ key }) => key)).toEqual(['synthetic.ts#huge']);
+  });
+
+  test('an oversized callback is found by the call it is passed to (negative control)', () => {
+    const body = Array.from(
+      { length: MAX_FUNCTION_LINES + 5 },
+      (_, index) => `  test('t${index}', () => {});`,
+    );
+    const short = 'items.map((item) => item);';
+    const text = [`describe('a suite', () => {`, ...body, '});', short].join('\n');
+    expect(oversized('synthetic.test.ts', text).functions.map(({ key }) => key)).toEqual([
+      'synthetic.test.ts#describe(a suite)',
+    ]);
+    const unlabelled = ['items.forEach((item) => {', ...body, '});'].join('\n');
+    expect(oversized('synthetic.ts', unlabelled).functions.map(({ key }) => key)).toEqual([
+      'synthetic.ts#items.forEach(…)',
+    ]);
   });
 });

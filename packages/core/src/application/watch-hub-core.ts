@@ -5,9 +5,10 @@
  */
 
 import { AppError } from '../contract/errors';
-import type { BackoffPolicy } from '../internal/backoff';
+import { type BackoffPolicy, BackoffPolicySchema } from '../internal/backoff';
 import { serializeCanonicalJson } from '../internal/canonical-json';
 import { ABANDONED_PASS, createCoalescedTask } from '../internal/coalesced-task';
+import { assertTimerMs } from '../internal/deadline';
 import { type WatchKey, type WatchStateFrame, watchKeyString } from '../live/watch-contract';
 import type {
   AttachedWatcher,
@@ -49,6 +50,10 @@ export class WatchHubCore {
       if (!Number.isInteger(bound) || bound < 1)
         throw new RangeError('Watch capacity must be positive');
     }
+    // Both end in a timer of a source nobody may be watching yet: refused here, not at the
+    // first release or the first failed read.
+    assertTimerMs('Watch hub holdMs', config.holdMs, { min: 0 });
+    if (config.backoff !== undefined) BackoffPolicySchema.parse(config.backoff);
     if (config.reconcileIntervalMs !== undefined) {
       if (
         !Number.isInteger(config.reconcileIntervalMs) ||

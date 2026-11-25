@@ -2,13 +2,14 @@ import { expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { probeLiveness } from '../src/internal/process-identity';
+import { probeLiveness, probeLivenessSync } from '../src/internal/process-identity';
 import {
   linuxProcessStart,
   type ProcessInstance,
   probeProcessOwnerWith,
   readProcessInstance,
 } from '../src/internal/process-instance';
+import { withZombie } from './support/zombie';
 
 const identity: ProcessInstance = {
   platform: 'linux',
@@ -150,4 +151,14 @@ test('same-boot foreign namespace refuses before liveness while different-boot p
     liveness: 'gone',
   });
   expect(calls).toBe(1);
+});
+
+test('a zombie is gone to the asynchronous and the synchronous liveness probe alike', async () => {
+  await withZombie(async (pid) => {
+    expect(await probeLiveness(pid)).toBe('gone');
+    expect(probeLivenessSync(pid)).toBe('gone');
+  });
+  // The negative control: this process is running.
+  expect(await probeLiveness(process.pid)).toBe('alive');
+  expect(probeLivenessSync(process.pid)).toBe('alive');
 });

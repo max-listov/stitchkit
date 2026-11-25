@@ -87,7 +87,7 @@ const service = implement(contract, {
   state: ({ params }) => ({ id: params.id, status: 'done' }),
 });
 
-type RunConfig = Pick<CliConfig, 'services' | 'results' | 'signal' | 'wait' | 'exitCodes'>;
+type RunConfig = Pick<CliConfig, 'services' | 'commandSettings' | 'signal' | 'exitCodes'>;
 
 async function run(argv: string[], config: RunConfig) {
   let out = '';
@@ -98,6 +98,7 @@ async function run(argv: string[], config: RunConfig) {
     name: 'app',
     version: '1.0.0',
     ...config,
+    access: { open: 'local-operator' },
     argv,
     stdout: (text) => {
       out += text;
@@ -137,13 +138,15 @@ describe('a stream command ends on its own deadline, not on its source', () => {
   test('a presenter that throws ends the feed with CLI_PRESENTATION_FAILED', async () => {
     const result = await run(['ticks_feed'], {
       services: [service],
-      results: {
-        ticks_feed: defineCliResult(Tick, {
-          present: ({ result: tick }) => {
-            if (tick.n === 2) throw new Error('broken presenter');
-            return `tick ${tick.n}\n`;
-          },
-        }),
+      commandSettings: {
+        ticks_feed: {
+          result: defineCliResult(Tick, {
+            present: ({ result: tick }) => {
+              if (tick.n === 2) throw new Error('broken presenter');
+              return `tick ${tick.n}\n`;
+            },
+          }),
+        },
       },
     });
     expect(result.out).toBe('tick 1\n');
@@ -165,22 +168,23 @@ describe('a result policy speaks for the command own result only', () => {
     const seen: unknown[] = [];
     const result = await run(['job_start', '--wait', '--quiet', '--json'], {
       services: [service],
-      wait: {
+      commandSettings: {
         job_start: {
-          tool: 'job_state',
-          poll: (value) => (Job.safeParse(value).success ? { id: Job.parse(value).id } : null),
-          done: (value) => JobState.safeParse(value).data?.status === 'done',
-          backoff: [0],
-        },
-      },
-      results: {
-        job_start: defineCliResult(Job, {
-          present: ({ result: job }) => {
-            seen.push(job);
-            return `started ${job.id}\n`;
+          wait: {
+            tool: 'job_state',
+            poll: (value) =>
+              Job.safeParse(value).success ? { id: Job.parse(value).id } : null,
+            done: (value) => JobState.safeParse(value).data?.status === 'done',
+            backoff: [0],
           },
-          exitCode: () => 9,
-        }),
+          result: defineCliResult(Job, {
+            present: ({ result: job }) => {
+              seen.push(job);
+              return `started ${job.id}\n`;
+            },
+            exitCode: () => 9,
+          }),
+        },
       },
     });
     expect(seen).toEqual([]);
@@ -189,10 +193,12 @@ describe('a result policy speaks for the command own result only', () => {
     // The control: without --wait the policy does speak.
     const direct = await run(['job_start'], {
       services: [service],
-      results: {
-        job_start: defineCliResult(Job, {
-          present: ({ result: job }) => `started ${job.id}\n`,
-        }),
+      commandSettings: {
+        job_start: {
+          result: defineCliResult(Job, {
+            present: ({ result: job }) => `started ${job.id}\n`,
+          }),
+        },
       },
     });
     expect(direct.out).toBe('started job-1\n');

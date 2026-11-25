@@ -2,16 +2,17 @@
 title: "ADR 0028 — Revert createContractDispatcher (no adopting consumer)"
 type: decision
 status: accepted
+amends: ["0027"]
 created: 2026-06-17
 updated: 2026-06-17
 ---
 
 # ADR 0028 — Revert `createContractDispatcher` (no adopting consumer)
 
-- **Status:** Accepted — supersedes the `createContractDispatcher` portion of
-  [ADR 0027](0027-transport-neutral-contract-execution.md). The rest of ADR 0027
-  (`idempotent`, `createRetainedTopics`, the open `TransportSource` union) stays
-  Accepted.
+**Relations:** supersedes the `createContractDispatcher` portion of
+[ADR 0027](0027-transport-neutral-contract-execution.md). The rest of ADR 0027 (`idempotent`,
+`createRetainedTopics`, the open `TransportSource` union) stays Accepted.
+
 - **Date:** 2026-06-17
 
 ## Context

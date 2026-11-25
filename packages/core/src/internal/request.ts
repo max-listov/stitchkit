@@ -3,12 +3,13 @@
  * Pure `Request → value` functions; no framework state.
  */
 
+import { randomHex } from './random-hex';
 import { isUnsafeKey } from './safe-json';
 import { isRecord } from './typed';
 
 /** Compact, time-sortable id — base36 timestamp + a cryptographic suffix. */
 export function generateTraceId(): string {
-  return `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
+  return `${Date.now().toString(36)}-${randomHex(4)}`;
 }
 
 /**
@@ -92,15 +93,56 @@ export function getClientInfo(
   };
 }
 
+/** Raised when a URL query string carries a malformed percent-escape. */
+export class MalformedQueryError extends URIError {
+  constructor(message = 'Malformed percent-encoding in query string', options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'MalformedQueryError';
+  }
+}
+
+function validateQueryEncoding(search: string): void {
+  if (!search) return;
+  const raw = search.startsWith('?') ? search.slice(1) : search;
+  if (!raw) return;
+  for (const pair of raw.split('&')) {
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    const rawKey = eq === -1 ? pair : pair.slice(0, eq);
+    const rawValue = eq === -1 ? '' : pair.slice(eq + 1);
+    try {
+      decodeURIComponent(rawKey.replace(/\+/g, ' '));
+      decodeURIComponent(rawValue.replace(/\+/g, ' '));
+    } catch (error) {
+      if (error instanceof URIError) {
+        throw new MalformedQueryError('Malformed percent-encoding in query string', {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+  }
+}
+
 /** Flatten a URL query string — repeated keys collapse to arrays. */
 export function parseQueryParams(url: URL): Record<string, string | string[]> {
+  validateQueryEncoding(url.search);
   const query: Record<string, string | string[]> = {};
-  for (const key of new Set(url.searchParams.keys())) {
-    // `?__proto__=x` would pollute the prototype chain on assignment.
-    if (isUnsafeKey(key)) continue;
-    const values = url.searchParams.getAll(key);
-    const [first] = values;
-    query[key] = values.length === 1 && first !== undefined ? first : values;
+  try {
+    for (const key of new Set(url.searchParams.keys())) {
+      // `?__proto__=x` would pollute the prototype chain on assignment.
+      if (isUnsafeKey(key)) continue;
+      const values = url.searchParams.getAll(key);
+      const [first] = values;
+      query[key] = values.length === 1 && first !== undefined ? first : values;
+    }
+  } catch (error) {
+    if (error instanceof URIError) {
+      throw new MalformedQueryError('Malformed percent-encoding in query string', {
+        cause: error,
+      });
+    }
+    throw error;
   }
   return query;
 }

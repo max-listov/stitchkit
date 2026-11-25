@@ -98,7 +98,13 @@ test('candidate runs structural checks and the metadata tests, and certifies not
   const f = await fixture('stable');
   try {
     expect((await f.run(['--candidate'])).code).toBe(0);
-    expect(await runs(f.root)).toEqual(['lockfile', 'lint', 'check', 'test:release-metadata']);
+    expect(await runs(f.root)).toEqual([
+      'lockfile',
+      'lint',
+      'build',
+      'check',
+      'test:release-metadata',
+    ]);
     expect(await f.history(PROFILES.candidate.gate)).toHaveLength(0);
     expect(await f.history(PROFILES.fast.gate)).toHaveLength(0);
     expect((await f.run(['--candidate'])).output).not.toContain('skipping');
@@ -109,7 +115,7 @@ test('candidate runs structural checks and the metadata tests, and certifies not
 
 test('release and full runs certify the fast subset and always run their heavy steps again', async () => {
   for (const [flag, heavy] of [
-    ['--release', ['build', 'tui-packed-lane']],
+    ['--release', ['tui-packed-lane']],
     ['', VERIFY_STEPS.slice(VERIFY_STEPS.indexOf('test') + 1)],
   ] as const) {
     const f = await fixture('stable');
@@ -232,7 +238,6 @@ test('the release profile takes its lanes from the CI evidence lanes of the trai
     expect(core.gate).toBe('verify:release:core+tui');
     expect(core.steps).toEqual([
       ...FAST_STEPS,
-      'build',
       'test:postgres-stores',
       'smoke:next-ssr',
       'smoke:node',
@@ -247,7 +252,6 @@ test('the release profile takes its lanes from the CI evidence lanes of the trai
     const starter = await profileFor([{ target: 'create-stitchkit', version: '0.9.0' }]);
     expect(starter.steps).toEqual([
       ...FAST_STEPS,
-      'build',
       'agent-template-lane',
       'telegram-bot-template-lane',
       'generated-templates-lane',

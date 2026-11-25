@@ -3,6 +3,7 @@ title: "ADR 0103: Every entrypoint declares how settled it is"
 description: "Two declared maturity levels — stable and evolving — so a consumer chooses a surface knowing how often its shape moves, without slowing the surfaces that are still finding it."
 type: decision
 status: accepted
+amendedBy: ["0198", "0204"]
 created: 2026-08-24
 updated: 2026-08-24
 ---

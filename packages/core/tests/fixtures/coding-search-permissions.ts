@@ -10,6 +10,7 @@ if (process.getuid?.() === 0) {
   process.setuid?.(65534);
 }
 const tools = mountAgent([], {
+  access: { open: 'local-operator' },
   runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
 });
 const execute = tools.search_files?.execute;

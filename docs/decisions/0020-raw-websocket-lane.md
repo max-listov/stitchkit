@@ -8,7 +8,10 @@ updated: 2026-06-05
 
 # ADR 0020 — A raw WebSocket lane composed beside Socket.IO
 
-- **Status:** Accepted — upholds [ADR 0008](0008-thin-wrappers.md), Bun-only per [ADR 0013](0013-runtime-agnostic-core.md), lifecycle extended by [ADR 0074](0074-server-owned-managed-shutdown.md)
+**Relations:** upholds [ADR 0008](0008-thin-wrappers.md), Bun-only per
+[ADR 0013](0013-runtime-agnostic-core.md), lifecycle extended by
+[ADR 0074](0074-server-owned-managed-shutdown.md)
+
 - **Date:** 2026-06-05
 
 ## Context

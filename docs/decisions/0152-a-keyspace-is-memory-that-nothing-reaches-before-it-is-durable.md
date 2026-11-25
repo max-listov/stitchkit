@@ -2,7 +2,7 @@
 title: A keyspace is memory that nothing reaches before it is durable
 description: defineKeyspace declares a named record set read synchronously from memory and written through one serialised chain, where memory and the change event both follow the backend's acknowledgement, and the whole thing is a managed resource so the kernel can close it in order.
 type: decision
-status: active
+status: accepted
 created: 2026-09-02
 updated: 2026-09-02
 ---

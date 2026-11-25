@@ -3,7 +3,6 @@ import { askReleaseCi, selectSuccessfulCiRun } from './release-ci';
 import { assertMigrationSection, extractReleaseNotes } from './release-notes';
 import { decidePublishAction } from './release-plan';
 import { classifyPrePush } from './release-prepush';
-import { shouldRunStarterHeadLane } from './release-starter-head';
 import {
   assertReleaseSubjectForTag,
   assertTagOnReleaseHead,
@@ -108,7 +107,9 @@ describe('release plan', () => {
     );
     expect(() => assertTagOnReleaseHead('', SHA)).toThrow(/current origin\/master/);
   });
+});
 
+describe('release plan: tags, CI runs and deferred reviews', () => {
   test('a release tag on a non-release commit is refused, naming the honest order', async () => {
     // A tag cannot sit on a commit with no release commit beneath it.
     const history = async () => [
@@ -221,45 +222,6 @@ describe('release plan', () => {
     expect(decidePublishAction('abc', '')).toBe('publish');
     expect(decidePublishAction('abc', 'abc')).toBe('skip');
     expect(() => decidePublishAction('abc', 'def')).toThrow(/DIFFERENT tarball/);
-  });
-
-  test('an unaligned breaking release runs HEAD unless an exact deferred review exists', () => {
-    const breaking = '### ⚠️ Breaking changes\n\n- managed server hard cut';
-    expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking)).toBe(true);
-    expect(
-      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
-        coreVersion: '0.49.0',
-        outcome: 'deferred',
-        reason: 'The target lane must remain on the published minor until core ships.',
-      }),
-    ).toBe(false);
-    expect(
-      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
-        coreVersion: '0.48.0',
-        outcome: 'deferred',
-        reason: 'stale review',
-      }),
-    ).toBe(true);
-    expect(
-      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
-        coreVersion: '0.49.0',
-        outcome: 'deferred',
-        reason: '   ',
-      }),
-    ).toBe(true);
-    expect(
-      shouldRunStarterHeadLane('0.49.0', '^0.46.0', breaking, {
-        coreVersion: '0.49.0',
-        outcome: 'compatible',
-        reason: 'must prove compatibility by running the lane',
-      }),
-    ).toBe(true);
-    expect(shouldRunStarterHeadLane('0.49.0', '^0.49.0', breaking)).toBe(true);
-    expect(shouldRunStarterHeadLane('0.49.0', '^0.46.0', '### Added\n\n- additive')).toBe(
-      true,
-    );
-    expect(shouldRunStarterHeadLane('1.0.0', '^0.46.0', breaking)).toBe(true);
-    expect(shouldRunStarterHeadLane('0.49.0', 'workspace:*', breaking)).toBe(true);
   });
 });
 

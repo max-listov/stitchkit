@@ -1,13 +1,14 @@
 import { z } from 'zod';
+import { AgentRecordIdSchema } from '../durability/events';
 import {
   createBoundedSinkManager,
   type ObservabilityDrainBound,
 } from '../observability/bounded-sink';
 import type { ObservabilitySinkStatus } from '../observability/status';
 import { childSpan, createTraceContext } from '../observability/trace';
+import { AgentStepSpendPhaseSchema, AgentStepSpendProviderSchema } from './run-step-spend';
 import {
   AgentProviderResponseSchema,
-  AgentRecordIdSchema,
   AgentRunStateSchema,
   AgentTerminalReasonSchema,
   AgentTimestampSchema,
@@ -39,11 +40,48 @@ export const AgentRunStartedEventSchema = AgentRunEventBaseSchema.extend({
 
 export const AgentStepFinishedEventSchema = AgentRunEventBaseSchema.extend({
   type: z.literal('step-finished'),
+  /** The model step this spend belongs to; a compaction carries the step it prepared. */
   step: z.int().nonnegative(),
+  /** Which try produced this spend, counted from one: `2` is the first retry. */
+  attempt: z.int().nonnegative(),
+  /**
+   * What was billed. `step` and `abandoned-attempt` are provider answers and always carry
+   * `modelId`, `provider` and `response`; `compaction` is the application's own callback
+   * and carries none. Count model steps by `phase === 'step'`.
+   */
+  phase: AgentStepSpendPhaseSchema,
+  provider: AgentStepSpendProviderSchema.optional(),
   ttftMs: z.number().nonnegative().optional(),
   /** What this one step reported — the provider's own figure, per step. */
   usage: AgentUsageSchema,
-  response: AgentProviderResponseSchema,
+  response: AgentProviderResponseSchema.optional(),
+  /**
+   * Diagnostic summary when `onStepSpend` threw or timed out. `reportFailed` says that
+   * `onStepSpendError` threw or timed out as well, so this event is the only report there
+   * is. The raw `cause` and `reportError` require `includeInternalCause`.
+   */
+  spendHookError: z
+    .strictObject({
+      code: z.enum(['hook_error', 'hook_timeout']),
+      cause: z.unknown().optional(),
+      reportFailed: z.literal(true).optional(),
+      reportError: z.unknown().optional(),
+    })
+    .optional(),
+}).check((ctx) => {
+  const event = ctx.value;
+  const answered = event.phase !== 'compaction';
+  for (const field of ['modelId', 'provider', 'response'] as const) {
+    if ((event[field] !== undefined) === answered) continue;
+    ctx.issues.push({
+      code: 'custom',
+      input: event[field],
+      path: [field],
+      message: answered
+        ? `A ${event.phase} spend names its ${field}`
+        : `A compaction has no ${field}`,
+    });
+  }
 });
 
 export const AgentRunTerminalEventSchema = AgentRunEventBaseSchema.extend({
@@ -161,11 +199,19 @@ export function createAgentObservability(config: AgentRunSinkConfig): AgentObser
       remember(parsed.eventId);
       manager.submit(() => {
         if (config.includeInternalCause) return parsed;
-        // Only a terminal event carries a cause, and only that member has the
-        // field to strip — which is the union doing its job: there is no longer
-        // a shape where an unrelated event could be carrying one.
-        if (parsed.type !== 'run-terminal') return parsed;
-        return AgentRunTerminalEventSchema.omit({ internalCause: true }).parse(parsed);
+        if (parsed.type === 'run-terminal') {
+          return AgentRunTerminalEventSchema.omit({ internalCause: true }).parse(parsed);
+        }
+        if (parsed.type === 'step-finished' && parsed.spendHookError !== undefined) {
+          return AgentStepFinishedEventSchema.parse({
+            ...parsed,
+            spendHookError: {
+              code: parsed.spendHookError.code,
+              ...(parsed.spendHookError.reportFailed && { reportFailed: true }),
+            },
+          });
+        }
+        return parsed;
       });
     },
     flush: (bound) => manager.flush(bound),

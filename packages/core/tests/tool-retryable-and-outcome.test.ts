@@ -118,6 +118,7 @@ describe('the outcome of an agent tool call is reported structurally', () => {
     const tools = mountAgent(
       { name: 'journal', prefix: 'journal', scope: 'public', methods: { record: method } },
       {
+        access: { open: 'local-operator' },
         hooks: {
           afterToolCall: ({ context, result }) => {
             seen.push({
@@ -145,12 +146,15 @@ describe('the outcome of an agent tool call is reported structurally', () => {
   test('a consumer can brand-check the failure instead of parsing its message', async () => {
     const { isAgentToolError } = await import('../src/entrypoints/tools');
     const { mountAgent } = await import('../src/tools/agent');
-    const tools = mountAgent({
-      name: 'journal',
-      prefix: 'journal',
-      scope: 'public',
-      methods: { record: method },
-    });
+    const tools = mountAgent(
+      {
+        name: 'journal',
+        prefix: 'journal',
+        scope: 'public',
+        methods: { record: method },
+      },
+      { access: { open: 'local-operator' } },
+    );
     const execute = executable(tools, 'record_journal');
     const thrown = await execute(
       { id: 7 },

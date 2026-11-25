@@ -3,6 +3,7 @@ title: "ADR 0297: A watched read ends with its last subscriber"
 description: The watch hub owns the lifetime of each shared read, hands the application a per-read AbortSignal, and treats cancellation as neither a value nor a failure.
 type: decision
 status: accepted
+amends: ["0153"]
 created: 2026-11-21 19:43 +08:00
 updated: 2026-11-21 19:43 +08:00
 ---

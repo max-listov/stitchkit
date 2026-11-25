@@ -1,4 +1,4 @@
-import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import { assertTimerMs } from '../internal/deadline';
 export interface AgentRaceBarrier {
   reached: Promise<void>;
   wait(): Promise<void>;
@@ -6,7 +6,7 @@ export interface AgentRaceBarrier {
 }
 
 export function createAgentRaceBarrier(timeoutMs = 5_000): AgentRaceBarrier {
-  assertPositiveSafeInteger('Agent race barrier timeoutMs', timeoutMs);
+  assertTimerMs('Agent race barrier timeoutMs', timeoutMs);
   const reached = Promise.withResolvers<void>();
   const released = Promise.withResolvers<void>();
   let announced = false;

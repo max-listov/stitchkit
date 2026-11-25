@@ -174,7 +174,7 @@ export function createAgentHarnessFileResources(config: {
         provenance: z.string().min(1),
       })
       .strict(),
-    transports: ['AGENT'],
+    expose: ['AGENT'],
     handler: ({ input }) => {
       const resource = exact.get(input.name);
       if (!resource)

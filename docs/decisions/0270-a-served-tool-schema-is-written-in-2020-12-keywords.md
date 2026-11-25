@@ -3,6 +3,7 @@ title: "ADR 0270: A served tool schema is written in 2020-12 keywords"
 description: "The MCP mount translates the draft-07 presentation into 2020-12 keywords — tuples included — because the SDK stamps 2020-12 and a client that validates tool schemas drops a tool whose `items` is a list."
 type: decision
 status: accepted
+amends: ["0185"]
 created: 2026-10-26 19:20 +07:00
 updated: 2026-10-26 19:20 +07:00
 ---

@@ -1,3 +1,5 @@
+import { assertTimerMs, withDeadline } from '../internal/deadline';
+
 /**
  * What happens to a run in flight when new input arrives on the same key.
  *
@@ -65,11 +67,9 @@ export interface AgentSessionCoordinator {
  * check happens where nothing has been changed yet.
  */
 export function assertCloseBudgets(options: AgentSessionCloseOptions): void {
-  for (const [name, value] of Object.entries(options)) {
-    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
-      throw new TypeError(`${name} must be a non-negative safe integer`);
-    }
-  }
+  // Each ends in a timer; zero is a budget that does not wait.
+  assertTimerMs('Agent session close gracePeriodMs', options.gracePeriodMs, { min: 0 });
+  assertTimerMs('Agent session close forceTimeoutMs', options.forceTimeoutMs, { min: 0 });
 }
 
 export interface AgentSessionCloseOptions {
@@ -134,14 +134,7 @@ export function createAgentSessionCoordinator(): AgentSessionCoordinator {
 
   const waitWithin = async (settled: Promise<void>, timeoutMs: number): Promise<boolean> => {
     if (timeoutMs === 0) return false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<false>((resolve) => {
-      timer = setTimeout(() => resolve(false), timeoutMs);
-    });
-    const completed = settled.then(() => true);
-    const result = await Promise.race([completed, timeout]);
-    if (timer !== undefined) clearTimeout(timer);
-    return result;
+    return (await withDeadline(settled, timeoutMs)).settled;
   };
 
   const laneFor = (key: string): Lane => {

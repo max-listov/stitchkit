@@ -11,6 +11,7 @@ import {
 } from 'ai';
 import type { LocalStepDurability } from '../durability/contract';
 import { createLocalStepDurability } from '../durability/engine';
+import { linkAbortSignals } from '../internal/abort-race';
 import { streamAgentTextBoundary } from '../internal/ai-sdk-typed';
 import { createRuntimeToolContext } from '../tools/runtime-call-context';
 import { deferredToolRepair } from './deferred-tools-internal';
@@ -18,23 +19,19 @@ import type { AgentInjectableInput } from './injection';
 import { ownedProviderStream } from './owned-provider-stream';
 import { classifyProviderFailure } from './provider-failure';
 import { recordAgentRetryDecision } from './retry-policy';
-import {
-  billedUsage,
-  checkpoint,
-  type RunExecution,
-  transientSequence,
-} from './run-execution-state';
+import { checkpoint, type RunExecution, transientSequence } from './run-execution-state';
 import { failureThisRuntimeOwns } from './run-failure';
 import { createRunProviderLedger, type RunProviderLedger } from './run-provider-ledger';
+import { normalizeStepUsage, recordStepSpend } from './run-step-spend';
 import {
   applyStreamPart,
   isOutputPart,
   STRUCTURAL_BOUNDARY_PARTS,
   type StreamPartScope,
+  TOOL_STATUS_PARTS,
 } from './run-stream-parts';
+import { createToolProgressReporter } from './run-tool-progress';
 import type { PreparedTurn } from './run-turn-preparation';
-import { addUsage, normalizeSdkUsage } from './runtime-internals';
-import { createToolProgressReporter } from './tool-progress';
 
 /** What outlives one provider attempt: the retry count and what the SDK carries forward. */
 interface AttemptLoopState {
@@ -143,11 +140,11 @@ async function prepareAttemptStep<CONTEXT, TOOLS extends ToolSet>(
   // rather than depending on stream-consumer scheduling.
   const previousStep = options.steps.at(-1);
   if (previousStep) {
-    state.lastPromptTokens =
-      state.selectedModel?.normalizeUsage?.({
-        usage: previousStep.usage,
-        providerMetadata: previousStep.providerMetadata,
-      })?.inputTokens ?? normalizeSdkUsage(previousStep.usage).inputTokens;
+    state.lastPromptTokens = normalizeStepUsage(
+      state.selectedModel,
+      previousStep.usage,
+      previousStep.providerMetadata,
+    ).inputTokens;
   }
   const prepared = await config.loop?.prepareStep?.({
     ...options,
@@ -223,15 +220,12 @@ function startAttemptStream<CONTEXT, TOOLS extends ToolSet>(
   context: AttemptContext<CONTEXT, TOOLS>,
   attempt: ModelAttempt,
   stopConditions: StopCondition<TOOLS>[],
+  attemptSignal: AbortSignal,
 ) {
   const { execution, turn } = context;
   const { config } = execution.dependencies;
   const { idleDeadline, operationLifecycle } = execution;
   const { tools } = turn;
-  const attemptSignal = AbortSignal.any([
-    execution.executionSignal,
-    attempt.attemptAbort.signal,
-  ]);
   return streamAgentTextBoundary<TOOLS>({
     model: turn.selectedModel.model,
     tools,
@@ -270,8 +264,8 @@ function startAttemptStream<CONTEXT, TOOLS extends ToolSet>(
     onToolExecutionStart: () => idleDeadline.suspend(),
     onToolExecutionEnd: () => idleDeadline.resume(),
     repairToolCall: deferredToolRepair(config.loop?.prepareStep),
-    ...(config.loop?.toolApproval && {
-      toolApproval: config.loop.toolApproval,
+    ...(turn.toolApproval && {
+      toolApproval: turn.toolApproval,
       runtimeContext: execution.input.context,
     }),
     ...(config.loop?.toolApprovalSecret && {
@@ -289,26 +283,13 @@ async function drainAbandonedPart<CONTEXT, TOOLS extends ToolSet>(
   part: TextStreamPart<TOOLS>,
 ): Promise<void> {
   if (part.type !== 'finish-step') return;
-  const { state } = context.execution;
-  await context.ledger.recordResponse({
-    id: part.response.id,
-    providerMetadata: part.providerMetadata,
-    stepNumber: state.step,
+  await recordStepSpend(context.execution, {
+    phase: 'abandoned-attempt',
+    part,
     attempt: attempt.providerAttempt,
+    selectedModel: context.turn.selectedModel,
+    ledger: context.ledger,
   });
-  const failedStepUsage =
-    context.turn.selectedModel.normalizeUsage?.({
-      usage: part.usage,
-      providerMetadata: part.providerMetadata,
-    }) ?? normalizeSdkUsage(part.usage);
-  state.abandonedUsage = state.abandonedUsage
-    ? addUsage(state.abandonedUsage, failedStepUsage)
-    : failedStepUsage;
-  const billed = billedUsage(state);
-  state.usage =
-    state.nonModelUsage && billed
-      ? addUsage(state.nonModelUsage, billed)
-      : (billed ?? state.nonModelUsage);
 }
 
 /**
@@ -404,11 +385,19 @@ async function consumeAttempt<CONTEXT, TOOLS extends ToolSet>(
     ) {
       continue;
     }
-    if (isOutputPart(part)) {
+    const held =
+      part.type === 'text-delta' &&
+      context.execution.dependencies.config.loop?.stepBarriers?.stepText === 'after-tools';
+    if (isOutputPart(part) && !held) {
       if (state.firstOutputAt === undefined) state.firstOutputAt = performance.now();
       await operationLifecycle.firstOutput();
     }
     await applyStreamPart(execution, scope, part);
+    if (TOOL_STATUS_PARTS.includes(part.type)) {
+      // Its tool-status checkpoint just wrote the draft.
+      state.eventsSinceCheckpoint = 0;
+      continue;
+    }
     const structuralBoundary = STRUCTURAL_BOUNDARY_PARTS.includes(part.type);
     if (structuralBoundary || state.eventsSinceCheckpoint >= checkpointEveryEvents) {
       await checkpoint(execution);
@@ -446,9 +435,17 @@ export async function runModelAttempts<CONTEXT, TOOLS extends ToolSet>(
       draining: false,
       attemptAbort: new AbortController(),
     };
-    const result = startAttemptStream(context, attempt, stopConditions);
-    await consumeAttempt(context, attempt, result.stream);
+    // Linked for this attempt only: the run's signal outlives every attempt it retries.
+    const link = linkAbortSignals(execution.executionSignal, attempt.attemptAbort.signal);
+    try {
+      const result = startAttemptStream(context, attempt, stopConditions, link.signal);
+      await consumeAttempt(context, attempt, result.stream);
+    } finally {
+      link.release();
+    }
     if (!attempt.retrying) break;
+    // A retried attempt starts its step over: text it held is not the next one's.
+    state.stepGuard = { text: '', toolFailed: false, reasoningChars: 0 };
     // Subscribers drop what the failed attempt streamed before the next
     // attempt's first delta arrives.
     await publish({

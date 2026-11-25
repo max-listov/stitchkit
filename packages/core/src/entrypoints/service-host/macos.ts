@@ -1,0 +1,127 @@
+/**
+ * macOS service-host primitives: fail-closed Developer ID code signing and
+ * verification, hardened C11 `.app` launcher generation/compilation, Apple
+ * squircle `AppIcon.icns` generation, atomic signed `.app` bundle installation
+ * with rollback, LaunchServices (`lsregister`) registration and cleanup, and
+ * macOS TCC responsibility inspection.
+ */
+
+export {
+  createDefaultMacosBundleHostAdapter,
+  type EnsureSignedBundleOptions,
+  type EnsureSignedBundleResult,
+  ensureSignedBundle,
+  type MacosBundleHostAdapter,
+  MacosBundleInstallError,
+  type MacosBundleInstallErrorCode,
+  swapDirectoriesDarwin,
+} from '../../service-host/macos/bundle';
+export {
+  BUNDLE_SPEC_DIGEST_PLIST_KEY,
+  computeBundleSpecDigest,
+  type MacosBundleDigestInput,
+  type MacosBundleInfoPlistConfig,
+  MacosBundleInfoPlistConfigSchema,
+  renderBundleInfoPlist,
+} from '../../service-host/macos/bundle-plist';
+export {
+  type DeveloperIdIdentity,
+  type FindDeveloperIdsOptions,
+  findDeveloperIds,
+  MacosCodesignError,
+  type MacosCodesignErrorCode,
+  type ParsedCodesignDetails,
+  parseCodesignDetails,
+  parseDeveloperIdsOutput,
+  type ResolveSigningIdentityOptions,
+  resolveSigningIdentity,
+  type SignBundleOptions,
+  signBundle,
+  type VerifiedBundleSignature,
+  type VerifySignedBundleOptions,
+  verifySignedBundle,
+} from '../../service-host/macos/codesign';
+export {
+  APPLE_ICON_CANVAS_PX,
+  APPLE_ICON_CORNER_RADIUS_PX,
+  APPLE_ICON_INSET_PX,
+  APPLE_ICON_TILE_PX,
+  APPLE_ICONSET_SLOTS,
+  type AppleIconsetSlot,
+  assertSafeSvg,
+  assertValidIcnsBytes,
+  type GenerateAppIconIcnsOptions,
+  type GenerateAppIconIcnsResult,
+  generateAppIconIcns,
+  MacosIconError,
+  type MacosIconErrorCode,
+  type MacosIconSource,
+  MacosIconSourceSchema,
+  type RenderAppleSquircleSvgOptions,
+  renderAppleSquircleSvg,
+} from '../../service-host/macos/icon';
+export {
+  createLsregisterDumpParser,
+  DEFAULT_LSREGISTER_DUMP_MAX_BYTES,
+  DEFAULT_MAX_UNREGISTRATIONS,
+  type ForgetBuildTreeOptions,
+  type ForgetRegistrationResult,
+  type ForgetStaleRegistrationsOptions,
+  type ForgetStaleRegistrationsResult,
+  forgetBuildTree,
+  forgetRegistration,
+  forgetStaleRegistrations,
+  KLS_APPLICATION_NOT_FOUND_ERR,
+  type LaunchServicesBundleOptions,
+  LSREGISTER_PATH,
+  type LsregisterBundleRecord,
+  MacosLaunchServicesError,
+  type MacosLaunchServicesErrorCode,
+  parseLsregisterDump,
+  registerBundle,
+  type ScanLsregisterDumpOptions,
+  scanLsregisterDump,
+} from '../../service-host/macos/launch-services';
+export {
+  type CompileMacosLauncherOptions,
+  type CompileMacosLauncherResult,
+  compileMacosLauncher,
+  LAUNCHER_EXIT_NOT_LAUNCHD,
+  type MacosLauncherConfig,
+  MacosLauncherConfigSchema,
+  MacosLauncherError,
+  type MacosLauncherErrorCode,
+  renderMacosLauncherSource,
+} from '../../service-host/macos/launcher';
+export {
+  collectProcessSubtreePids,
+  createDefaultMacosResponsibilityAdapter,
+  type InspectResponsibleProcessOptions,
+  inspectResponsibleProcess,
+  isExecutableInsideBundle,
+  type MacosResponsibilityAdapter,
+  type MacosResponsibilityReason,
+  type MacosResponsibilityStatus,
+  type PsProcessEntry,
+  parsePsPidPpidTable,
+  type ResponsibleProcessInspection,
+  type SubtreeResponsibilityVerification,
+  type VerifyProcessSubtreeResponsibilityOptions,
+  verifyProcessSubtreeResponsibility,
+} from '../../service-host/macos/responsibility';
+export {
+  CLANG_PATH,
+  CODESIGN_PATH,
+  canonicalizeMacosPath,
+  createDefaultMacosCommandRunner,
+  ICONUTIL_PATH,
+  isPathWithinDirectory,
+  type MacosCommandOptions,
+  type MacosCommandResult,
+  type MacosCommandRunner,
+  normalizeMacosSyntheticPath,
+  PS_PATH,
+  QLMANAGE_PATH,
+  SECURITY_PATH,
+  SIPS_PATH,
+} from '../../service-host/macos/runner';

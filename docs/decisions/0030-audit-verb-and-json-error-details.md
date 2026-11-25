@@ -8,10 +8,10 @@ updated: 2026-06-18
 
 # ADR 0030 — Audit verb, sanitised error details, and complete error-code logging
 
-- **Status:** Accepted — extends [ADR 0029](0029-audit-endpoint-identity-and-dimensions.md)
-  (audit completeness), [ADR 0026](0026-stitch-error-code-registry.md) (error
-  model), [ADR 0022](0022-endpoint-identity.md); keeps the core generic per
-  [ADR 0002](0002-generic-core.md).
+**Relations:** extends [ADR 0029](0029-audit-endpoint-identity-and-dimensions.md) (audit
+completeness), [ADR 0026](0026-stitch-error-code-registry.md) (error model),
+[ADR 0022](0022-endpoint-identity.md); keeps the core generic per [ADR 0002](0002-generic-core.md).
+
 - **Date:** 2026-06-18
 
 ## Context

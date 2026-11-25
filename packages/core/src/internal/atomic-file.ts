@@ -23,12 +23,17 @@
 
 import { closeSync, fchmodSync, fsyncSync, openSync, unlinkSync, writeSync } from 'node:fs';
 import { open, unlink } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import {
+  AtomicFilePublicationError,
   type AtomicPublishOptions,
+  assertDirectoryDurability,
   publishAtomicFile,
   publishAtomicFileSync,
+  syncDirectory,
 } from './atomic-publication';
 import { stagingPath } from './atomic-staging';
+import { readBoundedFile, readBoundedFileSync } from './bounded-file-read';
 import { closeAfter, closeAfterSync } from './close-after';
 import { errnoOf } from './errno';
 
@@ -44,6 +49,13 @@ export interface WriteFileAtomicOptions {
   /** Replace by default; false atomically refuses any existing file or link. */
   replace?: boolean;
   /**
+   * Only valid with `replace: false` (throws `TypeError` otherwise). When `true`
+   * and `target` already exists, succeed without replacing it if the existing
+   * regular file (not a symlink, FIFO, or directory) already has identical bytes
+   * and matching permission bits (`mode`, on POSIX).
+   */
+  idempotent?: boolean;
+  /**
    * `'file'` (the default) fsyncs the bytes before publication; `'directory'`
    * also fsyncs the parent after it; `'none'` does neither.
    */
@@ -54,6 +66,34 @@ const DEFAULT_MODE = 0o600;
 
 function bytesOf(data: Uint8Array | string): Uint8Array {
   return typeof data === 'string' ? new TextEncoder().encode(data) : data;
+}
+
+function assertWriteOptions(options: WriteFileAtomicOptions): void {
+  if (options.idempotent === true && options.replace !== false) {
+    throw new TypeError('writeFileAtomic option "idempotent: true" requires "replace: false"');
+  }
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let index = 0; index < left.byteLength; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function modeMatches(actualMode: number | undefined, expectedMode: number): boolean {
+  if (process.platform === 'win32') return true;
+  return actualMode !== undefined && (actualMode & 0o7777) === (expectedMode & 0o7777);
+}
+
+function syncDirectorySync(dir: string): void {
+  assertDirectoryDurability();
+  const descriptor = openSync(dir, 'r');
+  closeAfterSync(
+    () => closeSync(descriptor),
+    () => fsyncSync(descriptor),
+  );
 }
 
 /** The staged file as a writer sees it; a `FileHandle` satisfies it. */
@@ -97,18 +137,82 @@ interface AtomicFileWriteIO {
   open(path: string, flags: 'wx', mode: number): Promise<StagedFile>;
   unlink(path: string): Promise<void>;
   publish(staged: string, target: string, options: AtomicPublishOptions): Promise<void>;
+  readExisting?(
+    target: string,
+    maxBytes: number,
+  ): Promise<{ bytes: Uint8Array; mode: number | undefined }>;
+  syncDir?(dir: string): Promise<void>;
 }
 
 /** How the staged bytes of one atomic write are produced and vetted. */
 export interface AtomicFileStage<T> {
   /** Fills the staged file; a throw discards the staging, and the result is what the write returns once published. */
   fill(file: StagedFile): Promise<T>;
+  /** Exact expected bytes used when `idempotent: true` verifies an `EEXIST` target. */
+  expectedBytes?: Uint8Array;
   /** Receives a failure to remove the staging file after a failed write. */
   onCleanupError?(error: unknown): void;
 }
 
 function isMissing(error: unknown): boolean {
   return errnoOf(error) === 'ENOENT';
+}
+
+async function publishMaybeIdempotent(
+  staged: string,
+  target: string,
+  mode: number,
+  options: WriteFileAtomicOptions,
+  expectedBytes: Uint8Array | undefined,
+  io: AtomicFileWriteIO,
+): Promise<void> {
+  const publishOptions: AtomicPublishOptions = {
+    replace: options.replace ?? true,
+    durability: options.durability ?? 'file',
+  };
+  try {
+    await io.publish(staged, target, publishOptions);
+    return;
+  } catch (error) {
+    if (
+      options.idempotent !== true ||
+      errnoOf(error) !== 'EEXIST' ||
+      expectedBytes === undefined
+    ) {
+      throw error;
+    }
+    const readExisting =
+      io.readExisting ??
+      ((path: string, maxBytes: number) =>
+        readBoundedFile(path, maxBytes, { rejectSymlinks: true }));
+    let existing: { bytes: Uint8Array; mode: number | undefined };
+    try {
+      existing = await readExisting(target, expectedBytes.byteLength);
+    } catch (readError) {
+      if (isMissing(readError)) {
+        // Target disappeared between EEXIST and inspection while `staged` is still on disk: 1 bounded retry.
+        await io.publish(staged, target, publishOptions);
+        return;
+      }
+      throw error;
+    }
+    if (!modeMatches(existing.mode, mode) || !bytesEqual(existing.bytes, expectedBytes)) {
+      throw error;
+    }
+    try {
+      await io.unlink(staged);
+    } catch (cleanup) {
+      if (!isMissing(cleanup)) throw new AtomicFilePublicationError('cleanup', cleanup);
+    }
+    if (publishOptions.durability === 'directory') {
+      try {
+        const syncDir = io.syncDir ?? syncDirectory;
+        await syncDir(dirname(target));
+      } catch (syncError) {
+        throw new AtomicFilePublicationError('directory-sync', syncError);
+      }
+    }
+  }
 }
 
 /**
@@ -123,6 +227,7 @@ export async function writeAtomicFileStaged<T>(
   options: WriteFileAtomicOptions,
   io: AtomicFileWriteIO = { open, unlink, publish: publishAtomicFile },
 ): Promise<T> {
+  assertWriteOptions(options);
   const mode = options.mode ?? DEFAULT_MODE;
   const staged = stagingPath(target);
   // `wx` — create, fail if the path exists at all. The descriptor is then the
@@ -135,10 +240,7 @@ export async function writeAtomicFileStaged<T>(
       if (options.durability !== 'none') await file.sync();
       return filled;
     });
-    await io.publish(staged, target, {
-      replace: options.replace ?? true,
-      durability: options.durability ?? 'file',
-    });
+    await publishMaybeIdempotent(staged, target, mode, options, stage.expectedBytes, io);
     return value;
   } catch (error) {
     await io.unlink(staged).catch((cleanup: unknown) => {
@@ -155,9 +257,10 @@ export async function writeAtomicFileData(
   options: WriteFileAtomicOptions,
   io?: AtomicFileWriteIO,
 ): Promise<void> {
+  const bytes = bytesOf(data);
   await writeAtomicFileStaged(
     target,
-    { fill: (file) => writeAllBytes(file, bytesOf(data)) },
+    { fill: (file) => writeAllBytes(file, bytes), expectedBytes: bytes },
     options,
     io,
   );
@@ -175,6 +278,8 @@ interface AtomicFileWriteSyncIO {
   open(path: string, flags: 'wx', mode: number): StagedFileSync;
   unlink(path: string): void;
   publish(staged: string, target: string, options: AtomicPublishOptions): void;
+  readExisting?(target: string, maxBytes: number): { bytes: Uint8Array; mode: number };
+  syncDir?(dir: string): void;
 }
 
 const nativeSync: AtomicFileWriteSyncIO = {
@@ -191,6 +296,58 @@ const nativeSync: AtomicFileWriteSyncIO = {
   publish: publishAtomicFileSync,
 };
 
+function publishMaybeIdempotentSync(
+  staged: string,
+  target: string,
+  mode: number,
+  options: WriteFileAtomicOptions,
+  expectedBytes: Uint8Array,
+  io: AtomicFileWriteSyncIO,
+): void {
+  const publishOptions: AtomicPublishOptions = {
+    replace: options.replace ?? true,
+    durability: options.durability ?? 'file',
+  };
+  try {
+    io.publish(staged, target, publishOptions);
+    return;
+  } catch (error) {
+    if (options.idempotent !== true || errnoOf(error) !== 'EEXIST') {
+      throw error;
+    }
+    const readExisting =
+      io.readExisting ??
+      ((path: string, maxBytes: number) =>
+        readBoundedFileSync(path, maxBytes, { rejectSymlinks: true }));
+    let existing: { bytes: Uint8Array; mode: number };
+    try {
+      existing = readExisting(target, expectedBytes.byteLength);
+    } catch (readError) {
+      if (isMissing(readError)) {
+        io.publish(staged, target, publishOptions);
+        return;
+      }
+      throw error;
+    }
+    if (!modeMatches(existing.mode, mode) || !bytesEqual(existing.bytes, expectedBytes)) {
+      throw error;
+    }
+    try {
+      io.unlink(staged);
+    } catch (cleanup) {
+      if (!isMissing(cleanup)) throw new AtomicFilePublicationError('cleanup', cleanup);
+    }
+    if (publishOptions.durability === 'directory') {
+      try {
+        const syncDir = io.syncDir ?? syncDirectorySync;
+        syncDir(dirname(target));
+      } catch (syncError) {
+        throw new AtomicFilePublicationError('directory-sync', syncError);
+      }
+    }
+  }
+}
+
 /**
  * The synchronous form of {@link writeFileAtomic}, with the same guarantees in
  * the same order, and the same internal syscall seam.
@@ -201,6 +358,7 @@ export function writeAtomicFileDataSync(
   options: WriteFileAtomicOptions,
   io: AtomicFileWriteSyncIO = nativeSync,
 ): void {
+  assertWriteOptions(options);
   const mode = options.mode ?? DEFAULT_MODE;
   const bytes = bytesOf(data);
   const staged = stagingPath(target);
@@ -223,10 +381,7 @@ export function writeAtomicFileDataSync(
         if (options.durability !== 'none') file.sync();
       },
     );
-    io.publish(staged, target, {
-      replace: options.replace ?? true,
-      durability: options.durability ?? 'file',
-    });
+    publishMaybeIdempotentSync(staged, target, mode, options, bytes, io);
   } catch (error) {
     try {
       io.unlink(staged);

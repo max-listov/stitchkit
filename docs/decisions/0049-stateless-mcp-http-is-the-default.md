@@ -3,14 +3,16 @@ title: "ADR 0049 — Stateless MCP HTTP is the default"
 description: Synchronous MCP HTTP handlers are request-isolated by default; session continuity is explicit.
 type: decision
 status: superseded
+supersededBy: ["0068"]
 created: 2026-08-07
 updated: 2026-08-07
 ---
 
 # ADR 0049 — Stateless MCP HTTP is the default
 
-- **Status:** Accepted — changes the HTTP transport default; builds on immutable
-  surface preparation from ADR 0047
+**Relations:** changes the HTTP transport default; builds on immutable surface preparation from ADR
+0047
+
 - **Date:** 2026-08-07
 
 ## Context

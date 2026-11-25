@@ -44,11 +44,12 @@ async function invoke(argv: string[], config: Partial<CliConfig>) {
       code = value;
     },
     ...config,
+    access: config.access ?? { open: 'local-operator' },
   });
   return { code, err, out };
 }
 
-test('native declarations reject framework option spellings before either handler runs', async () => {
+test('native declarations reject framework option spellings and option-shaped names before either handler runs', async () => {
   const calls: string[] = [];
   for (const name of [
     '--quiet',
@@ -58,6 +59,8 @@ test('native declarations reject framework option spellings before either handle
     '-h',
     '--version',
     '--',
+    '--custom',
+    '-x',
   ]) {
     await expect(
       invoke(['--quiet', 'inspect'], {
@@ -66,10 +69,6 @@ test('native declarations reject framework option spellings before either handle
     ).rejects.toThrow(`CLI command "${name}" is reserved`);
   }
   expect(calls).toEqual([]);
-  expect(
-    await invoke(['--custom', 'inspect'], { commands: [native('--custom', calls)] }),
-  ).toMatchObject({ code: 0, err: '' });
-  expect(calls).toEqual(['--custom']);
 });
 
 test('known managed names are checked even before offline native dispatch', async () => {
@@ -110,7 +109,7 @@ test('known managed names are checked even before offline native dispatch', asyn
     ).rejects.toThrow('CLI command "--quiet" is reserved');
   }
   expect(calls).toEqual([]);
-  const isolated = { ...tool, transports: ['MCP'] as const };
+  const isolated = { ...tool, expose: ['MCP'] as const };
   expect(
     await invoke(['--quiet', 'inspect'], { runtimeTools: [isolated], commands }),
   ).toMatchObject({ code: 0, err: '' });
@@ -147,7 +146,7 @@ test('a discovered conflict refuses before managed execution and a rename restor
   expect(calls).toEqual(['auth', 'catalog', 'inspect']);
 });
 
-test('unresolved names cannot silently switch the handler and command-first native calls stay offline', async () => {
+test('leading flags before native commands stay offline even beside dynamic managed factories', async () => {
   const calls: string[] = [];
   const commands = [native('inspect', calls)];
   const config = {
@@ -170,12 +169,10 @@ test('unresolved names cannot silently switch the handler and command-first nati
       },
     },
   ]) {
-    const result = await invoke(['--quiet', 'inspect'], { ...config, ...factory });
-    expect(result).toMatchObject({ code: 2, out: '' });
-    expect(result.err).toContain('fixture inspect');
-    expect(calls).toEqual([]);
     const first = await invoke(['inspect', '--quiet'], { ...config, ...factory });
     expect(first).toMatchObject({ code: 0, err: '' });
+    expect(calls.splice(0)).toEqual(['inspect']);
+    expect(await invoke(['--quiet', 'inspect'], { ...config, ...factory })).toEqual(first);
     expect(calls.splice(0)).toEqual(['inspect']);
     expect(
       await invoke(['--quiet', 'inspect'], {

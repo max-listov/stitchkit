@@ -8,6 +8,7 @@ import type { ZodObject, ZodType, z } from 'zod';
 import type { HttpMethod, ToolTransport } from '../../contract/define';
 import { AppError } from '../../contract/errors';
 import type { EndpointToolAnnotations } from '../../contract/tool-options';
+import { assertNoLegacyTransports } from '../internal/expose';
 import {
   defineRuntimeTool,
   type RuntimeToolDefinition,
@@ -47,7 +48,7 @@ export type RuntimeOperationSurfaceConfig<
   | 'descriptions'
   | 'scopes'
   | 'annotations'
-  | 'transports'
+  | 'expose'
   | 'backoff'
   | 'defaultTimeout'
   | 'timeoutFromId'
@@ -56,7 +57,7 @@ export type RuntimeOperationSurfaceConfig<
 export interface RuntimeOperationCommon {
   name: string;
   description: string;
-  transports: readonly ToolTransport[] | undefined;
+  expose: readonly ToolTransport[] | undefined;
   annotations: EndpointToolAnnotations | undefined;
 }
 
@@ -101,6 +102,7 @@ export function createRuntimeOperationSurface<
 >(
   config: RuntimeOperationSurfaceConfig<TId, TState, TSnapshot>,
 ): RuntimeOperationSurface<TId, TState, TSnapshot> {
+  assertNoLegacyTransports(config, 'defineAsyncOperation');
   const capabilityName = (capability: AsyncOperationCapability): string =>
     config.names?.[capability] ?? `${config.name}_${capability}`;
   const description = (capability: AsyncOperationCapability): string =>
@@ -117,7 +119,7 @@ export function createRuntimeOperationSurface<
     common: (capability) => ({
       name: capabilityName(capability),
       description: description(capability),
-      transports: config.transports?.[capability],
+      expose: config.expose?.[capability],
       annotations:
         config.annotations?.[capability] ??
         (capability === 'start' || capability === 'cancel'

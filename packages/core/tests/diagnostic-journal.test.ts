@@ -13,6 +13,7 @@ import {
   type DiagnosticJournalStorage,
   DiagnosticJournalStorageError,
 } from '../src/application/diagnostic-journal-storage';
+import { expectTimerRejection } from './support/timer-refusal';
 
 const EventSchema = z.object({ message: z.string() }).strict();
 const epoch = '00000000-0000-4000-8000-000000000001';
@@ -179,6 +180,33 @@ describe('bounded ordered diagnostic journal', () => {
       pendingItems: 0,
       lastFailure: { phase: 'write', sequence: 1 },
     });
+  });
+
+  test('a wait past the timer ceiling is refused, and a refused close leaves the journal open', async () => {
+    const { storage } = fakeStorage({});
+    const journal = createDiagnosticJournalManager(
+      {
+        eventSchema: EventSchema,
+        epoch,
+        limits,
+        lock: { policy: 'refuse' as const, reclaimedStale: false },
+      },
+      storage,
+    );
+    // 2 ** 31 ms is past the timer ceiling: the wait would end the moment it began.
+    await expectTimerRejection(
+      journal.flush({ timeoutMs: 2 ** 31 }),
+      'Diagnostic journal timeoutMs',
+      2 ** 31,
+    );
+    await expectTimerRejection(
+      journal.close({ timeoutMs: 2 ** 31 }),
+      'Diagnostic journal timeoutMs',
+      2 ** 31,
+    );
+    expect(journal.getStatus()).toMatchObject({ state: 'open' });
+    expect(journal.submit({ message: 'accepted' })).toMatchObject({ outcome: 'accepted' });
+    await journal.close();
   });
 
   test('caller timeout never releases a physically running write', async () => {

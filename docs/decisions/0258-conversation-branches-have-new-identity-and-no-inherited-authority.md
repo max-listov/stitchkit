@@ -3,6 +3,7 @@ title: "ADR 0258: Conversation branches have new identity and no inherited autho
 description: "A settled prefix or validated archive becomes an independent conversation through one atomic store operation with typed rekeying and durable lineage."
 type: decision
 status: accepted
+amendedBy: ["0298"]
 created: 2026-10-15 07:39 +07:00
 updated: 2026-10-15 07:39 +07:00
 ---

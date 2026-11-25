@@ -2,26 +2,18 @@ import { z } from 'zod';
 import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
 import { jsonSchemaObjectCoercionMembers } from './json-schema-origin';
+import { unwrapZodWrappers } from './schema';
 
 /** True for a schema whose value should be JSON-parsed when it arrives as a string. */
 function needsJsonCoercion(schema: z.core.$ZodType): boolean {
-  if (
-    schema instanceof z.ZodArray ||
-    schema instanceof z.ZodObject ||
-    schema instanceof z.ZodRecord ||
-    schema instanceof z.ZodTuple ||
-    schema instanceof z.ZodUnion // includes ZodDiscriminatedUnion
-  ) {
-    return true;
-  }
-  if (
-    schema instanceof z.ZodOptional ||
-    schema instanceof z.ZodNullable ||
-    schema instanceof z.ZodDefault
-  ) {
-    return needsJsonCoercion(schema.unwrap());
-  }
-  return false;
+  const base = unwrapZodWrappers(schema);
+  return (
+    base instanceof z.ZodArray ||
+    base instanceof z.ZodObject ||
+    base instanceof z.ZodRecord ||
+    base instanceof z.ZodTuple ||
+    base instanceof z.ZodUnion // includes ZodDiscriminatedUnion
+  );
 }
 
 /**
@@ -30,39 +22,27 @@ function needsJsonCoercion(schema: z.core.$ZodType): boolean {
  * string enum, a template literal, and any wrapper/union over one of those.
  */
 function acceptsRawString(schema: z.core.$ZodType): boolean {
-  const type = schema._zod.def.type;
+  const base = unwrapZodWrappers(schema);
+  const type = base._zod.def.type;
   if (type === 'string' || type === 'template_literal') return true;
-  if (schema instanceof z.ZodLiteral) {
-    return schema.def.values.some((value) => typeof value === 'string');
+  if (base instanceof z.ZodLiteral) {
+    return base.def.values.some((value) => typeof value === 'string');
   }
-  if (schema instanceof z.ZodEnum) {
-    return schema.options.some((value) => typeof value === 'string');
+  if (base instanceof z.ZodEnum) {
+    return base.options.some((value) => typeof value === 'string');
   }
-  if (
-    schema instanceof z.ZodOptional ||
-    schema instanceof z.ZodNullable ||
-    schema instanceof z.ZodDefault
-  ) {
-    return acceptsRawString(schema.unwrap());
-  }
-  if (schema instanceof z.ZodUnion) {
-    return schema.def.options.some((option) => acceptsRawString(option));
+  if (base instanceof z.ZodUnion) {
+    return base.def.options.some((option) => acceptsRawString(option));
   }
   return false;
 }
 
-/** The array members of a union, seen through optional, nullable and default wrappers. */
+/** The array members of a union, seen through optional, nullable, default and readonly wrappers. */
 function arrayMembers(schema: z.core.$ZodType): z.ZodArray[] {
-  if (schema instanceof z.ZodArray) return [schema];
-  if (
-    schema instanceof z.ZodOptional ||
-    schema instanceof z.ZodNullable ||
-    schema instanceof z.ZodDefault
-  ) {
-    return arrayMembers(schema.unwrap());
-  }
-  if (schema instanceof z.ZodUnion) {
-    return schema.def.options.flatMap((option) => arrayMembers(option));
+  const base = unwrapZodWrappers(schema);
+  if (base instanceof z.ZodArray) return [base];
+  if (base instanceof z.ZodUnion) {
+    return base.def.options.flatMap((option) => arrayMembers(option));
   }
   return [];
 }
@@ -112,15 +92,9 @@ function coerceValue(
 ): unknown {
   if (!schema) return value;
 
-  if (
-    schema instanceof z.ZodOptional ||
-    schema instanceof z.ZodNullable ||
-    schema instanceof z.ZodDefault
-  ) {
-    return coerceValue(value, schema.unwrap(), path);
-  }
+  const base = unwrapZodWrappers(schema);
 
-  const guardedMembers = jsonSchemaObjectCoercionMembers(schema);
+  const guardedMembers = jsonSchemaObjectCoercionMembers(base);
   if (guardedMembers) {
     return guardedMembers.reduce(
       (current, member) => coerceValue(current, member, path),
@@ -139,9 +113,9 @@ function coerceValue(
   // `union([string, array])` a double-serialized `'["a"]'` stays a string, and
   // when it parses to an array the array member accepts it is refused by name
   // rather than read as one plain value.
-  if (typeof current === 'string' && needsJsonCoercion(schema)) {
-    if (acceptsRawString(schema)) {
-      if (writtenAsList(current, schema)) {
+  if (typeof current === 'string' && needsJsonCoercion(base)) {
+    if (acceptsRawString(base)) {
+      if (writtenAsList(current, base)) {
         throw new z.ZodError([
           {
             code: 'custom',
@@ -160,19 +134,19 @@ function coerceValue(
     }
   }
 
-  if (schema instanceof z.ZodObject && isRecord(current)) {
-    const shape = schema.shape;
+  if (base instanceof z.ZodObject && isRecord(current)) {
+    const shape = base.shape;
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(current)) {
       out[key] = coerceValue(item, shape[key], [...path, key]);
     }
     return out;
   }
-  if (schema instanceof z.ZodArray && Array.isArray(current)) {
-    return current.map((item, index) => coerceValue(item, schema.element, [...path, index]));
+  if (base instanceof z.ZodArray && Array.isArray(current)) {
+    return current.map((item, index) => coerceValue(item, base.element, [...path, index]));
   }
-  if (schema instanceof z.ZodDiscriminatedUnion && isRecord(current)) {
-    const variant = matchingVariant(schema, current);
+  if (base instanceof z.ZodDiscriminatedUnion && isRecord(current)) {
+    const variant = matchingVariant(base, current);
     return variant ? coerceValue(current, variant, path) : current;
   }
   return current;

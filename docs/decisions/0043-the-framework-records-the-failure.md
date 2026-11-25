@@ -8,8 +8,9 @@ updated: 2026-08-06
 
 # ADR 0043 — The framework records the failure; the project overrides it
 
-- **Status:** Accepted — applies [ADR 0042](0042-the-audit-row-may-name-the-cause.md)'s
-  rule to the HTTP path; extends [ADR 0012](0012-observability-module.md)
+**Relations:** applies [ADR 0042](0042-the-audit-row-may-name-the-cause.md)'s rule to the HTTP path;
+extends [ADR 0012](0012-observability-module.md)
+
 - **Date:** 2026-08-06
 
 ## Context

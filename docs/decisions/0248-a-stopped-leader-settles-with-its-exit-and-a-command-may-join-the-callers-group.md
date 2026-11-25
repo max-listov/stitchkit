@@ -1,6 +1,14 @@
+---
+title: "ADR 0248 — A stopped leader settles with its exit, and a command may join the caller's group"
+type: decision
+status: accepted
+amends: ["0243", "0246"]
+created: 2026-10-06
+updated: 2026-10-06
+---
+
 # 0248 — A stopped leader settles with its exit, and a command may join the caller's group
 
-**Status:** Accepted
 **Date:** 2026-10-06
 
 Amends ADR 0243 and ADR 0246. Invariants I8, I9 and I10.

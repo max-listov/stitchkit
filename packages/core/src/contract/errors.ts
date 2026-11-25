@@ -60,8 +60,9 @@ export class AppError<
   readonly retryable?: boolean;
 
   /**
-   * `message` defaults to the code and `status` to 500; `cause` is the standard
-   * `Error` cause.
+   * `message` defaults to the code and `status` defaults to the code's entry in
+   * `STITCH_ERROR_STATUS` (or 500 for application-defined codes); `cause` is
+   * the standard `Error` cause.
    */
   constructor(
     public readonly code: TCode,
@@ -77,7 +78,8 @@ export class AppError<
   ) {
     super(options.message ?? code, 'cause' in options ? { cause: options.cause } : undefined);
     this.name = 'AppError';
-    this.status = options.status ?? 500;
+    this.status =
+      options.status ?? (isStitchErrorCode(code) ? STITCH_ERROR_STATUS[code] : 500);
     this.details = options.details;
     this.hint = options.hint;
     this.traceId = options.traceId;
@@ -186,6 +188,7 @@ export const STITCH_ERROR_STATUS = {
   CONNECTION_RESPONSE_TOO_LARGE: 413,
   CONNECTION_REQUEST_FAILED: 502,
   UPSTREAM_TOOL_ERROR: 502,
+  MCP_STRUCTURED_CONTENT_MISSING: 502,
   OPERATION_NOT_SUCCEEDED: 409,
   // An operation executed in a process of its own (`stitchkit/process`).
   OPERATION_BUSY: 503,
@@ -231,17 +234,4 @@ export type StitchErrorCode = keyof typeof STITCH_ERROR_STATUS;
 /** Type guard — is `code` one of stitchkit's own error codes? */
 export function isStitchErrorCode(code: string): code is StitchErrorCode {
   return Object.hasOwn(STITCH_ERROR_STATUS, code);
-}
-
-/** Throw an `AppError` for any `code`, mapping a stitch code to its HTTP status (else 500). */
-export function appError(
-  code: string,
-  message?: string,
-  details?: Record<string, unknown>,
-): never {
-  throw new AppError(code, {
-    message,
-    status: isStitchErrorCode(code) ? STITCH_ERROR_STATUS[code] : 500,
-    details,
-  });
 }

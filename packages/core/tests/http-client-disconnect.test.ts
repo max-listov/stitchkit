@@ -108,7 +108,7 @@ function requestContext(path: string): RequestContext {
     source: 'http',
     method: 'GET',
     path,
-    startedAt: process.hrtime.bigint(),
+    startedAt: performance.now(),
     trace: createTraceContext(),
   };
 }

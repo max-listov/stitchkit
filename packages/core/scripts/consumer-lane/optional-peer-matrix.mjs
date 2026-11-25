@@ -61,6 +61,28 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: false,
   },
   {
+    id: 'handler-browser',
+    subpath: './handler',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: `import { defineContract } from 'stitchkit/contract';
+import { createHandler, implement, serveBridge } from 'stitchkit/handler';
+import { z } from 'zod';
+const contract = defineContract({ prefix: 'ping' }, {
+  ok: { method: 'GET', path: '/ok', desc: 'Ping', output: z.object({ ok: z.boolean() }) },
+});
+const handler = createHandler({ services: [implement(contract, { ok: () => ({ ok: true }) })] });
+const res = await handler(new Request('http://bridge.invalid/ping/ok'));
+if (res.status !== 200 || (await res.json()).ok !== true || typeof serveBridge !== 'function') {
+  throw new Error('handler browser execution failed');
+}
+console.log('handler browser: ok');`,
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
     id: 'native-packaging',
     subpath: './files/packaging',
     fixture: 'minimal',
@@ -573,6 +595,110 @@ export const OPTIONAL_PEER_MATRIX = [
     execute: true,
   },
   {
+    id: 'agent-executor',
+    subpath: './agent-executor',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/agent-executor', 'projectExecutorDeltas'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'agent-executor-claude',
+    subpath: './agent-executor/claude',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/agent-executor/claude', 'createClaudeCliDriver'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'spend',
+    subpath: './spend',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/spend', 'createSpendGateway'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'spend-testing',
+    subpath: './spend/testing',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/spend/testing', 'assertSpendCoverage'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'agent-executor-acp',
+    subpath: './agent-executor/acp',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/agent-executor/acp', 'createAcpDriver'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    // The leaf takes the SDK's `query` from the application: it runs without
+    // the SDK installed, and only its declarations name the SDK's types.
+    id: 'agent-executor-claude-sdk',
+    subpath: './agent-executor/claude-sdk',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/agent-executor/claude-sdk', 'createClaudeSdkDriver'),
+    runtimePeers: [],
+    declarationPeers: ['@anthropic-ai/claude-agent-sdk'],
+    execute: true,
+  },
+  {
+    id: 'agent-executor-codex',
+    subpath: './agent-executor/codex',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/agent-executor/codex', 'createCodexDriver'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'agent-executor-testing',
+    subpath: './agent-executor/testing',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource('stitchkit/agent-executor/testing', 'runAgentEngineConformance'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'agent-runtime-postgres',
+    subpath: './agent-runtime/postgres',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: featureSource(
+      'stitchkit/agent-runtime/postgres',
+      'createPostgresAgentRuntimeStore',
+    ),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
     id: 'agent-runtime-sqlite-bun',
     subpath: './agent-runtime/sqlite/bun',
     fixture: 'minimal',
@@ -608,7 +734,11 @@ export const OPTIONAL_PEER_MATRIX = [
     // Browser now: the diagnostic journal was the single import that made this
     // barrel unusable in a client bundle, and it has its own entry.
     target: 'browser',
-    source: featureSource('stitchkit/application', 'createApplication'),
+    source: `import { ApplicationSnapshotSchema, createApplication } from 'stitchkit/application';
+if (typeof createApplication === 'undefined') throw new Error('createApplication is unavailable');
+if (typeof ApplicationSnapshotSchema === 'undefined') throw new Error('ApplicationSnapshotSchema is unavailable');
+console.log('application: ok');
+`,
     runtimePeers: [],
     declarationPeers: [],
     execute: true,
@@ -671,20 +801,6 @@ export const OPTIONAL_PEER_MATRIX = [
     runtimePeers: [],
     declarationPeers: [],
     execute: true,
-  },
-  {
-    id: 'application-schemas',
-    subpath: './application/schemas',
-    fixture: 'minimal',
-    installedPeers: FIXTURE_PEERS.minimal,
-    // Browser, deliberately. The schemas are reachable from './application'
-    // too, and a lane that only proved that would prove the wrong half: what
-    // this entry exists for is to be importable where the server runtime is not.
-    target: 'browser',
-    source: featureSource('stitchkit/application/schemas', 'ApplicationSnapshotSchema'),
-    runtimePeers: [],
-    declarationPeers: [],
-    execute: false,
   },
   {
     id: 'testing',
@@ -750,6 +866,50 @@ console.log('xlsx browser: ok');`,
     execute: true,
   },
   {
+    id: 'sync-browser',
+    subpath: './sync',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'browser',
+    source: `import { createSyncSession, decideOutboxBatch } from 'stitchkit/sync';
+const sent = [];
+const saved = [];
+const session = createSyncSession({
+  isConnected: () => true,
+  readCursor: () => 5,
+  beginFullSync: () => {},
+  send: (request) => sent.push(request),
+  apply: () => {},
+  saveCursor: (version) => saved.push(version),
+  log: { info() {}, warn() {}, error() {} },
+  newId: () => 'id-' + Math.random(),
+  schedule: () => () => {},
+});
+session.requestSync();
+session.handleResponse({ sessionId: sent[0].sessionId, requestId: sent[0].requestId, hasMore: false, latestVersion: 9 });
+if (sent[0]?.after !== 5 || saved[0] !== 9) throw new Error('sync session');
+const batch = decideOutboxBatch([{ id: 'a', entity: 'task', entityId: 'a', payloadJson: '{}', status: 'pending', sentAt: null, attempts: 0 }], { now: 0, policy: { toChange: (row) => ({ id: row.id }), emptyEnvelopeBytes: 2, maxBytes: 1024, maxChanges: 10, retryAfterMs: 1000 } });
+if (batch.send.length !== 1) throw new Error('sync outbox');
+console.log('sync browser: ok');`,
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'sync-postgres',
+    subpath: './sync/postgres',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'bun',
+    source: `import { checkSyncStore, memorySyncStore } from 'stitchkit/sync/postgres';
+const failures = await checkSyncStore(() => memorySyncStore());
+if (failures.length > 0) throw new Error(failures.join('; '));
+console.log('sync server store: ok');`,
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
     id: 'process',
     subpath: './process',
     fixture: 'minimal',
@@ -778,6 +938,39 @@ console.log('xlsx browser: ok');`,
     installedPeers: FIXTURE_PEERS.minimal,
     target: 'bun',
     source: featureSource('stitchkit/files', 'ManagedFilePathSchema'),
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'service-host',
+    subpath: './service-host',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: `import { renderSystemdServiceUnit, renderLaunchdPlist, parseProcNetUnixListeningSockets } from 'stitchkit/service-host';
+const unit = renderSystemdServiceUnit({ description: 'Demo', execStart: ['/usr/bin/env', 'demo'] });
+const plist = renderLaunchdPlist({ label: 'example.demo', programArguments: ['/usr/bin/env', 'demo'] });
+if (!unit.includes('ExecStart=') || !plist.includes('<key>Label</key>') || parseProcNetUnixListeningSockets('').length !== 0) {
+  throw new Error('service-host execution failed');
+}
+console.log('service-host: ok');`,
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'service-host-macos',
+    subpath: './service-host/macos',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: `import { renderMacosLauncherSource, parseCodesignDetails, parseLsregisterDump } from 'stitchkit/service-host/macos';
+const src = renderMacosLauncherSource({ targetExecutable: '/usr/bin/true' });
+if (!src.includes('posix_spawn') || parseCodesignDetails('').authorities.length !== 0 || parseLsregisterDump('').length !== 0) {
+  throw new Error('service-host/macos execution failed');
+}
+console.log('service-host/macos: ok');`,
     runtimePeers: [],
     declarationPeers: [],
     execute: true,
@@ -815,7 +1008,19 @@ console.log('xlsx browser: ok');`,
     fixture: 'minimal',
     installedPeers: FIXTURE_PEERS.minimal,
     target: 'browser',
-    source: featureSource('stitchkit/telegram/html', 'splitTelegramHtml'),
+    source: `import { checkTelegramHtml, markdownToTelegramHtml, splitTelegramHtml, splitTelegramMarkdown } from 'stitchkit/telegram/html';
+const html = markdownToTelegramHtml('**hi** _there_ \`x\` [docs](https://example.com)');
+const chunks = splitTelegramMarkdown('a\\nb', { limit: 10 });
+if (
+  checkTelegramHtml(html).problem !== undefined ||
+  !html.includes('<a href="https://example.com">docs</a>') ||
+  splitTelegramHtml(html).length !== 1 ||
+  chunks.length !== 1
+) {
+  throw new Error('telegram/html browser execution failed');
+}
+console.log('telegram-html: ok');
+`,
     runtimePeers: [],
     declarationPeers: [],
     execute: true,

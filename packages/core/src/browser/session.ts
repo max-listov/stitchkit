@@ -1,3 +1,4 @@
+import { randomHex } from '../internal/random-hex';
 import type { ClientFetch } from './transport';
 
 /** An operation's originating login has ended. Never an auth-refresh instruction. */
@@ -66,7 +67,8 @@ export function createSessionScope<T>(): SessionScope<T> {
       };
       const operation: SessionOperation<T> = {
         context,
-        id: crypto.randomUUID(),
+        // Not `crypto.randomUUID`: React Native and pages on plain HTTP do not have it.
+        id: randomHex(16),
         generation: id,
         signal: controller.signal,
         current,

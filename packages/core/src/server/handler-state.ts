@@ -8,6 +8,8 @@
 import type { RuntimeContext } from '../contract/runtime-context';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { type ClientIpOptions, resolveTraceId } from '../internal/request';
+import { isRecord } from '../internal/typed';
+import type { RequestContext } from '../observability/context';
 import { resolveLoggingConfig } from './logging';
 import { assertCorsConfig, type RequestCors } from './middleware/cors';
 import { compileRouteTable } from './route-table';
@@ -19,6 +21,47 @@ import type {
   MethodDef,
   StitchLogger,
 } from './types';
+
+const trustProxyHandlers = new WeakSet<object>();
+
+/** Remember handlers configured with `trustProxy: true` so non-proxy transports can refuse them. */
+export function markTrustProxyHandler(handler: object): void {
+  trustProxyHandlers.add(handler);
+}
+
+/** Whether `handler` was constructed with `trustProxy: true`. */
+export function isTrustProxyHandler(handler: object): boolean {
+  return trustProxyHandlers.has(handler);
+}
+
+function assertRandomValuesAvailable(): void {
+  const cryptoGlobal: unknown = Reflect.get(globalThis, 'crypto');
+  if (!isRecord(cryptoGlobal) || typeof cryptoGlobal.getRandomValues !== 'function') {
+    throw new Error(
+      '[stitchkit] createHandler requires crypto.getRandomValues (on React Native, install a Web Crypto getRandomValues polyfill before creating the handler)',
+    );
+  }
+}
+
+function assertRuntimeCapabilities(routeMap: RouteMap): void {
+  assertRandomValuesAvailable();
+  if (typeof Reflect.get(globalThis, 'ReadableStream') === 'function') return;
+  const unsupported: string[] = [];
+  for (const entries of routeMap.values()) {
+    for (const { method } of entries) {
+      if (method.stream !== undefined) {
+        unsupported.push(`${method.serviceName}.${method.key} (stream)`);
+      } else if (method.multipart !== undefined) {
+        unsupported.push(`${method.serviceName}.${method.key} (multipart)`);
+      }
+    }
+  }
+  if (unsupported.length > 0) {
+    throw new Error(
+      `[stitchkit] createHandler: this runtime does not provide ReadableStream, which is required by: ${unsupported.join(', ')}`,
+    );
+  }
+}
 
 export interface HandlerState<TServer> {
   config: HandlerConfig<TServer>;
@@ -46,9 +89,13 @@ export type RespondError = (
   group?: LifecycleHooks,
 ) => Promise<Response>;
 
-/** Close the request's timing window: one completion line, one observability row. */
+/**
+ * Close the request's timing window: one completion line, one observability row.
+ * Given the `Response` a handler built, the line also reads whether that code marked
+ * it a protocol outcome (`markProtocolOutcome`); given a bare status, it is not one.
+ */
 export type CompleteRequest = (
-  status: number,
+  answer: number | Response,
   errorCode?: string,
   outcome?: 'cancelled',
 ) => void;
@@ -65,6 +112,8 @@ export interface RequestState<TServer> {
   respondError: RespondError;
   /** This request's CORS answer; absent when the handler has no CORS config. */
   cors: RequestCors | undefined;
+  /** Explicit per-request observability record, independent of ambient AsyncLocalStorage. */
+  context: RequestContext | undefined;
 }
 
 export function createHandlerState<TServer>(
@@ -93,6 +142,9 @@ export function createHandlerState<TServer>(
     }
   };
 
+  const routeMap = compileRouteTable(config, warn);
+  assertRuntimeCapabilities(routeMap);
+
   return {
     config,
     cors,
@@ -104,7 +156,7 @@ export function createHandlerState<TServer>(
     warnedEnrichKeys: new Set<string>(),
     warn,
     resolveId: createTraceIdResolver(config.traceId, warn),
-    routeMap: compileRouteTable(config, warn),
+    routeMap,
   };
 }
 

@@ -17,23 +17,17 @@
  * so a CLI call validates against the exact same contract schema an HTTP or MCP
  * call does (ADR 0014 parity).
  */
-import { z } from 'zod';
-import { coerceJsonArgs } from '../schema/coerce';
+import type { z } from 'zod';
 import {
   coerceField,
   describeSchemaFields,
   describeSchemaPath,
   type FieldInfo,
   looseCoerce,
-  separateBoolValue,
   setNested,
 } from './args-fields';
-import { appendCliFieldValue, cliFieldOption, coerceCliFieldValue } from './args-json';
-import {
-  classifyLongOptionToken,
-  isOptionToken,
-  preserveCliBooleanBoundary,
-} from './args-route';
+import { coerceCliFieldValue } from './args-json';
+import { answersBeforeArguments, type CliFrameworkOptions, scanCliArgv } from './args-scan';
 import { type CliTokens, readCliTokens } from './args-tokens';
 import { type CliResultView, resolveCliView } from './args-view';
 
@@ -57,6 +51,8 @@ export interface CliRunOptions {
   dryRun: boolean;
   /** `--help` / `-h` — print usage for the command. */
   help: boolean;
+  /** `--schema` — print the command's input and output JSON Schema instead of running it. */
+  schema: boolean;
   /** `--count-by` / `--sum` / `--top` / `--table` — aggregate instead of the collection. */
   view?: CliResultView;
 }
@@ -186,9 +182,34 @@ function buildToolArgs(
   return toolArgs;
 }
 
+/** What `parseCliArgs` reads a command's argv with besides its schema: its third parameter. */
+type CliParseConfig = NonNullable<Parameters<typeof parseCliArgs>[2]>;
+
+/** The run options a scan of the line read. */
+export function cliRunOptions(framework: CliFrameworkOptions): CliRunOptions {
+  return {
+    json: framework.json,
+    wait: framework.wait,
+    quiet: framework.quiet,
+    dryRun: framework.dryRun,
+    help: framework.help,
+    schema: framework.schema,
+    ...(framework.waitTimeout !== undefined && { waitTimeout: framework.waitTimeout }),
+    ...(framework.outputDir !== undefined && { outputDir: framework.outputDir }),
+    ...(framework.view !== undefined && { view: framework.view }),
+  };
+}
+
 /**
  * Parse one command's argv against its schema: lexical/coerced flags, explicit
- * `--field:=JSON`, dotted paths, boolean presence and declared positionals.
+ * `--field:=JSON`, dotted paths, boolean presence, declared positionals, and
+ * optional `separatedBefore` boundaries where lifted tokens split adjacent slots.
+ *
+ * The grammar is the one `createCli` reads a command with: a pure boolean field
+ * written inline (`--verbose=maybe`) takes only a boolean word and refuses any
+ * other with `CliArgumentError`, as a malformed framework flag does. A line that
+ * asks for help or `--schema` is answered before its arguments, as `createCli`
+ * answers it: when they cannot be read, `toolArgs` is empty instead of a refusal.
  */
 export function parseCliArgs(
   argv: string[],
@@ -196,9 +217,28 @@ export function parseCliArgs(
   config: {
     allowUnknown?: boolean;
     knownFields?: readonly string[];
-    optionAliases?: ReadonlyMap<string, string>;
+    aliases?: ReadonlyMap<string, string>;
     positionals?: readonly string[];
+    separatedBefore?: ReadonlySet<number>;
   } = {},
+): ParsedCliArgs {
+  try {
+    return parseCommandArgv(argv, schema, config);
+  } catch (error) {
+    if (!(error instanceof CliArgumentError)) throw error;
+    const scan = scanCliArgv(argv, {
+      afterCommand: true,
+      separatedBefore: config.separatedBefore,
+    });
+    if (!answersBeforeArguments(scan)) throw error;
+    return { toolArgs: {}, options: cliRunOptions(scan.framework) };
+  }
+}
+
+function parseCommandArgv(
+  argv: string[],
+  schema: z.ZodType | undefined,
+  config: CliParseConfig,
 ): ParsedCliArgs {
   const fields = describeSchemaFields(schema);
   for (const name of config.knownFields ?? []) {
@@ -225,97 +265,54 @@ export function parseCliArgs(
 
 /** The application's own global options, lifted out of one invocation's argv. */
 export interface CliGlobalOptionsParse {
-  /** argv with the application-global tokens removed, ready for routing. */
+  /**
+   * argv with the application-global tokens removed, ready for routing; a `--` before the
+   * command stays, so the router refuses the line as `createCli` does. Reading it throws
+   * `CliArgumentError` when a lifted global stood between a bare framework boolean and `true`
+   * or `false`: the remaining tokens would read as `--flag false`, which the line did not say.
+   */
   argv: string[];
   /** The validated values, as the application's own schema types them. */
   globals: Record<string, unknown>;
-}
-
-/** The argument error for the first issue of an application option's validation. */
-function refuseGlobalOption(issue: z.core.$ZodIssue | undefined): never {
-  const field = issue?.path[0];
-  const where = typeof field === 'string' ? `--${field}` : 'application option';
-  throw new CliArgumentError(`${where}: ${issue?.message ?? 'invalid value'}`);
+  /**
+   * Indices in `argv` before which an application global was lifted between a bare option and
+   * a value-shaped token; omitted when empty. Hand it to `routeCliArgv` with `argv`.
+   */
+  separatedBefore?: ReadonlySet<number>;
 }
 
 /**
  * Lift the APPLICATION's global options out of argv, wherever they stand.
  *
- * These are not arguments of any operation: which identity key to use, which
- * checkout a call speaks for, which profile. They belong to the invocation, so
- * they may precede the command name as easily as follow it — and a command's
- * own parser must never see them, or an app-global would read as an unknown
- * flag on every operation that does not declare it.
- *
- * Stripping them BEFORE routing is what keeps this one grammar rather than two:
- * `routeCliArgv` then sees a command where a command is, `parseCliArgs` sees
- * only operation arguments, and `passthrough` cannot swallow an app-global into
- * a freeform bag. The token shape is the same `classifyLongOptionToken` the
- * framework's own globals use, so `--root /x`, `--root=/x` and a bare boolean
- * `--verbose` all behave as they do everywhere else.
- *
- * `--` ends the sweep: past it every token is a literal value, so a positional
- * that happens to read as `--root` survives intact.
+ * Thin projection over the single-pass invocation scanner (`scanCliInvocation`),
+ * preserving the `argv`/`globals` shape for consumers that lift globals before
+ * routing. It refuses what `createCli` refuses: a line answered before its
+ * arguments are read (help, `--version`, `--schema`) reports no global's error.
  */
 export function extractCliGlobalOptions(
   argv: readonly string[],
   schema: z.ZodObject | undefined,
 ): CliGlobalOptionsParse {
   if (schema === undefined) return { argv: [...argv], globals: {} };
-  const fields = describeSchemaFields(schema);
-  const rest: string[] = [];
-  const raw = new Map<string, string[]>();
-  const jsonFields = new Set<string>();
-  let ended = false;
-  for (let i = 0; i < argv.length; i++) {
-    const token = argv[i];
-    if (token === undefined) continue;
-    if (!ended && token === '--') ended = true;
-    const option = ended ? undefined : classifyLongOptionToken(token);
-    // A framework-global name wins — an application may not redeclare one, and
-    // that is refused at startup rather than silently resolved here.
-    const field = option ? cliFieldOption(option, fields) : undefined;
-    const info =
-      field && option?.globalKind === undefined ? fields.get(field.name) : undefined;
-    if (!option || !field || !info) {
-      rest.push(token);
-      continue;
-    }
-    let { value } = option;
-    if (value === undefined && info.kind === 'boolean') {
-      const separate = separateBoolValue(argv[i + 1]);
-      if (separate !== undefined) i++;
-      value = String(separate ?? true);
-    } else if (value === undefined) {
-      const next = argv[i + 1];
-      if (next !== undefined && !isOptionToken(next)) {
-        value = next;
-        i++;
-      } else {
-        throw new CliArgumentError(`--${option.name} requires a value`);
-      }
-    }
-    appendCliFieldValue(raw, jsonFields, field.name, value, info, field.json);
-    preserveCliBooleanBoundary(rest, argv[i + 1]);
+  const result = scanCliArgv(argv, { appGlobals: schema });
+  const early = answersBeforeArguments(result);
+  if (!early && result.appGlobalError !== undefined) throw result.appGlobalError;
+  const refusal = early ? undefined : result.liftedBoundaryError;
+  if (refusal === undefined) {
+    return {
+      argv: result.withoutGlobals,
+      globals: result.globals,
+      ...(result.separatedBeforeGlobals.size > 0 && {
+        separatedBefore: result.separatedBeforeGlobals,
+      }),
+    };
   }
-
-  const args: Record<string, unknown> = {};
-  for (const [name, values] of raw) {
-    args[name] = coerceCliFieldValue(
-      fields.get(name),
-      values,
-      `--${name}`,
-      jsonFields.has(name),
-    );
-  }
-  let coerced: Record<string, unknown>;
-  try {
-    coerced = coerceJsonArgs(args, schema);
-  } catch (error) {
-    if (error instanceof z.ZodError) refuseGlobalOption(error.issues[0]);
-    throw error;
-  }
-  const parsed = schema.safeParse(coerced);
-  if (!parsed.success) refuseGlobalOption(parsed.error.issues[0]);
-  return { argv: rest, globals: parsed.data };
+  // Lifting a global from between a bare framework boolean and a boolean word leaves an argv that
+  // reads as `--flag false`. The globals are still what the line says; no argv is.
+  return {
+    globals: result.globals,
+    get argv(): string[] {
+      throw refusal;
+    },
+  };
 }

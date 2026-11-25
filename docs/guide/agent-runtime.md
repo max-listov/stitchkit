@@ -119,7 +119,7 @@ const runtime = createAgentRuntime({
   tools: ({ context, toolFenceLifecycle }) =>
     mountAgent(service, {
       context,
-      lifecycle: composeToolLifecycle(authLifecycle, toolFenceLifecycle),
+      access: { gate: composeToolLifecycle(authLifecycle, toolFenceLifecycle) },
     }),
   runs: { inputPolicy: 'interrupt', coalescePending: true },
   loop: {
@@ -199,7 +199,7 @@ const runtime = createAgentRuntime({
   // protocol, store, models and prompt...
   tools: runContext => deferred.mount(runContext, {
     context: runContext.context,
-    lifecycle: composeToolLifecycle(authLifecycle, runContext.toolFenceLifecycle),
+    access: { gate: composeToolLifecycle(authLifecycle, runContext.toolFenceLifecycle) },
   }),
   loop: { prepareStep: deferred.prepareStep(applicationPrepareStep) },
 })
@@ -207,7 +207,10 @@ const runtime = createAgentRuntime({
 
 The built-in selector deterministically ranks exact name, prefix/token and
 description matches. A custom async selector returns names only; unknown and
-duplicate output is removed against the local canonical manifest. Search never
+duplicate output is removed against the local canonical manifest. `select` only
+ranks candidates and is not an access check: an inactive tool in the current
+catalog can still be activated by exact name past `select`, so access is
+governed by `surfaces` membership and the tool `lifecycle`. Search never
 executes the selected operation and never returns its schema. A later provider
 step receives the real selected tools by name, so their direct lifecycle,
 fencing, hooks, errors and `present.agent` output remain unchanged.
@@ -223,7 +226,11 @@ the same `SEARCH_REQUIRED` answer with an exact name, and with a query in words
 the field is ignored and the query is ranked as usual.
 
 Every ceiling is required. `maxSchemaBytes` measures UTF-8 bytes over canonical
-name, description and presentation schema. It is useful for before/after
+name, description and presentation schema. The options that shape how inputs are
+advertised — `extend`, `flattenUnionInput`, `inputRecursionDepth` — are set on
+`createDeferredAgentToolSurface`, not on `mount`, so the manifest the selector
+ranks and the ceilings measure is the one the model receives; a `mount` that
+names one is refused. It is useful for before/after
 comparison, but provider serialization and tokenization differ: use existing
 provider-reported input usage and cost to decide whether the extra search round
 is beneficial. Controller evidence intentionally omits query text, prompts,
@@ -269,7 +276,8 @@ has no side effect; an external supervisor owns process placement and restart.
 
 `createAgentHarnessControlServer` adds transport-neutral correlated requests, shared observers and
 one exclusive controller lease per conversation. `close()` on a connection detaches only that
-client; it never closes the harness. Normal `event` delivery stays serialized. A bounded slow
+client; it never closes the harness. A request the harness rejects answers `REQUEST_REJECTED`; its
+cause goes to the config's `onError` (else `console.error`), never to the client. Normal `event` delivery stays serialized. A bounded slow
 consumer is detached and receives `resync-required` through the required synchronous
 `onOverflow` callback; that callback closes/aborts the underlying transport, which then reconnects
 and requests a fresh snapshot. It never writes a second frame concurrently with a blocked
@@ -470,7 +478,8 @@ only. Production applications normally call `createAgentRuntimeStore()` and
 provide one database transaction driver. Its `transaction` owns the retry of a
 serialization conflict, wherever the database reports it: on a statement or on
 `COMMIT`, which some clients surface in a different shape. Pass
-`armCommitConflict` to `runAgentStoreConformance` to prove it:
+`commitConflict: { arm }` to `runAgentStoreConformance` to prove it (a single-writer
+engine declares `{ impossible: 'single-writer' }` instead):
 
 ```ts
 const store = createAgentRuntimeStore({
@@ -494,13 +503,41 @@ const store = createAgentRuntimeStore({
     loadByInputMessageId: (tx, identity) => loadAdmissionByInput(tx, identity),
     create: (tx, receipt) => createAdmission(tx, receipt),
   },
+  seeds: {
+    load: (tx, identity) => loadSeedReceipt(tx, identity),
+    create: (tx, receipt) => createSeedReceipt(tx, receipt),
+  },
   history: {
     load: (tx, conversationId) => loadCanonicalMessages(tx, conversationId),
+    hasMessage: (tx, identity) => hasAnyMessage(tx, identity), // compacted rows too
     apply: (tx, mutation) => applyCanonicalHistoryMutation(tx, mutation),
+    restore: (tx, baseline) => restoreBaseline(tx, baseline), // optional
   },
+  events: {
+    append: (tx, event) => appendEvent(tx, event),
+    list: (tx, page) => listEvents(tx, page),
+    find: (tx, identity) => findEvent(tx, identity), // a unique index on the event id
+  },
+  archive: { export: exportCompanions, import: importCompanions }, // optional
   scanRecoverable: page => scanRecoverableRuns(page),
 })
+
+await runAgentStoreConformance({
+  createStore: () => store,
+  capabilities: { branch: true, planBranch: true, archive: true, historyRestore: true },
+  commitConflict: { arm: () => db.failNextCommitWithSerializationError() },
+})
 ```
+
+`archive` and `history.restore` are the driver's optional members, and
+`store.capabilities` (`{ archive, historyRestore, purge }`) says which this one
+has. A store without `archive` refuses an archive carrying spills or companion
+projections, and a branch source carrying spills; one without `history.restore`
+refuses a compacted baseline. Each refusal is an
+`AgentStoreUnsupportedCapabilityError` naming the `capability`, thrown before
+anything is written — never a silent drop of spills or a compacted row brought
+back as active history. The conformance kit compares the declared `capabilities`
+with `store.capabilities` and proves each by behaviour.
 
 Prompt budgeting keeps reservation deficits signed. If instructions,
 `reservedOutput`, tool schemas, attachments and provider overhead already exceed
@@ -587,13 +624,54 @@ empty search result; check with
 `SELECT sqlite_compileoption_used('ENABLE_FTS5')`.
 
 The handle returned by `createBunSqliteAgentRuntimeStore` /
-`createNodeSqliteAgentRuntimeStore` is `{ store, conversations, database,
-transaction, close }`. `database` is the shared connection and `transaction`
-is one write transaction in the store's own serialization: the SQLite
-companions — `createSqliteAgentProjectionStore`, `createSqliteAgentSpillStore`,
-`createSqliteAgentChildManager`, `createAgentScheduleService` — take `{ sqlite }`
-and write their rows and events through it, so a row and its event land
-together or not at all.
+`createNodeSqliteAgentRuntimeStore` is `{ store, conversations, host, close }`.
+`host` is where the companions keep their rows — `createAgentProjectionStore`,
+`createAgentSpillStore`, `createAgentChildManager`,
+`createAgentScheduleService` and `createAgentEventSearch` take it (the child
+manager and the projection store `{ store, host }`). `host.transaction(conversationId, work)`
+is one write transaction of the store: it refuses a purged conversation, and
+the companion's row and its event commit together or not at all.
+`host.read(work)` is a read transaction. Companions exist on the SQLite and
+Postgres stores; the memory store and a hand-written driver have none. The
+event search uses FTS5 on SQLite and a `tsvector` index on Postgres.
+
+### On Postgres
+
+`stitchkit/agent-runtime/postgres` is the same store on Postgres, over the
+application's own client:
+
+```ts
+import { SQL } from 'bun'
+import { createPostgresAgentRuntimeStore } from 'stitchkit/agent-runtime/postgres'
+
+const sql = new SQL(process.env.DATABASE_URL)
+const { store, conversations, host } = createPostgresAgentRuntimeStore<SQL>({
+  transaction: (work) => sql.begin((tx) => work(tx)),
+  query: (tx, text, parameters) => tx.unsafe(text, [...parameters]),
+})
+```
+
+With Prisma, `transaction: (work) => prisma.$transaction(work)` and
+`query: (tx, text, parameters) => tx.$queryRawUnsafe(text, ...parameters)`.
+
+The store owns its transactions, unlike the sync store, which writes inside
+the application's transaction so a change commits with the application's own
+rows. Every write runs SERIALIZABLE, and a serialization conflict — on any
+statement, or on `COMMIT` — is cured only by running the whole unit again,
+which only the code that opened the transaction can do. So `transaction` must
+open a fresh transaction on every call, and the store's isolation statement is
+the first in it; a transaction the application already used is refused in
+words. Retrying is the driver's duty: `withStoreRetries` around a store call
+does not replace it.
+
+The schema is versioned and created on first use under an advisory lock, so
+processes starting at once agree on it; a schema of another version or with
+tables missing is refused, not repaired. When migrations own the schema, pass
+`createTables: false` and put `postgresAgentRuntimeStoreDdl(prefix)` in one;
+the version is still checked. `prefix` (default `stitchkit_agent_runtime`)
+keeps two stores in one database apart. Identifiers and timestamps are stored
+as written, byte for byte, so an archive exported from Postgres imports into
+SQLite and back unchanged.
 
 `conversations.messages` pages the model's history: what compaction removed is
 not in it, which is the point of compaction. A person reading back their own
@@ -652,6 +730,8 @@ const copy = await sqlite.store.branchConversation({
   applicationFiles: [
     { reference: 'uploads/original/photo.png', destinationReference: 'uploads/new-conversation/photo.png' },
   ],
+  // Your own data under names the runtime reads as references; `retain` keeps a record of the past.
+  applicationKeys: [{ key: 'messageId' }, { key: 'runId', sourceIdentity: 'retain' }],
 })
 
 const restored = await sqlite.store.branchConversation({
@@ -682,7 +762,7 @@ lives in your store, where the runtime can neither copy it nor grant access to i
 destination conversation access in your store first, then declare each pair in `applicationFiles`:
 the branch writes your `destinationReference` and never the source address. A file part neither
 spilled nor declared refuses the whole branch with `Branch contains a foreign or missing file
-reference`, as does a declared reference that is also a spill or a repeated `reference` or
+reference` (code `application-file-undeclared`), as does a declared reference that is also a spill or a repeated `reference` or
 `destinationReference`. Declare every attachment of the supplied history, including turns after
 `throughRunId`: the complete archive is validated before the prefix is chosen. The declaration is
 part of the request fingerprint, so a retry with the same pairs returns the receipt and different
@@ -692,10 +772,77 @@ Message metadata, the input and output of your own tools and provider options ar
 the branch does not rewrite them. A key in them named like a runtime reference — `reference`,
 `conversationId`, `runId`, `messageId`, `callId`, `toolCallId`, `approvalId`, `operationId`,
 `artifactId` — refuses the branch, because a runtime reference there could be neither rekeyed nor
-safely carried. When such a name is simply your data — a Telegram `messageId`, a CRM `reference` —
-list it in `applicationKeys: ['messageId', 'reference']`. A declared key still refuses when its value
-names an identity of the source conversation, and the order of `applicationKeys` and
-`applicationFiles` is not part of the request.
+safely carried. When such a name is your data, declare it once in `applicationKeys`, and say what
+a value naming the source conversation means:
+
+- `{ key: 'messageId' }` — `sourceIdentity: 'refuse'`, the default. The value is data that never
+  names the source, such as a Telegram `messageId` or a CRM `reference`; one that names the source
+  conversation, anything it defines or a declared application file refuses the branch.
+- `{ key: 'runId', sourceIdentity: 'retain' }` — the value may be a record of the past: the run
+  that took an input, the IDs a read of your own data returned. It crosses byte for byte — the
+  provider journal shows the model the same string — and never becomes a reference of the
+  destination. Only the source conversation, its runs and its messages may be named so; a value
+  naming a spill, an application file, a tool call or any other runtime identity still refuses,
+  because what it grants crosses by its own contract.
+
+A refusal names the key's path inside the payload (`at intake.runId`), never its value. A key is
+one of the names above, declared once; the order of `applicationKeys` and `applicationFiles` is not
+part of the request. A retained ID is visible to the destination's model: a tool of yours that
+accepts such an ID checks it against the conversation calling the tool, as the runtime's own
+tools do by taking the conversation from the run that calls them.
+
+#### Every refusal at once, and a plan before the call
+
+A branch reads the whole source before it answers. Everything a declaration or an authorization
+lifts — an undeclared key, a source identity under a key, an undeclared attachment, spills without
+`artifactAuthorization`, an event kind this runtime does not know — is collected, and the branch
+refuses once with `AgentConversationBranchRefusedError`, a `TypeError` whose `refusals` lists them
+all (up to 100; `omittedRefusals` counts the rest). Each refusal has a `code` and its address in
+the source: the event `seq` and `eventKind`, the `messageId`, the `toolName` and the key's `path`,
+never a value; an attachment refusal names the `reference` to declare. A source the branch cannot
+read as what it claims to be stops it at once as one more refusal with code `integrity`, after
+what was collected before it.
+
+`store.planConversationBranch(input)` takes the same input, writes nothing and returns
+`{ ready, refusals, omittedRefusals, applicationFiles, undeclaredKeys, fingerprint,
+sourceArchiveDigest }`: the same list the branch would throw, every attachment reference of the
+source that is not a spill — the access to grant before the call — and the keys to declare. Plan,
+grant, declare, then branch; `sourceArchiveDigest` tells you whether the source you planned is the
+one you branch.
+
+```ts
+const plan = await sqlite.store.planConversationBranch(request)
+if (!plan.ready) {
+  for (const refusal of plan.refusals)
+    log(refusal.code, refusal.seq, refusal.eventKind, refusal.toolName, refusal.path ?? refusal.reference)
+}
+await grantAccess(plan.applicationFiles, request.destinationConversationId)
+```
+
+Identities are all defined before any value is judged, so a value naming a schedule, a child or
+an idempotency key refuses the same whether the source recorded the identity before or after it.
+
+Those declarations are for your data only. What the runtime's own capabilities wrote into the
+conversation crosses by its type, with nothing to declare:
+
+- **Model invocation ledger** (`invocations`). Its records cross as inert receipts: they keep naming
+  the conversation and run that made the call, with who called, the trace, the executing process
+  (host name and pid), models, usage and hashes. No ledger reader counts them as invocations of the
+  branch. The encrypted payload body is not copied; the receipt keeps the artifact's id, size and
+  hash, so `readPayload` on the source conversation still finds it. A branch cut at a run with
+  `throughRunId` can hold that run's started record without its finished one: the ledger finishes an
+  agent invocation after the run's terminal.
+- **Deferred tool search.** A selection receipt follows the run it was written in, whatever you
+  named the search tool. One that names no run of this conversation is your data.
+- **Event search tools.** What `session_search`, `session_trace` and `session_event` were asked and
+  answered is a record of what the model read and crosses as it was, including a call the tool
+  refused, except that encrypted invocation payload bodies in it are removed. Addresses in it keep
+  naming the source; the runtime reads spills, invocation payloads and events only through the
+  conversation asking, so in the branch they resolve to nothing. A tool of yours that accepts such
+  an address checks it against the conversation calling the tool.
+
+A value that only resembles one of these — a receipt with a field of your own, another shape under
+the same tool name — is your data and is judged by `applicationKeys`.
 
 The provider journal is the record of what a model was actually sent, and a branch copies it as
 evidence, unrewritten. File bytes are recorded by hash; an address your `resolveFile` returned —
@@ -724,7 +871,7 @@ schedule row or child relation is cloned. Ordinary companion projections in the 
 unique names and checkpoints within the supplied journal, then discards their values. They are
 derived application caches, including ones containing source references; their values are never
 replayed as state or copied as authority. Rebuild destination projections with
-`createSqliteAgentProjectionStore().advance(...)` over the destination ledger. An exact earlier
+`createAgentProjectionStore().advance(...)` over the destination ledger. An exact earlier
 boundary never inherits a later cache value.
 
 The store validates the complete archive before writing: contiguous events, a matching runtime
@@ -755,7 +902,7 @@ observations, not executable checkpoint inputs. `AgentStoreTransitionSchema` des
 store mutations. Shape inspection does not replace branch's complete replay/reference validation.
 Schema v4 archives written by 0.109.4 use the same journal representation.
 
-Use `defineAgentProjection` with `createSqliteAgentProjectionStore` for a
+Use `defineAgentProjection` with `createAgentProjectionStore` for a
 deterministic versioned fold. Every value reports `uptoSeq`, so a caller can
 distinguish current data from a projection that still has events to consume.
 Changing the projection version folds from sequence one.
@@ -784,31 +931,69 @@ await slots.set({
 const runtime = createAgentRuntime({ ...config, store: sqlite.store, stateSlots: [goal] })
 ```
 
-`createAgentStateTools` binds `create_goal`, `update_goal`, `get_goal` and
-`todo_write` to one conversation. Human changes call the same slot store with
+Every built-in tool factory below takes the run context `tools()` receives and acts
+for that run's conversation; a context no runtime issued is refused, so the tools
+are built per run:
+
+```ts
+createAgentRuntime({
+  ...config,
+  tools: (run) =>
+    mountAgent([], {
+      access: { gate: run.toolFenceLifecycle },
+      runtimeTools: createAgentStateTools({ state, run }),
+    }),
+})
+```
+
+`createAgentStateTools({ state, run })` binds `create_goal`, `update_goal`,
+`get_goal` and `todo_write` to the conversation of the run it is given. Human changes call the same slot store with
 `actor: 'human'`; they remain structured `state/set` facts rather than forged
 chat messages.
 
-`createSqliteAgentSpillStore` persists oversized output separately and records
-its locator, hash and lifecycle in the ledger. `read_output` and
+`createAgentSpillStore` persists oversized output separately and records
+its locator, hash, lifecycle and the tool call whose output it holds in the ledger. `read_output` and
 `search_output` re-run both locator authorization and the originating tool
 authorization before reading bytes. A reference the store does not hold is a
 refusal like any other — `SPILL_REFERENCE_UNKNOWN` / 404, naming the reference
 and pointing at the one the spilling command returned. The lookup is scoped by
 conversation, so a reference belonging to another conversation is absent rather
-than forbidden, and the refusal cannot tell a model that it exists elsewhere. `createSqliteAgentEventSearch` returns the
+than forbidden, and the refusal cannot tell a model that it exists elsewhere. The store's `conversationId`
+and `runId` are the host's to name, as `root` is for the coding tools: the store also serves work outside a
+run (retention `cleanup`, reading a branched copy), and the model never names a conversation, only a
+reference. Inside a runtime, create it in `tools()` from the run context it receives —
+`conversationId: runContext.run.conversationId, runId: runContext.run.id`. `createAgentEventSearch` returns the
 exact conversation and event sequence; cross-conversation results are denied
 unless `authorizeConversation` approves each target.
-`createAgentEventSearchTools` supplies `session_search`, `session_trace` and
-`session_event` over the same bounded APIs.
+On the Postgres store the search keeps a `tsvector` (`simple`) per event in a
+table of its own and indexes new events when a search needs them, never inside
+`appendEvent`, so an event of any size is stored. It matches as SQLite does —
+every word, in any order; a hyphenated word is found by its parts on both —
+with two differences named in ADR 0315: diacritics are kept unless
+`postgres: { diacritics: 'unaccent' }` (FTS5 removes them; `unaccent` needs the
+extension and refuses without it), and the ranking and snippets come from
+`ts_rank_cd` and `ts_headline` rather than `bm25` and `snippet`. `maxIndexedChars` (65 536) bounds the text indexed per
+event; `maxSyncEvents` (10 000) bounds the indexing one search does — a search
+further behind indexes that many and refuses with how far, and the next
+continues.
+`createAgentEventSearchTools({ run, search, store })` supplies `session_search`,
+`session_trace` and `session_event` over the same bounded APIs, for the
+conversation of the run it is given.
 
 For credential-free failure tests, import `createFaultProviderServer` and
 `createReplayAgentProvider` from `stitchkit/agent-runtime/testing`. Runtime
 `loop.retry` applies an explicit `AgentRetryPolicy`: each decision is recorded
 as `retry/scheduled`, each new attempt as `retry/started`, and an attempt that
-has invoked a tool is never automatically replayed.
+has invoked a tool is never automatically replayed. Its `maxAttempts` is a
+positive safe integer, refused otherwise when the runtime is created and when
+`recordAgentRetryDecision` is given the policy (`TypeError`): `Infinity` would
+retry a paid failure without end, `NaN` or `0` would silently mean never. The
+Postgres store's `maxAttempts` follows the same rule.
 
-`createAgentScheduleService` persists `at`, `after` and `every` input. Repeating
+`createAgentScheduleService` persists `at`, `after` and `every` input. It
+requires `maxActivePerConversation` — the schedules one conversation may hold at
+once, counted in the transaction that inserts — and `minIntervalMs`, the shortest
+repeat; a request past either refuses with the limit in the message. Repeating
 schedules require an explicit IANA time zone. Dispatch uses a stable
 `schedule:<id>:<occurrence>` idempotency key, and restart lateness is recorded.
 Resolve after durable admission; return `{ status: 'retry', reason }` for a
@@ -833,20 +1018,69 @@ can delay newly due work by at most its deadline. The service keeps one nearest-
 timer plus per-attempt deadline timers. Storage failures use a bounded recovery timer;
 idle ticks do not write. SQLite v4 migration preserves due times and claims; stop older
 scheduler processes before migration. See [ADR 0202](../decisions/0202-schedule-retries-preserve-occurrence-identity.md).
-`createAgentScheduleTools` exposes the exact `schedule_after`, `schedule_at`,
-`schedule_every`, `schedule_list` and `schedule_cancel` surface.
+`createAgentScheduleTools({ service, run })` exposes the exact `schedule_after`,
+`schedule_at`, `schedule_every`, `schedule_list` and `schedule_cancel` surface, bound to the
+conversation of the run it is given: the model's input carries no conversation address, and
+the service's limits are the only ones.
 
-`createSqliteAgentChildManager` seeds a child from the parent's ledger through
-an exact sequence, stores the graph, clamps requested limits to a durable parent
-remainder and stops budget overruns at the next step boundary as
+`createAgentChildManager` seeds a child from the parent's ledger through
+an exact sequence, stores the graph, clamps requested limits to the parent
+remainder `remainingBudget` returns (required; a dimension the model leaves out
+takes it, a budget that names no limit or a spent dimension refuses), refuses a
+child past `maxActiveChildren` (required; counted by the managing process, so two processes managing
+one store each hold their own count) and stops budget overruns at the next step boundary as
 `policy_stop`. That enforcement runs inside the child's own runtime: the host that spawns it gives the child
 `loop.stopPolicies: [agentChildBudgetStopPolicy({ manager, childConversationId })]`, which
-calls `recordStepUsage` at every step boundary; `recordStepUsage` alone measures and decides,
-and reports `enforced: false` when the deciding process holds no handle to stop. Given to `createAgentRuntime` as `children`, the manager stops the parent's children after the parent's terminal is durable — interrupted, cancelled, timed out or shut down; a successful, policy-stopped, superseded or failed parent leaves them to the conversation (ADR 0175 carries the table); without `children` nothing cascades; an unreachable child is recorded
-as `lost`, not misreported as a provider failure.
-`createAgentChildTools` adds `subagent`, `subagent_fork`, `list_agents`,
-`send_message` and `interrupt_agent`; final output stays behind its bounded
-result locator.
+calls `recordStepUsage` at every step boundary using the resolved model's own `normalizeUsage` hook (the same path as `onStepSpend`, with no separate `cost` callback); `recordStepUsage` alone measures and decides,
+and reports `enforced: false` when the deciding process holds no handle to stop; a budget stop the
+host confirms records the child `stopped`, so it no longer holds a place under `maxActiveChildren`. Given to `createAgentRuntime` as `children`, the manager stops the parent's children after the parent's terminal is durable — interrupted, cancelled, timed out or shut down; a successful, policy-stopped, superseded or failed parent leaves them to the conversation (ADR 0175 carries the table); without `children` nothing cascades; an unreachable child is recorded
+as `lost`, not misreported as a provider failure. Every stop — the cascade, `interruptChild`, the
+cleanup of a spawn whose record failed — is asked of the host within one bound, and stops that meet on
+one child while its host is answering share that one request; a stop it does not
+confirm records `lost` with its `reason` (`stop-timeout`, `stop-failed`, `unreachable`). A spawn is
+visible to the parent's stop from its first line: stopped before the host is asked to start the child,
+`spawnChild` rejects and no child exists; stopped after, the child is stopped as soon as its handle is
+held, and `spawnChild` returns the state that stop recorded. `waitChild` — and so the `subagent` tool —
+resolves once a stop has recorded how the child ended, without waiting for a host that never reports. An
+answer or a message that outlived the bound may still reach the host: until it settles, a second one is
+refused rather than delivered twice, and one the host takes late is recorded when it lands. A message and a blocking answer are asked of
+the host within the same bound: one it does not answer rejects, a blocking request stays pending to
+answer again, and each parent's blocking requests queue on their own, so a silent host holds no other
+parent's. A child
+that finished while being stopped keeps `finished` and its result: a child leaves `spawned` or
+`running` once, and each conversation journals one terminal state for it. `listChildBlocking`
+returns `{ pending, unavailable }`: a live child that does not say in time what it has pending, or
+whose answer fails, is listed in `unavailable`, not read as having nothing pending.
+`createAgentChildTools({ manager, run })` adds `subagent`, `subagent_fork`,
+`list_agents`, `send_message` and `interrupt_agent` for the parent conversation of the run it is given;
+the model's input names no parent, and a child of another parent is refused. Final output stays
+behind its bounded result locator.
+
+### Per-step spend hook
+
+`createAgentRuntime({ onStepSpend, onStepSpendError, stepSpendTimeoutMs })` delivers one validated
+`AgentStepSpend & AgentRuntimeRunContext<CONTEXT>` fact for every billed model step
+(`phase: 'step'`), billed retried attempt (`phase: 'abandoned-attempt'`), and compaction call
+(`phase: 'compaction'`), after the `provider/response` ledger entry (which now persists `usage` in
+the non-audited ledger too) is written. The same fact feeds `observe` `step-finished` events and run
+totals.
+
+`onStepSpend` is awaited up to `stepSpendTimeoutMs` (default `5_000` ms): the run does not start its
+next step, or retry a discarded attempt, until the hook settles, so a slow hook adds its time to
+every step. Because the provider call is already billed, a throw or timeout never fails the run; it
+is isolated and reported to `onStepSpendError` and on the corresponding `step-finished`
+observability event (`spendHookError: { code: 'hook_error' | 'hook_timeout', cause? }`, with `cause`
+redacted unless `includeInternalCause: true`). `onStepSpendError` is awaited up to the same
+`stepSpendTimeoutMs`; if it throws or times out as well, the event carries `reportFailed: true`:
+it is then the only report of the failure.
+
+The core intentionally carries no domain billing enum (`payment` / `subscription` / `key`)
+([ADR 0002](../decisions/0002-generic-core.md),
+[ADR 0110](../decisions/0110-a-reconciled-cost-belongs-to-the-application.md)): each
+fact reports `provider: { key, upstream? }`, `usage.cost.provenance` (`provider-reported` vs
+`unavailable`, never fabricated as `0`), and scope via `context` and `trace?.project`, so
+applications attach their own workspace or payment-method rules to provider keys inside
+`onStepSpend`.
 
 ## Durable order
 
@@ -1312,8 +1546,9 @@ or it keeps the failed attempt's partial text on screen.
   measured. First output is a
   non-empty text/reasoning/tool-argument delta or complete tool call; metadata,
   usage, files and sources do not count;
-- `tool-status` is transient lifecycle presentation with JSON-safe input on
-  start and output on completion. A mounted typed failure carries the same safe
+- `tool-status` is durable lifecycle presentation with JSON-safe input on
+  start and output on completion: it follows the checkpoint that holds the call
+  (or its result) and carries that checkpoint's `eventId` and `snapshotVersion`. A mounted typed failure carries the same safe
   `{ error, retryable, details?, _hint? }` envelope as the durable result; an unknown
   internal cause remains generic and stays in local observability only;
 - `tool-progress` is transient: what a running tool handler reported through
@@ -1846,9 +2081,8 @@ The built-in memory and SQLite stores implement `appendEventOnce`. Custom stores
 must implement its once-only check and append atomically, returning the original
 event on a duplicate key scoped by conversation and kind. A factory without this
 capability refuses receipt setup. The driver-backed implementation finds the keyed
-event by its identity through the driver's optional `events.find` — one index probe
-in SQLite — so admission costs the same on a long conversation as on a new one; a
-custom driver without `find` falls back to paging the log in one transaction.
+event by its identity through the driver's `events.find` — one index probe
+in SQLite — so admission costs the same on a long conversation as on a new one.
 `store.findEventOnce({ conversationId, kind, key })` reads the same event back.
 Invocation payload artifacts are keyed by their artifact id the same way.
 

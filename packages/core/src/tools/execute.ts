@@ -12,6 +12,7 @@ import type { ToolCallContext, ToolCallHooks, ToolLifecycle } from './execute-ho
 import { type ToolResult, toolResultFromError } from './execute-result';
 import { observed } from './internal/observe-hook';
 import { projectToolView } from './internal/tool-view';
+import { localVerdict } from './schema/json-schema-origin';
 
 export type ToolExecutionControlReason = 'stale_run' | 'run_interrupted';
 
@@ -194,14 +195,25 @@ async function invokeToolHandler(
   // Match the HTTP path: the contract decides whether an output exists.
   // A mismatch is a server fault — never argument VALIDATION_ERROR.
   const checked = validateDeclaredOutput(method.outputSchema, data, onOutputStrip);
-  if (!checked.ok) {
-    return {
-      ok: false,
-      code: 'INTERNAL_SERVER_ERROR',
-      details: { message: checked.message },
-    };
+  if (checked.ok) {
+    data = checked.data;
+  } else {
+    const verdict =
+      checked.error && method.outputSchema
+        ? localVerdict(method.outputSchema, checked.error)
+        : undefined;
+    if (verdict !== null) {
+      const message =
+        verdict && verdict !== checked.error
+          ? `Handler output does not match the contract: ${formatZodError(verdict)}`
+          : checked.message;
+      return {
+        ok: false,
+        code: 'INTERNAL_SERVER_ERROR',
+        details: { message },
+      };
+    }
   }
-  data = checked.data;
 
   // The tool-surface answer is derived from the validated full one, and only
   // where an output exists: a guard pass that runs no handler has nothing to

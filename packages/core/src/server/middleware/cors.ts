@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+/** Static Cross-Origin Resource Sharing (CORS) header configuration for a handler. */
 export interface CorsConfig {
   origin?: string | string[];
   credentials?: boolean;
@@ -62,9 +63,12 @@ function isOriginPolicy(config: CorsConfig | CorsOriginPolicy): config is CorsOr
 
 /** Scheme and authority, as a browser serializes `Origin`; `null` and junk are not origins. */
 function isSerializedOrigin(origin: string): boolean {
-  if (!URL.canParse(origin)) return false;
-  const url = new URL(origin);
-  return url.host !== '' && origin === `${url.protocol}//${url.host}`;
+  try {
+    const url = new URL(origin);
+    return url.host !== '' && origin === `${url.protocol}//${url.host}`;
+  } catch {
+    return false;
+  }
 }
 
 /**

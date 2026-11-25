@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { AgentUsage } from './schemas';
+import { SqlIntegerSchema } from './sql-rows';
 export const AgentChildBudgetSchema = z
   .object({
     usd: z.number().positive().optional(),
@@ -18,6 +19,14 @@ export const AgentChildStateSchema = z.enum([
 ]);
 export type AgentChildState = z.infer<typeof AgentChildStateSchema>;
 
+const ChildUsageMetricsSchema = z
+  .object({
+    tokens: z.int().nonnegative(),
+    usd: z.number().nonnegative(),
+    milliseconds: z.int().nonnegative(),
+  })
+  .strict();
+
 export const AgentChildRecordSchema = z
   .object({
     parentConversationId: z.string().min(1),
@@ -25,13 +34,7 @@ export const AgentChildRecordSchema = z
     seedUptoSeq: z.int().nonnegative(),
     state: AgentChildStateSchema,
     budget: AgentChildBudgetSchema,
-    usage: z
-      .object({
-        tokens: z.int().nonnegative(),
-        usd: z.number().nonnegative(),
-        milliseconds: z.int().nonnegative(),
-      })
-      .strict(),
+    usage: ChildUsageMetricsSchema,
     resultReference: z.string().optional(),
     createdAt: z.string(),
     updatedAt: z.string(),
@@ -96,10 +99,92 @@ export const ChildBlockingDecisionSchema = z.union([
 ]);
 export type AgentChildBlockingDecision = z.infer<typeof ChildBlockingDecisionSchema>;
 
+/** Canonical payload written to `child/spawned` events and validated on branch. */
+export const ChildSpawnedEventPayloadSchema = z
+  .object({
+    childConversationId: z.string().min(1),
+    seedUptoSeq: z.int().nonnegative(),
+    budget: AgentChildBudgetSchema,
+  })
+  .strict();
+export type ChildSpawnedEventPayload = z.infer<typeof ChildSpawnedEventPayloadSchema>;
+
+const ChildTransitionStateEventPayloadSchema = z
+  .object({
+    childConversationId: z.string().min(1).optional(),
+    parentConversationId: z.string().min(1).optional(),
+    state: AgentChildStateSchema,
+    resultReference: z.string().min(1).optional(),
+    reason: z.string().optional(),
+    policyName: z.string().min(1).optional(),
+    enforced: z.boolean().optional(),
+    stopDurationMs: z.number().nonnegative().optional(),
+    usage: ChildUsageMetricsSchema.optional(),
+    overrun: ChildUsageMetricsSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.childConversationId !== undefined || value.parentConversationId !== undefined,
+    { message: 'Child state event requires childConversationId or parentConversationId' },
+  );
+
+const ChildMessageSentEventPayloadSchema = z
+  .object({
+    childConversationId: z.string().min(1),
+    action: z.literal('message-sent'),
+  })
+  .strict();
+
+const ChildBlockingPresentedEventPayloadSchema = z
+  .object({
+    action: z.literal('blocking-presented'),
+    childConversationId: z.string().min(1),
+    approvalId: z.string().min(1),
+    childApprovalId: z.string().min(1),
+    kind: AgentChildBlockingKindSchema,
+    callId: z.string().min(1),
+    toolName: z.string().min(1),
+    input: z.json(),
+    batchId: z.string().min(1),
+    presentedAt: z.string(),
+  })
+  .strict();
+
+const ChildBlockingResolvedApprovalEventPayloadSchema = z
+  .object({
+    action: z.literal('blocking-resolved'),
+    childConversationId: z.string().min(1),
+    approvalId: z.string().min(1),
+    batchId: z.string().min(1),
+    approved: z.boolean(),
+  })
+  .strict();
+
+const ChildBlockingResolvedInputEventPayloadSchema = z
+  .object({
+    action: z.literal('blocking-resolved'),
+    childConversationId: z.string().min(1),
+    approvalId: z.string().min(1),
+    batchId: z.string().min(1),
+    kind: z.literal('input'),
+  })
+  .strict();
+
+/** Canonical payload written to `child/state` events and validated on branch. */
+export const ChildStateEventPayloadSchema = z.union([
+  ChildTransitionStateEventPayloadSchema,
+  ChildMessageSentEventPayloadSchema,
+  ChildBlockingPresentedEventPayloadSchema,
+  ChildBlockingResolvedApprovalEventPayloadSchema,
+  ChildBlockingResolvedInputEventPayloadSchema,
+]);
+export type ChildStateEventPayload = z.infer<typeof ChildStateEventPayloadSchema>;
+
 const ChildRowSchema = z.object({
   parent_conversation_id: z.string(),
   child_conversation_id: z.string(),
-  seed_upto_seq: z.int().nonnegative(),
+  seed_upto_seq: SqlIntegerSchema.pipe(z.int().nonnegative()),
   state: AgentChildStateSchema,
   budget_payload: z.string(),
   usage_payload: z.string(),
@@ -161,7 +246,7 @@ export interface AgentChildManager {
     childInput: unknown;
     budget: AgentChildBudget;
   }): Promise<AgentChildRecord>;
-  listChildren(parentConversationId: string): readonly AgentChildRecord[];
+  listChildren(parentConversationId: string): Promise<readonly AgentChildRecord[]>;
   recordStepUsage(request: {
     childConversationId: string;
     usage: AgentUsage;
@@ -184,9 +269,18 @@ export interface AgentChildManager {
   /**
    * Present each live child's blocking events on the parent exactly once and
    * return the pending set. Never writes a presentation event to the child's
-   * own conversation. → ADR 0179
+   * own conversation. Each live child is asked within a bound; one that does
+   * not answer in time (`timeout`) or whose answer throws, rejects or is
+   * malformed (`failed`) is listed in `unavailable` — what it has pending is
+   * unknown, not empty — and the other children are still presented. → ADR 0179
    */
-  listChildBlocking(parentConversationId: string): Promise<readonly AgentChildBlockingEvent[]>;
+  listChildBlocking(parentConversationId: string): Promise<{
+    pending: readonly AgentChildBlockingEvent[];
+    unavailable: readonly (
+      | { childConversationId: string; reason: 'timeout' }
+      | { childConversationId: string; reason: 'failed'; cause: unknown }
+    )[];
+  }>;
   /**
    * Route the parent's answer to the child that raised the request. A missing,
    * stale or already-answered id is refused. Answering one request preserves

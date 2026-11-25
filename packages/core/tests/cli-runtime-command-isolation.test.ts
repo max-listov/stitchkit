@@ -17,7 +17,7 @@ function operation(name: string, input: z.ZodObject): RuntimeToolDefinition {
     name,
     description: `${name} operation`,
     identity: { serviceName: 'catalog', action: name, method: 'POST' },
-    transports: ['CLI'],
+    expose: ['CLI'],
     input,
     output: z.unknown(),
     handler: ({ input }) => input,
@@ -53,6 +53,7 @@ async function run(argv: string[], config: Partial<CliConfig> = {}) {
       code = value;
     },
     ...config,
+    access: config.access ?? { open: 'local-operator' },
   });
   return { out, err, code };
 }
@@ -148,8 +149,7 @@ test('reserved fields are isolated; invocation refuses before parsing, stdin, co
 test('disabled defaults remain known to presentation policies, with exit code/hint overrides', async () => {
   const result = await run(['--json'], {
     defaultCommand: 'blocked',
-    optionAliases: { blocked: { c: 'caller' } },
-    positionals: { blocked: ['caller'] },
+    commandSettings: { blocked: { aliases: { c: 'caller' }, positionals: ['caller'] } },
     exitCodes: { CLI_COMMAND_UNAVAILABLE: 23 },
     errorHint: (name, code) => `${name}: ${code}`,
   });
@@ -192,13 +192,12 @@ test('native and contract-defined field conflicts remain startup errors', async 
 test('field isolation does not hide local policy, identity or duplicate faults', async () => {
   await expect(
     run(['healthy'], {
-      optionAliases: { blocked: { c: 'caller' } },
-      passthrough: { blocked: 'caller' },
+      commandSettings: { blocked: { aliases: { c: 'caller' }, passthrough: 'caller' } },
     }),
   ).rejects.toThrow('cannot alias passthrough field "caller"');
   await expect(
     run(['healthy'], {
-      optionAliases: { blocked: { c: 'missing' } },
+      commandSettings: { blocked: { aliases: { c: 'missing' } } },
     }),
   ).rejects.toThrow('targets unknown field "missing"');
   await expect(
@@ -234,7 +233,12 @@ test('native repair and version do not resolve a broken managed catalogue', asyn
 test('direct invoker retains reserved/global-named input separately from globals', async () => {
   const both = operation('both', z.object({ caller: z.string(), json: z.boolean() }));
   const invoker = await createCliInvoker(
-    { name: 'catalog', globalOptions, runtimeTools: [both, healthy] },
+    {
+      access: { open: 'local-operator' },
+      name: 'catalog',
+      globalOptions,
+      runtimeTools: [both, healthy],
+    },
     { caller: 'application' },
   );
   expect(await invoker.invoke('both', { caller: 'operation', json: false })).toEqual({
@@ -249,13 +253,15 @@ for (const target of ['blocked', 'unknown', 'healthy']) {
   test(`--wait distinguishes ${target} poll target`, async () => {
     let checks = 0;
     const result = await run(['healthy', '--wait', '--quiet', '--json'], {
-      wait: {
+      commandSettings: {
         healthy: {
-          tool: target,
-          poll: () => ({}),
-          done: () => target === 'healthy' && ++checks > 1,
-          backoff: [0],
-          timeout: 1,
+          wait: {
+            tool: target,
+            poll: () => ({}),
+            done: () => target === 'healthy' && ++checks > 1,
+            backoff: [0],
+            timeout: 1,
+          },
         },
       },
     });

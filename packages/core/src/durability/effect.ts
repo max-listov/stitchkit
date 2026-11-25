@@ -9,8 +9,8 @@
  * permission reply, so a lost acknowledgement sent the reply twice.
  */
 import type { z } from 'zod';
-import { raceAbort } from '../internal/abort-race';
-import { MAX_TIMER_MS } from '../internal/timers';
+import { linkAbortSignals, raceAbort } from '../internal/abort-race';
+import { assertTimerMs } from '../internal/deadline';
 import {
   DURABILITY_EFFECT_EVENT_KIND,
   type EffectHandlers,
@@ -90,7 +90,7 @@ async function reconcile<P extends Proof>(
     () => controller.abort(new Error(`reconcile did not finish within ${timeoutMs} ms`)),
     timeoutMs,
   );
-  const signal = AbortSignal.any([...caller, controller.signal]);
+  const { signal, release } = linkAbortSignals(context.signal, outerSignal, controller.signal);
   let found: P | null;
   try {
     found = await raceAbort(
@@ -111,6 +111,7 @@ async function reconcile<P extends Proof>(
   } finally {
     clearTimeout(timeout);
     controller.abort(new Error('Reconciliation completed'));
+    release();
   }
   if (found === null) {
     await append(context, { phase: 'uncertain' }, name);
@@ -128,11 +129,7 @@ export async function executeEffect<P extends Proof>(
   options: EffectRunOptions | undefined,
 ): Promise<EffectOutcome<P>> {
   const timeoutMs = options?.reconcileTimeoutMs ?? DEFAULT_RECONCILE_TIMEOUT_MS;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMER_MS) {
-    throw new TypeError(
-      `reconcileTimeoutMs must be a positive finite number at most ${MAX_TIMER_MS}, got ${timeoutMs}`,
-    );
-  }
+  assertTimerMs('reconcileTimeoutMs', timeoutMs);
   const key = effectKey(context.conversationId, context.runId, name);
   const recorded = (await context.readLedger()).effects.get(key);
   if (recorded?.outcome === 'uncertain') return { outcome: 'uncertain' };

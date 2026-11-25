@@ -110,7 +110,7 @@ export { checkTelegramUpdateStore } from '../telegram/update-store-check';
 export {
   type PostgresTelegramUpdateStoreConfig,
   postgresTelegramUpdateStore,
-  postgresTelegramUpdateStoreSchema,
+  postgresTelegramUpdateStoreDdl,
   type TelegramPostgresQuery,
 } from '../telegram/update-store-postgres';
 export {

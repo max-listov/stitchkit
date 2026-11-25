@@ -2,7 +2,7 @@
 title: A gate that does not run the code is measuring a proxy for the thing it cares about
 description: Six entrypoints killed the page on import while passing every static check the package had; the browser gate now bundles each promised entry and executes it.
 type: decision
-status: active
+status: accepted
 created: 2026-09-03
 updated: 2026-09-03
 ---

@@ -26,11 +26,16 @@ const service = implement(
   ),
   { need: ({ input }) => input },
 );
-const invoker = await createCliInvoker({ name: 'stdin-probe', services: [service] });
+const invoker = await createCliInvoker({
+  access: { open: 'local-operator' },
+  name: 'stdin-probe',
+  services: [service],
+});
 
 await createCli({
   name: 'stdin-probe',
   version: '0.0.0',
+  access: { open: 'local-operator' },
   ...(process.env.STITCHKIT_TEST_EXPLICIT_STDIN === '1' && {
     stdin: async () => {
       const chunks: Buffer[] = [];

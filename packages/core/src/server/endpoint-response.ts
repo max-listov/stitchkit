@@ -8,6 +8,7 @@ import type { ResponseMetadata } from '../contract/define';
 import { AppError } from '../contract/errors';
 import { validateDeclaredOutput } from '../contract/normalize';
 import type { RuntimeContext } from '../contract/runtime-context';
+import { jsonResponse } from '../internal/json-response';
 import { isAsyncIterable } from '../internal/typed';
 import { contractStreamResponse } from './contract-stream';
 import type { HandlerState, RequestState } from './handler-state';
@@ -65,7 +66,9 @@ function rawEndpointResponse<TServer>(
         })
       : result;
   const rawRes = applyCors(response, request.cors);
-  request.complete(rawRes.status);
+  // The handler's own response carries its protocol-outcome mark; a `HEAD`
+  // copy or a CORS copy does not, and the status is the same on all three.
+  request.complete(result);
   return rawRes;
 }
 
@@ -162,8 +165,8 @@ async function dataEndpointResponse<TServer>(
     `${method.serviceName}.${method.key}`,
   );
 
-  // The line is written only once the response exists. `json()` throws on
-  // data `Response.json` cannot serialise (a `BigInt`, a cycle), and that
+  // The line is written only once the response exists. `jsonResponse()` throws on
+  // data `JSON.stringify` cannot serialise (a `BigInt`, a cycle), and that
   // throw belongs to the error path — logging `200` first would record a
   // success the caller never received.
   if (!method.outputSchema) {
@@ -172,7 +175,7 @@ async function dataEndpointResponse<TServer>(
     return empty;
   }
 
-  const body = Response.json(result, { status: responseStatus, headers: responseHeaders });
+  const body = jsonResponse(result, { status: responseStatus, headers: responseHeaders });
   request.complete(responseStatus);
   return body;
 }

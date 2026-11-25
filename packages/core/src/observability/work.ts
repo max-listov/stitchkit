@@ -17,7 +17,9 @@
  * absence — moving the invention from the consumer into the framework would
  * have been the same lie with a better address.
  */
+
 import type { TransportSource } from '../contract/define';
+import { errnoOf } from '../internal/errno';
 import type { Observability } from './audit';
 import { type RequestContext, runWithRequestContext } from './context';
 import { resolvePropagationContext } from './trace';
@@ -67,7 +69,7 @@ export async function runUnitOfWork<T>(
     source: options.source ?? 'job',
     kind: 'job',
     name: options.name,
-    startedAt: process.hrtime.bigint(),
+    startedAt: performance.now(),
     ...(options.dimensions !== undefined && { dimensions: { ...options.dimensions } }),
   };
   const startedAtMs = Date.now();
@@ -81,19 +83,13 @@ export async function runUnitOfWork<T>(
       // recorded one: a body that called `setRequestError` with a code knows
       // more about its own failure than this catch does.
       context.error ??= {
-        ...(errorCodeOf(error) !== undefined && { code: errorCodeOf(error) }),
+        ...(errnoOf(error) !== undefined && { code: errnoOf(error) }),
         message: error instanceof Error ? error.message : String(error),
       };
       complete(options.observability, context, startedAtMs);
       throw error;
     }
   });
-}
-
-function errorCodeOf(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const code: unknown = Reflect.get(error, 'code');
-  return typeof code === 'string' ? code : undefined;
 }
 
 function complete(

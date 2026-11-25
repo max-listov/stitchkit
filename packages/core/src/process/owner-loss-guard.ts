@@ -26,14 +26,8 @@ const FORWARDED_SIGNALS = [
 
 function causeMessage(cause: unknown): { message: string; code?: string } {
   const message = cause instanceof Error ? cause.message : String(cause);
-  if (
-    typeof cause === 'object' &&
-    cause !== null &&
-    'code' in cause &&
-    typeof cause.code === 'string'
-  )
-    return { message, code: cause.code };
-  return { message };
+  const code = errnoOf(cause);
+  return code === undefined ? { message } : { message, code };
 }
 
 function guardMessage(control: Socket, message: GuardMessage, written: () => void): void {

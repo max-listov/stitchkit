@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
-import { isRecord } from '../internal/typed';
+import { errnoOf } from '../internal/errno';
 import type {
   DiagnosticJournalFailurePhase,
   DiagnosticJournalLockPolicy,
@@ -68,7 +68,7 @@ interface RotatingStorageConfig {
 }
 
 function isMissing(error: unknown): boolean {
-  return isRecord(error) && error.code === 'ENOENT';
+  return errnoOf(error) === 'ENOENT';
 }
 
 async function removeIfPresent(path: string): Promise<void> {

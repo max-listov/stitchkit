@@ -4,11 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ToolSet } from 'ai';
 import { z } from 'zod';
-import {
-  createMemoryAgentRuntimeStore,
-  recordAgentSandboxProbe,
-} from '../src/entrypoints/agent-runtime';
+import { createMemoryAgentRuntimeStore } from '../src/entrypoints/agent-runtime';
 import { createAgentCodingTools } from '../src/entrypoints/agent-runtime/coding-tools';
+import { recordAgentSandboxProbe } from '../src/entrypoints/agent-runtime/sandbox';
 import { defineRuntimeTool, describeToolCatalog } from '../src/entrypoints/tools';
 import { mountAgent } from '../src/entrypoints/tools/agent';
 
@@ -41,6 +39,7 @@ describe('agent runtime sandbox and tool catalog', () => {
       },
     };
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,
@@ -76,6 +75,7 @@ describe('agent runtime sandbox and tool catalog', () => {
     const observed: unknown[] = [];
     const cause = new Error('ENOENT: posix_spawn /opt/private/launcher-bin');
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       hooks: { onToolError: ({ error }) => void observed.push(error) },
       runtimeTools: createAgentCodingTools({
         root,
@@ -128,6 +128,7 @@ describe('agent runtime sandbox and tool catalog', () => {
     const observed: unknown[] = [];
     const cause = new Error('EACCES: /opt/private/launcher-bin --probe');
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       hooks: { onToolError: ({ error }) => void observed.push(error) },
       runtimeTools: createAgentCodingTools({
         root,

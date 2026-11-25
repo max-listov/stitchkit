@@ -120,6 +120,7 @@ describe('protected resource metadata (RFC 9728)', () => {
 
   test('MCP handler 401 carries WWW-Authenticate when protectedResource is set', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 't', version: '1' },
       auth: () => null,
       services: [],
@@ -133,6 +134,7 @@ describe('protected resource metadata (RFC 9728)', () => {
 
   test('MCP handler 401 omits WWW-Authenticate without protectedResource', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 't', version: '1' },
       auth: () => null,
       services: [],
@@ -1319,5 +1321,31 @@ describe('application_type in DCR (SEP-837)', () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('invalid_client_metadata');
+  });
+
+  test('register and token enforce maxRequestBodyBytes on streaming and body-less runtimes', async () => {
+    const routes = buildProvider({ maxRequestBodyBytes: 64 });
+    const huge = JSON.stringify({ redirect_uris: [REDIRECT], client_name: 'x'.repeat(200) });
+    const streamRes = await callRoute(
+      routes,
+      '/oauth/register',
+      new Request(`${ISSUER}/oauth/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: huge,
+      }),
+    );
+    expect(streamRes.status).toBe(413);
+
+    const noStreamReq = {
+      method: 'POST',
+      url: `${ISSUER}/oauth/register`,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      signal: new AbortController().signal,
+      body: undefined,
+      text: async () => huge,
+    } as unknown as Request;
+    const fallbackRes = await callRoute(routes, '/oauth/register', noStreamReq);
+    expect(fallbackRes.status).toBe(413);
   });
 });

@@ -11,9 +11,11 @@
  */
 
 import { leadingEntrypoints } from '../packages/core/src/internal/upgrade-plan';
+import { type FenceState, linesOutsideFences, stepFence } from './markdown-fences';
+import { comparePreOneVersions } from './release-notes';
 
 export interface SurfaceCadence {
-  /** Version the surface first shipped in. */
+  /** Version the count starts at: the one the surface first shipped in, or the metadata floor. */
   readonly since: string;
   /** Minors released since, counting the one it shipped in. */
   readonly minors: number;
@@ -27,17 +29,22 @@ export interface SurfaceCadence {
 function releases(changelog: string): { version: string; body: string }[] {
   const found: { version: string; body: string }[] = [];
   let current: { version: string; lines: string[] } | undefined;
+  let fence: FenceState | null = null;
   for (const line of changelog.split('\n')) {
-    const heading = /^## \[(\d+\.\d+\.\d+)\]/.exec(line);
-    if (heading?.[1]) {
-      if (current) found.push({ version: current.version, body: current.lines.join('\n') });
-      current = { version: heading[1], lines: [] };
-      continue;
-    }
-    if (line.startsWith('## ')) {
-      if (current) found.push({ version: current.version, body: current.lines.join('\n') });
-      current = undefined;
-      continue;
+    const stepped = stepFence(line, fence);
+    fence = stepped.fence;
+    if (!stepped.isDelimiter && fence === null) {
+      const heading = /^## \[(\d+\.\d+\.\d+)\]/.exec(line);
+      if (heading?.[1]) {
+        if (current) found.push({ version: current.version, body: current.lines.join('\n') });
+        current = { version: heading[1], lines: [] };
+        continue;
+      }
+      if (line.startsWith('## ')) {
+        if (current) found.push({ version: current.version, body: current.lines.join('\n') });
+        current = undefined;
+        continue;
+      }
     }
     current?.lines.push(line);
   }
@@ -59,52 +66,69 @@ function breakingSection(body: string): string {
 }
 
 /**
- * Cadence for one surface, matched by the terms its breaking entries use.
+ * Whether a breaking entry leading with `entrypoint` belongs to `surface`'s family.
  *
- * Matching on wording rather than on a maintained list is the trade: a breaking
- * entry that names none of the terms is invisible here, and the alternative — a
- * per-release annotation — is the hand-maintained thing this exists to avoid.
- * The terms are therefore the surface's own vocabulary, not adjectives.
+ * A subpath row `stitchkit/x` counts items leading with `stitchkit/x` and `stitchkit/x/*`;
+ * the root `stitchkit` counts only `stitchkit` itself.
+ */
+export function matchesSurfaceFamily(surface: string, entrypoint: string): boolean {
+  if (surface === 'stitchkit') return entrypoint === 'stitchkit';
+  return entrypoint === surface || entrypoint.startsWith(`${surface}/`);
+}
+
+/**
+ * Cadence for one surface, counted from breaking entries that lead with the
+ * surface or a subpath in its family since `BREAKING_METADATA_SINCE` (`0.94.0`),
+ * or since `shipped` for a surface first published after it. The minor a
+ * surface shipped in does not redefine it: nothing depended on it before.
  */
 export function surfaceCadence(input: {
   changelog: string;
-  since: string;
-  terms: readonly string[];
+  surface: string;
+  known: ReadonlyMap<string, Maturity>;
+  since?: string;
+  /** The version that first published the surface. */
+  shipped?: string;
 }): SurfaceCadence {
+  const floor = input.since ?? BREAKING_METADATA_SINCE;
+  const shippedLater =
+    input.shipped !== undefined && comparePreOneVersions(input.shipped, floor) > 0
+      ? input.shipped
+      : undefined;
+  const since = shippedLater ?? floor;
   const all = releases(input.changelog);
-  const sinceMinor = minorOf(input.since);
+  const sinceMinor = minorOf(since);
   const considered = all.filter(
-    (release) => compareMinor(minorOf(release.version), sinceMinor) >= 0,
+    (release) => comparePreOneVersions(minorOf(release.version), sinceMinor) >= 0,
   );
   const minors = new Set(considered.map((release) => minorOf(release.version)));
   const brokenMinors = new Set<string>();
   let lastBroken: string | undefined;
   for (const release of considered) {
+    if (shippedLater !== undefined && minorOf(release.version) === sinceMinor) continue;
     const section = breakingSection(release.body);
     if (!section) continue;
-    if (!input.terms.some((term) => section.includes(term))) continue;
+    const entries = breakingEntries(section, input.known);
+    const matched = entries.some((entry) =>
+      entry.entrypoints.some((name) => matchesSurfaceFamily(input.surface, name)),
+    );
+    if (!matched) continue;
     brokenMinors.add(minorOf(release.version));
-    if (!lastBroken || compareMinor(minorOf(release.version), minorOf(lastBroken)) > 0) {
+    if (!lastBroken || comparePreOneVersions(release.version, lastBroken) > 0) {
       lastBroken = release.version;
     }
   }
   return {
-    since: input.since,
+    since,
     minors: minors.size,
     breaking: brokenMinors.size,
     ...(lastBroken && { lastBroken }),
   };
 }
 
-function compareMinor(left: string, right: string): number {
-  const [leftMajor = 0, leftMinor = 0] = left.split('.').map(Number);
-  const [rightMajor = 0, rightMinor = 0] = right.split('.').map(Number);
-  return leftMajor - rightMajor || leftMinor - rightMinor;
-}
-
 /** The sentence the maturity table carries, so the table cannot drift from the notes. */
 export function cadenceSentence(cadence: SurfaceCadence): string {
-  return `redefined in ${cadence.breaking} of the ${cadence.minors} minors since ${cadence.since}${
+  return `redefined in ${cadence.breaking} of the ${cadence.minors} minor${cadence.minors === 1 ? '' : 's'} since ${cadence.since}${
     cadence.lastBroken ? `, most recently ${cadence.lastBroken}` : ''
   }`;
 }
@@ -145,7 +169,8 @@ export interface BreakingEntry {
  *
  * An item is a `- ` line at column zero outside a fence; its continuation is
  * indented and belongs to it. The leading run is backticked names separated by
- * `, `, ` and ` or ` + `, optionally inside the item's opening `**`. Only names
+ * `, `, ` and `, ` + ` or a space (`leadingEntrypoints`), optionally inside the
+ * item's opening `**`. Only names
  * the maturity table knows count — `createMcpHandler` in that position is a
  * symbol, not an entrypoint, and an entry leading with it names none.
  */
@@ -154,7 +179,6 @@ export function breakingEntries(
   known: ReadonlyMap<string, Maturity>,
 ): BreakingEntry[] {
   const entries: BreakingEntry[] = [];
-  let fenced = false;
   let current: string | undefined;
   const flush = () => {
     if (current === undefined) return;
@@ -164,12 +188,7 @@ export function breakingEntries(
     });
     current = undefined;
   };
-  for (const line of section.split('\n')) {
-    if (/^\s*(`{3,}|~{3,})/.test(line)) {
-      fenced = !fenced;
-      continue;
-    }
-    if (fenced) continue;
+  for (const line of linesOutsideFences(section)) {
     if (line.startsWith('- ')) {
       flush();
       current = line;
@@ -186,18 +205,11 @@ export function breakingEntries(
 /** A dated release heading: `## [x.y.z] — YYYY-MM-DD`. */
 function releaseDates(changelog: string): Map<string, string> {
   const dates = new Map<string, string>();
-  for (const match of changelog.matchAll(
-    /^## \[(\d+\.\d+\.\d+)\](?:\s+[—–-]\s+(\d{4}-\d{2}-\d{2}))?/gm,
-  )) {
-    if (match[1] && match[2]) dates.set(match[1], match[2]);
+  for (const line of linesOutsideFences(changelog)) {
+    const match = /^## \[(\d+\.\d+\.\d+)\](?:\s+[—–-]\s+(\d{4}-\d{2}-\d{2}))?/.exec(line);
+    if (match?.[1] && match[2]) dates.set(match[1], match[2]);
   }
   return dates;
-}
-
-function compareVersion(left: string, right: string): number {
-  const [la = 0, lb = 0, lc = 0] = left.split('.').map(Number);
-  const [ra = 0, rb = 0, rc = 0] = right.split('.').map(Number);
-  return la - ra || lb - rb || lc - rc;
 }
 
 function daysBetween(earlier: string, later: string): number {
@@ -243,8 +255,8 @@ export function stableBreakingCadence(input: {
     );
   const stableBreaking = releases(input.changelog).filter(
     (release) =>
-      compareVersion(release.version, since) >= 0 &&
-      compareVersion(release.version, input.version) <= 0 &&
+      comparePreOneVersions(release.version, since) >= 0 &&
+      comparePreOneVersions(release.version, input.version) <= 0 &&
       touchesStable(release.body),
   );
   const breaksStable = stableBreaking.some((release) => release.version === input.version);
@@ -286,7 +298,7 @@ export function assertBreakingReleaseMetadata(input: {
 }): StableBreakingCadence {
   const since = input.since ?? BREAKING_METADATA_SINCE;
   const cadence = stableBreakingCadence(input);
-  if (compareVersion(input.version, since) < 0) return cadence;
+  if (comparePreOneVersions(input.version, since) < 0) return cadence;
   const known = maturityTable(input.guide);
   const release = releases(input.changelog).find((entry) => entry.version === input.version);
   const entries = breakingEntries(breakingSection(release?.body ?? ''), known);

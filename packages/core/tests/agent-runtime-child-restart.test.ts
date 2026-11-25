@@ -5,7 +5,7 @@ import {
   type SqliteDatabase,
   type SqliteValue,
 } from '../src/agent-runtime/sqlite-bun';
-import { createSqliteAgentChildManager } from '../src/entrypoints/agent-runtime';
+import { createAgentChildManager } from '../src/entrypoints/agent-runtime';
 
 function sqlite(): SqliteDatabase {
   const raw = new Database(':memory:');
@@ -31,8 +31,11 @@ describe('child records across a restart', () => {
     const runtime = createSqliteAgentRuntimeStore({ database });
     const result = Promise.withResolvers<{ resultReference?: string }>();
     const stops: string[] = [];
-    const before = createSqliteAgentChildManager({
-      sqlite: runtime,
+    const before = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: runtime.store,
+      host: runtime.host,
       spawn: () => ({
         result: result.promise,
         stopPolicy: (name) => {
@@ -47,20 +50,28 @@ describe('child records across a restart', () => {
       budget: { tokens: 10 },
     });
     // The process restarts: a new manager over the same rows, no handles.
-    const after = createSqliteAgentChildManager({
-      sqlite: runtime,
+    const after = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: runtime.store,
+      host: runtime.host,
       spawn: () => {
         throw new Error('not spawned here');
       },
     });
     await after.stopChildren('parent');
-    expect(after.listChildren('parent').map((record) => record.state)).toEqual(['lost']);
+    expect((await after.listChildren('parent')).map((record) => record.state)).toEqual([
+      'lost',
+    ]);
     expect(stops).toEqual([]);
     // The old process's child settles later; `lost` stands.
     result.resolve({ resultReference: 'late' });
     await before.waitChild('child');
     expect(
-      after.listChildren('parent').map((record) => [record.state, record.resultReference]),
+      (await after.listChildren('parent')).map((record) => [
+        record.state,
+        record.resultReference,
+      ]),
     ).toEqual([['lost', undefined]]);
     await runtime.close();
   });
@@ -68,8 +79,11 @@ describe('child records across a restart', () => {
   test('a spawn that throws leaves no record and no event', async () => {
     const database = sqlite();
     const runtime = createSqliteAgentRuntimeStore({ database });
-    const children = createSqliteAgentChildManager({
-      sqlite: runtime,
+    const children = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: runtime.store,
+      host: runtime.host,
       spawn: () => {
         throw new Error('host refused');
       },
@@ -81,7 +95,7 @@ describe('child records across a restart', () => {
         budget: { tokens: 1 },
       }),
     ).rejects.toThrow('host refused');
-    expect(children.listChildren('parent')).toEqual([]);
+    expect(await children.listChildren('parent')).toEqual([]);
     expect(
       (await runtime.store.readEvents({ conversationId: 'parent', limit: 10 })).items.map(
         (event) => event.kind,
@@ -94,8 +108,11 @@ describe('child records across a restart', () => {
     const database = sqlite();
     const runtime = createSqliteAgentRuntimeStore({ database });
     const result = Promise.withResolvers<{ resultReference?: string }>();
-    const children = createSqliteAgentChildManager({
-      sqlite: runtime,
+    const children = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: runtime.store,
+      host: runtime.host,
       spawn: () => ({
         result: result.promise,
         stopPolicy: () => undefined,
@@ -116,7 +133,10 @@ describe('child records across a restart', () => {
     await children.stopChildren('parent');
     await children.waitChild('child');
     expect(
-      children.listChildren('parent').map((record) => [record.state, record.resultReference]),
+      (await children.listChildren('parent')).map((record) => [
+        record.state,
+        record.resultReference,
+      ]),
     ).toEqual([['finished', 'answer']]);
     await runtime.close();
   });
@@ -124,8 +144,11 @@ describe('child records across a restart', () => {
   test('a budget decision without a handle is recorded as not enforced', async () => {
     const database = sqlite();
     const runtime = createSqliteAgentRuntimeStore({ database });
-    const before = createSqliteAgentChildManager({
-      sqlite: runtime,
+    const before = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: runtime.store,
+      host: runtime.host,
       spawn: () => ({ result: new Promise(() => undefined), stopPolicy: () => undefined }),
     });
     await before.spawnChild({
@@ -134,8 +157,11 @@ describe('child records across a restart', () => {
       childInput: {},
       budget: { tokens: 1 },
     });
-    const after = createSqliteAgentChildManager({
-      sqlite: runtime,
+    const after = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: runtime.store,
+      host: runtime.host,
       spawn: () => {
         throw new Error('not here');
       },
@@ -160,8 +186,11 @@ describe('child records across a restart', () => {
     const database = sqlite();
     const runtime = createSqliteAgentRuntimeStore({ database });
     const result = Promise.withResolvers<{ resultReference?: string }>();
-    const children = createSqliteAgentChildManager({
-      sqlite: runtime,
+    const children = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: runtime.store,
+      host: runtime.host,
       spawn: () => ({ result: result.promise, stopPolicy: () => undefined }),
     });
     await children.spawnChild({

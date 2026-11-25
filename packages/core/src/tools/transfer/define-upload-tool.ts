@@ -1,6 +1,7 @@
 import { type ZodType, z } from 'zod';
 import { ManagedFilePathSchema } from '../../contract/file-ref';
 import type { ManagedFileBoundary, ManagedFileSource } from '../../files/boundary';
+import { assertNoLegacyTransports } from '../internal/expose';
 import { type ManagedNativeToolConfig, managedNativeIdentity } from '../native-definition';
 import {
   defineRuntimeTool,
@@ -35,13 +36,14 @@ export function defineUploadTool<TOutput extends ZodType>(
   undefined,
   RuntimeToolPresenters<z.output<TOutput>>
 > {
+  assertNoLegacyTransports(config, 'defineUploadTool');
   return defineRuntimeTool({
     name: config.name ?? 'upload',
     description: config.description,
     identity: managedNativeIdentity(config.identity, 'POST'),
     input: UploadToolInputSchema,
     output: config.output,
-    transports: config.transports,
+    expose: config.expose,
     annotations: config.annotations,
     present: config.present,
     handler: async (context) => {

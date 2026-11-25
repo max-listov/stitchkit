@@ -8,7 +8,8 @@ updated: 2026-05-20
 
 # ADR 0010 — Grow stitchkit into a fullstack framework
 
-- **Status:** Rejected
+**Relations:** Rejected
+
 - **Date:** 2026-05-13 (explored), 2026-05-20 (rejected)
 
 ## Context

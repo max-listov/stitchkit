@@ -137,6 +137,14 @@ describe('the request ledger', () => {
       await runtime.close();
       await observability.close();
 
+      const expectedUsage = {
+        inputTokens: { value: 1, provenance: 'provider-reported' },
+        outputTokens: { value: 1, provenance: 'provider-reported' },
+        reasoningTokens: { provenance: 'unavailable' },
+        cacheReadTokens: { provenance: 'unavailable' },
+        cacheWriteTokens: { provenance: 'unavailable' },
+        cost: { provenance: 'unavailable' },
+      };
       if (sqlite) {
         await sqlite.close();
         const reopened = createBunSqliteAgentRuntimeStore({ filename, initialize: false });
@@ -149,6 +157,7 @@ describe('the request ledger', () => {
             attempt: 1,
             stepNumber: 0,
             response: { id: 'gen-1', provider: 'DeepInfra' },
+            usage: expectedUsage,
           },
         ]);
         await reopened.close();
@@ -163,6 +172,7 @@ describe('the request ledger', () => {
             attempt: 1,
             stepNumber: 0,
             response: { id: 'gen-1', provider: 'DeepInfra' },
+            usage: expectedUsage,
           },
         ]);
       }

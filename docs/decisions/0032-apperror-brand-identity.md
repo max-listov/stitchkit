@@ -8,9 +8,10 @@ updated: 2026-06-22
 
 # ADR 0032 — Brand-based `AppError` identification (not `instanceof`)
 
-- **Status:** Accepted — fixes the error model of [ADR 0026](0026-stitch-error-code-registry.md);
-  consequence of the multi-chunk build ([ADR 0011](0011-bun-only-one-package.md) /
-  [ADR 0013](0013-runtime-agnostic-core.md)).
+**Relations:** fixes the error model of [ADR 0026](0026-stitch-error-code-registry.md); consequence
+of the multi-chunk build ([ADR 0011](0011-bun-only-one-package.md) /
+[ADR 0013](0013-runtime-agnostic-core.md)).
+
 - **Date:** 2026-06-22
 
 ## Context

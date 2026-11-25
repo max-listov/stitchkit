@@ -19,6 +19,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { builtByVerify } from './lane-build';
 import {
   assertNothingSurvives,
   claimLaneDirectory,
@@ -228,7 +229,9 @@ try {
 
   const env = laneEnvironment();
 
-  await run(['bun', '--filter', 'create-stitchkit', 'build'], repositoryRoot, env);
+  if (!builtByVerify(env)) {
+    await run(['bun', '--filter', 'create-stitchkit', 'build'], repositoryRoot, env);
+  }
   await run(
     [
       'bun',

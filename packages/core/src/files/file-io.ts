@@ -1,5 +1,5 @@
 import { type ManagedFileRef, ManagedFileRefSchema } from '../contract/file-ref';
-import { raceAbort } from '../internal/abort-race';
+import { abortReason, linkAbortSignals, raceAbort } from '../internal/abort-race';
 import { type StagedFile, writeAllBytes } from '../internal/atomic-file';
 import {
   ManagedFileError,
@@ -22,7 +22,7 @@ export async function inspectFile(
   if (!inspector) return {};
   outerSignal?.throwIfAborted();
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const signal = outerSignal ? AbortSignal.any([outerSignal, timeoutSignal]) : timeoutSignal;
+  const { signal, release } = linkAbortSignals(outerSignal, timeoutSignal);
   try {
     const inspected = await raceAbort(
       Promise.resolve().then(() => inspector({ ...input, signal })),
@@ -30,12 +30,14 @@ export async function inspectFile(
     );
     return ManagedFileInspectionSchema.parse(inspected);
   } catch (error) {
-    if (outerSignal?.aborted) throw outerSignal.reason;
+    if (outerSignal?.aborted) throw abortReason(outerSignal);
     throw new ManagedFileError(
       'FILE_INSPECTION_REJECTED',
       'managed file rejected by inspection',
       { cause: error },
     );
+  } finally {
+    release();
   }
 }
 

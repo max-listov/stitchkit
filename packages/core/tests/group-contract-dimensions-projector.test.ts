@@ -32,7 +32,7 @@ describe('typed dimensions projector', () => {
       source: 'http' as const,
       method: 'POST',
       path: '/schools',
-      startedAt: 1n,
+      startedAt: 1,
     };
     runWithRequestContext(context, () => {
       const ctx = {
@@ -57,7 +57,7 @@ describe('typed dimensions projector', () => {
       source: 'http' as const,
       method: 'GET',
       path: '/schools/one',
-      startedAt: 1n,
+      startedAt: 1,
     };
     runWithRequestContext(context, () => {
       setRequestDimensions({ entityId: 'first' });

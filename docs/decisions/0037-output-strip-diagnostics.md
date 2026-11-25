@@ -8,7 +8,8 @@ updated: 2026-08-05
 
 # ADR 0037 — Make the output strip visible, do not change it
 
-- **Status:** Accepted — extends [ADR 0014](0014-tool-http-parity.md).
+**Relations:** extends [ADR 0014](0014-tool-http-parity.md).
+
 - **Date:** 2026-08-05
 
 ## Context

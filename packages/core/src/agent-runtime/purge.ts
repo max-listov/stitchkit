@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { AgentRecordIdSchema, AgentRecordVersionSchema } from './schemas';
+import { AgentRecordIdSchema } from '../durability/events';
+import { AgentRecordVersionSchema } from './schemas';
 import type { AgentRuntimeStore } from './store';
 
 export const AgentConversationPurgeInputSchema = z.strictObject({

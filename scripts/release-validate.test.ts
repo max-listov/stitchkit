@@ -1,74 +1,74 @@
 import { describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
+import { PUBLIC_SURFACE_PATH } from './release-affects-names';
 import { isReleaseCommitSubject } from './release-subject';
 import {
   RELEASE_TARGETS,
   ReleaseTargetSchema,
-  ReleaseTrainSchema,
   releasePlanForTag,
   releaseTagForTarget,
   targetForTag,
 } from './release-train';
-import {
-  assertTrainDoesNotOutrunTheStarter,
-  releaseCandidateIdentity,
-  validateReleaseCommit,
-} from './release-validate';
+import { releaseCandidateIdentity, validateReleaseCommit } from './release-validate';
 
 const SHA = '1'.repeat(40);
 const BREAKING = '### ⚠️ Breaking changes';
 
-describe('a release commit is checked before it costs a gate', () => {
-  const root = resolve(import.meta.dir, '..');
+const root = resolve(import.meta.dir, '..');
 
-  /** A tree the check reads instead of the repository — one file at a time. */
-  // Every tree carries the workspace manifests and a lockfile that agrees with
-  // them, unless a test says otherwise: the lockfile gate has its own tests.
-  const TRAIN_9_9_0 = JSON.stringify({
-    schemaVersion: 1,
-    releases: [{ target: 'core', version: '9.9.0' }],
+/** A tree the check reads instead of the repository — one file at a time. */
+// Every tree carries the workspace manifests and a lockfile that agrees with
+// them, unless a test says otherwise: the lockfile gate has its own tests.
+const TRAIN_9_9_0 = JSON.stringify({
+  schemaVersion: 1,
+  releases: [{ target: 'core', version: '9.9.0' }],
+});
+const WORKSPACES = ['packages/core', 'packages/tui', 'packages/create-stitchkit'];
+const lockFor = (versions: Record<string, string>) =>
+  Object.entries(versions)
+    .map(
+      ([dir, version]) =>
+        `    "${dir}": {\n      "name": "x",\n      "version": "${version}",\n    },`,
+    )
+    .join('\n');
+const treeOf = (given: Record<string, string>) => (relativePath: string) => {
+  const files: Record<string, string> = { ...given };
+  const versions: Record<string, string> = {};
+  for (const dir of WORKSPACES) {
+    files[`${dir}/package.json`] ??= JSON.stringify({ version: '0.0.0' });
+    versions[dir] = JSON.parse(files[`${dir}/package.json`] ?? '{}').version;
+  }
+  files['bun.lock'] ??= lockFor(versions);
+  files['release-train.json'] ??= TRAIN_9_9_0;
+  // The exports the items below name, so their `**Affects:**` names exist in the tree.
+  files[PUBLIC_SURFACE_PATH] ??= JSON.stringify({
+    stitchkit: ['ApiError', 'createLiveState'],
+    'stitchkit/live': ['createLiveState', 'LiveStateSnapshot'],
+    'stitchkit/tools': ['mountAgent'],
   });
-  const WORKSPACES = ['packages/core', 'packages/tui', 'packages/create-stitchkit'];
-  const lockFor = (versions: Record<string, string>) =>
-    Object.entries(versions)
-      .map(
-        ([dir, version]) =>
-          `    "${dir}": {\n      "name": "x",\n      "version": "${version}",\n    },`,
-      )
-      .join('\n');
-  const treeOf = (given: Record<string, string>) => (relativePath: string) => {
-    const files: Record<string, string> = { ...given };
-    const versions: Record<string, string> = {};
-    for (const dir of WORKSPACES) {
-      files[`${dir}/package.json`] ??= JSON.stringify({ version: '0.0.0' });
-      versions[dir] = JSON.parse(files[`${dir}/package.json`] ?? '{}').version;
-    }
-    files['bun.lock'] ??= lockFor(versions);
-    files['release-train.json'] ??= TRAIN_9_9_0;
-    const contents = files[relativePath];
-    if (contents === undefined) {
-      return Promise.reject(new Error(`no ${relativePath} in this tree`));
-    }
-    return Promise.resolve(contents);
-  };
+  const contents = files[relativePath];
+  if (contents === undefined) {
+    return Promise.reject(new Error(`no ${relativePath} in this tree`));
+  }
+  return Promise.resolve(contents);
+};
 
-  const coreTree = (changelogSection: string, migration: string) =>
-    treeOf({
-      'packages/core/package.json': JSON.stringify({ version: '9.9.0' }),
-      'CHANGELOG.md': ['## [9.9.0] — x', '', changelogSection, ''].join('\n'),
-      'docs/guide/upgrading.md': migration,
-    });
+const coreTree = (changelogSection: string, migration: string) =>
+  treeOf({
+    'packages/core/package.json': JSON.stringify({ version: '9.9.0' }),
+    'CHANGELOG.md': ['## [9.9.0] — x', '', changelogSection, ''].join('\n'),
+    'docs/guide/upgrading.md': migration,
+  });
 
-  const ADDITIVE = ['### Added', '', '- One genuinely new export nobody had before.'].join(
-    '\n',
-  );
-  const BREAKING_NO_AUDIENCE = [
-    '### ⚠️ Breaking changes',
-    '',
-    '- **Something moved**, and this section never says who has to act on it.',
-  ].join('\n');
-  const RELEASED_MIGRATION = ['## Released migration: 9.9.0', '', 'Do the thing.'].join('\n');
+const ADDITIVE = ['### Added', '', '- One genuinely new export nobody had before.'].join('\n');
+const BREAKING_NO_AUDIENCE = [
+  '### ⚠️ Breaking changes',
+  '',
+  '- **Something moved**, and this section never says who has to act on it.',
+].join('\n');
+const RELEASED_MIGRATION = ['## Released migration: 9.9.0', '', 'Do the thing.'].join('\n');
 
+describe('a release commit is checked before it costs a gate', () => {
   test('one table names the tag, directory and changelog of every target', () => {
     for (const target of ReleaseTargetSchema.options) {
       const info = RELEASE_TARGETS[target];
@@ -215,7 +215,9 @@ describe('a release commit is checked before it costs a gate', () => {
     expect(validated.version).toBe('9.9.0');
     expect(validated.packageName).toBe('stitchkit');
   });
+});
 
+describe('a release commit: its breaking metadata', () => {
   describe('breaking metadata validation preserves disclosure without a calendar limit — ADR 0204', () => {
     const GUIDE = [
       '| Import | Use in | Maturity | Holds |',
@@ -376,17 +378,50 @@ describe('a release commit is checked before it costs a gate', () => {
       }
     });
   });
+});
+
+describe("a release commit: the starter's migrations and the last real release", () => {
+  test('a starter release refuses unmarked migrations and unknown core versions in UPGRADING.md', async () => {
+    const starterCommit = { sha: SHA, subject: 'release(train): update starter in 0.6.24' };
+    const starterTree = (upgrading: string) =>
+      treeOf({
+        'release-train.json': JSON.stringify({
+          schemaVersion: 1,
+          releases: [{ target: 'create-stitchkit', version: '0.6.24' }],
+        }),
+        'packages/core/package.json': '{"version":"0.126.0"}',
+        'CHANGELOG.md': '## [0.126.0] - 2026-11-20\n\n### Added\n\n- A core feature.\n',
+        'packages/create-stitchkit/package.json': '{"version":"0.6.24"}',
+        'packages/create-stitchkit/CHANGELOG.md':
+          '## [0.6.24] - 2026-11-23\n\n### Added\n\n- A starter update with substance.\n',
+        'packages/create-stitchkit/UPGRADING.md': upgrading,
+      });
+    const run = (body: string) =>
+      validateReleaseCommit(root, starterCommit, {
+        checkStarterLockfile: false,
+        read: starterTree(`## Released migration: 0.6.24\n\n### rename\n\n${body}\n`),
+      });
+
+    await expect(run('No marker here.')).rejects.toThrow(/must start with/);
+    await expect(run('**With stitchkit 0.999.0.** Missing.')).rejects.toThrow(
+      /references stitchkit 0\.999\.0/,
+    );
+    await expect(run('**With stitchkit 0.126.0.** Good.')).resolves.toMatchObject({
+      target: 'create-stitchkit',
+      version: '0.6.24',
+    });
+  });
 
   test('the release commit this repository last made passes it', async () => {
     // Not a synthetic tree: the real one, read out of the real commit. Skipped
     // rather than silently passed when HEAD is an ordinary commit — a test that
     // returns early looks exactly like a test that checked something.
-    const subject = (await Bun.$`git log -1 --format=%s HEAD`.text()).trim();
+    const subject = (await Bun.$`git -C ${root} log -1 --format=%s HEAD`.text()).trim();
     if (!isReleaseCommitSubject(subject)) {
       expect(isReleaseCommitSubject(subject)).toBe(false);
       return;
     }
-    const sha = (await Bun.$`git rev-parse HEAD`.text()).trim();
+    const sha = (await Bun.$`git -C ${root} rev-parse HEAD`.text()).trim();
     // A historical release commit must keep validating after newer versions
     // appear on npm. Its mutable registry gate was answered before tagging;
     // this assertion checks the immutable metadata carried by the commit.
@@ -396,74 +431,12 @@ describe('a release commit is checked before it costs a gate', () => {
       { checkStarterLockfile: false },
     );
     const manifest: unknown = JSON.parse(
-      await Bun.$`git show ${sha}:${validated.packageDir}/package.json`.text(),
+      await Bun.$`git -C ${root} show ${sha}:${validated.packageDir}/package.json`.text(),
     );
     expect(validated.version).toBe(
       typeof manifest === 'object' && manifest !== null
         ? Reflect.get(manifest, 'version')
         : null,
     );
-  });
-});
-
-describe('a train cannot publish the framework its own starter must pin', () => {
-  const root = resolve(import.meta.dir, '..');
-
-  const starterTree = (range: string) => (relativePath: string) => {
-    if (relativePath.endsWith('template/package.json')) {
-      return Promise.resolve(JSON.stringify({ catalog: { stitchkit: range } }));
-    }
-    if (relativePath.endsWith('template/bun.lock')) {
-      return Promise.resolve(
-        '{ "packages": { "stitchkit": ["stitchkit@0.90.5", "", {}, "x"] } }',
-      );
-    }
-    return Promise.reject(new Error(`no ${relativePath} in this tree`));
-  };
-
-  const train = (releases: { target: string; version: string }[]) =>
-    ReleaseTrainSchema.parse({ schemaVersion: 1, releases });
-
-  test('the exact 0.6.1 train is refused, and the refusal names both versions', async () => {
-    await expect(
-      assertTrainDoesNotOutrunTheStarter(
-        root,
-        train([
-          { target: 'core', version: '0.90.6' },
-          { target: 'create-stitchkit', version: '0.6.1' },
-        ]),
-        starterTree('^0.90.5'),
-      ),
-    ).rejects.toThrow(/publishes stitchkit 0\.90\.6 and create-stitchkit 0\.6\.1 together/);
-  });
-
-  test('a starter targeting an older minor rides along with a new one', async () => {
-    // The narrow case the refusal must not swallow: the framework the train
-    // publishes is outside the starter's range, so its lockfile owes it nothing.
-    await expect(
-      assertTrainDoesNotOutrunTheStarter(
-        root,
-        train([
-          { target: 'core', version: '0.91.0' },
-          { target: 'create-stitchkit', version: '0.6.2' },
-        ]),
-        starterTree('^0.90.5'),
-      ),
-    ).resolves.toBeUndefined();
-  });
-
-  test('a train without one of the two halves is not this question', async () => {
-    for (const releases of [
-      [{ target: 'core', version: '0.90.7' }],
-      [{ target: 'create-stitchkit', version: '0.6.2' }],
-      [
-        { target: 'core', version: '0.90.7' },
-        { target: 'tui', version: '0.1.3' },
-      ],
-    ]) {
-      await expect(
-        assertTrainDoesNotOutrunTheStarter(root, train(releases), starterTree('^0.90.5')),
-      ).resolves.toBeUndefined();
-    }
   });
 });

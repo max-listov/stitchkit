@@ -24,6 +24,11 @@
  */
 
 import type { UploadProgress } from '../contract/client-types';
+import { abortError } from '../internal/abort-error';
+import { abortReason } from '../internal/abort-race';
+import { utf8ByteLength } from '../internal/bounded-body';
+import { isRecord } from '../internal/typed';
+import type { RequestOptions } from './http';
 import type { ClientFetch } from './transport';
 
 type UploadProgressListener = (progress: UploadProgress) => void;
@@ -61,6 +66,8 @@ export function uploadProgressRoute(injectedTransport: boolean): UploadProgressR
 export interface UploadProgressDelivery {
   readonly route: UploadProgressRoute;
   readonly nativeBody?: XMLHttpRequestBodyInit | null;
+  /** How the caller will consume the reply. A raw response must retain the wire bytes. */
+  readonly responseType?: RequestOptions['responseType'];
 }
 
 /** Reports of one attempt: the first is `0`, and each later one only when it grew. */
@@ -101,6 +108,10 @@ export function withUploadProgress(
         signal,
         credentials,
         report,
+        responseType:
+          delivery.responseType === 'response' || delivery.responseType === 'blob'
+            ? 'arraybuffer'
+            : 'text',
       });
     }
     const request = new Request(input, init);
@@ -121,6 +132,7 @@ export function withUploadProgress(
         url: request.url,
         headers,
         body: total > 0 ? bytes : null,
+        responseType: 'arraybuffer',
         totalBytes: total,
         withCredentials: credentials === 'include',
         signal,
@@ -172,6 +184,7 @@ interface NativeSend {
   readonly signal: AbortSignal | null | undefined;
   readonly credentials: RequestInit['credentials'];
   readonly report: (sentBytes: number, totalBytes: number) => void;
+  readonly responseType: XhrSend['responseType'];
 }
 
 /**
@@ -184,7 +197,7 @@ function sendNative(
   input: string | URL | Request,
   init: RequestInit | undefined,
   body: XMLHttpRequestBodyInit | null,
-  { signal, credentials, report }: NativeSend,
+  { signal, credentials, report, responseType }: NativeSend,
 ): Promise<Response> {
   const request = input instanceof Request ? input : undefined;
   const headers = new Headers(request?.headers);
@@ -193,7 +206,8 @@ function sendNative(
   });
   // A `FormData` is encoded by the platform, which writes its own boundary; a
   // header left from a `Request` built around it would name another one.
-  if (body instanceof FormData) headers.delete('content-type');
+  if (typeof FormData === 'function' && body instanceof FormData)
+    headers.delete('content-type');
   const totalBytes = knownLength(body);
   if (totalBytes !== undefined) report(0, totalBytes);
   return sendThroughXhr({
@@ -201,6 +215,7 @@ function sendNative(
     url: request?.url ?? String(input),
     headers,
     body,
+    responseType,
     totalBytes,
     ...(credentials === 'include' && { withCredentials: true }),
     ...(credentials === 'omit' && { withCredentials: false }),
@@ -209,8 +224,15 @@ function sendNative(
   });
 }
 
+function isReadableStream(body: BodyInit | null | undefined): body is ReadableStream {
+  return (
+    (typeof ReadableStream === 'function' && body instanceof ReadableStream) ||
+    (isRecord(body) && typeof body.getReader === 'function')
+  );
+}
+
 function xhrBodyOf(body: BodyInit | null | undefined): XMLHttpRequestBodyInit | null {
-  if (body instanceof ReadableStream) {
+  if (isReadableStream(body)) {
     throw new TypeError('onUploadProgress in React Native cannot send a streamed body');
   }
   return body ?? null;
@@ -218,8 +240,8 @@ function xhrBodyOf(body: BodyInit | null | undefined): XMLHttpRequestBodyInit | 
 
 function knownLength(body: XMLHttpRequestBodyInit | null): number | undefined {
   if (body === null) return 0;
-  if (typeof body === 'string') return new TextEncoder().encode(body).byteLength;
-  if (body instanceof Blob) return body.size;
+  if (typeof body === 'string') return utf8ByteLength(body);
+  if (typeof Blob === 'function' && body instanceof Blob) return body.size;
   if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return body.byteLength;
   return undefined;
 }
@@ -229,6 +251,7 @@ interface XhrSend {
   readonly url: string;
   readonly headers: Headers;
   readonly body: XMLHttpRequestBodyInit | null;
+  readonly responseType: 'text' | 'arraybuffer';
   /** Unknown until the first upload event when the platform encodes the body. */
   readonly totalBytes: number | undefined;
   /** Left at the platform default when absent. */
@@ -261,7 +284,7 @@ function sendThroughXhr(send: XhrSend): Promise<Response> {
       if (!BROWSER_OWNED_HEADERS.has(name)) xhr.setRequestHeader(name, value);
     });
     if (send.withCredentials !== undefined) xhr.withCredentials = send.withCredentials;
-    xhr.responseType = 'arraybuffer';
+    xhr.responseType = send.responseType;
     const abort = (): void => xhr.abort();
     signal?.addEventListener('abort', abort, { once: true });
     const settle = (): void => signal?.removeEventListener('abort', abort);
@@ -283,14 +306,10 @@ function sendThroughXhr(send: XhrSend): Promise<Response> {
     };
     xhr.onabort = () => {
       settle();
-      reject(signal ? abortReason(signal) : new DOMException('Aborted', 'AbortError'));
+      reject(signal ? abortReason(signal) : abortError('Aborted'));
     };
     xhr.send(send.body);
   });
-}
-
-function abortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException('Aborted', 'AbortError');
 }
 
 /** Statuses whose response must be constructed without a body. */
@@ -305,9 +324,12 @@ function responseOf(xhr: XMLHttpRequest): Response {
     const colon = line.indexOf(':');
     if (colon > 0) headers.append(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
   }
-  const body: unknown = xhr.response;
-  return new Response(
-    NULL_BODY_STATUSES.has(xhr.status) || !(body instanceof ArrayBuffer) ? null : body,
-    { status: xhr.status, statusText: xhr.statusText, headers },
-  );
+  // React Native's whatwg-fetch reads an ArrayBuffer as one character per byte.
+  // Give it the native string for parsed replies, the original bytes for raw ones.
+  const body: unknown = NULL_BODY_STATUSES.has(xhr.status) ? null : xhr.response;
+  return new Response(typeof body === 'string' || body instanceof ArrayBuffer ? body : null, {
+    status: xhr.status,
+    statusText: xhr.statusText,
+    headers,
+  });
 }

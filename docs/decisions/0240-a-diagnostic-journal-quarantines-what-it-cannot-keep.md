@@ -1,6 +1,14 @@
+---
+title: "ADR 0240 — A diagnostic journal quarantines what it cannot keep, and its recovery status is a wire shape"
+type: decision
+status: accepted
+amends: ["0219"]
+created: 2026-10-05
+updated: 2026-10-05
+---
+
 # 0240 — A diagnostic journal quarantines what it cannot keep, and its recovery status is a wire shape
 
-**Status:** Accepted
 **Date:** 2026-10-05
 
 Amends ADR 0219. Invariants I8, I9, I10 and I13.

@@ -29,6 +29,9 @@ const botInfo: NonNullable<BotConfig<Context>['botInfo']> = {
   allows_users_to_create_topics: false,
   can_manage_bots: false,
   supports_join_request_queries: false,
+  supports_guest_queries: false,
+  needs_inline_query_location: false,
+  has_topic_sidebar: false,
 };
 const pollingBot = new Bot<Context>('packed-token', { botInfo });
 const webhookBot = new Bot<Context>('packed-token', { botInfo });

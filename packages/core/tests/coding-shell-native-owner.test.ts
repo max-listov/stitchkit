@@ -91,6 +91,7 @@ function structuralLauncher(bytes: number, finish: boolean) {
 async function tool(root: string, adapter: AgentProcessSandbox, artifact = false) {
   let saved: Uint8Array | undefined;
   const tools = mountAgent([], {
+    access: { open: 'local-operator' },
     runtimeTools: createAgentCodingTools({
       root,
       authorize: () => true,
@@ -169,6 +170,7 @@ describe('coding shell shared native ownership', () => {
     const root = await mkdtemp(join(tmpdir(), 'coding-long-budgets-'));
     roots.push(root);
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentCodingTools({
         root,
         authorize: () => true,

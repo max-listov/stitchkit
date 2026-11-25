@@ -109,6 +109,7 @@ describe('framework-owned MCP multi-round input', () => {
       }),
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'mrtr-test', version: '1' },
       auth: () => ({ identity: 'alpha' }),
       context: (auth) => auth,
@@ -170,6 +171,7 @@ describe('framework-owned MCP multi-round input', () => {
       }),
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'mrtr-test', version: '1' },
       auth: () => ({ identity: 'alpha' }),
       context: (auth) => auth,
@@ -237,6 +239,7 @@ describe('framework-owned MCP multi-round input', () => {
     });
     const attempts: Array<{ outcome?: string; round?: number }> = [];
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'mrtr-test', version: '1' },
       auth: () => ({ identity: 'alpha' }),
       context: (auth) => auth,
@@ -311,9 +314,11 @@ describe('framework-owned MCP multi-round input', () => {
       auth: (request) => ({ identity: request.headers.get('authorization') ?? '' }),
       context: (auth) => auth,
       services: [service],
-      lifecycle: {
-        beforeHandle: (context) => {
-          if (!context.identity) throw new Error('identity required');
+      access: {
+        gate: {
+          beforeHandle: (context) => {
+            if (!context.identity) throw new Error('identity required');
+          },
         },
       },
       hooks: {
@@ -367,6 +372,7 @@ describe('framework-owned MCP multi-round input', () => {
       },
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'mrtr-test', version: '1' },
       auth: () => ({ identity: 'alpha' }),
       context: (auth) => auth,
@@ -427,6 +433,7 @@ describe('framework-owned MCP multi-round input', () => {
       },
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'mrtr-test', version: '1' },
       auth: (request) => ({ identity: request.headers.get('authorization') ?? '' }),
       context: (auth) => auth,
@@ -484,6 +491,7 @@ describe('framework-owned MCP multi-round input', () => {
       },
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'mrtr-test', version: '1' },
       auth: () => ({ identity: 'alpha' }),
       context: (auth) => auth,
@@ -528,6 +536,7 @@ describe('framework-owned MCP multi-round input', () => {
       },
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'mrtr-test', version: '1' },
       auth: () => ({ identity: 'alpha' }),
       context: (auth) => auth,
@@ -565,6 +574,7 @@ describe('framework-owned MCP multi-round input', () => {
         context: z.object({ identity: z.string() }),
       });
       return createMcpHandler({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'mrtr-test', version: '1' },
         auth: () => ({ identity: 'alpha' }),
         context: (auth) => auth,
@@ -634,6 +644,7 @@ describe('framework-owned MCP multi-round input', () => {
         handler: () => ({ ok: true }),
       });
       return createMcpHandler({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'mrtr-test', version: '1' },
         auth: () => ({ identity: 'alpha' }),
         context: (auth) => auth,
@@ -684,6 +695,7 @@ describe('framework-owned MCP multi-round input', () => {
       },
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'mrtr-test', version: '1' },
       auth: (request) => ({ id: request.headers.get('authorization') ?? '' }),
       context: (auth) => auth,
@@ -732,6 +744,7 @@ describe('framework-owned MCP multi-round input', () => {
       remove: (context) => ({ deleted: context.params.id, confirmedBy: 'yes' }),
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'mrtr-test', version: '1' },
       auth: () => ({ identity: 'alpha' }),
       context: (auth) => auth,

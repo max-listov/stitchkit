@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -110,6 +110,11 @@ const control = createServer((request, response) => {
 let next;
 try {
   cpSync(fixtureRoot, appRoot, { recursive: true });
+  if (!existsSync(join(coreRoot, 'dist/entrypoints/index.js'))) {
+    throw new Error(
+      'packages/core/dist is missing; run `bun --filter stitchkit build` before smoke:next-ssr',
+    );
+  }
   run('bun', ['pm', 'pack', '--ignore-scripts', '--filename', tarball], coreRoot);
   const manifestPath = join(appRoot, 'package.json');
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));

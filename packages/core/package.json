@@ -32,8 +32,8 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "bun": ">=1.2.0",
-    "node": ">=22"
+    "bun": ">=1.4.0",
+    "node": ">=22.3.0"
   },
   "bin": {
     "stitchkit": "./dist/entrypoints/bin/upgrade-cli.js"
@@ -125,6 +125,10 @@
       "types": "./dist/entrypoints/primitives.d.ts",
       "import": "./dist/entrypoints/primitives.js"
     },
+    "./handler": {
+      "types": "./dist/entrypoints/handler.d.ts",
+      "import": "./dist/entrypoints/handler.js"
+    },
     "./server": {
       "types": "./dist/entrypoints/server.d.ts",
       "import": "./dist/entrypoints/server.js"
@@ -157,6 +161,34 @@
       "types": "./dist/entrypoints/agent-runtime/openrouter.d.ts",
       "import": "./dist/entrypoints/agent-runtime/openrouter.js"
     },
+    "./agent-executor": {
+      "types": "./dist/entrypoints/agent-executor.d.ts",
+      "import": "./dist/entrypoints/agent-executor.js"
+    },
+    "./agent-executor/acp": {
+      "types": "./dist/entrypoints/agent-executor/acp.d.ts",
+      "import": "./dist/entrypoints/agent-executor/acp.js"
+    },
+    "./agent-executor/claude": {
+      "types": "./dist/entrypoints/agent-executor/claude.d.ts",
+      "import": "./dist/entrypoints/agent-executor/claude.js"
+    },
+    "./agent-executor/claude-sdk": {
+      "types": "./dist/entrypoints/agent-executor/claude-sdk.d.ts",
+      "import": "./dist/entrypoints/agent-executor/claude-sdk.js"
+    },
+    "./agent-executor/codex": {
+      "types": "./dist/entrypoints/agent-executor/codex.d.ts",
+      "import": "./dist/entrypoints/agent-executor/codex.js"
+    },
+    "./agent-executor/testing": {
+      "types": "./dist/entrypoints/agent-executor/testing.d.ts",
+      "import": "./dist/entrypoints/agent-executor/testing.js"
+    },
+    "./agent-runtime/postgres": {
+      "types": "./dist/entrypoints/agent-runtime/postgres.d.ts",
+      "import": "./dist/entrypoints/agent-runtime/postgres.js"
+    },
     "./agent-runtime/sqlite/bun": {
       "types": "./dist/entrypoints/agent-runtime/sqlite/bun.d.ts",
       "import": "./dist/entrypoints/agent-runtime/sqlite/bun.js"
@@ -185,10 +217,6 @@
       "types": "./dist/entrypoints/application/diagnostic-journal.d.ts",
       "import": "./dist/entrypoints/application/diagnostic-journal.js"
     },
-    "./application/schemas": {
-      "types": "./dist/entrypoints/application/schemas.d.ts",
-      "import": "./dist/entrypoints/application/schemas.js"
-    },
     "./testing": {
       "types": "./dist/entrypoints/testing.d.ts",
       "import": "./dist/entrypoints/testing.js"
@@ -197,9 +225,25 @@
       "types": "./dist/entrypoints/agent-runtime/sandbox.d.ts",
       "import": "./dist/entrypoints/agent-runtime/sandbox.js"
     },
+    "./spend": {
+      "types": "./dist/entrypoints/spend.d.ts",
+      "import": "./dist/entrypoints/spend.js"
+    },
+    "./spend/testing": {
+      "types": "./dist/entrypoints/spend/testing.d.ts",
+      "import": "./dist/entrypoints/spend/testing.js"
+    },
     "./files": {
       "types": "./dist/entrypoints/files.d.ts",
       "import": "./dist/entrypoints/files.js"
+    },
+    "./service-host": {
+      "types": "./dist/entrypoints/service-host.d.ts",
+      "import": "./dist/entrypoints/service-host.js"
+    },
+    "./service-host/macos": {
+      "types": "./dist/entrypoints/service-host/macos.d.ts",
+      "import": "./dist/entrypoints/service-host/macos.js"
     },
     "./telegram": {
       "types": "./dist/entrypoints/telegram.d.ts",
@@ -256,6 +300,14 @@
     "./voice": {
       "types": "./dist/entrypoints/voice.d.ts",
       "import": "./dist/entrypoints/voice.js"
+    },
+    "./sync": {
+      "types": "./dist/entrypoints/sync.d.ts",
+      "import": "./dist/entrypoints/sync.js"
+    },
+    "./sync/postgres": {
+      "types": "./dist/entrypoints/sync/postgres.d.ts",
+      "import": "./dist/entrypoints/sync/postgres.js"
     },
     "./oauth": {
       "types": "./dist/entrypoints/oauth.d.ts",
@@ -314,7 +366,7 @@
     "build:unlocked": "rm -rf dist && cp ../../CHANGELOG.md ./CHANGELOG.md && bun run build:js && chmod +x dist/entrypoints/bin/upgrade-cli.js && bun run build:types && bun scripts/check-browser-clean.mjs && bun scripts/check-browser-executes.mjs && bun scripts/check-env-live.mjs && bun scripts/check-public-types.mjs && bun scripts/check-durability-port-standalone.mjs && bun scripts/check-tools-neutral.mjs && bun scripts/check-declarations-strict.mjs",
     "dev": "bun run build:entrypoints -- --watch",
     "prepack": "bun ../../scripts/sync-package-readme.ts && bun ../../scripts/gen-llms.ts && bun run build",
-    "test": "bun ../../scripts/test-leak-gate.ts -- bun test",
+    "test": "bun ../../scripts/test-leak-gate.ts --tmpdir -- bun test",
     "smoke:node": "node scripts/node-smoke.mjs",
     "smoke:next-ssr": "node scripts/next-ssr-retry-smoke.mjs",
     "consumer-lane": "bun ../../scripts/test-leak-gate.ts -- bun scripts/consumer-lane/run.mjs",
@@ -323,6 +375,7 @@
     "build:entrypoints": "bun scripts/generate-native-assets.ts && bun scripts/build-entrypoints.mjs"
   },
   "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.330",
     "@modelcontextprotocol/ext-apps": "^1.7.2 || ^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@openrouter/ai-sdk-provider": "^3.1.0",
@@ -344,6 +397,9 @@
     "zod": "^4.6.5"
   },
   "peerDependenciesMeta": {
+    "@anthropic-ai/claude-agent-sdk": {
+      "optional": true
+    },
     "@modelcontextprotocol/ext-apps": {
       "optional": true
     },
@@ -403,6 +459,7 @@
     "ky": "^2.2.0"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.330",
     "@happy-dom/global-registrator": "^21.0.4",
     "@modelcontextprotocol/client": "^2.4.0",
     "@modelcontextprotocol/ext-apps": "^2.0.4",
@@ -412,7 +469,7 @@
     "@seriousme/openapi-schema-validator": "^2.12.0",
     "@socket.io/bun-engine": "^0.1.2",
     "@socket.io/component-emitter": "^3.1.2",
-    "@tanstack/react-query": "5.108.2",
+    "@tanstack/react-query": "5.108.4",
     "@types/bun": "^1.4.5",
     "@types/json-schema": "^7.0.15",
     "@types/react": "^19.3.0",
@@ -432,6 +489,7 @@
     "srvx": "^1.0.8",
     "typescript": "^7.0.2",
     "web-vitals": "^6.2.3",
+    "whatwg-fetch": "3.6.20",
     "zod": "^4.6.7"
   }
 }

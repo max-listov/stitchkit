@@ -59,7 +59,7 @@ const runtimeTool = defineRuntimeTool({
   identity: { serviceName: 'jobs', action: 'status', method: 'GET', scope: 'user' },
   input: z.object({ id: z.string() }),
   output: z.object({ state: z.string() }),
-  transports: ['MCP', 'AGENT', 'CLI'],
+  expose: ['MCP', 'AGENT', 'CLI'],
   handler: () => ({ state: 'done' }),
 });
 
@@ -156,6 +156,65 @@ describe('transport conformance kit', () => {
     );
   });
 
+  test('derives matching HTTP and MCP discovery identities without calling handlers', () => {
+    const untouched = implement(contract, {
+      read: () => {
+        throw new Error('a manifest must not call a handler');
+      },
+    });
+    const manifest = buildSurfaceManifest({ services: [untouched] });
+    const openApi = generateOpenApiDocument({
+      info: { title: 'test', version: '1' },
+      groups: [{ pathPrefix: '', services: [untouched] }],
+    });
+    const names =
+      manifest.toolSurfaces
+        .find((projection) => projection.transport === 'MCP' && projection.surface === null)
+        ?.tools.map((tool) => tool.name) ?? [];
+
+    expect(names).toHaveLength(1);
+    expect(() => assertSurfaceDiscovery(manifest, { openApi, MCP: names })).not.toThrow();
+  });
+
+  test('a missing AGENT tool and a missing CLI command each fail conformance', () => {
+    const manifest = buildSurfaceManifest({ services: [service] });
+
+    expect(() => assertSurfaceDiscovery(manifest, { AGENT: [] })).toThrow(
+      'AGENT discovery mismatch',
+    );
+    expect(() => assertSurfaceDiscovery(manifest, { CLI: [] })).toThrow(
+      'CLI discovery mismatch',
+    );
+  });
+
+  test('the committed snapshot catches an expose edit that moves BOTH in-process sides together', () => {
+    // Narrowing `expose` moves the manifest and the in-process tool lists in
+    // lockstep, so comparing them to each other stays green. The snapshot is the
+    // anchor that does not move with the source.
+    const snapshot = buildSurfaceManifest({ services: [service] });
+    const narrowed = implement(
+      defineContract(
+        { prefix: 'items', scope: 'user' },
+        {
+          read: {
+            method: 'GET',
+            path: '/:id',
+            desc: 'Read item',
+            params: ParamsSchema,
+            input: InputSchema,
+            output: OutputSchema,
+            expose: ['HTTP', 'MCP'],
+          },
+        },
+      ),
+      { read: () => ({ value: 'ok' }) },
+    );
+    const moved = buildSurfaceManifest({ services: [narrowed] });
+
+    expect(() => assertSurfaceManifestSnapshot(moved, snapshot)).toThrow();
+    expect(() => assertSurfaceManifestSnapshot(snapshot, snapshot)).not.toThrow();
+  });
+
   test('projects named MCP selections through one reachable global preparation policy', () => {
     const manifest = buildSurfaceManifest({
       groups: [{ pathPrefix: '/api/v1', services: [service] }],
@@ -220,7 +279,7 @@ describe('transport conformance kit', () => {
       identity: { serviceName: 'jobs', action: 'snapshot', method: 'GET' },
       input: z.object({ id: z.string() }),
       output: z.object({ state: z.string() }),
-      transports: ['MCP', 'AGENT'],
+      expose: ['MCP', 'AGENT'],
     } satisfies SurfaceRuntimeToolDefinition;
 
     const manifest = buildSurfaceManifest({ runtimeTools: [descriptor] });
@@ -793,13 +852,13 @@ describe('transport conformance kit', () => {
     ).rejects.toBeDefined();
   });
 
-  test('rejects a fractional scenario timeout before invoking a driver', async () => {
+  test('rejects a scenario timeout outside the timer range before invoking a driver', async () => {
     let invoked = false;
-    await expect(
-      runSurfaceProbes({
+    for (const timeoutMs of [1.5, 0, 2_147_483_648]) {
+      const run = runSurfaceProbes({
         probes: [
           {
-            name: 'fractional timeout',
+            name: 'out-of-range timeout',
             fixture: undefined,
             transports: ['HTTP'],
             expected: { HTTP: { outcome: 'success' } },
@@ -813,9 +872,13 @@ describe('transport conformance kit', () => {
             },
           },
         },
-        timeoutMs: 1.5,
-      }),
-    ).rejects.toThrow('Surface probe timeoutMs must be a positive integer');
+        timeoutMs,
+      });
+      await expect(run).rejects.toThrow(RangeError);
+      await expect(run).rejects.toThrow(
+        `Surface probe timeoutMs must be an integer from 1 to 2147483647 milliseconds, received ${timeoutMs}`,
+      );
+    }
     expect(invoked).toBe(false);
   });
 

@@ -2,13 +2,15 @@
 title: "ADR 0026 — Published stitch error-code registry"
 type: decision
 status: accepted
+amendedBy: ["0105", "0311"]
 created: 2026-06-05
 updated: 2026-06-05
 ---
 
 # ADR 0026 — Published stitch error-code registry
 
-- **Status:** Accepted — extends [ADR 0002](0002-generic-core.md)
+**Relations:** extends [ADR 0002](0002-generic-core.md)
+
 - **Date:** 2026-06-05
 
 ## Context
@@ -49,7 +51,8 @@ export function isStitchErrorCode(code: string): code is StitchErrorCode
   type-checking the values). Adding a code in one place updates the type.
 - Exported from `stitchkit` and `stitchkit/server`. `appError()` and the router
   now resolve status through it (so `METHOD_NOT_ALLOWED` → 405, not the 500
-  fallback).
+  fallback) (amended by [ADR 0311](0311-planned-breaking-release-access-expose-and-clean-boundaries.md):
+  `appError()` is removed and `new AppError(code)` itself derives status from `STITCH_ERROR_STATUS`).
 - The **mapping** stitch-code → app-code stays the consumer's job (it is domain —
   the app decides `BAD_REQUEST` → `VALIDATION_ERROR`). stitch only provides the
   stable, typed source so a consumer's map is keyed by `StitchErrorCode`.

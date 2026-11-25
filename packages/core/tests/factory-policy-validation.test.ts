@@ -236,14 +236,14 @@ describe('factory policy validation', () => {
         name: 'same',
         service: 'disjoint',
         method: 'two',
-        transports: ['MCP'],
+        expose: ['MCP'],
       },
       {
         kind: 'contract',
         name: 'same',
         service: 'disjoint',
         method: 'one',
-        transports: ['CLI'],
+        expose: ['CLI'],
       },
     ]);
   });
@@ -291,10 +291,12 @@ describe('factory policy validation', () => {
         code = value;
       },
       stdin: async () => null,
-      lifecycle: {
-        beforeHandle: (_context, endpoint) => {
-          expect(endpoint.scope).toBe('admin');
-          forbidden('access denied');
+      access: {
+        gate: {
+          beforeHandle: (_context, endpoint) => {
+            expect(endpoint.scope).toBe('admin');
+            forbidden('access denied');
+          },
         },
       },
     });

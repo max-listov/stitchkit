@@ -8,7 +8,8 @@ updated: 2026-06-05
 
 # ADR 0021 — Endpoint meta passthrough (opaque per-endpoint metadata)
 
-- **Status:** Accepted — extends [ADR 0002](0002-generic-core.md)
+**Relations:** extends [ADR 0002](0002-generic-core.md)
+
 - **Date:** 2026-06-05
 
 ## Context

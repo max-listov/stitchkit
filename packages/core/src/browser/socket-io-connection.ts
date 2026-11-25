@@ -1,3 +1,4 @@
+import { assertTimerMs } from '../internal/deadline';
 import {
   RealtimeRequestDisconnectedError,
   RealtimeRequestTimeoutError,
@@ -146,6 +147,7 @@ export function createStickyEvents(retain: readonly PropertyKey[] | undefined) {
 
 /** The one pending server-disconnect recycle, replaced by a newer one and cleared on teardown. */
 export function createRecycle(delay: number | false) {
+  if (delay !== false) assertTimerMs('reconnectOnServerDisconnect', delay, { min: 0 });
   let timer: ReturnType<typeof setTimeout> | null = null;
   const clear = (): void => {
     if (timer === null) return;

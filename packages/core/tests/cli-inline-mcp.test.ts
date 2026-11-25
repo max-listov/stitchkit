@@ -24,6 +24,7 @@ test('a process CLI saves defineViewFileTool media under their source names thro
   await writeFile(join(root, 'voice.ogg'), AUDIO_BYTES);
   const files = await createManagedFileBoundary({ root });
   const handler = createMcpHandler({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'media', version: '1' },
     auth: () => ({}),
     context: () => ({}),
@@ -32,7 +33,7 @@ test('a process CLI saves defineViewFileTool media under their source names thro
       defineViewFileTool({
         description: 'Inspect protected synthetic media',
         identity: { serviceName: 'media', action: 'view' },
-        transports: ['MCP'],
+        expose: ['MCP'],
         files,
       }),
     ],
@@ -89,6 +90,7 @@ test('a process CLI saves the raw mountViewFile media under their source names: 
   await writeFile(join(root, 'picture.png'), IMAGE_BYTES);
   const files = await createManagedFileBoundary({ root });
   const handler = createMcpHandler({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'raw-media', version: '1' },
     auth: () => ({}),
     context: () => ({}),

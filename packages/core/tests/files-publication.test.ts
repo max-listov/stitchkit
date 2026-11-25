@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import {
   closeSync,
   fsyncSync,
   linkSync,
+  mkdirSync,
   openSync,
   readdirSync,
   readFileSync as readFileSyncNode,
@@ -11,6 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import {
+  chmod,
   link,
   mkdtemp,
   open,
@@ -364,4 +367,294 @@ test('staging does not depend on the length of the target name', async () => {
   await writeFileAtomic(direct, 'direct');
   expect(await readFile(direct, 'utf8')).toBe('direct');
   expect(await readdir(root)).not.toContainEqual(expect.stringMatching(/\.tmp$/));
+});
+
+for (const [label, write] of [
+  ['async', writeFileAtomic],
+  [
+    'sync',
+    async (...args: Parameters<typeof writeFileAtomicSync>) => writeFileAtomicSync(...args),
+  ],
+] as const) {
+  test(`idempotent option rejects replace !== false with TypeError (${label})`, async () => {
+    const target = join(root, `invalid-opt-${label}`);
+    await expect(write(target, 'data', { idempotent: true })).rejects.toThrow(TypeError);
+    await expect(write(target, 'data', { replace: true, idempotent: true })).rejects.toThrow(
+      TypeError,
+    );
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test(`strict replace: false without idempotent still refuses identical bytes (${label})`, async () => {
+    const target = join(root, `strict-${label}`);
+    await write(target, 'identical', { replace: false, mode: 0o600 });
+    await expect(
+      write(target, 'identical', { replace: false, mode: 0o600 }),
+    ).rejects.toMatchObject({ code: 'EEXIST' });
+    expect(await readdir(root)).toEqual([`strict-${label}`]);
+  });
+
+  test(`idempotent replace: false succeeds on identical bytes+mode and empty files without replacing inode (${label})`, async () => {
+    const target = join(root, `idem-${label}`);
+    await write(target, 'hello-world', { replace: false, mode: 0o640 });
+    const beforeStat = await stat(target);
+
+    await write(target, 'hello-world', {
+      replace: false,
+      idempotent: true,
+      mode: 0o640,
+      durability: 'directory',
+    });
+    const afterStat = await stat(target);
+    expect(afterStat.ino).toBe(beforeStat.ino);
+    expect(afterStat.nlink).toBe(1);
+    expect(await readFile(target, 'utf8')).toBe('hello-world');
+
+    // Empty 0-byte file support
+    const emptyTarget = join(root, `empty-${label}`);
+    await write(emptyTarget, '', { replace: false, mode: 0o600 });
+    const emptyBefore = await stat(emptyTarget);
+    await write(emptyTarget, '', { replace: false, idempotent: true, mode: 0o600 });
+    await write(emptyTarget, new Uint8Array(0), {
+      replace: false,
+      idempotent: true,
+      mode: 0o600,
+    });
+    expect((await stat(emptyTarget)).ino).toBe(emptyBefore.ino);
+
+    // Non-empty against empty and empty against non-empty must fail with EEXIST
+    await expect(
+      write(emptyTarget, 'non-empty', { replace: false, idempotent: true, mode: 0o600 }),
+    ).rejects.toMatchObject({ code: 'EEXIST' });
+    await expect(
+      write(target, '', { replace: false, idempotent: true, mode: 0o640 }),
+    ).rejects.toMatchObject({ code: 'EEXIST' });
+
+    expect((await readdir(root)).filter((name) => name.startsWith('.stitchkit-'))).toEqual([]);
+  });
+
+  test(`idempotent replace: false refuses different bytes, mismatched mode, symlink, FIFO, and directory (${label})`, async () => {
+    const target = join(root, `content-${label}`);
+    await write(target, 'same-length-A', { replace: false, mode: 0o600 });
+
+    // Different bytes (same length, shorter, longer)
+    for (const candidate of ['same-length-B', 'short', 'same-length-A-extra']) {
+      await expect(
+        write(target, candidate, { replace: false, idempotent: true, mode: 0o600 }),
+      ).rejects.toMatchObject({ code: 'EEXIST' });
+    }
+    expect(await readFile(target, 'utf8')).toBe('same-length-A');
+
+    // Mismatched mode (0644 vs 0600) and special bits (sticky 01600 vs 0600)
+    await expect(
+      write(target, 'same-length-A', { replace: false, idempotent: true, mode: 0o644 }),
+    ).rejects.toMatchObject({ code: 'EEXIST' });
+    expect((await stat(target)).mode & 0o7777).toBe(0o600);
+
+    const stickyTarget = join(root, `sticky-${label}`);
+    await write(stickyTarget, 'same-length-A', { replace: false, mode: 0o600 });
+    await chmod(stickyTarget, 0o1600);
+    if (((await stat(stickyTarget)).mode & 0o7777) === 0o1600) {
+      await expect(
+        write(stickyTarget, 'same-length-A', {
+          replace: false,
+          idempotent: true,
+          mode: 0o600,
+        }),
+      ).rejects.toMatchObject({ code: 'EEXIST' });
+    }
+
+    // Symlink pointing to identical content + mode must be refused (O_NOFOLLOW)
+    const linkTarget = join(root, `symlink-${label}`);
+    await symlink(target, linkTarget);
+    await expect(
+      write(linkTarget, 'same-length-A', { replace: false, idempotent: true, mode: 0o600 }),
+    ).rejects.toMatchObject({ code: 'EEXIST' });
+
+    // Directory must be refused
+    const dirTarget = join(root, `dir-${label}`);
+    mkdirSync(dirTarget);
+    await expect(
+      write(dirTarget, '', { replace: false, idempotent: true, mode: 0o600 }),
+    ).rejects.toMatchObject({ code: 'EEXIST' });
+
+    // FIFO must be refused without blocking
+    const fifoTarget = join(root, `fifo-${label}`);
+    const mkfifo = spawnSync('mkfifo', [fifoTarget]);
+    expect(mkfifo.status).toBe(0);
+    await expect(
+      write(fifoTarget, '', { replace: false, idempotent: true, mode: 0o600 }),
+    ).rejects.toMatchObject({ code: 'EEXIST' });
+
+    expect((await readdir(root)).filter((name) => name.startsWith('.stitchkit-'))).toEqual([]);
+  });
+}
+
+test('idempotent replace: false performs 1 bounded retry on EEXIST -> ENOENT race and syncs directory on hit (async)', async () => {
+  const { writeAtomicFileData } = await import('../src/internal/atomic-file');
+  const target = join(root, 'race-async');
+  await writeFile(target, 'transient');
+
+  let publishAttempts = 0;
+  await writeAtomicFileData(
+    target,
+    'fresh-value',
+    { replace: false, idempotent: true, mode: 0o600 },
+    {
+      open,
+      unlink,
+      publish: async (staged, to, publication) => {
+        publishAttempts += 1;
+        if (publishAttempts === 1) {
+          // Simulate EEXIST, then concurrent deletion before idempotent inspection opens target.
+          await unlink(to);
+          throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+        }
+        await publishAtomicFile(staged, to, publication);
+      },
+    },
+  );
+  expect(publishAttempts).toBe(2);
+  expect(await readFile(target, 'utf8')).toBe('fresh-value');
+  expect((await readdir(root)).filter((name) => name.startsWith('.stitchkit-'))).toEqual([]);
+
+  // Directory durability calls syncDir on idempotent hit
+  const syncedDirs: string[] = [];
+  await writeAtomicFileData(
+    target,
+    'fresh-value',
+    { replace: false, idempotent: true, mode: 0o600, durability: 'directory' },
+    {
+      open,
+      unlink,
+      publish: publishAtomicFile,
+      syncDir: async (dir) => {
+        syncedDirs.push(dir);
+      },
+    },
+  );
+  expect(syncedDirs).toEqual([root]);
+
+  // Bounded retry (async): EEXIST -> ENOENT -> 2nd attempt also EEXIST stops after exactly 2 attempts with 0 .tmp files
+  const retryFailTarget = join(root, 'race-double-eexist-async');
+  await writeFile(retryFailTarget, 'contended');
+  let doubleAttempts = 0;
+  await expect(
+    writeAtomicFileData(
+      retryFailTarget,
+      'contended',
+      { replace: false, idempotent: true, mode: 0o600 },
+      {
+        open,
+        unlink,
+        publish: async (_staged, to) => {
+          doubleAttempts += 1;
+          if (doubleAttempts === 1) await unlink(to);
+          throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ code: 'EEXIST' });
+  expect(doubleAttempts).toBe(2);
+  expect((await readdir(root)).filter((name) => name.startsWith('.stitchkit-'))).toEqual([]);
+});
+
+test('idempotent replace: false performs 1 bounded retry on EEXIST -> ENOENT race and syncs directory on hit (sync)', async () => {
+  const { writeAtomicFileDataSync } = await import('../src/internal/atomic-file');
+  const target = join(root, 'race-sync');
+  writeFileSync(target, 'transient');
+
+  let publishAttempts = 0;
+  writeAtomicFileDataSync(
+    target,
+    'fresh-sync-value',
+    { replace: false, idempotent: true, mode: 0o600 },
+    {
+      open: (path, flags, mode) => {
+        const fd = openSync(path, flags, mode);
+        return {
+          write: (bytes, offset, length) => {
+            writeFileSync(fd, bytes.subarray(offset, offset + length));
+            return length;
+          },
+          chmod: () => undefined,
+          sync: () => fsyncSync(fd),
+          close: () => closeSync(fd),
+        };
+      },
+      unlink: unlinkSync,
+      publish: (staged, to, publication) => {
+        publishAttempts += 1;
+        if (publishAttempts === 1) {
+          unlinkSync(to);
+          throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+        }
+        publishAtomicFileSync(staged, to, publication);
+      },
+    },
+  );
+  expect(publishAttempts).toBe(2);
+  expect(readFileSyncNode(target, 'utf8')).toBe('fresh-sync-value');
+  expect(readdirSync(root).filter((name) => name.startsWith('.stitchkit-'))).toEqual([]);
+
+  const syncedDirs: string[] = [];
+  writeAtomicFileDataSync(
+    target,
+    'fresh-sync-value',
+    { replace: false, idempotent: true, mode: 0o600, durability: 'directory' },
+    {
+      open: (path, flags, mode) => {
+        const fd = openSync(path, flags, mode);
+        return {
+          write: (bytes, offset, length) => {
+            writeFileSync(fd, bytes.subarray(offset, offset + length));
+            return length;
+          },
+          chmod: () => undefined,
+          sync: () => fsyncSync(fd),
+          close: () => closeSync(fd),
+        };
+      },
+      unlink: unlinkSync,
+      publish: publishAtomicFileSync,
+      syncDir: (dir) => {
+        syncedDirs.push(dir);
+      },
+    },
+  );
+  expect(syncedDirs).toEqual([root]);
+
+  // Bounded retry (sync): EEXIST -> ENOENT -> 2nd attempt also EEXIST stops after exactly 2 attempts with 0 .tmp files
+  const retryFailSyncTarget = join(root, 'race-double-eexist-sync');
+  writeFileSync(retryFailSyncTarget, 'contended');
+  let doubleSyncAttempts = 0;
+  expect(() =>
+    writeAtomicFileDataSync(
+      retryFailSyncTarget,
+      'contended',
+      { replace: false, idempotent: true, mode: 0o600 },
+      {
+        open: (path, flags, mode) => {
+          const fd = openSync(path, flags, mode);
+          return {
+            write: (bytes, offset, length) => {
+              writeFileSync(fd, bytes.subarray(offset, offset + length));
+              return length;
+            },
+            chmod: () => undefined,
+            sync: () => fsyncSync(fd),
+            close: () => closeSync(fd),
+          };
+        },
+        unlink: unlinkSync,
+        publish: (_staged, to) => {
+          doubleSyncAttempts += 1;
+          if (doubleSyncAttempts === 1) unlinkSync(to);
+          throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+        },
+      },
+    ),
+  ).toThrow(/EEXIST/);
+  expect(doubleSyncAttempts).toBe(2);
+  expect(readdirSync(root).filter((name) => name.startsWith('.stitchkit-'))).toEqual([]);
 });

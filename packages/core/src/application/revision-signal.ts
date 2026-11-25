@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MAX_TIMER_MS } from '../internal/timers';
+import { MAX_TIMER_MS, monotonicTimerClock } from '../internal/timers';
 
 const NonNegativeSafeIntegerSchema = z.number().int().nonnegative().safe();
 const PositiveSafeIntegerSchema = z.number().int().positive().safe();
@@ -95,17 +95,10 @@ interface RevisionWaiter {
   settle(outcome: RevisionSignalWaitOutcome): void;
 }
 
-const systemClock: RevisionSignalClock = {
-  schedule(callback, delayMs) {
-    const timer = setTimeout(callback, delayMs);
-    return { cancel: () => clearTimeout(timer) };
-  },
-};
-
 /** Finite process-local broadcast wake-up keyed by a monotonic revision. */
 export function createRevisionSignal(config: RevisionSignalConfig): RevisionSignal {
   const maxWaiters = PositiveSafeIntegerSchema.parse(config.maxWaiters);
-  const clock = config.clock ?? systemClock;
+  const clock: RevisionSignalClock = config.clock ?? monotonicTimerClock;
   const waiters = new Set<RevisionWaiter>();
   let state: RevisionSignalState = 'open';
   let revision = 0;

@@ -3,14 +3,16 @@ title: "ADR 0063 — One HTTP completion feeds every observability projection"
 description: Request logging and audit consume one framework-owned completion snapshot; payload capture is explicit and wrapper-free.
 type: decision
 status: accepted
+amends: ["0012"]
 created: 2026-08-08
 updated: 2026-08-08
 ---
 
 # ADR 0063 — One HTTP completion feeds every observability projection
 
-- **Status:** Accepted — supersedes the HTTP wrapper portion of ADR 0012 and
-  refines ADR 0039; tool-event semantics remain unchanged.
+**Relations:** supersedes the HTTP wrapper portion of ADR 0012 and refines ADR 0039; tool-event
+semantics remain unchanged.
+
 - **Date:** 2026-08-08
 
 ## Context

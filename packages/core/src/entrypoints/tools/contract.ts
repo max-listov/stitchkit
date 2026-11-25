@@ -9,8 +9,8 @@
  * receive, and the input and output of a view-file tool.
  *
  * Reaching them only through the implementation was contract-first failing on
- * its own promise, one entrypoint over from where
- * `stitchkit/application/schemas` fixed the same thing. The names live here and
+ * its own promise: a browser consumer must be able to import contract schemas
+ * without pulling a server runtime. The names live here and
  * `stitchkit/tools` re-exports them, so there is one list rather than two.
  *
  * Every module behind this entry is a leaf: zod and nothing else.

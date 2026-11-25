@@ -1,10 +1,10 @@
 ---
 title: Engineering rules — the reasoning behind the review rules
-description: Why casts are a counted review rule, why every declared option must prove its effect, when a runtime internal is published and why an ADR may record a practice.
+description: Why casts are a counted review rule, why every declared option must prove its effect, why runtime globals are verified against real packages, when a runtime internal is published and why an ADR may record a practice.
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-11-24
 ---
 
 # Engineering rules — the reasoning behind the review rules
@@ -66,14 +66,36 @@ whose every command is discovered saw no change: by the time its schema reached 
 The loss had been noticed during that work and written into the guide as a property of composed
 patterns. Two rules follow.
 
-- A rule about how a schema is shown is tested on a discovered command as well as an authored one —
-  `packages/core/tests/cli-help-limits.test.ts` serves a document over MCP, mounts it with
-  `defineMcpClientConnection` and reads the help. A test that hands the printer an authored schema
-  proves the printer, not the path a discovered schema takes to it.
+- A rule about how a schema, metadata, or result is shown is proven through the shared test
+  factories rather than a single authored path:
+  `packages/core/tests/support/operation-origins.ts` parameterizes across every origin (`native`,
+  `contract`, `discovered-openapi`, `discovered-mcp`, `managed-cli-catalog`), and
+  `packages/core/tests/support/operation-transports.ts` parameterizes across every result transport
+  (`agent`, raw wire `mcp-content`, `mcp-structured`, `cli`). A test that hands the printer an
+  authored schema proves the printer, not the path a discovered schema or wire envelope takes to it.
 - A keyword that does not survive from the served document to the written one is fixed where it is lost:
   at the read boundary (`withServedFormats`) or in the one conversion (`keepFormatName`).
   `packages/core/tests/json-schema-string-format.test.ts` holds the invariant — a document a stitchkit
   server serves reads back as it was served. A caveat in the guide is not a third option.
+- The same rule applies across exported CLI helpers: `stitchkit/cli` exposes `extractCliGlobalOptions`,
+  `scanCliInvocation`, `routeCliArgv`, `parseCliArgs`, `createCli`, and `createCliInvoker` as separate
+  entry points over the same CLI grammar. A flag or parser change proven only on `createCli` leaves sibling
+  helpers able to diverge silently, so regression tests cover every affected exported helper and schema
+  projection.
+
+## Verify target-runtime globals against real packages
+
+A portable entrypoint such as `stitchkit/handler` runs inside target realms — React Native / Hermes, Node,
+and browsers — whose global object differs from Bun's. Testing a realm against hand-written assumptions
+about what globals exist proves the assumption, not the target: a synthetic polyfill for `DOMException`,
+`Buffer`, or `URL` can make a test harness pass while the real runtime throws on the first call, or mask a
+missing host primitive the core actually depends on.
+
+Realm proofs (`packages/core/tests/rn-realm/`) and packed consumer proofs
+(`packages/core/scripts/consumer-lane/fixtures/minimal/src/handler-hermes*`) therefore verify target
+globals against real installed packages and runtime binaries on disk, include a negative control that proves
+forbidden host APIs fail inside the target realm, and share one source of truth for any target-provided
+helper rather than maintaining divergent copies.
 
 ## A runtime internal is published only when it cannot be otherwise
 

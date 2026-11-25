@@ -42,8 +42,16 @@ const http = createHttpClient({ baseUrl: 'http://localhost', fetch, retry: { lim
 const remote = implementRemote(contract, http);
 
 test('declared HTTP retryability survives direct and remote CLI and model tool hops', async () => {
-  const direct = await createCliInvoker({ name: 'direct', services: [service] });
-  const proxy = await createCliInvoker({ name: 'remote', services: [remote] });
+  const direct = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'direct',
+    services: [service],
+  });
+  const proxy = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'remote',
+    services: [remote],
+  });
   for (const [status, declared, expected] of [
     [502, false, false],
     [409, true, true],
@@ -64,6 +72,7 @@ test('declared HTTP retryability survives direct and remote CLI and model tool h
     }
     for (const source of ['mcp', 'agent'] as const) {
       const tools = createToolInvoker([remote], {
+        access: { open: 'local-operator' },
         transport: source === 'mcp' ? 'MCP' : 'AGENT',
       });
       expect(await tools.invoke('recommendation_fail', args, { source })).toMatchObject({
@@ -119,10 +128,13 @@ test('HTTP retryability is absent by default and rejects nonboolean wire metadat
       createHttpClient({ baseUrl: 'http://localhost', fetch: transport, retry: { limit: 0 } }),
     );
     expect(
-      await (await createCliInvoker({ name: 'malformed', services: [adapted] })).invoke(
-        'recommendation_fail',
-        { status: 502 },
-      ),
+      await (
+        await createCliInvoker({
+          access: { open: 'local-operator' },
+          name: 'malformed',
+          services: [adapted],
+        })
+      ).invoke('recommendation_fail', { status: 502 }),
     ).toMatchObject({ ok: false, error: { retryable: true } });
   }
 });
@@ -150,6 +162,7 @@ test('ApiError keeps the existing cause argument and remote transport errors sta
     createHttpClient({ baseUrl: 'http://localhost', fetch: transport, retry: { limit: 0 } }),
   );
   const proxy = await createCliInvoker({
+    access: { open: 'local-operator' },
     name: 'private',
     services: [adapted],
     hooks: {
@@ -190,6 +203,7 @@ test('an upstream failure without an envelope keeps its status and never leaks i
     );
     const causes: unknown[] = [];
     const cli = await createCliInvoker({
+      access: { open: 'local-operator' },
       name: 'envelope-less',
       services: [adapted],
       hooks: { onToolError: ({ error }) => void causes.push(error) },
@@ -200,7 +214,10 @@ test('an upstream failure without an envelope keeps its status and never leaks i
       error: { code: 'HTTP_ERROR', retryable: status !== 404 },
     });
     expect(JSON.stringify(result)).not.toContain('upstream-secret-body');
-    const tools = createToolInvoker([adapted], { transport: 'MCP' });
+    const tools = createToolInvoker([adapted], {
+      access: { open: 'local-operator' },
+      transport: 'MCP',
+    });
     const tool = await tools.invoke('recommendation_fail', { status }, { source: 'mcp' });
     expect(tool).toMatchObject({ ok: false, code: 'HTTP_ERROR', retryable: status !== 404 });
     expect(JSON.stringify(tool)).not.toContain('upstream-secret-body');
@@ -234,7 +251,11 @@ test('a deadline the remote client hit follows the status class like any 408', a
       retry: { limit: 0 },
     }),
   );
-  const cli = await createCliInvoker({ name: 'deadline', services: [adapted] });
+  const cli = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'deadline',
+    services: [adapted],
+  });
   expect(await cli.invoke('recommendation_fail', { status: 502 })).toMatchObject({
     ok: false,
     error: { code: 'REQUEST_TIMEOUT', retryable: true },

@@ -1,5 +1,7 @@
 import type { ZodObject, ZodType, z } from 'zod';
 import { AppError } from '../../contract/errors';
+import { assertTimerSeconds } from '../../internal/deadline';
+import { assertNoLegacyTransports } from '../internal/expose';
 import { type ManagedNativeToolConfig, managedNativeIdentity } from '../native-definition';
 import {
   defineRuntimeTool,
@@ -41,6 +43,8 @@ export function defineWaitTool<TInput extends ZodObject, TState extends ZodType>
   undefined,
   RuntimeToolPresenters<z.output<TState>>
 > {
+  assertNoLegacyTransports(config, 'defineWaitTool');
+  assertTimerSeconds('defineWaitTool defaultTimeout', config.defaultTimeout);
   const renderedMcp: RuntimeToolPresenters<z.output<TState>> | undefined = config.render
     ? {
         mcp: (state: z.output<TState>): RuntimeMcpPresentation => {
@@ -65,7 +69,7 @@ export function defineWaitTool<TInput extends ZodObject, TState extends ZodType>
     identity: managedNativeIdentity(config.identity, 'GET'),
     input: config.input,
     output: config.state,
-    transports: config.transports,
+    expose: config.expose,
     annotations: config.annotations,
     present,
     handler: async (context) => {

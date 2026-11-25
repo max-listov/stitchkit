@@ -31,7 +31,13 @@ static const char *filesystem_error_code(int code) {
     case ELOOP: return "ELOOP";
     case EISDIR: return "EISDIR";
     case EEXIST: return "EEXIST";
+    case EXDEV: return "EXDEV";
+    case EINVAL: return "EINVAL";
+    case ESRCH: return "ESRCH";
     case EOPNOTSUPP: return "EOPNOTSUPP";
+#if defined(ENOTSUP) && ENOTSUP != EOPNOTSUPP
+    case ENOTSUP: return "ENOTSUP";
+#endif
     default: return NULL;
   }
 }
@@ -449,6 +455,8 @@ static napi_value process_identity(napi_env env, napi_callback_info info) {
   return result;
 }
 
+#include "service_host_darwin.h"
+
 static napi_value initialize(napi_env env, napi_value exports) {
   const napi_property_descriptor methods[] = {
       {"processIdentity", NULL, process_identity, NULL, NULL, NULL, napi_default, NULL},
@@ -462,6 +470,9 @@ static napi_value initialize(napi_env env, napi_value exports) {
       {"listAt", NULL, list_at, NULL, NULL, NULL, napi_default, NULL},
       {"renameAt", NULL, rename_at, NULL, NULL, NULL, napi_default, NULL},
       {"unlinkAt", NULL, unlink_at, NULL, NULL, NULL, napi_default, NULL},
+      {"renameSwapAt", NULL, rename_swap_at, NULL, NULL, NULL, napi_default, NULL},
+      {"responsiblePid", NULL, responsible_pid, NULL, NULL, NULL, napi_default, NULL},
+      {"processPath", NULL, process_path, NULL, NULL, NULL, napi_default, NULL},
   };
   napi_define_properties(env, exports, sizeof(methods) / sizeof(methods[0]), methods);
   return exports;

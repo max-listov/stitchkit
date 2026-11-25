@@ -2,7 +2,7 @@
 title: "ADR 0222: A release candidate pays for evidence once"
 description: "Full exact-SHA CI authorises publication; the local candidate passes the fast gate, and a full local result separately confirms the fast subset."
 type: decision
-status: active
+status: accepted
 created: 2026-10-01 15:43 +07:00
 updated: 2026-10-01 15:43 +07:00
 ---

@@ -372,7 +372,15 @@ test('reconciliation refuses timer overflow and accepts the native timer ceiling
   });
   await expect(
     engine(store).effect('reply', handlers, { reconcileTimeoutMs: 2_147_483_648 }),
-  ).rejects.toThrow('at most 2147483647');
+  ).rejects.toThrow(
+    'reconcileTimeoutMs must be an integer from 1 to 2147483647 milliseconds, received 2147483648',
+  );
+  for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    await expect(
+      engine(store).effect('reply', handlers, { reconcileTimeoutMs: bad }),
+      String(bad),
+    ).rejects.toThrow(RangeError);
+  }
   await expect(
     engine(store).effect('reply', handlers, { reconcileTimeoutMs: 2_147_483_647 }),
   ).resolves.toEqual({ outcome: 'accepted', proof: { id: 'proof' } });

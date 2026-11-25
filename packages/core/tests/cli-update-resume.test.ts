@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { currentCliBuildTarget } from '../src/tools/cli/manifest';
 import { applyCliUpdate } from '../src/tools/cli/update';
+import { expectTimerRejection } from './support/timer-refusal';
 
 const BINARY = randomBytes(150 * 1024); // random: gzip keeps it about this size
 const DIGEST = createHash('sha256').update(BINARY).digest('hex');
@@ -128,14 +129,19 @@ function serve(bytes: Uint8Array = gzipSync(BINARY)): Served {
     },
   });
   cleanups.push(() => void server.stop(true));
-  served.url = `http://127.0.0.1:${server.port}/geckochat.gz`;
+  served.url = `http://127.0.0.1:${server.port}/app.gz`;
   return served;
 }
 
 function update(
   served: Served,
   dir: string,
-  extra: { idleTimeoutMs?: number; timeoutMs?: number; compression?: 'gzip' | 'none' } = {},
+  extra: {
+    idleTimeoutMs?: number;
+    timeoutMs?: number;
+    verifyTimeoutMs?: number;
+    compression?: 'gzip' | 'none';
+  } = {},
 ) {
   return applyCliUpdate({
     asset: {
@@ -150,6 +156,10 @@ function update(
     allowPrivateHosts: true,
     ...(extra.idleTimeoutMs !== undefined && { idleTimeoutMs: extra.idleTimeoutMs }),
     ...(extra.timeoutMs !== undefined && { timeoutMs: extra.timeoutMs }),
+    ...(extra.verifyTimeoutMs !== undefined && {
+      verify: () => undefined,
+      verifyTimeoutMs: extra.verifyTimeoutMs,
+    }),
   });
 }
 
@@ -159,6 +169,23 @@ function prepareState(dir: string): void {
 }
 
 describe('an interrupted update continues from where it stopped', () => {
+  test('a deadline past the timer range is refused before anything is downloaded', async () => {
+    // 2 ** 31 ms is past the timer ceiling: such a timer fires at once, so the download or the
+    // verification would end the moment it began — after the bytes were already fetched.
+    for (const option of ['timeoutMs', 'idleTimeoutMs', 'verifyTimeoutMs'] as const) {
+      const served = serve();
+      const dir = scratch();
+      prepareState(dir);
+      await expectTimerRejection(
+        update(served, dir, { [option]: 2 ** 31 }),
+        `[stitchkit] update: ${option}`,
+        2 ** 31,
+      );
+      expect(served.requests).toEqual([]);
+      expect(existsSync(join(dir, 'state', 'update.part'))).toBe(false);
+    }
+  });
+
   test('the second attempt asks for the rest and receives only the rest', async () => {
     const served = serve();
     const dir = scratch();

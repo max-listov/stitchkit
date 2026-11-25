@@ -34,6 +34,7 @@ async function run(
   });
   await createCli({
     ...config,
+    access: { open: 'local-operator' },
     name: 'fixture',
     version: '1',
     commands: [inspect, { ...inspect, name: 'fallback', description: 'Default command' }],
@@ -82,7 +83,7 @@ test('the public route retains option values, the explicit command and its argum
     version: false,
   };
   expect(routeCliArgv(['help', 'insp'])).toEqual({ ...helpRoute, helpFilter: 'insp' });
-  expect(routeCliArgv(['help', 'insp'], 'fallback')).toEqual(helpRoute);
+  expect(routeCliArgv(['help', 'insp'], { defaultCommand: 'fallback' })).toEqual(helpRoute);
 });
 
 test('native dispatch respects flag values, command boundaries and duplicate options', async () => {
@@ -93,7 +94,12 @@ test('native dispatch respects flag values, command boundaries and duplicate opt
       err: '',
       out: `${JSON.stringify({ text: word })}\n`,
     };
-    expect(await run(['--json', 'inspect', word])).toEqual(expected);
+    const broken = await run(['--json', 'inspect', word]);
+    expect(broken).toMatchObject({ calls: 0, code: 2, out: '' });
+    expect(broken.err).toContain('--json=true');
+    expect(broken.err).toContain(`-- ${word}`);
+    expect(await run(['--json=true', 'inspect', word])).toEqual(expected);
+    expect(await run(['--json', 'inspect', '--', word])).toEqual(expected);
     expect(await run(['inspect', word, '--json'])).toEqual(expected);
   }
   expect(await run(['--quiet', 'inspect', '--json', '--', '--quiet'])).toEqual({
@@ -106,7 +112,7 @@ test('native dispatch respects flag values, command boundaries and duplicate opt
   expect(duplicate).toMatchObject({ calls: 0, code: 2, out: '' });
   expect(duplicate.err).toContain('--json was passed 2 times');
   const unknown = await run(['--quiet', 'typo']);
-  expect(unknown).toMatchObject({ calls: 0, code: 1, out: '' });
+  expect(unknown).toMatchObject({ calls: 0, code: 4, out: '' });
   expect(unknown.err).toContain('Unknown command "typo"');
   for (const argv of [
     ['--quiet', '--', 'inspect'],
@@ -160,7 +166,10 @@ test('a refused managed surface honours the routed JSON flag in either position'
   expect(compact).toMatchObject({ calls: 0, code: 2, out: '' });
   expect(compact.err.trim().split('\n')).toHaveLength(1);
   expect(JSON.parse(compact.err).error).toBe('UNAUTHORIZED');
-  expect(await run(['--json', 'remote', 'false'], config)).toEqual(compact);
+  expect(await run(['--json=true', 'remote', 'false'], config)).toEqual(compact);
+  const broken = await run(['--json', 'remote', 'false'], config);
+  expect(broken).toMatchObject({ calls: 0, code: 2, out: '' });
+  expect(broken.err).toContain('--json=false');
 
   const human = await run(['remote'], config);
   expect(human.err.trim().split('\n').length).toBeGreaterThan(1);
@@ -185,8 +194,15 @@ test('dry-run cannot take a positional boolean across a command or an applicatio
         ['--dry-run', '--profile=fixture', 'inspect', word],
         ['inspect', '--dry-run', '--profile=fixture', '--verbose=false', word],
       ]) {
-        expect(await run(argv, config)).toEqual(preview);
+        const refused = await run(argv, config);
+        expect(refused).toMatchObject({ calls: 0, code: 2, out: '' });
+        expect(refused.err).toContain('--dry-run=false');
+        expect(refused.err).toContain(`-- ${word}`);
       }
+      expect(await run(['--dry-run=true', 'inspect', word], config)).toEqual(preview);
+      expect(
+        await run(['inspect', '--dry-run=true', '--profile', 'fixture', word], config),
+      ).toEqual(preview);
     }
     expect(await run(['inspect', '--dry-run', 'false'], config)).toMatchObject({
       calls: 1,
@@ -218,7 +234,10 @@ test('separate false disables schema and command help before dispatch', async ()
   expect(top.err).toContain('no command matches "false"');
   const config = { globalOptions: z.object({ profile: z.string().optional() }) };
   expect(await run(['--help', '--profile=fixture', 'false'], config)).toEqual(top);
-  expect(await run(['inspect', '--help', '--profile=fixture', 'false'], config)).toEqual(
+  const brokenHelp = await run(['inspect', '--help', '--profile=fixture', 'false'], config);
+  expect(brokenHelp).toMatchObject({ calls: 0, code: 2, out: '' });
+  expect(brokenHelp.err).toContain('--help=false');
+  expect(await run(['inspect', '--help=true', '--profile=fixture', 'false'], config)).toEqual(
     await run(['inspect', '--help'], config),
   );
 });

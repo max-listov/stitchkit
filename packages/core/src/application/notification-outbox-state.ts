@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_TIMER_MS } from '../internal/timers';
 import { measureSize } from '../observability/sanitize';
 import type {
   DroppedNotification,
@@ -23,6 +24,7 @@ export function resolveOutboxLimits<TPayload>(config: NotificationOutboxConfig<T
     .number()
     .int()
     .min(10)
+    .max(MAX_TIMER_MS)
     .parse(config.pollIntervalMs ?? 1_000);
   const leaseMs = z
     .number()

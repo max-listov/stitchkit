@@ -39,3 +39,47 @@ export const InstalledConsumerProofSchema = z.object({
   idle: z.literal(true).optional(),
 });
 export type InstalledConsumerProof = z.infer<typeof InstalledConsumerProofSchema>;
+
+/** The compiler settings a declaration proof runs under: its own variants, or one from its resolution. */
+export type DeclarationVariant = z.infer<typeof DeclarationVariantSchema>;
+
+export function declarationProofVariants(
+  proof: InstalledConsumerProof,
+): readonly DeclarationVariant[] {
+  return (
+    proof.declarationVariants ?? [
+      {
+        id: proof.resolution ?? 'bundler',
+        target: 'ES2022',
+        module: proof.resolution === 'NodeNext' ? 'NodeNext' : 'Preserve',
+        resolution: proof.resolution ?? 'bundler',
+        lib: ['ES2023', 'DOM'],
+        types: ['node'],
+      },
+    ]
+  );
+}
+
+export function declarationProofArguments(
+  entry: string,
+  variant: DeclarationVariant,
+): string[] {
+  return [
+    '--ignoreConfig',
+    '--noEmit',
+    '--strict',
+    '--skipLibCheck',
+    'false',
+    '--target',
+    variant.target,
+    '--module',
+    variant.module,
+    '--moduleResolution',
+    variant.resolution,
+    '--lib',
+    variant.lib.join(','),
+    '--types',
+    variant.types.join(','),
+    entry,
+  ];
+}

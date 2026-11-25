@@ -1,5 +1,11 @@
 /** Realtime clients for native bundles: the caller supplies a literal Socket.IO peer loader. */
 
+export {
+  type BindRealtimeClientOptions,
+  type BoundRealtimeClient,
+  bindRealtimeClient,
+  type RealtimeClientTransport,
+} from '../browser/realtime-client';
 export { createRetainedTopics, type RetainedTopics } from '../browser/retained';
 export type {
   RealtimeClient,

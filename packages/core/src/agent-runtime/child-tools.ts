@@ -5,8 +5,29 @@ import {
   type AgentChildManager,
   AgentChildRecordSchema,
 } from './children';
+import { conversationOfRun } from './context-issue';
+import type { AgentRuntimeRunContext } from './runtime';
 
-function childTool(manager: AgentChildManager, fork: boolean) {
+/** Configuration binding child-management agent tools to a manager and active run context. */
+export interface AgentChildToolsConfig {
+  /**
+   * What the tools call; any child manager has it. Its own limits — the
+   * parent's remaining budget, the number of active children — bound what the
+   * model may ask for: the tools add none of their own.
+   */
+  manager: Pick<
+    AgentChildManager,
+    'spawnChild' | 'waitChild' | 'listChildren' | 'sendMessage' | 'interruptChild'
+  >;
+  /** The run context `tools()` received: every tool acts for its conversation and no other. */
+  run: AgentRuntimeRunContext<unknown>;
+}
+
+function childTool(
+  { manager, run }: AgentChildToolsConfig,
+  conversationId: string,
+  fork: boolean,
+) {
   return defineAgentTool({
     name: fork ? 'subagent_fork' : 'subagent',
     description: fork
@@ -19,7 +40,6 @@ function childTool(manager: AgentChildManager, fork: boolean) {
     },
     input: z
       .object({
-        parentConversationId: z.string().min(1),
         childInput: z.json(),
         budget: AgentChildBudgetSchema,
         seedUptoSeq: z.int().positive().optional(),
@@ -30,21 +50,25 @@ function childTool(manager: AgentChildManager, fork: boolean) {
       state: z.string(),
       resultReference: z.string().optional(),
     }),
-    transports: ['AGENT'],
+    expose: ['AGENT'],
     handler: async ({ input }) => {
       if (fork && input.seedUptoSeq === undefined) {
         throw new TypeError('subagent_fork requires seedUptoSeq');
       }
+      // A run already stopped spawns nothing: its cascade may have run, and a
+      // child started after it would have no stop to meet. From here on the
+      // spawn is the manager's, which a stop of the parent reaches.
+      run.signal.throwIfAborted();
       const child = await manager.spawnChild({
-        parentConversationId: input.parentConversationId,
+        parentConversationId: conversationId,
         childInput: input.childInput,
         budget: input.budget,
         ...(input.seedUptoSeq !== undefined && { seedUptoSeq: input.seedUptoSeq }),
       });
       await manager.waitChild(child.childConversationId);
-      const finished = manager
-        .listChildren(input.parentConversationId)
-        .find((record) => record.childConversationId === child.childConversationId);
+      const finished = (await manager.listChildren(conversationId)).find(
+        (record) => record.childConversationId === child.childConversationId,
+      );
       if (!finished) throw new Error('Child record disappeared after settlement');
       return {
         childConversationId: finished.childConversationId,
@@ -55,20 +79,25 @@ function childTool(manager: AgentChildManager, fork: boolean) {
   });
 }
 
-export function createAgentChildTools(manager: AgentChildManager) {
+/**
+ * Child tools bound to the parent conversation of one run. The address of a
+ * live conversation is authority, so it comes from the run the runtime
+ * started, never from the model and never from a free host argument.
+ */
+export function createAgentChildTools(config: AgentChildToolsConfig) {
+  const { manager } = config;
+  const conversationId = conversationOfRun(config.run, 'createAgentChildTools');
   return [
-    childTool(manager, false),
-    childTool(manager, true),
+    childTool(config, conversationId, false),
+    childTool(config, conversationId, true),
     defineAgentTool({
       name: 'list_agents',
-      description: 'List the durable child graph for one parent conversation.',
+      description: 'List the durable child graph of this conversation.',
       identity: { serviceName: 'agent-children', action: 'list', method: 'GET' },
-      input: z.object({ parentConversationId: z.string().min(1) }).strict(),
+      input: z.object({}).strict(),
       output: z.object({ children: z.array(AgentChildRecordSchema) }),
-      transports: ['AGENT'],
-      handler: ({ input }) => ({
-        children: [...manager.listChildren(input.parentConversationId)],
-      }),
+      expose: ['AGENT'],
+      handler: async () => ({ children: [...(await manager.listChildren(conversationId))] }),
     }),
     defineAgentTool({
       name: 'send_message',
@@ -76,19 +105,14 @@ export function createAgentChildTools(manager: AgentChildManager) {
       identity: { serviceName: 'agent-children', action: 'message', method: 'POST' },
       input: z
         .object({
-          parentConversationId: z.string().min(1),
           childConversationId: z.string().min(1),
           input: z.json(),
         })
         .strict(),
       output: z.object({ sent: z.literal(true) }),
-      transports: ['AGENT'],
+      expose: ['AGENT'],
       handler: async ({ input }) => {
-        await manager.sendMessage(
-          input.parentConversationId,
-          input.childConversationId,
-          input.input,
-        );
+        await manager.sendMessage(conversationId, input.childConversationId, input.input);
         return { sent: true as const };
       },
     }),
@@ -96,16 +120,11 @@ export function createAgentChildTools(manager: AgentChildManager) {
       name: 'interrupt_agent',
       description: 'Stop one active child conversation at a durable policy boundary.',
       identity: { serviceName: 'agent-children', action: 'interrupt', method: 'POST' },
-      input: z
-        .object({
-          parentConversationId: z.string().min(1),
-          childConversationId: z.string().min(1),
-        })
-        .strict(),
+      input: z.object({ childConversationId: z.string().min(1) }).strict(),
       output: z.object({ interrupted: z.literal(true) }),
-      transports: ['AGENT'],
+      expose: ['AGENT'],
       handler: async ({ input }) => {
-        await manager.interruptChild(input.parentConversationId, input.childConversationId);
+        await manager.interruptChild(conversationId, input.childConversationId);
         return { interrupted: true as const };
       },
     }),

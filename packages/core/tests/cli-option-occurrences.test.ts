@@ -13,7 +13,7 @@ const Input = z.strictObject({
 });
 const policy = {
   positionals: ['root'],
-  optionAliases: new Map([
+  aliases: new Map([
     ['c', 'check'],
     ['i', 'issuer'],
     ['t', 'tags'],
@@ -153,9 +153,9 @@ describe('CLI option occurrences before coercion', () => {
     });
   });
 
-  test('single invalid aliases retain usage errors while long boolean values stay raw', () => {
+  test('an invalid inline boolean is a usage error in its alias, long and framework forms', () => {
     expect(() => parseCliArgs(['-c=banana'], Input, policy)).toThrow(CliArgumentError);
-    expect(parseCliArgs(['--check=banana'], Input, policy).toolArgs.check).toBe('banana');
+    expect(() => parseCliArgs(['--check=banana'], Input, policy)).toThrow(CliArgumentError);
     expect(() => parseCliArgs(['--json=banana'], Input, policy)).toThrow(CliArgumentError);
   });
 
@@ -173,7 +173,7 @@ describe('CLI option occurrences before coercion', () => {
       'feature.enabled': z.boolean(),
       feature: z.object({ mode: z.string() }).optional(),
     });
-    const dottedPolicy = { optionAliases: new Map([['f', 'feature.enabled']]) };
+    const dottedPolicy = { aliases: new Map([['f', 'feature.enabled']]) };
     for (const flags of [
       ['-f=false'],
       ['--feature.enabled', 'false'],
@@ -265,8 +265,13 @@ describe('framework and application global occurrences', () => {
   });
 
   test('leading framework flags count with flags after the explicit command', () => {
-    const routed = routeCliArgv(['--json=false', 'run', '--json'], 'run');
-    expect(() => parseCliArgs(routed.commandArgv, Input)).toThrow('--json was passed 2 times');
+    // The route reads the framework options of the whole line: it refuses it as `createCli` does.
+    const routed = routeCliArgv(['--json=false', 'run', '--json'], { defaultCommand: 'run' });
+    expect(routed).toMatchObject({ commandArgv: [], error: '--json was passed 2 times' });
+    expect(routed.command).toBeUndefined();
+    expect(() => parseCliArgs(['--json=false', '--json'], Input)).toThrow(
+      '--json was passed 2 times',
+    );
   });
 
   test('application boolean and string globals refuse all repetitions across the command', () => {

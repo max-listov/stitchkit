@@ -36,6 +36,7 @@ describe.skipIf(probe.status !== 0)('sandbox coding composition', () => {
     const h = await backend.create({ template: template.templateKey, network: 'deny-all' });
     try {
       const tools = mountAgent([], {
+        access: { open: 'local-operator' },
         runtimeTools: createSandboxCodingTools(h, {
           authorize: () => true,
           authorizePath: ({ path }) => path !== 'secret',
@@ -62,6 +63,7 @@ describe.skipIf(probe.status !== 0)('sandbox coding composition', () => {
         outcome: 'timeout',
       });
       const denied = mountAgent([], {
+        access: { open: 'local-operator' },
         runtimeTools: createSandboxCodingTools(h, {
           authorize: () => false,
           executables: { shell: '/usr/bin/sh' },
@@ -134,6 +136,7 @@ describe.skipIf(probe.status !== 0)('sandbox coding composition', () => {
         return child;
       };
       const run = mountAgent([], {
+        access: { open: 'local-operator' },
         runtimeTools: createSandboxCodingTools(h, {
           authorize: () => true,
           executables: { sleep: '/usr/bin/sleep' },

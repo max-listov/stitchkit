@@ -42,6 +42,7 @@ function service(actorField: 'by' | 'actor') {
 
 function serverFor(actorField: 'by' | 'actor'): McpServer {
   return buildMcpServer({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'journal', version: '1' },
     services: [service(actorField)],
   });

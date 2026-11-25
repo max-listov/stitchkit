@@ -1,3 +1,4 @@
+import { monotonicTimerClock, scheduleAt } from '../internal/timers';
 import type { ResolvedManagedResource } from './graph';
 import {
   type ApplicationRestartInput,
@@ -123,9 +124,9 @@ async function runRestart(
 
   state.restartingIds = affectedIds;
   const restartAbort = new AbortController();
-  const closeTimer = setTimeout(
-    () => restartAbort.abort(),
-    Math.max(0, deadlines.forceDeadlineAt - performance.now()),
+  // Grace plus force: each fits a timer, their sum may not, so it is waited for in steps.
+  const closeTimer = scheduleAt(monotonicTimerClock, deadlines.forceDeadlineAt, () =>
+    restartAbort.abort(),
   );
   /** Every resource that ended this restart in `failed`, in start order. */
   const stillFailed = () =>
@@ -179,7 +180,7 @@ async function runRestart(
     };
   } finally {
     state.restartingIds = [];
-    clearTimeout(closeTimer);
+    closeTimer.cancel();
     publish(state);
   }
 }

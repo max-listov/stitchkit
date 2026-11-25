@@ -42,6 +42,7 @@ export function collectCliStreams(
           presentationSchema: buildToolPresentationSchema({
             paramsSchema: method.paramsSchema,
             inputSchema: method.inputSchema,
+            inputRecursionDepth: method.inputRecursionDepth,
             unrepresentable: 'any',
           }),
           shouldExtend: false,

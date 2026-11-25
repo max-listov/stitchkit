@@ -1,8 +1,8 @@
 /** Packed FTS search returns the exact seq and never a neighbour's conversation. */
-import { createSqliteAgentEventSearch } from 'stitchkit/agent-runtime';
+import { createAgentEventSearch } from 'stitchkit/agent-runtime';
 import { packedSqlite, proof } from './packed-sqlite.mjs';
 
-const { database, handle } = packedSqlite();
+const { handle } = packedSqlite();
 try {
   await handle.store.appendEvent({
     conversationId: 'a',
@@ -27,7 +27,7 @@ try {
       payload: { text: `needle needle ${index}` },
     });
   }
-  const search = createSqliteAgentEventSearch({ database });
+  const search = createAgentEventSearch({ host: handle.host });
   const hits = await search({ requestingConversationId: 'a', query: 'needle', limit: 20 });
   proof(
     'event search',

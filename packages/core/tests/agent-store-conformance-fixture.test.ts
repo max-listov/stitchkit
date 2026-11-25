@@ -15,6 +15,7 @@ import { runAgentStoreConformance } from '../src/entrypoints/agent-runtime/testi
  */
 function foreignKeyStore(parents: ReadonlySet<string>): AgentRuntimeStore {
   const inner = createMemoryAgentRuntimeStore();
+  const innerAppendEventOnce = inner.appendEventOnce;
   const guard = (conversationId: string): void => {
     if (parents.has(conversationId)) return;
     throw new Error(`foreign key violation: no conversation row for ${conversationId}`);
@@ -53,8 +54,26 @@ function foreignKeyStore(parents: ReadonlySet<string>): AgentRuntimeStore {
       guard(input.conversationId);
       return inner.replaceCompactedRange(input);
     },
+    appendEvent: (input) => {
+      guard(input.conversationId);
+      return inner.appendEvent(input);
+    },
+    ...(innerAppendEventOnce && {
+      appendEventOnce: (input, key) => {
+        guard(input.conversationId);
+        return innerAppendEventOnce(input, key);
+      },
+    }),
   };
 }
+
+const fullCapabilities = {
+  branch: true,
+  planBranch: true,
+  archive: true,
+  historyRestore: true,
+} as const;
+const singleWriter = { impossible: 'single-writer' } as const;
 
 describe('the conformance kit can be given a fixture', () => {
   test('once-seeding is a load-bearing adapter requirement', async () => {
@@ -70,6 +89,8 @@ describe('the conformance kit can be given a fixture', () => {
             }),
           };
         },
+        capabilities: fullCapabilities,
+        commitConflict: singleWriter,
       }),
     ).rejects.toThrow('Seed conformance: complete ordered seed missing');
   });
@@ -85,6 +106,8 @@ describe('the conformance kit can be given a fixture', () => {
         for (const id of context.conversationIds) parents.add(id);
         return foreignKeyStore(parents);
       },
+      capabilities: fullCapabilities,
+      commitConflict: singleWriter,
       cleanup: (context) => {
         cleaned += 1;
         for (const id of context.conversationIds) parents.delete(id);
@@ -96,9 +119,10 @@ describe('the conformance kit can be given a fixture', () => {
     // said so, rather than the adapter having to guess a global fixture name.
     expect(parents.size).toBe(0);
     // Six normalized scenarios, ledger, archive, once-seeding, three branch
-    // identities and the commit conflict.
-    expect(announced.length).toBe(13);
-    expect(new Set(announced).size).toBe(13);
+    // identities, two event-once identities, the archive and history-restore
+    // capabilities and the commit conflict.
+    expect(announced.length).toBe(17);
+    expect(new Set(announced).size).toBe(17);
     for (const id of announced) expect(id).toStartWith('conformance-');
   });
 
@@ -108,6 +132,8 @@ describe('the conformance kit can be given a fixture', () => {
     await expect(
       runAgentStoreConformance({
         createStore: () => foreignKeyStore(new Set<string>()),
+        capabilities: fullCapabilities,
+        commitConflict: singleWriter,
       }),
     ).rejects.toThrow('foreign key violation');
   });
@@ -127,6 +153,8 @@ describe('the conformance kit can be given a fixture', () => {
             },
           };
         },
+        capabilities: fullCapabilities,
+        commitConflict: singleWriter,
         cleanup: (context) => {
           cleaned += 1;
           for (const id of context.conversationIds) parents.delete(id);
@@ -151,6 +179,8 @@ describe('the conformance kit can be given a fixture', () => {
             },
           };
         },
+        capabilities: fullCapabilities,
+        commitConflict: singleWriter,
         cleanup: () => {
           throw new Error('teardown exploded too');
         },
@@ -162,6 +192,8 @@ describe('the conformance kit can be given a fixture', () => {
     await expect(
       runAgentStoreConformance({
         createStore: () => createMemoryAgentRuntimeStore(),
+        capabilities: fullCapabilities,
+        commitConflict: singleWriter,
         cleanup: () => {
           throw new Error('teardown exploded');
         },
@@ -173,7 +205,11 @@ describe('the conformance kit can be given a fixture', () => {
     // The shape every existing caller has. It must keep compiling and passing:
     // a lifecycle that forces every adapter to care about fixtures would be a
     // migration for people who have no fixtures.
-    await runAgentStoreConformance({ createStore: () => createMemoryAgentRuntimeStore() });
+    await runAgentStoreConformance({
+      createStore: () => createMemoryAgentRuntimeStore(),
+      capabilities: fullCapabilities,
+      commitConflict: singleWriter,
+    });
   });
 
   test('an adapter that does not retry a conflict at COMMIT fails the kit', async () => {
@@ -189,8 +225,11 @@ describe('the conformance kit can be given a fixture', () => {
     await expect(
       runAgentStoreConformance({
         createStore: () => store,
-        armCommitConflict: () => {
-          armed = true;
+        capabilities: fullCapabilities,
+        commitConflict: {
+          arm: () => {
+            armed = true;
+          },
         },
       }),
     ).rejects.toThrow('could not serialize access');

@@ -9,7 +9,11 @@ export function searchWorkspace(
   config: AgentCodingToolConfig,
   hooks?: AgentMountConfig['hooks'],
 ) {
-  const tools = mountAgent([], { runtimeTools: createAgentCodingTools(config), hooks });
+  const tools = mountAgent([], {
+    access: { open: 'local-operator' },
+    runtimeTools: createAgentCodingTools(config),
+    hooks,
+  });
   const execute = tools.search_files?.execute;
   if (!execute) throw new Error('Missing search_files');
   return async (

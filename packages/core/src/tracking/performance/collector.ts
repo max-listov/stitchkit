@@ -10,6 +10,7 @@
  * and one load: a call while one runs returns it, and what `web-vitals` reports
  * after a back-forward restore is not this load, so it is left out. → ADR 0280.
  */
+import { assertTimerMs } from '../../internal/deadline';
 import { sendUnloadBeacon } from '../beacon';
 import { redactTrackingText } from '../privacy';
 import { DEFAULT_BOT_USER_AGENT_PATTERN } from '../server/bot';
@@ -178,6 +179,7 @@ function samePage(body: string, id: string): boolean {
 export function createPerformanceCollector(
   config: PerformanceCollectorConfig,
 ): PerformanceCollector {
+  assertTimerMs('Performance collector earlyDelayMs', config.earlyDelayMs, { min: 0 });
   if (running) return running;
   if (config.host === undefined && typeof document === 'undefined') return INACTIVE;
   const host = config.host ?? browserHost();

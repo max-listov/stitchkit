@@ -1,6 +1,14 @@
+---
+title: "ADR 0203 — Automatic stdin probes only for the first byte"
+type: decision
+status: accepted
+amendedBy: ["0204"]
+created: 2026-09-26
+updated: 2026-09-26
+---
+
 # 0203 — Automatic stdin probes only for the first byte
 
-**Status:** Accepted
 **Date:** 2026-09-26
 
 Invariants I2, I8 and I10.

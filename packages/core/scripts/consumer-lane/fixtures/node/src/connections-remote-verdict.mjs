@@ -85,6 +85,7 @@ const contract = defineContract(
 const calls = [];
 const received = [];
 const handler = createMcpHandler({
+  access: { open: 'local-operator' },
   serverInfo: { name: 'entries', version: '1' },
   auth: () => ({}),
   context: () => ({}),
@@ -128,11 +129,15 @@ try {
   const runtimeTools = await mountConnections([
     defineMcpClientConnection({
       name: 'entries',
-      transports: ['CLI'],
+      expose: ['CLI'],
       transport: { url: `http://127.0.0.1:${address.port}/mcp` },
     }),
   ]);
-  const invoker = await createCliInvoker({ name: 'entries', runtimeTools });
+  const invoker = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'entries',
+    runtimeTools,
+  });
   const valid = { createdFrom: '2026-10-12T00:00:00Z', mode: 'safe' };
   const invalid = { ...valid, createdFrom: '2026-10-12' };
   const result = await invoker.invoke('entry_list', invalid);
@@ -151,6 +156,7 @@ try {
   let err = '';
   let exit = -1;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'entries',
     version: '1',
     runtimeTools,

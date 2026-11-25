@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { TOOL_TRANSPORTS, type ToolTransport } from '../contract/define';
+import { linkAbortSignals, raceAbort } from '../internal/abort-race';
 import { serializeCanonicalJson } from '../internal/canonical-json';
+import { assertTimerMs } from '../internal/deadline';
 import {
   RealtimeRejectDirectionSchema,
   RealtimeRejectFaultSchema,
@@ -227,24 +229,9 @@ function boundedObservation(
   };
 }
 
+/** Run a probe step until it settles or the probe signal aborts, whichever comes first. */
 async function runBounded<T>(run: () => T | Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) {
-    void Promise.resolve()
-      .then(run)
-      .catch(() => undefined);
-    throw signal.reason;
-  }
-  let removeAbortListener = (): void => undefined;
-  const aborted = new Promise<T>((_resolve, reject) => {
-    const onAbort = (): void => reject(signal.reason);
-    signal.addEventListener('abort', onAbort, { once: true });
-    removeAbortListener = () => signal.removeEventListener('abort', onAbort);
-  });
-  try {
-    return await Promise.race([Promise.resolve().then(run), aborted]);
-  } finally {
-    removeAbortListener();
-  }
+  return await raceAbort(Promise.resolve().then(run), signal);
 }
 
 /** Run explicit behavioral probes; no unrequested transport claim is inferred. */
@@ -255,16 +242,16 @@ export async function runSurfaceProbes<TFixture>({
   timeoutMs = 10_000,
   maxDiagnosticBytes = 4096,
 }: RunSurfaceProbesConfig<TFixture>): Promise<void> {
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
-    throw new TypeError('Surface probe timeoutMs must be a positive integer');
-  }
+  assertTimerMs('Surface probe timeoutMs', timeoutMs);
   if (!Number.isInteger(maxDiagnosticBytes) || maxDiagnosticBytes <= 0) {
     throw new TypeError('Surface probe maxDiagnosticBytes must be a positive integer');
   }
 
   for (const probe of probes) {
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const probeSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+    // Linked for this probe, its teardown included: the caller's signal outlives every probe.
+    const link = linkAbortSignals(signal, timeoutSignal);
+    const probeSignal = link.signal;
     let failed = false;
     let failure: unknown;
     try {
@@ -305,6 +292,7 @@ export async function runSurfaceProbes<TFixture>({
         }
       }
     }
+    link.release();
     if (failed) throw failure;
   }
 }

@@ -83,6 +83,13 @@ export {
   subtractMoney,
 } from './money';
 export {
+  isOrderKey,
+  OrderKeyError,
+  type OrderKeyRefusal,
+  OrderKeySchema,
+  orderKeyBetween,
+} from './order-key';
+export {
   defineOwnerScope,
   type OwnerScope,
   type OwnerScopeDefinition,

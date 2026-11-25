@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { AgentStoreEventEnvelope } from '../durability/events';
 import {
+  type AgentConversationBranchPlan,
+  AgentConversationBranchPlanSchema,
   AgentConversationBranchReceiptSchema,
   type AgentConversationBranchResult,
   type BranchAgentConversationInput,
@@ -9,10 +11,12 @@ import {
 } from './branch-contract';
 import { rekeyBranchEvents } from './branch-events';
 import { BranchIdentities } from './branch-identities';
+import { AgentConversationBranchRefusedError } from './branch-refusal';
 import { replayBranchEvents } from './branch-replay';
-import { branchHash, prepareBranchSource } from './branch-source';
+import { type BranchSource, branchHash, prepareBranchSource } from './branch-source';
 import { AgentConversationPurgedError } from './purge';
 import { exportConversationIn } from './store-archive';
+import { assertSourceCapabilities } from './store-capabilities';
 import type { AgentRuntimeStoreDriver } from './store-driver-contract';
 import { agentStoreEventDraft } from './store-events';
 import { persistRuntimeReplay } from './store-replay';
@@ -32,11 +36,8 @@ async function destinationEvents<T>(
   return events;
 }
 
-/** Source read, validation, receipt and clone share one write transaction. */
-export async function branchConversation<T>(
-  driver: AgentRuntimeStoreDriver<T>,
-  raw: BranchAgentConversationInput,
-): Promise<AgentConversationBranchResult> {
+/** The request a host made, owned and fingerprinted; declarations are sets. */
+function branchRequest(raw: BranchAgentConversationInput) {
   const parsed = BranchAgentConversationInputSchema.parse(raw);
   // Own binary input before the first await: the caller may reuse its buffer
   // while this request waits behind another transaction.
@@ -56,7 +57,9 @@ export async function branchConversation<T>(
       ),
     }),
     ...(input.applicationKeys && {
-      applicationKeys: [...new Set(input.applicationKeys)].sort(),
+      applicationKeys: input.applicationKeys.toSorted((left, right) =>
+        left.key.localeCompare(right.key),
+      ),
     }),
     source:
       input.source.kind === 'archive'
@@ -66,6 +69,128 @@ export async function branchConversation<T>(
           }
         : input.source,
   });
+  return { input, fingerprint };
+}
+
+type BranchRequest = ReturnType<typeof branchRequest>['input'];
+
+/** The source archive's bytes, from the request or from the live conversation. */
+async function sourceBytes<T>(
+  driver: AgentRuntimeStoreDriver<T>,
+  tx: T,
+  input: BranchRequest,
+): Promise<Uint8Array> {
+  if (input.source.kind === 'archive') return input.source.bytes;
+  if (await driver.conversations?.isPurged(tx, input.source.conversationId))
+    throw new AgentConversationPurgedError();
+  if (
+    !(await driver.head.load(tx, input.source.conversationId)) &&
+    (await driver.events.list(tx, { conversationId: input.source.conversationId, limit: 1 }))
+      .items.length === 0
+  )
+    throw new TypeError('Branch source conversation was not found');
+  return exportConversationIn(driver, tx, input.source.conversationId);
+}
+
+/** What the source needs of the driver; a plan and a branch refuse it the same way. */
+function assertBranchDriverCapabilities<T>(
+  driver: AgentRuntimeStoreDriver<T>,
+  source: BranchSource,
+): void {
+  assertSourceCapabilities(driver, {
+    spills: source.spills.length,
+    projections: 0,
+    compacted: source.replay.baseline?.compacted?.length ?? 0,
+  });
+}
+
+/**
+ * Everything the request refuses that a host lifts: the declarations the
+ * source needs, and the fresh authorization its spills need. One list, so a
+ * plan and a branch answer the same.
+ */
+function requestRefusal(input: BranchRequest, source: BranchSource) {
+  const missingAuthorization = source.spills.length > 0 && !input.artifactAuthorization;
+  if (!source.refused && !missingAuthorization) return undefined;
+  return new AgentConversationBranchRefusedError(
+    [
+      ...(source.refused?.refusals ?? []),
+      ...(missingAuthorization
+        ? [
+            {
+              code: 'artifact-authorization-missing' as const,
+              message: 'Branch spills require fresh destination artifact authorization',
+            },
+          ]
+        : []),
+    ],
+    source.refused?.omittedRefusals ?? 0,
+  );
+}
+
+/**
+ * What a branch of this request would refuse, without writing anything: the
+ * same planner, the same list, bound to the source it read by digest.
+ */
+export async function planConversationBranch<T>(
+  driver: AgentRuntimeStoreDriver<T>,
+  raw: BranchAgentConversationInput,
+): Promise<AgentConversationBranchPlan> {
+  const { input, fingerprint } = branchRequest(raw);
+  return driver.transaction(
+    async (tx) => {
+      const bytes = await sourceBytes(driver, tx, input);
+      const sourceArchiveDigest = createHash('sha256').update(bytes).digest('hex');
+      let source: BranchSource;
+      try {
+        source = prepareBranchSource(bytes, input);
+      } catch (error) {
+        if (!(error instanceof AgentConversationBranchRefusedError)) throw error;
+        return planOf(fingerprint, sourceArchiveDigest, error, []);
+      }
+      assertBranchDriverCapabilities(driver, source);
+      return planOf(
+        fingerprint,
+        sourceArchiveDigest,
+        requestRefusal(input, source),
+        source.applicationFiles,
+      );
+      // A plan only reads: it must not hold the write lock a branch is waiting for.
+    },
+    { access: 'read' },
+  );
+}
+
+function planOf(
+  fingerprint: string,
+  sourceArchiveDigest: string,
+  refused: AgentConversationBranchRefusedError | undefined,
+  applicationFiles: readonly string[],
+): AgentConversationBranchPlan {
+  const refusals = refused?.refusals ?? [];
+  return AgentConversationBranchPlanSchema.parse({
+    ready: refusals.length === 0,
+    fingerprint,
+    sourceArchiveDigest,
+    refusals,
+    omittedRefusals: refused?.omittedRefusals ?? 0,
+    applicationFiles,
+    undeclaredKeys: [
+      ...new Set(
+        refusals.flatMap((refusal) =>
+          refusal.code === 'application-key-undeclared' && refusal.key ? [refusal.key] : [],
+        ),
+      ),
+    ].sort(),
+  });
+}
+
+/** Source read, validation, receipt and clone share one write transaction. */
+export async function branchConversation<T>(
+  driver: AgentRuntimeStoreDriver<T>,
+  raw: BranchAgentConversationInput,
+): Promise<AgentConversationBranchResult> {
+  const { input, fingerprint } = branchRequest(raw);
   return driver.transaction(async (tx) => {
     if (await driver.conversations?.isPurged(tx, input.destinationConversationId))
       throw new AgentConversationPurgedError();
@@ -89,29 +214,13 @@ export async function branchConversation<T>(
       (await driver.history.load(tx, input.destinationConversationId)).length > 0
     )
       throw new TypeError('Branch destination must be empty');
-    if (
-      input.source.kind === 'conversation' &&
-      (await driver.conversations?.isPurged(tx, input.source.conversationId))
-    )
-      throw new AgentConversationPurgedError();
-    if (
-      input.source.kind === 'conversation' &&
-      !(await driver.head.load(tx, input.source.conversationId)) &&
-      (await driver.events.list(tx, { conversationId: input.source.conversationId, limit: 1 }))
-        .items.length === 0
-    )
-      throw new TypeError('Branch source conversation was not found');
-    const bytes =
-      input.source.kind === 'archive'
-        ? input.source.bytes
-        : await exportConversationIn(driver, tx, input.source.conversationId);
+    const bytes = await sourceBytes(driver, tx, input);
     const source = prepareBranchSource(bytes, input);
     if (source.conversationId === input.destinationConversationId)
       throw new TypeError('Branch requires a new conversation identity');
-    if (source.spills.length > 0 && (!input.artifactAuthorization || !driver.archive))
-      throw new TypeError(
-        'Branch spills require an archive adapter and fresh destination artifact authorization',
-      );
+    assertBranchDriverCapabilities(driver, source);
+    const refused = requestRefusal(input, source);
+    if (refused) throw refused;
     const ids = new BranchIdentities(
       input.destinationConversationId,
       input.requestKey,
@@ -126,9 +235,9 @@ export async function branchConversation<T>(
       source.events,
       source.replay.retainedMessages,
     );
+    const late = ids.refusedError();
+    if (late) throw late;
     const replay = replayBranchEvents(input.destinationConversationId, events);
-    if (replay.baseline?.compacted?.length && !driver.history.restore)
-      throw new TypeError('Branch baseline requires inactive history restoration support');
     const spills = source.spills.map(({ authorization: _sourceAuthority, ...spill }) => ({
       ...spill,
       reference: ids.reference('spill', spill.reference),

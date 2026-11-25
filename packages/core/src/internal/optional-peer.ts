@@ -1,3 +1,5 @@
+import { errnoOf } from './errno';
+
 /**
  * Telling "the package is not there" apart from "the loader itself threw".
  *
@@ -12,7 +14,7 @@
  */
 export function isModuleNotFound(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
-  const code = 'code' in error ? error.code : undefined;
+  const code = errnoOf(error);
   const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
   return (
     code === 'ERR_MODULE_NOT_FOUND' ||

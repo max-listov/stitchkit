@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { defineContract } from '../src/entrypoints/contract';
 import { implement } from '../src/entrypoints/server';
@@ -9,7 +9,13 @@ import {
 import { defineCliCommand } from '../src/tools/cli/command';
 import { type CliConfig, createCli } from '../src/tools/cli/create-cli';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
-import { buildToolPresentationSchema } from '../src/tools/schema/presentation';
+import {
+  ALL_OPERATION_ORIGINS,
+  mountOperationOrigins,
+  type OperationOrigin,
+  startMcp,
+} from './support/operation-origins';
+import { runCliSurface } from './support/operation-transports';
 
 const BoundedInput = z.object({
   limit: z.int().min(1).max(50).optional().describe('Page size'),
@@ -57,7 +63,7 @@ const runtime = defineRuntimeTool({
   description: 'Runtime command',
   input: BoundedInput,
   identity: { serviceName: 'limits', action: 'runtime', method: 'POST' },
-  transports: ['CLI'],
+  expose: ['CLI'],
   handler: () => {
     calls += 1;
   },
@@ -73,8 +79,9 @@ async function run(argv: string[], config: Partial<CliConfig> = {}) {
     services: [service],
     commands: [native],
     runtimeTools: () => [runtime],
-    optionAliases: { local: { l: 'limit' } },
+    commandSettings: { local: { aliases: { l: 'limit' } } },
     ...config,
+    access: config.access ?? { open: 'local-operator' },
     argv,
     stdout: (text) => {
       out += text;
@@ -258,52 +265,35 @@ describe('CLI help exposes the schema limits before execution', () => {
 
   test('an MCP-discovered runtime command retains its served limits and validation', async () => {
     let remoteCalls = 0;
-    const server = Bun.serve({
-      port: 0,
-      fetch: async (request) => {
-        if (request.method !== 'POST') return new Response('', { status: 404 });
-        const body: { id?: number; method: string } = await request.json();
-        if (body.id === undefined) return new Response(null, { status: 202 });
-        let result: unknown;
-        if (body.method === 'initialize') {
-          result = {
-            protocolVersion: '2024-11-05',
-            capabilities: {},
-            serverInfo: { name: 'limits', version: '1' },
-          };
-        } else if (body.method === 'tools/list') {
-          result = {
-            tools: [
-              {
-                name: 'discovered',
-                description: 'Discovered bounds',
-                inputSchema: {
-                  type: 'object',
-                  properties: {
-                    limit: {
-                      type: 'integer',
-                      minimum: 1,
-                      maximum: 50,
-                      description: 'Page size',
-                    },
-                  },
-                },
+    const server = startMcp(
+      [
+        {
+          name: 'discovered',
+          description: 'Discovered bounds',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              limit: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 50,
+                description: 'Page size',
               },
-            ],
-          };
-        } else {
-          remoteCalls += 1;
-          result = { content: [{ type: 'text', text: 'ok' }] };
-        }
-        return Response.json({ jsonrpc: '2.0', id: body.id, result });
+            },
+          },
+        },
+      ],
+      () => {
+        remoteCalls += 1;
+        return { content: [{ type: 'text', text: 'ok' }] };
       },
-    });
+    );
     try {
       const runtimeTools = await mountConnections([
         defineMcpClientConnection({
           name: 'limits',
-          transport: { url: `http://127.0.0.1:${server.port}/mcp` },
-          transports: ['CLI'],
+          transport: { url: server.url },
+          expose: ['CLI'],
         }),
       ]);
       const config = { runtimeTools };
@@ -318,106 +308,112 @@ describe('CLI help exposes the schema limits before execution', () => {
         expect(remoteCalls).toBe(1);
       }
     } finally {
-      await server.stop(true);
+      await server.stop();
     }
   });
 
-  test('a format a server declares reaches the help of the command discovered from it', async () => {
-    // The document a stitchkit server serves for these fields: each named
-    // format arrives with the expression Zod validates it by.
-    const served = buildToolPresentationSchema({
-      inputSchema: z.object({
-        requestKey: z.uuid().describe('Idempotency key'),
-        contact: z.email().nullable(),
-        since: z.iso.datetime().optional(),
-        callback: z.url().optional(),
-      }),
+  describe('a format a server declares reaches the help of the command discovered from it', () => {
+    let mounted: Awaited<ReturnType<typeof mountOperationOrigins>>;
+
+    beforeAll(async () => {
+      mounted = await mountOperationOrigins({
+        serviceName: 'formats',
+        specs: [
+          {
+            name: 'served',
+            description: 'Served formats',
+            method: 'GET',
+            input: z.object({
+              requestKey: z.uuid().describe('Idempotency key'),
+              contact: z.email().nullable(),
+              since: z.iso.datetime().optional(),
+              callback: z.url().optional(),
+            }),
+            handler: () => ({ ok: true }),
+          },
+        ],
+      });
     });
-    const foreign = {
-      type: 'object',
-      properties: {
-        own: { type: 'string', format: 'uuid', pattern: '^[0-9a-f-]{36}$' },
-        bare: { type: 'string', format: 'uuid' },
-        linked: { type: 'string', format: 'uri', pattern: '^https://' },
-        clock: { type: 'string', format: 'time' },
-        ticking: { type: 'string', format: 'time', pattern: '^1' },
-        relative: { type: 'string', format: 'uri-reference' },
-        mailbox: { type: ['string', 'null'], format: 'idn-email' },
-        pointer: { type: 'string', format: 'json-pointer', pattern: '^/' },
-        word: { type: 'string', format: 'ticket' },
-        coded: { type: 'string', format: 'ticket', pattern: '^T-' },
-        slug: { type: 'string', pattern: '^[a-z]+$', minLength: 2 },
-        plain: { type: 'string' },
-      },
-      required: ['own'],
-    };
-    const server = Bun.serve({
-      port: 0,
-      fetch: async (request) => {
-        if (request.method !== 'POST') return new Response('', { status: 404 });
-        const body: { id?: number; method: string } = await request.json();
-        if (body.id === undefined) return new Response(null, { status: 202 });
-        const result =
-          body.method === 'initialize'
-            ? {
-                protocolVersion: '2024-11-05',
-                capabilities: {},
-                serverInfo: { name: 'formats', version: '1' },
-              }
-            : {
-                tools: [
-                  { name: 'served', description: 'Served formats', inputSchema: served },
-                  { name: 'foreign', description: 'Foreign formats', inputSchema: foreign },
-                ],
-              };
-        return Response.json({ jsonrpc: '2.0', id: body.id, result });
-      },
+
+    afterAll(async () => {
+      await mounted?.close();
     });
-    try {
-      const runtimeTools = await mountConnections([
-        defineMcpClientConnection({
-          name: 'formats',
-          transport: { url: `http://127.0.0.1:${server.port}/mcp` },
-          transports: ['CLI'],
-        }),
+
+    test.each(ALL_OPERATION_ORIGINS)(
+      'origin %s preserves string formats in CLI help',
+      async (origin: OperationOrigin) => {
+        const surface = mounted.byOrigin.get(origin);
+        if (!surface) throw new Error(`missing mounted origin ${origin}`);
+        if (origin === 'managed-cli-catalog') expect(surface.catalogCacheHit).toBe(true);
+        const help = await runCliSurface(surface, [surface.commandName('served'), '--help']);
+        expect(help.code).toBe(0);
+        expect(argument(help.out, 'requestKey')).toContain(
+          '<string> [uuid] (required) — Idempotency key',
+        );
+        expect(argument(help.out, 'contact')).toContain('[any of: string [email] | null]');
+        expect(argument(help.out, 'since')).toContain('<string> [date-time]');
+        expect(argument(help.out, 'callback')).toContain('<string> [uri]');
+        expect(help.out).not.toContain('all of:');
+        expect(help.out).not.toContain('0-9a-fA-F');
+        expect(help.out).not.toContain('x-stitchkit');
+      },
+    );
+
+    test('foreign server formats reach CLI help through MCP discovery', async () => {
+      const foreign = {
+        type: 'object',
+        properties: {
+          own: { type: 'string', format: 'uuid', pattern: '^[0-9a-f-]{36}$' },
+          bare: { type: 'string', format: 'uuid' },
+          linked: { type: 'string', format: 'uri', pattern: '^https://' },
+          clock: { type: 'string', format: 'time' },
+          ticking: { type: 'string', format: 'time', pattern: '^1' },
+          relative: { type: 'string', format: 'uri-reference' },
+          mailbox: { type: ['string', 'null'], format: 'idn-email' },
+          pointer: { type: 'string', format: 'json-pointer', pattern: '^/' },
+          word: { type: 'string', format: 'ticket' },
+          coded: { type: 'string', format: 'ticket', pattern: '^T-' },
+          slug: { type: 'string', pattern: '^[a-z]+$', minLength: 2 },
+          plain: { type: 'string' },
+        },
+        required: ['own'],
+      };
+      const server = startMcp([
+        { name: 'foreign', description: 'Foreign formats', inputSchema: foreign },
       ]);
-      const servedHelp = await run(['served', '--help'], { runtimeTools });
-      expect(servedHelp.code).toBe(0);
-      expect(argument(servedHelp.out, 'requestKey')).toContain(
-        '<string> [uuid] (required) — Idempotency key',
-      );
-      expect(argument(servedHelp.out, 'contact')).toContain('[any of: string [email] | null]');
-      expect(argument(servedHelp.out, 'since')).toContain('<string> [date-time]');
-      expect(argument(servedHelp.out, 'callback')).toContain('<string> [uri]');
-      const foreignHelp = await run(['foreign', '--help'], { runtimeTools });
-      expect(foreignHelp.code).toBe(0);
-      expect(argument(foreignHelp.out, 'own')).toContain('<string> [uuid] (required)');
-      expect(argument(foreignHelp.out, 'bare')).toContain('<string> [uuid]');
-      expect(argument(foreignHelp.out, 'linked')).toContain('<string> [uri]');
-      expect(argument(foreignHelp.out, 'clock')).toContain('<string> [time]');
-      expect(argument(foreignHelp.out, 'ticking')).toContain('<string> [time]');
-      expect(argument(foreignHelp.out, 'relative')).toContain('<string> [uri-reference]');
-      expect(argument(foreignHelp.out, 'mailbox')).toContain(
-        '[any of: string [idn-email] | null]',
-      );
-      expect(argument(foreignHelp.out, 'pointer')).toContain('<string> [json-pointer]');
-      // The server's own word says the shape only when no pattern does.
-      expect(argument(foreignHelp.out, 'word')).toContain('<string> [ticket]');
-      expect(argument(foreignHelp.out, 'coded')).toContain('<string> [pattern /^T-/]');
-      expect(argument(foreignHelp.out, 'slug')).toContain(
-        '<string> [pattern /^[a-z]+$/, length >=2]',
-      );
-      expect(argument(foreignHelp.out, 'plain').trimEnd().endsWith('<string>')).toBe(true);
-      // Neither the expression behind a named format nor a conjunction of
-      // patterns stands in for the name.
-      for (const out of [servedHelp.out, foreignHelp.out]) {
-        expect(out).not.toContain('all of:');
-        expect(out).not.toContain('0-9a-fA-F');
-        expect(out).not.toContain('x-stitchkit');
+      try {
+        const runtimeTools = await mountConnections([
+          defineMcpClientConnection({
+            name: 'formats',
+            transport: { url: server.url },
+            expose: ['CLI'],
+          }),
+        ]);
+        const foreignHelp = await runCliSurface({ runtimeTools }, ['foreign', '--help']);
+        expect(foreignHelp.code).toBe(0);
+        expect(argument(foreignHelp.out, 'own')).toContain('<string> [uuid] (required)');
+        expect(argument(foreignHelp.out, 'bare')).toContain('<string> [uuid]');
+        expect(argument(foreignHelp.out, 'linked')).toContain('<string> [uri]');
+        expect(argument(foreignHelp.out, 'clock')).toContain('<string> [time]');
+        expect(argument(foreignHelp.out, 'ticking')).toContain('<string> [time]');
+        expect(argument(foreignHelp.out, 'relative')).toContain('<string> [uri-reference]');
+        expect(argument(foreignHelp.out, 'mailbox')).toContain(
+          '[any of: string [idn-email] | null]',
+        );
+        expect(argument(foreignHelp.out, 'pointer')).toContain('<string> [json-pointer]');
+        expect(argument(foreignHelp.out, 'word')).toContain('<string> [ticket]');
+        expect(argument(foreignHelp.out, 'coded')).toContain('<string> [pattern /^T-/]');
+        expect(argument(foreignHelp.out, 'slug')).toContain(
+          '<string> [pattern /^[a-z]+$/, length >=2]',
+        );
+        expect(argument(foreignHelp.out, 'plain').trimEnd().endsWith('<string>')).toBe(true);
+        expect(foreignHelp.out).not.toContain('all of:');
+        expect(foreignHelp.out).not.toContain('0-9a-fA-F');
+        expect(foreignHelp.out).not.toContain('x-stitchkit');
+      } finally {
+        await server.stop();
       }
-    } finally {
-      await server.stop(true);
-    }
+    });
   });
 
   test('help does not weaken validation for local, contract or runtime calls', async () => {

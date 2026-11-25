@@ -16,59 +16,22 @@ import {
   mountConnections,
 } from '../src/entrypoints/tools/connections';
 import { isRecord } from '../src/internal/typed';
-import { createCli } from '../src/tools/cli/create-cli';
 import { unwrapMcpResult } from '../src/tools/connections/mcp-envelope';
+import { type McpCallEnvelope, startMcp } from './support/operation-origins';
+import { runCliSurface } from './support/operation-transports';
 
-interface JsonRpcBody {
-  jsonrpc: '2.0';
-  id?: number;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-const servers: Array<{ stop: () => Promise<void> | void }> = [];
-afterEach(() => {
-  for (const server of servers.splice(0)) void server.stop();
+const stops: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  await Promise.all(stops.splice(0).map((stop) => stop()));
 });
 
-/**
- * What a server answers `tools/call` with. The default is the shape a stitchkit
- * MCP mount emits: the answer in `structuredContent`, the same answer serialized
- * into a text part for clients that read only content.
- */
-type CallEnvelope = (args: unknown) => unknown;
-
-function startMcp(tools: readonly unknown[], envelope?: CallEnvelope): string {
-  const answer: CallEnvelope =
-    envelope ??
-    ((args) => ({
-      content: [{ type: 'text', text: JSON.stringify({ echoed: args }) }],
-      structuredContent: { echoed: args },
-    }));
-  const server = Bun.serve({
-    port: 0,
-    fetch: async (request) => {
-      if (request.method === 'GET') return new Response('', { status: 404 });
-      const body: JsonRpcBody = await request.json();
-      if (body.id === undefined) return new Response(null, { status: 202 });
-      const result =
-        body.method === 'initialize'
-          ? {
-              protocolVersion: '2024-11-05',
-              capabilities: {},
-              serverInfo: { name: 'fake', version: '1' },
-            }
-          : body.method === 'tools/list'
-            ? { tools }
-            : answer(body.params?.arguments);
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    },
-  });
-  servers.push(server);
-  return `http://127.0.0.1:${server.port}/mcp`;
+function serveMcp(
+  tools: readonly Record<string, unknown>[],
+  envelope?: McpCallEnvelope,
+): string {
+  const started = startMcp(tools, envelope);
+  stops.push(started.stop);
+  return started.url;
 }
 
 const ECHO = {
@@ -81,39 +44,23 @@ const ECHO = {
   },
 };
 
-async function runCli(
+function runCli(
   runtimeTools: Awaited<ReturnType<typeof mountConnections>>,
   argv: string[],
   exitCodes?: Record<string, number>,
-): Promise<{ out: string; err: string; code: number }> {
-  let out = '';
-  let err = '';
-  let code = -1;
-  await createCli({
-    name: 'app',
-    version: '1.0.0',
-    runtimeTools,
+) {
+  return runCliSurface(
+    { runtimeTools },
     argv,
-    ...(exitCodes && { exitCodes }),
-    stdout: (text) => {
-      out += text;
-    },
-    stderr: (text) => {
-      err += text;
-    },
-    exit: (value) => {
-      code = value;
-    },
-    stdin: async () => null,
-  });
-  return { out, err, code };
+    exitCodes ? { name: 'app', exitCodes } : { name: 'app' },
+  );
 }
 
 describe('discovered tools on the CLI surface', () => {
   test('a connection that opts in contributes commands with no per-definition rewriting', async () => {
-    const url = startMcp([ECHO]);
+    const url = serveMcp([ECHO]);
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     const { out, code } = await runCli(discovered, ['--help']);
     expect(out).toContain('echo');
@@ -122,9 +69,9 @@ describe('discovered tools on the CLI surface', () => {
   });
 
   test('a discovered command actually runs', async () => {
-    const url = startMcp([ECHO]);
+    const url = serveMcp([ECHO]);
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     const { out, code } = await runCli(discovered, ['echo', '--value', 'hello', '--json']);
     expect(code).toBe(0);
@@ -210,7 +157,7 @@ describe('discovered tools on the CLI surface', () => {
       },
     };
     let calls = 0;
-    const url = startMcp([upsert, guarded, readOnly, composed], (args) => {
+    const url = serveMcp([upsert, guarded, readOnly, composed], (args) => {
       calls++;
       if (!input.safeParse(args).success) {
         return {
@@ -229,7 +176,7 @@ describe('discovered tools on the CLI surface', () => {
       };
     });
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     const value = '{"email":"cli-json@example.invalid","nested":{"code":"007"}}';
 
@@ -347,7 +294,7 @@ describe('discovered tools on the CLI surface', () => {
   });
 
   test('a connection without the opt-in contributes nothing to the CLI', async () => {
-    const url = startMcp([ECHO]);
+    const url = serveMcp([ECHO]);
     const discovered = await mountConnections([
       defineMcpClientConnection({ name: 'api', transport: { url } }),
     ]);
@@ -357,7 +304,7 @@ describe('discovered tools on the CLI surface', () => {
   });
 
   test('one unconvertible tool is skipped and named, and the rest still mount', async () => {
-    const url = startMcp([
+    const url = serveMcp([
       ECHO,
       {
         name: 'broken',
@@ -371,7 +318,7 @@ describe('discovered tools on the CLI surface', () => {
     ]);
     const skipped: SkippedConnectionTool[] = [];
     const discovered = await mountConnections(
-      [defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] })],
+      [defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] })],
       { onSkippedTool: (report) => skipped.push(report) },
     );
     expect(discovered.map((tool) => tool.name)).toEqual(['echo']);
@@ -382,7 +329,7 @@ describe('discovered tools on the CLI surface', () => {
   });
 
   test('the CLI prints the answer, so a view groups records rather than parts', async () => {
-    const url = startMcp([ECHO], () => ({
+    const url = serveMcp([ECHO], () => ({
       content: [
         {
           type: 'text',
@@ -395,7 +342,7 @@ describe('discovered tools on the CLI surface', () => {
       ],
     }));
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     // Before the unwrap this answered: no record carries the field "status" —
     // available: text, type. It was grouping the content parts.
@@ -411,24 +358,24 @@ describe('discovered tools on the CLI surface', () => {
   });
 
   test('structuredContent wins over the text part when the server sent both', async () => {
-    const url = startMcp([ECHO], () => ({
+    const url = serveMcp([ECHO], () => ({
       content: [{ type: 'text', text: '"the text part"' }],
       structuredContent: { answer: 'the structured one' },
     }));
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     const { out } = await runCli(discovered, ['echo', '--value', 'x', '--json']);
     expect(JSON.parse(out)).toEqual({ answer: 'the structured one' });
   });
 
   test('a prose answer stays prose, and several parts stay an envelope', async () => {
-    const prose = startMcp([ECHO], () => ({ content: [{ type: 'text', text: 'all good' }] }));
+    const prose = serveMcp([ECHO], () => ({ content: [{ type: 'text', text: 'all good' }] }));
     const proseTools = await mountConnections([
       defineMcpClientConnection({
         name: 'api',
         transport: { url: prose },
-        transports: ['CLI'],
+        expose: ['CLI'],
       }),
     ]);
     expect(
@@ -436,7 +383,7 @@ describe('discovered tools on the CLI surface', () => {
     ).toBe('all good');
 
     // Two parts: picking one of them would be inventing an answer.
-    const many = startMcp([ECHO], () => ({
+    const many = serveMcp([ECHO], () => ({
       content: [
         { type: 'text', text: 'first' },
         { type: 'text', text: 'second' },
@@ -446,7 +393,7 @@ describe('discovered tools on the CLI surface', () => {
       defineMcpClientConnection({
         name: 'api',
         transport: { url: many },
-        transports: ['CLI'],
+        expose: ['CLI'],
       }),
     ]);
     const emitted: unknown = JSON.parse(
@@ -460,12 +407,12 @@ describe('discovered tools on the CLI surface', () => {
   test('an empty answer prints null and exits 0, never the _meta around it', async () => {
     // A tool without an output contract answers with no parts; the envelope then
     // carries only protocol metadata, which is not what the command returned.
-    const url = startMcp([ECHO], () => ({
+    const url = serveMcp([ECHO], () => ({
       _meta: { 'stitchkit/catalog': { digest: 'd1', tools: 237 } },
       content: [],
     }));
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     for (const argv of [
       ['echo', '--value', 'x'],
@@ -490,13 +437,13 @@ describe('discovered tools on the CLI surface', () => {
   });
 
   test('a refusal with no parts fails upstream without relaying the envelope', async () => {
-    const url = startMcp([ECHO], () => ({
+    const url = serveMcp([ECHO], () => ({
       isError: true,
       _meta: { 'stitchkit/catalog': { digest: 'd1', tools: 237 } },
       content: [],
     }));
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     const { err, code } = await runCli(discovered, ['echo', '--value', 'x', '--json']);
     expect(code).toBe(1);
@@ -505,7 +452,7 @@ describe('discovered tools on the CLI surface', () => {
   });
 
   test('the agent mount still receives the envelope it needs', async () => {
-    const url = startMcp([ECHO], () => ({
+    const url = serveMcp([ECHO], () => ({
       content: [{ type: 'text', text: '{"n":1}' }],
       structuredContent: { n: 1 },
     }));
@@ -525,7 +472,7 @@ describe('discovered tools on the CLI surface', () => {
   });
 
   test('a remote refusal keeps its code, so exitCodes can map it', async () => {
-    const url = startMcp([ECHO], () => ({
+    const url = serveMcp([ECHO], () => ({
       isError: true,
       content: [
         {
@@ -538,7 +485,7 @@ describe('discovered tools on the CLI surface', () => {
       ],
     }));
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     const { err, code } = await runCli(discovered, ['echo', '--value', 'x', '--json'], {
       ITEM_NOT_FOUND: 4,
@@ -552,12 +499,12 @@ describe('discovered tools on the CLI surface', () => {
   });
 
   test('a refusal without a structured body still fails, and invents nothing', async () => {
-    const url = startMcp([ECHO], () => ({
+    const url = serveMcp([ECHO], () => ({
       isError: true,
       content: [{ type: 'text', text: 'the tool said no' }],
     }));
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     const { err, code } = await runCli(discovered, ['echo', '--value', 'x', '--json']);
     expect(code).toBe(1);
@@ -568,12 +515,12 @@ describe('discovered tools on the CLI surface', () => {
   });
 
   test('a relayed refusal is not an unexpected error to the runner', async () => {
-    const url = startMcp([ECHO], () => ({
+    const url = serveMcp([ECHO], () => ({
       isError: true,
       content: [{ type: 'text', text: JSON.stringify({ error: 'FORBIDDEN' }) }],
     }));
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     const lines: unknown[] = [];
     const original = console.error;
@@ -608,9 +555,9 @@ describe('a relayed refusal carries the remote answer, not one derived from 502'
   async function failureThroughCli(
     body: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    const url = startMcp([ECHO], refusal(body));
+    const url = serveMcp([ECHO], refusal(body));
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     const { err, code } = await runCli(discovered, ['echo', '--value', 'x', '--json']);
     expect(code).not.toBe(0);
@@ -675,12 +622,12 @@ describe('a relayed refusal carries the remote answer, not one derived from 502'
   });
 
   test('an unstructured refusal keeps the framework default', async () => {
-    const url = startMcp([ECHO], () => ({
+    const url = serveMcp([ECHO], () => ({
       isError: true,
       content: [{ type: 'text', text: 'the tool said no' }],
     }));
     const discovered = await mountConnections([
-      defineMcpClientConnection({ name: 'api', transport: { url }, transports: ['CLI'] }),
+      defineMcpClientConnection({ name: 'api', transport: { url }, expose: ['CLI'] }),
     ]);
     const { err } = await runCli(discovered, ['echo', '--value', 'x', '--json']);
     const failure: unknown = JSON.parse(err);

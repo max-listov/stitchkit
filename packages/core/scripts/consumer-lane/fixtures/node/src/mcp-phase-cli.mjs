@@ -28,9 +28,15 @@ if (command === 'unknown') {
       name: marker,
       transport: { url: `${url}?token=${marker}` },
       token: () => marker,
-      transports: ['CLI'],
+      expose: ['CLI'],
       limits: JSON.parse(policy),
     }),
   ]);
-  await createCli({ name: 'packed', version: '1', runtimeTools, argv: [command, ...flags] });
+  await createCli({
+    access: { open: 'local-operator' },
+    name: 'packed',
+    version: '1',
+    runtimeTools,
+    argv: [command, ...flags],
+  });
 }

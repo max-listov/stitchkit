@@ -7,9 +7,10 @@ import {
 const [url, ...argv] = process.argv.slice(2);
 if (!url) throw new Error('A synthetic MCP URL is required');
 const runtimeTools = await mountConnections([
-  defineMcpClientConnection({ name: 'fixture', transport: { url }, transports: ['CLI'] }),
+  defineMcpClientConnection({ name: 'fixture', transport: { url }, expose: ['CLI'] }),
 ]);
 await createCli({
+  access: { open: 'local-operator' },
   name: 'fixture',
   version: '1',
   runtimeTools,

@@ -11,6 +11,7 @@ import { AppError } from '../contract/errors';
 import { type ClientIpOptions, extractIp, resolveSocketIp } from '../internal/request';
 import {
   getRequestContext,
+  type RequestContext,
   runWithRequestContext,
   setRequestEndpoint,
 } from '../observability/context';
@@ -18,7 +19,12 @@ import { resolveTraceContext } from '../observability/trace';
 import { RELEASE_HEADER } from '../release/header';
 import { dispatchEndpoint } from './endpoint-dispatch';
 import { createErrorResponder } from './error-dispatch';
-import { createHandlerState, type HandlerState, type RequestState } from './handler-state';
+import {
+  createHandlerState,
+  type HandlerState,
+  markTrustProxyHandler,
+  type RequestState,
+} from './handler-state';
 import {
   applyCors,
   deniedRequestCors,
@@ -29,17 +35,21 @@ import { openRequestCompletion } from './request-completion';
 import { allowedMethods, matchRawRoute, matchRoute } from './router';
 import type { FetchHandler, HandlerConfig } from './types';
 
+/** Build a Web Fetch HTTP request handler from routes, middleware, and lifecycle hooks. */
 export function createHandler<TServer = unknown>(
   config: HandlerConfig<TServer>,
 ): FetchHandler<TServer> {
   const { trustProxy = false, observability } = config;
   const state = createHandlerState(config);
 
-  return async (req: Request, server?: TServer): Promise<Response> => {
+  const handler: FetchHandler<TServer> = async (
+    req: Request,
+    server?: TServer,
+  ): Promise<Response> => {
     // `req.url` is an absolute URL on Bun/Deno/srvx, but Node adapters may
     // pass just the pathname — the base avoids a `TypeError: Invalid URL`.
     const url = new URL(req.url, 'http://localhost');
-    const requestStartedAt = process.hrtime.bigint();
+    const requestStartedAt = performance.now();
     // Resolve the real socket peer once per request — the adapter (Bun server
     // / srvx) knows it; `extractIp` prefers `x-forwarded-for` over it only
     // when `trustProxy` is set.
@@ -47,8 +57,21 @@ export function createHandler<TServer = unknown>(
       trustProxy,
       socketIp: resolveSocketIp(req, server),
     };
-    const run = async (traceId: string, startedAt: bigint): Promise<Response> => {
-      const response = await dispatch(state, req, url, traceId, server, clientIp, startedAt);
+    const run = async (
+      traceId: string,
+      startedAt: number,
+      context: RequestContext | undefined,
+    ): Promise<Response> => {
+      const response = await dispatch(
+        state,
+        req,
+        url,
+        traceId,
+        server,
+        clientIp,
+        startedAt,
+        context,
+      );
       // Every response carries the framework-resolved trace id — always
       // overwritten, never the value a raw route or `onError` may have echoed
       // from the client. Immutable headers (a `Response.redirect()`) are
@@ -67,28 +90,31 @@ export function createHandler<TServer = unknown>(
 
     const activeContext = getRequestContext();
     if (activeContext) {
-      return run(activeContext.trace.traceId, activeContext.startedAt);
+      return run(activeContext.trace.traceId, activeContext.startedAt, activeContext);
     }
 
-    if (!observability) return run(state.resolveId(req), requestStartedAt);
+    if (!observability) return run(state.resolveId(req), requestStartedAt, undefined);
 
     const trace = resolveTraceContext(req);
     const traceId = state.resolveId(req, trace.traceId);
     const ipAddress = extractIp(req, clientIp) || undefined;
     const userAgent = req.headers.get('user-agent') ?? undefined;
-    return runWithRequestContext(
-      {
-        source: 'http',
-        method: req.method,
-        path: url.pathname,
-        startedAt: requestStartedAt,
-        trace: { ...trace, traceId },
-        ...(ipAddress !== undefined && { ipAddress }),
-        ...(userAgent !== undefined && { userAgent }),
-      },
-      () => run(traceId, requestStartedAt),
+    const requestContext: RequestContext = {
+      source: 'http',
+      method: req.method,
+      path: url.pathname,
+      startedAt: requestStartedAt,
+      trace: { ...trace, traceId },
+      ...(ipAddress !== undefined && { ipAddress }),
+      ...(userAgent !== undefined && { userAgent }),
+    };
+    return runWithRequestContext(requestContext, () =>
+      run(traceId, requestStartedAt, requestContext),
     );
   };
+
+  if (trustProxy) markTrustProxyHandler(handler);
+  return handler;
 }
 
 async function dispatch<TServer>(
@@ -98,11 +124,19 @@ async function dispatch<TServer>(
   traceId: string,
   server: TServer | undefined,
   clientIp: ClientIpOptions,
-  startedAt: bigint,
+  startedAt: number,
+  context: RequestContext | undefined,
 ): Promise<Response> {
   const { hooks, config, routeMap } = state;
   const ipAddress = extractIp(req, clientIp) || undefined;
-  const complete = openRequestCompletion(state, { req, url, traceId, startedAt, ipAddress });
+  const complete = openRequestCompletion(state, {
+    req,
+    url,
+    traceId,
+    startedAt,
+    ipAddress,
+    context,
+  });
   // One CORS answer per request, decided before any work and read by every exit.
   let cors: RequestCors | undefined;
   let corsFailed = false;
@@ -126,6 +160,7 @@ async function dispatch<TServer>(
     clientIp,
     complete,
     cors,
+    context,
   });
   // A policy that cannot answer grants nothing and runs nothing: the request
   // is refused through `onError` with the cause, and carries no allowance.
@@ -142,6 +177,7 @@ async function dispatch<TServer>(
     complete,
     respondError,
     cors,
+    context,
   };
 
   if (cors && req.method === 'OPTIONS') {
@@ -164,7 +200,7 @@ async function dispatch<TServer>(
         // carry `Access-Control-Allow-Origin`, or the response is unreadable
         // cross-origin.
         const withCors = applyCors(earlyResponse, cors);
-        complete(withCors.status);
+        complete(earlyResponse);
         return withCors;
       }
     }
@@ -180,7 +216,14 @@ async function dispatch<TServer>(
     const rawMatch = matchRawRoute(config.rawRoutes, req.method, url.pathname);
     if (rawMatch) {
       if (rawMatch.route.serviceName !== undefined) {
-        setRequestEndpoint(rawMatch.route.serviceName, rawMatch.route.action);
+        if (request.context) {
+          request.context.serviceName = rawMatch.route.serviceName;
+          if (rawMatch.route.action !== undefined) {
+            request.context.action = rawMatch.route.action;
+          }
+        } else {
+          setRequestEndpoint(rawMatch.route.serviceName, rawMatch.route.action);
+        }
       }
       try {
         const res = await rawMatch.route.handler(req, {
@@ -189,7 +232,9 @@ async function dispatch<TServer>(
           ipAddress,
         });
         const withCors = applyCors(res, cors);
-        complete(withCors.status);
+        // The handler's own response, not the CORS copy: it carries the
+        // handler's protocol-outcome mark, and its status is the same.
+        complete(res);
         return withCors;
       } catch (err) {
         return respondError(err);

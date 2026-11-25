@@ -1,6 +1,13 @@
+---
+title: "ADR 0190 — A question plan is part of the state it is asked in"
+type: decision
+status: accepted
+created: 2026-09-22
+updated: 2026-09-22
+---
+
 # 0190 — A question plan is part of the state it is asked in
 
-**Status:** Accepted
 **Date:** 2026-09-22
 
 ## Context

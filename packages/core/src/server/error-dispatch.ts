@@ -1,9 +1,10 @@
 import { AppError } from '../contract/errors';
 import { errorCode, normalizeError, recordedErrorMessage } from '../contract/normalize';
 import type { RuntimeContext } from '../contract/runtime-context';
+import { jsonResponse } from '../internal/json-response';
 import type { ClientIpOptions } from '../internal/request';
 import { isRecord } from '../internal/typed';
-import { getRequestContext, setRequestError } from '../observability/context';
+import { getRequestContext, type RequestContext } from '../observability/context';
 import { buildErrorContext } from './context';
 import type { CompleteRequest, HandlerState, RespondError } from './handler-state';
 import { applyCors, type RequestCors, requestCorsHeaders } from './middleware/cors';
@@ -41,6 +42,7 @@ export interface ErrorRequest {
   clientIp: ClientIpOptions;
   complete: CompleteRequest;
   cors: RequestCors | undefined;
+  context?: RequestContext;
 }
 
 /**
@@ -53,7 +55,7 @@ export function createErrorResponder<TServer>(
   request: ErrorRequest,
 ): RespondError {
   const { hooks, customLogger } = state;
-  const { req, url, traceId, clientIp, complete, cors } = request;
+  const { req, url, traceId, clientIp, complete, cors, context } = request;
   return async (err, errCtx, endpoint, group) => {
     if (isClientClosedRequest(req, err)) {
       const response = applyCors(
@@ -75,14 +77,15 @@ export function createErrorResponder<TServer>(
     // nothing and must never reach for it, or customising the envelope would
     // start writing a stderr line that was not there before.
     const recordFailure = (normalized?: AppError): void => {
-      if (getRequestContext()?.error !== undefined) return;
+      const activeContext = context ?? getRequestContext();
+      if (!activeContext || activeContext.error !== undefined) return;
       const known = AppError.is(err) ? err : normalized;
       const code = known?.code ?? errorCode(err) ?? 'INTERNAL_SERVER_ERROR';
-      setRequestError({
+      activeContext.error = {
         code,
         message: recordedErrorMessage(code, known?.message, err),
         details: known?.details,
-      });
+      };
     };
 
     const customResponse = await dispatchErrorHooks({
@@ -104,7 +107,7 @@ export function createErrorResponder<TServer>(
     const appErr = normalizeError(err);
     recordFailure(appErr);
     complete(appErr.status, appErr.code);
-    return Response.json(appErr.toJSON(), {
+    return jsonResponse(appErr.toJSON(), {
       status: appErr.status,
       headers: requestCorsHeaders(cors),
     });

@@ -1,8 +1,6 @@
 import type { ManagedResource, ManagedResourceContext } from '../application/resource';
 import type { GeoAttribution } from './schema';
 
-export type { GeoAttribution } from './schema';
-
 export interface MaxMindGeoIpPaths {
   readonly city: string;
   readonly asn?: string;

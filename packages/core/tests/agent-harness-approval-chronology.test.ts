@@ -116,7 +116,7 @@ describe('durable approval continuations', () => {
                   return true;
                 },
               }),
-              lifecycle: context.toolFenceLifecycle,
+              access: { gate: context.toolFenceLifecycle },
             }),
           loop: {
             toolApproval: {
@@ -225,7 +225,12 @@ describe('durable approval continuations', () => {
     });
   }
 
-  for (const invalid of ['unknown-response', 'unknown-without-request', 'forged-signature']) {
+  for (const invalid of [
+    'unknown-response',
+    'unknown-without-request',
+    'forged-signature',
+    'tampered-input',
+  ]) {
     test(`${invalid}: refuses continuation before effects or a provider call and retains a private cause`, async () => {
       const events: AgentRunEvent[] = [];
       const observe = createAgentObservability({
@@ -283,13 +288,13 @@ describe('durable approval continuations', () => {
                 return true;
               },
             }),
-            lifecycle: context.toolFenceLifecycle,
+            access: { gate: context.toolFenceLifecycle },
           }),
         loop: {
           toolApproval: { write_file: 'user-approval' },
           toolApprovalSecret: 'invalid-approval-secret',
         },
-        ...(invalid === 'forged-signature' && {
+        ...((invalid === 'forged-signature' || invalid === 'tampered-input') && {
           history: {
             project: async (messages) =>
               (await projectAgentHistory(messages)).map((message) => {
@@ -302,9 +307,16 @@ describe('durable approval continuations', () => {
                 return {
                   ...message,
                   content: message.content.map((part) =>
-                    part.type === 'tool-approval-request'
+                    invalid === 'forged-signature' && part.type === 'tool-approval-request'
                       ? { ...part, signature: 'forged-signature' }
-                      : part,
+                      : // The signature stays, the call it signed does not: the approved
+                        // input is what the signature binds, so the edit must be refused.
+                        invalid === 'tampered-input' && part.type === 'tool-call'
+                        ? {
+                            ...part,
+                            input: { path: 'elsewhere.txt', content: 'other effect' },
+                          }
+                        : part,
                   ),
                 };
               }),
@@ -325,7 +337,7 @@ describe('durable approval continuations', () => {
           throw new Error('expected signed request');
         corruptSignature = true;
         const ticket =
-          invalid === 'forged-signature' && pending
+          (invalid === 'forged-signature' || invalid === 'tampered-input') && pending
             ? await harness.respondToApproval({
                 conversationId: 'invalid',
                 approvalId: pending.approvalId,

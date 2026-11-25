@@ -2,13 +2,13 @@
 title: "ADR 0011 — Bun-only, published as one small package"
 type: decision
 status: accepted
+amendedBy: ["0013"]
 created: 2026-05-20
 updated: 2026-05-20
 ---
 
 # ADR 0011 — Bun-only, published as one small package
 
-- **Status:** Accepted
 - **Date:** 2026-05-20
 
 ## Context

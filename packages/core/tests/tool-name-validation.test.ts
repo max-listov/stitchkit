@@ -134,10 +134,14 @@ describe('mount-time assertion', () => {
 
   test('every provider-facing mount enforces it — MCP, agent and the build probe', () => {
     const bad = serviceWith('notes', 'bad name');
-    expect(() => mountMcp(new McpServer({ name: 't', version: '1' }), bad)).toThrow(
+    expect(() =>
+      mountMcp(new McpServer({ name: 't', version: '1' }), bad, {
+        access: { open: 'local-operator' },
+      }),
+    ).toThrow(/Tool name "bad name"/);
+    expect(() => mountAgent(bad, { access: { open: 'local-operator' } })).toThrow(
       /Tool name "bad name"/,
     );
-    expect(() => mountAgent(bad)).toThrow(/Tool name "bad name"/);
     expect(() => validateMcpSchemas({ services: [bad] })).toThrow(/Tool name "bad name"/);
   });
 });
@@ -176,7 +180,7 @@ describe('listToolNames stays a diagnostic', () => {
     // name. If it threw, the diagnostic would die on the very case it exists for.
     const names = listToolNames({ services: [serviceWith('notes', 'bad/name')] });
     expect(names.map((n) => n.name)).toEqual(['bad/name']);
-    expect(names[0]?.transports).toContain('MCP');
+    expect(names[0]?.expose).toContain('MCP');
   });
 
   test('it still resolves normalised derived names', () => {
@@ -193,7 +197,7 @@ describe('one duplicate guard, three surfaces', () => {
   test('every mount reports a duplicate, each with its own label', () => {
     const a = serviceWith('notes');
     const b = serviceWith('notes');
-    expect(() => mountAgent([a, b])).toThrow(
+    expect(() => mountAgent([a, b], { access: { open: 'local-operator' } })).toThrow(
       'Duplicate agent tool name "get_note" across mounted operations',
     );
     expect(() => validateMcpSchemas({ services: [a, b] })).toThrow(
@@ -216,7 +220,12 @@ describe('one duplicate guard, three surfaces', () => {
         { get: () => ({ ok: true }) },
       );
     expect(() =>
-      createCli({ name: 'x', version: '1', services: [cli('notes'), cli('notes')] }),
+      createCli({
+        access: { open: 'local-operator' },
+        name: 'x',
+        version: '1',
+        services: [cli('notes'), cli('notes')],
+      }),
     ).toThrow('Duplicate CLI command "get_note" across mounted operations');
   });
 });
@@ -227,7 +236,9 @@ describe('the existing duplicate guards fire on merged names', () => {
     // was added for this — the mounts already dedupe across services.
     const a = serviceWith('admin/chat');
     const b = serviceWith('admin.chat');
-    expect(() => mountAgent([a, b])).toThrow(/Duplicate agent tool name "get_admin_chat"/);
+    expect(() => mountAgent([a, b], { access: { open: 'local-operator' } })).toThrow(
+      /Duplicate agent tool name "get_admin_chat"/,
+    );
     expect(() => validateMcpSchemas({ services: [a, b] })).toThrow(
       /Duplicate MCP tool name "get_admin_chat"/,
     );

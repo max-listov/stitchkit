@@ -120,6 +120,7 @@ describe('tool transports strip identically — and report identically', () => {
     const [mountable] = collectTools(leakyService(), 'MCP');
     if (!mountable) throw new Error('expected a tool');
     const run = createToolRunner({
+      lifecycle: {},
       source: 'mcp',
       onOutputStrip: (tool, paths) => seen.push({ tool, paths }),
     });
@@ -131,7 +132,7 @@ describe('tool transports strip identically — and report identically', () => {
   test('without a reporter a tool call behaves exactly as before', async () => {
     const [mountable] = collectTools(leakyService(), 'MCP');
     if (!mountable) throw new Error('expected a tool');
-    const result = await createToolRunner({ source: 'mcp' })(mountable, {});
+    const result = await createToolRunner({ lifecycle: {}, source: 'mcp' })(mountable, {});
     expect(result.ok && result.data).toEqual({ id: '1', nested: { keep: 'yes' } });
   });
 });

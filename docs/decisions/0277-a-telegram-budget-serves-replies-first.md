@@ -3,6 +3,8 @@ title: "ADR 0277: A Telegram budget serves replies first and pauses on sends"
 description: One token's rate has an interactive lane granted before bulk, and only a 429 on a method that spends the budget pauses the token.
 type: decision
 status: accepted
+amends: ["0274"]
+amendedBy: ["0278"]
 created: 2026-11-02
 updated: 2026-11-02
 ---

@@ -8,7 +8,6 @@ updated: 2026-05-20
 
 # ADR 0006 — Route groups and GET/DELETE query params
 
-- **Status:** Accepted
 - **Date:** 2026-05-13
 
 ## Context

@@ -3,6 +3,7 @@ title: "ADR 0105: The error-code map is partial, and the registry is complete"
 description: "An exhaustive consumer map breaks on an additive release, so `codeMap` is partial and `unmappedCode` owns the rest — while the registry itself is held complete against the source by a check."
 type: decision
 status: accepted
+amends: ["0026"]
 created: 2026-08-25
 updated: 2026-08-25
 ---

@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { MAX_TIMER_MS } from '../internal/timers';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import { type SteppedTimerClock, scheduleAt } from '../internal/timers';
 import {
   type AgentSchedule,
   type AgentScheduleService,
@@ -8,9 +9,29 @@ import {
 import { dispatchSchedule, type ScheduleDispatchContext } from './schedule-dispatch';
 import { insertSchedule, newSchedule, type ScheduleRequest } from './schedule-records';
 
-export function createAgentScheduleService(input: {
-  sqlite: ScheduleDispatchContext['sqlite'];
+/** The service's own clock and timer, as the stepper reads them: the next due schedule is waited for in steps. */
+function serviceClock(
+  now: () => Date,
+  setTimer: NonNullable<ScheduleDispatchContext['setTimer']>,
+  clearTimer: NonNullable<ScheduleDispatchContext['clearTimer']>,
+): SteppedTimerClock {
+  return {
+    now: () => now().getTime(),
+    schedule(callback, delayMs) {
+      const handle = setTimer(callback, delayMs);
+      return { cancel: () => clearTimer(handle) };
+    },
+  };
+}
+
+/** What `createAgentScheduleService` takes; both limits are required. */
+export interface AgentScheduleServiceConfig {
+  host: ScheduleDispatchContext['host'];
   dispatch: ScheduleDispatchContext['dispatch'];
+  /** Schedules one conversation may hold in `scheduled` state at once; one more refuses. */
+  maxActivePerConversation: number;
+  /** The shortest `everyMs` a repeating schedule may take; a shorter one refuses. */
+  minIntervalMs: number;
   now?: () => Date;
   setTimer?: ScheduleDispatchContext['setTimer'];
   clearTimer?: ScheduleDispatchContext['clearTimer'];
@@ -21,14 +42,33 @@ export function createAgentScheduleService(input: {
    * retried. Default 1000 — about sixteen hours at the one-minute retry ceiling.
    */
   maxAttempts?: number;
-}): AgentScheduleService {
+}
+
+/**
+ * Durable deferred input over a SQL store's companion host — SQLite or
+ * Postgres. The memory store and hand-written drivers have no schedules.
+ */
+export function createAgentScheduleService(
+  input: AgentScheduleServiceConfig,
+): AgentScheduleService {
+  // Required by the type, checked here for a caller that is not typed: no
+  // limit is not a default the model may spend.
+  for (const name of ['maxActivePerConversation', 'minIntervalMs'] as const) {
+    if (input[name] === undefined)
+      throw new TypeError(`createAgentScheduleService requires ${name}`);
+    assertPositiveSafeInteger(name, input[name]);
+  }
+  const limits = {
+    maxActivePerConversation: input.maxActivePerConversation,
+    minIntervalMs: input.minIntervalMs,
+  };
   const maxAttempts = z
     .number()
     .int()
     .min(1)
     .parse(input.maxAttempts ?? 1_000);
   const now = input.now ?? (() => new Date());
-  const database = input.sqlite.database;
+  const host = input.host;
   const setTimer = input.setTimer ?? ((callback, delay) => setTimeout(callback, delay));
   const clearTimer = input.clearTimer ?? clearTimeout;
   const onError =
@@ -37,7 +77,12 @@ export function createAgentScheduleService(input: {
       console.error('[stitchkit] agent schedule tick failed', error);
     });
   const lifecycle = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clock = serviceClock(now, setTimer, clearTimer);
+  let timer: { cancel(): void } | undefined;
+  const cancelTimer = (): void => {
+    timer?.cancel();
+    timer = undefined;
+  };
   let ticking: Promise<void> | undefined;
   let recoveryAt = 0;
   let storageFailures = 0;
@@ -49,63 +94,71 @@ export function createAgentScheduleService(input: {
     onError(error);
   };
 
-  const listSchedules = (conversationId: string): readonly AgentSchedule[] =>
-    database
-      .prepare(`
-    SELECT * FROM stitchkit_agent_runtime_schedules
-    WHERE conversation_id = ? ORDER BY created_at, id
-  `)
-      .all(conversationId)
-      .map(parseSchedule);
+  const listSchedules = (conversationId: string): Promise<readonly AgentSchedule[]> =>
+    host.read(async (session) =>
+      (
+        await session.all(
+          `SELECT * FROM ${host.tables.schedules} WHERE conversation_id = ? ORDER BY created_at, id`,
+          [conversationId],
+        )
+      ).map(parseSchedule),
+    );
 
-  const arm = () => {
-    if (timer !== undefined) clearTimer(timer);
-    timer = undefined;
+  // The next due time is read asynchronously, so two `arm` calls can be in
+  // flight at once; only the newest may set the timer.
+  let armGeneration = 0;
+  const nextDueAt = (): Promise<number | undefined> =>
+    host.read(async (session) => {
+      const raw = await session.get(
+        `SELECT eligible_at FROM ${host.tables.schedules}
+         WHERE state = 'scheduled' ORDER BY eligible_at, id LIMIT 1`,
+      );
+      if (raw === undefined) return undefined;
+      return new Date(z.object({ eligible_at: z.string() }).parse(raw).eligible_at).getTime();
+    });
+
+  const arm = async (): Promise<void> => {
+    cancelTimer();
     if (lifecycle.signal.aborted || ticking) return;
+    const generation = ++armGeneration;
     let dueAt: number;
     if (recoveryAt > now().getTime()) {
       dueAt = recoveryAt;
     } else {
       try {
-        const raw = database
-          .prepare(`
-          SELECT eligible_at FROM stitchkit_agent_runtime_schedules
-          WHERE state = 'scheduled' ORDER BY eligible_at, id LIMIT 1
-        `)
-          .get();
-        if (raw === null || raw === undefined) return;
-        dueAt = new Date(
-          z.object({ eligible_at: z.string() }).parse(raw).eligible_at,
-        ).getTime();
+        const next = await nextDueAt();
+        if (next === undefined) return;
+        dueAt = next;
       } catch (error) {
         reportStorageFailure(error);
         dueAt = recoveryAt;
       }
     }
-    timer = setTimer(
-      () => {
-        timer = undefined;
-        void tick();
-      },
-      Math.min(Math.max(0, dueAt - now().getTime()), MAX_TIMER_MS),
-    );
+    if (generation !== armGeneration || lifecycle.signal.aborted || ticking) return;
+    cancelTimer();
+    timer = scheduleAt(clock, dueAt, () => {
+      timer = undefined;
+      void tick();
+    });
   };
 
   const runTick = async () => {
     if (lifecycle.signal.aborted || now().getTime() < recoveryAt) return;
-    const due = database
-      .prepare(`
-      SELECT * FROM stitchkit_agent_runtime_schedules
-      WHERE state = 'scheduled' AND eligible_at <= ? ORDER BY eligible_at, id LIMIT 32
-    `)
-      .all(now().toISOString())
-      .map(parseSchedule);
+    const due = await host.read(async (session) =>
+      (
+        await session.all(
+          `SELECT * FROM ${host.tables.schedules}
+           WHERE state = 'scheduled' AND eligible_at <= ? ORDER BY eligible_at, id LIMIT 32`,
+          [now().toISOString()],
+        )
+      ).map(parseSchedule),
+    );
     // Bound concurrency and isolate a slow consumer from the rest of this batch.
     const results = await Promise.allSettled(
       due.map((schedule) =>
         dispatchSchedule(
           {
-            sqlite: input.sqlite,
+            host,
             dispatch: input.dispatch,
             now,
             setTimer,
@@ -123,43 +176,51 @@ export function createAgentScheduleService(input: {
     storageFailures = 0;
   };
 
+  // A tick resolves once the next timer is armed, so a caller that awaits it
+  // sees the service in its settled state.
   const tick = (): Promise<void> => {
     if (ticking) return ticking;
-    if (timer !== undefined) clearTimer(timer);
-    timer = undefined;
-    ticking = runTick()
-      .catch(reportStorageFailure)
-      .finally(() => {
+    cancelTimer();
+    const current = (async () => {
+      try {
+        await runTick();
+      } catch (error) {
+        reportStorageFailure(error);
+      } finally {
         ticking = undefined;
-        arm();
-      });
-    return ticking;
+      }
+      await arm();
+    })();
+    ticking = current;
+    return current;
   };
 
   const scheduleInput = async (request: ScheduleRequest): Promise<AgentSchedule> => {
     const schedule = newSchedule(request, now());
-    await insertSchedule(input.sqlite, schedule);
-    arm();
+    if (schedule.intervalMs !== undefined && schedule.intervalMs < limits.minIntervalMs)
+      throw new TypeError(
+        `A repeating schedule fires at most every ${limits.minIntervalMs} ms, received everyMs ${schedule.intervalMs}`,
+      );
+    await insertSchedule(host, schedule, limits.maxActivePerConversation);
+    await arm();
     return schedule;
   };
 
   const cancelSchedule = async (conversationId: string, id: string): Promise<boolean> => {
     const observedAt = now().toISOString();
-    const changed = await input.sqlite.transaction(async (scope) => {
-      const raw = scope.database
-        .prepare(`
-        SELECT state FROM stitchkit_agent_runtime_schedules WHERE id = ? AND conversation_id = ?
-      `)
-        .get(id, conversationId);
-      if (raw === null || raw === undefined) return false;
+    const changed = await host.transaction(conversationId, async (scope) => {
+      const raw = await scope.get(
+        `SELECT state FROM ${host.tables.schedules} WHERE id = ? AND conversation_id = ?`,
+        [id, conversationId],
+      );
+      if (raw === undefined) return false;
       if (z.object({ state: z.string() }).parse(raw).state !== 'scheduled') return false;
-      scope.database
-        .prepare(`
-        UPDATE stitchkit_agent_runtime_schedules
-        SET state = 'cancelled', updated_at = ?, claim_owner = NULL, claim_until = NULL
-        WHERE id = ? AND conversation_id = ?
-      `)
-        .run(observedAt, id, conversationId);
+      await scope.run(
+        `UPDATE ${host.tables.schedules}
+         SET state = 'cancelled', updated_at = ?, claim_owner = NULL, claim_until = NULL
+         WHERE id = ? AND conversation_id = ?`,
+        [observedAt, id, conversationId],
+      );
       await scope.appendEvent({
         conversationId,
         kind: 'schedule/cancelled',
@@ -168,7 +229,7 @@ export function createAgentScheduleService(input: {
       });
       return true;
     });
-    if (changed) arm();
+    if (changed) await arm();
     return changed;
   };
 
@@ -180,8 +241,7 @@ export function createAgentScheduleService(input: {
     start: arm,
     close() {
       lifecycle.abort();
-      if (timer !== undefined) clearTimer(timer);
-      timer = undefined;
+      cancelTimer();
     },
   };
 }

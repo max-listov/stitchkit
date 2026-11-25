@@ -3,16 +3,18 @@ title: "ADR 0065 — Flat collisions preserve every known JSON kind"
 description: Divergent fields in a flattened discriminated union publish a sound JSON Schema type union instead of becoming untyped.
 type: decision
 status: accepted
+amends: ["0044"]
+amendedBy: ["0205"]
 created: 2026-08-08
 updated: 2026-08-08
 ---
 
 # ADR 0065 — Flat collisions preserve every known JSON kind
 
-- **Status:** Accepted — extends [ADR 0044](0044-a-collided-field-keeps-its-type.md),
-  preserves the flat presentation boundary of
-  [ADR 0050](0050-presentation-schema-is-not-a-parser.md), and supersedes ADR
-  0044's rule that genuinely different kinds become unknown.
+**Relations:** extends [ADR 0044](0044-a-collided-field-keeps-its-type.md), preserves the flat
+presentation boundary of [ADR 0050](0050-presentation-schema-is-not-a-parser.md), and supersedes ADR
+0044's rule that genuinely different kinds become unknown.
+
 - **Date:** 2026-08-08
 
 ## Context

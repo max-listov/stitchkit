@@ -132,13 +132,15 @@ describe('immutable MCP surface preparation', () => {
     const config: McpServerBuildConfig<undefined> = {
       serverInfo: { name: 'test', version: '1' },
       services,
-      lifecycle: {
-        beforeHandle: () => {
-          beforeCalls += 1;
-        },
-        afterHandle: (_context, result) => {
-          afterCalls += 1;
-          return result;
+      access: {
+        gate: {
+          beforeHandle: () => {
+            beforeCalls += 1;
+          },
+          afterHandle: (_context, result) => {
+            afterCalls += 1;
+            return result;
+          },
         },
       },
       hooks: {
@@ -173,6 +175,7 @@ describe('static handler preparation cache', () => {
     let contexts = 0;
     let servers = 0;
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => ({ id: 'static' }),
       services: [serviceFor('entity_get', z.cuid2())],
@@ -201,6 +204,7 @@ describe('identity-dependent surfaces', () => {
     const warnings: string[] = [];
     const identities: string[] = [];
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: (request) => request.headers.get('authorization'),
       services: (identity) => {
@@ -233,6 +237,7 @@ describe('finite prepared surface registry', () => {
     });
     const adminSurface = { services: [serviceFor('admin_get', z.cuid2())] };
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: (request) => ({ role: request.headers.get('authorization') ?? 'member' }),
       surfaces: {
@@ -266,6 +271,7 @@ describe('finite prepared surface registry', () => {
     const directClient = await connect(
       buildMcpServer(
         {
+          access: { open: 'local-operator' },
           serverInfo: { name: 'test', version: '1' },
           surfaces,
           selectSurface: (role) => (role === 'admin' ? 'admin' : 'member'),
@@ -280,6 +286,7 @@ describe('finite prepared surface registry', () => {
     await directClient.close();
 
     const stateless = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: (request) => request.headers.get('authorization') ?? 'member',
       surfaces,
@@ -310,6 +317,7 @@ describe('finite prepared surface registry', () => {
       },
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: (request) => ({ userId: request.headers.get('authorization') ?? 'anonymous' }),
       context: (auth) => auth,
@@ -348,6 +356,7 @@ describe('finite prepared surface registry', () => {
 
   test('fails first on unknown keys and contract/runtime collisions', async () => {
     const unknown = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => ({ role: 'member' }),
       surfaces: { member: { services: [] } },
@@ -359,6 +368,7 @@ describe('finite prepared surface registry', () => {
 
     expect(() =>
       createMcpHandler({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'test', version: '1' },
         auth: () => undefined,
         surfaces: {

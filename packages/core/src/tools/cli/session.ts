@@ -9,33 +9,30 @@ import {
   jsonSchemaFields,
   toJsonSchema,
 } from '../../json-schema/json-schema';
+import { resolveOptionalCliToolAccess } from '../access';
+import type { ToolLifecycle } from '../execute-hooks';
 import { buildToolPresentationSchema } from '../schema/presentation';
-import { extractCliGlobalOptions } from './args';
-import {
-  type CliArgvRoute,
-  isCliVersionToken,
-  RESERVED_CLI_OPTIONS,
-  readCliBooleanFlag,
-  routeCliArgv,
-} from './args-route';
+import { RESERVED_CLI_OPTIONS } from './args-classify';
+import { type CliFrameworkOptions, scanCliInvocation } from './args-scan';
 import { CliArgumentError } from './argument-error';
-import { type CliCommandDefinition, cliCommandPresentationSchema } from './command';
-import { assertStaticCliCommandNames, commandShapeIssue } from './command-shape';
+import type { CliCommandDefinition } from './command';
+import {
+  assertStaticCliCommandNames,
+  commandShapeIssue,
+  nativeCliDescriptor,
+} from './command-shape';
 import type { CliConfig } from './config';
 import { DEFAULT_EXIT_CODES, type EmitOptions } from './format';
 import type { CliIo } from './io';
-import { applyCliPresentationPolicy, type CliCommandPresentation } from './policy';
-
-function nativeDescriptor(
-  definition: CliCommandDefinition,
-): Omit<CliCommandPresentation, 'aliases' | 'positionals'> {
-  return {
-    description: definition.description,
-    argumentSchema: definition.input,
-    presentationSchema: cliCommandPresentationSchema(definition),
-    outputSchema: definition.output,
-  };
-}
+import {
+  applyCliPresentationPolicy,
+  assertCliPoliciesResolved,
+  assertNoLegacyCliPolicyKeys,
+  type CliCommandPresentation,
+  cliPassthroughField,
+  cliResultPolicy,
+} from './policy';
+import { assertCliAuthConfig } from './runner';
 
 export interface CliSession<
   TAuth,
@@ -43,6 +40,7 @@ export interface CliSession<
   TGlobals extends ZodObject,
 > {
   config: CliConfig<TAuth, TContext, TGlobals>;
+  lifecycle: ToolLifecycle;
   io: CliIo;
   applicationOptions: readonly JsonSchemaField[];
   applicationGlobalNames: Set<string>;
@@ -60,9 +58,9 @@ export function createCliSession<
   config: CliConfig<TAuth, TContext, TGlobals>,
   io: CliIo,
 ): CliSession<TAuth, TContext, TGlobals> {
-  if (config.auth !== undefined && config.resolveAuth !== undefined) {
-    throw new Error('[stitchkit] createCli: use either auth or resolveAuth, not both');
-  }
+  const lifecycle = resolveOptionalCliToolAccess('createCliSession', config);
+  assertNoLegacyCliPolicyKeys(config);
+  assertCliAuthConfig(config);
   assertPositiveSafeInteger('createCli maxDownloadBytes', config.maxDownloadBytes);
 
   const applicationOptions = config.globalOptions
@@ -89,24 +87,33 @@ export function createCliSession<
     typeof config.runtimeTools === 'function' ? [] : (config.runtimeTools ?? []),
   );
   for (const definition of config.commands ?? []) {
+    if (cliResultPolicy(config, definition.name) !== undefined) {
+      throw new Error(
+        `[stitchkit] CLI result policy "${definition.name}" targets a command that is not managed; a native command declares present and exitCode on defineCliCommand`,
+      );
+    }
     const descriptor = applyCliPresentationPolicy(
       definition.name,
-      nativeDescriptor(definition),
+      nativeCliDescriptor(definition),
       config,
     );
     const issue = commandShapeIssue(
       definition.name,
       descriptor,
       nativeCommands.has(definition.name),
-      config.passthrough?.[definition.name],
+      cliPassthroughField(config, definition.name),
       applicationGlobalNames,
     );
     if (issue !== undefined) throw new Error(issue);
     nativeCommands.set(definition.name, definition);
     nativeHelp.set(definition.name, descriptor);
   }
+  if (config.services === undefined && config.runtimeTools === undefined) {
+    assertCliPoliciesResolved(nativeHelp, config);
+  }
   return {
     config,
+    lifecycle,
     io,
     applicationOptions,
     applicationGlobalNames,
@@ -120,9 +127,12 @@ export function createCliSession<
 export interface CliRoute<TGlobals extends ZodObject> {
   globals: Record<string, unknown>;
   typedGlobals: z.output<TGlobals>;
-  route: CliArgvRoute;
+  framework: CliFrameworkOptions;
   command: string | undefined;
-  commandArgv: string[];
+  commandTokens: string[];
+  separatedBefore: ReadonlySet<number>;
+  topLevelHelp: boolean;
+  helpFilter?: string;
   quiet: boolean;
   helpRequested: boolean;
   /** `--schema` — answered like help: before identity, validation and the call. */
@@ -130,8 +140,9 @@ export interface CliRoute<TGlobals extends ZodObject> {
 }
 
 /**
- * Lift the application's globals, route the rest and answer `--version`.
- * `undefined` means the invocation was already answered and `exit` was called.
+ * Scan the invocation once (application globals, framework flags and routing)
+ * and answer `--version`. `undefined` means the invocation was already answered
+ * and `exit` was called.
  */
 export function resolveCliRoute<
   TAuth,
@@ -143,66 +154,35 @@ export function resolveCliRoute<
 ): CliRoute<TGlobals> | undefined {
   const { config } = session;
   const { stdout, stderr, exit } = session.io;
-  // The application's globals come off argv BEFORE routing: they may stand
-  // before the command name as easily as after it, and no command's parser
-  // should ever see them.
-  let globals: Record<string, unknown>;
-  let routableArgv: string[];
+  let scan: ReturnType<typeof scanCliInvocation<TGlobals>>;
   try {
-    const lifted = extractCliGlobalOptions(argv, config.globalOptions);
-    globals = lifted.globals;
-    routableArgv = lifted.argv;
+    scan = scanCliInvocation(argv, {
+      appGlobals: config.globalOptions,
+      defaultCommand: config.defaultCommand,
+    });
   } catch (error) {
     if (!(error instanceof CliArgumentError)) throw error;
     stderr(`${error.message}\n`);
     exit(2);
     return undefined;
   }
-  // The application declared this shape; `extractCliGlobalOptions` validated
-  // against it. This is the one bridge between the two.
-  const typedGlobals = globals as z.output<TGlobals>;
-
-  const route = routeCliArgv(routableArgv, config.defaultCommand);
-  if (route.error) {
-    stderr(`${route.error}\n`);
-    exit(2);
-    return undefined;
-  }
-  const { command, commandArgv } = route;
-  // Before leading flags were accepted, that first word could name a managed
-  // command. Its factory is deliberately unavailable on the offline native path.
-  if (
-    config.defaultCommand === undefined &&
-    session.hasManagedFactory &&
-    command !== undefined &&
-    command !== routableArgv[0] &&
-    session.nativeCommands.has(command)
-  ) {
-    stderr(
-      `Managed command names are unknown before native dispatch. Put "${config.name} ${command}" first and keep options with their values. ` +
-        'If moving a bare boolean flag next to positional true or false, spell the flag explicitly (for example, --dry-run=true).\n',
-    );
-    exit(2);
-    return undefined;
-  }
-  if (route.version || isCliVersionToken(command)) {
+  if (scan.version) {
     stdout(`${config.name} ${config.version}\n`);
     exit(0);
     return undefined;
   }
-
-  // `--help` wins over every option validator — a user must be able to ask a
-  // command about its flags even when the rest of the invocation is mistyped.
-  const helpRequested = readCliBooleanFlag(commandArgv, 'help');
-  const schemaRequested = !helpRequested && readCliBooleanFlag(commandArgv, 'schema');
+  const helpRequested = scan.framework.help;
+  const schemaRequested = !helpRequested && scan.framework.schema;
   return {
-    globals,
-    typedGlobals,
-    route,
-    command,
-    commandArgv,
-    // Follow the routed flag ordering. Dynamic top-level help drops the command arguments.
-    quiet: readCliBooleanFlag(route.topLevelHelp ? routableArgv : commandArgv, 'quiet'),
+    globals: scan.globals,
+    typedGlobals: scan.globals,
+    framework: scan.framework,
+    command: scan.command,
+    commandTokens: scan.commandTokens,
+    separatedBefore: scan.separatedBefore,
+    topLevelHelp: scan.topLevelHelp,
+    ...(scan.helpFilter !== undefined && { helpFilter: scan.helpFilter }),
+    quiet: scan.framework.quiet,
     helpRequested,
     schemaRequested,
   };

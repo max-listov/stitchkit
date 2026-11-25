@@ -153,7 +153,6 @@ describe('composeToolLifecycle', () => {
         beforeHandle: () => void order.push('first'),
         afterHandle: (_ctx, result) => `${String(result)}:first`,
       },
-      undefined,
       {
         beforeHandle: async () => void order.push('second'),
         afterHandle: () => undefined,

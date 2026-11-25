@@ -86,7 +86,7 @@ export interface RuntimeAsyncOperationConfig<
   descriptions?: Partial<Record<AsyncOperationCapability, string>>;
   scopes?: Partial<Record<AsyncOperationCapability, string>>;
   annotations?: Partial<Record<AsyncOperationCapability, EndpointToolAnnotations>>;
-  transports?: Partial<Record<AsyncOperationCapability, readonly ToolTransport[]>>;
+  expose?: Partial<Record<AsyncOperationCapability, readonly ToolTransport[]>>;
   backoff?: number[];
   defaultTimeout?: number;
   timeoutFromId?: (id: z.output<TId>) => number | undefined;

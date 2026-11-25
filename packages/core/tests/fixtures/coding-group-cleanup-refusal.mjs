@@ -33,7 +33,10 @@ try {
 }
 const errors = [];
 console.error = (...values) => errors.push(values.map(String).join(' '));
-const execute = mountAgent([], { runtimeTools: definitions }).run_command.execute;
+const execute = mountAgent([], {
+  access: { open: 'local-operator' },
+  runtimeTools: definitions,
+}).run_command.execute;
 try {
   await execute(
     { executable: 'printf', args: ['ok'] },

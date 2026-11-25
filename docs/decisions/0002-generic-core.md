@@ -8,7 +8,6 @@ updated: 2026-05-20
 
 # ADR 0002 — A generic core: the framework carries no domain model
 
-- **Status:** Accepted
 - **Date:** 2025-05
 
 ## Context

@@ -1,3 +1,4 @@
+import { assertNoLegacyTransports } from '../internal/expose';
 import { connectionMaxResponseBytes, connectionTimeoutMs } from './limits';
 import { resolveMcpLimits } from './operation-limits';
 import { assertConnectionUrl } from './ssrf';
@@ -12,6 +13,7 @@ import type {
 export function defineMcpClientConnection(
   config: McpClientConnectionConfig,
 ): McpClientConnection {
+  assertNoLegacyTransports(config, `defineMcpClientConnection("${config.name}")`);
   if (!config.name.trim()) throw new Error('MCP connection requires a name');
   assertConnectionUrl(config.transport.url, config.name);
   resolveMcpLimits(config);
@@ -20,6 +22,7 @@ export function defineMcpClientConnection(
 
 /** Define one external OpenAPI connection. */
 export function defineOpenApiConnection(config: OpenApiConnectionConfig): OpenApiConnection {
+  assertNoLegacyTransports(config, `defineOpenApiConnection("${config.name}")`);
   if (!config.name.trim()) throw new Error('OpenAPI connection requires a name');
   if (config.baseUrl) assertConnectionUrl(config.baseUrl, config.name);
   connectionTimeoutMs(config.timeoutMs);

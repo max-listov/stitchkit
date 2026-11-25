@@ -67,8 +67,8 @@ Wire each projection where its completion is owned:
 ```ts
 createServer({ services, observability: observability.request })
 
-createMcpHandler({ /* … */ hooks: observability.toolCall })
-mountAgent(service, { hooks: observability.toolCall })
+createMcpHandler({ /* … */ access: { gate: { beforeHandle: authHook } }, hooks: observability.toolCall })
+mountAgent(service, { access: { gate: { beforeHandle: authHook } }, hooks: observability.toolCall })
 ```
 
 Each sink runs fire-and-forget and fails independently: a slow or broken request
@@ -666,6 +666,7 @@ Use the `499/info` access completion or opt-in request cancellation event above.
 ```ts
 createMcpHandler({
   serverInfo, auth, services,
+  access: { gate: { beforeHandle: authHook } },
   hooks: {
     afterToolCall: ({ toolName, result, durationMs }) => {
       metrics.timing(`tool.${toolName}`, durationMs, { ok: String(result.ok) })
@@ -692,6 +693,7 @@ normalisation, stack and `cause` intact:
 ```ts
 createMcpHandler({
   serverInfo, auth, services,
+  access: { gate: { beforeHandle: authHook } },
   hooks: {
     onToolError: ({ toolName, error, endpoint }) => {
       reportToolFailure({
@@ -730,7 +732,11 @@ import { composeLifecycleHooks } from 'stitchkit/server'
 import { composeToolLifecycle } from 'stitchkit/tools'
 
 const httpLifecycle = composeLifecycleHooks(authLifecycle, featurePolicy, auditIdentity)
-const toolLifecycle = composeToolLifecycle(authHook, featureToolPolicy, auditToolIdentity)
+const toolLifecycle = composeToolLifecycle(
+  { beforeHandle: authHook },
+  featureToolPolicy,
+  auditToolIdentity,
+)
 ```
 
 Phases run left to right. `onRequest` stops on the first `Response`; `onError`

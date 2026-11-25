@@ -5,6 +5,7 @@
  * bounded pools, resolutions rate-limited per client and overall.
  */
 import { z } from 'zod';
+import { assertTimerMs } from '../../internal/deadline';
 import { fetchPinnedDocument } from '../../internal/secure-fetch';
 import type { ApplicationType, RegisteredClient } from './provider';
 
@@ -95,7 +96,7 @@ export function createSecureClientMetadataFetcher(
   policy: CimdFetchPolicy = {},
 ): CimdClientMetadataFetcher {
   assertPositiveInteger('cimd.maxBytes', policy.maxBytes ?? DEFAULT_CIMD_MAX_BYTES);
-  assertPositiveNumber('cimd.timeoutMs', policy.timeoutMs ?? DEFAULT_CIMD_TIMEOUT_MS);
+  assertTimerMs('cimd.timeoutMs', policy.timeoutMs);
   assertNonNegativeInteger('cimd.maxRedirects', policy.maxRedirects ?? 3);
   return {
     fetch: (url, headers) =>
@@ -121,10 +122,6 @@ function assertNonNegativeInteger(name: string, value: number): void {
   if (!Number.isInteger(value) || value < 0) {
     throw new Error(`${name} must be a non-negative integer`);
   }
-}
-
-function assertPositiveNumber(name: string, value: number): void {
-  if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be positive`);
 }
 
 type CimdCacheEntry =

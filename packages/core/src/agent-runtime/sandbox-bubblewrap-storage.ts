@@ -55,14 +55,8 @@ export function sandboxStorage(root: string, name: string) {
       try {
         await rename(temporary, directory);
       } catch (error) {
-        if (
-          !(
-            error instanceof Error &&
-            'code' in error &&
-            ['EEXIST', 'ENOTEMPTY'].includes(String(error.code))
-          )
-        )
-          throw error;
+        const code = errnoOf(error);
+        if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw error;
       }
       return { reused: false, templateKey: key };
     } finally {

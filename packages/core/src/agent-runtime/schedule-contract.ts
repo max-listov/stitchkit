@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SqlIntegerSchema } from './sql-rows';
 
 export const AgentScheduleSchema = z
   .object({
@@ -30,9 +31,10 @@ export interface AgentScheduleService {
     timeZone?: string;
   }): Promise<AgentSchedule>;
   cancelSchedule(conversationId: string, id: string): Promise<boolean>;
-  listSchedules(conversationId: string): readonly AgentSchedule[];
+  listSchedules(conversationId: string): Promise<readonly AgentSchedule[]>;
   tick(): Promise<void>;
-  start(): void;
+  /** Arm the timer for the earliest due schedule; resolves once it is armed. */
+  start(): Promise<void>;
   close(): void;
 }
 
@@ -41,12 +43,12 @@ const ScheduleRowSchema = z.object({
   conversation_id: z.string(),
   kind: z.enum(['at', 'after', 'every']),
   next_at: z.string(),
-  interval_ms: z.number().int().positive().nullable(),
+  interval_ms: SqlIntegerSchema.pipe(z.int().positive()).nullable(),
   time_zone: z.string().nullable(),
   input_payload: z.string(),
   state: z.enum(['scheduled', 'cancelled', 'completed', 'failed']),
-  occurrence: z.int().nonnegative(),
-  attempts: z.int().nonnegative(),
+  occurrence: SqlIntegerSchema.pipe(z.int().nonnegative()),
+  attempts: SqlIntegerSchema.pipe(z.int().nonnegative()),
   retry_at: z.string().nullable(),
   last_error: z.string().nullable(),
   created_at: z.string(),

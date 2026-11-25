@@ -98,6 +98,7 @@ describe('path-literal params', () => {
       expect(() => tool.argumentSchema.parse({})).toThrow();
       expect(tool.argumentSchema.parse({ visitorKey: 'v1' })).toEqual({ visitorKey: 'v1' });
       const result = await createToolRunner({
+        lifecycle: {},
         source: transport.toLowerCase() as 'mcp' | 'agent' | 'cli',
       })(tool, { visitorKey: 'v1' });
       expect(result).toEqual({ ok: true, data: { visitorKey: 'v1' } });

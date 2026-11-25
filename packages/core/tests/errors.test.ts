@@ -10,7 +10,6 @@ import {
 } from '../src/entrypoints';
 import {
   AppError,
-  appError,
   defineContract,
   isStitchErrorCode,
   STITCH_ERROR_STATUS,
@@ -58,34 +57,26 @@ describe('stitch error registry', () => {
 
   test('prototype keys remain application errors with a valid 500 status', () => {
     for (const code of ['toString', 'constructor', 'valueOf', '__proto__']) {
-      let error: unknown;
-      try {
-        appError(code);
-      } catch (caught) {
-        error = caught;
-      }
+      const error = new AppError(code);
       expect(AppError.is(error) && error.status).toBe(500);
-      if (!AppError.is(error)) throw new Error('Expected AppError');
       expect(() => Response.json(error.toJSON(), { status: error.status })).not.toThrow();
     }
   });
 
-  test('appError maps a stitch code to its status, an app code to 500', () => {
-    let mna: unknown;
-    try {
-      appError('METHOD_NOT_ALLOWED', 'nope');
-    } catch (e) {
-      mna = e;
-    }
-    expect(AppError.is(mna) && mna.status).toBe(405);
+  test('new AppError derives status from STITCH_ERROR_STATUS, respects explicit status, and defaults unknown codes to 500', () => {
+    const conflictErr = new AppError('CONFLICT', { message: 'already exists' });
+    expect(conflictErr.status).toBe(409);
+    expect(conflictErr.message).toBe('already exists');
 
-    let app: unknown;
-    try {
-      appError('BOT_NOT_FOUND');
-    } catch (e) {
-      app = e;
-    }
-    expect(AppError.is(app) && app.status).toBe(500);
+    const mna = new AppError('METHOD_NOT_ALLOWED', { message: 'nope' });
+    expect(mna.status).toBe(405);
+
+    const overridden = new AppError('CONFLICT', { status: 422, message: 'override' });
+    expect(overridden.status).toBe(422);
+
+    const app = new AppError('BOT_NOT_FOUND');
+    expect(app.status).toBe(500);
+    expect(app.message).toBe('BOT_NOT_FOUND');
   });
 });
 

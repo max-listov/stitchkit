@@ -2,7 +2,8 @@
 title: "ADR 0247: The candidate runs the tests that read release metadata"
 description: The release-candidate preflight adds the few seconds of tests that read the changelog, migrations, maturity table and manifests a release commit changes.
 type: decision
-status: active
+status: accepted
+amends: ["0223"]
 created: 2026-10-05 20:52 +07:00
 updated: 2026-10-05 20:52 +07:00
 ---

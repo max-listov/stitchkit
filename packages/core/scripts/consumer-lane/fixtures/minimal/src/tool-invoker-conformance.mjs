@@ -21,7 +21,10 @@ const contract = defineContract(
 const service = implement(contract, {
   add: ({ input }) => ({ total: input.left + input.right, private: true }),
 });
-const invoker = createToolInvoker(service, { transport: 'AGENT' });
+const invoker = createToolInvoker(service, {
+  access: { open: 'local-operator' },
+  transport: 'AGENT',
+});
 
 assert.deepEqual(await invoker.invokeOrThrow('local_add', { left: 2, right: 3 }), {
   total: 5,

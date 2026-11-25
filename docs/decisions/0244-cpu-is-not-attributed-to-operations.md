@@ -1,6 +1,13 @@
+---
+title: "ADR 0244 — CPU is not attributed to operations"
+type: decision
+status: accepted
+created: 2026-10-05
+updated: 2026-10-05
+---
+
 # 0244 — CPU is not attributed to operations
 
-**Status:** Accepted
 **Date:** 2026-10-05
 
 Builds on ADR 0012 and ADR 0013. Invariants I6, I8 and I13.

@@ -1,14 +1,15 @@
 import { z } from 'zod';
 import {
+  AgentRecordIdSchema,
   type AgentStoreEventEnvelope,
   AgentStoreEventEnvelopeSchema,
 } from '../durability/events';
-import { type AgentMessage, AgentMessageSchema, AgentRecordIdSchema } from './schemas';
+import type { ArchiveProjection } from './archive-projection';
+import { type AgentMessage, AgentMessageSchema } from './schemas';
 import {
   type AgentRecoverableDescriptor,
   type AgentRecoverablePage,
   AgentRecoverablePageSchema,
-  type AgentRuntimeStore,
 } from './store';
 import { createAgentRuntimeStore } from './store-create';
 import {
@@ -45,8 +46,10 @@ interface MemoryTransaction {
   admissions: Map<string, Map<string, AgentAdmissionReceipt>>;
   seeds: Map<string, Map<string, AgentSeedReceipt>>;
   histories: Map<string, AgentMessage[]>;
+  compactedMessageIds: Map<string, Set<string>>;
   events: Map<string, AgentStoreEventEnvelope[]>;
   spills: Map<string, import('./archive-spill').ArchiveSpill[]>;
+  projections: Map<string, ArchiveProjection[]>;
 }
 
 function cloneHeadMap(source: ReadonlyMap<string, AgentRuntimeHead>) {
@@ -79,6 +82,10 @@ function cloneHistoryMap(source: ReadonlyMap<string, readonly AgentMessage[]>) {
   );
 }
 
+function cloneCompactedMap(source: ReadonlyMap<string, ReadonlySet<string>>) {
+  return new Map([...source].map(([key, value]) => [key, new Set(value)]));
+}
+
 type MemoryDriver = AgentRuntimeStoreDriver<MemoryTransaction>;
 
 const memoryConversations: NonNullable<MemoryDriver['conversations']> = {
@@ -89,8 +96,10 @@ const memoryConversations: NonNullable<MemoryDriver['conversations']> = {
       !transaction.admissions.has(id) &&
       !transaction.seeds.has(id) &&
       !transaction.histories.has(id) &&
+      !transaction.compactedMessageIds.has(id) &&
       !transaction.events.has(id) &&
-      !transaction.spills.has(id)
+      !transaction.spills.has(id) &&
+      !transaction.projections.has(id)
     );
   },
   async isPurged(transaction, conversationId) {
@@ -103,8 +112,10 @@ const memoryConversations: NonNullable<MemoryDriver['conversations']> = {
     transaction.admissions.delete(conversationId);
     transaction.seeds.delete(conversationId);
     transaction.histories.delete(conversationId);
+    transaction.compactedMessageIds.delete(conversationId);
     transaction.events.delete(conversationId);
     transaction.spills.delete(conversationId);
+    transaction.projections.delete(conversationId);
   },
 };
 
@@ -219,6 +230,9 @@ const memoryHistory: MemoryDriver['history'] = {
         .filter((message) => !compacted.has(message.id))
         .map((message) => AgentMessageSchema.parse(structuredClone(message))),
     );
+    if (compacted.size > 0)
+      transaction.compactedMessageIds.set(input.conversationId, compacted);
+    else transaction.compactedMessageIds.delete(input.conversationId);
   },
   async load(transaction, conversationId) {
     return (transaction.histories.get(conversationId) ?? []).map((message) =>
@@ -226,8 +240,12 @@ const memoryHistory: MemoryDriver['history'] = {
     );
   },
   async hasMessage(transaction, input) {
-    return (transaction.histories.get(input.conversationId) ?? []).some(
-      (message) => message.id === input.messageId,
+    return (
+      (transaction.histories.get(input.conversationId) ?? []).some(
+        (message) => message.id === input.messageId,
+      ) ||
+      (transaction.compactedMessageIds.get(input.conversationId)?.has(input.messageId) ??
+        false)
     );
   },
   async apply(transaction, rawMutation) {
@@ -287,6 +305,9 @@ const memoryHistory: MemoryDriver['history'] = {
       .filter((index) => index !== undefined);
     const first = positions[0];
     if (first === undefined) throw new Error('Compaction history range disappeared');
+    const compacted = transaction.compactedMessageIds.get(conversationId) ?? new Set<string>();
+    for (const id of mutation.replacedMessageIds) compacted.add(id);
+    transaction.compactedMessageIds.set(conversationId, compacted);
     transaction.histories.set(conversationId, [
       ...current.slice(0, first),
       mutation.summary,
@@ -340,16 +361,17 @@ function scanMemoryRecoverable(
 }
 
 /** In-memory reference adapter backed by the same reducer and driver contract as durable stores. */
-export function createMemoryAgentRuntimeStore(): AgentRuntimeStore &
-  Required<Pick<AgentRuntimeStore, 'branchConversation'>> {
+export function createMemoryAgentRuntimeStore(): ReturnType<typeof createAgentRuntimeStore> {
   let purged = new Set<string>();
   let heads = new Map<string, AgentRuntimeHead>();
   let runs = new Map<string, Map<string, AgentStoredRun>>();
   let admissions = new Map<string, Map<string, AgentAdmissionReceipt>>();
   let seeds = new Map<string, Map<string, AgentSeedReceipt>>();
   let histories = new Map<string, AgentMessage[]>();
+  let compactedMessageIds = new Map<string, Set<string>>();
   let events = new Map<string, AgentStoreEventEnvelope[]>();
   let spills = new Map<string, import('./archive-spill').ArchiveSpill[]>();
+  let projections = new Map<string, ArchiveProjection[]>();
   let transactionTail = Promise.resolve();
 
   const driver: AgentRuntimeStoreDriver<MemoryTransaction> = {
@@ -361,6 +383,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore &
       const transaction = {
         purged: new Set(purged),
         spills: structuredClone(spills),
+        projections: structuredClone(projections),
         heads: cloneHeadMap(heads),
         runs: cloneNestedMap(runs, (record) =>
           AgentStoredRunSchema.parse(structuredClone(record)),
@@ -372,6 +395,7 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore &
           AgentSeedReceiptSchema.parse(structuredClone(receipt)),
         ),
         histories: cloneHistoryMap(histories),
+        compactedMessageIds: cloneCompactedMap(compactedMessageIds),
         events: new Map(
           [...events].map(([conversationId, stored]) => [
             conversationId,
@@ -383,11 +407,13 @@ export function createMemoryAgentRuntimeStore(): AgentRuntimeStore &
         const result = await work(transaction);
         purged = transaction.purged;
         spills = transaction.spills;
+        projections = transaction.projections;
         heads = transaction.heads;
         runs = transaction.runs;
         admissions = transaction.admissions;
         seeds = transaction.seeds;
         histories = transaction.histories;
+        compactedMessageIds = transaction.compactedMessageIds;
         events = transaction.events;
         return result;
       } finally {

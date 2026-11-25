@@ -15,8 +15,17 @@ function store(filename = ':memory:') {
   cleanup.push(() => sqlite.close());
   return sqlite;
 }
-function service(input: Parameters<typeof createAgentScheduleService>[0]) {
-  const schedules = createAgentScheduleService(input);
+function service(
+  input: Omit<
+    Parameters<typeof createAgentScheduleService>[0],
+    'maxActivePerConversation' | 'minIntervalMs'
+  >,
+) {
+  const schedules = createAgentScheduleService({
+    maxActivePerConversation: 100,
+    minIntervalMs: 1,
+    ...input,
+  });
   cleanup.push(() => schedules.close());
   return schedules;
 }
@@ -35,7 +44,13 @@ test('retry survives reopen, preserves key/due time, caps delay and resets after
     keys.push(request.idempotencyKey);
     if (failure) return { status: 'retry', reason: 'temporarily unavailable' };
   };
-  let scheduler = createAgentScheduleService({ sqlite, ...clock, dispatch });
+  let scheduler = createAgentScheduleService({
+    maxActivePerConversation: 100,
+    minIntervalMs: 1,
+    host: sqlite.host,
+    ...clock,
+    dispatch,
+  });
   const schedule = await scheduler.scheduleInput({
     conversationId: 'synthetic',
     input: {},
@@ -44,15 +59,15 @@ test('retry survives reopen, preserves key/due time, caps delay and resets after
   });
   clock.advance(10);
   await scheduler.tick();
-  expect(scheduler.listSchedules('synthetic')[0]).toMatchObject({
+  expect((await scheduler.listSchedules('synthetic'))[0]).toMatchObject({
     nextAt: schedule.nextAt,
     attempts: 1,
   });
   scheduler.close();
   await sqlite.close();
   sqlite = store(filename);
-  scheduler = service({ sqlite, ...clock, dispatch });
-  scheduler.start();
+  scheduler = service({ host: sqlite.host, ...clock, dispatch });
+  await scheduler.start();
   expect(clock.delays.at(-1)).toBe(1_000);
   const expected = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000];
   for (const delay of expected) {
@@ -68,13 +83,13 @@ test('retry survives reopen, preserves key/due time, caps delay and resets after
   failure = false;
   clock.advance(60_000);
   await scheduler.tick();
-  expect(scheduler.listSchedules('synthetic')[0]).toMatchObject({
+  expect((await scheduler.listSchedules('synthetic'))[0]).toMatchObject({
     occurrence: 1,
     attempts: 0,
     state: 'scheduled',
   });
-  expect(scheduler.listSchedules('synthetic')[0]?.retryAt).toBeUndefined();
-  expect(scheduler.listSchedules('synthetic')[0]?.lastError).toBeUndefined();
+  expect((await scheduler.listSchedules('synthetic'))[0]?.retryAt).toBeUndefined();
+  expect((await scheduler.listSchedules('synthetic'))[0]?.lastError).toBeUndefined();
   expect((await events(sqlite)).filter((e) => e.kind === 'schedule/failed')).toHaveLength(9);
 });
 
@@ -83,7 +98,7 @@ test('terminal stops every; cancellation during failure emits no false settlemen
   const clock = scheduleClock();
   let calls = 0;
   const scheduler = service({
-    sqlite,
+    host: sqlite.host,
     ...clock,
     dispatch: () => {
       calls++;
@@ -101,7 +116,7 @@ test('terminal stops every; cancellation during failure emits no false settlemen
   clock.advance(100_000);
   await scheduler.tick();
   expect(calls).toBe(1);
-  expect(scheduler.listSchedules('synthetic')[0]).toMatchObject({
+  expect((await scheduler.listSchedules('synthetic'))[0]).toMatchObject({
     state: 'failed',
     occurrence: 0,
     lastError: 'destination closed',
@@ -114,7 +129,7 @@ test('terminal stops every; cancellation during failure emits no false settlemen
   const entered = Promise.withResolvers<void>();
   const gate = Promise.withResolvers<void>();
   const cancelling = service({
-    sqlite,
+    host: sqlite.host,
     ...clock,
     dispatch: async () => {
       entered.resolve();
@@ -149,7 +164,7 @@ test('hanging dispatch has a deadline while a healthy schedule delivers immediat
   const gate = Promise.withResolvers<void>();
   let signal: AbortSignal | undefined;
   const scheduler = service({
-    sqlite,
+    host: sqlite.host,
     ...clock,
     dispatch: async (request) => {
       if (request.input === 'hang') {
@@ -170,18 +185,16 @@ test('hanging dispatch has a deadline while a healthy schedule delivers immediat
   await Promise.all([entered.promise, healthy.promise]);
   for (let i = 0; i < 30; i++) await Promise.resolve();
   expect(
-    scheduler.listSchedules('synthetic').filter((s) => s.state === 'completed'),
+    (await scheduler.listSchedules('synthetic')).filter((s) => s.state === 'completed'),
   ).toHaveLength(1);
   clock.advance(30_000);
   clock.fire();
   await tick;
   expect(signal?.aborted).toBeTrue();
-  expect(
-    scheduler
-      .listSchedules('synthetic')
-      .map((s) => s.state)
-      .sort(),
-  ).toEqual(['completed', 'scheduled']);
+  expect((await scheduler.listSchedules('synthetic')).map((s) => s.state).sort()).toEqual([
+    'completed',
+    'scheduled',
+  ]);
   const before = await events(sqlite);
   gate.resolve();
   await Promise.resolve();
@@ -200,7 +213,7 @@ test.each(['success', 'failure'])(
     const gate = Promise.withResolvers<void>();
     const admitted = new Set<string>();
     const a = service({
-      sqlite: aStore,
+      host: aStore.host,
       ...clock,
       dispatch: async (request) => {
         admitted.add(request.idempotencyKey);
@@ -210,7 +223,7 @@ test.each(['success', 'failure'])(
       },
     });
     const b = service({
-      sqlite: bStore,
+      host: bStore.host,
       ...clock,
       dispatch: (request) => {
         admitted.add(request.idempotencyKey);
@@ -233,7 +246,7 @@ test.each(['success', 'failure'])(
     gate.resolve();
     await pending;
     expect(await events(bStore)).toEqual(before);
-    expect(b.listSchedules('synthetic')[0]?.occurrence).toBe(1);
+    expect((await b.listSchedules('synthetic'))[0]?.occurrence).toBe(1);
   },
 );
 
@@ -272,7 +285,9 @@ test('crash after durable admission replays the key without adding another logic
     });
   };
   const a = createAgentScheduleService({
-    sqlite: firstStore,
+    maxActivePerConversation: 100,
+    minIntervalMs: 1,
+    host: firstStore.host,
     ...clock,
     dispatch: async (request) => {
       await accept(firstStore, request.idempotencyKey);
@@ -289,7 +304,7 @@ test('crash after durable admission replays the key without adding another logic
   await firstStore.close();
   const secondStore = store(filename);
   const b = service({
-    sqlite: secondStore,
+    host: secondStore.host,
     ...clock,
     dispatch: (request) => accept(secondStore, request.idempotencyKey),
   });
@@ -299,7 +314,7 @@ test('crash after durable admission replays the key without adding another logic
   expect(
     (await secondStore.store.loadSnapshot('synthetic')).messages.map((m) => m.id),
   ).toEqual(['scheduled-input']);
-  expect(b.listSchedules('synthetic')[0]?.state).toBe('completed');
+  expect((await b.listSchedules('synthetic'))[0]?.state).toBe('completed');
   expect((await events(secondStore)).filter((e) => e.kind === 'schedule/fired')).toHaveLength(
     1,
   );
@@ -310,7 +325,7 @@ test('a dispatch returning anything but an outcome delivered; failures stop at m
   const sqlite = store();
   const jobs: string[] = [];
   const delivering = service({
-    sqlite,
+    host: sqlite.host,
     ...clock,
     // `push` returns the new length: a number, not an outcome.
     dispatch: (request) => jobs.push(request.idempotencyKey),
@@ -324,13 +339,13 @@ test('a dispatch returning anything but an outcome delivered; failures stop at m
   await delivering.tick();
   await delivering.tick();
   expect(jobs).toHaveLength(1);
-  expect(delivering.listSchedules('synthetic')[0]?.state).toBe('completed');
+  expect((await delivering.listSchedules('synthetic'))[0]?.state).toBe('completed');
 
   const failing = createBunSqliteAgentRuntimeStore({ filename: ':memory:' });
   cleanup.push(() => failing.close());
   let calls = 0;
   const scheduler = service({
-    sqlite: failing,
+    host: failing.host,
     ...clock,
     maxAttempts: 3,
     dispatch: () => {
@@ -351,7 +366,7 @@ test('a dispatch returning anything but an outcome delivered; failures stop at m
   // A recurring schedule gives up the occurrence, not itself: after three
   // failures it moves to its next slot and keeps firing.
   expect(calls).toBeGreaterThan(3);
-  const [schedule] = scheduler.listSchedules('synthetic');
+  const [schedule] = await scheduler.listSchedules('synthetic');
   expect(schedule?.state).toBe('scheduled');
   expect(schedule?.lastError?.length).toBeLessThanOrEqual(1_001);
   const failures = (await events(failing)).filter((event) => event.kind === 'schedule/failed');
@@ -362,7 +377,7 @@ test('a dispatch returning anything but an outcome delivered; failures stop at m
   cleanup.push(() => once.close());
   let onceCalls = 0;
   const oneOff = service({
-    sqlite: once,
+    host: once.host,
     ...clock,
     maxAttempts: 2,
     dispatch: () => {
@@ -380,5 +395,5 @@ test('a dispatch returning anything but an outcome delivered; failures stop at m
     await oneOff.tick();
   }
   expect(onceCalls).toBe(2);
-  expect(oneOff.listSchedules('synthetic')[0]?.state).toBe('failed');
+  expect((await oneOff.listSchedules('synthetic'))[0]?.state).toBe('failed');
 });

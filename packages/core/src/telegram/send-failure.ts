@@ -164,7 +164,7 @@ function statusOf(value: unknown, depth = 0): number | undefined {
 function retryAfterOf(value: unknown, depth = 0): number | undefined {
   if (!isRecord(value) || depth > 4) return undefined;
   const direct = numberAt(value.parameters, ['retry_after']);
-  if (direct !== undefined) return direct;
+  if (direct !== undefined && direct >= 0) return direct;
   const nested = value.cause ?? value.response ?? value.error;
   return nested === value ? undefined : retryAfterOf(nested, depth + 1);
 }
@@ -175,7 +175,9 @@ function descriptionOf(value: unknown, depth = 0): string {
   if (value instanceof Error) {
     const own =
       isRecord(value) && typeof value.description === 'string' ? value.description : '';
-    const nested = descriptionOf(value.cause, depth + 1);
+    const nestedSource =
+      value.cause ?? (isRecord(value) ? (value.response ?? value.error) : undefined);
+    const nested = nestedSource === value ? '' : descriptionOf(nestedSource, depth + 1);
     return [own, value.message, nested].filter(Boolean).join(' ');
   }
   if (!isRecord(value)) return '';

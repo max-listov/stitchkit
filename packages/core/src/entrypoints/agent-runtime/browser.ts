@@ -15,3 +15,4 @@ export {
 export * from '../../agent-runtime/control-schema';
 export * from '../../agent-runtime/event-schema';
 export * from '../../agent-runtime/schemas';
+export { AgentRecordIdSchema } from '../../durability/events';

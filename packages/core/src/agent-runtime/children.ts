@@ -3,11 +3,11 @@ import type { AgentChildManager } from './children-contract';
 import { interruptChild, sendMessage, stopChildren } from './children-control';
 import { spawnChild } from './children-spawn';
 import {
+  type AgentChildManagerConfig,
   activeChild,
   bounded,
   createChildManagerState,
   listChildren,
-  type SqliteAgentChildManagerConfig,
 } from './children-state';
 import { recordStepUsage } from './children-usage';
 
@@ -32,16 +32,14 @@ export {
 } from './children-contract';
 
 /**
- * Child conversations over the SQLite store.
+ * Child conversations over a SQL store's companion host — SQLite or Postgres.
  *
  * Only the assembly lives here: the shared state and row access in
  * `children-state`, spawning in `children-spawn`, usage accounting in
  * `children-usage`, stop, interrupt and messages in `children-control`, and
  * the parent-owned blocking relay in `child-blocking`.
  */
-export function createSqliteAgentChildManager(
-  input: SqliteAgentChildManagerConfig,
-): AgentChildManager {
+export function createAgentChildManager(input: AgentChildManagerConfig): AgentChildManager {
   const state = createChildManagerState(input);
   const list = (parentConversationId: string) => listChildren(state, parentConversationId);
   const { retireChildBlocking, listChildBlocking, respondToChildBlocking } =
@@ -58,7 +56,7 @@ export function createSqliteAgentChildManager(
   return {
     spawnChild: (request) => spawnChild(state, retireChildBlocking, request),
     listChildren: list,
-    recordStepUsage: (request) => recordStepUsage(state, request),
+    recordStepUsage: (request) => recordStepUsage(state, retireChildBlocking, request),
     stopChildren: (parentConversationId) =>
       stopChildren(state, retireChildBlocking, parentConversationId),
     sendMessage: (parentConversationId, childConversationId, message) =>
@@ -66,7 +64,7 @@ export function createSqliteAgentChildManager(
     interruptChild: (parentConversationId, childConversationId) =>
       interruptChild(state, retireChildBlocking, parentConversationId, childConversationId),
     waitChild: async (childConversationId) => {
-      await state.settlements.get(childConversationId);
+      await state.settlements.get(childConversationId)?.ended;
     },
     listChildBlocking,
     respondToChildBlocking,

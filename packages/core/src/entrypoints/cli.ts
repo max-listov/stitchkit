@@ -11,7 +11,12 @@
  * ```ts
  * #!/usr/bin/env node
  * import { createCli } from 'stitchkit/cli';
- * await createCli({ name: 'myapp', version: '1.0.0', services: [...] });
+ * await createCli({
+ *   name: 'myapp',
+ *   version: '1.0.0',
+ *   services: [...],
+ *   access: { gate: authGate },
+ * });
  * ```
  *
  * and point your app's `package.json` `bin` at it.
@@ -24,7 +29,14 @@ export {
   type ParsedCliArgs,
   parseCliArgs,
 } from '../tools/cli/args';
-export { type CliArgvRoute, routeCliArgv } from '../tools/cli/args-route';
+export type { CliArgvRoute, CliRouteOptions } from '../tools/cli/args-classify';
+export { routeCliArgv } from '../tools/cli/args-route';
+export {
+  type CliFrameworkOptions,
+  type CliInvocationScan,
+  type CliInvocationScanOptions,
+  scanCliInvocation,
+} from '../tools/cli/args-scan';
 export type { CliResultView } from '../tools/cli/args-view';
 export { CliArgumentError } from '../tools/cli/argument-error';
 export {
@@ -44,6 +56,8 @@ export {
   defineCliResult,
 } from '../tools/cli/command';
 export {
+  type CliCommandName,
+  type CliCommandSettings,
   type CliConfig,
   type CliInvocationResult,
   type CliInvoker,

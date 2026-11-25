@@ -3,8 +3,9 @@ title: "ADR 0116: A selected Unix transport never becomes TCP"
 description: "Unix client routing is an explicit owned Fetch transport on Bun and Node; redirects, failures and unsupported legacy configuration cannot fall back to TCP."
 type: decision
 status: accepted
+amendedBy: ["0318"]
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-11-24
 ---
 
 # ADR 0116 — A selected Unix transport never becomes TCP
@@ -31,7 +32,7 @@ const transport = createUnixClientTransport({ socketPath: '/run/worker.sock' })
 const http = createHttpClient({ baseUrl: 'http://worker', fetch: transport.fetch })
 ```
 
-The path is absolute, every redirect remains on that path, requests and
+The path is absolute (amended by ADR 0318: capped at 103 UTF-8 bytes, with real non-symlink parent directory owned by the caller with `(mode & 0o022) === 0` and matching socket owner verified before connect, throwing non-retryable `UNIX_TARGET_REFUSED` with `delivery: 'not-dispatched'`), every redirect remains on that path, requests and
 responses have byte ceilings, response headers have time and byte ceilings,
 connections are finite, and `close()` owns active work. Failures report whether
 dispatch did not begin, may have begun, or a response was received; the adapter

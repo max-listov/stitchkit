@@ -168,6 +168,7 @@ describe('an MCP handler', () => {
   test('retains no authenticated principal of a request it has answered', async () => {
     const principals: WeakRef<object>[] = [];
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () => {
         const principal = { owner: 'alpha' };
@@ -205,6 +206,7 @@ describe('an MCP handler', () => {
   test('answers a request that arrives while it closes with 503', async () => {
     let release: () => void = () => undefined;
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'test', version: '1' },
       auth: () =>
         new Promise<{ owner: string }>((resolve) => (release = () => resolve({ owner: 'a' }))),

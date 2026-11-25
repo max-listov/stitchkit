@@ -9,8 +9,8 @@ updated: 2026-08-07
 
 # ADR 0056 — Entity cache shapes are declared
 
-- **Status:** Accepted — extends the optional cache bridge without turning it
-  into a domain cache framework
+**Relations:** extends the optional cache bridge without turning it into a domain cache framework
+
 - **Date:** 2026-08-07
 
 ## Context

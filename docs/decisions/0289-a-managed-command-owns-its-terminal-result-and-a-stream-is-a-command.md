@@ -3,6 +3,7 @@ title: "ADR 0289: A managed command owns its terminal result, and a stream is a 
 description: A CLI declares present and exitCode for a contract command where it is mounted, every command prints its schema, and a contract stream runs as a command that prints a line per item.
 type: decision
 status: accepted
+amendedBy: ["0311"]
 created: 2026-11-11 13:51 +07:00
 updated: 2026-11-11 13:51 +07:00
 ---
@@ -23,7 +24,9 @@ binary and kept copies of the schemas. A contract stream could not be a command 
 ## Decision
 
 **The result policy is declared where the CLI is mounted.** `CliConfig.results` maps a command
-name to `present` and `exitCode`, typed against the operation's output by `defineCliResult`. It is
+name to `present` and `exitCode`, typed against the operation's output by `defineCliResult`
+(amended by [ADR 0311](0311-planned-breaking-release-access-expose-and-clean-boundaries.md):
+moved under `CliConfig.commandSettings[name].result`). It is
 not a contract field: a client and a server print nothing, and two CLIs over one contract may
 print differently. One function applies the policy for native and managed commands, so the
 guarantees are identical — after output validation, `CLI_PRESENTATION_FAILED` on a failed

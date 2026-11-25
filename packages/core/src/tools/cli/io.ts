@@ -1,5 +1,5 @@
 import { writeSync } from 'node:fs';
-import { isRecord } from '../../internal/typed';
+import { errnoOf } from '../../internal/errno';
 import type { CliConfig } from './config';
 import { readPipedStdin } from './stdin';
 
@@ -19,7 +19,8 @@ export interface CliIo {
 
 /** The write error of a pipe whose reading end has closed. */
 function isReaderGone(error: unknown): boolean {
-  return isRecord(error) && (error.code === 'EPIPE' || error.code === 'ERR_STREAM_DESTROYED');
+  const code = errnoOf(error);
+  return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED';
 }
 
 export function createCliIo(
@@ -58,7 +59,7 @@ export function createCliIo(
         offset += writeSync(fd, bytes, offset, bytes.length - offset);
       } catch (error) {
         if (fd === 1 && isReaderGone(error)) throw error;
-        if (isRecord(error) && error.code === 'EAGAIN') {
+        if (errnoOf(error) === 'EAGAIN') {
           // A synchronous pause: the descriptor is full and there is nothing
           // else this invocation may do until the reader drains it.
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);

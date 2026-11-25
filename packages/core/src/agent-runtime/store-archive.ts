@@ -4,8 +4,10 @@ import {
   AgentStoreEventPageSchema,
   ReadAgentStoreEventsSchema,
 } from '../durability/events';
+import { isRuntimeSnapshotEntry } from './archive-projection';
 import { replayBranchEvents } from './branch-replay';
 import { AgentSnapshotSchema } from './schemas';
+import { assertSourceCapabilities } from './store-capabilities';
 import {
   AgentRuntimeHeadSchema,
   type AgentRuntimeStoreDriver,
@@ -44,6 +46,23 @@ export async function importConversation<TRANSACTION>(
   bytes: Uint8Array,
 ): Promise<{ conversationId: string; events: number }> {
   const archive = decodeAgentConversationArchive(bytes);
+  const snapshotEntry = archive.projections.find(isRuntimeSnapshotEntry);
+  const snapshot =
+    snapshotEntry === undefined
+      ? undefined
+      : AgentSnapshotSchema.parse(snapshotEntry.snapshot);
+  if (snapshot && snapshot.conversationId !== archive.conversationId) {
+    throw new TypeError('Conversation archive snapshot belongs to another conversation');
+  }
+  // Replayed before the transaction: what the archive needs of the driver is
+  // known, and refused, before a single row is written.
+  const replay =
+    snapshot && replayBranchEvents(archive.conversationId, archive.events, snapshot);
+  assertSourceCapabilities(driver, {
+    spills: archive.spills.length,
+    projections: archive.projections.filter((entry) => !isRuntimeSnapshotEntry(entry)).length,
+    compacted: replay?.baseline?.compacted?.length ?? 0,
+  });
   return driver.transaction(async (transaction) => {
     const existing = await driver.events.list(transaction, {
       conversationId: archive.conversationId,
@@ -66,18 +85,7 @@ export async function importConversation<TRANSACTION>(
         throw new TypeError('Conversation archive event sequence is not contiguous');
       }
     }
-    const snapshotEntry = archive.projections.find(
-      (entry) =>
-        typeof entry === 'object' &&
-        entry !== null &&
-        !Array.isArray(entry) &&
-        entry.archiveType === 'runtime-snapshot',
-    );
-    if (snapshotEntry && typeof snapshotEntry === 'object' && !Array.isArray(snapshotEntry)) {
-      const snapshot = AgentSnapshotSchema.parse(snapshotEntry.snapshot);
-      if (snapshot.conversationId !== archive.conversationId) {
-        throw new TypeError('Conversation archive snapshot belongs to another conversation');
-      }
+    if (snapshot && replay) {
       if (snapshot.version > 0 || snapshot.messages.length > 0 || snapshot.runs.length > 0) {
         const outcome = await driver.head.compareAndSwap(transaction, {
           conversationId: snapshot.conversationId,
@@ -92,7 +100,6 @@ export async function importConversation<TRANSACTION>(
           throw new TypeError('Conversation archive snapshot target is not empty');
         }
       }
-      const replay = replayBranchEvents(archive.conversationId, archive.events, snapshot);
       await persistRuntimeReplay(driver, transaction, replay);
       for (const run of snapshot.runs) {
         const terminalAssistant = snapshot.messages.find(

@@ -2,6 +2,7 @@ import { createStdioMcpServer } from '../../src/tools/mcp/stdio';
 import { bindStdioProcessSignals } from '../../src/tools/mcp/stdio-signals';
 
 const stdio = await createStdioMcpServer({
+  access: { open: 'local-operator' },
   serverInfo: { name: 'stitchkit-stdio-signal-test', version: '1' },
   auth: null,
   services: [],

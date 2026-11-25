@@ -94,7 +94,7 @@ function runtimeConfig(
       instructionTokens: { provenance: 'unavailable' as const },
       contextDecision: 'unavailable' as const,
     }),
-    tools: () => mountAgent([], { runtimeTools }),
+    tools: () => mountAgent([], { access: { open: 'local-operator' }, runtimeTools }),
     publish: (event: AgentRuntimeEvent) => void events.push(event),
     loop: { maxSteps: 2 },
   };

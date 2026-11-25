@@ -32,81 +32,155 @@
  */
 import type { ZodObject, z } from 'zod';
 import type { ServiceDef, StitchLogger } from '../../server/types';
-import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../execute-hooks';
-import { type ToolResult, toolErrorFromResult, toolResultFromError } from '../execute-result';
+import { resolveOptionalCliToolAccess, type ToolAccess } from '../access';
+import type { ErrorHintFn, ToolCallHooks } from '../execute-hooks';
+import { type ToolResult, toolResultFromError } from '../execute-result';
 import { toolSurfaceOutputSchema } from '../internal/tool-view';
-import { createToolRunner, type MountableTool } from '../mount';
+import type { MountableTool } from '../mount';
 import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
 import { collectToolSurface } from '../surface';
-import type { CliRunOptions } from './args';
+import { parseCliGlobalValues } from './args-fields';
 import {
   type CliCommandDefinition,
-  type CliResultPolicy,
-  cliCommandResultPolicy,
   cliCommandReturnsResult,
-  cliCommandSuccessExitCode,
-  executeCliCommand,
+  executeNativeCommand,
+  shapeCliInvocationResult,
 } from './command';
-import { cliExitCode, type ExitCodeMap } from './format';
+import { invokerCommandShapeIssue, nativeCliDescriptor } from './command-shape';
+import type { ExitCodeMap } from './format';
 import {
   applyCliPresentationPolicy,
   assertCliPoliciesResolved,
+  assertNoLegacyCliPolicyKeys,
+  type CliCommandName,
   type CliCommandPresentation,
   type CliPresentationPolicyConfig,
+  cliPassthroughField,
   cliResultPolicy,
 } from './policy';
+import { assertCliAuthConfig, createCliToolRunner, resolveCliIdentity } from './runner';
 import { type CliStreamOperation, collectCliStreams } from './stream-surface';
+import { unknownCliCommand } from './unavailable';
 
-export type CliSurfaceSource<TAuth, TValue> =
+export type CliSurfaceSource<
+  TAuth,
+  TValue,
+  TGlobals extends Record<string, unknown> = Record<string, unknown>,
+> =
   | readonly TValue[]
-  | ((auth: Awaited<TAuth> | undefined) => readonly TValue[]);
+  | ((auth: Awaited<TAuth> | undefined, globals: TGlobals) => readonly TValue[]);
+
+type CliServicesFactory<TAuth, TGlobals extends ZodObject> = (
+  auth: Awaited<TAuth> | undefined,
+  globals: z.output<TGlobals>,
+) => readonly ServiceDef[];
+
+type CliRuntimeToolsFactory<TAuth, TGlobals extends ZodObject> = (
+  auth: Awaited<TAuth> | undefined,
+  globals: z.output<TGlobals>,
+) => readonly RuntimeToolDefinition[];
+
+interface CliInvokerBaseConfig<
+  TAuth = unknown,
+  TContext extends Record<string, unknown> = Record<string, unknown>,
+  TGlobals extends ZodObject = ZodObject,
+  TServices extends readonly ServiceDef[] | undefined = readonly ServiceDef[],
+  TRuntime extends
+    | readonly RuntimeToolDefinition[]
+    | undefined = readonly RuntimeToolDefinition[],
+  TCommands extends
+    | readonly CliCommandDefinition[]
+    | undefined = readonly CliCommandDefinition[],
+> extends CliPresentationPolicyConfig<CliCommandName<TServices, TRuntime, TCommands>> {
+  /** Program name — used in diagnostics. */
+  name: string;
+  /** CLI-only executable commands, dispatched before the managed surface. */
+  commands?: TCommands;
+  /**
+   * Identity for the single CLI invocation — resolved ONCE at startup (from an
+   * env var / token file), like a stdio MCP server, not per call. A value or a
+   * promise of one.
+   */
+  auth?: TAuth | Promise<TAuth>;
+  /**
+   * Lazily resolve identity only when a managed command/surface actually needs
+   * it. Receives the application's global options, so `--caller <key>` can
+   * select WHICH identity this invocation speaks as.
+   */
+  resolveAuth?: (globals: z.output<TGlobals>) => TAuth | Promise<TAuth>;
+  /**
+   * The application's OWN global options — invocation context that belongs to
+   * no single operation: which identity key, which checkout, which profile.
+   * Declared as a Zod object of optional fields; `createCli` lifts these flags
+   * out of argv wherever they stand (before or after the command name),
+   * validates them against this schema and keeps them out of every operation's
+   * arguments. A name that collides with a framework option or with a field of
+   * any command is a startup error, never silent shadowing.
+   */
+  globalOptions?: TGlobals;
+  /**
+   * Context merged into every handler. Typed against the app's context shape
+   * when the CLI is built via `createToolkit<AppContext>()`.
+   */
+  context?: (auth: Awaited<TAuth> | undefined, globals: z.output<TGlobals>) => TContext;
+  /** Explicit cancellation for this invocation; applications may bind SIGINT to it. */
+  signal?: AbortSignal;
+  /** Tool-call observability hooks — `afterToolCall` fires for every result,
+   *  `onToolError` for the raw value behind a thrown one. */
+  hooks?: ToolCallHooks;
+  logger?: StitchLogger;
+  /** Coerce JSON-stringified arrays/objects in arguments. Default: true. */
+  coerceJsonArgs?: boolean;
+  /** Global error hint appended to every failed command's error. */
+  errorHint?: ErrorHintFn;
+  /** Override exit codes per `ToolResult.code`, merged over the defaults. */
+  exitCodes?: ExitCodeMap;
+}
+
+type CliSurfaceAccessConfig<
+  TAuth,
+  TGlobals extends ZodObject,
+  TServices extends readonly ServiceDef[],
+  TRuntime extends readonly RuntimeToolDefinition[],
+> =
+  | {
+      /** Contract services exposed as commands — absent on a native-only CLI. */
+      services?: never;
+      /** Pathless managed operations — absent on a native-only CLI. */
+      runtimeTools?: never;
+      /** Optional on a native-only CLI (native commands do not run through the tool lifecycle). */
+      access?: ToolAccess;
+    }
+  | {
+      /** Contract services exposed as commands — may depend on resolved identity and globals. */
+      services?: TServices | CliServicesFactory<TAuth, TGlobals>;
+      /** Pathless managed operations. CLI exposure always requires `expose: ['CLI']`. */
+      runtimeTools?: TRuntime | CliRuntimeToolsFactory<TAuth, TGlobals>;
+      /**
+       * Required access policy for every managed CLI command — pass `{ gate }` with
+       * `beforeHandle` or explicitly mark the surface `{ open: 'public' | 'local-operator' | 'remote' }`.
+       */
+      access: ToolAccess;
+    };
 
 /**
  * What an invocation needs to exist: the surface, the identity behind it and
  * the policies every call runs under. Everything about a terminal — argv,
  * writers, `--wait`, downloads — belongs to `CliConfig`, which extends this.
+ *
+ * When `services` or `runtimeTools` are declared, `access` is required; a
+ * native-only CLI (`commands` only) does not run the tool lifecycle and needs
+ * no `access`.
  */
-export interface CliInvokerConfig<
+export type CliInvokerConfig<
   TAuth = unknown,
   TContext extends Record<string, unknown> = Record<string, unknown>,
   TGlobals extends ZodObject = ZodObject,
-> extends CliPresentationPolicyConfig {
-  /** Program name — used in diagnostics. */
-  name: string;
-  /** Contract services exposed as commands — may depend on the resolved identity. */
-  services?: CliSurfaceSource<TAuth, ServiceDef>;
-  /** Pathless managed operations. CLI exposure always requires `transports: ['CLI']`. */
-  runtimeTools?: CliSurfaceSource<TAuth, RuntimeToolDefinition>;
-  /** CLI-only executable commands, dispatched before the managed surface. */
-  commands?: readonly CliCommandDefinition[];
-  auth?: TAuth | Promise<TAuth>;
-  resolveAuth?: (globals: z.output<TGlobals>) => TAuth | Promise<TAuth>;
-  globalOptions?: TGlobals;
-  context?: (auth: Awaited<TAuth> | undefined, globals: z.output<TGlobals>) => TContext;
-  signal?: AbortSignal;
-  hooks?: ToolCallHooks;
-  lifecycle?: ToolLifecycle;
-  logger?: StitchLogger;
-  coerceJsonArgs?: boolean;
-  errorHint?: ErrorHintFn;
-  exitCodes?: ExitCodeMap;
-  passthrough?: Record<string, string>;
-}
-
-/**
- * The application's global options, validated by the schema that declared them.
- *
- * `{}` is not a safe stand-in for "none given": a schema with `.default()`
- * fields turns an empty object into a populated one, and those values are what
- * `resolveAuth` and `context` read.
- */
-function parseCliGlobals<TGlobals extends ZodObject>(
-  schema: TGlobals | undefined,
-  globals: Record<string, unknown> | undefined,
-): z.output<TGlobals> {
-  if (!schema) return (globals ?? {}) as z.output<TGlobals>;
-  return schema.parse(globals ?? {});
-}
+  TServices extends readonly ServiceDef[] = readonly ServiceDef[],
+  TRuntime extends readonly RuntimeToolDefinition[] = readonly RuntimeToolDefinition[],
+  TCommands extends readonly CliCommandDefinition[] = readonly CliCommandDefinition[],
+> = CliInvokerBaseConfig<TAuth, TContext, TGlobals, TServices, TRuntime, TCommands> &
+  CliSurfaceAccessConfig<TAuth, TGlobals, TServices, TRuntime>;
 
 /** What one parsed invocation produced — never printed, never exited on. */
 export interface CliInvocationResult {
@@ -162,23 +236,7 @@ export function cliInvocationResult(
   toolName: string,
   config: { errorHint?: ErrorHintFn; exitCodes?: ExitCodeMap },
 ): CliInvocationResult {
-  if (result.ok) return { ok: true, exitCode: 0, data: result.data };
-  const normalized = toolErrorFromResult(result);
-  const hints: string[] = [];
-  if (result.hint) hints.push(result.hint);
-  const global = config.errorHint?.(toolName, result.code);
-  if (global) hints.push(global);
-  return {
-    ok: false,
-    exitCode: cliExitCode(result, config.exitCodes),
-    error: {
-      code: result.code,
-      message: normalized.message,
-      ...(result.details !== undefined && { details: result.details }),
-      ...(hints.length > 0 && { hint: hints.join(' ') }),
-      ...(result.retryable !== undefined && { retryable: result.retryable }),
-    },
-  };
+  return shapeCliInvocationResult(result, toolName, config);
 }
 
 /**
@@ -192,60 +250,81 @@ export async function createCliInvoker<
   TAuth = unknown,
   TContext extends Record<string, unknown> = Record<string, unknown>,
   TGlobals extends ZodObject = ZodObject,
+  TServices extends readonly ServiceDef[] = never,
+  TRuntime extends readonly RuntimeToolDefinition[] = never,
+  TCommands extends readonly CliCommandDefinition[] = never,
 >(
-  config: CliInvokerConfig<TAuth, TContext, TGlobals>,
+  config: CliInvokerConfig<TAuth, TContext, TGlobals, TServices, TRuntime, TCommands>,
   globals?: Record<string, unknown>,
 ): Promise<CliInvoker> {
-  // Parsed through the application's own schema, exactly as `createCli` parses
-  // what it lifts out of argv. Handing the raw object through would skip every
-  // declared default, and those defaults reach `resolveAuth` and `context` —
-  // so a line of a stream would run as a different identity, or against a
-  // different base URL, than the same call typed at a prompt. That is the one
-  // divergence this whole seam exists to prevent.
-  const typedGlobals = parseCliGlobals(config.globalOptions, globals);
-  const auth = await (config.resolveAuth ? config.resolveAuth(typedGlobals) : config.auth);
-  // Only the half that returns a value. A printing command stays unreachable
-  // here and answers UNKNOWN_OPERATION, which is the honest answer: it has no result to
-  // give and running it would write into a caller that never asked for output.
-  const natives = new Map<string, CliCommandDefinition>(
-    (config.commands ?? [])
-      .filter(cliCommandReturnsResult)
-      .map((definition) => [definition.name, definition]),
+  const lifecycle = resolveOptionalCliToolAccess('createCliInvoker', config);
+  assertNoLegacyCliPolicyKeys(config);
+  assertCliAuthConfig(config);
+  const typedGlobals = parseCliGlobalValues(config.globalOptions, globals);
+  const auth = await resolveCliIdentity(config, typedGlobals)();
+  // Only the half that returns a value is invocable in process. Every native
+  // command is still validated and passed to `buildCliSurface` so duplicates
+  // and invalid `commandSettings` fail at startup while `result` on native stays refused.
+  const natives = new Map<string, CliCommandDefinition>();
+  const allNativeHelp = new Map<string, CliCommandPresentation>();
+  for (const definition of config.commands ?? []) {
+    const descriptor = applyCliPresentationPolicy(
+      definition.name,
+      nativeCliDescriptor(definition),
+      config,
+    );
+    invokerCommandShapeIssue(
+      definition.name,
+      descriptor,
+      allNativeHelp.has(definition.name),
+      cliPassthroughField(config, definition.name),
+    );
+    allNativeHelp.set(definition.name, descriptor);
+    if (cliCommandReturnsResult(definition)) natives.set(definition.name, definition);
+  }
+  const { tools, help } = buildCliSurface(
+    config,
+    auth,
+    typedGlobals,
+    allNativeHelp,
+    new Set(),
+    invokerCommandShapeIssue,
   );
-  const nativeHelp = new Map(
-    [...natives].map(([name, definition]) => [
-      name,
-      { description: definition.description, argumentSchema: {}, presentationSchema: {} },
-    ]),
-  );
-  const { tools, help } = buildCliSurface(config, auth, new Map(), new Set());
-  const runTool = createToolRunner({
-    source: 'cli',
-    toolSurface: true,
-    context: { ...config.context?.(auth, typedGlobals), signal: config.signal },
-    hooks: config.hooks,
-    lifecycle: config.lifecycle,
-    coerceJsonArgs: config.coerceJsonArgs,
-  });
+  const runTool = createCliToolRunner(config, lifecycle, auth, typedGlobals);
   return {
-    commands: [...nativeHelp, ...help].map(([name, presentation]) => ({
-      name,
-      description: presentation.description,
-    })),
+    commands: [
+      ...[...natives].map(([name, definition]) => ({
+        name,
+        description: definition.description,
+      })),
+      ...[...help]
+        .filter(
+          ([name, presentation]) =>
+            !allNativeHelp.has(name) && presentation.unavailableReason === undefined,
+        )
+        .map(([name, presentation]) => ({
+          name,
+          description: presentation.description,
+        })),
+    ],
     invoke: async (command, args) => {
       const native = natives.get(command);
-      if (native) return runNativeCommand(native, args, config, typedGlobals);
+      if (native) {
+        return executeNativeCommand(
+          native,
+          args,
+          config.coerceJsonArgs ?? true,
+          typedGlobals,
+          {
+            mode: 'in-process',
+            errorHint: config.errorHint,
+            exitCodes: config.exitCodes,
+          },
+        );
+      }
       const tool = tools.get(command);
       if (!tool) {
-        return cliInvocationResult(
-          {
-            ok: false,
-            code: 'UNKNOWN_OPERATION',
-            details: { message: `Unknown command "${command}"`, operation: command },
-          },
-          command,
-          config,
-        );
+        return cliInvocationResult(unknownCliCommand(command), command, config);
       }
       let result: ToolResult;
       try {
@@ -253,95 +332,13 @@ export async function createCliInvoker<
       } catch (error) {
         result = toolResultFromError(error);
       }
-      return withSuccessExitCode(
-        cliInvocationResult(result, command, config),
-        cliResultPolicy(config, command),
+      return shapeCliInvocationResult(
         result,
         command,
         config,
+        cliResultPolicy(config, command),
       );
     },
-  };
-}
-
-/**
- * Give a successful invocation the exit code its command's policy declares —
- * through the function the printed path uses, so the two cannot disagree.
- */
-function withSuccessExitCode(
-  invocation: CliInvocationResult,
-  policy: CliResultPolicy<unknown> | undefined,
-  result: ToolResult,
-  command: string,
-  config: { errorHint?: ErrorHintFn; exitCodes?: ExitCodeMap },
-): CliInvocationResult {
-  if (!result.ok || policy === undefined) return invocation;
-  try {
-    return { ...invocation, exitCode: cliCommandSuccessExitCode(policy, result.data) };
-  } catch (error) {
-    return cliInvocationResult(
-      toolResultFromError(new Error('CLI result policy failed', { cause: error })),
-      command,
-      config,
-    );
-  }
-}
-
-/**
- * The run options a native command sees in process.
- *
- * Every terminal-shaped switch is off, because none of them has a meaning
- * without a terminal: `--json` chooses a printing format, `--wait` and
- * `--output-dir` are already refused for native commands on the command line,
- * and `--help` and `--dry-run` print instead of executing. A handler reading
- * these gets the same answer it would get from a bare invocation.
- */
-const IN_PROCESS_RUN_OPTIONS: Readonly<CliRunOptions> = Object.freeze({
-  json: false,
-  wait: false,
-  quiet: true,
-  dryRun: false,
-  help: false,
-});
-
-async function runNativeCommand<
-  TAuth,
-  TContext extends Record<string, unknown>,
-  TGlobals extends ZodObject,
->(
-  definition: CliCommandDefinition,
-  args: Record<string, unknown>,
-  config: CliInvokerConfig<TAuth, TContext, TGlobals>,
-  globals: Readonly<Record<string, unknown>>,
-): Promise<CliInvocationResult> {
-  let out = '';
-  let err = '';
-  const result = await executeCliCommand(
-    definition,
-    args,
-    IN_PROCESS_RUN_OPTIONS,
-    {
-      stdout: (text) => {
-        out += text;
-      },
-      stderr: (text) => {
-        err += text;
-      },
-    },
-    config.coerceJsonArgs ?? true,
-    globals,
-  );
-  const invocation = withSuccessExitCode(
-    cliInvocationResult(result, definition.name, config),
-    cliCommandResultPolicy(definition),
-    result,
-    definition.name,
-    config,
-  );
-  if (out === '' && err === '') return invocation;
-  return {
-    ...invocation,
-    written: { ...(out !== '' && { stdout: out }), ...(err !== '' && { stderr: err }) },
   };
 }
 
@@ -359,6 +356,7 @@ export function buildCliSurface<
 >(
   config: CliInvokerConfig<TAuth, TContext, TGlobals>,
   auth: Awaited<TAuth> | undefined,
+  typedGlobals: z.output<TGlobals>,
   nativeHelp: Map<string, CliCommandPresentation>,
   applicationGlobalNames: ReadonlySet<string>,
   shapeIssue?: (
@@ -373,11 +371,15 @@ export function buildCliSurface<
   streams: Map<string, CliStreamOperation>;
   help: Map<string, CliCommandPresentation>;
 } {
+  resolveOptionalCliToolAccess('buildCliSurface', config);
+  assertNoLegacyCliPolicyKeys(config);
   const services =
-    typeof config.services === 'function' ? config.services(auth) : (config.services ?? []);
+    typeof config.services === 'function'
+      ? config.services(auth, typedGlobals)
+      : (config.services ?? []);
   const runtimeTools =
     typeof config.runtimeTools === 'function'
-      ? config.runtimeTools(auth)
+      ? config.runtimeTools(auth, typedGlobals)
       : (config.runtimeTools ?? []);
   const tools = new Map<string, MountableTool>();
   const help = new Map(nativeHelp);
@@ -394,7 +396,7 @@ export function buildCliSurface<
       mountable.name,
       descriptor,
       help.has(mountable.name),
-      config.passthrough?.[mountable.name],
+      cliPassthroughField(config, mountable.name),
       applicationGlobalNames,
     );
     if (issue !== undefined) {
@@ -420,14 +422,16 @@ export function buildCliSurface<
       name,
       descriptor,
       help.has(name),
-      config.passthrough?.[name],
+      cliPassthroughField(config, name),
       applicationGlobalNames,
     );
     if (issue !== undefined) throw new Error(issue);
     help.set(name, descriptor);
   }
   assertCliPoliciesResolved(help, config);
-  for (const [name, policy] of Object.entries(config.results ?? {})) {
+  for (const [name, settings] of Object.entries(config.commandSettings ?? {})) {
+    const policy = settings?.result;
+    if (!policy) continue;
     if (!tools.has(name) && !streams.has(name)) {
       throw new Error(
         `[stitchkit] CLI result policy "${name}" targets a command that is not managed; a native command declares present and exitCode on defineCliCommand`,

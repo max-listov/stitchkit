@@ -8,6 +8,7 @@
  * reads `error_code` and `parameters.retry_after` before it ever reads prose.
  */
 
+import { abortReason } from '../internal/abort-race';
 import { BOT_TOKEN_SECRET } from '../internal/secret-shapes';
 import { isRecord } from '../internal/typed';
 import { isTelegramNotDispatchedError } from './not-dispatched';
@@ -93,7 +94,7 @@ export async function callTelegramBotApi(call: TelegramBotApiCall): Promise<unkn
       ...(call.signal && { signal: call.signal }),
     });
   } catch (error) {
-    if (call.signal?.aborted) throw call.signal.reason;
+    if (call.signal?.aborted) throw abortReason(call.signal);
     // Its message names no URL; it is what tells a sender the request never left.
     if (isTelegramNotDispatchedError(error)) throw error;
     const kind = error instanceof Error ? error.name : 'Error';

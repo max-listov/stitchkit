@@ -1,7 +1,8 @@
 import type { ToolSet } from 'ai';
 import { z } from 'zod';
 import type { ServiceDef } from '../server/types';
-import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from '../tools/execute-hooks';
+import type { ToolAccess } from '../tools/access';
+import type { ErrorHintFn, ToolCallHooks } from '../tools/execute-hooks';
 import type { ToolExtend } from '../tools/mount';
 import type { DeferredAgentRuntimeToolDefinition } from '../tools/runtime-tool-declaration';
 import type { AgentRuntimePrepareStep, AgentRuntimeRunContext } from './runtime';
@@ -53,11 +54,13 @@ export interface DeferredAgentToolManifestEntry {
 export interface DeferredAgentToolMountConfig {
   context?: Record<string, unknown>;
   hooks?: ToolCallHooks;
-  lifecycle?: ToolLifecycle;
-  extend?: ToolExtend;
+  /**
+   * Required access policy for every mounted tool call — pass `{ gate }` with
+   * `beforeHandle` or explicitly mark the surface `{ open }`.
+   */
+  access: ToolAccess;
   coerceJsonArgs?: boolean;
   onOutputStrip?: (toolName: string, paths: string[]) => void;
-  flattenUnionInput?: boolean;
   errorHint?: ErrorHintFn;
 }
 export interface DeferredAgentToolSurfaceDefinition {
@@ -103,6 +106,15 @@ export interface DeferredAgentToolCommonConfig<CONTEXT> {
     maxActiveTools: number;
     maxSchemaBytes: number;
   };
+  /**
+   * How every tool's input is advertised — `mountAgent`'s projection options. They belong to
+   * the surface, not to a mount: the manifest the selector ranks and `maxSchemaBytes` measures
+   * is built with them, so the ceiling holds for the schemas exactly as they are sent.
+   */
+  extend?: ToolExtend;
+  flattenUnionInput?: boolean;
+  /** Advertise inputs with no `$ref`, recursion unrolled this many levels. */
+  inputRecursionDepth?: number;
   observe?(event: DeferredAgentToolEvent): void;
 }
 export type DeferredAgentToolSurfaceConfig<CONTEXT> = DeferredAgentToolCommonConfig<CONTEXT> &
@@ -124,7 +136,7 @@ export interface DeferredResolvedSurface {
 export interface DeferredAgentToolController<CONTEXT> {
   mount(
     runContext: AgentRuntimeRunContext<CONTEXT>,
-    config?: DeferredAgentToolMountConfig,
+    config: DeferredAgentToolMountConfig,
   ): ToolSet;
   prepareStep(
     applicationPrepareStep?: AgentRuntimePrepareStep<CONTEXT>,

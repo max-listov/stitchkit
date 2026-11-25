@@ -73,6 +73,7 @@ export interface ErrorHookBase {
   ) => unknown | Promise<unknown>;
 }
 
+/** Mapping strategy translating framework error codes to public wire error codes. */
 export type ErrorHookMapping<TWireCode extends string> =
   | {
       /** A vocabulary returned by `defineErrors`; its generated map is canonical. */
@@ -103,6 +104,7 @@ export type ErrorHookMapping<TWireCode extends string> =
       unmappedCode?: TWireCode | ((code: StitchErrorCode) => TWireCode);
     };
 
+/** Configuration options for `createErrorHook`. */
 export type ErrorHookConfig<TWireCode extends string = string> = ErrorHookBase &
   ErrorHookMapping<TWireCode>;
 

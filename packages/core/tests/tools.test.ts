@@ -128,23 +128,32 @@ describe('validateMcpSchemas', () => {
 describe('mountMcp', () => {
   test('registers a clean service without throwing', () => {
     const server = new McpServer({ name: 't', version: '1' });
-    expect(() => mountMcp(server, notesService)).not.toThrow();
+    expect(() =>
+      mountMcp(server, notesService, { access: { open: 'local-operator' } }),
+    ).not.toThrow();
   });
 
   test('throws (default policy) on an incompatible schema', () => {
     const server = new McpServer({ name: 't', version: '1' });
-    expect(() => mountMcp(server, badService)).toThrow('JSON Schema');
+    expect(() => mountMcp(server, badService, { access: { open: 'local-operator' } })).toThrow(
+      'JSON Schema',
+    );
   });
 
   test('throws (default policy) on a non-object input', () => {
     const server = new McpServer({ name: 't', version: '1' });
-    expect(() => mountMcp(server, unionService)).toThrow('must be an object schema');
+    expect(() =>
+      mountMcp(server, unionService, { access: { open: 'local-operator' } }),
+    ).toThrow('must be an object schema');
   });
 
   test('skip policy drops the tool without throwing', () => {
     const server = new McpServer({ name: 't', version: '1' });
     expect(() =>
-      mountMcp(server, badService, { schemaValidation: { policy: 'skip' } }),
+      mountMcp(server, badService, {
+        access: { open: 'local-operator' },
+        schemaValidation: { policy: 'skip' },
+      }),
     ).not.toThrow();
   });
 
@@ -152,6 +161,7 @@ describe('mountMcp', () => {
     const server = new McpServer({ name: 't', version: '1' });
     expect(() =>
       mountMcp(server, notesService, {
+        access: { open: 'local-operator' },
         extend: { schema: { title: z.string() }, resolve: () => ({}) },
       }),
     ).toThrow('extend conflict');
@@ -166,6 +176,7 @@ describe('buildMcpServer', () => {
     expect(() =>
       buildMcpServer(
         {
+          access: { open: 'local-operator' },
           serverInfo: { name: 't', version: '1' },
           services: [notesService],
           extend: { schema: { title: z.string() }, resolve: () => ({}) },
@@ -178,26 +189,34 @@ describe('buildMcpServer', () => {
 
 describe('mountAgent', () => {
   test('accepts a single service', () => {
-    const tools = mountAgent(notesService);
+    const tools = mountAgent(notesService, { access: { open: 'local-operator' } });
     expect(Object.keys(tools).sort()).toEqual(['create_note', 'list_notes']);
   });
 
   test('accepts an array of services', () => {
-    const tools = mountAgent([notesService]);
+    const tools = mountAgent([notesService], { access: { open: 'local-operator' } });
     expect(Object.keys(tools).length).toBe(2);
   });
 
   test('accepts a non-object (union) input — the agent surface supports unions', () => {
-    expect(() => mountAgent(unionService)).not.toThrow();
-    expect(Object.keys(mountAgent(unionService))).toEqual(['send_msg']);
+    expect(() =>
+      mountAgent(unionService, { access: { open: 'local-operator' } }),
+    ).not.toThrow();
+    expect(
+      Object.keys(mountAgent(unionService, { access: { open: 'local-operator' } })),
+    ).toEqual(['send_msg']);
   });
 
   test('a multipart endpoint never becomes a tool', () => {
-    expect(Object.keys(mountAgent(multipartService))).toEqual([]);
+    expect(
+      Object.keys(mountAgent(multipartService, { access: { open: 'local-operator' } })),
+    ).toEqual([]);
   });
 
   test('throws on a cross-service tool-name collision', () => {
-    expect(() => mountAgent(collidingServices())).toThrow('Duplicate agent tool name');
+    expect(() =>
+      mountAgent(collidingServices(), { access: { open: 'local-operator' } }),
+    ).toThrow('Duplicate agent tool name');
   });
 });
 
@@ -230,7 +249,11 @@ describe('createToolRunner — the shared mount machinery', () => {
     );
     const [mountable] = collectTools(svc, 'AGENT', undefined);
     if (!mountable) throw new Error('expected a tool');
-    const runner = createToolRunner({ source: 'agent', context: { source: 'mcp' } });
+    const runner = createToolRunner({
+      lifecycle: {},
+      source: 'agent',
+      context: { source: 'mcp' },
+    });
     await runner(mountable, {});
     expect(captured).toBe('agent');
   });
@@ -246,7 +269,7 @@ describe('MCP round-trip (in-memory transport)', () => {
 
   test('the official legacy codec adapts a non-object output to { result }', async () => {
     const server = new McpServer({ name: 't', version: '1' });
-    mountMcp(server, notesService);
+    mountMcp(server, notesService, { access: { open: 'local-operator' } });
     const client = await connect(server);
     const res = await client.callTool({ name: 'list_notes', arguments: {} });
     expect(res.structuredContent).toEqual({ result: ['a'] });
@@ -256,9 +279,11 @@ describe('MCP round-trip (in-memory transport)', () => {
   test('lifecycle.beforeHandle blocks a tool call end-to-end through mountMcp', async () => {
     const server = new McpServer({ name: 't', version: '1' });
     mountMcp(server, notesService, {
-      lifecycle: {
-        beforeHandle: () => {
-          throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
+      access: {
+        gate: {
+          beforeHandle: () => {
+            throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
+          },
         },
       },
     });

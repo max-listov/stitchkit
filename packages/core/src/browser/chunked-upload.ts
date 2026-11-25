@@ -18,7 +18,9 @@
  */
 
 import type { ClientRequestOptions, UploadProgress } from '../contract/client-types';
-import { sleep } from '../internal/timers';
+import { assertTimerMs } from '../internal/deadline';
+import { randomHex } from '../internal/random-hex';
+import { MAX_TIMER_MS, sleep } from '../internal/timers';
 import { ApiError } from './api-error';
 
 /** How far a chunked upload is, in bytes of the file. */
@@ -63,7 +65,7 @@ export interface ChunkedUploadConfig<TResult, TPart = Blob> {
   /** Bytes per part; every part but the last is exactly this long. */
   readonly chunkBytes: number;
   /**
-   * Default `crypto.randomUUID()`, fresh per call. Pass a stable one — the id
+   * Default 32 random hex characters, fresh per call. Pass a stable one — the id
    * of the app's own job — to resume after a restart instead of sending again.
    */
   readonly uploadId?: string;
@@ -112,6 +114,7 @@ export async function uploadInChunks<TResult, TPart = Blob>(
   config: ChunkedUploadConfig<TResult, TPart>,
 ): Promise<TResult> {
   const { file, chunkBytes, signal } = config;
+  assertTimerMs('uploadInChunks retryDelayMs', config.retryDelayMs, { min: 0 });
   if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0) {
     throw new TypeError('uploadInChunks: chunkBytes must be a positive integer');
   }
@@ -121,7 +124,8 @@ export async function uploadInChunks<TResult, TPart = Blob>(
   if (file.size === 0) throw new TypeError('uploadInChunks: the file is empty');
   const totalBytes = file.size;
   const chunkCount = Math.ceil(totalBytes / chunkBytes);
-  const uploadId = config.uploadId ?? crypto.randomUUID();
+  // Not `crypto.randomUUID`: React Native and pages on plain HTTP do not have it.
+  const uploadId = config.uploadId ?? randomHex(16);
   const retries = config.retries ?? 3;
   const retryDelayMs = config.retryDelayMs ?? 1_000;
   const report = (sentBytes: number, index: number, attempt: number): void => {
@@ -190,7 +194,8 @@ async function repeating<T>(
       if (signal?.aborted || attempt > retries || !isRetryableUploadFailure(error))
         throw error;
       try {
-        await sleep(retryDelayMs * 2 ** (attempt - 1), signal);
+        // The pause doubles per repeat, up to the longest a timer holds; past it a timer fires at once.
+        await sleep(Math.min(retryDelayMs * 2 ** (attempt - 1), MAX_TIMER_MS), signal);
       } catch (aborted) {
         throwIfAborted(signal);
         throw aborted;

@@ -2,7 +2,8 @@
 title: A safelisted body is accepted only from an allowed origin
 description: A JSON body under text/plain is the one thing a dying document can still send to another origin, and the one thing any site can send with the user's cookies. An endpoint may opt into the first only under a server-side Origin check that refuses the second.
 type: decision
-status: active
+status: accepted
+amendedBy: ["0299"]
 created: 2026-09-06
 updated: 2026-09-06
 ---

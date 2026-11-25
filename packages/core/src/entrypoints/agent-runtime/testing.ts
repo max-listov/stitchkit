@@ -7,6 +7,7 @@ export {
 } from '../../agent-runtime/fault-bench';
 export { inspectAgentRun } from '../../agent-runtime/run-assertions';
 export {
+  type AgentStoreConformanceCapabilities,
   type AgentStoreConformanceConfig,
   type AgentStoreConformanceContext,
   runAgentStoreConformance,

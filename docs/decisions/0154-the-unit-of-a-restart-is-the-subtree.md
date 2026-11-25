@@ -2,7 +2,8 @@
 title: The unit of a restart is the subtree, not the resource
 description: Replacing one managed resource takes down every resource that transitively depends on it, in reverse dependency order, because a dependant left running holds a handle to a closed generation.
 type: decision
-status: active
+status: accepted
+amendedBy: ["0157"]
 created: 2026-09-03
 updated: 2026-09-03
 ---

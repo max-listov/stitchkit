@@ -1,5 +1,6 @@
-import { raceAbort } from '../internal/abort-race';
-import { MAX_TIMER_MS } from '../internal/timers';
+import { abortReason } from '../internal/abort-race';
+import { assertTimerMs } from '../internal/deadline';
+import { type SteppedTimerClock, scheduleAt } from '../internal/timers';
 import { TelegramNotDispatchedError } from './not-dispatched';
 import type { TelegramOutboundCallOptions, TelegramOutboundLane } from './outbound-budget';
 import type { OutboundPauses } from './outbound-pauses';
@@ -25,13 +26,60 @@ export interface OutboundQueue {
   ): Promise<void>;
   /** Wake the drain: a pause changed what it was sleeping on. */
   wake(): void;
-  wait(milliseconds: number, signal?: AbortSignal): Promise<void>;
+  /** Wait until `at` on the budget's clock, however far: `scheduleAt` steps under the timer ceiling. */
+  waitUntil(at: number, signal?: AbortSignal): Promise<void>;
   counts(): {
     readonly granted: number;
     readonly messages: number;
     readonly queued: number;
     readonly queuedBulk: number;
   };
+}
+
+/**
+ * Wait until `at` on the budget's clock, however far: its clock and sleeper become the stepped
+ * timer of `scheduleAt`. A step the sleeper refuses for a reason of its own, not the
+ * cancellation, fails the wait with it.
+ */
+function waitOnClock(
+  now: () => number,
+  sleepFor: (milliseconds: number, signal?: AbortSignal) => Promise<void>,
+  at: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortReason(signal));
+      return;
+    }
+    if (at <= now()) {
+      resolve();
+      return;
+    }
+    let settled = false;
+    const settle = (finish: () => void): void => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      finish();
+    };
+    const clock: SteppedTimerClock = {
+      now,
+      schedule(callback, delayMs) {
+        const step = new AbortController();
+        sleepFor(delayMs, step.signal).then(callback, (error: unknown) => {
+          if (!step.signal.aborted) settle(() => reject(error));
+        });
+        return { cancel: () => step.abort() };
+      },
+    };
+    const timer = scheduleAt(clock, at, () => settle(resolve));
+    const onAbort = (): void => {
+      timer.cancel();
+      settle(() => reject(signal ? abortReason(signal) : undefined));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export function createOutboundQueue(
@@ -49,13 +97,8 @@ export function createOutboundQueue(
   /** When the drain's current wait ends, while it is waiting. */
   let wakingAt = Number.POSITIVE_INFINITY;
 
-  const wait = async (milliseconds: number, signal?: AbortSignal): Promise<void> => {
-    const delay = Math.min(MAX_TIMER_MS, Math.max(0, milliseconds));
-    if (delay <= 0) return;
-    const pending = sleepFor(delay, signal);
-    if (signal) await raceAbort(pending, signal);
-    else await pending;
-  };
+  const waitUntil = (at: number, signal?: AbortSignal): Promise<void> =>
+    waitOnClock(now, sleepFor, at, signal);
 
   const wake = (): void => {
     const current = waking;
@@ -119,7 +162,7 @@ export function createOutboundQueue(
           waking = controller;
           wakingAt = at;
           try {
-            await wait(at - current, controller.signal);
+            await waitUntil(at, controller.signal);
           } catch (error) {
             if (!controller.signal.aborted) {
               for (const waiter of queue.splice(0)) {
@@ -155,7 +198,7 @@ export function createOutboundQueue(
     reject: (reason: unknown) => void,
   ): void => {
     waiter.expiry = new AbortController();
-    void wait(maxWaitMs, waiter.expiry.signal).then(
+    void waitUntil(now() + maxWaitMs, waiter.expiry.signal).then(
       () => {
         if (!queue.includes(waiter)) return;
         remove(waiter);
@@ -178,15 +221,12 @@ export function createOutboundQueue(
           new RangeError('cost must be an integer of at least one message'),
         );
       }
-      if (signal?.aborted) return Promise.reject(signal.reason);
+      if (signal?.aborted) return Promise.reject(abortReason(signal));
       const maxWaitMs = options?.maxWaitMs;
-      if (
-        maxWaitMs !== undefined &&
-        (!Number.isSafeInteger(maxWaitMs) || maxWaitMs < 1 || maxWaitMs > MAX_TIMER_MS)
-      ) {
-        return Promise.reject(
-          new RangeError(`maxWaitMs must be an integer from 1 to ${MAX_TIMER_MS}`),
-        );
+      try {
+        assertTimerMs('maxWaitMs', maxWaitMs);
+      } catch (error) {
+        return Promise.reject(error);
       }
       const chat = options?.chatId === undefined ? undefined : String(options.chatId);
       return new Promise<void>((resolve, reject) => {
@@ -202,7 +242,7 @@ export function createOutboundQueue(
           const onAbort = (): void => {
             remove(waiter);
             detach(waiter);
-            reject(signal.reason);
+            reject(abortReason(signal));
           };
           waiter.onAbort = onAbort;
           signal.addEventListener('abort', onAbort, { once: true });
@@ -215,7 +255,7 @@ export function createOutboundQueue(
       });
     },
     wake,
-    wait,
+    waitUntil,
     counts: () => ({
       granted,
       messages,

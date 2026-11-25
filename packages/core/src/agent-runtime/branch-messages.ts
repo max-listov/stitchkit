@@ -1,79 +1,71 @@
 import { z } from 'zod';
+import { BRANCH_RUNTIME_REFERENCE_KEYS } from './branch-contract';
 import type { BranchIdentities } from './branch-identities';
-import { ShellOutputSchema } from './coding-tool-contract';
-import { AGENT_CODING_TOOL_NAMES } from './coding-tools';
+import { branchRuntimeToolRecord } from './branch-runtime-tools';
 import type { AgentMessage, AgentMessagePart, AgentRun } from './schemas';
+
+/** Source identities a `'retain'` key may carry as a record of the past. */
+const RETAINABLE = new Set(['conversation', 'run', 'message']);
 
 /**
  * Application JSON is data, never an undocumented runtime reference codec.
  *
- * A key named like a runtime reference refuses the branch: the value cannot be
- * rekeyed, and carried as it is it would name the source. A host that uses such
- * a name for data of its own declares the key in `applicationKeys`; even then a
- * value that names an identity of the source conversation refuses.
+ * A key named like a runtime reference refuses the branch unless the host
+ * declares it in `applicationKeys`: the value cannot be rekeyed, and carried as
+ * it is it could name the source. Under a `'refuse'` key a value that names
+ * anything of the source still refuses. Under a `'retain'` key a value naming
+ * the source conversation, a run or a message crosses unchanged as a record of
+ * the past; one naming a spill, an application file or another runtime
+ * identity refuses, because what it grants crosses by its own contract.
+ * Refusals name the key's path inside the payload, never its value, and are
+ * collected: the branch goes on reading and answers them all at once.
  */
 export function branchOpaqueJson(
   ids: BranchIdentities,
   value: z.infer<ReturnType<typeof z.json>>,
+  path = '',
 ): typeof value {
-  if (Array.isArray(value)) return value.map((entry) => branchOpaqueJson(ids, entry));
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      branchOpaqueJson(ids, entry, `${path}[${index}]`);
+    });
+    return value;
+  }
   if (value !== null && typeof value === 'object') {
-    for (const key of [
-      'reference',
-      'conversationId',
-      'runId',
-      'messageId',
-      'callId',
-      'toolCallId',
-      'approvalId',
-      'operationId',
-      'artifactId',
-    ]) {
+    for (const key of BRANCH_RUNTIME_REFERENCE_KEYS) {
       if (!(key in value)) continue;
+      const at = path ? `${path}.${key}` : key;
+      const mode = ids.applicationKey(key);
+      if (mode === undefined) {
+        ids.refuse({
+          code: 'application-key-undeclared',
+          message: `Branch cannot rekey an opaque payload containing ${key} at ${at}; declare it in applicationKeys if it is application data`,
+          key,
+          path: at,
+        });
+        continue;
+      }
       const entry = value[key];
-      if (!ids.isApplicationKey(key))
-        throw new TypeError(
-          `Branch cannot rekey an opaque payload containing ${key}; declare it in applicationKeys if it is application data`,
-        );
-      if (typeof entry === 'string' && ids.isSourceIdentity(entry))
-        throw new TypeError(
-          `Branch cannot carry a source identity under the application key ${key}`,
-        );
+      if (typeof entry !== 'string') continue;
+      for (const kind of ids.sourceIdentitiesOf(entry)) {
+        if (mode === 'retain' && RETAINABLE.has(kind)) continue;
+        ids.refuse({
+          code: 'application-key-source-identity',
+          message:
+            mode === 'retain'
+              ? `Branch cannot carry a source ${kind} under the application key ${key} at ${at}`
+              : `Branch cannot carry a source identity under the application key ${key} at ${at}`,
+          key,
+          path: at,
+        });
+        break;
+      }
     }
-    for (const entry of Object.values(value)) branchOpaqueJson(ids, entry);
+    for (const [key, entry] of Object.entries(value))
+      branchOpaqueJson(ids, entry, path ? `${path}.${key}` : key);
   }
   return value;
 }
-
-const ArtifactReadSchema = z
-  .object({
-    reference: z.string(),
-    offset: z.int().nonnegative(),
-    maxBytes: z.int().positive().optional(),
-  })
-  .strict();
-const ArtifactSearchSchema = z
-  .object({
-    reference: z.string(),
-    query: z.string(),
-    maxMatches: z.int().positive().optional(),
-  })
-  .strict();
-const ArtifactReadResultSchema = z
-  .object({
-    reference: z.string(),
-    offset: z.int().nonnegative(),
-    text: z.string(),
-    bytes: z.int().nonnegative(),
-    totalBytes: z.int().nonnegative().optional(),
-  })
-  .strict();
-const ArtifactSearchResultSchema = z
-  .object({
-    reference: z.string(),
-    matches: z.array(z.object({ line: z.int().positive(), text: z.string() }).strict()),
-  })
-  .strict();
 
 export function branchToolJson(
   ids: BranchIdentities,
@@ -81,35 +73,16 @@ export function branchToolJson(
   value: z.infer<ReturnType<typeof z.json>>,
   output: boolean,
 ) {
-  if (
-    name === AGENT_CODING_TOOL_NAMES.readOutput ||
-    name === AGENT_CODING_TOOL_NAMES.searchOutput
-  ) {
-    const parsed = output
-      ? name === AGENT_CODING_TOOL_NAMES.readOutput
-        ? ArtifactReadResultSchema.parse(value)
-        : ArtifactSearchResultSchema.parse(value)
-      : name === AGENT_CODING_TOOL_NAMES.readOutput
-        ? ArtifactReadSchema.parse(value)
-        : ArtifactSearchSchema.parse(value);
-    return { ...parsed, reference: ids.reference('spill', parsed.reference) };
-  }
-  if (output && name === AGENT_CODING_TOOL_NAMES.runCommand) {
-    const parsed = ShellOutputSchema.parse(value);
-    return {
-      ...parsed,
-      ...(parsed.artifact && {
-        artifact: {
-          ...parsed.artifact,
-          reference: ids.reference('spill', parsed.artifact.reference),
-        },
-      }),
-    };
-  }
-  return branchOpaqueJson(ids, value);
+  return branchRuntimeToolRecord(ids, name, value, output) ?? branchOpaqueJson(ids, value);
 }
 
 function branchPart(ids: BranchIdentities, part: AgentMessagePart): AgentMessagePart {
+  return 'toolName' in part && typeof part.toolName === 'string'
+    ? ids.within({ toolName: part.toolName }, () => branchPartAt(ids, part))
+    : branchPartAt(ids, part);
+}
+
+function branchPartAt(ids: BranchIdentities, part: AgentMessagePart): AgentMessagePart {
   switch (part.type) {
     case 'file':
       return { ...part, reference: ids.fileReference(part.reference) };
@@ -157,7 +130,7 @@ export function branchMessage(
 ): AgentMessage {
   if (message.conversationId !== sourceConversationId)
     throw new TypeError('Branch message belongs to another conversation');
-  return {
+  return ids.within({ messageId: message.id }, () => ({
     ...message,
     id: ids.reference('message', message.id),
     conversationId: ids.conversationId,
@@ -166,7 +139,7 @@ export function branchMessage(
     ...(message.metadata && {
       metadata: z.record(z.string(), z.json()).parse(branchOpaqueJson(ids, message.metadata)),
     }),
-  };
+  }));
 }
 
 export function branchRun(

@@ -1,3 +1,5 @@
+import { assertTimerMs } from '../internal/deadline';
+
 /**
  * The browser's side: is the page still the build the server is serving?
  *
@@ -101,6 +103,8 @@ export function browserReleaseHost(): ReleaseWatcherHost {
 
 export function createReleaseWatcher(config: ReleaseWatcherConfig): ReleaseWatcher {
   const policy = config.policy ?? 'when-hidden';
+  // Zero is a reload that does not wait for its moment.
+  assertTimerMs('Release watcher maxDeferMs', config.maxDeferMs, { min: 0 });
   const maxDeferMs = config.maxDeferMs ?? 15 * 60 * 1000;
   const ignore = new Set(config.ignore ?? ['dev']);
   const host = config.host ?? browserReleaseHost();

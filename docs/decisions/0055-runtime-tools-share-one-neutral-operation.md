@@ -3,16 +3,17 @@ title: "ADR 0055 — Runtime tools share one neutral operation"
 description: Pathless MCP and Agent tools use one framework runner and transport-specific presentation callbacks.
 type: decision
 status: accepted
+amendedBy: ["0311"]
 created: 2026-08-07
 updated: 2026-08-07
 ---
 
 # ADR 0055 — Runtime tools share one neutral operation
 
-- **Status:** Accepted — extends the shared runner in ADR 0014, protected native
-  registration in [ADR 0048](0048-framework-owned-native-mcp-registration.md)
-  and per-call isolation in
-  [ADR 0045](0045-a-tool-call-runs-in-its-own-context.md)
+**Relations:** extends the shared runner in ADR 0014, protected native registration in
+[ADR 0048](0048-framework-owned-native-mcp-registration.md) and per-call isolation in
+[ADR 0045](0045-a-tool-call-runs-in-its-own-context.md)
+
 - **Date:** 2026-08-07
 
 ## Context
@@ -41,7 +42,8 @@ presentation is wired to the AI SDK's `toModelOutput`, preserving the neutral
 execute/UI result while giving the model text or file content.
 
 Presentation requires an output schema, so its input is always the validated
-value. `transports` defaults to both surfaces. Duplicate and invalid names fail
+value. `transports` defaults to both surfaces (amended by [ADR 0311](0311-planned-breaking-release-access-expose-and-clean-boundaries.md):
+renamed to `expose`, with legacy `transports` refused at runtime). Duplicate and invalid names fail
 at mount, including collisions with contract tools.
 
 MCP `rawTools` and direct AI SDK `tool()` remain explicit low-level

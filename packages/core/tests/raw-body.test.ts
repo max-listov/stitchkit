@@ -196,7 +196,9 @@ describe('rawBody contract endpoints', () => {
     const service = implement(contract, {
       receive: () => undefined,
     });
-    expect(Object.keys(mountAgent(service))).toEqual([]);
+    expect(Object.keys(mountAgent(service, { access: { open: 'local-operator' } }))).toEqual(
+      [],
+    );
   });
 
   test('rejects incoherent rawBody declarations at definition time', () => {

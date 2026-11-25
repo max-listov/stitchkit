@@ -8,6 +8,7 @@ if (!baseUrl) throw new Error('Missing fixture origin');
 const controller = new AbortController();
 process.once('SIGTERM', () => controller.abort(new Error('private-caller-reason')));
 await createCli({
+  access: { open: 'local-operator' },
   name: 'remote-probe',
   version: '1',
   argv,

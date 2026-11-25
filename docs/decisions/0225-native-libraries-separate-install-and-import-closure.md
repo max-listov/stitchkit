@@ -1,7 +1,7 @@
 ---
 title: Native libraries separate install and import closure
 description: Neutral public imports may be bundled into a library without making the backend kernel a runtime dependency.
-status: active
+status: accepted
 created: 2026-10-02 00:07 +07:00
 updated: 2026-10-02 00:07 +07:00
 type: decision

@@ -80,6 +80,15 @@ test('destroying stdin closes the pipe, so a reader of it sees the end', async (
   expect(child.exitCode).toBe(0);
 });
 
+test('a child that exits without reading stdin has it destroyed, as a Node child does', async () => {
+  const child = spawnShell('exit 0');
+  child.stdout.resume();
+  child.stderr.resume();
+  await once(child, 'exit');
+  // A writer left with an open stdin would queue into a pipe nobody reads.
+  expect(child.stdin.destroyed).toBe(true);
+});
+
 test('a spawn failure Node throws synchronously is thrown, not reported', () => {
   expect(() =>
     spawnOwnedCommand({ executable: '/etc/passwd/x', args: [], group: true }),

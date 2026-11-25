@@ -23,7 +23,8 @@
  * about a transport, the same kind of fact as a bearer token being well-formed.
  */
 
-import { digestsEqual, hmacSha256, toHex } from './crypto';
+import { secretsEqual } from '../internal/secret-equal';
+import { hmacSha256, toHex } from './crypto';
 import { parseTelegramUser, type TelegramUser } from './user';
 
 const encoder = new TextEncoder();
@@ -142,7 +143,7 @@ export async function verifyTelegramInitData(
   const expected = toHex(await hmacSha256(secretKey, dataCheckString));
   // The signature is checked before anything else is believed. An expiry read
   // out of an unsigned string is a number the sender chose.
-  if (!digestsEqual(expected, hash.toLowerCase())) {
+  if (!secretsEqual(expected, hash.toLowerCase())) {
     return { valid: false, reason: 'signature-mismatch' };
   }
 

@@ -1,6 +1,13 @@
+---
+title: "ADR 0245 — CLI publication is an evolving leaf, not part of the stable CLI"
+type: decision
+status: accepted
+created: 2026-10-05
+updated: 2026-10-05
+---
+
 # 0245 — CLI publication is an evolving leaf, not part of the stable CLI
 
-**Status:** Accepted
 **Date:** 2026-10-05
 
 Builds on ADR 0198, ADR 0230 and ADR 0238. Invariants I8, I11 and I14.

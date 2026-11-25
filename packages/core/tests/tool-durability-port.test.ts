@@ -76,7 +76,10 @@ function ledger(): { durability: ToolDurability; ran: string[] } {
 describe('a mounted tool body can be made restartable without agent-runtime', () => {
   test('a declared factory puts step into the handler context', async () => {
     const { durability, ran } = ledger();
-    const tools = mountAgent(service, { durability: () => durability });
+    const tools = mountAgent(service, {
+      access: { open: 'local-operator' },
+      durability: () => durability,
+    });
     const execute = executable(tools, 'render_media');
 
     const result = await execute(
@@ -89,7 +92,10 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
 
   test('a replay returns the record instead of running the body again', async () => {
     const { durability, ran } = ledger();
-    const tools = mountAgent(service, { durability: () => durability });
+    const tools = mountAgent(service, {
+      access: { open: 'local-operator' },
+      durability: () => durability,
+    });
     const execute = executable(tools, 'render_media');
 
     await execute(
@@ -108,6 +114,7 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
     const seen: string[] = [];
     const { durability } = ledger();
     const tools = mountAgent(service, {
+      access: { open: 'local-operator' },
       durability: (toolCallId) => {
         seen.push(toolCallId);
         return durability;
@@ -122,6 +129,7 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
     let seen: AbortSignal | undefined;
     const { durability } = ledger();
     const tools = mountAgent(service, {
+      access: { open: 'local-operator' },
       durability: (_toolCallId, signal) => {
         seen = signal;
         return durability;
@@ -147,7 +155,10 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
     // declared factory must not silently redirect its steps elsewhere.
     const fromRuntime = ledger();
     const fromFactory = ledger();
-    const tools = mountAgent(service, { durability: () => fromFactory.durability });
+    const tools = mountAgent(service, {
+      access: { open: 'local-operator' },
+      durability: () => fromFactory.durability,
+    });
     const execute = executable(tools, 'render_media');
     await execute(
       { prompt: 'a' },
@@ -166,7 +177,7 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
   });
 
   test('without the option the tool body sees no durability at all', async () => {
-    const tools = mountAgent(service);
+    const tools = mountAgent(service, { access: { open: 'local-operator' } });
     const execute = executable(tools, 'render_media');
     expect(
       await execute(
@@ -246,6 +257,7 @@ describe('the durability engine runs over a two-method ledger the application ow
       {
         // A fresh engine per call, as a restarted host would build one — the
         // ledger is the only thing that survives, and it is what makes replay work.
+        access: { open: 'local-operator' },
         durability: (toolCallId) =>
           createLocalStepDurability({
             store: ledger,

@@ -6,7 +6,7 @@
  * prints them. A figure without a source cannot be re-measured, compared with
  * yesterday's or reproduced on another host. This script is the source:
  *
- *   bun scripts/bench-durable-store.ts [--conversations 100] [--events 10000]
+ *   bun scripts/bench-durable-store.ts [--conversations 100] [--events 10000] [--steps 5] [--history 200]
  *
  * It prints one JSON line per measurement. The numbers are evidence, not a
  * gate: nothing here asserts a threshold.
@@ -21,10 +21,23 @@ import {
   type SqliteValue,
 } from '../src/agent-runtime/sqlite-bun';
 import {
+  createAgentEventSearch,
   createAgentRuntime,
-  createSqliteAgentEventSearch,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+
+type StreamPart =
+  Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'] extends ReadableStream<
+    infer T
+  >
+    ? T
+    : never;
+
+const LedgerBytesRowSchema = z.object({
+  bytes: z.number(),
+  events: z.number(),
+  bodies: z.number().nullable(),
+});
 
 function argument(name: string, fallback: number): number {
   const index = process.argv.indexOf(`--${name}`);
@@ -116,7 +129,7 @@ try {
     });
   }
   const indexedMs = performance.now() - indexStarted;
-  const search = createSqliteAgentEventSearch({ database });
+  const search = createAgentEventSearch({ host: handle.host });
   const searchStarted = performance.now();
   const results = await search({
     requestingConversationId: 'searched',
@@ -155,7 +168,7 @@ try {
           doStream: async () => {
             call += 1;
             const last = call >= steps;
-            const chunks: Record<string, unknown>[] = last
+            const chunks: StreamPart[] = last
               ? [
                   { type: 'text-start', id: 't' },
                   { type: 'text-delta', id: 't', delta: 'done' },
@@ -175,7 +188,7 @@ try {
                     usage,
                   },
                 ];
-            return { stream: simulateReadableStream({ chunks } as never) };
+            return { stream: simulateReadableStream<StreamPart>({ chunks }) };
           },
         }),
       }),
@@ -229,16 +242,18 @@ function ledgerBytes(conversationId: string): {
   events: number;
   bodies: number;
 } {
-  const row = database
-    .prepare(
-      `SELECT COALESCE(SUM(LENGTH(payload)), 0) AS bytes, COUNT(*) AS events,
-         SUM(CASE WHEN kind = 'provider/message' THEN 1 ELSE 0 END) AS bodies
-       FROM stitchkit_agent_runtime_events WHERE conversation_id = ?`,
-    )
-    .get(conversationId) as { bytes: number; events: number; bodies: number | null };
+  const row = LedgerBytesRowSchema.parse(
+    database
+      .prepare(
+        `SELECT COALESCE(SUM(LENGTH(payload)), 0) AS bytes, COUNT(*) AS events,
+           SUM(CASE WHEN kind = 'provider/message' THEN 1 ELSE 0 END) AS bodies
+         FROM stitchkit_agent_runtime_events WHERE conversation_id = ?`,
+      )
+      .get(conversationId),
+  );
   return {
-    bytes: Number(row.bytes),
-    events: Number(row.events),
-    bodies: Number(row.bodies ?? 0),
+    bytes: row.bytes,
+    events: row.events,
+    bodies: row.bodies ?? 0,
   };
 }

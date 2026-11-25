@@ -170,6 +170,7 @@ async function runCli(
   let out = '';
   let code = -1;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'people',
     version: '1.0.0',
     services: [service],
@@ -219,6 +220,7 @@ describe('MCP answers with the view', () => {
   test('the advertised input states the tool default and no longer requires the key', async () => {
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'people', version: '1' },
         services: [peopleService(peopleContract()).service],
       }),
@@ -235,6 +237,7 @@ describe('MCP answers with the view', () => {
   test('the advertised output schema is the view, not the full record', async () => {
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'people', version: '1' },
         services: [peopleService(peopleContract()).service],
       }),
@@ -251,6 +254,7 @@ describe('MCP answers with the view', () => {
     const people = peopleService(peopleContract());
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'people', version: '1' },
         services: [people.service],
       }),
@@ -265,6 +269,7 @@ describe('MCP answers with the view', () => {
     const people = peopleService(peopleContract());
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'people', version: '1' },
         services: [people.service],
       }),
@@ -283,6 +288,7 @@ describe('MCP answers with the view', () => {
     const people = peopleService(peopleContract());
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'people', version: '1' },
         services: [people.service],
       }),
@@ -325,7 +331,11 @@ describe('MCP answers with the view', () => {
       },
     });
     const client = await connect(
-      buildMcpServer({ serverInfo: { name: 'bags', version: '1' }, services: [service] }),
+      buildMcpServer({
+        access: { open: 'local-operator' },
+        serverInfo: { name: 'bags', version: '1' },
+        services: [service],
+      }),
     );
     const first = await client.callTool({ name: 'bag_fill', arguments: {} });
     const second = await client.callTool({ name: 'bag_fill', arguments: {} });
@@ -356,6 +366,7 @@ describe('MCP answers with the view', () => {
     );
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'refs', version: '1' },
         services: [implement(contract, { find: (ctx) => ({ n: ctx.input.tags.length }) })],
       }),
@@ -374,6 +385,7 @@ describe('MCP answers with the view', () => {
   test('a view without project slices the full record by its schema', async () => {
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'people', version: '1' },
         services: [peopleService(peopleContract()).service],
       }),
@@ -401,7 +413,7 @@ describe('MCP answers with the view', () => {
 describe('AGENT and CLI answer with the view; the invoker does not', () => {
   test('an agent tool returns the card and the handler loads nothing', async () => {
     const people = peopleService(peopleContract());
-    const tools = mountAgent([people.service]);
+    const tools = mountAgent([people.service], { access: { open: 'local-operator' } });
     const execute = tools.people_list?.execute;
     if (!execute) throw new Error('people_list is not mounted');
     // A contract tool's input is typed `never` on the AI SDK side; the call
@@ -424,7 +436,11 @@ describe('AGENT and CLI answer with the view; the invoker does not', () => {
 
   test('an invoker backing a model-facing transport opts into the tool surface', async () => {
     const people = peopleService(peopleContract());
-    const invoker = createToolInvoker(people.service, { transport: 'MCP', toolSurface: true });
+    const invoker = createToolInvoker(people.service, {
+      access: { open: 'local-operator' },
+      transport: 'MCP',
+      toolSurface: true,
+    });
     expect(await invoker.invoke('people_list', {}, { source: 'mcp' })).toEqual({
       ok: true,
       data: CARD,
@@ -433,14 +449,19 @@ describe('AGENT and CLI answer with the view; the invoker does not', () => {
   });
 
   test('the agent tool advertises the tool default', () => {
-    const tools = mountAgent([peopleService(peopleContract()).service]);
+    const tools = mountAgent([peopleService(peopleContract()).service], {
+      access: { open: 'local-operator' },
+    });
     const schema = JSON.stringify(tools.people_list?.inputSchema);
     expect(schema).toContain('"default":[]');
   });
 
   test('the in-process invoker gets the full answer — code, not a model, is calling', async () => {
     const people = peopleService(peopleContract());
-    const invoker = createToolInvoker(people.service, { transport: 'AGENT' });
+    const invoker = createToolInvoker(people.service, {
+      access: { open: 'local-operator' },
+      transport: 'AGENT',
+    });
     const result = await invoker.invoke('people_list', {});
     expect(result).toEqual({ ok: true, data: { items: [{ ...ADA, stats: { orders: 3 } }] } });
     expect(people.seen).toEqual([{ source: 'internal', include: ['stats'] }]);
@@ -468,6 +489,7 @@ describe('a projection is held to its own schema', () => {
   test('a projection that breaks the view schema is a server fault', async () => {
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'broken', version: '1' },
         services: [failing(() => ({ id: 42 }))],
       }),
@@ -481,6 +503,7 @@ describe('a projection is held to its own schema', () => {
     const thrown: unknown[] = [];
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'broken', version: '1' },
         services: [
           failing(() => {
@@ -504,6 +527,7 @@ describe('a projection is held to its own schema', () => {
     try {
       const client = await connect(
         buildMcpServer({
+          access: { open: 'local-operator' },
           serverInfo: { name: 'broken', version: '1' },
           services: [failing(async () => Promise.reject(new Error('late failure')))],
         }),
@@ -520,6 +544,7 @@ describe('a projection is held to its own schema', () => {
   test('a projection that returns nothing is named as the projection, not the handler', async () => {
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'broken', version: '1' },
         services: [failing(() => undefined)],
       }),
@@ -532,6 +557,7 @@ describe('a projection is held to its own schema', () => {
   test('an asynchronous projection is refused', async () => {
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'broken', version: '1' },
         services: [failing(async () => ({ id: 'p1', tags: [] }))],
       }),
@@ -572,6 +598,7 @@ describe('a projection is held to its own schema', () => {
     );
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'extra', version: '1' },
         services: [implement(extra, { sliced: () => ADA, projected: () => ADA })],
         onOutputStrip: (_tool, paths) => void stripped.push(paths),
@@ -613,6 +640,7 @@ describe('a view composes with the rest of the tool machinery', () => {
       remove: (ctx) => ({ ...ADA, id: ctx.params.id }),
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'guarded', version: '1' },
       auth: () => ({ identity: 'alpha' }),
       context: (auth) => auth,
@@ -668,6 +696,7 @@ describe('a view composes with the rest of the tool machinery', () => {
     const answers: unknown[] = [];
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'people', version: '1' },
         services: [peopleService(peopleContract()).service],
         hooks: { afterToolCall: ({ result }) => void answers.push(result) },
@@ -707,6 +736,7 @@ describe('a view composes with the rest of the tool machinery', () => {
     });
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'asking', version: '1' },
         services: [service],
         multiRound: {
@@ -730,7 +760,11 @@ describe('a view composes with the rest of the tool machinery', () => {
       }),
     );
     const client = await connect(
-      buildMcpServer({ serverInfo: { name: 'proxy', version: '1' }, services: [remote] }),
+      buildMcpServer({
+        access: { open: 'local-operator' },
+        serverInfo: { name: 'proxy', version: '1' },
+        services: [remote],
+      }),
     );
     const result = await client.callTool({ name: 'people_list', arguments: {} });
     expect(result.structuredContent).toEqual(CARD);
@@ -751,7 +785,11 @@ describe('a view composes with the rest of the tool machinery', () => {
     );
     expect(remote.methods.list?.toolView).toBeDefined();
     const client = await connect(
-      buildMcpServer({ serverInfo: { name: 'proxy', version: '1' }, services: [remote] }),
+      buildMcpServer({
+        access: { open: 'local-operator' },
+        serverInfo: { name: 'proxy', version: '1' },
+        services: [remote],
+      }),
     );
     const result = await client.callTool({ name: 'person_get', arguments: { id: 'p2' } });
     expect(result.structuredContent).toEqual({ id: 'p2', tags: ADA.tags });
@@ -774,7 +812,10 @@ describe('a view composes with the rest of the tool machinery', () => {
       createHttpClient({ baseUrl: 'http://localhost' }),
     );
     expect(remote.methods.watch?.expose).toEqual(['HTTP']);
-    expect(createToolInvoker(remote, { transport: 'MCP' }).names).toEqual([]);
+    expect(
+      createToolInvoker(remote, { access: { open: 'local-operator' }, transport: 'MCP' })
+        .names,
+    ).toEqual([]);
   });
 
   test('implementRemote asks no elicitation questions whose answers it could not forward', () => {
@@ -874,7 +915,7 @@ describe('a view of defaults alone changes the call, not the answer', () => {
 
   test('a tool call gets the default and the full answer; HTTP keeps the schema default', async () => {
     const people = lighterService();
-    const tools = mountAgent([people.service]);
+    const tools = mountAgent([people.service], { access: { open: 'local-operator' } });
     const execute = tools.people_list?.execute;
     if (!execute) throw new Error('people_list is not mounted');
     const result = await Reflect.apply(execute, undefined, [
@@ -897,6 +938,7 @@ describe('a view of defaults alone changes the call, not the answer', () => {
   test('the advertised output is the full one, and the input states the default', async () => {
     const client = await connect(
       buildMcpServer({
+        access: { open: 'local-operator' },
         serverInfo: { name: 'people', version: '1' },
         services: [lighterService().service],
       }),

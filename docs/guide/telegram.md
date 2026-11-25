@@ -11,7 +11,7 @@ way: [ADR 0201](../decisions/0201-a-telegram-bot-is-assembled-from-primitives.md
 |---|---|
 | the bot as resources: command menu, then long polling with updates admitted by batch | `grammyBotResources` — [application kernel](application-kernel.md#optional-grammy-adapter) |
 | a bot on a webhook: set only where it is this process's, updates recorded before Telegram is answered | `claimTelegramWebhook`, `createTelegramUpdateIntake`, `receiveTelegramWebhook` — [below](#a-bot-on-a-webhook) |
-| text for Telegram's HTML: cleaned, cut to the limit, checked | `stitchkit/telegram/html` — [below](#message-markup) |
+| text for Telegram's HTML: Markdown converted, markup cleaned, cut to the limit, checked | `stitchkit/telegram/html` — [below](#message-markup) |
 | widgets: send, change their data, answer their queries, under the token's budget | `telegramWidgetApi` from `stitchkit/telegram/grammy` — [below](#widgets) |
 | the process journal | `createJsonLogger` from `stitchkit/observability` |
 | the operator's chat: product events, apart from the journal | `createTelegramOperatorChannel` |
@@ -105,15 +105,20 @@ cast, and a send cancelled in the queue then waits for its slot and fails as
 - **The token is the identity, not the sender.** Two bot objects built from one
   token share the budget; two different tokens do not. The registry keeps a
   128-bit identity, never the credential, and `stats()` contains no token.
-- **A message is the unit.** `sendMediaGroup` and `sendPaidMedia` cost their
-  media length, `copyMessages` and `forwardMessages` cost their message ids, and
-  a follow-up call to action after an album costs one more. `sendWidget`,
-  `sendSharedWidget` and `editMessageWidgetData` each cost one; Telegram counts
+- **A message is the unit, and unknown methods fail closed.** `sendMediaGroup`
+  and `sendPaidMedia` cost their media length, `copyMessages` and
+  `forwardMessages` cost their message ids, and a follow-up call to action after
+  an album costs one more. `sendWidget`, `sendSharedWidget` and
+  `editMessageWidgetData` each cost one; Telegram counts
   [a widget data edit as a sent message](https://core.telegram.org/bots/widgets#changing-the-state),
-  including an inline edit without `chat_id`. `answerWidgetQuery` and
-  `editSharedWidgetData` cost zero, as do reads and ordinary edits
-  (`getMe`, `getFile`, `editMessageText`, `deleteMessage`, `sendChatAction`).
-  The shared widget's own edit limit is separate from this token budget.
+  including an inline edit without `chat_id`. Only the explicitly classified
+  free list (`FREE_METHODS`) costs zero — reads, ordinary edits of already-sent
+  messages, deletions, administration, `sendChatAction`, `answerWidgetQuery` and
+  `editSharedWidgetData` (whose own edit limit is separate from this token
+  budget). Any Bot API method the budget does not know — such as a newer method
+  Telegram added — costs **one** message and, on a 429, pauses its `chat_id` (or
+  the whole token when the payload carries no chat) rather than passing through
+  unbudgeted.
 - **Two lanes share one rate.** A call is `interactive` by default; a campaign passes
   `{ lane: 'bulk' }` to `run` or `acquire`, or installs
   `telegramBudgetTransformer(budget, { lane: 'bulk' })` on its own `Api`. A waiting
@@ -185,8 +190,9 @@ The chat where people read about new users, payments and failures is not the
 journal. The journal must not lose a line to a slow network; the chat must not
 slow the bot down. `post` returns at once and never throws; sends are paced
 below Telegram's per-chat limit (one every 3 s by default), 429s wait the time
-Telegram named, and when the chat cannot keep up the oldest message is dropped
-and reported.
+Telegram named up to `maxRetryAfterMs` (a minute by default; a longer flood wait
+drops that message as `flood-wait` rather than hold the queue behind it), and
+when the chat cannot keep up the oldest message is dropped and reported.
 
 ```ts
 import { createTelegramOperatorChannel, telegramOperatorSender } from 'stitchkit/telegram'
@@ -454,7 +460,8 @@ parser. Text written by someone else — a model, an editor, an owner's greeting
 becomes markup Telegram accepts: synonyms renamed (`strong` → `b`), block tags
 turned into line breaks, a link kept only with an `href` Telegram opens,
 anything Telegram forbids (a tag it does not know, formatting inside `code`, a
-quote inside a quote) left as its words.
+quote inside a quote) left as its words. An element nested more than 32 deep
+keeps its words and loses its tag, so parsing stays linear in the markup.
 
 ```ts
 import { sanitizeTelegramHtml, splitTelegramHtml } from 'stitchkit/telegram/html'
@@ -469,11 +476,95 @@ TELEGRAM_CAPTION_LIMIT }`) — count the text after the markup is parsed, so a
 text is cut by what the reader sees, not by the length of its tags. A cut
 prefers a paragraph, then a line, then a space; it never splits a character or
 a custom emoji, and an element open across it is closed in one part and opened
-again, attributes and all, in the next. `truncateTelegramHtml` keeps one part
+again, attributes and all, in the next. A custom emoji or a `tg-time` longer than
+the limit cannot be cut: `splitTelegramHtml` refuses it with a `RangeError`
+rather than send a part over the limit or an empty one, and a truncation cuts
+before it. `truncateTelegramHtml` keeps one part
 with an ellipsis; `telegramHtmlText` is what the reader sees; `parseTelegramHtml`
 gives the nodes to render a preview or an email from. `checkTelegramHtml` says,
 without repairing anything, what Telegram would refuse — for an editor that
 should warn a person rather than change their text.
+
+When the source is GitHub-flavored Markdown — an assistant's reply, a media
+caption, or a fallback where rich messages are unavailable — convert it through
+the same tree with `markdownToTelegramHtml`, then cut the HTML with
+`splitTelegramHtml`, which counts what the reader sees:
+
+```ts
+import {
+  markdownToTelegramHtml,
+  splitTelegramHtml,
+  TELEGRAM_CAPTION_LIMIT,
+  truncateTelegramHtml,
+} from 'stitchkit/telegram/html'
+
+const caption = truncateTelegramHtml(markdownToTelegramHtml(notes), {
+  limit: TELEGRAM_CAPTION_LIMIT,
+})
+for (const part of splitTelegramHtml(markdownToTelegramHtml(report))) {
+  await ctx.reply(part, { parse_mode: 'HTML' })
+}
+```
+
+Converting first matters: a table becomes aligned text in `<pre>`, and its
+padding can make the rendered text several times longer than its Markdown.
+
+`markdownToTelegramHtml` builds canonical `TelegramHtmlNode[]` nodes and renders
+them through `renderTelegramHtml`, so every output passes `checkTelegramHtml`
+and is a fixed point of `sanitizeTelegramHtml`. Conversion takes time linear in
+the text, and nesting deeper than 32 quotes, `<details>` blocks or inline styles
+stays text, so no input can exhaust the stack. It converts bold (`**`, `__`),
+italic (`*`, `_`), strikethrough (`~~`), spoilers (`||`), underline (`<u>`), inline and
+fenced code blocks (backticks or tildes; unclosed fences stay literal plain
+text), safe links (`http:`, `https:`, `tg:`, `mailto:` only, with balanced
+parentheses in URLs), headings (`#`–`######` → `<b>`), nested lists and
+checkboxes (`☐` / `☑`), blockquotes (`<blockquote>` with inline formatting,
+links and code), GFM tables (`<pre>`), `<details>`/`<summary>`, horizontal
+rules, and valid Telegram HTML entities while escaping raw `<`, `>`, `&` and
+non-Telegram entities such as `&nbsp;` or `&apos;`. A link is kept by the same
+fixed rules in every runtime, React Native included: a scheme Telegram opens, a
+host for `http:`/`https:` (an optional port up to 65535), something after
+`tg:`/`mailto:`, and no whitespace or control character anywhere.
+An inline Markdown link with a literal `"` in its destination stays visible as
+source text. To include a quotation mark in the URL, write `%22`; the converter
+preserves that escape. Quotes in the label or around an optional title are fine. The rule
+applies before entity decoding: `&quot;` in a destination still round-trips as
+`&quot;` in the HTML `href`.
+
+In a `<details>` block the summary becomes a bold heading. A tag on its own
+line adds no visible line; blank lines the author left between the heading
+and the body, or at the end of a nonempty body, are retained.
+
+Plain text stays plain. Every emphasis delimiter keeps to word boundaries: it
+opens only where no letter or digit stands before it and closes only where none
+follows, so `2*3*4`, `a*b or c*d`, `SKU-12*34` and `snake_case_name` convert to
+themselves, while `**bold**` and `*italic*` beside spaces and punctuation still
+convert. A run of delimiters is judged at its edges as one. A link whose
+destination the rules refuse is not dropped and does not become a link: its
+source stays visible as text, so `[click](javascript:alert(1))` reads exactly
+so.
+
+What lists and tables look like: a list item is `• ` (a numbered one keeps its
+number), and a nested item is indented two spaces per level with the same
+marker — `• a` then `  • b`. A table is one `<pre>` block of aligned columns,
+cells separated by ` | ` and the header underlined with `-` joined by `+`:
+
+```text
+a | b
+--+--
+1 | 2
+```
+
+`splitTelegramMarkdown` is for text that stays Markdown after the cut, sent
+where the Markdown itself is rendered. It cuts along line boundaries so each Markdown
+chunk stays within `limit` UTF-16 code units of Markdown (default
+`TELEGRAM_TEXT_LIMIT`) — not of rendered text. A fenced block split across
+chunks is closed in one and reopened in the next, a table split across chunks
+repeats its header row and separator, and both repeats count against the
+limit. It never emits an empty orphan fence chunk, and throws
+`TelegramMarkdownSplitError` (`invalid-limit` or `line-exceeds-limit`) when
+`limit` is not a positive safe integer or a single line cannot fit together
+with the fence or table header repeated before it.
 
 ## A bot on a webhook
 
@@ -631,7 +722,7 @@ postgresTelegramUpdateStore({
 
 Each rule is one conditional statement, so a claim is atomic across every
 process sharing the table. By default the table is created on first use; where
-migrations own the schema, `postgresTelegramUpdateStoreSchema(table)` is the
+migrations own the schema, `postgresTelegramUpdateStoreDdl(table)` is the
 statement to put in one. Apply it before using `handleAttempt` or
 `handleExhaustion`; it adds `claim_id` idempotently. Legacy `handle(update)`
 uses base PostgreSQL operations that do not reference that column. SQLite adds

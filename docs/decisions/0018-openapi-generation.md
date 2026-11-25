@@ -8,7 +8,6 @@ updated: 2026-05-29
 
 # ADR 0018 — OpenAPI generated from the contract
 
-- **Status:** Accepted
 - **Date:** 2026-05-29
 
 ## Context

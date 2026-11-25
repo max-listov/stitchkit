@@ -5,8 +5,10 @@
  */
 import { z } from 'zod';
 import { isUnsafeKey } from '../../internal/safe-json';
-import { isRecord } from '../../internal/typed';
+import { isRecord, transportResult } from '../../internal/typed';
+import { coerceJsonArgs } from '../schema/coerce';
 import { jsonSchemaObjectCoercionMembers } from '../schema/json-schema-origin';
+import { unwrapZodWrappers } from '../schema/schema';
 import { CliArgumentError } from './argument-error';
 
 export type FieldKind =
@@ -26,6 +28,8 @@ export interface FieldInfo {
   elementKind?: FieldKind;
   /** A `number` field that only accepts integers — named in its coercion error. */
   integer?: boolean;
+  /** True when the field accepts only booleans (not a union that also accepts non-booleans). */
+  pureBoolean?: boolean;
 }
 
 /** Admit each raw occurrence before scalar coercion can discard a value. */
@@ -49,25 +53,13 @@ export function appendCliOptionValue(
   }
 }
 
-/** Strip `.optional()` / `.nullable()` / `.default()` wrappers to the base type. */
-function unwrap(field: z.core.$ZodType): z.core.$ZodType {
-  if (
-    field instanceof z.ZodOptional ||
-    field instanceof z.ZodNullable ||
-    field instanceof z.ZodDefault
-  ) {
-    return unwrap(field.unwrap());
-  }
-  return field;
-}
-
 /**
  * The one primitive kind every literal branch accepts. Mixed primitive kinds stay raw: argv has
  * no type tag with which to distinguish the number `7` from the string `"7"`, and guessing from
  * its spelling would corrupt string literals such as `007`.
  */
 function literalKind(field: z.core.$ZodType): FieldKind | undefined {
-  const base = unwrap(field);
+  const base = unwrapZodWrappers(field);
   if (base instanceof z.ZodLiteral) {
     const kinds = new Set<FieldKind>();
     for (const value of base.values) {
@@ -115,6 +107,8 @@ function mergeField(fields: Map<string, FieldInfo>, name: string, info: FieldInf
   if (existing.kind === info.kind) {
     if (existing.kind === 'array' && existing.elementKind !== info.elementKind) {
       fields.set(name, { kind: 'array', elementKind: 'other' });
+    } else if (existing.kind === 'boolean' && existing.pureBoolean !== info.pureBoolean) {
+      fields.set(name, { kind: 'boolean' });
     }
     return;
   }
@@ -125,33 +119,38 @@ function mergeField(fields: Map<string, FieldInfo>, name: string, info: FieldInf
   fields.set(name, { kind: 'other' });
 }
 
-function collectSchemaFields(schema: z.core.$ZodType, fields: Map<string, FieldInfo>): void {
-  const base = unwrap(schema);
+function collectSchemaFields(
+  schema: z.core.$ZodType,
+  fields: Map<string, FieldInfo>,
+  inUnion = false,
+): void {
+  const base = unwrapZodWrappers(schema);
   if (base instanceof z.ZodObject) {
     for (const [name, raw] of Object.entries(base.shape)) {
-      const fieldBase = unwrap(raw);
+      const fieldBase = unwrapZodWrappers(raw);
       const kind = classify(fieldBase);
       if (kind === 'array' && fieldBase instanceof z.ZodArray) {
         mergeField(fields, name, {
           kind,
-          elementKind: classify(unwrap(fieldBase.element)),
+          elementKind: classify(unwrapZodWrappers(fieldBase.element)),
         });
       } else {
         mergeField(fields, name, {
           kind,
           ...(fieldBase instanceof z.ZodNumber && fieldBase.isInt && { integer: true }),
+          ...(kind === 'boolean' && !inUnion && { pureBoolean: true }),
         });
       }
     }
     return;
   }
   if (base instanceof z.ZodUnion) {
-    for (const option of base.def.options) collectSchemaFields(option, fields);
+    for (const option of base.def.options) collectSchemaFields(option, fields, true);
     return;
   }
   if (base instanceof z.ZodIntersection) {
-    collectSchemaFields(base.def.left, fields);
-    collectSchemaFields(base.def.right, fields);
+    collectSchemaFields(base.def.left, fields, inUnion);
+    collectSchemaFields(base.def.right, fields, inUnion);
     return;
   }
 }
@@ -169,14 +168,15 @@ export function describeSchemaFields(schema: z.ZodType | undefined): Map<string,
 }
 
 function infoOf(field: z.core.$ZodType): FieldInfo {
-  const base = unwrap(field);
+  const base = unwrapZodWrappers(field);
   const kind = classify(base);
   if (kind === 'array' && base instanceof z.ZodArray) {
-    return { kind, elementKind: classify(unwrap(base.element)) };
+    return { kind, elementKind: classify(unwrapZodWrappers(base.element)) };
   }
   return {
     kind,
     ...(base instanceof z.ZodNumber && base.isInt && { integer: true }),
+    ...(kind === 'boolean' && { pureBoolean: true }),
   };
 }
 
@@ -203,10 +203,16 @@ function mergePathInfos(
           ? first.elementKind
           : 'other'
         : undefined;
+    const pureBoolean =
+      first.kind === 'boolean' &&
+      (composition === 'intersection'
+        ? candidates.some((info) => info.pureBoolean)
+        : infos.every((info) => info?.pureBoolean));
     return {
       kind: first.kind,
       ...(elementKind && { elementKind }),
       ...(first.integer && candidates.every((info) => info.integer) && { integer: true }),
+      ...(pureBoolean && { pureBoolean: true }),
     };
   }
   return candidates.some((info) => info.kind === 'boolean')
@@ -222,7 +228,7 @@ function pathInfo(schema: z.core.$ZodType, path: readonly string[]): FieldInfo |
       'intersection',
     );
   }
-  const base = unwrap(schema);
+  const base = unwrapZodWrappers(schema);
   if (base !== schema) return pathInfo(base, path);
   if (base instanceof z.ZodUnion) {
     return mergePathInfos(
@@ -260,45 +266,60 @@ export function describeSchemaPath(
   return pathInfo(schema, path);
 }
 
-const TRUE_WORDS = new Set(['true', '1', 'yes', 'on']);
-const FALSE_WORDS = new Set(['false', '0', 'no', 'off']);
-
-/** Strict boolean for a RESERVED option — an unrecognised value is a usage error, never a silent `true`. */
 /**
- * The token after a bare boolean flag, when it is the flag's value: exactly
- * `true` or `false` — `--verbose false` is a common habit, and reading it as
- * "on, plus a positional `false`" silently does the opposite of what was said.
- * Only those two words: `1`, `yes` or `no` there stay positionals, since a
- * flag followed by an ordinary value must not swallow it.
+ * Single boolean word table for CLI flags (case-insensitive):
+ * - inline (`--flag=word`): `true`, `1`, `yes`, `on`, `false`, `0`, `no`, `off`
+ * - separate token (`--flag word`): `true`, `false` only, so ordinary values like `1`, `yes`, `no` stay positionals.
+ */
+interface BoolWordRow {
+  readonly value: boolean;
+  readonly separate: boolean;
+}
+
+const BOOL_WORDS: Readonly<Record<string, BoolWordRow>> = {
+  true: { value: true, separate: true },
+  '1': { value: true, separate: false },
+  yes: { value: true, separate: false },
+  on: { value: true, separate: false },
+  false: { value: false, separate: true },
+  '0': { value: false, separate: false },
+  no: { value: false, separate: false },
+  off: { value: false, separate: false },
+};
+
+function lookupBoolWord(value: string): BoolWordRow | undefined {
+  const key = value.toLowerCase();
+  return Object.hasOwn(BOOL_WORDS, key) ? BOOL_WORDS[key] : undefined;
+}
+
+/**
+ * The token after a bare boolean flag, when it is the flag's value: `true` or
+ * `false` (case-insensitive). Other inline boolean words (`1`, `yes`, `no`,
+ * `on`, `off`) stay positionals here so a flag does not swallow an ordinary value.
  */
 export function separateBoolValue(next: string | undefined): boolean | undefined {
-  if (next === 'true') return true;
-  if (next === 'false') return false;
-  return undefined;
+  if (next === undefined) return undefined;
+  const row = lookupBoolWord(next);
+  return row?.separate ? row.value : undefined;
 }
 
 /** True for a value the reserved-boolean grammar already claims. */
 export function isReservedBoolWord(value: string): boolean {
-  const word = value.toLowerCase();
-  return TRUE_WORDS.has(word) || FALSE_WORDS.has(word);
+  return lookupBoolWord(value) !== undefined;
 }
 
+/** Strict boolean for a reserved option or inline boolean flag — unknown words throw. */
 export function parseReservedBool(name: string, value: string): boolean {
-  const v = value.toLowerCase();
-  if (TRUE_WORDS.has(v)) return true;
-  if (FALSE_WORDS.has(v)) return false;
+  const row = lookupBoolWord(value);
+  if (row !== undefined) return row.value;
   throw new CliArgumentError(`--${name} expects a boolean (true/false), got "${value}"`);
 }
 
 /** Coerce one string to a scalar field kind — never throws; an un-coercible value is left raw for Zod to reject with a clear message. */
 function coerceScalar(kind: FieldKind, value: string): unknown {
   switch (kind) {
-    case 'boolean': {
-      const v = value.toLowerCase();
-      if (TRUE_WORDS.has(v)) return true;
-      if (FALSE_WORDS.has(v)) return false;
-      return value; // not a recognisable boolean — Zod rejects it loudly.
-    }
+    case 'boolean':
+      return lookupBoolWord(value)?.value ?? value;
     case 'number': {
       const n = Number(value);
       return value.trim() !== '' && !Number.isNaN(n) ? n : value;
@@ -318,12 +339,50 @@ function coerceScalar(kind: FieldKind, value: string): unknown {
   }
 }
 
-/** Preserve the legacy best-effort grammar for a wholly unknown passthrough option. */
+/** Best-effort coercion for a wholly unknown passthrough option (`true`/`false` and numbers only). */
 export function looseCoerce(value: string): unknown {
   if (value === 'true') return true;
   if (value === 'false') return false;
   const number = Number(value);
   return value.trim() !== '' && !Number.isNaN(number) ? number : value;
+}
+
+/** The argument error for the first issue of an application option's validation. */
+function refuseGlobalOption(issue: z.core.$ZodIssue | undefined): never {
+  const field = issue?.path[0];
+  const where = typeof field === 'string' ? `--${field}` : 'application option';
+  throw new CliArgumentError(`${where}: ${issue?.message ?? 'invalid value'}`);
+}
+
+/**
+ * Validate raw application global options against their schema once:
+ * coerce JSON-stringified objects/arrays, apply declared defaults, and refuse
+ * invalid values with `CliArgumentError`.
+ */
+export function parseCliGlobalValues<TGlobals extends z.ZodObject>(
+  schema: TGlobals,
+  raw: Record<string, unknown> | undefined,
+): z.output<TGlobals>;
+export function parseCliGlobalValues<TGlobals extends z.ZodObject = z.ZodObject>(
+  schema: TGlobals | undefined,
+  raw: Record<string, unknown> | undefined,
+): z.output<TGlobals>;
+export function parseCliGlobalValues<TGlobals extends z.ZodObject = z.ZodObject>(
+  schema: TGlobals | undefined,
+  raw: Record<string, unknown> | undefined,
+): z.output<TGlobals> {
+  const base = raw ?? {};
+  if (schema === undefined) return transportResult<z.output<TGlobals>>(base);
+  let coerced: Record<string, unknown>;
+  try {
+    coerced = coerceJsonArgs(base, schema);
+  } catch (error) {
+    if (error instanceof z.ZodError) refuseGlobalOption(error.issues[0]);
+    throw error;
+  }
+  const parsed = schema.safeParse(coerced);
+  if (!parsed.success) refuseGlobalOption(parsed.error.issues[0]);
+  return parsed.data;
 }
 
 function looksLikeJson(value: string): boolean {

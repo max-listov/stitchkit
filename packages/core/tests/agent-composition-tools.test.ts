@@ -35,15 +35,17 @@ test('the one-line harness composition retains mapped identity, mount options, h
     mountAgent([], {
       runtimeTools: [definition],
       context: { ...input.context, messageId: input.run.assistantMessageId },
-      lifecycle: composeToolLifecycle(
-        {
-          beforeHandle: () => {
-            seen.push('auth');
-            if (denied) throw new AppError('DENIED', { message: 'denied', status: 403 });
+      access: {
+        gate: composeToolLifecycle(
+          {
+            beforeHandle: () => {
+              seen.push('auth');
+              if (denied) throw new AppError('DENIED', { message: 'denied', status: 403 });
+            },
           },
-        },
-        input.toolFenceLifecycle,
-      ),
+          input.toolFenceLifecycle,
+        ),
+      },
       hooks: {
         beforeToolCall: () => {
           seen.push('hook');

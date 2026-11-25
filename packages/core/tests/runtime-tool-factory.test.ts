@@ -83,14 +83,16 @@ describe('createRuntimeToolFactory', () => {
     const tools = mountAgent([], {
       context: { userId: 'user-1', tz: 'UTC' },
       runtimeTools: [countRecords],
-      lifecycle: {
-        beforeHandle: (_context, endpoint) => {
-          seenIdentities.push({
-            serviceName: endpoint.serviceName,
-            action: endpoint.key,
-            scope: endpoint.scope,
-            method: endpoint.method,
-          });
+      access: {
+        gate: {
+          beforeHandle: (_context, endpoint) => {
+            seenIdentities.push({
+              serviceName: endpoint.serviceName,
+              action: endpoint.key,
+              scope: endpoint.scope,
+              method: endpoint.method,
+            });
+          },
         },
       },
     });
@@ -131,6 +133,7 @@ describe('createRuntimeToolFactory', () => {
       },
     });
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       context: { userId: 42, tz: 'UTC' },
       runtimeTools: [tool],
       hooks,
@@ -172,6 +175,7 @@ describe('createRuntimeToolFactory', () => {
       },
     });
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       context: { userId: 'user-1' },
       runtimeTools: [tool],
     });

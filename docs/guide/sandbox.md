@@ -52,6 +52,7 @@ import { createSandboxCodingTools } from 'stitchkit/agent-runtime/sandbox';
 import { mountAgent } from 'stitchkit/tools/agent';
 
 const tools = mountAgent([], {
+  access: { gate: { beforeHandle: authHook } },
   runtimeTools: createSandboxCodingTools(handle, {
     authorize: (operation) => applicationPolicy(operation),
     executables: { shell: '/usr/bin/sh' },

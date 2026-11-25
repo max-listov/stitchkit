@@ -157,6 +157,7 @@ async function run(argv: string[], cfg: Partial<CliConfig> = {}): Promise<RunRes
     },
     stdin: async () => null,
     ...cfg,
+    access: cfg.access ?? { open: 'local-operator' },
   });
   return { out, err, code };
 }
@@ -179,9 +180,9 @@ describe('createCli — routing & help', () => {
     expect(out.trim()).toBe('widget 1.0.0');
   });
 
-  test('unknown command → exit 1 on stderr', async () => {
+  test('unknown command → exit 4 (UNKNOWN_OPERATION) on stderr', async () => {
     const { err, code } = await run(['nope']);
-    expect(code).toBe(1);
+    expect(code).toBe(4);
     expect(err).toContain('Unknown command');
   });
 
@@ -336,12 +337,14 @@ describe('createCli — --wait polling', () => {
     jobPolls = 0;
     jobTerminalStatus = 'COMPLETED';
     const { out, code } = await run(['create_job', '--wait', '--quiet', '--json'], {
-      wait: {
+      commandSettings: {
         create_job: {
-          tool: 'get_job',
-          poll: (r) => (isRecord(r) && typeof r.id === 'string' ? { id: r.id } : null),
-          done: (r) => isRecord(r) && r.status === 'COMPLETED',
-          backoff: [0],
+          wait: {
+            tool: 'get_job',
+            poll: (r) => (isRecord(r) && typeof r.id === 'string' ? { id: r.id } : null),
+            done: (r) => isRecord(r) && r.status === 'COMPLETED',
+            backoff: [0],
+          },
         },
       },
     });
@@ -353,13 +356,15 @@ describe('createCli — --wait polling', () => {
     jobPolls = 0;
     jobTerminalStatus = 'FAILED';
     const { out, err, code } = await run(['create_job', '--wait', '--quiet', '--json'], {
-      wait: {
+      commandSettings: {
         create_job: {
-          tool: 'get_job',
-          poll: (r) => (isRecord(r) && typeof r.id === 'string' ? { id: r.id } : null),
-          done: (r) => isRecord(r) && ['COMPLETED', 'FAILED'].includes(String(r.status)),
-          failed: (r) => isRecord(r) && r.status === 'FAILED',
-          backoff: [0],
+          wait: {
+            tool: 'get_job',
+            poll: (r) => (isRecord(r) && typeof r.id === 'string' ? { id: r.id } : null),
+            done: (r) => isRecord(r) && ['COMPLETED', 'FAILED'].includes(String(r.status)),
+            failed: (r) => isRecord(r) && r.status === 'FAILED',
+            backoff: [0],
+          },
         },
       },
     });
@@ -505,7 +510,7 @@ describe('createCli — pathless runtime tools', () => {
       identity: { serviceName: 'local', action: 'inspect', method: 'GET' },
       input: z.object({ path: z.string() }),
       output: z.object({ path: z.string(), source: z.literal('cli') }),
-      transports: ['CLI'],
+      expose: ['CLI'],
       handler: ({ input, source }): { path: string; source: 'cli' } => {
         expect(source).toBe('cli');
         return { path: input.path, source: 'cli' };
@@ -517,7 +522,7 @@ describe('createCli — pathless runtime tools', () => {
         name: 'inspect_local',
         service: 'local',
         method: 'inspect',
-        transports: ['CLI'],
+        expose: ['CLI'],
       },
     ]);
     expect(summarizeTransports({ runtimeTools: [definition] }).totals.CLI).toBe(1);
@@ -526,9 +531,11 @@ describe('createCli — pathless runtime tools', () => {
 
     const called = await run(['inspect_local', '--path', './asset.png', '--json'], {
       runtimeTools: [definition],
-      lifecycle: {
-        beforeHandle: (_context, endpoint) => {
-          phases.push(`lifecycle:${endpoint.serviceName}:${endpoint.key}`);
+      access: {
+        gate: {
+          beforeHandle: (_context, endpoint) => {
+            phases.push(`lifecycle:${endpoint.serviceName}:${endpoint.key}`);
+          },
         },
       },
       hooks: {
@@ -556,7 +563,7 @@ describe('createCli — pathless runtime tools', () => {
       identity: { serviceName: 'local', action: 'only', method: 'GET' },
       input: z.object({ value: z.string() }),
       output: z.object({ value: z.string() }),
-      transports: ['CLI'],
+      expose: ['CLI'],
       handler: ({ input }) => input,
     });
     const result = await run(['runtime_only', 'yes', '--json'], {
@@ -579,7 +586,7 @@ describe('createCli — pathless runtime tools', () => {
       description: 'Collision',
       identity: { serviceName: 'runtime', action: 'list', method: 'GET' },
       input: z.object({}),
-      transports: ['CLI'],
+      expose: ['CLI'],
       handler: () => undefined,
     });
     await expect(run(['list_widgets'], { runtimeTools: [collision] })).rejects.toThrow(
@@ -715,8 +722,12 @@ describe('createCli — declarative command presentation policy', () => {
   const presentation = {
     commands: [logs],
     defaultCommand: 'logs',
-    optionAliases: { logs: { f: 'follow', n: 'lines', t: 'tags' } },
-    positionals: { logs: ['target'] },
+    commandSettings: {
+      logs: {
+        aliases: { f: 'follow', n: 'lines', t: 'tags' },
+        positionals: ['target'],
+      },
+    },
   } satisfies Partial<CliConfig>;
 
   test('default command composes with global-only argv and explicit routing', async () => {
@@ -738,7 +749,7 @@ describe('createCli — declarative command presentation policy', () => {
     expect(JSON.parse(explicit.out)).toMatchObject({ target: 'api', lines: 25 });
 
     const typo = await run(['--json', 'logz'], presentation);
-    expect(typo.code).toBe(1);
+    expect(typo.code).toBe(4);
     expect(typo.err).toContain('Unknown command "logz"');
 
     for (const argv of [
@@ -818,8 +829,7 @@ describe('createCli — declarative command presentation policy', () => {
 
   test('managed commands accept aliases and explicit positionals after surface resolution', async () => {
     const result = await run(['create_widget', 'alpha', '-n', '3', '--json'], {
-      optionAliases: { create_widget: { n: 'count' } },
-      positionals: { create_widget: ['name'] },
+      commandSettings: { create_widget: { aliases: { n: 'count' }, positionals: ['name'] } },
     });
     expect(result.code).toBe(0);
     expect(JSON.parse(result.out)).toEqual({ id: 'w1', name: 'alpha', count: 3 });
@@ -834,15 +844,16 @@ describe('createCli — declarative command presentation policy', () => {
       identity: { serviceName: 'runtime', action: 'policy', method: 'POST' },
       input: z.object({ target: z.string(), verbose: z.boolean().default(false) }),
       output: z.object({ target: z.string(), verbose: z.boolean() }),
-      transports: ['CLI'],
+      expose: ['CLI'],
       handler: ({ input }) => input,
     });
     const runtimeResult = await run(['-v', '--target', 'packed', '--json'], {
       services: [],
       runtimeTools: [runtime],
       defaultCommand: 'runtime_policy',
-      optionAliases: { runtime_policy: { v: 'verbose' } },
-      positionals: { runtime_policy: ['target'] },
+      commandSettings: {
+        runtime_policy: { aliases: { v: 'verbose' }, positionals: ['target'] },
+      },
     });
     expect(runtimeResult.code).toBe(0);
     expect(JSON.parse(runtimeResult.out)).toEqual({ target: 'packed', verbose: true });
@@ -856,7 +867,7 @@ describe('createCli — declarative command presentation policy', () => {
       identity: { serviceName: 'dynamic', action: 'policy', method: 'POST' },
       input: z.object({ target: z.string(), verbose: z.boolean().default(false) }),
       output: z.object({ target: z.string(), verbose: z.boolean() }),
-      transports: ['CLI'],
+      expose: ['CLI'],
       handler: ({ input }) => {
         phases.push('handler');
         return input;
@@ -864,8 +875,9 @@ describe('createCli — declarative command presentation policy', () => {
     });
     const result = await run(['--target', 'packed', '-v', '--json'], {
       defaultCommand: 'dynamic_policy',
-      optionAliases: { dynamic_policy: { v: 'verbose' } },
-      positionals: { dynamic_policy: ['target'] },
+      commandSettings: {
+        dynamic_policy: { aliases: { v: 'verbose' }, positionals: ['target'] },
+      },
       resolveAuth: () => {
         phases.push('auth');
         return { userId: 'u1' };
@@ -882,9 +894,11 @@ describe('createCli — declarative command presentation policy', () => {
         phases.push('context');
         return { requestId: 'r1' };
       },
-      lifecycle: {
-        beforeHandle: () => {
-          phases.push('lifecycle');
+      access: {
+        gate: {
+          beforeHandle: () => {
+            phases.push('lifecycle');
+          },
         },
       },
     });
@@ -952,7 +966,7 @@ describe('createCli — declarative command presentation policy', () => {
       ['structured_alias', '-m', 'fast', '-c', '{"retries":2}', '--json'],
       {
         commands: [structured],
-        optionAliases: { structured_alias: { m: 'mode', c: 'config' } },
+        commandSettings: { structured_alias: { aliases: { m: 'mode', c: 'config' } } },
       },
     );
     expect(structuredResult.code).toBe(0);
@@ -960,7 +974,10 @@ describe('createCli — declarative command presentation policy', () => {
     const leaked = await run(['logs', '-m', 'fast'], {
       ...presentation,
       commands: [logs, structured],
-      optionAliases: { structured_alias: { m: 'mode' } },
+      commandSettings: {
+        ...presentation.commandSettings,
+        structured_alias: { aliases: { m: 'mode' } },
+      },
     });
     expect(leaked.code).toBe(2);
     expect(leaked.err).toContain('Unknown option "-m"');
@@ -976,7 +993,7 @@ describe('createCli — declarative command presentation policy', () => {
     });
     const config = {
       commands: [strictLogs],
-      positionals: { strict_logs: ['target'] },
+      commandSettings: { strict_logs: { positionals: ['target'] } },
       stdin: async () => '40',
     };
     const result = await run(['strict_logs', 'api', '--json'], config);
@@ -989,7 +1006,7 @@ describe('createCli — declarative command presentation policy', () => {
 
     const noPositionals = await run(['strict_logs', '--target', 'api', '--json'], {
       ...config,
-      positionals: { strict_logs: [] },
+      commandSettings: { strict_logs: { positionals: [] } },
     });
     expect(noPositionals.code).toBe(0);
     expect(JSON.parse(noPositionals.out)).toEqual({ target: 'api', lines: 40 });
@@ -1011,7 +1028,9 @@ describe('createCli — declarative command presentation policy', () => {
       ['ordered_values', '--first', 'fixed', '12', '["one","two"]', '{"retries":3}', '--json'],
       {
         commands: [ordered],
-        positionals: { ordered_values: ['first', 'count', 'tags', 'meta'] },
+        commandSettings: {
+          ordered_values: { positionals: ['first', 'count', 'tags', 'meta'] },
+        },
       },
     );
     expect(orderedResult.code).toBe(0);
@@ -1033,7 +1052,9 @@ describe('createCli — declarative command presentation policy', () => {
 
     const noPositionals = await run(['logs', 'api'], {
       ...presentation,
-      positionals: { logs: [] },
+      commandSettings: {
+        logs: { ...presentation.commandSettings.logs, positionals: [] },
+      },
     });
     expect(noPositionals.code).toBe(2);
     expect(noPositionals.err).toContain('Unexpected positional argument "api"');
@@ -1041,37 +1062,51 @@ describe('createCli — declarative command presentation policy', () => {
 
   test('invalid command-scoped policies fail at the resolved surface boundary', async () => {
     await expect(
-      run(['logs'], { commands: [logs], optionAliases: { logs: { h: 'follow' } } }),
+      run(['logs'], {
+        commands: [logs],
+        commandSettings: { logs: { aliases: { h: 'follow' } } },
+      }),
     ).rejects.toThrow('alias "-h" is reserved');
     await expect(
-      run(['logs'], { commands: [logs], optionAliases: { logs: { 1: 'follow' } } }),
+      run(['logs'], {
+        commands: [logs],
+        commandSettings: { logs: { aliases: { 1: 'follow' } } },
+      }),
     ).rejects.toThrow('must be one ASCII letter');
     await expect(
       run(['logs'], {
         commands: [logs],
-        optionAliases: { logs: { f: 'follow', F: 'follow' } },
+        commandSettings: { logs: { aliases: { f: 'follow', F: 'follow' } } },
       }),
     ).rejects.toThrow('has multiple aliases');
     await expect(
       run(['list_widgets'], {
         commands: [logs],
-        optionAliases: { missing: { f: 'follow' } },
+        commandSettings: { missing: { aliases: { f: 'follow' } } },
       }),
     ).rejects.toThrow('targets unavailable command "missing"');
     await expect(
-      run(['logs'], { commands: [logs], positionals: { logs: ['follow'] } }),
+      run(['logs'], {
+        commands: [logs],
+        commandSettings: { logs: { positionals: ['follow'] } },
+      }),
     ).rejects.toThrow('boolean field "follow" cannot be positional');
     await expect(
-      run(['logs'], { commands: [logs], positionals: { logs: ['target', 'target'] } }),
+      run(['logs'], {
+        commands: [logs],
+        commandSettings: { logs: { positionals: ['target', 'target'] } },
+      }),
     ).rejects.toThrow('repeats positional field "target"');
     await expect(
-      run(['logs'], { commands: [logs], positionals: { logs: ['missing'] } }),
+      run(['logs'], {
+        commands: [logs],
+        commandSettings: { logs: { positionals: ['missing'] } },
+      }),
     ).rejects.toThrow('positional targets unknown field "missing"');
     await expect(
       run(['logs'], {
         commands: [logs],
-        optionAliases: { logs: { t: 'tags' } },
-        passthrough: { logs: 'tags' },
+        commandSettings: { logs: { aliases: { t: 'tags' }, passthrough: 'tags' } },
       }),
     ).rejects.toThrow('cannot alias passthrough field "tags"');
 
@@ -1084,7 +1119,7 @@ describe('createCli — declarative command presentation policy', () => {
     await expect(
       run(['ordered'], {
         commands: [optionalFirst],
-        positionals: { ordered: ['optional', 'required'] },
+        commandSettings: { ordered: { positionals: ['optional', 'required'] } },
       }),
     ).rejects.toThrow('required positional "required" cannot follow an optional positional');
 
@@ -1098,8 +1133,7 @@ describe('createCli — declarative command presentation policy', () => {
       });
       const result = await run([name, '--json'], {
         commands: [inheritedName],
-        optionAliases: {},
-        positionals: {},
+        commandSettings: {},
       });
       expect(result.code).toBe(0);
       expect(JSON.parse(result.out).value).toBe('ok');
@@ -1249,6 +1283,7 @@ describe('createToolkit — typed context path runs', () => {
     let out = '';
     let code = -1;
     await toolkit.createCli({
+      access: { open: 'local-operator' },
       name: 'widget',
       version: '1.0.0',
       services: [service],
@@ -1392,7 +1427,7 @@ describe('parseCliArgs — unit', () => {
     });
     const policy = {
       positionals: ['target', 'body'],
-      optionAliases: new Map([['f', 'follow']]),
+      aliases: new Map([['f', 'follow']]),
     };
 
     test('the token after an option that expects a value is that value', () => {
@@ -1466,9 +1501,12 @@ describe('parseCliArgs — unit', () => {
     });
   });
 
-  test('an unrecognisable boolean field value is left raw for Zod, not coerced to true', () => {
-    const { toolArgs } = parseCliArgs(['--active=banana'], schema);
-    expect(toolArgs.active).toBe('banana');
+  test('an unrecognisable inline boolean value is a usage error, as on the command line', () => {
+    expect(() => parseCliArgs(['--active=banana'], schema)).toThrow(CliArgumentError);
+    expect(() => parseCliArgs(['--active=banana'], schema)).toThrow(
+      '--active expects a boolean (true/false), got "banana"',
+    );
+    expect(parseCliArgs(['--active=false'], schema).toolArgs.active).toBe(false);
   });
 
   test('a union schema exposes the boolean member as a flag and keeps positionals in place', () => {
@@ -1542,7 +1580,7 @@ describe('createCli — passthrough', () => {
   test('flat flags merge into a JSON object field instead of clobbering it', async () => {
     const { out, code } = await run(
       ['set_config', '--opts', '{"retries":3}', '--extra', 'foo', '--dry-run'],
-      { passthrough: { set_config: 'opts' } },
+      { commandSettings: { set_config: { passthrough: 'opts' } } },
     );
     expect(code).toBe(0);
     // The `--opts` JSON survives — the passthrough bag merges onto it.
@@ -1551,7 +1589,7 @@ describe('createCli — passthrough', () => {
 
   test('with no JSON field the passthrough bag becomes the object', async () => {
     const { out } = await run(['set_config', '--retries', '5', '--dry-run'], {
-      passthrough: { set_config: 'opts' },
+      commandSettings: { set_config: { passthrough: 'opts' } },
     });
     expect(JSON.parse(out).args.opts).toEqual({ retries: 5 });
   });
@@ -1566,7 +1604,10 @@ describe('createCli — trailing variadic positional', () => {
     output: HandoffInput,
     handler: ({ input }) => input,
   });
-  const policy = { commands: [handoff], positionals: { handoff: ['to', 'files'] } };
+  const policy = {
+    commands: [handoff],
+    commandSettings: { handoff: { positionals: ['to', 'files'] } },
+  };
 
   test('the trailing array field takes every remaining token', async () => {
     const many = await run(['handoff', 'proj', 'a.md', 'b.md', '--json'], policy);
@@ -1591,7 +1632,7 @@ describe('createCli — trailing variadic positional', () => {
     });
     const result = await run(['numbers', 'edge', '80', '443', '--json'], {
       commands: [numbers],
-      positionals: { numbers: ['label', 'ports'] },
+      commandSettings: { numbers: { positionals: ['label', 'ports'] } },
     });
     expect(result.code).toBe(0);
     expect(JSON.parse(result.out)).toEqual({ label: 'edge', ports: [80, 443] });
@@ -1633,7 +1674,7 @@ describe('createCli — trailing variadic positional', () => {
     });
     const middle = {
       commands: [ordered],
-      positionals: { ordered: ['first', 'tags', 'last'] },
+      commandSettings: { ordered: { positionals: ['first', 'tags', 'last'] } },
     };
     const orderedHelp = await run(['ordered', '--help'], middle);
     expect(orderedHelp.out).toContain('Usage: widget ordered <first> <tags> <last>');
@@ -1658,7 +1699,7 @@ describe('createCli — help survives an unresolved dynamic surface', () => {
     identity: { serviceName: 'handoff', action: 'read', method: 'GET' },
     input: z.object({ handoffId: z.string() }),
     output: z.object({ handoffId: z.string() }),
-    transports: ['CLI'],
+    expose: ['CLI'],
     handler: ({ input }) => input,
   });
   const unreachable = {
@@ -1741,7 +1782,7 @@ describe('createCli — application global options', () => {
     identity: { serviceName: 'handoff', action: 'read', method: 'GET' },
     input: z.object({ handoffId: z.string() }),
     output: z.object({ handoffId: z.string(), root: z.string().optional() }),
-    transports: ['CLI'],
+    expose: ['CLI'],
     handler: (ctx) => ({
       handoffId: ctx.input.handoffId,
       root: typeof ctx.root === 'string' ? ctx.root : undefined,
@@ -1825,7 +1866,7 @@ describe('createCli — application global options', () => {
     const result = await run(['echo', '--json', '--', '--root', 'tail'], {
       globalOptions,
       commands: [echo],
-      positionals: { echo: ['words'] },
+      commandSettings: { echo: { positionals: ['words'] } },
     });
     expect(result.code).toBe(0);
     expect(JSON.parse(result.out)).toEqual({ words: ['--root', 'tail', 'none'] });

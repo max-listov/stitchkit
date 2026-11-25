@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { planUpgrade, renderUpgradePlan } from '../src/internal/upgrade-plan';
+import {
+  fixedItems,
+  leadingEntrypoints,
+  planUpgrade,
+  renderUpgradePlan,
+} from '../src/internal/upgrade-plan';
 
 const changelog = `# Changelog
 
@@ -70,6 +75,36 @@ describe('upgrade plan', () => {
     expect(
       planUpgrade(real, '0.52.0', '0.80.1').some(({ version }) => version === '0.62.0'),
     ).toBe(true);
+  });
+});
+
+describe('the entrypoints an item leads with', () => {
+  test('a run of backticked entrypoints is read whatever joins it, and stops at the first non-entrypoint', () => {
+    expect(
+      leadingEntrypoints(
+        '- `stitchkit` `stitchkit/http` `stitchkit/testing` every other timer option follows the rule',
+      ),
+    ).toEqual(['stitchkit', 'stitchkit/http', 'stitchkit/testing']);
+    expect(
+      leadingEntrypoints(
+        '- `stitchkit/tools`, `stitchkit/cli` and `stitchkit/live` + `stitchkit-tui`',
+      ),
+    ).toEqual(['stitchkit/tools', 'stitchkit/cli', 'stitchkit/live', 'stitchkit-tui']);
+    expect(leadingEntrypoints('- `stitchkit/files` `readDirectory` now refuses')).toEqual([
+      'stitchkit/files',
+    ]);
+    expect(leadingEntrypoints('- `stitchkit/files`  `stitchkit/tools` two spaces')).toEqual([
+      'stitchkit/files',
+    ]);
+  });
+
+  test('a fix title drops the leading run whatever joins it', () => {
+    const [fix] = fixedItems(
+      '0.2.0',
+      '### Fixed\n\n- `stitchkit` `stitchkit/http` a retry pause stays under the ceiling.\n  **Affects:** `stitchkit` behaviour; `stitchkit/http` behaviour\n',
+    );
+    expect(fix?.entrypoints).toEqual(['stitchkit', 'stitchkit/http']);
+    expect(fix?.title).toBe('a retry pause stays under the ceiling');
   });
 });
 

@@ -4,15 +4,25 @@
  * The verdict is conservative in one direction only: an unknown machine, an unprobed process or an
  * unreadable descriptor table is "not gone", so the residual error is a refusal to reclaim, never
  * a second holder.
+ *
+ * Every lock file of this library is judged here: the asynchronous exclusive lock and the
+ * synchronous unix socket startup lock write the same record and read it by the same rule. Each
+ * step has a synchronous twin over the same evidence, for a caller that cannot wait.
  */
 import { hostname } from 'node:os';
 import { z } from 'zod';
-import { type FileIdentity, holdsOpenDescriptor } from './open-descriptors';
-import { machineIdentity } from './process-identity';
 import {
+  type FileIdentity,
+  holdsOpenDescriptor,
+  holdsOpenDescriptorSync,
+} from './open-descriptors';
+import { machineIdentity, machineIdentitySync } from './process-identity';
+import {
+  type ProcessInstance,
   ProcessInstanceSchema,
   type ProcessOwnerEvidence,
   probeProcessOwner,
+  probeProcessOwnerSync,
 } from './process-instance';
 import { isRecord } from './typed';
 
@@ -38,6 +48,23 @@ export interface ExclusiveLockDiagnosis {
   readonly identity?: ProcessOwnerEvidence['identity'] | 'descriptor-closed';
   readonly owner: ExclusiveLockOwner | null;
   readonly cause?: unknown;
+}
+
+/**
+ * The record a new holder writes: this process, its lifetime and this machine. A lifetime or a
+ * machine the platform cannot name is recorded as unknown, which only ever refuses a reclaim.
+ */
+export function recordOwner(
+  machine: string | null,
+  instance: ProcessInstance | null,
+): ExclusiveLockOwner {
+  return {
+    pid: process.pid,
+    process: instance,
+    host: hostname(),
+    acquiredAt: new Date().toISOString(),
+    ...(machine !== null && { machine }),
+  };
 }
 
 export function readOwner(text: string): {
@@ -87,6 +114,31 @@ export interface RecordedLock extends FileIdentity {
   readonly owner: ExclusiveLockOwner | undefined;
 }
 
+const UNJUDGED: ExclusiveLockDiagnosis = {
+  attribution: 'unattributable',
+  liveness: 'not-probed',
+  owner: null,
+};
+
+/**
+ * A record that names this very process with matching kernel identity, which is the one case the
+ * descriptor table decides.
+ */
+function namesThisProcess(owner: ExclusiveLockOwner, evidence: ProcessOwnerEvidence): boolean {
+  return evidence.identity === 'matched' && owner.pid === process.pid;
+}
+
+function judged(
+  attribution: ExclusiveLockDiagnosis['attribution'],
+  evidence: ProcessOwnerEvidence,
+  owner: ExclusiveLockOwner,
+  heldHere: boolean | null,
+): ExclusiveLockDiagnosis {
+  if (heldHere === false)
+    return { attribution, liveness: 'gone', identity: 'descriptor-closed', owner };
+  return { attribution, ...evidence, owner };
+}
+
 /**
  * Judge the recorded owner of a lock file that was read, or of none when it was not.
  *
@@ -102,16 +154,51 @@ export async function diagnose(
   signal?: AbortSignal,
 ): Promise<ExclusiveLockDiagnosis> {
   const owner = lock?.owner;
-  if (!lock || !owner)
-    return { attribution: 'unattributable', liveness: 'not-probed', owner: null };
+  if (!lock || !owner) return UNJUDGED;
   const attribution = attribute(owner, await machineIdentity(declaredIdentity, signal));
   if (attribution !== 'this-machine') return { attribution, liveness: 'not-probed', owner };
   const evidence = await probeProcessOwner(owner.pid, owner.process);
-  if (
-    evidence.identity === 'matched' &&
-    owner.pid === process.pid &&
-    (await holdsOpenDescriptor(lock.path, lock)) === false
-  )
-    return { attribution, liveness: 'gone', identity: 'descriptor-closed', owner };
-  return { attribution, ...evidence, owner };
+  const heldHere = namesThisProcess(owner, evidence)
+    ? await holdsOpenDescriptor(lock.path, lock)
+    : null;
+  return judged(attribution, evidence, owner, heldHere);
+}
+
+/** {@link diagnose} for a caller that cannot wait: the same steps on synchronous evidence. */
+export function diagnoseSync(
+  lock: RecordedLock | undefined,
+  declaredIdentity: string | undefined,
+): ExclusiveLockDiagnosis {
+  const owner = lock?.owner;
+  if (!lock || !owner) return UNJUDGED;
+  const attribution = attribute(owner, machineIdentitySync(declaredIdentity));
+  if (attribution !== 'this-machine') return { attribution, liveness: 'not-probed', owner };
+  const evidence = probeProcessOwnerSync(owner.pid, owner.process);
+  const heldHere = namesThisProcess(owner, evidence)
+    ? holdsOpenDescriptorSync(lock.path, lock)
+    : null;
+  return judged(attribution, evidence, owner, heldHere);
+}
+
+/** What a judged lock file carries beyond its owner: whether it had one, and how old it is. */
+export interface JudgedLockFile {
+  readonly owner: ExclusiveLockOwner | undefined;
+  readonly ownerless: boolean;
+  readonly mtimeMs: number;
+}
+
+/**
+ * Whether a present lock may be taken. An owner is taken only when it is provably gone; a file
+ * with no readable owner at all — never produced here, but an older writer could leave one — only
+ * when the caller opted in to an age and the file is at least that old.
+ */
+export function reclaimable(
+  state: JudgedLockFile,
+  diagnosis: ExclusiveLockDiagnosis,
+  graceMs: number | null | undefined,
+): boolean {
+  if (state.owner) return diagnosis.liveness === 'gone';
+  return (
+    state.ownerless && typeof graceMs === 'number' && Date.now() - state.mtimeMs >= graceMs
+  );
 }

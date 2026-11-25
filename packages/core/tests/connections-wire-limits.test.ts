@@ -4,7 +4,7 @@ import {
   ConnectionTimeoutError,
 } from '../src/entrypoints/tools/connections';
 import {
-  readBoundedText,
+  readBoundedConnectionText,
   readConnectionErrorText,
   withConnectionDeadline,
 } from '../src/tools/connections/limits';
@@ -73,10 +73,15 @@ test.each([1, 2, 4096])(
     const text = 'á🙂z';
     const exact = streamed(text, chunkSize, { 'content-length': '1' });
     expect(
-      await readBoundedText(exact.response, exact.bytes, 'wire', context(exact.bytes)),
+      await readBoundedConnectionText(
+        exact.response,
+        exact.bytes,
+        'wire',
+        context(exact.bytes),
+      ),
     ).toBe(text);
     const over = streamed(text, chunkSize, undefined, false);
-    const error = await readBoundedText(
+    const error = await readBoundedConnectionText(
       over.response,
       over.bytes - 1,
       'wire',
@@ -143,7 +148,7 @@ test('a body reader that ignores fetch still terminates on its deadline and canc
   );
   const read = context(100, 20);
   const error = await withConnectionDeadline('wire', read, undefined, (scoped) =>
-    readBoundedText(response, 100, 'wire', scoped),
+    readBoundedConnectionText(response, 100, 'wire', scoped),
   ).catch((error: unknown) => error);
   expect(error).toBeInstanceOf(ConnectionTimeoutError);
   expect(error).toMatchObject({

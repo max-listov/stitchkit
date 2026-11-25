@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { createSqliteAgentSpillStore } from '../src/agent-runtime/spill';
+import { createAgentSpillStore } from '../src/agent-runtime/spill';
 import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   type AgentMessage,
@@ -149,15 +149,15 @@ const imageInput = (reference: string): AgentMessage['parts'] => [
 async function sourceOnDisk(directory: string) {
   const filename = join(directory, 'runtime.sqlite');
   const sqlite = createBunSqliteAgentRuntimeStore({ filename });
-  const { reference: spill } = await createSqliteAgentSpillStore({
-    sqlite,
+  const { reference: spill } = await createAgentSpillStore({
+    host: sqlite.host,
     conversationId: 'source',
     runId: 'first',
-    toolCallId: 'call',
   }).write({
     data: new TextEncoder().encode('full artifact payload'),
     mediaType: 'text/plain',
     authorization: { operation: 'read', path: 'source-only' },
+    toolCallId: 'call',
   });
   await turn(
     sqlite.store,
@@ -198,7 +198,7 @@ async function readsBoth(
   const artifact = z
     .object({ output: z.object({ artifact: z.object({ reference: z.string() }) }) })
     .parse(result);
-  const spills = createSqliteAgentSpillStore({ sqlite, conversationId });
+  const spills = createAgentSpillStore({ host: sqlite.host, conversationId });
   const read = await spills.read({
     reference: artifact.output.artifact.reference,
     offset: 0,
@@ -412,52 +412,6 @@ test('the memory store branches the same archive the same way, and import keeps 
   }
 });
 
-test('a key the application declares as its own data crosses a branch; a source identity under it does not', async () => {
-  const store = createMemoryAgentRuntimeStore();
-  const base = { conversationId: 'source', id: 'first' };
-  await turn(store, { ...base, parts: [{ type: 'text', text: 'hello' }] }, [
-    { type: 'tool-call', callId: 'call', toolName: 'send_message', input: { text: 'hi' } },
-    {
-      type: 'tool-result',
-      callId: 'call',
-      toolName: 'send_message',
-      outcome: 'success',
-      output: { messageId: 'telegram-4242', ticket: { reference: 'CRM-17' } },
-    },
-  ]);
-  const request = {
-    requestKey: 'keys',
-    destinationConversationId: 'copy',
-    source: { kind: 'conversation', conversationId: 'source' },
-  } satisfies BranchAgentConversationInput;
-  // Undeclared, the names read as runtime references and the refusal says what to declare.
-  await refusedAtomically(store, request, 'declare it in applicationKeys');
-  await refusedAtomically(
-    store,
-    { ...request, applicationKeys: ['messageId'] },
-    'opaque payload containing reference',
-  );
-  await branch(store, { ...request, applicationKeys: ['messageId', 'reference'] });
-  const result = (await store.loadSnapshot('copy')).messages
-    .flatMap((message) => message.parts)
-    .find((part) => part.type === 'tool-result');
-  expect(result).toMatchObject({
-    output: { messageId: 'telegram-4242', ticket: { reference: 'CRM-17' } },
-  });
-
-  // Declared or not, a value that names the source's own run is a reference, not data.
-  const leaking = createMemoryAgentRuntimeStore();
-  await turn(leaking, { ...base, parts: [{ type: 'text', text: 'hello' }] }, [
-    { type: 'tool-call', callId: 'call', toolName: 'note', input: { runId: 'first' } },
-    { type: 'tool-result', callId: 'call', toolName: 'note', outcome: 'success', output: {} },
-  ]);
-  await refusedAtomically(
-    leaking,
-    { ...request, applicationKeys: ['runId'] },
-    'source identity under the application key runId',
-  );
-});
-
 test('the order of declarations is not part of the request', async () => {
   const store = createMemoryAgentRuntimeStore();
   await turn(
@@ -482,12 +436,12 @@ test('the order of declarations is not part of the request', async () => {
   const created = await branch(store, {
     ...request,
     applicationFiles: [a, b],
-    applicationKeys: ['messageId', 'reference'],
+    applicationKeys: [{ key: 'messageId' }, { key: 'reference' }],
   });
   const again = await branch(store, {
     ...request,
     applicationFiles: [b, a],
-    applicationKeys: ['reference', 'messageId', 'reference'],
+    applicationKeys: [{ key: 'reference' }, { key: 'messageId' }],
   });
   expect(again).toEqual({ outcome: 'duplicate', receipt: created.receipt });
 });

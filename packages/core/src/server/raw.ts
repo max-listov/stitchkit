@@ -8,14 +8,15 @@
  */
 import type { ZodType } from 'zod';
 import { normalizeError } from '../contract/normalize';
-import { concatChunks, readBoundedChunks } from '../internal/bounded-body';
+import { readBoundedText } from '../internal/bounded-body';
+import { jsonResponse } from '../internal/json-response';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { getTraceId } from '../observability/context';
 
 /** A JSON response for `data`; `204 No Content` when `data` is null/undefined. */
 export function respondJson(data: unknown): Response {
   if (data === null || data === undefined) return new Response(null, { status: 204 });
-  return Response.json(data);
+  return jsonResponse(data);
 }
 
 /**
@@ -26,7 +27,7 @@ export function respondJson(data: unknown): Response {
  */
 export function errorResponse(error: unknown): Response {
   const appErr = normalizeError(error);
-  const res = Response.json(appErr.toJSON(), { status: appErr.status });
+  const res = jsonResponse(appErr.toJSON(), { status: appErr.status });
   const traceId = getTraceId();
   if (traceId) res.headers.set('x-request-id', traceId);
   return res;
@@ -66,9 +67,9 @@ const DEFAULT_PARSE_BODY_BYTES = 1024 * 1024;
 /** The JSON of a request up to `maxBytes`; `null` for anything else, an abort included. */
 async function readJson(req: Request, maxBytes: number): Promise<unknown> {
   try {
-    const result = await readBoundedChunks(req.body, { maxBytes, signal: req.signal });
+    const result = await readBoundedText(req, { maxBytes, signal: req.signal });
     if (result.kind === 'over-limit') return null;
-    return JSON.parse(new TextDecoder().decode(concatChunks(result.chunks, result.total)));
+    return JSON.parse(result.text);
   } catch {
     return null;
   }

@@ -4,7 +4,7 @@ description: Which local gate a push earns, why the release rows cost what they 
 type: architecture
 status: active
 created: 2026-09-23
-updated: 2026-10-13 14:30 +07:00
+updated: 2026-11-25 07:27 +08:00
 ---
 
 # Local gates — what runs where, and why
@@ -13,12 +13,29 @@ The rules live in [`AGENTS.md`](../../AGENTS.md#what-runs-where); this page hold
 The CI graph and the publication boundary are in [`ci-release.md`](./ci-release.md); the release
 protocol in [`release-process.md`](./release-process.md).
 
+## The load lane is a diagnostic, not a gate
+
+`bun run load-lane` (`scripts/load-lane.ts`) runs the tests that depend on timing — process cleanup
+within its grace budget, native command owners, wall-clock deadlines — under one busy worker per
+core, each file several times. `.github/workflows/load.yml` runs it every night. It gates nothing
+and is not release evidence: a red run names a timing bound that does not hold under load, found at
+night instead of beside another project's gate during a release. A test that waits long declares
+its own limit rather than leaning on the runner's default.
+
 ## `verify` is every portable gate CI runs
+
+Every profile builds before it checks types and runs tests. The build checks the published
+declarations (`check-public-types`): a public signature naming an unexported type passes the type
+check and the tests and is caught only by the build, after push. The
+terminal package's own check and tests read the framework's build, which otherwise is the
+previous one. The steps up to the tests run in order; the heavy lanes after them run side by side.
 
 Release candidates use the structural candidate profile on `release/X.Y.Z`, followed by the complete selected CI
 for the exact SHA. `bun scripts/verify.ts --release` protects a direct unproven master release. `verify` is the whole portable local gate and it runs **every portable gate CI
-runs**: the frozen-lockfile install every runner performs first, lint, typecheck, tests, the
-Postgres stores lane (the agent store and the Telegram update store against a real server), build, the Next-SSR and Node smokes, the packed consumer lane, the packed
+runs**: the frozen-lockfile install every runner performs first and the check that `bun.lock` records
+every workspace manifest, the root included (`scripts/release-lockfile.ts`; the install alone accepts a
+manifest the lock never wrote), lint, the build, typecheck, tests, the
+Postgres stores lane (the agent store and the Telegram update store against a real server), the Next-SSR and Node smokes, the packed consumer lane, the packed
 starter lanes and the supervised PM2 lane. Its prerequisites are listed in
 [`CONTRIBUTING.md`](../../CONTRIBUTING.md), and all of them arrive with `bun install` except a
 reachable PostgreSQL and the Playwright browsers.
@@ -43,6 +60,12 @@ the core runs `prepack`, which starts with `rm -rf dist`. Everything that writes
 starter-and-terminal train found the reader without the lock — its typecheck saw the declarations
 vanish mid-rebuild and failed on `TS7016` for every `stitchkit/*` import.
 
+A lane builds the packages it packs, because it proves the tree it was started on. Inside one
+`verify` run the sequential `build` step has built that tree, and `verify` tells the lanes it starts
+(`STITCHKIT_VERIFY_BUILT`, `scripts/lane-build.ts`) so they do not build again side by side. A `dist`
+left by an earlier run is never the reason to skip: the `head` profile has no build step, and a lane
+that trusted an existing `dist` would certify code it never built.
+
 ## What runs where
 
 CI plans evidence per SHA. A release commit, a scheduled run and a manual run select every
@@ -62,8 +85,8 @@ would cost on the commit being pushed:
 
 | Push | Local gate | Why |
 | --- | --- | --- |
-| ordinary branch push | `lockfile`, `lint`, `check`, `test` (~40s) | a red CI run costs one follow-up push |
-| `release(...)` commit to a **`release/**`** branch | metadata, then lockfile/lint/types | nothing is published; CI gates that exact SHA before master sees it |
+| ordinary branch push | `lockfile`, `lint`, `build`, `check`, `test` (~50s) | a red CI run costs one follow-up push |
+| `release(...)` commit to a **`release/**`** branch | metadata, then `lockfile`, `lint`, `build`, `check` and `test:release-metadata` | nothing is published; CI gates that exact SHA before master sees it |
 | `release(...)` commit **to master** with no green run for its SHA | metadata, then `verify --release` for the selected train (heavy concurrency measured from host and cgroup headroom, `VERIFY_HEAVY_CONCURRENCY` overrides) | a red run here cannot be repaired in place |
 | `release(...)` commit to master that CI already passed | metadata only | the fast-forward publishes a tree CI has answered for on this exact SHA |
 | tag only | release metadata; for a **scaffolder** tag also the lockfile check | the commit already has a green exact-SHA run |
@@ -84,19 +107,34 @@ A test of the process primitives starts real processes, and one that fails or ti
 records them leaks them: the suite is green and they live on with `PPID=1`. Two halves, because a
 runner killed with SIGKILL runs no cleanup. A test registers what it starts before it can exist
 (`tests/support/process-reaper.ts`: `trackGroupLeader` as `onLeaderStarted`, `trackProcess`,
-`trackPidFile`) and `reapAfterEachTest()` kills it in `afterEach` and on an interrupt. `bun run test`
-and `bun run consumer-lane` of the core package then run under `scripts/test-leak-gate.ts`, which makes itself the
-subreaper of the run, so every orphan reparents to the gate whatever its session, group,
-environment or working directory. A live child of the gate once the command has exited is a leak:
-the gate names it, kills it and fails the run. Where the kernel cannot do this (no Linux
-`prctl`), the gate says the check was not measurable and runs the command unchecked. → ADR 0249.
+`trackPidFile`) and `reapAfterEachTest()` kills it in `afterEach` and on an interrupt. The package
+suites of `bun run test` and `bun run consumer-lane` of the core package then run under
+`scripts/test-leak-gate.ts`, which makes itself the subreaper of the run, so every orphan reparents
+to the gate whatever its session, group, environment or working directory. A live child of the
+gate once the command has exited is a leak: the gate names it, kills it and fails the run. Where the
+kernel cannot do this (no Linux `prctl`), the gate says the process check was not measurable and
+runs the command without it. → ADR 0249.
+
+## A test run leaves no temporary file behind
+
+The suites call the gate with `--tmpdir`: the run gets a fresh, empty `TMPDIR` (`/tmp/sk-run-XXXXXX`,
+short for unix socket paths, mode `1777` like `/tmp`), and once the command has exited the gate
+names what is left in it, removes it, and fails the run if anything was. A directory recreated by a
+write the test did not wait for, or by a timer of a resource the test left running, is caught in a
+shard even when the file alone ends first. `scripts/test-suites.test.ts` refuses a suite that is not
+gated this way. Two script tests, `lane-processes` and `load-lane`, run as their own suite
+(`scripts orphans`) without the process half (`--no-process-check`), because they prove what happens
+to an orphan adopted by init; every other script test keeps the whole gate, and CI runs both suites
+by name (`bun scripts/test-suites.ts scripts 'scripts orphans'`). The consumer lane skips `--tmpdir`,
+because it keeps its work directory on a failure on purpose. → ADR 0321.
 
 ## The suites run side by side
 
 The root `bun run test` (`scripts/test-suites.ts`) starts every suite as its own process at once:
 the core suite in four file shards, the same `--shard=N/4` split CI runs on four runners, then the
 terminal, scaffolder and repository-script suites. Each is an ordinary sequential `bun test`; each
-core shard has its own leak gate, and a process can only reparent to the gate of its own shard.
+suite and core shard has its own leak gate and `TMPDIR`, and a process can only reparent to the gate
+of its own shard.
 Output is printed whole per suite when it ends, and one failed suite fails the step and is named.
 The step answers in the time of its slowest shard rather than the sum of all suites. Running
 side by side is load, so a test must hold under it: a shell it kills is `exec`ed into its command,
@@ -111,6 +149,12 @@ scan at the same time, and `git add` moves neither. A push therefore skipped it 
 a real machine path; CI went red afterwards, which for a public repository is a report rather than
 a refusal. It costs 367 ms. → [ADR 0164](../decisions/0164-a-local-gate-refuses-ci-only-reports.md)
 
+Its shapes know no names, since a list kept here would publish what it protects; a project name has
+no shape, though. So the names come from outside: a clone whose git config `stitchkit.privateNames`
+names a JSON list of them refuses every spelling of each in what git carries, file paths included
+(`scripts/publication-private-names.ts`), and a clone without the setting says the names were not
+checked instead of reporting them clean.
+
 ## Metadata before machinery
 
 On both pushes a release commit's changelog is read — version against the manifest,
@@ -124,9 +168,15 @@ was refused, at which point the commit is public and the fix needs a second rele
 gate and a second CI run. The order lives in one observed function (`prePushMetadataGate`)
 rather than in the sequence of statements around it.
 
+The same checks run earlier still, on every ordinary push: `scripts/release-unreleased-rehearsal.test.ts`
+rolls each target's `[Unreleased]` notes and `## Unreleased migration: …` sections in memory to the
+version their content calls for and passes them through `assertReleaseNotesMetadata`, the one function
+`validateReleaseTag` uses. A companion's queued breaking section is written weeks before its train; a
+malformed one is red on the push that wrote it, not on `release:check`.
+
 ## The green memo
 
-Only the `fast` subset (`lockfile`, `lint`, `check`, `test`) is remembered
+Only the `fast` subset (`lockfile`, `lint`, `build`, `check`, `test`) is remembered
 (`scripts/gate-memo.ts`). An unchanged tree is not gated twice, any edit to any file runs it
 again, and a skip always prints which run answers for it. Heavier lanes read PostgreSQL,
 browsers and the network, none of which a tree hash can see, and exact-SHA CI is what answers
@@ -166,7 +216,7 @@ historical record and is not edited; this page and `AGENTS.md` are the live answ
 
 ## Candidate structural preflight
 
-`bun scripts/verify.ts --candidate` runs lockfile, lint, types and `test:release-metadata` — the
+`bun scripts/verify.ts --candidate` runs lockfile, lint, the build, types and `test:release-metadata` — the
 few seconds of tests that read the changelog, migrations, maturity table and manifests a
 metadata-only release commit changes (ADR 0247; the list is that root script). Only release
 commit tips pushed to the remote `release/**` namespace receive this profile;

@@ -1,3 +1,4 @@
+import { monotonicTimerClock, scheduleAt } from '../internal/timers';
 import { contextFor } from './kernel-resource-context';
 import { type KernelState, publish, reportFailure, untilDeadline } from './kernel-state';
 
@@ -32,10 +33,11 @@ export async function closeAttempted(state: KernelState): Promise<unknown[]> {
   // failed startup from ever reporting why it failed. Passing budgets without
   // this timer would have moved that hang from "forever" to "forever", while
   // reading as if it were fixed.
+  // The force deadline is grace plus force: each fits a timer, their sum may not, so it is
+  // waited for in steps.
   const rollbackAbort = new AbortController();
-  const rollbackTimer = setTimeout(
-    () => rollbackAbort.abort(),
-    Math.max(0, rollbackForceDeadlineAt - performance.now()),
+  const rollbackTimer = scheduleAt(monotonicTimerClock, rollbackForceDeadlineAt, () =>
+    rollbackAbort.abort(),
   );
   try {
     await closeEachAttempted(state, rollbackAbort.signal, errors, {
@@ -43,7 +45,7 @@ export async function closeAttempted(state: KernelState): Promise<unknown[]> {
       forceDeadlineAt: rollbackForceDeadlineAt,
     });
   } finally {
-    clearTimeout(rollbackTimer);
+    rollbackTimer.cancel();
   }
   return errors;
 }

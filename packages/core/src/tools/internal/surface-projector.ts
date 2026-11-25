@@ -18,6 +18,7 @@ import {
 } from '../schema/presentation';
 import { mergeSchemas } from '../schema/schema';
 import { findUntypedProperties } from '../schema/untyped-properties';
+import { assertNoLegacyTransports } from './expose';
 import { toolSurfaceOutputSchema } from './tool-view';
 
 /**
@@ -35,7 +36,7 @@ export interface SurfaceRuntimeToolDefinition {
   };
   input: ZodObject;
   output?: ZodType;
-  transports?: readonly ToolTransport[];
+  expose?: readonly ToolTransport[];
   annotations?: EndpointToolAnnotations;
   ui?: EndpointUiMeta;
   mcp?: EndpointMcpPolicy;
@@ -58,11 +59,25 @@ export interface ToolSurfaceProjection<TRuntime> {
   runtimeTools?: readonly TRuntime[];
 }
 
-export interface ToolPresentationProjectionConfig {
-  extend?: SurfaceToolExtension;
+/** How a surface shapes every input document it advertises, runtime tools included. */
+export interface ToolInputProjection {
   flattenUnionInput?: boolean;
+  /**
+   * Write every `$ref` out and unroll recursion this many levels; a tool's own
+   * `tool.inputRecursionDepth` wins over it. → ADR 0319.
+   */
+  inputRecursionDepth?: number;
+}
+
+export interface ToolPresentationProjectionConfig extends ToolInputProjection {
+  extend?: SurfaceToolExtension;
   assertNames?: boolean;
   assertUniqueNames?: boolean;
+}
+
+/** One runtime-tool projection: the surface's input shaping plus whether to check the name. */
+export interface RuntimeToolProjectionOptions extends ToolInputProjection {
+  assertName?: boolean;
 }
 
 /** Canonical collision guard shared by executable extensions and projections. */
@@ -112,9 +127,9 @@ export type ProjectedTool<
  */
 export function projectRuntimeTool<TRuntime extends SurfaceRuntimeToolDefinition>(
   definition: TRuntime,
-  assertName = true,
+  options: RuntimeToolProjectionOptions = {},
 ): ProjectedRuntimeTool<TRuntime> {
-  if (assertName) {
+  if (options.assertName ?? true) {
     assertProjectedName(
       definition.name,
       definition.identity.serviceName,
@@ -131,6 +146,8 @@ export function projectRuntimeTool<TRuntime extends SurfaceRuntimeToolDefinition
     name: definition.name,
     presentationSchema: buildToolPresentationSchema({
       inputSchema: definition.input,
+      flattenUnionInput: options.flattenUnionInput,
+      inputRecursionDepth: options.inputRecursionDepth,
       unrepresentable: 'any',
     }),
     shouldExtend: false,
@@ -142,12 +159,11 @@ export function projectedRuntimeToolSupports(
   definition: SurfaceRuntimeToolDefinition,
   transport: ToolTransport,
 ): boolean {
-  if (definition.transports?.length === 0) {
+  assertNoLegacyTransports(definition, `Runtime tool "${definition.name}"`);
+  if (definition.expose?.length === 0) {
     throw new Error(`Runtime tool "${definition.name}" must expose at least one transport`);
   }
-  return definition.transports
-    ? definition.transports.includes(transport)
-    : transport !== 'CLI';
+  return definition.expose ? definition.expose.includes(transport) : transport !== 'CLI';
 }
 
 function duplicateLabel(
@@ -240,6 +256,7 @@ export function projectToolSurface<TRuntime extends SurfaceRuntimeToolDefinition
           defaults: method.toolView?.defaults,
           extendSchema: shouldExtend ? config.extend?.schema : undefined,
           flattenUnionInput: config.flattenUnionInput,
+          inputRecursionDepth: method.inputRecursionDepth ?? config.inputRecursionDepth,
           unrepresentable: 'any',
         }),
         shouldExtend,
@@ -259,7 +276,13 @@ export function projectToolSurface<TRuntime extends SurfaceRuntimeToolDefinition
         false,
       );
     }
-    append(projectRuntimeTool(definition, false));
+    append(
+      projectRuntimeTool(definition, {
+        assertName: false,
+        flattenUnionInput: config.flattenUnionInput,
+        inputRecursionDepth: config.inputRecursionDepth,
+      }),
+    );
   }
   return projected;
 }
@@ -295,6 +318,8 @@ export interface McpProjectionCandidate<TTool> {
   inputSchema?: ZodType;
   /** A tool view's input defaults, stated in the advertised input schema. */
   inputDefaults?: Readonly<Record<string, unknown>>;
+  /** The tool's own `tool.inputRecursionDepth`, over the surface's. */
+  inputRecursionDepth?: number;
   /** The tool-surface answer's schema — a tool view's, when one is declared. */
   outputSchema?: ZodType;
   shouldExtend: boolean;
@@ -322,6 +347,9 @@ export function mcpProjectionCandidate<TRuntime extends SurfaceRuntimeToolDefini
       }),
       ...(tool.source.toolView?.defaults !== undefined && {
         inputDefaults: tool.source.toolView.defaults,
+      }),
+      ...(tool.source.inputRecursionDepth !== undefined && {
+        inputRecursionDepth: tool.source.inputRecursionDepth,
       }),
       ...(toolSurfaceOutputSchema(tool.source) !== undefined && {
         outputSchema: toolSurfaceOutputSchema(tool.source),
@@ -374,6 +402,7 @@ export function prepareProjectedMcpTools<TTool>(
         inputSchema: tool.inputSchema,
         extendSchema: tool.shouldExtend && config.extend ? config.extend.schema : undefined,
         flattenUnionInput: config.flattenUnionInput,
+        inputRecursionDepth: tool.inputRecursionDepth ?? config.inputRecursionDepth,
         unrepresentable: 'throw',
         defaults: tool.inputDefaults,
       });
@@ -405,7 +434,7 @@ export function prepareProjectedMcpTools<TTool>(
           ? ` (only a description: "${untyped.description}")`
           : '';
         reportIncompatible(
-          `MCP tool "${tool.name}" — input property "${untyped.path}" carries no type, enum or $ref${clue}. A model is given no way to know what to send. Use \`z.json()\` for an arbitrary JSON value; use \`allowUntyped\` only when the presentation value is genuinely not representable as JSON Schema.`,
+          `MCP tool "${tool.name}" — input property "${untyped.path}" carries no type, enum or $ref${clue}. A model is given no way to know what to send. Use \`z.json()\` for an arbitrary JSON value — its schema refers to itself, so where the model provider refuses recursive schemas also set \`inputRecursionDepth\`; use \`allowUntyped\` only when the presentation value is genuinely not representable as JSON Schema.`,
           policy === 'skip' ? 'warn' : policy,
           config.logger,
           failures,

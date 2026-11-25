@@ -1,7 +1,9 @@
 import type { ToolTransport, TransportSource } from '../contract/define';
 import { AppError } from '../contract/errors';
+import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
-import type { ToolCallContext, ToolCallHooks, ToolLifecycle } from './execute-hooks';
+import { resolveToolAccess, type ToolAccess } from './access';
+import type { ToolCallContext, ToolCallHooks } from './execute-hooks';
 import { type ToolResult, toolErrorFromResult } from './execute-result';
 import { collectTools, createToolRunner, type MountableTool, type ToolExtend } from './mount';
 import { assertUniqueToolName } from './names';
@@ -10,9 +12,16 @@ import { assertUniqueToolName } from './names';
 export interface ToolInvokerConfig {
   /** Existing exposure policy to honour. Required: there is no bypass-all mode. */
   transport: ToolTransport;
+  /**
+   * Required access policy applied to every call through this invoker: pass
+   * `{ gate }` with `beforeHandle` or explicitly mark `{ open }`.
+   */
+  access: ToolAccess;
   extend?: ToolExtend;
   /** Compiles the same presentation surface as the chosen mount. */
   flattenUnionInput?: boolean;
+  /** Compiles the same reference-free input documents as the chosen mount. */
+  inputRecursionDepth?: number;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
   /**
@@ -32,7 +41,6 @@ export interface ToolInvocationOptions {
   source?: TransportSource;
   context?: Omit<ToolCallContext, 'source'>;
   hooks?: ToolCallHooks;
-  lifecycle?: ToolLifecycle;
   /** Report output keys removed by contract validation. */
   onOutputStrip?: (toolName: string, paths: string[]) => void;
 }
@@ -60,6 +68,7 @@ export function createToolInvoker(
   services: ServiceDef | readonly ServiceDef[],
   config: ToolInvokerConfig,
 ): ToolInvoker {
+  const lifecycle = resolveToolAccess('createToolInvoker', config);
   const serviceList = Array.isArray(services) ? services : [services];
   const tools = new Map<string, MountableTool>();
 
@@ -67,6 +76,7 @@ export function createToolInvoker(
     for (const tool of collectTools(service, config.transport, {
       extend: config.extend,
       flattenUnionInput: config.flattenUnionInput,
+      inputRecursionDepth: config.inputRecursionDepth,
     })) {
       assertUniqueToolName(tool.name, tools.has(tool.name), 'in-process tool name');
       tools.set(tool.name, tool);
@@ -92,11 +102,16 @@ export function createToolInvoker(
     args: Record<string, unknown>,
     options: ToolInvocationOptions = {},
   ): Promise<ToolResult> => {
+    if (isRecord(options) && Object.hasOwn(options, 'lifecycle')) {
+      throw new TypeError(
+        'createToolInvoker: per-call "lifecycle" was removed — pass "access" in createToolInvoker config',
+      );
+    }
     const runTool = createToolRunner({
       source: options.source ?? 'internal',
       context: options.context,
       hooks: options.hooks,
-      lifecycle: options.lifecycle,
+      lifecycle,
       extend: config.extend,
       coerceJsonArgs: config.coerceJsonArgs,
       onOutputStrip: options.onOutputStrip,

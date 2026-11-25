@@ -1,6 +1,19 @@
+---
+title: "ADR 0243 — A native command stops by one named policy, and the host bounds only what it outlives"
+type: decision
+status: accepted
+amends: ["0224"]
+amendedBy: ["0248", "0255"]
+created: 2026-10-05
+updated: 2026-10-05
+---
+
 # 0243 — A native command stops by one named policy, and the host bounds only what it outlives
 
-**Status:** Accepted, amended by [ADR 0248](0248-a-stopped-leader-settles-with-its-exit-and-a-command-may-join-the-callers-group.md) and [ADR 0255](0255-an-owner-loss-guard-belongs-to-the-command-group.md)
+**Relations:** amended by
+[ADR 0248](0248-a-stopped-leader-settles-with-its-exit-and-a-command-may-join-the-callers-group.md)
+and [ADR 0255](0255-an-owner-loss-guard-belongs-to-the-command-group.md)
+
 **Date:** 2026-10-05
 
 Amends ADR 0224. Invariants I8, I9, I10 and I11.

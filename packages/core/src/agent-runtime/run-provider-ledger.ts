@@ -8,6 +8,7 @@ import {
 } from './provider-journal';
 import type { RunExecutionState } from './run-execution-state';
 import { providerResponseIdentity } from './runtime-internals';
+import type { AgentUsage } from './schemas';
 import type { AgentRuntimeStore } from './store';
 import { canonicalAgentJson } from './store-events';
 
@@ -57,6 +58,7 @@ export interface RunProviderLedger {
     providerMetadata: unknown;
     stepNumber: number;
     attempt: number;
+    usage: AgentUsage;
   }): Promise<ReturnType<typeof providerResponseIdentity>>;
 }
 
@@ -172,6 +174,7 @@ export async function createRunProviderLedger(input: {
           attempt: response.attempt,
           stepNumber: response.stepNumber,
           response: identity,
+          usage: response.usage,
         }),
       });
       return identity;

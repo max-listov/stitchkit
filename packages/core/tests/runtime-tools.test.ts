@@ -54,14 +54,16 @@ describe('framework runtime tools', () => {
     });
     const tools = mountAgent([], {
       runtimeTools: [runtimeTool],
-      lifecycle: {
-        beforeHandle: (_context, endpoint) => {
-          expect(endpoint).toMatchObject({
-            serviceName: 'runtimeTools',
-            key: 'update',
-            scope: 'admin',
-            method: 'PATCH',
-          });
+      access: {
+        gate: {
+          beforeHandle: (_context, endpoint) => {
+            expect(endpoint).toMatchObject({
+              serviceName: 'runtimeTools',
+              key: 'update',
+              scope: 'admin',
+              method: 'PATCH',
+            });
+          },
         },
       },
       hooks: {
@@ -119,10 +121,12 @@ describe('framework runtime tools', () => {
     const tools = mountAgent([], {
       runtimeTools: [runtimeTool],
       hooks: audit.toolCall,
-      lifecycle: {
-        beforeHandle: (context) => {
-          const input = z.object({ id: z.string() }).loose().parse(context.input);
-          setRequestDimensions({ entityId: input.id });
+      access: {
+        gate: {
+          beforeHandle: (context) => {
+            const input = z.object({ id: z.string() }).loose().parse(context.input);
+            setRequestDimensions({ entityId: input.id });
+          },
         },
       },
     });
@@ -133,7 +137,7 @@ describe('framework runtime tools', () => {
         source: 'http',
         method: 'POST',
         path: '/agent',
-        startedAt: process.hrtime.bigint(),
+        startedAt: performance.now(),
         trace: { traceId: 'a'.repeat(32), spanId: 'b'.repeat(16) },
       },
       () =>
@@ -217,6 +221,7 @@ describe('framework runtime tools', () => {
 
     const mcpServer = buildMcpServer(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 'runtime', version: '1' },
         services: [],
         hooks,
@@ -230,7 +235,11 @@ describe('framework runtime tools', () => {
       arguments: { prompt: 'forest' },
     });
 
-    const agentTools = mountAgent([], { runtimeTools: [definition], hooks });
+    const agentTools = mountAgent([], {
+      access: { open: 'local-operator' },
+      runtimeTools: [definition],
+      hooks,
+    });
     const execute = executable(agentTools, 'runtime_preview');
     const output = await execute(
       { prompt: 'forest' },
@@ -289,9 +298,11 @@ describe('framework runtime tools', () => {
     });
     const tools = mountAgent([], {
       runtimeTools: [definition],
-      lifecycle: {
-        beforeHandle: () => {
-          throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
+      access: {
+        gate: {
+          beforeHandle: () => {
+            throw new AppError('FORBIDDEN', { message: 'denied', status: 403 });
+          },
         },
       },
       hooks: {
@@ -317,10 +328,14 @@ describe('framework runtime tools', () => {
       description: 'MCP only',
       identity: { serviceName: 'runtimeTools', action: 'mcpOnly', method: 'GET' },
       input: z.object({}),
-      transports: ['MCP'],
+      expose: ['MCP'],
       handler: () => undefined,
     });
-    expect(Object.keys(mountAgent([], { runtimeTools: [mcpOnly] }))).toEqual([]);
+    expect(
+      Object.keys(
+        mountAgent([], { access: { open: 'local-operator' }, runtimeTools: [mcpOnly] }),
+      ),
+    ).toEqual([]);
 
     const contract = defineContract(
       { prefix: 'runtime' },
@@ -345,12 +360,13 @@ describe('framework runtime tools', () => {
       handler: () => undefined,
     });
 
-    expect(() => mountAgent(service, { runtimeTools: [duplicate] })).toThrow(
-      /Duplicate agent tool name "duplicate_name"/,
-    );
+    expect(() =>
+      mountAgent(service, { access: { open: 'local-operator' }, runtimeTools: [duplicate] }),
+    ).toThrow(/Duplicate agent tool name "duplicate_name"/);
     expect(() =>
       buildMcpServer(
         {
+          access: { open: 'local-operator' },
           serverInfo: { name: 'runtime', version: '1' },
           services: [service],
           runtimeTools: [duplicate],

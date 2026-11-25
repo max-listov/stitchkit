@@ -68,7 +68,7 @@ const runtime = createAgentRuntime({
     contextDecision: 'fits',
     sections: [],
   }),
-  tools: () => mountAgent([], { runtimeTools: [effect] }),
+  tools: () => mountAgent([], { access: { open: 'local-operator' }, runtimeTools: [effect] }),
   loop: { maxSteps: 1 },
 });
 try {

@@ -53,7 +53,7 @@ async function run(directory, names = ['frame.png'], config = {}) {
           name: 'media',
           description: 'Download a media result',
           identity: { serviceName: 'media', action: 'get', method: 'GET' },
-          transports: ['CLI'],
+          expose: ['CLI'],
           input: z.object({}),
           output: z.object({ ok: z.boolean() }),
           handler: () => ({ ok: true }),
@@ -74,6 +74,7 @@ async function run(directory, names = ['frame.png'], config = {}) {
       allowPrivateDownloadHosts: true,
       download: () => names.map((name) => ({ url, name })),
       ...config,
+      access: config.access ?? { open: 'local-operator' },
     });
   } finally {
     process.umask = originalUmask;

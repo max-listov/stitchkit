@@ -42,7 +42,8 @@ The framework attaches no meaning to the strings — `'public'`, `'user'`,
 lifecycles. On HTTP it belongs in `hooks.authorize`: Stitchkit validates path
 params, resolves identity and scope, and rejects `401`/`403` **before reading a
 JSON or multipart body**. On MCP, agent and CLI surfaces it belongs in
-`lifecycle.beforeHandle`, because those transports have already received their
+`access.gate.beforeHandle` (`access: { gate: { beforeHandle: authHook } }`),
+because those transports have already received their
 arguments before the common tool runner starts.
 
 ```ts
@@ -250,7 +251,7 @@ source differ:
   bearer token) before body parsing.
 - **Tool calls (MCP / agent)** — there is no `req`. The transport authenticated
   the caller (an MCP API key) and `buildMcpServer`'s `context` injected the
-  identity into `ctx`. `lifecycle.beforeHandle` calls
+  identity into `ctx`. `access.gate.beforeHandle` calls
   `resolveFromContext(ctx)` to locate it.
 
 ```ts
@@ -268,7 +269,7 @@ passes a tool call it cannot authenticate. → [ADR 0014](../decisions/0014-tool
 
 ```ts
 createServer({ services, hooks: { authorize: authHook } })
-createMcpHandler({ services, lifecycle: { beforeHandle: authHook } })
+createMcpHandler({ services, access: { gate: { beforeHandle: authHook } } })
 ```
 
 ## `createBearerResolver`
@@ -303,6 +304,44 @@ const payload = await verifyJwt(token, env.JWT_SECRET)
 
 `extractToken(req, cookieName?)` reads a bearer token from the `Authorization`
 header, or from the named cookie.
+
+## Signed links
+
+`<audio src>`, `<img src>` and a plain navigation send no `Authorization` header, so an endpoint
+that serves private bytes cannot see the page's session. The server signs a short-lived link
+instead, and the endpoint's auth gate accepts it:
+
+```ts
+import { createAuthHook, signLink, verifySignedLink } from 'stitchkit/server'
+
+// Where the page asks for the recording: a link it can put in `<audio src>`.
+const src = await signLink({
+  secret: env.MEDIA_LINK_SECRET, method: 'GET',
+  url: `/media/${recordingId}?for=${userId}`, expiresInSeconds: 300,
+})
+
+// The `rawResponse` endpoint under `scope: 'viewer'` needs no guard of its own.
+const auth = createAuthHook<Viewer>({
+  resolve: async (ctx) => {
+    if (ctx.req) {
+      const link = await verifySignedLink(ctx.req, { secret: env.MEDIA_LINK_SECRET })
+      if (link.ok) return { userId: new URL(ctx.req.url).searchParams.get('for') }
+    }
+    return resolveSession(ctx)
+  },
+  rules: { viewer: 'authenticated' },
+})
+```
+
+`signLink` appends `expires` (Unix seconds) and `signature`, an HMAC-SHA-256 over the method, the
+path and every other query parameter, so a link opens one request: another path, method or edited
+parameter is `forged`. What the link is for — whose recording — rides in a parameter you add, and
+the signature covers it. Nothing is stored; rotating the secret ends every link at once. The host
+is not signed, so a proxy may change the origin, but the path and query must reach the server as
+they were signed. A lifetime is 1 second to `MAX_SIGNED_LINK_SECONDS` (seven days); a secret
+shorter than 32 characters throws. `verifySignedLink` returns `{ ok: true, expiresAt }` or a
+`reason` — `unsigned`, `malformed`, `forged`, `expired` — and a raw route calls it the same way.
+A link is a bearer credential until it expires: anyone holding it opens that one request.
 
 ## Telegram Mini Apps
 
@@ -459,7 +498,7 @@ Throw `AppError` directly, or use a typed helper — the idiomatic path:
 | `forbidden(message?)` | 403 | `FORBIDDEN` |
 | `conflict(message?, details?)` | 409 | `CONFLICT` |
 | `rateLimited(message?)` | 429 | `RATE_LIMITED` |
-| `appError(code, message?, details?)` | mapped, else 500 | any `code` |
+| `throw new AppError(code, { message?, details?, status? })` | `STITCH_ERROR_STATUS[code]`, else 500 | any `code` |
 
 ```ts
 import { notFound, badRequest } from 'stitchkit/server'
@@ -541,7 +580,7 @@ core never models them (ADR 0002). But stitchkit itself emits a set of its own:
 `WAIT_TIMEOUT`,
 `WAIT_FAILED`, `CLI_COMMAND_UNAVAILABLE`, `CLI_PRESENTATION_FAILED`, `DOWNLOAD_NOT_FOUND`, `VIEW_HTTP_ERROR`,
 `CONNECTION_TIMEOUT`, `CONNECTION_RESPONSE_TOO_LARGE`,
-`CONNECTION_REQUEST_FAILED`, `UPSTREAM_TOOL_ERROR`,
+`CONNECTION_REQUEST_FAILED`, `UPSTREAM_TOOL_ERROR`, `MCP_STRUCTURED_CONTENT_MISSING`,
 `OPERATION_NOT_SUCCEEDED`, `OPERATION_BUSY`, `OPERATION_RESPONSE_TOO_LARGE`,
 `OPERATION_PROCESS_FAILED`, `STREAM_ITEM_INVALID`, `STREAM_FRAME_TOO_LARGE`,
 `STREAM_TERMINAL_MISSING`, `STREAM_LIFETIME_EXCEEDED`,

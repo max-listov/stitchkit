@@ -2,16 +2,17 @@
 title: "ADR 0045 — A tool call runs in its own request context"
 type: decision
 status: accepted
+amends: ["0041"]
 created: 2026-08-06
 updated: 2026-08-06
 ---
 
 # ADR 0045 — A tool call runs in its own request context
 
-- **Status:** Accepted — scopes the `AsyncLocalStorage` context of
-  [ADR 0012](0012-observability-module.md); makes the `dimensions` contract of
-  [ADR 0029](0029-audit-endpoint-identity-and-dimensions.md) hold under
-  concurrency
+**Relations:** scopes the `AsyncLocalStorage` context of [ADR 0012](0012-observability-module.md);
+makes the `dimensions` contract of [ADR 0029](0029-audit-endpoint-identity-and-dimensions.md) hold
+under concurrency
+
 - **Date:** 2026-08-06
 
 ## Context

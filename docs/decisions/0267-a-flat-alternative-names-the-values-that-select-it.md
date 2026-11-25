@@ -3,6 +3,7 @@ title: "ADR 0267: A flat alternative names the values that select it"
 description: "Each structural alternative of a field shared by flattened variants carries, as its description, the discriminator values that select it; the link stays text, never `oneOf`."
 type: decision
 status: accepted
+amends: ["0205"]
 created: 2026-10-20 08:25 +07:00
 updated: 2026-10-20 08:25 +07:00
 ---

@@ -1,6 +1,16 @@
 import { z } from 'zod';
 import type { AgentStoreEventEnvelope } from '../durability/events';
-import type { SqliteAgentRuntimeStore } from './sqlite';
+import type { AgentCompanionHost } from './companion-host';
+import { InvocationResponseSchema, isModelInvocationRecord } from './invocation-schema';
+import { addUsage, statedUsage, unknownUsage } from './runtime-internals';
+import {
+  AgentTerminalReasonSchema,
+  type AgentUsage,
+  AgentUsageSchema,
+  runStateForTerminalReason,
+} from './schemas';
+import { SqlIntegerSchema } from './sql-rows';
+import type { AgentRuntimeStore } from './store';
 
 export interface AgentProjectionDefinition<STATE> {
   name: string;
@@ -43,8 +53,8 @@ export function createAgentProjectionRegistry(
 
 const ProjectionRowSchema = z.object({
   conversation_id: z.string().optional(),
-  version: z.int().positive(),
-  upto_seq: z.int().nonnegative(),
+  version: SqlIntegerSchema.pipe(z.int().positive()),
+  upto_seq: SqlIntegerSchema.pipe(z.int().nonnegative()),
   payload: z.string(),
   updated_at: z.string(),
 });
@@ -53,21 +63,29 @@ function projectionPayload(value: string): unknown {
   return JSON.parse(value);
 }
 
-export function createSqliteAgentProjectionStore(input: { sqlite: SqliteAgentRuntimeStore }) {
-  const database = input.sqlite.database;
-  const store = input.sqlite.store;
-  const load = <STATE>(
+/**
+ * Folded views of a conversation's events, kept in a SQL store's companion
+ * host — SQLite or Postgres — and advanced from where they stopped.
+ */
+export function createAgentProjectionStore(input: {
+  store: AgentRuntimeStore;
+  /** The store's companion host: `host` of the SQLite or Postgres store. */
+  host: AgentCompanionHost;
+}) {
+  const { host, store } = input;
+  const projections = host.tables.projections;
+  const load = async <STATE>(
     conversationId: string,
     definition: AgentProjectionDefinition<STATE>,
-  ) => {
-    const raw = database
-      .prepare(`
-        SELECT version, upto_seq, payload, updated_at
-        FROM stitchkit_agent_runtime_projections
-        WHERE conversation_id = ? AND name = ?
-      `)
-      .get(conversationId, definition.name);
-    if (raw === null || raw === undefined) return undefined;
+  ): Promise<AgentProjectionValue<STATE> | undefined> => {
+    const raw = await host.read((session) =>
+      session.get(
+        `SELECT version, upto_seq, payload, updated_at FROM ${projections}
+         WHERE conversation_id = ? AND name = ?`,
+        [conversationId, definition.name],
+      ),
+    );
+    if (raw === undefined) return undefined;
     const row = ProjectionRowSchema.parse(raw);
     if (row.version !== definition.version) return undefined;
     return {
@@ -76,14 +94,14 @@ export function createSqliteAgentProjectionStore(input: { sqlite: SqliteAgentRun
       uptoSeq: row.upto_seq,
       updatedAt: row.updated_at,
       value: definition.schema.parse(projectionPayload(row.payload)),
-    } satisfies AgentProjectionValue<STATE>;
+    };
   };
 
   const advance = async <STATE>(
     conversationId: string,
     definition: AgentProjectionDefinition<STATE>,
   ): Promise<AgentProjectionValue<STATE>> => {
-    const current = load(conversationId, definition);
+    const current = await load(conversationId, definition);
     let value = current?.value ?? definition.initial();
     let uptoSeq = current?.uptoSeq ?? 0;
     let cursor = uptoSeq + 1;
@@ -102,58 +120,65 @@ export function createSqliteAgentProjectionStore(input: { sqlite: SqliteAgentRun
       if (page.nextSeq === undefined) break;
       cursor = page.nextSeq;
     }
-    await input.sqlite.transaction(async (scope) => {
-      scope.database
-        .prepare(`
-          INSERT INTO stitchkit_agent_runtime_projections
-            (conversation_id, name, version, upto_seq, payload, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?)
-          ON CONFLICT (conversation_id, name) DO UPDATE SET
-            version = excluded.version,
-            upto_seq = excluded.upto_seq,
-            payload = excluded.payload,
-            updated_at = excluded.updated_at
-        `)
-        .run(
+    // Two advances of one projection can run at once, each folding from what
+    // it read. The one that folded less must not overwrite the one that folded
+    // more: the row moves only forward, or to a new projection version.
+    await host.transaction(conversationId, async (scope) => {
+      await scope.run(
+        `INSERT INTO ${projections}
+           (conversation_id, name, version, upto_seq, payload, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (conversation_id, name) DO UPDATE SET
+           version = excluded.version,
+           upto_seq = excluded.upto_seq,
+           payload = excluded.payload,
+           updated_at = excluded.updated_at
+         WHERE ${projections}.version <> excluded.version
+           OR excluded.upto_seq >= ${projections}.upto_seq`,
+        [
           conversationId,
           definition.name,
           definition.version,
           uptoSeq,
           JSON.stringify(value),
           updatedAt,
-        );
+        ],
+      );
     });
     return { name: definition.name, version: definition.version, uptoSeq, updatedAt, value };
   };
 
-  const list = <STATE>(
+  const list = async <STATE>(
     definition: AgentProjectionDefinition<STATE>,
-  ): readonly {
-    conversationId: string;
-    projection: AgentProjectionValue<STATE>;
-  }[] =>
-    database
-      .prepare(`
-        SELECT conversation_id, version, upto_seq, payload, updated_at
-        FROM stitchkit_agent_runtime_projections
-        WHERE name = ? AND version = ? ORDER BY updated_at DESC, conversation_id
-      `)
-      .all(definition.name, definition.version)
-      .map((raw) => {
-        const row = ProjectionRowSchema.parse(raw);
-        if (!row.conversation_id)
-          throw new TypeError('Projection list row has no conversation id');
-        return {
-          conversationId: row.conversation_id,
-          projection: {
-            name: definition.name,
-            version: row.version,
-            uptoSeq: row.upto_seq,
-            updatedAt: row.updated_at,
-            value: definition.schema.parse(projectionPayload(row.payload)),
-          },
-        };
-      });
+  ): Promise<
+    readonly {
+      conversationId: string;
+      projection: AgentProjectionValue<STATE>;
+    }[]
+  > =>
+    (
+      await host.read((session) =>
+        session.all(
+          `SELECT conversation_id, version, upto_seq, payload, updated_at FROM ${projections}
+           WHERE name = ? AND version = ? ORDER BY updated_at DESC, conversation_id`,
+          [definition.name, definition.version],
+        ),
+      )
+    ).map((raw) => {
+      const row = ProjectionRowSchema.parse(raw);
+      if (!row.conversation_id)
+        throw new TypeError('Projection list row has no conversation id');
+      return {
+        conversationId: row.conversation_id,
+        projection: {
+          name: definition.name,
+          version: row.version,
+          uptoSeq: row.upto_seq,
+          updatedAt: row.updated_at,
+          value: definition.schema.parse(projectionPayload(row.payload)),
+        },
+      };
+    });
 
   return { load, advance, list };
 }
@@ -186,8 +211,7 @@ export const agentStateSlotsProjection = defineAgentProjection({
   fold: (state, event) => {
     if (event.kind !== 'state/set') return state;
     const payload = z
-      .object({ name: z.string().min(1), value: z.json() })
-      .passthrough()
+      .looseObject({ name: z.string().min(1), value: z.json() })
       .parse(event.payload);
     return { ...state, [payload.name]: payload.value };
   },
@@ -237,11 +261,10 @@ export const agentSummaryProjection = defineAgentProjection({
     const request =
       event.kind === 'provider/request'
         ? z
-            .object({
+            .looseObject({
               modelId: z.string().optional(),
-              sent: z.object({ modelId: z.string() }).passthrough().optional(),
+              sent: z.looseObject({ modelId: z.string() }).optional(),
             })
-            .passthrough()
             .transform((payload) => ({ modelId: payload.modelId ?? payload.sent?.modelId }))
             .safeParse(event.payload)
         : undefined;
@@ -259,39 +282,105 @@ export const agentSummaryProjection = defineAgentProjection({
   },
 });
 
-const RuntimeUsageSchema = z
-  .object({
-    inputTokens: z.number().nonnegative(),
-    outputTokens: z.number().nonnegative(),
-    cost: z.number().nonnegative(),
-    sources: z.array(z.string()),
-  })
-  .strict();
+function hasMeasuredUsage(usage: AgentUsage | undefined): boolean {
+  if (!usage) return false;
+  return (
+    usage.inputTokens.value !== undefined ||
+    usage.outputTokens.value !== undefined ||
+    usage.reasoningTokens?.value !== undefined ||
+    usage.cacheReadTokens?.value !== undefined ||
+    usage.cacheWriteTokens?.value !== undefined ||
+    usage.cost?.value !== undefined
+  );
+}
 
-/** Usage totals keep their source names so an unavailable price never becomes zero-cost. */
+const TerminalUsageTransitionSchema = z.looseObject({
+  type: z.literal('terminal'),
+  input: z.looseObject({
+    reason: AgentTerminalReasonSchema.optional(),
+    usage: AgentUsageSchema.optional(),
+    assistant: z.looseObject({ parts: z.array(z.unknown()) }).optional(),
+  }),
+});
+
+const RecoverUsageTransitionSchema = z.looseObject({
+  type: z.literal('recover'),
+  input: z.looseObject({ action: z.literal('abandon') }),
+  usage: AgentUsageSchema.optional(),
+});
+
+function eventUsage(event: AgentStoreEventEnvelope): AgentUsage | undefined {
+  if (event.kind === 'runtime/transition') {
+    const terminal = TerminalUsageTransitionSchema.safeParse(event.payload);
+    if (terminal.success) {
+      const { assistant, reason, usage } = terminal.data.input;
+      // A run that did not complete, measured nothing and holds no provider output spent
+      // nothing: a refused connection, an oversized context, a cancel before the request.
+      // Counting it as unknown would hide every paid run of the conversation. One part of
+      // an answer is enough to mean a provider spoke, and then the unknown is real.
+      const answered =
+        reason === undefined ||
+        runStateForTerminalReason(reason) === 'completed' ||
+        assistant === undefined ||
+        assistant.parts.length > 0;
+      if (!answered && !hasMeasuredUsage(usage)) return undefined;
+      return statedUsage(usage);
+    }
+    const abandoned = RecoverUsageTransitionSchema.safeParse(event.payload);
+    if (abandoned.success && hasMeasuredUsage(abandoned.data.usage)) {
+      return statedUsage(abandoned.data.usage);
+    }
+    return undefined;
+  }
+  if (event.kind === 'provider/response' && isModelInvocationRecord(event.payload)) {
+    const parsed = InvocationResponseSchema.safeParse(event.payload);
+    // An audited agent run carries `runId` on every step response and commits
+    // one run total on `runtime/transition` (`type: 'terminal'`); folding both
+    // would double-count the run.
+    if (!parsed.success || parsed.data.runId !== undefined) return undefined;
+    if (parsed.data.status !== 'succeeded' && !hasMeasuredUsage(parsed.data.usage)) {
+      return undefined;
+    }
+    return parsed.data.usage;
+  }
+  return undefined;
+}
+
+const RuntimeUsageSchema = z.strictObject({
+  records: z.int().nonnegative(),
+  usage: AgentUsageSchema,
+});
+
+/**
+ * Conversation spend folded from canonical ledger records with per-field provenance.
+ *
+ * Folds terminal `runtime/transition` (`type: 'terminal'`), abandoned runs
+ * (`type: 'recover'`, `action: 'abandon'`) that carry measured checkpointed usage,
+ * and standalone `provider/response` invocation receipts (`runId === undefined`).
+ * A run that did not complete, carries no measured value and holds no part of a provider
+ * answer is skipped, as is a non-succeeded standalone attempt with no measured values:
+ * neither heard from a provider, so neither turns conversation cost into `unavailable`.
+ *
+ * Only ledger events after any `runtime/baseline` migration are folded; pre-baseline
+ * spend is not reconstructed. If a `history.compact` callback runs standalone
+ * `createModelInvocationLedger().complete()` on the same `conversationId`, do not
+ * also return that completion's `usage` from `compact()`, or both the standalone
+ * `provider/response` and the run's terminal transition will be counted.
+ */
 export const agentUsageProjection = defineAgentProjection({
   name: 'usage',
-  version: 1,
+  version: 2,
   schema: RuntimeUsageSchema,
-  initial: () => ({ inputTokens: 0, outputTokens: 0, cost: 0, sources: [] }),
+  initial: (): z.infer<typeof RuntimeUsageSchema> => ({
+    records: 0,
+    usage: unknownUsage(),
+  }),
   fold: (state, event) => {
-    const parsed = z
-      .object({
-        inputTokens: z.number().nonnegative().optional(),
-        outputTokens: z.number().nonnegative().optional(),
-        cost: z.number().nonnegative().optional(),
-        source: z.string().min(1).optional(),
-      })
-      .passthrough()
-      .safeParse(event.payload);
-    if (!parsed.success) return state;
-    const source = parsed.data.source;
+    const usage = eventUsage(event);
+    if (!usage) return state;
     return {
-      inputTokens: state.inputTokens + (parsed.data.inputTokens ?? 0),
-      outputTokens: state.outputTokens + (parsed.data.outputTokens ?? 0),
-      cost: state.cost + (parsed.data.cost ?? 0),
-      sources:
-        source && !state.sources.includes(source) ? [...state.sources, source] : state.sources,
+      records: state.records + 1,
+      usage: statedUsage(addUsage(state.records === 0 ? undefined : state.usage, usage)),
     };
   },
 });
@@ -318,10 +407,7 @@ export const agentOutlineProjection = defineAgentProjection({
   initial: () => ({ requests: [] }),
   fold: (state, event) => {
     if (event.kind !== 'provider/request') return state;
-    const payload = z
-      .object({ runId: z.string().optional() })
-      .passthrough()
-      .parse(event.payload);
+    const payload = z.looseObject({ runId: z.string().optional() }).parse(event.payload);
     return {
       requests: [
         ...state.requests,

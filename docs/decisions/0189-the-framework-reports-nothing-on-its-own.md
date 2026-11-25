@@ -1,6 +1,13 @@
+---
+title: "ADR 0189 — The framework reports nothing on its own"
+type: decision
+status: accepted
+created: 2026-09-22
+updated: 2026-09-22
+---
+
 # 0189 — The framework reports nothing on its own
 
-**Status:** Accepted
 **Date:** 2026-09-22
 
 ## Context

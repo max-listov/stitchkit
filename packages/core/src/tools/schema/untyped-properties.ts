@@ -15,6 +15,7 @@
  * options, so it is the honest home for it.
  */
 import { isRecord } from '../../internal/typed';
+import { TYPE_DEFINING_KEYWORDS } from '../../json-schema/keywords';
 
 /** One property the model would be shown with no idea what it is. */
 export interface UntypedProperty {
@@ -24,11 +25,8 @@ export interface UntypedProperty {
   description?: string;
 }
 
-/** Keywords any one of which tells a model what a value may be. */
-const TYPE_KEYWORDS = ['type', 'enum', 'const', 'anyOf', 'oneOf', 'allOf', '$ref', 'not'];
-
 function saysWhatItIs(schema: Record<string, unknown>): boolean {
-  return TYPE_KEYWORDS.some((keyword) => schema[keyword] !== undefined);
+  return TYPE_DEFINING_KEYWORDS.some((keyword) => schema[keyword] !== undefined);
 }
 
 /**

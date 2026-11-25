@@ -96,6 +96,7 @@ async function run(runtimeTools, argv) {
   let err = '';
   let code = -1;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'packed',
     version: '1',
     runtimeTools,
@@ -119,7 +120,7 @@ try {
     defineMcpClientConnection({
       name: 'fixture',
       transport: { url: `http://127.0.0.1:${address.port}/mcp` },
-      transports: ['CLI'],
+      expose: ['CLI'],
     }),
   ]);
   const value = '{"email":"cli-json@example.invalid","nested":{"code":"007"}}';

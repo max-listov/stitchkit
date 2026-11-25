@@ -3,14 +3,15 @@ title: "ADR 0072 — HTTP authorization precedes payload parsing"
 description: Separate pre-body authorization from post-validation application hooks so rejected requests consume no payload resources.
 type: decision
 status: accepted
+supersedes: ["0004"]
 created: 2026-08-14
 updated: 2026-08-14
 ---
 
 # ADR 0072 — HTTP authorization precedes payload parsing
 
-- **Status:** Accepted — supersedes [ADR 0004](0004-lifecycle-hooks.md) while
-  preserving its flat-hook design.
+**Relations:** supersedes [ADR 0004](0004-lifecycle-hooks.md) while preserving its flat-hook design.
+
 - **Date:** 2026-08-14
 
 ## Context

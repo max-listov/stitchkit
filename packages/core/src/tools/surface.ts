@@ -56,6 +56,7 @@ export function collectToolSurface<TRuntime extends RuntimeToolDefinition>({
   for (const projected of projectToolSurface<TRuntime>(surface, transport, {
     extend: collectConfig.extend,
     flattenUnionInput: collectConfig.flattenUnionInput,
+    inputRecursionDepth: collectConfig.inputRecursionDepth,
     assertNames: collectConfig.assertNames,
     assertUniqueNames,
   })) {
@@ -73,7 +74,7 @@ export function collectToolSurface<TRuntime extends RuntimeToolDefinition>({
         kind: 'runtime',
         service: projected.serviceName,
         action: projected.action,
-        mountable: runtimeToolMountable(projected.source, false),
+        mountable: runtimeToolMountable(projected),
         definition: projected.source,
         projection: projected,
       });

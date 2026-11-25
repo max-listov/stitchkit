@@ -1,6 +1,15 @@
+---
+title: "ADR 0198 — Stable is earned, and kept on a budget"
+type: decision
+status: accepted
+amends: ["0103"]
+amendedBy: ["0204"]
+created: 2026-09-23
+updated: 2026-09-23
+---
+
 # 0198 — Stable is earned, and kept on a budget
 
-**Status:** Accepted
 **Date:** 2026-09-23
 
 Amends [ADR 0103](0103-entrypoints-declare-their-maturity.md) and is read together

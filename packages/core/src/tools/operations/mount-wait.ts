@@ -6,6 +6,7 @@
  */
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { assertTimerSeconds } from '../../internal/deadline';
 import { isRecord } from '../../internal/typed';
 import { createMcpProgressReporter } from '../mcp/progress';
 import { assertToolName } from '../names';
@@ -41,6 +42,7 @@ export function mountWait(server: McpServer, config: WaitToolConfig): void {
   // A native tool lands in the SAME `tools/list` as the contract tools, so one
   // undeliverable name here takes them all down too. → ADR 0035.
   assertToolName(name, '<native>', 'wait');
+  assertTimerSeconds('mountWait defaultTimeout', config.defaultTimeout);
   server.registerTool(
     name,
     { description: config.description, inputSchema: z.object(config.inputSchema) },

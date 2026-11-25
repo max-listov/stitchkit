@@ -28,6 +28,15 @@ export function registerDeferredToolCatalog(
   if (search && typeof search === 'object') catalogs.set(search, names);
 }
 
+/** Keep the catalog when a tool set is rebuilt around the same tools (a wrapper). */
+export function carryDeferredToolCatalog(from: ToolSet, to: ToolSet): void {
+  for (const [name, tool] of Object.entries(from)) {
+    const names = tool && typeof tool === 'object' ? catalogs.get(tool) : undefined;
+    const next = to[name];
+    if (names && next && typeof next === 'object') catalogs.set(next, names);
+  }
+}
+
 export function deferredToolCatalog(
   tools: ToolSet,
   searchName: string,

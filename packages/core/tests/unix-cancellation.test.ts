@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +35,8 @@ const contract = defineContract(
 
 async function abortDuring(transport: 'tcp' | 'unix'): Promise<number | null> {
   let sawAbortAtMs: number | null = null;
-  const socketPath = join(tmpdir(), `sk-cancel-${transport}-${Date.now()}.sock`);
+  const socketDir = transport === 'unix' ? mkdtempSync(join(tmpdir(), 'skx-')) : '';
+  const socketPath = transport === 'unix' ? join(socketDir, 'cancel.sock') : '';
   const service = implement(contract, {
     async wait(ctx: { signal?: AbortSignal }) {
       const startedAt = performance.now();
@@ -69,7 +71,7 @@ async function abortDuring(transport: 'tcp' | 'unix'): Promise<number | null> {
     return sawAbortAtMs;
   } finally {
     void server.runtime?.stop(true);
-    if (transport === 'unix') await rm(socketPath, { force: true });
+    if (transport === 'unix') await rm(socketDir, { recursive: true, force: true });
   }
 }
 

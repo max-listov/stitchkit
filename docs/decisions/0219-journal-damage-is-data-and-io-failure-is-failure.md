@@ -1,7 +1,8 @@
 ---
 title: "ADR 0219: Journal damage is data, an IO failure is an error"
 description: "One shared bounded reader keeps valid frames and reports anomalies explicitly; the startup writer restores diagnostics from the saved generations."
-status: active
+status: accepted
+amendedBy: ["0240"]
 created: 2026-09-30 17:41 +07:00
 updated: 2026-09-30 17:41 +07:00
 type: decision

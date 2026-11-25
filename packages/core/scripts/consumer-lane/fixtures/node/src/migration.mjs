@@ -2,7 +2,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createSqliteAgentEventSearch } from 'stitchkit/agent-runtime';
+import { createAgentEventSearch } from 'stitchkit/agent-runtime';
 import { packedSqlite, proof, rawDatabase } from './packed-sqlite.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'stitchkit-packed-migration-'));
@@ -56,7 +56,7 @@ try {
     await migrated.handle.store.readEvents({ conversationId: 'migrated', limit: 10 })
   ).items;
   const baseline = events[0];
-  const search = createSqliteAgentEventSearch({ database: migrated.database });
+  const search = createAgentEventSearch({ host: migrated.handle.host });
   const hits = await search({ requestingConversationId: 'migrated', query: 'needle' });
   await migrated.handle.close();
   proof(

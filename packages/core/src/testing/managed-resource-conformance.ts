@@ -1,3 +1,4 @@
+import { assertTimerMs } from '../internal/deadline';
 import {
   type ManagedResourceConformanceConfig,
   ManagedResourceConformanceError,
@@ -136,11 +137,10 @@ export async function runManagedResourceConformance(
   config: ManagedResourceConformanceConfig,
 ): Promise<void> {
   const watchdogTimeoutMs = config.watchdogTimeoutMs ?? DEFAULT_WATCHDOG_TIMEOUT_MS;
-  if (!Number.isSafeInteger(watchdogTimeoutMs) || watchdogTimeoutMs <= 0) {
-    throw new TypeError(
-      '[stitchkit] managed resource conformance watchdogTimeoutMs must be positive',
-    );
-  }
+  assertTimerMs(
+    '[stitchkit] managed resource conformance watchdogTimeoutMs',
+    watchdogTimeoutMs,
+  );
   const selected = new Set(
     (
       config.scenarios ?? MANAGED_RESOURCE_CONFORMANCE_SCENARIOS.map((scenario) => scenario.id)

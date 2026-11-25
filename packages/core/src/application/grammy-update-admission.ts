@@ -1,4 +1,5 @@
 import type { Bot, Context } from 'grammy';
+import { abortError } from '../internal/abort-error';
 import type { ApplicationOperationLease } from './kernel-contract';
 import type { ManagedResourceAdmission } from './resource';
 
@@ -37,8 +38,8 @@ function batchSize(result: unknown): number {
   return Array.isArray(result) ? result.length : 0;
 }
 
-function abortError(): DOMException {
-  return new DOMException('Telegram polling stopped', 'AbortError');
+function pollingStopped(): Error {
+  return abortError('Telegram polling stopped');
 }
 
 /**
@@ -48,8 +49,8 @@ function abortError(): DOMException {
  */
 function untilNoLongerAdmitted(signal: AbortSignal): Promise<never> {
   return new Promise((_, reject) => {
-    if (signal.aborted) reject(abortError());
-    else signal.addEventListener('abort', () => reject(abortError()), { once: true });
+    if (signal.aborted) reject(pollingStopped());
+    else signal.addEventListener('abort', () => reject(pollingStopped()), { once: true });
   });
 }
 
@@ -60,7 +61,7 @@ async function admitted(
   try {
     return await admission.acquireWhenAccepting(signal);
   } catch {
-    if (signal.aborted) throw abortError();
+    if (signal.aborted) throw pollingStopped();
     return untilNoLongerAdmitted(signal);
   }
 }
@@ -89,8 +90,8 @@ function followed(signal: PollingSignal): AbortSignal {
  */
 function follow(signal: PollingSignal): AbortSignal {
   const controller = new AbortController();
-  if (signal.aborted) controller.abort(abortError());
-  else signal.addEventListener('abort', () => controller.abort(abortError()));
+  if (signal.aborted) controller.abort(pollingStopped());
+  else signal.addEventListener('abort', () => controller.abort(pollingStopped()));
   return controller.signal;
 }
 

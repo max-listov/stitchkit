@@ -3,6 +3,7 @@ title: "ADR 0211: Telegram screens are declared views over grammY"
 description: "A bot menu is a tree of declared screens whose views are reconciled against what the chat shows; it is middleware over the bot's own ctx.api and a grammY StorageAdapter, not an engine; navigation is the path tree; a press is trusted only if the pressed message carries it; the record is written after Telegram answers and the last write wins."
 type: decision
 status: accepted
+amendedBy: ["0294"]
 created: 2026-09-28
 updated: 2026-11-18
 ---

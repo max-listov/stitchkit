@@ -9,8 +9,9 @@ updated: 2026-08-10
 
 # ADR 0069 — Realtime contracts validate without owning delivery
 
-- **Status:** Accepted — extends [ADR 0008](0008-thin-wrappers.md); the raw
-  binary lane in [ADR 0020](0020-raw-websocket-lane.md) remains orthogonal.
+**Relations:** extends [ADR 0008](0008-thin-wrappers.md); the raw binary lane in
+[ADR 0020](0020-raw-websocket-lane.md) remains orthogonal.
+
 - **Date:** 2026-08-10
 
 ## Context

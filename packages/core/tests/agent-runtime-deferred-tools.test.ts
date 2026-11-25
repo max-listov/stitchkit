@@ -129,10 +129,12 @@ describe('deferred Agent tool surface', () => {
       tools: (runContext) =>
         deferred.mount(runContext, {
           context: runContext.context,
-          lifecycle: {
-            beforeHandle: (_context, operation) => {
-              if (!operation.toolName) throw new Error('expected Agent tool identity');
-              lifecycle.push(operation.toolName);
+          access: {
+            gate: {
+              beforeHandle: (_context, operation) => {
+                if (!operation.toolName) throw new Error('expected Agent tool identity');
+                lifecycle.push(operation.toolName);
+              },
             },
           },
         }),
@@ -203,7 +205,7 @@ describe('deferred Agent tool surface', () => {
         instructionTokens: { provenance: 'unavailable' },
         contextDecision: 'unavailable',
       }),
-      tools: (context) => deferred.mount(context),
+      tools: (context) => deferred.mount(context, { access: { open: 'local-operator' } }),
       loop: { maxSteps: 2, prepareStep: deferred.prepareStep() },
     });
     const result = await runtime.submit({
@@ -416,12 +418,15 @@ describe('deferred Agent tool surface', () => {
       createdAt: '2026-08-29T00:00:00.000Z',
       updatedAt: '2026-08-29T00:00:00.000Z',
     });
-    const mounted = deferred.mount({
-      context: { mode: 'member' },
-      run,
-      signal: new AbortController().signal,
-      toolFenceLifecycle: {},
-    });
+    const mounted = deferred.mount(
+      {
+        context: { mode: 'member' },
+        run,
+        signal: new AbortController().signal,
+        toolFenceLifecycle: { beforeHandle: () => undefined },
+      },
+      { access: { open: 'local-operator' } },
+    );
     const presenter = mounted.render_image?.toModelOutput;
     expect(presenter).toBeDefined();
     expect(
@@ -523,7 +528,7 @@ describe('a search marked inactive_call', () => {
         instructionTokens: { provenance: 'unavailable' },
         contextDecision: 'unavailable',
       }),
-      tools: (context) => deferred.mount(context),
+      tools: (context) => deferred.mount(context, { access: { open: 'local-operator' } }),
       loop: { maxSteps: 2, prepareStep: deferred.prepareStep() },
     });
     const result = await runtime.submit({
@@ -572,9 +577,20 @@ describe('a search marked inactive_call', () => {
         return ['disk_read'];
       },
     );
+    const rejected = await receiptFor(
+      { query: 'residence_read', reason: 'inactive_call' },
+      (query) => {
+        asked.push(query);
+        return [];
+      },
+    );
 
     expect(asked).toEqual([]);
     expect(marked).toMatchObject({ status: 'SEARCH_REQUIRED', selected: ['residence_read'] });
+    expect(rejected).toMatchObject({
+      status: 'SEARCH_REQUIRED',
+      selected: ['residence_read'],
+    });
   });
 
   test('a name in another case is ranked, and an empty selection answers nothing', async () => {

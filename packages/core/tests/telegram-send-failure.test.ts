@@ -175,6 +175,23 @@ describe('a refused Telegram send is classified', () => {
     cyclic.cause = cyclic;
     expect(classifyTelegramSendFailure(cyclic).reason).toBe('unknown');
   });
+
+  test('ignores negative retry_after and reads nested response descriptions on Error instances', () => {
+    const neg = classifyTelegramSendFailure({
+      error_code: 429,
+      parameters: { retry_after: -5 },
+    });
+    expect(neg.reason).toBe('rate-limited');
+    expect(neg.retryAfterSeconds).toBeUndefined();
+
+    const wrappedError = Object.assign(new Error('HTTP 403'), {
+      response: { error_code: 403, description: 'Forbidden: bot was blocked by the user' },
+    });
+    const classified = classifyTelegramSendFailure(wrappedError);
+    expect(classified.reason).toBe('blocked-by-user');
+    expect(classified.status).toBe(403);
+    expect(classified.recipientUnreachable).toBe(true);
+  });
 });
 
 describe('the reasons as a list', () => {

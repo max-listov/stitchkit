@@ -45,38 +45,32 @@ export interface NotificationOutboxState<TPayload> {
 }
 
 /** The schema shared by any persistence adapter and the outbox itself. */
-export function notificationOutboxStateSchema<TPayload>(
+export function createNotificationOutboxStateSchema<TPayload>(
   payload: z.ZodType<TPayload>,
 ): z.ZodType<NotificationOutboxState<TPayload>> {
-  return z
-    .object({
-      schemaVersion: z.literal(1),
-      queue: z.array(
-        z
-          .object({
-            key: z.string().min(1).max(512),
-            payload,
-            delivery: NotificationDeliveryStateSchema.optional(),
-            createdAt: z.string().datetime({ offset: true }),
-            attempts: z.number().int().nonnegative(),
-            nextAttemptAt: z.string().datetime({ offset: true }),
-            leaseOwner: z.string().min(1).max(128).nullable(),
-            leaseId: z.string().min(1).max(128).nullable(),
-            leaseUntil: z.string().datetime({ offset: true }).nullable(),
-          })
-          .strict(),
-      ),
-      receipts: z.array(
-        z
-          .object({
-            key: z.string().min(1).max(512),
-            completedAt: z.string().datetime({ offset: true }),
-            delivery: NotificationDeliveryStateSchema.optional(),
-          })
-          .strict(),
-      ),
-    })
-    .strict();
+  return z.strictObject({
+    schemaVersion: z.literal(1),
+    queue: z.array(
+      z.strictObject({
+        key: z.string().min(1).max(512),
+        payload,
+        delivery: NotificationDeliveryStateSchema.optional(),
+        createdAt: z.string().datetime({ offset: true }),
+        attempts: z.number().int().nonnegative(),
+        nextAttemptAt: z.string().datetime({ offset: true }),
+        leaseOwner: z.string().min(1).max(128).nullable(),
+        leaseId: z.string().min(1).max(128).nullable(),
+        leaseUntil: z.string().datetime({ offset: true }).nullable(),
+      }),
+    ),
+    receipts: z.array(
+      z.strictObject({
+        key: z.string().min(1).max(512),
+        completedAt: z.string().datetime({ offset: true }),
+        delivery: NotificationDeliveryStateSchema.optional(),
+      }),
+    ),
+  });
 }
 
 export interface NotificationSend<TPayload> {
@@ -217,7 +211,7 @@ function notificationRejection<TPayload>(
 export function createNotificationOutbox<TPayload>(
   config: NotificationOutboxConfig<TPayload>,
 ): NotificationOutbox<TPayload> {
-  const schema = notificationOutboxStateSchema(config.payloadSchema);
+  const schema = createNotificationOutboxStateSchema(config.payloadSchema);
   const clock = config.clock ?? (() => new Date());
   const ownerId = config.ownerId ?? crypto.randomUUID();
   const { pollIntervalMs, leaseMs, maxQueue, maxStateBytes, retainReceipts } =

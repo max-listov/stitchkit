@@ -1,5 +1,5 @@
+import { abortReason, raceAbort } from './abort-race';
 import { isRecord } from './typed';
-import { abortReason, untilAborted } from './until-aborted';
 
 /** Bytes a stream reader accepts: a `Response` body, a web stream, or any async byte iterable. */
 export type StreamByteSource =
@@ -67,7 +67,7 @@ export async function* chunksOf(
     try {
       for (;;) {
         const pending = reader.read();
-        const chunk = await (signal ? untilAborted(pending, signal) : pending);
+        const chunk = await (signal ? raceAbort(pending, signal) : pending);
         signal?.throwIfAborted();
         if (chunk.done) return;
         yield chunk.value;
@@ -87,7 +87,7 @@ export async function* chunksOf(
   try {
     for (;;) {
       const pending = iterator.next();
-      const next = await (signal ? untilAborted(pending, signal) : pending);
+      const next = await (signal ? raceAbort(pending, signal) : pending);
       if (next.done) {
         finished = true;
         return;

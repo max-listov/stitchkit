@@ -45,6 +45,7 @@ import type { SessionOperation } from '../browser/session';
  * sense a rendering component can use.
  */
 import type { ContractDef, EndpointDef } from '../contract/define';
+import { assertTimerMs } from '../internal/deadline';
 import { argumentsDigest } from '../internal/stable-digest';
 import {
   applyWatchFrame,
@@ -167,19 +168,31 @@ export type TypedWatchClient<T extends Record<string, EndpointDef>> = {
   [K in keyof T]: (args?: Record<string, unknown>) => WatchHandle<unknown>;
 };
 
+/** Every bound of a watch client, refused before a key exists. */
+function watchClientLimits(config: WatchClientConfig) {
+  const maxKeys = config.maxKeys ?? 1024;
+  const maxListeners = config.maxListenersPerKey ?? 128;
+  for (const bound of [maxKeys, maxListeners])
+    if (!Number.isInteger(bound) || bound < 1)
+      throw new RangeError('Watch capacity must be positive');
+  // Both end in timers of keys not yet opened: refused here, not at the first release or open.
+  assertTimerMs('Watch client holdMs', config.holdMs, { min: 0 });
+  assertTimerMs('Watch client openTimeoutMs', config.openTimeoutMs);
+  return {
+    maxKeys,
+    maxListeners,
+    holdMs: config.holdMs ?? 0,
+    openTimeoutMs: config.openTimeoutMs ?? 10_000,
+  };
+}
+
 export function createWatchClient<T extends Record<string, EndpointDef>>(
   contract: ContractDef<T, string>,
   config: WatchClientConfig,
 ): TypedWatchClient<T> {
   const entries = new Map<string, WatchClientEntry>();
   const valid = () => !config.session || config.session.current();
-  const maxKeys = config.maxKeys ?? 1024;
-  const maxListeners = config.maxListenersPerKey ?? 128;
-  for (const bound of [maxKeys, maxListeners])
-    if (!Number.isInteger(bound) || bound < 1)
-      throw new RangeError('Watch capacity must be positive');
-  const holdMs = config.holdMs ?? 0;
-  const openTimeoutMs = config.openTimeoutMs ?? 10_000;
+  const { maxKeys, maxListeners, holdMs, openTimeoutMs } = watchClientLimits(config);
   const service = contract.meta.prefix;
 
   /**

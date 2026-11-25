@@ -1,8 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { simulateReadableStream, tool } from 'ai';
+import { type LanguageModelUsage, simulateReadableStream, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
-import { addUsage, unknownUsage } from '../src/agent-runtime/runtime-internals';
+import {
+  addUsage,
+  normalizeSdkUsage,
+  unknownUsage,
+} from '../src/agent-runtime/runtime-internals';
 import {
   type AgentRunEvent,
   type AgentRuntimeEvent,
@@ -36,19 +40,18 @@ const detailedSdkUsage = (
 
 const reported = (value: number) => ({ value, provenance: 'provider-reported' as const });
 
-/** Mirrors the shipped OpenRouter adapter: per-step cost out of provider metadata. */
+/** Mirrors the shipped OpenRouter adapter: per-step tokens and cost out of provider metadata. */
 const normalizeUsage = ({
   usage,
   providerMetadata,
 }: {
-  usage: { inputTokens?: number; outputTokens?: number };
+  usage: LanguageModelUsage;
   providerMetadata?: unknown;
 }): AgentUsage => {
   const meta = providerMetadata as { openrouter?: { usage?: { cost?: number } } } | undefined;
   const cost = meta?.openrouter?.usage?.cost;
   return {
-    inputTokens: reported(usage.inputTokens ?? 0),
-    outputTokens: reported(usage.outputTokens ?? 0),
+    ...normalizeSdkUsage(usage),
     ...(cost !== undefined && {
       cost: { value: cost, currency: 'USD', provenance: 'provider-reported' as const },
     }),

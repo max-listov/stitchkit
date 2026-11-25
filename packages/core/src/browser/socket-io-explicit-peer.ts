@@ -12,15 +12,6 @@ import type {
   SocketIOClientPeerLoaders,
 } from './socket-io-contract';
 
-export type {
-  RealtimeClient,
-  RealtimeClientOptions,
-  SocketEventMap,
-  SocketIOClient,
-  SocketIOClientConfig,
-  SocketIOClientPeerLoaders,
-} from './socket-io-contract';
-
 const missingPeer = () =>
   Promise.reject(
     new Error(

@@ -3,14 +3,17 @@ title: "ADR 0205 — Flat tool collisions retain structural alternatives"
 description: Object and array alternatives keep their field and item schemas while the containing discriminated union remains an object.
 type: decision
 status: accepted
+amends: ["0031", "0033", "0065"]
+amendedBy: ["0267"]
 created: 2026-09-27 19:05 +07:00
 updated: 2026-09-27 19:05 +07:00
 ---
 
 # ADR 0205 — Flat tool collisions retain structural alternatives
 
-- **Status:** Accepted — amends the no-nested-union collision rule of ADRs 0033
-  and 0065; preserves the presentation/runtime boundary of ADR 0050.
+**Relations:** amends the no-nested-union collision rule of ADRs 0033 and 0065; preserves the
+presentation/runtime boundary of ADR 0050.
+
 - **Invariants:** I3, I8.
 
 ## Context

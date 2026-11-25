@@ -7,12 +7,15 @@ import {
   type McpServer,
   originValidationResponse,
 } from '@modelcontextprotocol/server';
-import { untilAborted } from '../../internal/until-aborted';
+import { raceAbort } from '../../internal/abort-race';
+import { jsonResponse } from '../../internal/json-response';
 import {
   type ProtectedResourceConfig,
   wwwAuthenticateHeader,
 } from '../../server/oauth/metadata';
+import { markProtocolOutcome } from '../../server/protocol-outcome';
 import type { RawRoute } from '../../server/types';
+import { resolveToolAccess } from '../access';
 import {
   MCP_CATALOG_HEADER,
   type McpCatalogStamp,
@@ -81,7 +84,7 @@ function jsonRpcError(
   status: number,
   headers?: Record<string, string>,
 ): Response {
-  return Response.json(
+  return jsonResponse(
     { jsonrpc: '2.0', error: { code, message }, id: null },
     { status, headers },
   );
@@ -111,6 +114,7 @@ function prepareStaticSurface<TAuth>(
     logger: config.logger,
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
+    inputRecursionDepth: config.inputRecursionDepth,
     schemaValidation: config.schemaValidation,
     multiRound: {
       stateConfigured: config.multiRound !== undefined,
@@ -162,6 +166,7 @@ export function createMcpHandler<
   TAuth,
   const TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
 >(config: McpHandlerConfig<TAuth, TSurfaces>): McpHttpHandler {
+  resolveToolAccess('createMcpHandler', config);
   const buildPrepared = prepareStaticSurface(config);
   const authByCarrier = new WeakMap<
     AuthInfo,
@@ -217,7 +222,7 @@ export function createMcpHandler<
 
       // Each request owns its wait on `closing`: a promise shared by every request would keep
       // one reaction, and the auth result it carries, per request for the life of the handler.
-      const auth = await untilAborted(
+      const auth = await raceAbort(
         Promise.resolve(config.auth(request)),
         closing.signal,
       ).catch((error: unknown) => {
@@ -237,7 +242,8 @@ export function createMcpHandler<
       authByCarrier.set(authCarrier, resolved);
       try {
         const response = await sdkHandler.fetch(request, { authInfo: authCarrier });
-        return observeRejection(request, withCatalogHeader(response, resolved.served));
+        const answered = withCatalogHeader(response, resolved.served);
+        return observeRejection(request, markSessionOperationRefusal(request, answered));
       } finally {
         authByCarrier.delete(authCarrier);
       }
@@ -249,6 +255,19 @@ export function createMcpHandler<
       await sdkHandler.close();
     },
   };
+}
+
+/**
+ * A stateless endpoint offers no event stream and no session to end, and Streamable HTTP
+ * names `405` as the answer to both: to the `GET` that opens the stream and the `DELETE`
+ * that ends a session. The official client reads either as "not offered here" and carries
+ * on, so the request line logs them as the ordinary answers they are. A `405` to any other
+ * method is a client mistake and keeps its warning.
+ */
+function markSessionOperationRefusal(request: Request, response: Response): Response {
+  if (response.status !== 405) return response;
+  if (request.method !== 'GET' && request.method !== 'DELETE') return response;
+  return markProtocolOutcome(response);
 }
 
 /**

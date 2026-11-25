@@ -1,0 +1,71 @@
+gui/501/com.stitchkit.fixture.launchd.base = {
+	active count = 1
+	path = /Users/fixture-user/scratch/stitchkit-0127/launchd/com.stitchkit.fixture.launchd.base.plist
+	type = LaunchAgent
+	state = running
+
+	program = /bin/sleep
+	arguments = {
+		/bin/sleep
+		600
+	}
+
+	inherited environment = {
+		SSH_AUTH_SOCK => /private/tmp/com.apple.launchd.FIXTURE/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		FOO => plain-value
+		XPC_SERVICE_NAME => com.stitchkit.fixture.launchd.base
+	}
+
+	domain = gui/501 [100015]
+	asid = 100015
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	pid = 91595
+	immediate reason = speculative
+	forks = 0
+	execs = 1
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	checked allocations = 0 (queried = 1)
+	checked allocations reason = no host
+	checked allocations flags = 0x0
+	last exit code = (never exited)
+
+	resource coalition = {
+		ID = 64326
+		type = resource
+		state = active
+		active count = 1
+		name = com.stitchkit.fixture.launchd.base
+	}
+
+	jetsam coalition = {
+		ID = 64327
+		type = jetsam
+		state = active
+		active count = 1
+		name = com.stitchkit.fixture.launchd.base
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	sanitizer flags = 0x0
+
+	properties = runatload | inferred program
+}

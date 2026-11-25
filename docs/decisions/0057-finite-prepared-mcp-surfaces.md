@@ -3,18 +3,18 @@ title: "ADR 0057 — Finite prepared MCP surfaces"
 description: A bounded identity-selected registry compiles contract and runtime tool descriptors once while request state stays fresh.
 type: decision
 status: accepted
+supersedes: ["0048"]
 created: 2026-08-08
 updated: 2026-08-08
 ---
 
 # ADR 0057 — Finite prepared MCP surfaces
 
-- **Status:** Accepted — extends the neutral runtime operation of
-  [ADR 0055](0055-runtime-tools-share-one-neutral-operation.md), supersedes the
-  protected registrar shape of
-  [ADR 0048](0048-framework-owned-native-mcp-registration.md), and preserves
-  per-call isolation from
-  [ADR 0045](0045-a-tool-call-runs-in-its-own-context.md)
+**Relations:** extends the neutral runtime operation of
+[ADR 0055](0055-runtime-tools-share-one-neutral-operation.md), supersedes the protected registrar
+shape of [ADR 0048](0048-framework-owned-native-mcp-registration.md), and preserves per-call
+isolation from [ADR 0045](0045-a-tool-call-runs-in-its-own-context.md)
+
 - **Date:** 2026-08-08
 
 ## Context

@@ -56,6 +56,7 @@ function request(): Request {
 
 function handlerFor(services: ReturnType<typeof makeService>[]) {
   return createMcpHandler({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'benchmark', version: '1' },
     auth: () => ({ id: 'benchmark' }),
     services,
@@ -64,6 +65,7 @@ function handlerFor(services: ReturnType<typeof makeService>[]) {
 
 function uncachedHandlerFor(services: ReturnType<typeof makeService>[]) {
   return createMcpHandler({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'benchmark', version: '1' },
     auth: () => ({ id: 'benchmark' }),
     services: () => services,
@@ -72,6 +74,7 @@ function uncachedHandlerFor(services: ReturnType<typeof makeService>[]) {
 
 function registryHandlerFor(services: ReturnType<typeof makeService>[]) {
   return createMcpHandler({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'benchmark', version: '1' },
     auth: () => ({ id: 'benchmark' }),
     surfaces: { benchmark: { services } },

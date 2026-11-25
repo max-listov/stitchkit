@@ -1,5 +1,7 @@
 export type { AgentToolDefinition } from '../agent-runtime/agent-tool';
 export {
+  type AgentConversationBranchPlan,
+  AgentConversationBranchPlanSchema,
   type AgentConversationBranchReceipt,
   AgentConversationBranchReceiptSchema,
   type AgentConversationBranchResult,
@@ -7,7 +9,17 @@ export {
   type BranchAgentConversationInput,
   BranchAgentConversationInputSchema,
 } from '../agent-runtime/branch-contract';
-export { createAgentChildTools } from '../agent-runtime/child-tools';
+export {
+  type AgentBranchRefusal,
+  type AgentBranchRefusalCode,
+  AgentBranchRefusalCodeSchema,
+  AgentBranchRefusalSchema,
+  AgentConversationBranchRefusedError,
+} from '../agent-runtime/branch-refusal';
+export {
+  type AgentChildToolsConfig,
+  createAgentChildTools,
+} from '../agent-runtime/child-tools';
 export {
   type AgentChildBlockingDecision,
   type AgentChildBlockingEvent,
@@ -25,9 +37,12 @@ export {
   type AgentChildState,
   AgentChildStateSchema,
   agentChildBudgetStopPolicy,
-  createSqliteAgentChildManager,
+  createAgentChildManager,
 } from '../agent-runtime/children';
-export type { SqliteAgentChildManagerConfig } from '../agent-runtime/children-state';
+export type {
+  AgentChildManagerConfig,
+  AgentChildRemainingBudget,
+} from '../agent-runtime/children-state';
 export {
   type AgentCompactionContext,
   type AgentCompactionResult,
@@ -37,6 +52,7 @@ export {
   selectCompactableHistory,
   structuredCompaction,
 } from '../agent-runtime/compaction';
+export type { AgentCompanionHost, AgentCompanionScope } from '../agent-runtime/companion-host';
 export { AgentContextOverflowError } from '../agent-runtime/context-refusal';
 export {
   type AgentConversationMessagePage,
@@ -75,9 +91,13 @@ export {
 export {
   type AgentEventSearchResult,
   AgentEventSearchResultSchema,
-  createSqliteAgentEventSearch,
+  createAgentEventSearch,
 } from '../agent-runtime/event-search';
-export { createAgentEventSearchTools } from '../agent-runtime/event-search-tools';
+export type { PostgresAgentEventSearchConfig } from '../agent-runtime/event-search-postgres';
+export {
+  type AgentEventSearchToolsConfig,
+  createAgentEventSearchTools,
+} from '../agent-runtime/event-search-tools';
 export {
   AgentAdmissionEventSchema,
   AgentAttemptResetEventSchema,
@@ -120,6 +140,7 @@ export {
   type ModelInvocationTrace,
   ModelInvocationTraceSchema,
 } from '../agent-runtime/invocation-schema';
+export { modelInvocationSpendAttribution } from '../agent-runtime/invocation-spend';
 export {
   createModelInvocationLedger,
   type ModelInvocationConfig,
@@ -190,7 +211,7 @@ export {
   agentSummaryProjection,
   agentUsageProjection,
   createAgentProjectionRegistry,
-  createSqliteAgentProjectionStore,
+  createAgentProjectionStore,
   defineAgentProjection,
 } from '../agent-runtime/projections';
 export {
@@ -235,6 +256,18 @@ export {
   recordAgentRetryDecision,
 } from '../agent-runtime/retry-policy';
 export {
+  AgentStepBarrierError,
+  type AgentStepBarriers,
+  type AgentToolCallDependencies,
+  createToolDependencyResolver,
+} from '../agent-runtime/run-step-barriers';
+export {
+  type AgentStepSpend,
+  type AgentStepSpendPhase,
+  AgentStepSpendPhaseSchema,
+  AgentStepSpendSchema,
+} from '../agent-runtime/run-step-spend';
+export {
   type AgentContextUsage,
   type AgentRuntime,
   type AgentRuntimeAbandonInput,
@@ -254,17 +287,10 @@ export {
   createAgentRuntime,
 } from '../agent-runtime/runtime';
 export type { AgentRuntimeResult } from '../agent-runtime/runtime-result';
-export {
-  type AgentProcessSandbox,
-  type AgentSandboxGrade,
-  AgentSandboxGradeSchema,
-  type AgentSandboxOutputStream,
-  type AgentSandboxProcess,
-  type AgentSandboxRestriction,
-  AgentSandboxRestrictionSchema,
-  missingSandboxRestrictions,
-  probeAgentProcessSandbox,
-  recordAgentSandboxProbe,
+export type {
+  AgentProcessSandbox,
+  AgentSandboxOutputStream,
+  AgentSandboxProcess,
 } from '../agent-runtime/sandbox';
 export {
   type AgentSchedule,
@@ -273,10 +299,21 @@ export {
   AgentScheduleSchema,
   type AgentScheduleService,
 } from '../agent-runtime/schedule-contract';
-export { createAgentScheduleTools } from '../agent-runtime/schedule-tools';
-export { createAgentScheduleService } from '../agent-runtime/schedules';
+export {
+  type AgentScheduleToolsConfig,
+  createAgentScheduleTools,
+} from '../agent-runtime/schedule-tools';
+export {
+  type AgentScheduleServiceConfig,
+  createAgentScheduleService,
+} from '../agent-runtime/schedules';
 export * from '../agent-runtime/schemas';
-export { createSqliteAgentSpillStore } from '../agent-runtime/spill';
+export { createAgentSpillStore } from '../agent-runtime/spill';
+export type {
+  AgentSqlSession,
+  AgentSqlTables,
+  AgentSqlValue,
+} from '../agent-runtime/sql-session';
 export {
   type AgentStateSlotDefinition,
   type AgentStateSlotStore,
@@ -288,7 +325,10 @@ export {
   defineStateSlot,
   renderAgentStateSlots,
 } from '../agent-runtime/state-slots';
-export { createAgentStateTools } from '../agent-runtime/state-tools';
+export {
+  type AgentStateToolsConfig,
+  createAgentStateTools,
+} from '../agent-runtime/state-tools';
 export {
   type AcceptInputAndAssignRun,
   AcceptInputAndAssignRunSchema,
@@ -322,6 +362,11 @@ export {
   type SeedConversationInput,
   SeedConversationInputSchema,
 } from '../agent-runtime/store';
+export {
+  type AgentRuntimeStoreCapabilities,
+  type AgentStoreOptionalCapability,
+  AgentStoreUnsupportedCapabilityError,
+} from '../agent-runtime/store-capabilities';
 export { createAgentRuntimeStore } from '../agent-runtime/store-create';
 export {
   ACTIVE_AGENT_RUN_STATES,
@@ -374,6 +419,7 @@ export {
   type StepRunOptions,
 } from '../durability/engine';
 export {
+  AgentRecordIdSchema,
   type AgentStoreEventEnvelope,
   AgentStoreEventEnvelopeSchema,
   type AgentStoreEventKind,

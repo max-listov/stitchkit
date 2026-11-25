@@ -45,7 +45,7 @@ export function placeholderDeferredSearch(name: string): SearchDefinition {
     identity: { serviceName: 'agent-runtime', action: 'deferred-tool-search', method: 'POST' },
     input: DeferredAgentToolSearchInputSchema,
     output: DeferredAgentToolReceiptSchema,
-    transports: ['AGENT'],
+    expose: ['AGENT'],
     handler: (): DeferredAgentToolReceipt => ({
       schemaVersion: 1,
       kind: 'stitchkit.deferred-tool-selection',
@@ -70,7 +70,7 @@ export function createDeferredSearchTool<CONTEXT>(
     identity: { serviceName: 'agent-runtime', action: 'deferred-tool-search', method: 'POST' },
     input: DeferredAgentToolSearchInputSchema,
     output: DeferredAgentToolReceiptSchema,
-    transports: ['AGENT'],
+    expose: ['AGENT'],
     handler: async ({ input }): Promise<DeferredAgentToolReceipt> => {
       const queryOversized = utf8Bytes(input.query) > config.search.maxQueryBytes;
       // The runtime writes `inactive_call` beside the exact name of a tool the

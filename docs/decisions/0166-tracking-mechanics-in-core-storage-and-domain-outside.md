@@ -2,7 +2,8 @@
 title: Tracking mechanics live in core; storage and domain stay outside
 description: Two consuming applications carried the same visitor-tracking mechanics and fixed the same defects one at a time. The mechanics and the pure decisions move into stitchkit; the tables, the transaction, the event vocabulary and the reports do not.
 type: decision
-status: active
+status: accepted
+amendedBy: ["0280", "0282"]
 created: 2026-09-06
 updated: 2026-11-04 16:21 +07:00
 ---

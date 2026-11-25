@@ -63,6 +63,7 @@ describe('rawTools receives the resolved auth', () => {
     const seen: unknown[] = [];
     const server = buildMcpServer<{ tenantId: string }>(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 't', version: '1' },
         services: (auth) => {
           seen.push(auth);
@@ -102,6 +103,7 @@ describe('rawTools receives the resolved auth', () => {
     let called = false;
     buildMcpServer<{ tenantId: string }>(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 't', version: '1' },
         services: [],
         rawTools: () => {

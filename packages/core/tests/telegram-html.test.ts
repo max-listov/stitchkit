@@ -55,15 +55,59 @@ describe('telegram html: cleaning', () => {
     expect(result).not.toContain('onclick');
   });
 
+  test('an href is kept by fixed rules: a scheme Telegram opens, a web host, no whitespace', () => {
+    // The same rules run in every realm; `tests/rn-realm/telegram-html.test.ts` proves it in React Native's.
+    const rendered = renderTelegramHtml(
+      parseTelegramHtml('<a href="https://example.com">docs</a>'),
+    );
+    expect(rendered).toBe('<a href="https://example.com">docs</a>');
+    expect(checkTelegramHtml(rendered).problem).toBeUndefined();
+    expect(
+      sanitizeTelegramHtml(
+        '<a href="javascript:alert(1)">bad</a> <a href="not-a-url">raw</a> <a href="https://example.com/a\tb">ctrl</a> <a href="https://example.com/a b">space</a>',
+      ),
+    ).toBe('bad raw ctrl space');
+    expect(
+      sanitizeTelegramHtml(
+        '<a href="https://">empty</a> <a href="https://exa&lt;mple.com">host</a> <a href="https://x.test:70000">port</a> <a href="tg:">bare</a>',
+      ),
+    ).toBe('empty host port bare');
+    expect(
+      sanitizeTelegramHtml(
+        '<a href="HTTPS://X.TEST:8080/p">a</a> <a href="https://[::1]/">b</a> <a href="mailto:x@x.test">c</a>',
+      ),
+    ).toBe(
+      '<a href="HTTPS://X.TEST:8080/p">a</a> <a href="https://[::1]/">b</a> <a href="mailto:x@x.test">c</a>',
+    );
+  });
+
   test('entities nest only where Telegram lets them', () => {
-    // Nothing inside code or pre; links, quotes and code never inside each other.
+    // Nothing inside code or pre; links and code never inside each other; no nested quotes.
     expect(sanitizeTelegramHtml('<code><b>x</b></code>')).toBe('<code>x</code>');
     expect(sanitizeTelegramHtml('<a href="https://x.test">l <code>c</code></a>')).toBe(
       '<a href="https://x.test">l c</a>',
     );
     expect(
+      sanitizeTelegramHtml('<a href="https://x.test">l <a href="https://y.test">in</a></a>'),
+    ).toBe('<a href="https://x.test">l in</a>');
+    expect(
+      sanitizeTelegramHtml('<a href="https://x.test">l <blockquote>q</blockquote></a>'),
+    ).toBe('<a href="https://x.test">l q</a>');
+    expect(
       sanitizeTelegramHtml('<blockquote>q <blockquote>in</blockquote></blockquote>'),
     ).toBe('<blockquote>q in</blockquote>');
+    // Blockquotes may hold styles, links, code, pre and atomic entities, never another quote or code inside a link.
+    const quoted =
+      '<blockquote><b>b</b> <code>c</code> <a href="https://x.test">l</a> ' +
+      '<pre><code class="language-ts">x = 1</code></pre> ' +
+      '<tg-emoji emoji-id="5368324170671202286">👍</tg-emoji> ' +
+      '<tg-time unix="1647531900">then</tg-time></blockquote>';
+    expect(sanitizeTelegramHtml(quoted)).toBe(quoted);
+    expect(
+      sanitizeTelegramHtml(
+        '<blockquote><a href="https://x.test">l <code>c</code></a></blockquote>',
+      ),
+    ).toBe('<blockquote><a href="https://x.test">l c</a></blockquote>');
     // Styles nest freely, and hold anything.
     expect(sanitizeTelegramHtml('<b>b <i>i <a href="https://x.test">l</a></i></b>')).toBe(
       '<b>b <i>i <a href="https://x.test">l</a></i></b>',
@@ -164,6 +208,29 @@ describe('telegram html: cutting to the limit', () => {
     expect(caption.map((part) => part.length)).toEqual([TELEGRAM_CAPTION_LIMIT, 1]);
   });
 
+  test('a custom emoji or a time longer than the limit is refused by a split, dropped by a truncation', () => {
+    const time = `<tg-time unix="1" format="t">${'x'.repeat(30)}</tg-time>`;
+    const emoji = '<tg-emoji emoji-id="1">😀😀😀</tg-emoji>';
+    // It cannot be cut, and a part over the limit or an empty one is a send Telegram refuses.
+    for (const [markup, limit] of [
+      [`ab ${time} cd`, 10],
+      [emoji, 2],
+    ] as const)
+      expect(() => splitTelegramHtml(markup, { limit })).toThrow(
+        new RangeError(
+          '[stitchkit] telegram html: a custom emoji or a time is longer than the limit and cannot be cut',
+        ),
+      );
+    expect(truncateTelegramHtml(`ab ${time} cd`, { limit: 10 })).toBe('ab…');
+    expect(truncateTelegramHtml(`${emoji} tail`, { limit: 4 })).toBe('…');
+    // One that fits goes whole into the part it starts in, never into an empty one.
+    const parts = splitTelegramHtml(`${'a '.repeat(4)}${emoji} b`, { limit: 7 });
+    expect(parts.every((part) => part !== '' && telegramHtmlText(part).length <= 7)).toBe(
+      true,
+    );
+    expect(parts.join(' ')).toContain(emoji);
+  });
+
   test('a text with nothing visible is no parts', () => {
     expect(splitTelegramHtml('<b></b> <img>')).toEqual([]);
     expect(() => splitTelegramHtml('x', { limit: 1 })).toThrow(RangeError);
@@ -196,5 +263,39 @@ describe('telegram html: the strict check', () => {
     expect(checkTelegramHtml('a < b').problem).toEqual({ kind: 'bare-character' });
     expect(checkTelegramHtml('&nbsp;').problem).toEqual({ kind: 'bare-character' });
     expect(checkTelegramHtml('<b>fine</b> &amp; &#33;')).toEqual({ text: 'fine & !' });
+  });
+});
+
+describe('telegram html: linear in the markup', () => {
+  const BUDGET_MS = 200;
+  const ADVERSARIAL: readonly (readonly [string, string])[] = [
+    ['bold nested 16 000 deep', `${'<b>'.repeat(16_000)}x`],
+    ['styles alternating 16 000 deep', `${'<b><i>'.repeat(8_000)}x`],
+    ['unknown-to-Telegram spans 16 000 deep', `${'<span>'.repeat(16_000)}x`],
+    [
+      'stray closing tags under open spans',
+      `${'<span>'.repeat(8_000)}${'</b>'.repeat(8_000)}`,
+    ],
+    ['a tag with a long run of spaces', `<a${' '.repeat(64_000)}x`],
+    ['a closed tag with a long run of spaces', `<a${' '.repeat(64_000)}x>`],
+    ['a run of line breaks', `${'\n'.repeat(64_000)}x`],
+  ];
+  for (const [name, markup] of ADVERSARIAL) {
+    test(`${name}: sanitized and split within ${BUDGET_MS} ms`, () => {
+      const started = performance.now();
+      const clean = sanitizeTelegramHtml(markup);
+      const parts = splitTelegramHtml(markup);
+      expect(performance.now() - started).toBeLessThan(BUDGET_MS);
+      expect(checkTelegramHtml(clean).problem).toBeUndefined();
+      expect(sanitizeTelegramHtml(clean)).toBe(clean);
+      expectAccepted(parts);
+    });
+  }
+
+  test('an element nested past the bound keeps its words and loses its tag', () => {
+    const clean = sanitizeTelegramHtml(`${'<b><i>'.repeat(20)}deep`);
+    expect(telegramHtmlText(clean)).toBe('deep');
+    expect(clean.match(/<[bi]>/g)?.length).toBe(32);
+    expect(sanitizeTelegramHtml('<b><b>x</b></b>')).toBe('<b><b>x</b></b>');
   });
 });

@@ -2,7 +2,7 @@
 title: The official starter composes Next.js and a separate Stitchkit backend
 description: Keep frontend rendering and backend transports independently owned while providing one production-shaped scaffold
 type: decision
-status: active
+status: accepted
 created: 2026-08-08
 updated: 2026-08-08
 ---

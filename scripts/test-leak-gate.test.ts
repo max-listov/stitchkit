@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test';
 import { closeSync, existsSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isMissingProcess, parseProcessStat } from './test-leak-gate';
+import { isMissingProcess, parseGateArguments, parseProcessStat } from './test-leak-gate';
+import { describeTempResidue, RUN_TEMP_PREFIX, runTempBase } from './test-temp-residue';
 
 const GATE = join(import.meta.dir, 'test-leak-gate.ts');
 const hasProcfs = existsSync('/proc/self/stat') && process.platform === 'linux';
@@ -159,3 +160,86 @@ test.skipIf(!hasProcfs)(
     expect(alive(pid)).toBe(false);
   },
 );
+
+/** The real gate with `--tmpdir`, as a child; stdout carries what the command saw. */
+async function tmpdirGate(script: string) {
+  const run = Bun.spawn(['bun', GATE, '--tmpdir', '--', 'sh', '-c', script], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+    run.exited,
+  ]);
+  // The not-measurable line of a host without a subreaper is not about temporary files.
+  return {
+    stdout,
+    stderr: stderr.replace(/^\[test-gate\] process leak check not measurable.*\n/m, ''),
+    exitCode,
+  };
+}
+
+test('the gate reads its options before the command, and only before it', () => {
+  expect(parseGateArguments(['bun', 'test'])).toEqual({
+    tmpdir: false,
+    noProcessCheck: false,
+    command: ['bun', 'test'],
+  });
+  expect(parseGateArguments(['--tmpdir', '--', 'bun', 'test', '--tmpdir'])).toEqual({
+    tmpdir: true,
+    noProcessCheck: false,
+    command: ['bun', 'test', '--tmpdir'],
+  });
+  expect(parseGateArguments(['--tmpdir', '--no-process-check', '--', 'bun', 'test'])).toEqual({
+    tmpdir: true,
+    noProcessCheck: true,
+    command: ['bun', 'test'],
+  });
+  expect(() => parseGateArguments(['--tmpdir', '--'])).toThrow('Usage');
+});
+
+test('a clean command gets an empty TMPDIR of its own, as open as /tmp, removed after it', async () => {
+  const { stdout, stderr, exitCode } = await tmpdirGate(
+    'echo "$TMPDIR"; ls -A "$TMPDIR" | wc -l; ls -ld "$TMPDIR"; mkdir "$TMPDIR/own"; rmdir "$TMPDIR/own"',
+  );
+  expect({ stderr, exitCode }).toEqual({ stderr: '', exitCode: 0 });
+  const [directory, count, listing] = stdout.trim().split('\n');
+  expect(directory?.startsWith(join(runTempBase(), RUN_TEMP_PREFIX))).toBe(true);
+  expect(count?.trim()).toBe('0');
+  expect(listing).toStartWith('drwxrwxrwt');
+  expect(existsSync(directory ?? '/')).toBe(false);
+});
+
+// The negative control: an empty report from a gate that never saw residue proves nothing.
+test('what a green command leaves in its TMPDIR is named, removed, and fails the run', async () => {
+  const { stdout, stderr, exitCode } = await tmpdirGate(
+    'echo "$TMPDIR"; mkdir "$TMPDIR/stitchkit-left-ab12"; : > "$TMPDIR/stitchkit-left-ab12/state.json"; : > "$TMPDIR/loose.sqlite"; exit 0',
+  );
+  expect(exitCode).toBe(1);
+  expect(stderr).toContain('2 temporary entries left in the run');
+  expect(stderr).toContain('  loose.sqlite (file)\n');
+  expect(stderr).toContain('  stitchkit-left-ab12/ (1 entry)\n');
+  expect(existsSync(stdout.trim())).toBe(false);
+});
+
+test('a failing command keeps its own code when it also left a temporary file', async () => {
+  const { stderr, exitCode } = await tmpdirGate(': > "$TMPDIR/left"; exit 7');
+  expect(exitCode).toBe(7);
+  expect(stderr).toContain('1 temporary entry left');
+  expect(stderr).toContain('  left (file)\n');
+});
+
+test('residue is described by kind and capped, so a large leak stays readable', () => {
+  const many = Array.from({ length: 45 }, (_, index) => ({
+    name: `stitchkit-spool-${index}`,
+    kind: 'directory' as const,
+    entries: 1,
+  }));
+  const report = describeTempResidue(many, 'bun test');
+  expect(report).toContain('45 temporary entries');
+  expect(report).toContain('  … and 5 more');
+  expect(
+    report.split('\n').filter((line) => line.startsWith('  stitchkit-spool-')),
+  ).toHaveLength(40);
+});

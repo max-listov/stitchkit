@@ -3,6 +3,7 @@ title: "ADR 0104: The project declaration ships from the framework"
 description: "One versioned Zod schema for what a repository says about itself, published as an entrypoint rather than copied into every project, with a boundary rule that keeps deployment values out of it."
 type: decision
 status: accepted
+amends: ["0070"]
 created: 2026-08-24
 updated: 2026-08-24
 ---

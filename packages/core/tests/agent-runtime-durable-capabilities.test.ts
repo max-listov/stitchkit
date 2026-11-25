@@ -14,16 +14,16 @@ import {
   agentGoalStateSlot,
   agentTodoStateSlot,
   classifyProviderFailure,
+  createAgentChildManager,
+  createAgentEventSearch,
   createAgentEventSearchTools,
+  createAgentProjectionStore,
   createAgentRuntime,
   createAgentScheduleService,
+  createAgentSpillStore,
   createAgentStateSlotStore,
   createAgentStateTools,
   createMemoryAgentRuntimeStore,
-  createSqliteAgentChildManager,
-  createSqliteAgentEventSearch,
-  createSqliteAgentProjectionStore,
-  createSqliteAgentSpillStore,
   defineAgentProjection,
   defineAgentProtocol,
   defineStateSlot,
@@ -35,6 +35,7 @@ import {
   createReplayAgentProvider,
 } from '../src/entrypoints/agent-runtime/testing';
 import { mountAgent } from '../src/entrypoints/tools/agent';
+import { issuedRunContext } from './support/issued-run-context';
 
 function sqlite(): SqliteDatabase {
   const raw = new Database(':memory:');
@@ -150,7 +151,10 @@ describe('agent runtime durable capabilities', () => {
       occurredAt: '2026-09-08T01:00:00.000Z',
       payload: { first: true },
     });
-    const projections = createSqliteAgentProjectionStore({ sqlite: runtime });
+    const projections = createAgentProjectionStore({
+      store: runtime.store,
+      host: runtime.host,
+    });
     const first = await projections.advance('projection', agentConversationCardProjection);
     expect(first.uptoSeq).toBe(1);
     await runtime.store.appendEvent({
@@ -193,7 +197,8 @@ describe('agent runtime durable capabilities', () => {
       definitions: [agentGoalStateSlot, agentTodoStateSlot],
     });
     const tools = mountAgent([], {
-      runtimeTools: createAgentStateTools({ conversationId: 'state-tools', state }),
+      access: { open: 'local-operator' },
+      runtimeTools: createAgentStateTools({ run: issuedRunContext('state-tools'), state }),
     });
     const options = { toolCallId: 'state', messages: [], context: undefined };
     await executable(tools, 'create_goal')({ objective: 'ship it' }, options);
@@ -304,13 +309,14 @@ describe('agent runtime durable capabilities', () => {
       kind: 'state/set',
       payload: { text: 'needle private' },
     });
-    const search = createSqliteAgentEventSearch({ database });
+    const search = createAgentEventSearch({ host: runtime.host });
     expect(await search({ requestingConversationId: 'a', query: 'needle' })).toEqual([
       expect.objectContaining({ conversationId: 'a', seq: 1 }),
     ]);
     const tools = mountAgent([], {
+      access: { open: 'local-operator' },
       runtimeTools: createAgentEventSearchTools({
-        conversationId: 'a',
+        run: issuedRunContext('a'),
         search,
         store: runtime.store,
       }),
@@ -322,6 +328,24 @@ describe('agent runtime durable capabilities', () => {
     await expect(
       executable(tools, 'session_event')({ conversationId: 'b', seq: 1 }, options),
     ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
+    // The host may open another conversation to this one, target by target.
+    const approved: string[] = [];
+    const authorized = mountAgent([], {
+      access: { open: 'local-operator' },
+      runtimeTools: createAgentEventSearchTools({
+        run: issuedRunContext('a'),
+        search,
+        store: runtime.store,
+        authorizeConversation: ({ requestingConversationId, targetConversationId }) => {
+          approved.push(`${requestingConversationId}->${targetConversationId}`);
+          return targetConversationId === 'b';
+        },
+      }),
+    });
+    expect(
+      await executable(authorized, 'session_event')({ conversationId: 'b', seq: 1 }, options),
+    ).toEqual(expect.objectContaining({ conversationId: 'b', seq: 1 }));
+    expect(approved).toEqual(['a->b']);
     await runtime.close();
   });
 
@@ -330,7 +354,7 @@ describe('agent runtime durable capabilities', () => {
     // Asserting them together is the point: the promise is that a model sees
     // the same answer whichever of the three it happens to reach.
     const runtime = createSqliteAgentRuntimeStore({ database: sqlite() });
-    const spills = createSqliteAgentSpillStore({ sqlite: runtime, conversationId: 'own' });
+    const spills = createAgentSpillStore({ host: runtime.host, conversationId: 'own' });
     const absent = 'no-such-reference';
     const refusals = [
       () => spills.authorization?.(absent),
@@ -357,8 +381,8 @@ describe('agent runtime durable capabilities', () => {
     // row entirely and would prove nothing about disclosure.
     const database = sqlite();
     const runtime = createSqliteAgentRuntimeStore({ database });
-    const mine = createSqliteAgentSpillStore({ sqlite: runtime, conversationId: 'mine' });
-    const theirs = createSqliteAgentSpillStore({ sqlite: runtime, conversationId: 'theirs' });
+    const mine = createAgentSpillStore({ host: runtime.host, conversationId: 'mine' });
+    const theirs = createAgentSpillStore({ host: runtime.host, conversationId: 'theirs' });
     const written = await theirs.write({
       mediaType: 'text/plain',
       data: new TextEncoder().encode('secret line\n'),
@@ -385,8 +409,8 @@ describe('agent runtime durable capabilities', () => {
     const database = sqlite();
     const runtime = createSqliteAgentRuntimeStore({ database });
     let current = new Date('2026-09-08T01:00:00.000Z');
-    const spills = createSqliteAgentSpillStore({
-      sqlite: runtime,
+    const spills = createAgentSpillStore({
+      host: runtime.host,
       conversationId: 'spill',
       retentionMs: 1_000,
       now: () => current,
@@ -396,7 +420,16 @@ describe('agent runtime durable capabilities', () => {
       mediaType: 'text/plain',
       data,
       authorization: { operation: 'read', path: 'allowed.txt' },
+      toolCallId: 'shell-call',
     });
+    // The row names the call whose output it holds.
+    expect(
+      database
+        .prepare(
+          'SELECT tool_call_id FROM stitchkit_agent_runtime_spills WHERE reference_id = ?',
+        )
+        .get(written.reference),
+    ).toEqual({ tool_call_id: 'shell-call' });
     expect(await spills.authorization?.(written.reference)).toEqual({
       operation: 'read',
       path: 'allowed.txt',
@@ -408,8 +441,8 @@ describe('agent runtime durable capabilities', () => {
     const restoredDatabase = sqlite();
     const restored = createSqliteAgentRuntimeStore({ database: restoredDatabase });
     await restored.store.importConversation(archive);
-    const restoredSpills = createSqliteAgentSpillStore({
-      sqlite: restored,
+    const restoredSpills = createAgentSpillStore({
+      host: restored.host,
       conversationId: 'spill',
     });
     expect(
@@ -655,7 +688,9 @@ describe('agent runtime durable capabilities', () => {
     let current = new Date('2026-09-08T01:00:00.000Z');
     const deliveries: unknown[] = [];
     const schedules = createAgentScheduleService({
-      sqlite: runtime,
+      maxActivePerConversation: 100,
+      minIntervalMs: 1,
+      host: runtime.host,
       now: () => current,
       dispatch: (delivery) => {
         deliveries.push(delivery);
@@ -722,8 +757,11 @@ describe('agent runtime durable capabilities', () => {
     });
     let policy: string | undefined;
     const pending = Promise.withResolvers<{ resultReference?: string }>();
-    const children = createSqliteAgentChildManager({
-      sqlite: runtime,
+    const children = createAgentChildManager({
+      remainingBudget: () => ({}),
+      maxActiveChildren: 8,
+      store: runtime.store,
+      host: runtime.host,
       spawn: ({ seedArchive }) => {
         const seed = new TextDecoder().decode(seedArchive);
         expect(seed).toContain('"seq":1');

@@ -13,6 +13,7 @@
  */
 import { isUnsafeKey } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
+import { stringifyJsonSafe } from '../internal/json-projection';
 import type { CliResultView } from './args-view';
 import { CliArgumentError } from './argument-error';
 
@@ -108,7 +109,7 @@ function groupKey(value: unknown): string {
   if (value === undefined) return ABSENT;
   if (value === null) return 'null';
   if (value === 'null' || value === ABSENT) return JSON.stringify(value);
-  if (typeof value === 'object') return JSON.stringify(value);
+  if (typeof value === 'object') return stringifyJsonSafe(value);
   return String(value);
 }
 
@@ -131,9 +132,9 @@ export function stringifyGroups(
   order: readonly string[],
   compact: boolean,
 ): string {
-  if (!isRecord(data) || order.length === 0) return JSON.stringify(data);
+  if (!isRecord(data) || order.length === 0) return stringifyJsonSafe(data);
   const lines = order.map(
-    (key) => `${JSON.stringify(key)}:${compact ? '' : ' '}${JSON.stringify(data[key])}`,
+    (key) => `${JSON.stringify(key)}:${compact ? '' : ' '}${stringifyJsonSafe(data[key])}`,
   );
   return compact ? `{${lines.join(',')}}` : `{\n  ${lines.join(',\n  ')}\n}`;
 }
@@ -153,7 +154,7 @@ function renderTable(
   const cell = (value: unknown): string => {
     if (value === undefined) return '';
     if (value === null) return 'null';
-    if (typeof value === 'object') return JSON.stringify(value);
+    if (typeof value === 'object') return stringifyJsonSafe(value);
     return String(value);
   };
   const rows = records.map((record) =>

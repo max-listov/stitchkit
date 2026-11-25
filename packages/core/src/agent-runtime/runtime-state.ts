@@ -1,11 +1,15 @@
 import type { ToolSet } from 'ai';
+import { assertTimerMs } from '../internal/deadline';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { createRuntimeAdmissionLanes, type RuntimeAdmissionLanes } from './admission-lanes';
 import { type AgentSessionCoordinator, createAgentSessionCoordinator } from './coordinator';
 import type { AgentRuntimeEvent } from './events';
 import { type AgentInjectionRegistry, createAgentInjectionRegistry } from './injection';
+import { assertAgentRetryPolicy } from './retry-policy';
 import { createRunExecutor } from './run-execution';
 import type { RunExecutionInput } from './run-execution-state';
+import { assertStepBarriers } from './run-step-barriers';
+import { DEFAULT_STEP_SPEND_TIMEOUT_MS } from './run-step-spend';
 import type { AgentRuntimeAdmission, AgentRuntimeConfig } from './runtime';
 import {
   createRuntimeAdmissionGate,
@@ -44,6 +48,7 @@ interface LoopLimits {
   checkpointEveryEvents: number;
   maxSteps: number;
   idleTimeoutMs?: number;
+  stepSpendTimeoutMs: number;
 }
 
 /** Defaults applied and every limit validated before the runtime exists. */
@@ -57,9 +62,13 @@ function resolveLoopLimits<CONTEXT, TOOLS extends ToolSet>(
   const declaredIdleTimeoutMs = config.loop?.idleTimeoutMs;
   const idleTimeoutMs =
     declaredIdleTimeoutMs === null ? undefined : (declaredIdleTimeoutMs ?? 60_000);
+  const stepSpendTimeoutMs = config.stepSpendTimeoutMs ?? DEFAULT_STEP_SPEND_TIMEOUT_MS;
   assertPositiveSafeInteger('checkpointEveryEvents', checkpointEveryEvents);
   assertPositiveSafeInteger('maxSteps', maxSteps);
-  assertPositiveSafeInteger('idleTimeoutMs', idleTimeoutMs);
+  assertTimerMs('idleTimeoutMs', idleTimeoutMs);
+  assertTimerMs('stepSpendTimeoutMs', stepSpendTimeoutMs);
+  if (config.loop?.retry) assertAgentRetryPolicy('loop.retry', config.loop.retry);
+  assertStepBarriers(config.loop?.stepBarriers);
   const policyNames = new Set<string>(['max-steps']);
   for (const policy of config.loop?.stopPolicies ?? []) {
     if (!policy.name || policyNames.has(policy.name)) {
@@ -71,6 +80,7 @@ function resolveLoopLimits<CONTEXT, TOOLS extends ToolSet>(
     checkpointEveryEvents,
     maxSteps,
     ...(idleTimeoutMs !== undefined && { idleTimeoutMs }),
+    stepSpendTimeoutMs,
   };
 }
 
@@ -93,7 +103,8 @@ export function createAgentRuntimeState<CONTEXT, TOOLS extends ToolSet>(
   const injectionPossible =
     typeof config.runs?.inputPolicy === 'function' || config.runs?.inputPolicy === 'inject';
   const injection = injectionPossible ? createAgentInjectionRegistry() : undefined;
-  const { checkpointEveryEvents, maxSteps, idleTimeoutMs } = resolveLoopLimits(config);
+  const { checkpointEveryEvents, maxSteps, idleTimeoutMs, stepSpendTimeoutMs } =
+    resolveLoopLimits(config);
 
   const publish = async (event: AgentRuntimeEvent): Promise<void> => {
     try {
@@ -117,6 +128,7 @@ export function createAgentRuntimeState<CONTEXT, TOOLS extends ToolSet>(
     checkpointEveryEvents,
     maxSteps,
     ...(idleTimeoutMs !== undefined && { idleTimeoutMs }),
+    stepSpendTimeoutMs,
     ...(injection && { injection }),
   });
 

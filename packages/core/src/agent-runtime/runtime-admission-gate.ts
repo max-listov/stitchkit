@@ -12,6 +12,8 @@
  * that follows it. Before the store call the answer is a clean refusal; after
  * it there is nothing to refuse, and the coordinator's own drain owns the run.
  */
+import { withDeadline } from '../internal/deadline';
+
 export interface RuntimeAdmissionGate {
   /** Set once by `close()`; every admission path reads it, none resets it. */
   closed: boolean;
@@ -81,14 +83,7 @@ export function createRuntimeAdmissionGate(): RuntimeAdmissionGate {
       await settled;
       return 0;
     }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      settled,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, budgetMs);
-      }),
-    ]);
-    if (timer !== undefined) clearTimeout(timer);
+    await withDeadline(settled, budgetMs);
     return stranded;
   };
 

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** hosts running `stitchkit-tui` on Bun 1.3 must upgrade Bun to `>= 1.4.0`, and
+hosts on `stitchkit` 0.126 or older must upgrade it to 0.127 (the peer this release accepts),
+before upgrading to `0.5.0`.
+
+- `stitchkit-tui` — **requires Bun `>= 1.4.0`** (`engines.bun`, previously `>= 1.3.0`), matching the
+  framework runtime floor. See the [migration](UPGRADING.md).
+- `stitchkit-tui` — **accepts only `stitchkit` 0.127** as its peer: next to 0.126 the peer is
+  unmet. Upgrade `stitchkit` first, by its own guide. See the
+  [migration](UPGRADING.md).
+
 ## [0.4.7] - 2026-11-21
 
 ### Changed

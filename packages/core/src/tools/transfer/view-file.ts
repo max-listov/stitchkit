@@ -16,33 +16,22 @@
 import { basename, extname } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import type { McpMediaContent, ViewFileOutput } from './view-file-contract';
-import {
-  MCP_FILE_NAME_META_KEY,
-  ViewFileInputSchema,
-  ViewFileOutputSchema,
-} from './view-file-contract';
-
-export {
-  MCP_FILE_NAME_META_KEY,
-  type McpAnnotations,
-  McpAnnotationsSchema,
-  type McpMediaContent,
-  McpMediaContentSchema,
-  ViewFileErrorSchema,
-  ViewFileInputSchema,
-  type ViewFileOutput,
-  ViewFileOutputSchema,
-} from './view-file-contract';
-
 import { AppError } from '../../contract/errors';
 import { type ManagedFileBoundary, ManagedFileError } from '../../files/boundary';
+import { abortReason } from '../../internal/abort-race';
+import { assertTimerMs } from '../../internal/deadline';
 import { mediaTypeEssence } from '../../internal/media-type';
 import { fetchGuarded, readCapped } from '../../internal/secure-fetch';
 import { formatZodError } from '../../internal/zod-issues';
 import { coerceJsonArgs } from '../schema/coerce';
 import { downloadFileName } from './download-core';
 import { normalizeFileToolError } from './managed-file-error';
+import type { McpMediaContent, ViewFileOutput } from './view-file-contract';
+import {
+  MCP_FILE_NAME_META_KEY,
+  ViewFileInputSchema,
+  ViewFileOutputSchema,
+} from './view-file-contract';
 
 /** MCP inline cap — bytes above this are returned as a link, not embedded. */
 const MAX_INLINE_BYTES = 20 * 1024 * 1024;
@@ -124,8 +113,11 @@ async function fetchSource(
       timeoutMs: options.timeoutMs,
       signal: options.signal,
     });
-    if (!res.ok)
+    if (!res.ok) {
+      // Nothing of an error body is shown: release it, as the other refusals below do.
+      await res.body?.cancel();
       throw new AppError('VIEW_HTTP_ERROR', { message: `HTTP ${res.status}`, status: 502 });
+    }
     const headerMime = mediaTypeEssence(res.headers.get('content-type'));
     const mimeType = headerMime || extMime || 'application/octet-stream';
 
@@ -295,7 +287,7 @@ export async function runViewFileOperation(
       remainingBytes -= resolved.bytes;
       content.push(...resolved.content);
     } catch (error) {
-      if (signal?.aborted) throw signal.reason ?? error;
+      if (signal?.aborted) throw abortReason(signal);
       const message = normalizeFileToolError(error).message;
       errors.push({ path: pathOrUrl, message });
       content.push({ type: 'text', text: `[${pathOrUrl}] Error: ${message}` });
@@ -312,6 +304,7 @@ export async function runViewFileOperation(
  * required. `options` controls the media security boundary.
  */
 export function mountViewFile(server: McpServer, options: ViewFileOptions = {}): void {
+  assertTimerMs('mountViewFile timeoutMs', options.timeoutMs);
   server.registerTool(
     'view_file',
     {

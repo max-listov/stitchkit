@@ -165,7 +165,11 @@ describe('domain error transport normalization', () => {
   test('MCP and Agent keep the canonical model-facing projection', async () => {
     const client = await connect(
       buildMcpServer(
-        { serverInfo: { name: 'errors', version: '1' }, services: [service] },
+        {
+          access: { open: 'local-operator' },
+          serverInfo: { name: 'errors', version: '1' },
+          services: [service],
+        },
         undefined,
       ),
     );
@@ -177,7 +181,7 @@ describe('domain error transport normalization', () => {
     await client.close();
 
     await expect(
-      executable(mountAgent([service]), 'quota_check')(
+      executable(mountAgent([service], { access: { open: 'local-operator' } }), 'quota_check')(
         {},
         { toolCallId: 'quota', messages: [], context: undefined },
       ),
@@ -191,7 +195,10 @@ describe('domain error transport normalization', () => {
   });
 
   test('in-process throwing composition retains the exact AppError', async () => {
-    const invoker = createToolInvoker([service], { transport: 'MCP' });
+    const invoker = createToolInvoker([service], {
+      access: { open: 'local-operator' },
+      transport: 'MCP',
+    });
     try {
       await invoker.invokeOrThrow('quota_check', {});
       throw new Error('expected quota error');
@@ -296,10 +303,10 @@ describe('defineErrors — declared message', () => {
     // A code WITH a details schema shows the model no text at all: the envelope
     // is `{ error, details?, _hint? }` and its `details` is the parsed payload.
     await expect(
-      executable(mountAgent([service]), 'quota_message_check')(
-        {},
-        { toolCallId: 'quota-message', messages: [], context: undefined },
-      ),
+      executable(
+        mountAgent([service], { access: { open: 'local-operator' } }),
+        'quota_message_check',
+      )({}, { toolCallId: 'quota-message', messages: [], context: undefined }),
     ).rejects.toMatchObject({
       output: {
         error: 'QUOTA_EXCEEDED',
@@ -336,10 +343,10 @@ describe('defineErrors — declared message', () => {
     // the framework fills `details` with `{ message }` when a code declares no
     // details schema. It used to be the code itself.
     await expect(
-      executable(mountAgent([withMessage]), 'session_touch')(
-        {},
-        { toolCallId: 'touch-1', messages: [], context: undefined },
-      ),
+      executable(
+        mountAgent([withMessage], { access: { open: 'local-operator' } }),
+        'session_touch',
+      )({}, { toolCallId: 'touch-1', messages: [], context: undefined }),
     ).rejects.toMatchObject({
       output: {
         error: 'SESSION_EXPIRED',
@@ -349,10 +356,10 @@ describe('defineErrors — declared message', () => {
 
     // A code that declares no message is unchanged — `details.message` is the code.
     await expect(
-      executable(mountAgent([withoutMessage]), 'session_touch')(
-        {},
-        { toolCallId: 'touch-2', messages: [], context: undefined },
-      ),
+      executable(
+        mountAgent([withoutMessage], { access: { open: 'local-operator' } }),
+        'session_touch',
+      )({}, { toolCallId: 'touch-2', messages: [], context: undefined }),
     ).rejects.toMatchObject({
       output: { error: 'PLAIN', details: { message: 'PLAIN' } },
     });

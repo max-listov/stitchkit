@@ -2,7 +2,7 @@
 title: One decision vocabulary, and an unanswered question is an error
 description: A listener voting on an event and a policy voting on a request answer the same question, so they share one schema; a pipeline where every voter defers raises rather than picking an outcome for it.
 type: decision
-status: active
+status: accepted
 created: 2026-09-03
 updated: 2026-09-03
 ---

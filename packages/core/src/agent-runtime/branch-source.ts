@@ -3,9 +3,10 @@ import { z } from 'zod';
 import type { AgentStoreEventEnvelope } from '../durability/events';
 import { ArchiveProjectionSchema } from './archive-projection';
 import { ArchiveSpillSchema } from './archive-spill';
-import type { BranchAgentConversationInput } from './branch-contract';
+import type { ParsedBranchAgentConversationInput } from './branch-contract';
 import { rekeyBranchEvents } from './branch-events';
 import { BranchIdentities } from './branch-identities';
+import type { AgentConversationBranchRefusedError } from './branch-refusal';
 import { type BranchReplay, replayBranchEvents } from './branch-replay';
 import { type AgentSnapshot, AgentSnapshotSchema } from './schemas';
 import { isActiveRunState } from './store-driver-contract';
@@ -69,6 +70,10 @@ export interface BranchSource {
   spills: z.infer<typeof ArchiveSpillSchema>[];
   replay: BranchReplay;
   digest: string;
+  /** What declarations would lift, collected over the whole archive; absent when nothing. */
+  refused?: AgentConversationBranchRefusedError;
+  /** Attachment references in the whole archive that are not spills: each needs a declaration. */
+  applicationFiles: readonly string[];
 }
 
 /** Validate the complete archive before selecting a prefix; a truncated tail never looks complete. */
@@ -78,7 +83,10 @@ export function prepareBranchSource(
     source,
     applicationFiles = [],
     applicationKeys = [],
-  }: Pick<BranchAgentConversationInput, 'source' | 'applicationFiles' | 'applicationKeys'>,
+  }: Pick<
+    ParsedBranchAgentConversationInput,
+    'source' | 'applicationFiles' | 'applicationKeys'
+  >,
 ): BranchSource {
   const archive = decodeAgentConversationArchive(bytes);
   if (source.kind === 'conversation' && source.conversationId !== archive.conversationId)
@@ -136,6 +144,8 @@ export function prepareBranchSource(
     if (spill.runId) validationIds.reference('run', spill.runId);
     if (spill.toolCallId) validationIds.reference('call', spill.toolCallId);
   }
+  // Collected over the whole archive: the selected prefix can only refuse less.
+  const refused = validationIds.refusedError();
   if (
     canonicalAgentJson(visibleSnapshot(full.snapshot)) !==
     canonicalAgentJson(visibleSnapshot(expected))
@@ -172,6 +182,8 @@ export function prepareBranchSource(
     events,
     spills,
     replay,
+    ...(refused && { refused }),
+    applicationFiles: validationIds.applicationFileReferences(),
     digest: branchHash({
       conversationId: archive.conversationId,
       events,

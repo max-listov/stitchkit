@@ -3,6 +3,7 @@ title: "ADR 0100: The agent store reducer owns runtime transitions"
 description: Applications provide one coherent transaction driver; Stitchkit owns run, admission and history-mutation invariants.
 type: decision
 status: accepted
+amendedBy: ["0101"]
 created: 2026-08-22
 updated: 2026-08-23
 ---

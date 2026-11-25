@@ -28,19 +28,20 @@
  * ## What it is not
  *
  * Not a queue, not a broker, not a cross-process outbox. One process owns one
- * spool file; two processes pointed at one path will replay each other's
- * records — which is safe when the store is idempotent and wasteful always.
- * Give each process its own path.
+ * spool file: two processes on one path append and compact the same file and
+ * can tear each other's lines. Give each process its own path.
  */
-import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { isRecord, spooledRecord } from '../internal/typed';
 import type { RequestEvent } from './event';
+import { createSpoolCore, type SpoolRecovery, SpoolUnspooledError } from './spool-core';
+
+export type { SpoolRecovery };
 
 export interface SpooledSinkConfig {
   /** The real sink — normally the project's audit-table write. */
   write: (event: RequestEvent) => void | Promise<void>;
   /**
-   * The spool file. Created with its directory if missing.
+   * The spool file. Created with its directory if missing, mode `0o600`.
    *
    * One process, one path: see the module header.
    */
@@ -58,19 +59,22 @@ export interface SpooledSinkConfig {
    * so a crash during it leaves either the old file or the new one.
    */
   compactAfter?: number;
+  /** Undelivered events held at most; past it an event is not spooled (and `onSpoolError` says so). Default 10 000. */
+  maxPendingEntries?: number;
+  /** Spool file size at most, in bytes, compacting first. Default 64 MiB. */
+  maxFileBytes?: number;
   /** Observe a spool-file failure. The event is still offered to the store. */
   onSpoolError?: (failure: { error: unknown; event?: RequestEvent }) => void;
 }
 
-export interface SpoolRecovery {
-  /** Records found undelivered and offered to the store again. */
-  replayed: number;
-  /** Of those, the ones the store refused again. They stay in the file. */
-  failed: number;
-}
-
 export interface SpooledSink {
-  /** Spool, then deliver. Hand this to `RequestEventSinkConfig.write`. */
+  /**
+   * Spool, then deliver. Hand this to `RequestEventSinkConfig.write`. Rejects with the
+   * store's error when the store refused a row that is on disk (`recover` offers it again),
+   * and with an error of code `SPOOL_UNSPOOLED` (the store's error as `cause`) when the row
+   * is kept nowhere: the spool was at `maxPendingEntries` or `maxFileBytes` (`onSpoolError`
+   * reports `SPOOL_FULL`) or could not be written, and the store refused it too.
+   */
   write(event: RequestEvent): Promise<void>;
   /**
    * Replay what a previous process left undelivered, then rewrite the file with
@@ -86,14 +90,6 @@ export interface SpooledSink {
   pending(): number;
 }
 
-interface SpoolLine {
-  /** A record: the key and the event. */
-  k?: string;
-  e?: RequestEvent;
-  /** An acknowledgement: the key that reached the store. */
-  a?: string;
-}
-
 /**
  * `startedAt` is a `Date` in the shape and a string on disk.
  *
@@ -101,136 +97,38 @@ interface SpoolLine {
  * a timestamp fails the replay — at 3am, on rows that only exist because
  * something already went wrong once.
  */
-function reviveEvent(event: RequestEvent): RequestEvent {
-  return { ...event, startedAt: new Date(event.startedAt) };
+function reviveEvent(value: unknown): RequestEvent {
+  if (!isRecord(value) || typeof value.startedAt !== 'string')
+    throw new TypeError('Spooled request event is malformed');
+  return spooledRecord<RequestEvent>({ ...value, startedAt: new Date(value.startedAt) });
 }
 
 export function createSpooledSink(config: SpooledSinkConfig): SpooledSink {
-  const keyOf = config.key ?? ((event: RequestEvent) => event.spanId);
-  const compactAfter = config.compactAfter ?? 512;
-  const undelivered = new Map<string, RequestEvent>();
-  let delivered = 0;
-  // Appends are serialised through one chain. Two concurrent `appendFile`
-  // calls on one path can interleave inside a single line, and a torn line is
-  // an unparseable record — that is, a lost audit row, which is the one thing
-  // this file exists to prevent.
-  let tail: Promise<void> = Promise.resolve();
-
-  function serialise(work: () => Promise<void>): Promise<void> {
-    const next = tail.then(work, work);
-    tail = next.catch(() => undefined);
-    return next;
-  }
-
-  async function append(line: SpoolLine, event?: RequestEvent): Promise<void> {
-    try {
-      await appendFile(config.path, `${JSON.stringify(line)}\n`, 'utf8');
-    } catch (error) {
-      // ENOENT here is the directory, not the file: `appendFile` creates the
-      // file and refuses to create the path above it.
-      if (isMissing(error)) {
-        await mkdir(dirname(config.path), { recursive: true });
-        await appendFile(config.path, `${JSON.stringify(line)}\n`, 'utf8');
-        return;
-      }
-      // Reported, not thrown: a spool that cannot be written is a degraded
-      // audit, and failing here would take the store write down with it — the
-      // opposite of the point.
-      config.onSpoolError?.({ error, ...(event !== undefined && { event }) });
-    }
-  }
-
-  async function compact(): Promise<void> {
-    const temporary = `${config.path}.compacting`;
-    const body = [...undelivered.entries()]
-      .map(([key, event]) => `${JSON.stringify({ k: key, e: event })}\n`)
-      .join('');
-    try {
-      await writeFile(temporary, body, 'utf8');
-      await rename(temporary, config.path);
-      delivered = 0;
-    } catch (error) {
-      config.onSpoolError?.({ error });
-    }
-  }
-
+  const core = createSpoolCore<RequestEvent>({
+    path: config.path,
+    write: config.write,
+    key: config.key ?? ((event) => event.spanId),
+    encode: (event) => event,
+    decode: reviveEvent,
+    ...(config.compactAfter !== undefined && { compactAfter: config.compactAfter }),
+    ...(config.maxPendingEntries !== undefined && {
+      maxPendingEntries: config.maxPendingEntries,
+    }),
+    ...(config.maxFileBytes !== undefined && { maxFileBytes: config.maxFileBytes }),
+    ...(config.onSpoolError && {
+      onSpoolError: ({ error, record }) =>
+        config.onSpoolError?.({ error, ...(record !== undefined && { event: record }) }),
+    }),
+  });
   return {
     async write(event) {
-      const key = keyOf(event);
-      await serialise(() => append({ k: key, e: event }, event));
-      undelivered.set(key, event);
-      // The store is offered the event outside the append chain: a slow store
-      // must not hold up the next event's spool line, which is the record that
-      // survives if this process dies mid-write.
-      await config.write(event);
-      undelivered.delete(key);
-      delivered += 1;
-      await serialise(async () => {
-        await append({ a: key });
-        if (delivered >= compactAfter) await compact();
-      });
+      const result = await core.write(event);
+      // The store's refusal is the caller's to see: the row stays spooled for `recover`.
+      if (result.outcome === 'spooled') throw result.storeError;
+      // Neither on disk nor in the store: the caller is told the row is kept nowhere.
+      if (result.outcome === 'unspooled') throw new SpoolUnspooledError(result.storeError);
     },
-
-    async recover() {
-      let body: string;
-      try {
-        body = await readFile(config.path, 'utf8');
-      } catch (error) {
-        // No file is the ordinary first run, and it is not a failure. Anything
-        // else is reported rather than swallowed: a spool that cannot be read
-        // is undelivered rows nobody will ever hear about again.
-        if (!isMissing(error)) config.onSpoolError?.({ error });
-        return { replayed: 0, failed: 0 };
-      }
-      const pending = new Map<string, RequestEvent>();
-      for (const line of body.split('\n')) {
-        if (line.length === 0) continue;
-        let parsed: SpoolLine;
-        try {
-          parsed = JSON.parse(line) as SpoolLine;
-        } catch (error) {
-          // A torn last line is what a crash mid-append leaves. Skipping it
-          // loses at most that one record, and stopping would lose every record
-          // after it.
-          config.onSpoolError?.({ error });
-          continue;
-        }
-        if (parsed.a !== undefined) {
-          pending.delete(parsed.a);
-          continue;
-        }
-        if (parsed.k !== undefined && parsed.e !== undefined) {
-          pending.set(parsed.k, reviveEvent(parsed.e));
-        }
-      }
-
-      const replayed = pending.size;
-      let failed = 0;
-      for (const [key, event] of pending) {
-        try {
-          await config.write(event);
-          pending.delete(key);
-        } catch (error) {
-          failed += 1;
-          config.onSpoolError?.({ error, event });
-        }
-      }
-      undelivered.clear();
-      for (const [key, event] of pending) undelivered.set(key, event);
-      delivered = 0;
-      await serialise(compact);
-      return { replayed, failed };
-    },
-
-    pending: () => undelivered.size,
+    recover: () => core.recover(),
+    pending: () => core.pending(),
   };
 }
-
-function code(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const value = Reflect.get(error, 'code');
-  return typeof value === 'string' ? value : undefined;
-}
-
-/** `ENOENT` — the file or the directory above it is not there. */
-const isMissing = (error: unknown) => code(error) === 'ENOENT';

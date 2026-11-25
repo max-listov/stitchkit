@@ -135,7 +135,7 @@ async function mounted(mock, limits) {
       name: marker,
       transport: { url: `${mock.url}?token=${marker}` },
       token: () => marker,
-      transports: ['CLI'],
+      expose: ['CLI'],
       limits,
     }),
   ]);
@@ -145,6 +145,7 @@ async function invoker(mock, limits) {
   const raw = [];
   const after = [];
   const cli = await createCliInvoker({
+    access: { open: 'local-operator' },
     name: 'packed',
     runtimeTools,
     hooks: {

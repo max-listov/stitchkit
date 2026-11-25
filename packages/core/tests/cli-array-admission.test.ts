@@ -34,7 +34,7 @@ async function run(argv: string[], config: Partial<CliConfig> = {}) {
     identity: { serviceName: 'fixture', action: 'resolve', method: 'POST' },
     input: Input,
     output: Input,
-    transports: ['CLI'],
+    expose: ['CLI'],
     handler,
   });
   const local = defineCliCommand({
@@ -50,6 +50,7 @@ async function run(argv: string[], config: Partial<CliConfig> = {}) {
     runtimeTools: () => [resolve],
     commands: [local],
     ...config,
+    access: config.access ?? { open: 'local-operator' },
     argv,
     stdin: async () => {
       stdinCalls++;
@@ -111,7 +112,7 @@ describe('CLI named arrays and positional admission', () => {
   test('aliases, dotted arrays and wrappers resolve the canonical array field', () => {
     expect(() =>
       parseCliArgs(['-r', 'alpha.md', 'beta.md'], Input, {
-        optionAliases: new Map([['r', 'references']]),
+        aliases: new Map([['r', 'references']]),
       }),
     ).toThrow('--references cannot be combined');
     for (const references of [
@@ -152,7 +153,7 @@ describe('CLI named arrays and positional admission', () => {
 
   test('declared scalar positionals and variadic tails have exact destinations', async () => {
     const scalar = await run(['resolve', 'project-one', '--references=alpha.md', '--json'], {
-      positionals: { resolve: ['projectId'] },
+      commandSettings: { resolve: { positionals: ['projectId'] } },
     });
     expect(scalar.code).toBe(0);
     expect(JSON.parse(scalar.out)).toEqual({
@@ -161,12 +162,12 @@ describe('CLI named arrays and positional admission', () => {
       references: ['alpha.md'],
     });
     const variadic = await run(['resolve', 'alpha.md', 'beta.md', 'gamma.md', '--json'], {
-      positionals: { resolve: ['references'] },
+      commandSettings: { resolve: { positionals: ['references'] } },
     });
     expect(variadic.code).toBe(0);
     expect(JSON.parse(variadic.out)).toEqual(expected);
     const conflict = await run(['resolve', '--references=alpha.md', 'beta.md'], {
-      positionals: { resolve: ['references'] },
+      commandSettings: { resolve: { positionals: ['references'] } },
     });
     expect(conflict.code).toBe(2);
     expect(conflict.calls).toBe(0);
@@ -180,11 +181,11 @@ describe('CLI named arrays and positional admission', () => {
 
   test('empty policy, unknown options and scalar flags keep their own admission', async () => {
     const named = await run(['resolve', '--references=alpha.md', '--json'], {
-      positionals: { resolve: [] },
+      commandSettings: { resolve: { positionals: [] } },
     });
     expect(named.code).toBe(0);
     const bare = await run(['resolve', '--references=alpha.md', 'beta.md'], {
-      positionals: { resolve: [] },
+      commandSettings: { resolve: { positionals: [] } },
     });
     expect(bare.err).toContain('Unexpected positional argument "beta.md"');
     expect(bare.calls).toBe(0);
@@ -207,7 +208,9 @@ describe('CLI named arrays and positional admission', () => {
       expect(result.calls).toBe(0);
     }
     await expect(
-      run(['--help'], { positionals: { content_resolve: ['references'] } }),
+      run(['--help'], {
+        commandSettings: { content_resolve: { positionals: ['references'] } },
+      }),
     ).rejects.toThrow('targets unavailable command "content_resolve"');
   });
 

@@ -2,13 +2,15 @@
 title: "ADR 0015 — OAuth 2.1 resource-server toolkit for MCP"
 type: decision
 status: superseded
+supersededBy: ["0068"]
 created: 2026-05-29
 updated: 2026-05-29
 ---
 
 # ADR 0015 — OAuth 2.1 resource-server toolkit for MCP
 
-- **Status:** Superseded by ADR 0068
+**Relations:** Superseded by ADR 0068
+
 - **Date:** 2026-05-29
 
 ## Context

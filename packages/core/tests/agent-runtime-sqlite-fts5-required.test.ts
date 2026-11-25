@@ -55,7 +55,9 @@ describe('the SQLite transaction scope', () => {
     };
     const handle = createSqliteAgentRuntimeStore({ database });
     await expect(
-      handle.transaction(() => handle.store.readEvents({ conversationId: 'x', limit: 1 })),
+      handle.host.transaction('x', () =>
+        handle.store.readEvents({ conversationId: 'x', limit: 1 }),
+      ),
     ).rejects.toThrow('inside its own transaction scope');
     await handle.close();
   });

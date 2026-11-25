@@ -13,7 +13,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
-    "hermes-compiler": "250829098.0.19",
+    "hermes-compiler": "260318099.0.8",
     "@babel/core": "8.0.7",
     "@babel/plugin-transform-async-generator-functions": "8.0.6",
     "@types/react": "^19.3.0"

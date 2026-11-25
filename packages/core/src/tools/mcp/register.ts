@@ -7,12 +7,14 @@ import { z } from 'zod';
 import { AppError } from '../../contract/errors';
 import type { EndpointToolAnnotations, EndpointUiMeta } from '../../contract/tool-options';
 import { isRecord } from '../../internal/typed';
+import { toJsonSchema } from '../../json-schema/json-schema';
 import type { ToolExecutionOptions } from '../execute';
 import type { ToolCallContext, ToolCallHooks } from '../execute-hooks';
 import { type ToolResult, toolResultFromError } from '../execute-result';
 import { observed } from '../internal/observe-hook';
 import type { MountableTool } from '../mount';
 import { publishedToolAnnotations } from '../read-operation';
+import { localVerdict } from '../schema/json-schema-origin';
 import { presentationMetadata } from '../schema/presentation';
 import { stampToolRegistration, stampToolResult } from './catalog';
 import type { McpCatalogStamp } from './catalog-stamp';
@@ -52,6 +54,29 @@ export interface McpToolRegistrationConfig {
 }
 
 /**
+ * Wrap a tool's `outputSchema` for the MCP SDK: advertise the canonical JSON
+ * Schema (preserving served format names via `toJsonSchema`) while deferring
+ * remote-owned format/union verdicts through `localVerdict` so `McpServer`'s
+ * `validateToolOutput` never rejects valid remote outputs such as `uri-reference`.
+ */
+function mcpOutputSchema(schema: z.ZodType): z.ZodType {
+  const presented = presentationMetadata(toJsonSchema(schema, 'output'));
+  return z
+    .unknown()
+    .superRefine((value, ctx) => {
+      const parsed = schema.safeParse(value);
+      if (parsed.success) return;
+      const refused = localVerdict(schema, parsed.error);
+      if (!refused) return;
+      for (const issue of refused.issues) {
+        const raw: Record<string, unknown> = {};
+        ctx.addIssue(Object.assign(raw, issue));
+      }
+    })
+    .meta(presented);
+}
+
+/**
  * Register one prepared tool on one MCP server — the only place a tool's
  * listing, `_meta`, catalog stamp, request context and elicitation rounds are
  * assembled. Contract endpoints and runtime tools differ in where their
@@ -77,7 +102,8 @@ export function registerMcpTool(
     description: presentation.description,
     inputSchema: z.looseObject({}).meta(presentationMetadata(descriptor.inputSchema)),
   };
-  if (descriptor.outputSchema) toolConfig.outputSchema = descriptor.outputSchema;
+  if (descriptor.outputSchema)
+    toolConfig.outputSchema = mcpOutputSchema(descriptor.outputSchema);
   // MCP `ToolAnnotations` — behavioural hints a host reads to group tools
   // (read-only vs destructive), pick permission defaults and show a title.
   // Derived here, where every contract and runtime tool is registered, so a

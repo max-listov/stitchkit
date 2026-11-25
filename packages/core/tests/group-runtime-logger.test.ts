@@ -47,7 +47,7 @@ describe('bounded logger', () => {
         source: 'http',
         method: 'GET',
         path: '/',
-        startedAt: 0n,
+        startedAt: 0,
         userId: 'real-user',
         dimensions: { project: 'real-project' },
       },

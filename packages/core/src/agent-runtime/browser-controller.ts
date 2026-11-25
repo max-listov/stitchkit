@@ -1,4 +1,5 @@
 import { bindRealtimeClient, type RealtimeClientTransport } from '../browser/realtime-client';
+import { assertTimerMs } from '../internal/deadline';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import {
   type AgentBrowserRequest,
@@ -14,6 +15,35 @@ import {
   reduceAgentControlSnapshot,
 } from './control-schema';
 import type { AgentSnapshot } from './schemas';
+
+/**
+ * The view across a reconnect: each conversation keeps its last snapshot and the
+ * snapshot version it was read at, so the screen does not go blank; what only the
+ * lost connection could vouch for — in-flight run text, run cursors, the durable
+ * event ids since the snapshot — is dropped and rebuilt by the next attach.
+ */
+function retainSnapshots(view: AgentControlView): AgentControlView {
+  const conversations: Record<string, AgentControlView['conversations'][string]> = {};
+  const cursors: Record<string, AgentControlView['cursor']['conversations'][string]> = {};
+  for (const [id, conversation] of Object.entries(view.conversations)) {
+    if (!conversation.snapshot) continue;
+    conversations[id] = {
+      snapshot: conversation.snapshot,
+      resyncRequired: conversation.resyncRequired,
+      transientByRun: {},
+    };
+    // The retained snapshot's own version. The next attach answer replaces the
+    // snapshot whatever its version: the server's versions may have restarted
+    // (a memory store, a purged and reused conversation), and the answer is the present.
+    const version = conversation.snapshot.version;
+    cursors[id] = {
+      runs: {},
+      durableEventIds: [],
+      ...(version !== undefined && { snapshotVersion: version }),
+    };
+  }
+  return { ...createAgentControlView(), cursor: { conversations: cursors }, conversations };
+}
 
 /**
  * Config for `createAgentController`: a realtime transport, one conversation id, `observe` or
@@ -60,11 +90,17 @@ export interface AgentController {
 
 /**
  * Preserve active transient progress across a durable refresh; terminal runs lose transient
- * state.
+ * state. Within a connection a snapshot older than the view is a late answer and is dropped;
+ * an attach answer is taken as it is, since it is what the connection starts from.
  */
-function refreshed(view: AgentControlView, snapshot: AgentSnapshot): AgentControlView {
+function refreshed(
+  view: AgentControlView,
+  snapshot: AgentSnapshot,
+  answer: 'attach' | 'refresh',
+): AgentControlView {
   const current = view.conversations[snapshot.conversationId];
   if (
+    answer === 'refresh' &&
     Math.max(
       current?.snapshot?.version ?? 0,
       view.cursor.conversations[snapshot.conversationId]?.snapshotVersion ?? 0,
@@ -121,16 +157,16 @@ class ConversationController implements AgentController {
   private offDelivery: () => void;
   private offConnection: () => void;
   constructor(private config: AgentControllerConfig) {
-    this.client = bindRealtimeClient(agentControlRealtimeContract, config.transport);
     this.timeoutMs = config.timeoutMs ?? 10_000;
     this.maxEvents = config.maxBufferedEvents ?? 256;
     this.maxBytes = config.maxBufferedBytes ?? 1_048_576;
     this.maxPending = config.maxPendingRequests ?? 32;
-    assertPositiveSafeInteger('timeoutMs', this.timeoutMs);
+    assertTimerMs('timeoutMs', this.timeoutMs);
     assertPositiveSafeInteger('maxBufferedEvents', this.maxEvents);
     assertPositiveSafeInteger('maxBufferedBytes', this.maxBytes);
     assertPositiveSafeInteger('maxPendingRequests', this.maxPending);
     if (!config.conversationId) throw new TypeError('conversationId must not be empty');
+    this.client = bindRealtimeClient(agentControlRealtimeContract, config.transport);
     this.offDelivery = this.client.on('agent:delivery', (delivery) => this.receive(delivery));
     this.offConnection = this.client.onConnectionChange((connected) =>
       this.changed(connected),
@@ -219,7 +255,14 @@ class ConversationController implements AgentController {
       if (response.snapshot) {
         if (response.snapshot.conversationId !== this.config.conversationId)
           throw new Error('Agent snapshot conversation mismatch');
-        this.update({ status: 'ready', view: refreshed(this.state.view, response.snapshot) });
+        this.update({
+          status: 'ready',
+          view: refreshed(
+            this.state.view,
+            response.snapshot,
+            command.operation === 'attach' ? 'attach' : 'refresh',
+          ),
+        });
         if (!this.state.view.conversations[this.config.conversationId]?.resyncRequired)
           this.refreshAttempts = 0;
       }
@@ -309,7 +352,7 @@ class ConversationController implements AgentController {
     this.tail = Promise.resolve();
     this.update({
       status: connected ? 'connecting' : 'disconnected',
-      view: createAgentControlView(),
+      view: retainSnapshots(this.state.view),
     });
     if (connected)
       void this.request({ operation: 'attach', access: this.config.access }).catch(() => {

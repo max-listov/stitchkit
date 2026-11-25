@@ -115,4 +115,11 @@ export interface EndpointToolOptions {
   annotations?: EndpointToolAnnotations;
   /** Opt-in multi-round input gate; ignored by HTTP, Agent and CLI. */
   mcp?: EndpointMcpPolicy;
+  /**
+   * Levels each recursive input definition is written out when this tool's
+   * input is advertised without `$ref`; wins over the surface's
+   * `inputRecursionDepth` and projects this tool even where the surface sets
+   * none. A positive integer. → ADR 0319.
+   */
+  inputRecursionDepth?: number;
 }

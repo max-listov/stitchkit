@@ -11,6 +11,7 @@
  * application supplies — HTTP, a socket first), the React wrapper, the
  * session. → ADR 0166.
  */
+import { assertTimerMs } from '../internal/deadline';
 import { assertClickIdParams, type ResolvedAttribution } from './attribution';
 import { sendUnloadBeacon } from './beacon';
 import type { ResolveTrackedClickOptions, TrackedClickAttributes } from './clicks';
@@ -180,6 +181,7 @@ function trackingTimings(config: {
   if (typeof config.buildId !== 'string' || config.buildId.length === 0) {
     throw new Error('[stitchkit] tracking client requires a buildId — a git SHA or "dev"');
   }
+  assertTimerMs('Tracking heartbeatMs', config.heartbeatMs);
   return {
     heartbeatMs: config.heartbeatMs ?? 30_000,
     renewAfterHiddenMs: config.renewAfterHiddenMs ?? 30 * 60 * 1000,

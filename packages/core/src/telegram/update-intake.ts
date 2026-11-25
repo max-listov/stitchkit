@@ -25,6 +25,7 @@
  * interrupted stays under its lease and comes when that lapses.
  */
 
+import { assertTimerMs } from '../internal/deadline';
 import { isRecord } from '../internal/typed';
 import { classifyTelegramSendFailure } from './send-failure';
 import {
@@ -268,9 +269,12 @@ export function createTelegramUpdateIntake<TUpdate extends TelegramUpdateEnvelop
   const now = config.now ?? Date.now;
   const retry = config.retry ?? defaultRetry;
   const maxAttempts = positive('maxAttempts', config.maxAttempts ?? 5);
-  const leaseMs = positive('leaseMs', config.leaseMs ?? 120_000);
+  // The lease is renewed on a timer at a quarter of it and lost on a timer at its end.
+  const leaseMs = config.leaseMs ?? 120_000;
+  assertTimerMs('[stitchkit] telegram update intake: leaseMs', leaseMs);
   const pendingGraceMs = config.pendingGraceMs ?? 60_000;
-  const sweepEveryMs = positive('sweepEveryMs', config.sweepEveryMs ?? 30_000);
+  const sweepEveryMs = config.sweepEveryMs ?? 30_000;
+  assertTimerMs('[stitchkit] telegram update intake: sweepEveryMs', sweepEveryMs);
   const retainMs = config.retainMs ?? 86_400_000;
   const maxConcurrent = positive('maxConcurrent', config.maxConcurrent ?? 32);
   let started = false;

@@ -30,6 +30,29 @@ export interface AgentHarnessControlServerConfig {
   maxPendingEvents?: number;
   /** Maximum concurrent snapshot-backed attachment requests across this server. */
   maxPendingAttachments?: number;
+  /**
+   * Server-only diagnostic: the cause of a failure the client sees only as a safe code — a
+   * request the harness rejected (`REQUEST_REJECTED`) or, over realtime, an authorization
+   * hook that failed. Absent, the cause goes to `console.error`; it never reaches a client.
+   */
+  onError?(error: unknown): void;
+}
+
+/** Hand a cause the client does not see to `onError`; an observer that throws is contained. */
+export function reportAgentControlError(
+  config: AgentHarnessControlServerConfig,
+  error: unknown,
+  context: string,
+): void {
+  try {
+    if (config.onError) config.onError(error);
+    else console.error(`[stitchkit] ${context}`, error);
+  } catch (observerError) {
+    console.error('[stitchkit] agent control error observer failed', {
+      error,
+      observerError,
+    });
+  }
 }
 
 /** Transport-neutral correlated control with observer attachments and exclusive mutation leases. */
@@ -66,6 +89,9 @@ async function runControlledOperation<CONTEXT>(
       context: request.context,
       ...(request.metadata !== undefined && { metadata: request.metadata }),
     });
+    // The control reply waits for admission only; the run's own result is
+    // observed by subscribers, and an unobserved rejection must not escape.
+    void ticket.result.catch(() => undefined);
     const admission = await ticket.admission;
     return AgentControlResponseSchema.parse({
       schemaVersion: 1,
@@ -82,6 +108,7 @@ async function runControlledOperation<CONTEXT>(
     parts: request.parts,
     ...(request.metadata !== undefined && { metadata: request.metadata }),
   });
+  void ticket.result.catch(() => undefined);
   const admission = await ticket.admission;
   return AgentControlResponseSchema.parse({
     schemaVersion: 1,
@@ -312,7 +339,8 @@ export function createAgentHarnessControlServer<CONTEXT>(
               return fail('LEASE_REQUIRED', 'An active controller lease is required');
             }
             return await runControlledOperation(harness, request);
-          } catch {
+          } catch (error) {
+            reportAgentControlError(config, error, 'agent control request was rejected');
             return fail('REQUEST_REJECTED', 'Control request was rejected');
           }
         },

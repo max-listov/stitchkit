@@ -1,6 +1,14 @@
+---
+title: "ADR 0194 — Printing is the exclusion, not being native"
+type: decision
+status: accepted
+amends: ["0192"]
+created: 2026-09-22
+updated: 2026-09-22
+---
+
 # 0194 — Printing is the exclusion, not being native
 
-**Status:** Accepted
 **Date:** 2026-09-22
 
 ## Context

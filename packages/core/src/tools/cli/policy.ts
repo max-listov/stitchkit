@@ -3,20 +3,119 @@ import { isUnsafeKey } from '../../internal/safe-json';
 import { type JsonSchemaField, jsonSchemaFields } from '../../json-schema/json-schema';
 import { describeSchemaFields } from './args-fields';
 import type { CliResultPolicy } from './command';
+import type { CliWaitConfig } from './wait';
 
-export interface CliPresentationPolicyConfig {
-  /** Command selected when argv contains no explicit command. */
-  defaultCommand?: string;
-  /** Exact command-scoped short option aliases (`{ logs: { f: 'follow' } }`). */
-  optionAliases?: Readonly<Record<string, Readonly<Record<string, string>>>>;
-  /** Exact ordered argv-positional fields per command; an empty array disables positionals. */
-  positionals?: Readonly<Record<string, readonly string[]>>;
+/** All per-command CLI settings, grouped under one command name in `commandSettings`. */
+export interface CliCommandSettings {
+  /** Exact ordered argv-positional fields; an empty array disables positionals. */
+  positionals?: readonly string[];
+  /** Exact command-scoped short option aliases (`{ f: 'follow' }`). */
+  aliases?: Readonly<Record<string, string>>;
   /**
-   * Terminal presentation and success exit code of a managed command's result,
-   * keyed by command name — `{ lookup: defineCliResult(LookupOutput, { present, exitCode }) }`.
+   * Terminal presentation and success exit code of a managed command's result —
+   * `defineCliResult(LookupOutput, { present, exitCode })`.
    * Declared where the CLI is mounted, because a client and a server print nothing.
    */
-  results?: Readonly<Record<string, CliResultPolicy<unknown>>>;
+  result?: CliResultPolicy<unknown>;
+  /**
+   * Route unknown `--flags` into a freeform object field. Lets
+   * `generate <model> --prompt … --aspect_ratio 16:9` fill the model's `parameters`
+   * directly instead of a `--parameters '{json}'` blob.
+   */
+  passthrough?: string;
+  /** `--wait` polling behaviour for this command. */
+  wait?: CliWaitConfig;
+}
+
+type StaticServiceCommandName<TServices> = [TServices] extends [undefined]
+  ? never
+  : TServices extends (...args: never[]) => unknown
+    ? string
+    : TServices extends readonly (infer TService)[]
+      ? TService extends { readonly methods: infer TMethods extends Record<string, unknown> }
+        ? string extends keyof TMethods
+          ? string
+          : {
+              [K in keyof TMethods & string]: TMethods[K] extends {
+                readonly toolName: infer TToolName extends string;
+              }
+                ? string extends TToolName
+                  ? K
+                  : TToolName
+                : K;
+            }[keyof TMethods & string]
+        : string
+      : string;
+
+type StaticRuntimeCommandName<TRuntime> = [TRuntime] extends [undefined]
+  ? never
+  : TRuntime extends (...args: never[]) => unknown
+    ? string
+    : TRuntime extends readonly (infer TTool)[]
+      ? TTool extends { readonly name: infer TName extends string }
+        ? TName
+        : string
+      : string;
+
+type StaticNativeCommandName<TCommands> = [TCommands] extends [undefined]
+  ? never
+  : TCommands extends readonly (infer TCommand)[]
+    ? TCommand extends { readonly name: infer TName extends string }
+      ? TName
+      : string
+    : string;
+
+/**
+ * Command names accepted as keys of `commandSettings`.
+ *
+ * Resolves to the literal union of command names when `services` and
+ * `runtimeTools` (and optional `commands`) are static tuples with literal names;
+ * widens to `string` when any source is a factory function or an array of
+ * unknown composition.
+ */
+export type CliCommandName<TServices = unknown, TRuntime = unknown, TCommands = undefined> = [
+  | StaticServiceCommandName<TServices>
+  | StaticRuntimeCommandName<TRuntime>
+  | StaticNativeCommandName<TCommands>,
+] extends [never]
+  ? string
+  :
+      | StaticServiceCommandName<TServices>
+      | StaticRuntimeCommandName<TRuntime>
+      | StaticNativeCommandName<TCommands>;
+
+export interface CliPresentationPolicyConfig<TCommandName extends string = string> {
+  /** Command selected when argv contains no explicit command. */
+  defaultCommand?: string;
+  /**
+   * Per-command CLI settings keyed by command name: positional order, short
+   * aliases, managed result presentation/exit code, unknown-flag passthrough
+   * target and `--wait` polling configuration.
+   */
+  commandSettings?: Readonly<{ [name in TCommandName]?: CliCommandSettings }>;
+}
+
+const REMOVED_TOP_LEVEL_KEYS = [
+  'optionAliases',
+  'positionals',
+  'results',
+  'passthrough',
+  'wait',
+] as const;
+
+/**
+ * Refuse the five removed top-level CLI policy maps at startup so JS callers,
+ * spreads and untyped configs fail loudly instead of silently dropping settings.
+ */
+export function assertNoLegacyCliPolicyKeys(config: unknown): void {
+  if (typeof config !== 'object' || config === null) return;
+  for (const key of REMOVED_TOP_LEVEL_KEYS) {
+    if (Object.hasOwn(config, key)) {
+      throw new TypeError(
+        `[stitchkit] CLI option "${key}" was moved into "commandSettings.<command>" — migrate to commandSettings`,
+      );
+    }
+  }
 }
 
 export interface CliCommandPresentation {
@@ -120,14 +219,38 @@ function resolvePositionals(
   return [...configured];
 }
 
+/** Settings configured for one command, if any. */
+export function cliCommandSettingsFor(
+  config: Pick<CliPresentationPolicyConfig, 'commandSettings'>,
+  command: string,
+): CliCommandSettings | undefined {
+  return config.commandSettings && Object.hasOwn(config.commandSettings, command)
+    ? config.commandSettings[command]
+    : undefined;
+}
+
 /** The result policy mounted for one command, if any. */
 export function cliResultPolicy(
-  config: Pick<CliPresentationPolicyConfig, 'results'>,
+  config: Pick<CliPresentationPolicyConfig, 'commandSettings'>,
   command: string,
 ): CliResultPolicy<unknown> | undefined {
-  return config.results && Object.hasOwn(config.results, command)
-    ? config.results[command]
-    : undefined;
+  return cliCommandSettingsFor(config, command)?.result;
+}
+
+/** The passthrough target field configured for one command, if any. */
+export function cliPassthroughField(
+  config: Pick<CliPresentationPolicyConfig, 'commandSettings'>,
+  command: string,
+): string | undefined {
+  return cliCommandSettingsFor(config, command)?.passthrough;
+}
+
+/** The `--wait` polling configuration mounted for one command, if any. */
+export function cliWaitConfig(
+  config: Pick<CliPresentationPolicyConfig, 'commandSettings'>,
+  command: string,
+): CliWaitConfig | undefined {
+  return cliCommandSettingsFor(config, command)?.wait;
 }
 
 export function applyCliPresentationPolicy(
@@ -136,18 +259,11 @@ export function applyCliPresentationPolicy(
   config: CliPresentationPolicyConfig,
 ): CliCommandPresentation {
   const base: CliCommandPresentation = { ...descriptor, aliases: new Map() };
-  const configuredAliases =
-    config.optionAliases && Object.hasOwn(config.optionAliases, command)
-      ? config.optionAliases[command]
-      : undefined;
-  const configuredPositionals =
-    config.positionals && Object.hasOwn(config.positionals, command)
-      ? config.positionals[command]
-      : undefined;
+  const settings = cliCommandSettingsFor(config, command);
   return {
     ...base,
-    aliases: resolveAliases(command, base, configuredAliases),
-    positionals: resolvePositionals(command, base, configuredPositionals),
+    aliases: resolveAliases(command, base, settings?.aliases),
+    positionals: resolvePositionals(command, base, settings?.positionals),
   };
 }
 
@@ -156,11 +272,7 @@ export function assertCliPoliciesResolved(
   commands: ReadonlyMap<string, CliCommandPresentation>,
   config: CliPresentationPolicyConfig,
 ): void {
-  const configuredNames = new Set([
-    ...Object.keys(config.optionAliases ?? {}),
-    ...Object.keys(config.positionals ?? {}),
-    ...Object.keys(config.results ?? {}),
-  ]);
+  const configuredNames = new Set(Object.keys(config.commandSettings ?? {}));
   if (config.defaultCommand !== undefined) configuredNames.add(config.defaultCommand);
   for (const name of configuredNames) {
     if (!commands.has(name)) {

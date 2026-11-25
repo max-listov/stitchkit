@@ -27,10 +27,18 @@ export function transitionRecord(
   reduced?: ReducedApplied,
 ): unknown {
   if (operation.type === 'recover' && operation.input.action === 'abandon') {
-    const assistant = reduced?.runRecords?.find(
-      (record) => record.run.id === operation.input.runId,
-    )?.terminalAssistant;
-    if (assistant) return { ...operation, assistant };
+    const record = reduced?.runRecords?.find(
+      (candidate) => candidate.run.id === operation.input.runId,
+    );
+    const assistant = record?.terminalAssistant;
+    const usage = record?.run.usage;
+    if (assistant || usage) {
+      return {
+        ...operation,
+        ...(assistant && { assistant }),
+        ...(usage && { usage }),
+      };
+    }
   }
   if (operation.type !== 'checkpoint') return operation;
   const { assistant, ...rest } = operation.input;

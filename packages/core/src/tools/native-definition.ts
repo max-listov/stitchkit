@@ -14,7 +14,7 @@ export interface ManagedNativeToolConfig {
   description: string;
   identity: NativeToolIdentity;
   /** Default: MCP and AGENT. CLI is always explicit opt-in. */
-  transports?: readonly ToolTransport[];
+  expose?: readonly ToolTransport[];
   annotations?: EndpointToolAnnotations;
 }
 

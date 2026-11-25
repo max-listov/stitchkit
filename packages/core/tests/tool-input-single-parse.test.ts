@@ -56,6 +56,7 @@ describe('one executable input parser per tool call', () => {
     });
     const server = buildMcpServer(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 'single', version: '1' },
         services: [service],
         flattenUnionInput: true,
@@ -98,6 +99,7 @@ describe('one executable input parser per tool call', () => {
     );
     const tools = mountAgent(
       implement(contract, { run: (context) => void received.push(context.input) }),
+      { access: { open: 'local-operator' } },
     );
     const mounted = tools.run_agent;
     if (!mounted || typeof mounted.execute !== 'function') throw new Error('expected tool');
@@ -144,7 +146,10 @@ describe('one executable input parser per tool call', () => {
       ),
       { run: (context) => void received.push(context) },
     );
-    const mounted = mountAgent(service, { flattenUnionInput: true }).run_agent_flat;
+    const mounted = mountAgent(service, {
+      access: { open: 'local-operator' },
+      flattenUnionInput: true,
+    }).run_agent_flat;
     if (!mounted || typeof mounted.execute !== 'function') throw new Error('expected tool');
     await Reflect.apply(mounted.execute, undefined, [
       { id: 'abc', operation: { kind: 'write', payload: { value: 'x' } } },
@@ -183,7 +188,7 @@ describe('one executable input parser per tool call', () => {
       ),
       { run: () => undefined },
     );
-    const mounted = mountAgent(service).run_tuple;
+    const mounted = mountAgent(service, { access: { open: 'local-operator' } }).run_tuple;
     if (!mounted) throw new Error('expected tool');
     const schema = await asSchema(mounted.inputSchema).jsonSchema;
     expect(schema.$schema).toBe('http://json-schema.org/draft-07/schema#');
@@ -226,6 +231,7 @@ describe('one executable input parser per tool call', () => {
     const [tool] = collectTools(service, 'MCP', { extend });
     if (!tool) throw new Error('expected tool');
     const run = createToolRunner({
+      lifecycle: {},
       source: 'mcp',
       extend,
       hooks: {
@@ -287,7 +293,7 @@ describe('one executable input parser per tool call', () => {
     };
     const [tool] = collectTools(service, 'AGENT', { extend });
     if (!tool) throw new Error('expected tool');
-    const run = createToolRunner({ source: 'agent', extend });
+    const run = createToolRunner({ lifecycle: {}, source: 'agent', extend });
 
     const success = await run(tool, {
       required: 'yes',
@@ -309,6 +315,7 @@ describe('one executable input parser per tool call', () => {
 
     const events: string[] = [];
     const failed = await createToolRunner({
+      lifecycle: {},
       source: 'agent',
       extend,
       hooks: {
@@ -326,6 +333,7 @@ describe('one executable input parser per tool call', () => {
     const received: string[] = [];
     const server = buildMcpServer(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 'native', version: '1' },
         services: [],
         runtimeTools: [
@@ -392,6 +400,7 @@ describe('one executable input parser per tool call', () => {
     });
     const server = buildMcpServer(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 'effects', version: '1' },
         services: [service],
       },
@@ -439,6 +448,7 @@ describe('one executable input parser per tool call', () => {
     const [tool] = collectTools(service, 'AGENT');
     if (!tool) throw new Error('expected tool');
     const result = await createToolRunner({
+      lifecycle: {},
       source: 'agent',
       hooks: {
         beforeToolCall: () => void events.push('before'),

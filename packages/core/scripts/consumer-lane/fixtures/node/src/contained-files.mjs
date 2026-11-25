@@ -25,6 +25,7 @@ async function ordinaryOperations() {
   await writeFile(path.join(root, 'nested', 'file.txt'), 'nested value');
   const authorizations = [];
   const tools = mountAgent([], {
+    access: { open: 'local-operator' },
     runtimeTools: createAgentCodingTools({
       root,
       authorize: (request) => {
@@ -133,6 +134,7 @@ async function parentSwap(kind) {
   const entered = Promise.withResolvers();
   const release = Promise.withResolvers();
   const tools = mountAgent([], {
+    access: { open: 'local-operator' },
     runtimeTools: createAgentCodingTools({
       root,
       authorize: async () => {

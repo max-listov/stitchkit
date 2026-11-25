@@ -2,7 +2,7 @@
 title: An event declaration projects onto the socket we already run
 description: defineEvents declares topics, payload schemas and how each is delivered to in-process listeners, and reaches the wire by projecting onto the existing realtime contract rather than by owning a transport of its own.
 type: decision
-status: active
+status: accepted
 created: 2026-09-02
 updated: 2026-09-02
 ---

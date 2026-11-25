@@ -8,7 +8,9 @@ updated: 2026-05-29
 
 # ADR 0016 — CLI as the fourth transport
 
-- **Status:** Accepted — extends [ADR 0007](0007-mcp-agent-tools.md), upholds [ADR 0014](0014-tool-http-parity.md)
+**Relations:** extends [ADR 0007](0007-mcp-agent-tools.md), upholds
+[ADR 0014](0014-tool-http-parity.md)
+
 - **Date:** 2026-05-29
 
 ## Context

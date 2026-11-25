@@ -16,6 +16,7 @@ import { writeFileAtomicSync } from '../../internal/atomic-file';
 import { safeJsonParse } from '../../internal/safe-json';
 import { argumentsDigest } from '../../internal/stable-digest';
 import { isRecord } from '../../internal/typed';
+import { stringifyJsonSafe } from '../internal/json-projection';
 
 /** One recorded line: what it was, and what running it produced. */
 export interface CliCheckpointEntry {
@@ -66,7 +67,7 @@ export function readCliCheckpoint(path: string): CliCheckpoint {
 
 /** Persist the checkpoint atomically. */
 export function writeCliCheckpoint(path: string, checkpoint: CliCheckpoint): void {
-  writeFileAtomicSync(path, `${JSON.stringify({ entries: checkpoint.entries }, null, 2)}\n`, {
+  writeFileAtomicSync(path, `${stringifyJsonSafe({ entries: checkpoint.entries }, 2)}\n`, {
     mode: 0o600,
   });
 }

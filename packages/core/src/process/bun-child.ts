@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { Readable, Writable } from 'node:stream';
+import { errnoOf } from '../internal/errno';
 import { abortOwnerLossLaunch, attachOwnerLossControl } from './owner-loss-control';
 import { type OwnerLossGuardInvocation, ownerLossGuardCommand } from './owner-loss-protocol';
 import { connectOwnerLossSocket } from './owner-loss-socket';
@@ -81,13 +82,7 @@ function readableOf(source: ReadableStream<Uint8Array>): Readable {
 const REPORTED_SPAWN_CODES = new Set(['ENOENT', 'EACCES', 'EAGAIN', 'EMFILE', 'ENFILE']);
 
 function reportedSpawnFailure(cause: unknown): boolean {
-  return (
-    typeof cause === 'object' &&
-    cause !== null &&
-    'code' in cause &&
-    typeof cause.code === 'string' &&
-    REPORTED_SPAWN_CODES.has(cause.code)
-  );
+  return REPORTED_SPAWN_CODES.has(errnoOf(cause) ?? '');
 }
 
 const waitClosed = (stream: Readable) =>
@@ -120,6 +115,10 @@ function defineBunChildren() {
       super();
     }
 
+    protected onExited(): void {
+      // Subclasses override to release handles bound to the exited child.
+    }
+
     watch(subprocess: BunSubprocess) {
       this.pid = subprocess.pid;
       this.#subprocess = subprocess;
@@ -127,6 +126,7 @@ function defineBunChildren() {
         this.exitCode = subprocess.exitCode;
         this.signalCode =
           subprocess.signalCode === null ? null : String(subprocess.signalCode);
+        this.onExited();
         this.emit('exit', this.exitCode, this.signalCode);
         // As a Node child does: a pipe nobody reads is drained, or it would never close.
         for (const pipe of this.pipes) if (pipe.readableFlowing === null) pipe.resume();
@@ -167,6 +167,10 @@ function defineBunChildren() {
       readonly stderr: Readable,
     ) {
       super([stdout, stderr]);
+    }
+
+    protected override onExited(): void {
+      if (!this.stdin.destroyed && !this.stdin.closed) this.stdin.destroy();
     }
   }
   return { BunProcess, BunChild };

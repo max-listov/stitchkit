@@ -8,10 +8,10 @@ updated: 2026-08-06
 
 # ADR 0039 — Request logging reads the request context
 
-- **Status:** Accepted — connects the logger of
-  [ADR 0012](0012-observability-module.md) to the context that ADR introduced;
-  upholds [ADR 0013](0013-runtime-agnostic-core.md) and
-  [ADR 0029](0029-audit-endpoint-identity-and-dimensions.md)
+**Relations:** connects the logger of [ADR 0012](0012-observability-module.md) to the context that
+ADR introduced; upholds [ADR 0013](0013-runtime-agnostic-core.md) and
+[ADR 0029](0029-audit-endpoint-identity-and-dimensions.md)
+
 - **Date:** 2026-08-06
 
 ## Context

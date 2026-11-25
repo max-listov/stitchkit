@@ -3,6 +3,7 @@ title: "ADR 0186: The CLI surface owns aggregates, profiles and its own distribu
 description: "Four things every consumer of createCli rebuilds — aggregate views, named credential profiles, an installer generated from a manifest, and a bounded update check — become framework surface, with the dangerous variant of each one refused rather than documented."
 type: decision
 status: accepted
+amendedBy: ["0295"]
 created: 2026-09-16
 updated: 2026-11-20 00:37 +08:00
 ---

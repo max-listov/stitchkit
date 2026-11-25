@@ -6,8 +6,9 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import type { AgentCompanionHost } from './companion-host';
 import { type AgentSchedule, AgentScheduleSchema } from './schedule-contract';
-import type { SqliteAgentRuntimeStore } from './sqlite';
+import { SqlIntegerSchema } from './sql-rows';
 
 export interface ScheduleRequest {
   conversationId: string;
@@ -70,18 +71,34 @@ export function newSchedule(request: ScheduleRequest, observedAt: Date): AgentSc
 }
 
 export async function insertSchedule(
-  sqlite: SqliteAgentRuntimeStore,
+  host: AgentCompanionHost,
   schedule: AgentSchedule,
+  maxActivePerConversation: number,
 ): Promise<void> {
-  await sqlite.transaction(async (scope) => {
-    scope.database
-      .prepare(`
-        INSERT INTO stitchkit_agent_runtime_schedules (
+  await host.transaction(schedule.conversationId, async (scope) => {
+    // Counted in the transaction that inserts, so two concurrent requests
+    // cannot both take the last place.
+    const active = z.object({ active: SqlIntegerSchema }).parse(
+      await scope.get(
+        `
+            SELECT COUNT(*) AS active FROM ${host.tables.schedules}
+            WHERE conversation_id = ? AND state = 'scheduled'
+          `,
+        [schedule.conversationId],
+      ),
+    ).active;
+    if (active >= maxActivePerConversation)
+      throw new TypeError(
+        `The conversation already holds ${active} active schedules, the limit is ${maxActivePerConversation}`,
+      );
+    await scope.run(
+      `
+        INSERT INTO ${host.tables.schedules} (
           id, conversation_id, kind, next_at, interval_ms, time_zone,
           input_payload, state, occurrence, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?)
-      `)
-      .run(
+      `,
+      [
         schedule.id,
         schedule.conversationId,
         schedule.kind,
@@ -91,7 +108,8 @@ export async function insertSchedule(
         JSON.stringify(schedule.input),
         schedule.createdAt,
         schedule.updatedAt,
-      );
+      ],
+    );
     await scope.appendEvent({
       conversationId: schedule.conversationId,
       kind: 'schedule/set',
@@ -109,7 +127,7 @@ function holdsClaim(raw: unknown, firing: ClaimedFiring, at: string): boolean {
       state: z.string(),
       claim_owner: z.string().nullable(),
       claim_until: z.string().nullable(),
-      occurrence: z.int(),
+      occurrence: SqlIntegerSchema,
       next_at: z.string(),
     })
     .parse(raw);
@@ -141,7 +159,7 @@ function nextSlot(schedule: AgentSchedule, observedAt: Date, intervalMs: number)
  * next slot — an outage longer than the retries does not end a recurring job.
  */
 export async function recordDispatchFailure(
-  sqlite: SqliteAgentRuntimeStore,
+  host: AgentCompanionHost,
   firing: ClaimedFiring,
   reason: string,
   maxAttempts: number,
@@ -153,26 +171,28 @@ export async function recordDispatchFailure(
     characters.length > MAX_FAILURE_REASON
       ? `${characters.slice(0, MAX_FAILURE_REASON).join('')}…`
       : reason;
-  await sqlite.transaction(async (scope) => {
+  await host.transaction(schedule.conversationId, async (scope) => {
     const at = firing.now().toISOString();
-    const raw = scope.database
-      .prepare(`
+    const raw = await scope.get(
+      `
       SELECT state, claim_owner, claim_until, occurrence, next_at
-      FROM stitchkit_agent_runtime_schedules WHERE id = ?
-    `)
-      .get(schedule.id);
+      FROM ${host.tables.schedules} WHERE id = ?
+    `,
+      [schedule.id],
+    );
     if (!holdsClaim(raw, firing, at)) return;
     const attempts = Math.min((schedule.attempts ?? 0) + 1, Number.MAX_SAFE_INTEGER);
     const exhausted = !explicitlyTerminal && attempts >= maxAttempts;
     if (exhausted && schedule.kind === 'every' && schedule.intervalMs) {
       const nextAt = nextSlot(schedule, firing.now(), schedule.intervalMs);
-      scope.database
-        .prepare(`
-        UPDATE stitchkit_agent_runtime_schedules
+      await scope.run(
+        `
+        UPDATE ${host.tables.schedules}
         SET state = 'scheduled', occurrence = ?, next_at = ?, retry_at = NULL, attempts = 0,
           last_error = ?, claim_owner = NULL, claim_until = NULL, updated_at = ? WHERE id = ?
-      `)
-        .run(occurrence, nextAt, message, at, schedule.id);
+      `,
+        [occurrence, nextAt, message, at, schedule.id],
+      );
       await scope.appendEvent({
         conversationId: schedule.conversationId,
         kind: 'schedule/failed',
@@ -196,13 +216,14 @@ export async function recordDispatchFailure(
       : new Date(
           new Date(at).getTime() + Math.min(60_000, 1_000 * 2 ** Math.min(attempts - 1, 6)),
         ).toISOString();
-    scope.database
-      .prepare(`
-      UPDATE stitchkit_agent_runtime_schedules
+    await scope.run(
+      `
+      UPDATE ${host.tables.schedules}
       SET state = ?, retry_at = ?, attempts = ?, last_error = ?,
         claim_owner = NULL, claim_until = NULL, updated_at = ? WHERE id = ?
-    `)
-      .run(terminal ? 'failed' : 'scheduled', retryAt, attempts, message, at, schedule.id);
+    `,
+      [terminal ? 'failed' : 'scheduled', retryAt, attempts, message, at, schedule.id],
+    );
     await scope.appendEvent({
       conversationId: schedule.conversationId,
       kind: 'schedule/failed',
@@ -214,13 +235,13 @@ export async function recordDispatchFailure(
 
 /** Advance only the held occurrence; stale and cancelled attempts produce no settlement events. */
 export async function settleFiring(
-  sqlite: SqliteAgentRuntimeStore,
+  host: AgentCompanionHost,
   firing: ClaimedFiring,
   lateByMs: number,
 ): Promise<void> {
   const { schedule, occurrence } = firing;
   const state = schedule.kind === 'every' ? 'scheduled' : 'completed';
-  await sqlite.transaction(async (scope) => {
+  await host.transaction(schedule.conversationId, async (scope) => {
     const observedAt = firing.now();
     const at = observedAt.toISOString();
     const nextAt =
@@ -228,21 +249,23 @@ export async function settleFiring(
         ? nextSlot(schedule, observedAt, schedule.intervalMs)
         : schedule.nextAt;
 
-    const raw = scope.database
-      .prepare(`
+    const raw = await scope.get(
+      `
       SELECT state, claim_owner, claim_until, occurrence, next_at
-      FROM stitchkit_agent_runtime_schedules WHERE id = ?
-    `)
-      .get(schedule.id);
+      FROM ${host.tables.schedules} WHERE id = ?
+    `,
+      [schedule.id],
+    );
     if (!holdsClaim(raw, firing, at)) return;
-    scope.database
-      .prepare(`
-      UPDATE stitchkit_agent_runtime_schedules
+    await scope.run(
+      `
+      UPDATE ${host.tables.schedules}
       SET state = ?, occurrence = ?, next_at = ?, updated_at = ?,
         claim_owner = NULL, claim_until = NULL, retry_at = NULL, attempts = 0, last_error = NULL
       WHERE id = ?
-    `)
-      .run(state, occurrence, nextAt, at, schedule.id);
+    `,
+      [state, occurrence, nextAt, at, schedule.id],
+    );
     if (lateByMs > 0) {
       await scope.appendEvent({
         conversationId: schedule.conversationId,
@@ -260,36 +283,42 @@ export async function settleFiring(
   });
 }
 
-/** Recheck both eligibility and the selected occurrence under BEGIN IMMEDIATE. */
+/** Recheck both eligibility and the selected occurrence inside the store's write transaction. */
 export function claimSchedule(
-  sqlite: SqliteAgentRuntimeStore,
+  host: AgentCompanionHost,
   owner: string,
   schedule: AgentSchedule,
   now: () => Date,
 ): Promise<boolean> {
-  return sqlite.transaction(async (scope) => {
+  return host.transaction(schedule.conversationId, async (scope) => {
     const observedAt = now();
     const at = observedAt.toISOString();
     const until = new Date(observedAt.getTime() + 60_000).toISOString();
-    const raw = scope.database
-      .prepare(`
-      SELECT occurrence, next_at, attempts FROM stitchkit_agent_runtime_schedules
+    const raw = await scope.get(
+      `
+      SELECT occurrence, next_at, attempts FROM ${host.tables.schedules}
       WHERE id = ? AND state = 'scheduled' AND eligible_at <= ?
-    `)
-      .get(schedule.id, at);
+    `,
+      [schedule.id, at],
+    );
     if (raw === null || raw === undefined) return false;
     const row = z
-      .object({ occurrence: z.int(), next_at: z.string(), attempts: z.int() })
+      .object({
+        occurrence: SqlIntegerSchema,
+        next_at: z.string(),
+        attempts: SqlIntegerSchema,
+      })
       .parse(raw);
     if (row.attempts !== (schedule.attempts ?? 0)) return false;
     if (row.occurrence !== schedule.occurrence || row.next_at !== schedule.nextAt)
       return false;
-    scope.database
-      .prepare(`
-      UPDATE stitchkit_agent_runtime_schedules
+    await scope.run(
+      `
+      UPDATE ${host.tables.schedules}
       SET claim_owner = ?, claim_until = ?, updated_at = ? WHERE id = ?
-    `)
-      .run(owner, until, at, schedule.id);
+    `,
+      [owner, until, at, schedule.id],
+    );
     return true;
   });
 }

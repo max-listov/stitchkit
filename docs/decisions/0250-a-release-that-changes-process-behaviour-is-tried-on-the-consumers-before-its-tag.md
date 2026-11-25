@@ -1,6 +1,16 @@
+---
+title: "ADR 0250 — A release that changes process behaviour is tried on the consumers before its tag"
+type: decision
+status: superseded
+supersededBy: ["0251"]
+created: 2026-10-06
+updated: 2026-10-06
+---
+
 # 0250 — A release that changes process behaviour is tried on the consumers before its tag
 
-**Status:** Superseded by [ADR 0251](0251-a-release-does-not-wait-for-its-consumers.md)
+**Relations:** Superseded by [ADR 0251](0251-a-release-does-not-wait-for-its-consumers.md)
+
 **Date:** 2026-10-06
 
 Practice. Invariant P. Complements the release wave of ADR 0136: consumers are still migrated after

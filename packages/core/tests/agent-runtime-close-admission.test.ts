@@ -8,6 +8,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { expectTimerRejection } from './support/timer-refusal';
 
 /**
  * `close()` closes admission, and the only proof is the STORE.
@@ -203,10 +204,23 @@ describe('close() closes admission', () => {
   test('a refused close leaves the runtime open', async () => {
     // Validation used to happen one await later, inside the coordinator: the
     // flag was already set, so the caller got a TypeError AND a runtime that
-    // admitted nothing — from a call that never legally started.
+    // admitted nothing — from a call that never legally started. The budgets are timer
+    // delays, refused by the one timer rule: past the ceiling a timer fires at once.
     const { runtime, store } = createRuntime();
-    await expect(runtime.close({ forceTimeoutMs: Number.NaN })).rejects.toThrow(TypeError);
-    await expect(runtime.close({ gracePeriodMs: -1 })).rejects.toThrow(TypeError);
+    for (const value of [Number.NaN, -1, 1.5, 2 ** 31]) {
+      await expectTimerRejection(
+        runtime.close({ forceTimeoutMs: value }),
+        'Agent session close forceTimeoutMs',
+        value,
+        0,
+      );
+      await expectTimerRejection(
+        runtime.close({ gracePeriodMs: value }),
+        'Agent session close gracePeriodMs',
+        value,
+        0,
+      );
+    }
 
     const ticket = runtime.submit(anInput('still-open'));
     await ticket.accepted;

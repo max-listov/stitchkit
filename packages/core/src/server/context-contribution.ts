@@ -16,6 +16,7 @@ export const RUNTIME_CONTEXT_RESERVED_KEYS = new Set([
   'ipAddress',
   'userAgent',
   'signal',
+  'toolCallId',
   'mcp',
   'reportProgress',
 ]);

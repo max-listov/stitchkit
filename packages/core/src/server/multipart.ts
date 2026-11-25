@@ -1,5 +1,6 @@
 import type { MultipartDescriptor, MultipartFilePolicy } from '../contract/client-types';
 import { badRequest } from '../contract/errors';
+import { abortReason } from '../internal/abort-race';
 import { concatChunks, readBoundedChunks } from '../internal/bounded-body';
 import {
   decoder,
@@ -49,7 +50,7 @@ function limitedStream(
     async pull(controller) {
       if (signal.aborted) {
         cancelReader(signal.reason);
-        controller.error(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+        controller.error(abortReason(signal));
         return;
       }
       try {

@@ -9,22 +9,22 @@
  * published hints onto the mounted tool, and the refused-view rule then holds
  * over MCP exactly as it does over the contract.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
 import { defineContract, type RuntimeContext } from '../src/entrypoints/contract';
 import { defineRuntimeTool } from '../src/entrypoints/tools';
-import {
-  defineMcpClientConnection,
-  mountConnections,
-} from '../src/entrypoints/tools/connections';
 import { createImplement } from '../src/server/implement';
-import { createCli } from '../src/tools/cli/create-cli';
 import { mcpCatalogStamp } from '../src/tools/mcp/catalog';
-import { createMcpHandler } from '../src/tools/mcp/handler';
 import { buildMcpServer } from '../src/tools/mcp/mount';
 import { prepareMcpServerSurface } from '../src/tools/mcp/prepare';
 import { readDiscoveredToolAnnotations } from '../src/tools/read-operation';
+import {
+  ALL_OPERATION_ORIGINS,
+  mountOperationOrigins,
+  type OperationOrigin,
+} from './support/operation-origins';
+import { runCliSurface } from './support/operation-transports';
 
 const Bots = z.array(z.object({ id: z.string(), name: z.string() }));
 const bots = [
@@ -91,10 +91,8 @@ const runtimeRead = defineRuntimeTool({
   handler: () => ({ now: 'noon' }),
 });
 
-const stops: Array<() => Promise<void>> = [];
-afterEach(async () => {
+afterEach(() => {
   calls = 0;
-  await Promise.all(stops.splice(0).map((stop) => stop()));
 });
 
 async function listedAnnotations(): Promise<Record<string, unknown>> {
@@ -102,6 +100,7 @@ async function listedAnnotations(): Promise<Record<string, unknown>> {
   const client = new Client({ name: 'read-hint-test', version: '1' });
   const server = buildMcpServer(
     {
+      access: { open: 'local-operator' },
       serverInfo: { name: 'bots', version: '1' },
       services: [botsService()],
       runtimeTools: [runtimeRead],
@@ -112,48 +111,6 @@ async function listedAnnotations(): Promise<Record<string, unknown>> {
   const { tools } = await client.listTools();
   await client.close();
   return Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));
-}
-
-/** A consuming project's path: a Stitchkit `/mcp` over HTTP, mounted into a CLI through the client connection. */
-async function botsCli(argv: string[]): Promise<{ out: string; err: string; code: number }> {
-  const handler = createMcpHandler({
-    serverInfo: { name: 'bots', version: '1' },
-    auth: () => ({}),
-    context: () => ({}),
-    services: [botsService()],
-  });
-  const server = Bun.serve({ port: 0, fetch: (request) => handler.fetch(request) });
-  stops.push(async () => {
-    await server.stop(true);
-    await handler.close();
-  });
-  const runtimeTools = await mountConnections([
-    defineMcpClientConnection({
-      name: 'bots',
-      transport: { url: `http://127.0.0.1:${server.port}/mcp` },
-      transports: ['CLI'],
-    }),
-  ]);
-  let out = '';
-  let err = '';
-  let code = -1;
-  await createCli({
-    name: 'bots',
-    version: '1.0.0',
-    runtimeTools,
-    argv,
-    stdout: (text) => {
-      out += text;
-    },
-    stderr: (text) => {
-      err += text;
-    },
-    exit: (value) => {
-      code = value;
-    },
-    stdin: async () => null,
-  });
-  return { out, err, code };
 }
 
 describe('the MCP server publishes whether a tool reads', () => {
@@ -178,19 +135,95 @@ describe('the MCP server publishes whether a tool reads', () => {
 });
 
 describe('a CLI mounted over MCP withholds a refused read view', () => {
-  test('a read prints nothing on stdout and says so', async () => {
-    const { out, err, code } = await botsCli(['bot_list', '--table', 'id,nosuchcolumn']);
-    expect(out).toBe('');
-    expect(code).toBe(8);
-    const diagnostic = JSON.parse(err);
-    expect(diagnostic.error).toBe('CLI_PRESENTATION_FAILED');
-    expect(diagnostic.details.resultOnStdout).toBe(false);
-    expect(JSON.stringify(diagnostic)).toContain('nosuchcolumn');
-    expect(calls).toBe(1);
+  const OpenBots = z.array(z.looseObject({ id: z.string(), name: z.string() }));
+  let mounted: Awaited<ReturnType<typeof mountOperationOrigins>>;
+
+  beforeAll(async () => {
+    const answer = () => {
+      calls += 1;
+      return bots;
+    };
+    mounted = await mountOperationOrigins({
+      serviceName: 'bots',
+      specs: [
+        {
+          name: 'bot_list',
+          description: 'List bots',
+          method: 'GET',
+          input: z.object({}),
+          output: OpenBots,
+          handler: answer,
+        },
+        {
+          name: 'token_rotate',
+          description: 'Rotate tokens and list the bots they belong to',
+          method: 'GET',
+          input: z.object({}),
+          output: OpenBots,
+          annotations: { readOnlyHint: false },
+          handler: answer,
+        },
+        {
+          name: 'bot_purge',
+          description: 'Purge and list what was purged',
+          method: 'GET',
+          input: z.object({}),
+          output: OpenBots,
+          annotations: { destructiveHint: true, title: 'Purge' },
+          handler: answer,
+        },
+        {
+          name: 'bot_create',
+          description: 'Create bots',
+          method: 'POST',
+          input: z.object({}),
+          output: OpenBots,
+          handler: answer,
+        },
+      ],
+    });
   });
 
+  afterAll(async () => {
+    await mounted?.close();
+  });
+
+  const mcpSurface = () => {
+    const surface = mounted.byOrigin.get('discovered-mcp');
+    if (!surface) throw new Error('missing discovered-mcp surface');
+    return surface;
+  };
+
+  test.each(ALL_OPERATION_ORIGINS)(
+    'a read prints nothing on stdout and says so (origin: %s)',
+    async (origin: OperationOrigin) => {
+      const surface = mounted.byOrigin.get(origin);
+      if (!surface) throw new Error(`missing mounted origin ${origin}`);
+      if (origin === 'managed-cli-catalog') expect(surface.catalogCacheHit).toBe(true);
+      const before = calls;
+      const { out, err, code } = await runCliSurface(
+        surface,
+        [surface.commandName('bot_list'), '--table', 'id,nosuchcolumn'],
+        { name: 'bots' },
+      );
+      expect(out).toBe('');
+      expect(code).toBe(8);
+      const diagnostic = JSON.parse(err);
+      expect(diagnostic.error).toBe('CLI_PRESENTATION_FAILED');
+      expect(diagnostic.details.resultOnStdout).toBe(false);
+      expect(JSON.stringify(diagnostic)).toContain('nosuchcolumn');
+      expect(calls).toBe(before + 1);
+    },
+  );
+
   test('a known column of the same read still renders its table', async () => {
-    const { out, err, code } = await botsCli(['bot_list', '--table', 'id']);
+    const { out, err, code } = await runCliSurface(
+      mcpSurface(),
+      ['bot_list', '--table', 'id'],
+      {
+        name: 'bots',
+      },
+    );
     expect(code).toBe(0);
     expect(err).toBe('');
     expect(out).toContain('b1');
@@ -201,7 +234,11 @@ describe('a CLI mounted over MCP withholds a refused read view', () => {
     ['a GET declared not read-only', 'token_rotate'],
     ['a GET declared destructive', 'bot_purge'],
   ])('%s keeps its result on stdout', async (_label, command) => {
-    const { out, err, code } = await botsCli([command, '--table', 'id,nosuchcolumn']);
+    const { out, err, code } = await runCliSurface(
+      mcpSurface(),
+      [command, '--table', 'id,nosuchcolumn'],
+      { name: 'bots' },
+    );
     expect(code).toBe(8);
     // MCP carries an array answer as `{ result: [...] }`; the CLI prints what it received.
     expect(JSON.parse(out)).toEqual({ result: bots });

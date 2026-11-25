@@ -1,7 +1,8 @@
 ---
 title: Public build-time native packaging
 description: One native-asset graph and a lazy loader for a custom companion layout and embedded delivery.
-status: active
+status: accepted
+amendedBy: ["0241", "0252"]
 created: 2026-10-04 18:29 +07:00
 updated: 2026-10-05 20:12 +07:00
 type: decision

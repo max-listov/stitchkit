@@ -13,7 +13,7 @@ export interface AgentToolDefinition<TInput extends ZodObject, TOutput extends Z
   };
   input: TInput;
   output: TOutput;
-  transports: readonly ['AGENT'];
+  expose: readonly ['AGENT'];
   handler(context: unknown): unknown;
 }
 

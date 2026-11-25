@@ -2,16 +2,18 @@ import type { ToolExecutionOptions, ToolSet } from 'ai';
 import { jsonSchema, tool } from 'ai';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
+import { resolveToolAccess, type ToolAccess } from './access';
 import { AgentToolError } from './agent-tool-error';
 import type { ToolDurability, ToolDurabilityFactory } from './durability-port';
 import { isToolExecutionControlError } from './execute';
-import type { ErrorHintFn, ToolCallHooks, ToolLifecycle } from './execute-hooks';
+import type { ErrorHintFn, ToolCallHooks } from './execute-hooks';
 import { toolCauseFromResult, toolResultFromError } from './execute-result';
 import { createToolRunner, formatToolError, type ToolExtend } from './mount';
 import type { AgentToolRegistry } from './registry';
 import { resolveRuntimeToolCall } from './runtime-call-context';
 import { agentPresenterOf } from './runtime-tool';
 import type { RuntimeToolDefinition } from './runtime-tool-declaration';
+import { localVerdict } from './schema/json-schema-origin';
 import { collectToolSurface } from './surface';
 
 export interface AgentContext {
@@ -23,11 +25,11 @@ export interface AgentMountConfig {
   /** Tool-call observability hooks. */
   hooks?: ToolCallHooks;
   /**
-   * Auth / scope gate and result transform for every tool call — the tool-side
-   * twin of `createServer`'s `beforeHandle` / `afterHandle`. Without it an
-   * agent tool call bypasses the auth a `createServer` `beforeHandle` enforces.
+   * Required access policy for every mounted tool call — pass `{ gate }` with
+   * `beforeHandle` (for example from `createAuthHook`) or explicitly mark the
+   * surface `{ open: 'public' | 'local-operator' | 'remote' }`.
    */
-  lifecycle?: ToolLifecycle;
+  access: ToolAccess;
   extend?: ToolExtend;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
@@ -35,6 +37,13 @@ export interface AgentMountConfig {
   onOutputStrip?: (toolName: string, paths: string[]) => void;
   /** Flatten discriminated union inputs into a single object. Default: false. */
   flattenUnionInput?: boolean;
+  /**
+   * Advertise every input, runtime tools included, with no `$ref`: references
+   * written out, each recursive definition unrolled this many levels and
+   * closed by an open node. For providers that refuse recursive schemas.
+   * A tool's `tool.inputRecursionDepth` wins. Absent: references stay.
+   */
+  inputRecursionDepth?: number;
   /** Global error hint injected into every failed tool result. */
   errorHint?: ErrorHintFn;
   /** Framework-managed pathless operations mounted beside contract tools. */
@@ -59,8 +68,9 @@ export interface AgentMountConfig {
 
 export function mountAgent(
   services: ServiceDef | ServiceDef[],
-  config: AgentMountConfig = {},
+  config: AgentMountConfig,
 ): ToolSet {
+  const lifecycle = resolveToolAccess('mountAgent', config);
   const serviceList = Array.isArray(services) ? services : [services];
   if (config.registry && config.runtimeTools) {
     throw new Error('mountAgent accepts either runtimeTools or a registry, not both');
@@ -73,7 +83,7 @@ export function mountAgent(
     extend: config.extend,
     context: config.context,
     hooks: config.hooks,
-    lifecycle: config.lifecycle,
+    lifecycle,
     coerceJsonArgs: config.coerceJsonArgs,
     onOutputStrip: config.onOutputStrip,
   });
@@ -83,6 +93,7 @@ export function mountAgent(
     transport: 'AGENT',
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
+    inputRecursionDepth: config.inputRecursionDepth,
   })) {
     const { mountable } = entry;
     const inputSchema = jsonSchema(mountable.presentationSchema, {
@@ -129,7 +140,7 @@ export function mountAgent(
               waitFor: durability.waitFor.bind(durability),
             },
             hooks: config.hooks,
-            lifecycle: config.lifecycle,
+            lifecycle,
             coerceJsonArgs: config.coerceJsonArgs,
             onOutputStrip: config.onOutputStrip,
           })
@@ -165,10 +176,9 @@ export function mountAgent(
         execute,
         toModelOutput: async ({ output: rawOutput }) => {
           const parsed = output.safeParse(rawOutput);
-          if (!parsed.success) {
-            return { type: 'text', value: JSON.stringify(rawOutput) };
-          }
-          return presenter(parsed.data);
+          if (parsed.success) return presenter(parsed.data);
+          if (localVerdict(output, parsed.error) === null) return presenter(rawOutput);
+          return { type: 'text', value: JSON.stringify(rawOutput) };
         },
       });
     } else {

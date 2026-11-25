@@ -119,7 +119,9 @@ function handlerFor(
     context: (auth) => ({ identity: auth.identity }),
     services: [service],
     ...(hooks && { hooks }),
-    ...(hooks?.beforeHandle && { lifecycle: { beforeHandle: hooks.beforeHandle } }),
+    access: hooks?.beforeHandle
+      ? { gate: { beforeHandle: hooks.beforeHandle } }
+      : { open: 'local-operator' },
     multiRound: {
       state: { key: KEY, principal: () => 'alpha' },
       ...(maxRounds !== undefined && { serving: { maxRounds } }),
@@ -401,7 +403,7 @@ describe('what a dynamic declaration costs, exactly', () => {
           create: (context) => ({ model: context.input.model }),
         }),
       ],
-      lifecycle: { beforeHandle: () => void gates.push(1) },
+      access: { gate: { beforeHandle: () => void gates.push(1) } },
       multiRound: { state: { key: KEY, principal: () => 'alpha' } },
     });
     await handler.fetch(call({ model: 'text' }));

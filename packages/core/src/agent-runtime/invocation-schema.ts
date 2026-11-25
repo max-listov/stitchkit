@@ -117,3 +117,23 @@ export const InvocationPayloadSchema = Base.extend({
   tag: z.string(),
   ciphertext: z.string(),
 }).strict();
+
+/**
+ * What remains of a payload artifact outside the conversation that made the
+ * call: its identity, size and hash. The encrypted body is bound to that
+ * conversation and its invocation, and stays with them.
+ */
+export const InvocationPayloadReceiptSchema = InvocationPayloadSchema.partial({
+  iv: true,
+  tag: true,
+  ciphertext: true,
+});
+
+/**
+ * Whether a `provider/request` or `provider/response` payload is a record of
+ * this ledger. The provider journal writes the same two kinds in its own shape,
+ * without an invocation. The ledger reader and the branch tell them apart here.
+ */
+export function isModelInvocationRecord(payload: unknown): boolean {
+  return payload !== null && typeof payload === 'object' && 'invocationId' in payload;
+}

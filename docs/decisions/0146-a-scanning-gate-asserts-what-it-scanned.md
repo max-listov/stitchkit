@@ -2,7 +2,7 @@
 title: A scanning gate asserts what it scanned
 description: A test that discovers its own inputs must assert the size of the set it found before asserting that the set is clean, because an empty scan and a clean scan produce the same green.
 type: decision
-status: active
+status: accepted
 created: 2026-09-02
 updated: 2026-09-02
 ---

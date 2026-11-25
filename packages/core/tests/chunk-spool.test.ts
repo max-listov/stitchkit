@@ -4,7 +4,8 @@
  * nothing is assembled until every part is in.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, rmSync, utimesSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, statSync, utimesSync } from 'node:fs';
+import { open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -12,6 +13,7 @@ import { AppError } from '../src/contract/errors';
 import {
   CHUNK_SPOOL_ERROR_CODES,
   createChunkSpool,
+  createChunkSpoolWith,
   isChunkSpoolErrorCode,
 } from '../src/files/chunk-spool';
 
@@ -216,5 +218,164 @@ describe('assemble, discard and sweep', () => {
     utimesSync(join(directory, first ?? ''), old, old);
     expect(await spool.sweep()).toBe(1);
     expect(readdirSync(directory)).toEqual([second ?? '']);
+  });
+
+  test('sweep skips an entry that vanishes mid-loop (ENOENT) and continues sweeping remaining stale uploads', async () => {
+    spools += 1;
+    const directory = join(root, String(spools));
+    let vanishedDir: string | undefined;
+    let enoentHits = 0;
+
+    const spool = createChunkSpoolWith(
+      {
+        directory,
+        chunkBytes: 4,
+        maxFileBytes: 64,
+        meta: z.object({ name: z.string() }),
+        staleAfterMs: 0,
+      },
+      {
+        async stat(target) {
+          if (target === vanishedDir) {
+            await rm(target, { recursive: true, force: true });
+            try {
+              return await stat(target);
+            } catch (error) {
+              enoentHits += 1;
+              throw error;
+            }
+          }
+          return stat(target);
+        },
+      },
+    );
+
+    await spool.open({ ...opening, uploadId: 'vanishing' });
+    await spool.open({ ...opening, uploadId: 'still-stale' });
+    const entries = readdirSync(directory);
+    expect(entries).toHaveLength(2);
+    const old = new Date(Date.now() - 10_000);
+    for (const entry of entries) utimesSync(join(directory, entry), old, old);
+    vanishedDir = join(directory, entries[0] ?? '');
+
+    expect(await spool.sweep()).toBe(1);
+    expect(enoentHits).toBe(1);
+    expect(readdirSync(directory)).toEqual([]);
+  });
+
+  test('sweep rejects when stat fails with a non-ENOENT error (EACCES)', async () => {
+    spools += 1;
+    const directory = join(root, String(spools));
+    const permissionDenied = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+
+    const spool = createChunkSpoolWith(
+      {
+        directory,
+        chunkBytes: 4,
+        maxFileBytes: 64,
+        meta: z.object({ name: z.string() }),
+        staleAfterMs: 0,
+      },
+      {
+        async stat() {
+          throw permissionDenied;
+        },
+      },
+    );
+
+    await spool.open(opening);
+    await expect(spool.sweep()).rejects.toBe(permissionDenied);
+  });
+
+  test('assembled stream closes the open FileHandle when handle.read throws EIO', async () => {
+    spools += 1;
+    const directory = join(root, String(spools));
+    const readError = Object.assign(new Error('disk I/O failure'), { code: 'EIO' });
+    let openCount = 0;
+    let closeCount = 0;
+
+    const spool = createChunkSpoolWith(
+      {
+        directory,
+        chunkBytes: 4,
+        maxFileBytes: 64,
+        meta: z.object({ name: z.string() }),
+      },
+      {
+        async open(target, flags) {
+          openCount += 1;
+          const handle = await open(target, flags);
+          return {
+            async read() {
+              throw readError;
+            },
+            async close() {
+              closeCount += 1;
+              await handle.close();
+            },
+          };
+        },
+      },
+    );
+
+    await spool.open(opening);
+    for (const [index, text] of ['abcd', 'efgh', 'ij'].entries()) {
+      await spool.put(part(index, text));
+    }
+
+    const assembled = await spool.assemble(key);
+    const reader = assembled.stream().getReader();
+    await expect(reader.read()).rejects.toBe(readError);
+    expect(openCount).toBe(1);
+    expect(closeCount).toBe(1);
+  });
+});
+
+describe('config validation and private file mode', () => {
+  test('refuses invalid maxFileBytes and staleAfterMs while allowing staleAfterMs: 0', () => {
+    const base = {
+      directory: join(root, 'config-validation'),
+      chunkBytes: 4,
+      maxFileBytes: 64,
+      meta: z.object({ name: z.string() }),
+    };
+
+    for (const badMax of [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(() => createChunkSpool({ ...base, maxFileBytes: badMax })).toThrow(TypeError);
+    }
+
+    for (const badStale of [
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(() => createChunkSpool({ ...base, staleAfterMs: badStale })).toThrow(TypeError);
+    }
+
+    expect(() => createChunkSpool({ ...base, staleAfterMs: 0 })).not.toThrow();
+  });
+
+  test('publishes declaration, part and receipt files with 0600 permissions', async () => {
+    if (process.platform === 'win32') return;
+    const { spool, directory } = makeSpool();
+    await spool.open(opening);
+    await spool.put(part(0, 'abcd'));
+    const [uploadDir] = readdirSync(directory);
+    const fullDir = join(directory, uploadDir ?? '');
+    const files = readdirSync(fullDir);
+    expect(files.length).toBeGreaterThanOrEqual(3);
+    for (const name of files) {
+      expect(statSync(join(fullDir, name)).mode & 0o777).toBe(0o600);
+    }
   });
 });

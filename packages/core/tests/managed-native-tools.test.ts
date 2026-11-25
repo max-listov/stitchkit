@@ -89,7 +89,7 @@ describe('managed generic native tools', () => {
         service: 'jobs',
         method: 'waitForJob',
         kind: 'runtime',
-        transports: ['MCP', 'AGENT'],
+        expose: ['MCP', 'AGENT'],
       },
     ]);
     expect(summarizeTransports({ runtimeTools: [wait] }).totals).toEqual({
@@ -105,11 +105,13 @@ describe('managed generic native tools', () => {
         services: [],
         context: () => ({ userId: 'u1' }),
         runtimeTools: [wait],
-        lifecycle: {
-          beforeHandle: (context, endpoint) => {
-            expect(context.userId).toBe('u1');
-            expect(endpoint).toMatchObject({ serviceName: 'jobs', key: 'waitForJob' });
-            phases.push('lifecycle');
+        access: {
+          gate: {
+            beforeHandle: (context, endpoint) => {
+              expect(context.userId).toBe('u1');
+              expect(endpoint).toMatchObject({ serviceName: 'jobs', key: 'waitForJob' });
+              phases.push('lifecycle');
+            },
           },
         },
         hooks: {
@@ -128,7 +130,7 @@ describe('managed generic native tools', () => {
     expect(mcp.content).toEqual([{ type: 'text', text: 'job mcp-job: DONE' }]);
     expect(phases).toEqual(['before', 'lifecycle', 'success']);
 
-    const agent = mountAgent([], { runtimeTools: [wait] });
+    const agent = mountAgent([], { access: { open: 'local-operator' }, runtimeTools: [wait] });
     expect(
       await executable(agent, 'wait_for_job')(
         { id: 'agent-job' },
@@ -159,9 +161,11 @@ describe('managed generic native tools', () => {
           serverInfo: { name: 'managed-native', version: '1' },
           services: [],
           runtimeTools: [wait],
-          lifecycle: {
-            beforeHandle: () => {
-              throw new AppError('FORBIDDEN', { message: 'Denied', status: 403 });
+          access: {
+            gate: {
+              beforeHandle: () => {
+                throw new AppError('FORBIDDEN', { message: 'Denied', status: 403 });
+              },
             },
           },
           hooks: {
@@ -280,6 +284,7 @@ describe('managed generic native tools', () => {
     const client = await connect(
       buildMcpServer(
         {
+          access: { open: 'local-operator' },
           serverInfo: { name: 'managed-native', version: '1' },
           services: [],
           runtimeTools: [upload],
@@ -290,7 +295,10 @@ describe('managed generic native tools', () => {
     const mcp = await client.callTool({ name: 'upload', arguments: { path: 'mcp.png' } });
     expect(mcp.structuredContent).toEqual({ url: 'https://example.com/mcp.png' });
 
-    const agent = mountAgent([], { runtimeTools: [upload] });
+    const agent = mountAgent([], {
+      access: { open: 'local-operator' },
+      runtimeTools: [upload],
+    });
     expect(
       await executable(agent, 'upload')(
         { path: 'agent.png' },
@@ -336,6 +344,7 @@ describe('managed generic native tools', () => {
     const client = await connect(
       buildMcpServer(
         {
+          access: { open: 'local-operator' },
           serverInfo: { name: 'managed-errors', version: '1' },
           services: [],
           runtimeTools: [safeDefinition, internalDefinition],
@@ -357,7 +366,10 @@ describe('managed generic native tools', () => {
       expect(resultText(mcpSafe)).toContain('"error": "FILE_NOT_FOUND"');
       expect(resultText(mcpSafe)).not.toContain('/srv/private');
 
-      const agent = mountAgent([], { runtimeTools: [safeDefinition, internalDefinition] });
+      const agent = mountAgent([], {
+        access: { open: 'local-operator' },
+        runtimeTools: [safeDefinition, internalDefinition],
+      });
       await expect(
         executable(agent, 'safe_upload')(
           { path: 'file.bin' },

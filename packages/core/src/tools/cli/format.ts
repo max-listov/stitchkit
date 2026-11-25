@@ -14,6 +14,7 @@
 
 import type { ErrorHintFn } from '../execute-hooks';
 import type { ToolFailure, ToolResult } from '../execute-result';
+import { stringifyJsonSafe } from '../internal/json-projection';
 import { formatToolError } from '../mount';
 
 /** Map a `ToolResult.code` to a process exit code. */
@@ -41,9 +42,20 @@ export const DEFAULT_EXIT_CODES: ExitCodeMap = {
   CONNECTION_RESPONSE_TOO_LARGE: 1,
   CONNECTION_REQUEST_FAILED: 1,
   UPSTREAM_TOOL_ERROR: 1,
+  MCP_STRUCTURED_CONTENT_MISSING: 1,
   WAIT_FAILED: 1,
   CLI_COMMAND_UNAVAILABLE: 1,
   CLI_PRESENTATION_FAILED: 8,
+  // Local unix-socket transport outcomes — distinct codes so scripts can tell
+  // "never reached the application" apart from "sent, outcome unknown" and
+  // from a response failure (exit 1).
+  UNIX_CONNECT_FAILED: 9,
+  UNIX_TARGET_REFUSED: 9,
+  UNIX_CLIENT_CLOSED: 9,
+  UNIX_CONNECTION_LIMIT: 9,
+  UNIX_REQUEST_TOO_LARGE: 9,
+  UNIX_DELIVERY_UNCERTAIN: 10,
+  UNIX_HEADERS_TIMEOUT: 10,
   INTERNAL_SERVER_ERROR: 1,
 };
 
@@ -97,9 +109,7 @@ export function emitResult(
     // A no-payload success (`data === undefined`) prints nothing — explicit,
     // rather than relying on `JSON.stringify(undefined)` being a falsy value.
     if (result.data === undefined) return 0;
-    const text = opts.json
-      ? JSON.stringify(result.data)
-      : JSON.stringify(result.data, null, 2);
+    const text = stringifyJsonSafe(result.data, opts.json ? undefined : 2);
     writers.stdout(`${text}\n`);
     return 0;
   }

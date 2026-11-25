@@ -2,7 +2,8 @@
 title: A schema a browser cannot import is not a contract
 description: The application schemas ship as their own entrypoint because the server runtime beside them breaks a client bundle at module init, and the gate now refuses a browser-safe module that no export path reaches.
 type: decision
-status: active
+status: accepted
+amendedBy: ["0157", "0311"]
 created: 2026-09-03
 updated: 2026-09-03
 ---
@@ -61,7 +62,8 @@ node-free file named `diagnostic-journal-contract.ts`.
 
 `stitchkit/application/schemas` stays. It is no longer the *only* way to reach
 those schemas, but it is still the honest minimal one — the schemas without the
-kernel — and it had already shipped.
+kernel — and it had already shipped (amended by [ADR 0311](0311-planned-breaking-release-access-expose-and-clean-boundaries.md):
+`stitchkit/application/schemas` is removed; all canonical schemas are imported from browser-clean `stitchkit/application`).
 
 The lesson is not about entrypoints. This ADR reasoned from the shape of the
 module ("it is a server entrypoint by design") when the question was empirical

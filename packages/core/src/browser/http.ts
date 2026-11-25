@@ -7,9 +7,16 @@ import ky, {
 } from 'ky';
 import type { UploadProgress } from '../contract/client-types';
 import type { ErrorEnvelope } from '../contract/errors';
+import { assertTimerMs } from '../internal/deadline';
 import { isRecord } from '../internal/typed';
+import {
+  UNIX_CLIENT_TRANSPORT_ERROR_NAME,
+  type UnixClientDeliveryState,
+  type UnixClientTransportErrorCode,
+} from '../internal/unix-client-error';
 import { createTraceContext, formatTraceparent } from '../observability/trace';
 import { ApiError } from './api-error';
+import { classifyBridgeTransportRetry } from './bridge-errors';
 import { createRequestCancellation, RequestCancellationError } from './cancellation';
 import {
   createRetryAwareFetch,
@@ -48,8 +55,54 @@ export function isAbortLikeError(error: unknown): boolean {
   );
 }
 
-/** @internal Narrow adapter for a Bun fetch error Ky does not classify. */
-export function shouldRetryBunNetworkError(error: unknown): true | undefined {
+/**
+ * Bun's codes for a connection that gave no answer: refused before the request
+ * left, or closed after it left and before a byte came back — a host process
+ * that crashed or restarted mid-call. Ky classifies neither.
+ */
+const BUN_NO_ANSWER_CODES = new Set([
+  'ConnectionRefused',
+  'ECONNREFUSED',
+  'ConnectionClosed',
+  'ECONNRESET',
+]);
+
+/** Read an own string data property without walking prototypes or invoking getters. */
+function ownStringProperty(error: Error, key: string): string | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(error, key);
+  return descriptor && 'value' in descriptor && typeof descriptor.value === 'string'
+    ? descriptor.value
+    : undefined;
+}
+
+const UNIX_RESPONSE_RECEIVED: UnixClientDeliveryState = 'response-received';
+const UNIX_RETRYABLE_PAIRS: ReadonlyArray<
+  readonly [UnixClientTransportErrorCode, UnixClientDeliveryState]
+> = [
+  ['UNIX_CONNECT_FAILED', 'not-dispatched'],
+  ['UNIX_DELIVERY_UNCERTAIN', 'possibly-dispatched'],
+];
+
+/**
+ * Classify a `UnixClientTransportError` for transport replay: `true` only when
+ * no response arrived because the socket failed to connect or dropped before
+ * response headers; `false` for every other unix transport error (including
+ * `UNIX_RESPONSE_TOO_LARGE` and any `response-received` failure); `undefined`
+ * for non-unix errors. Inspected by own data properties so getters never run.
+ */
+export function classifyUnixTransportRetry(error: unknown): boolean | undefined {
+  if (!(error instanceof Error)) return undefined;
+  if (ownStringProperty(error, 'name') !== UNIX_CLIENT_TRANSPORT_ERROR_NAME) return undefined;
+  const code = ownStringProperty(error, 'code');
+  const delivery = ownStringProperty(error, 'delivery');
+  if (delivery === UNIX_RESPONSE_RECEIVED) return false;
+  return UNIX_RETRYABLE_PAIRS.some(([c, d]) => code === c && delivery === d);
+}
+
+/** @internal Narrow adapter for Bun fetch, bridge and Unix transport errors Ky does not classify. */
+export function shouldRetryBunNetworkError(error: unknown): boolean | undefined {
+  const bridgeRetry = classifyBridgeTransportRetry(error);
+  if (bridgeRetry !== undefined) return bridgeRetry;
   if (
     ApiError.is(error) ||
     isHTTPError(error) ||
@@ -59,14 +112,12 @@ export function shouldRetryBunNetworkError(error: unknown): true | undefined {
   ) {
     return undefined;
   }
+  const unixRetry = classifyUnixTransportRetry(error);
+  if (unixRetry !== undefined) return unixRetry;
   if (!(error instanceof Error)) return undefined;
 
-  const code = Object.getOwnPropertyDescriptor(error, 'code');
-  return code &&
-    'value' in code &&
-    (code.value === 'ConnectionRefused' || code.value === 'ECONNREFUSED')
-    ? true
-    : undefined;
+  const code = ownStringProperty(error, 'code');
+  return code !== undefined && BUN_NO_ANSWER_CODES.has(code) ? true : undefined;
 }
 
 /**
@@ -151,6 +202,13 @@ export interface RequestOptions {
   responseType?: 'json' | 'blob' | 'response' | 'void';
   /** Hear the request body leave; each transport retry counts again. */
   onUploadProgress?: (progress: UploadProgress) => void;
+  /**
+   * Whether a request that never got an answer may be sent again. `true`
+   * retries a network failure whatever the method, within `retry.limit`;
+   * `false` never retries it, even a `GET`. Unset keeps the client's
+   * `retry.methods`. The typed client passes the endpoint's own `idempotent`.
+   */
+  idempotent?: boolean;
 }
 
 /** The HTTP transport adapter `createClient` builds typed methods on. */
@@ -246,6 +304,7 @@ function errorBodyOf(data: unknown): unknown {
  */
 export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient {
   assertTransportChoice(config);
+  assertTimerMs('HTTP client timeout', config.timeout);
   let ssrCookies: string | null = null;
   let isLoggedOut = false;
   const listeners = new Set<ApiEventListener>();
@@ -273,7 +332,8 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
     // `statusCodes` = retry network failures only.
     retry: {
       limit: config.retry?.limit ?? 2,
-      methods: config.retry?.methods ?? ['get'],
+      // `HEAD` reads like `GET`: an endpoint that does not say otherwise is repeated (ADR 0303).
+      methods: config.retry?.methods ?? ['get', 'head'],
       statusCodes: config.retry?.statusCodes ?? [],
       shouldRetry: ({ error }) => shouldRetryBunNetworkError(error),
     },
@@ -354,11 +414,13 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
     // cancellation did to the request — is recorded here and kept as the cause.
     let transportFailure: { readonly cause: unknown } | undefined;
     const resolvedTransport = resolveClientFetch(config.fetch);
-    const transport: ClientFetch = (input, init) =>
-      resolvedTransport(input, init).catch((cause: unknown) => {
+    const transport: ClientFetch = (input, init) => {
+      transportFailure = undefined;
+      return resolvedTransport(input, init).catch((cause: unknown) => {
         transportFailure = { cause };
         throw cause;
       });
+    };
     const kyOptions: Options = {
       fetch: createRetryAwareFetch(
         options.onUploadProgress
@@ -369,12 +431,16 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
               // Ky hands its fetch a `Request`, from which React Native cannot
               // read a `FormData` back; its route sends the body as built here.
               nativeBody: data instanceof FormData ? data : jsonBodyOf(data),
+              responseType: options.responseType,
             })
           : transport,
         config.unix,
       ),
       timeout: false,
-      signal: cancellation.signal,
+      // Merged into the instance's retry: the limit, status codes and network
+      // predicate stay the client's, only which methods may repeat changes.
+      ...(options.idempotent === true && { retry: { methods: [method] } }),
+      ...(options.idempotent === false && { retry: { limit: 0 } }),
     };
 
     const searchParams = options.params ? searchParamsOf(options.params) : undefined;
@@ -387,12 +453,15 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
     }
 
     try {
-      return await cancellation.run(() =>
-        readResponse<T>(client[method](url, kyOptions), options.responseType).catch(
-          (error: unknown) => {
+      return await cancellation.run(
+        (signal) =>
+          readResponse<T>(
+            client[method](url, { ...kyOptions, signal }),
+            options.responseType,
+          ).catch((error: unknown) => {
             throw transportFailure && isAbortLikeError(error) ? transportFailure.cause : error;
-          },
-        ),
+          }),
+        options.responseType === 'response' ? 'handed-out' : 'read',
       );
     } catch (error) {
       throw requestFailure(error, emit);

@@ -60,6 +60,7 @@ export function rekeyBranchTransition(
         type: operation.type,
         ...(operation.type === 'recover' &&
           operation.assistant && { assistant: message(operation.assistant) }),
+        ...(operation.type === 'recover' && operation.usage && { usage: operation.usage }),
         input: {
           ...common,
           ...(operation.type === 'checkpoint' || operation.type === 'terminal'

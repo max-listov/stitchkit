@@ -33,6 +33,25 @@ export function transportResult<T>(value: unknown): T {
   return value as T;
 }
 
+/**
+ * A record read back from a spool file this process family wrote. The file is
+ * the writer's own state, not input from outside, and the record type has no
+ * schema to parse it with, so this is the one place it is taken as written.
+ */
+export function spooledRecord<T>(value: unknown): T {
+  return value as T;
+}
+
+/**
+ * The object without keys whose value is `undefined` (such a key is not JSON).
+ * `Object.fromEntries` gives up the key type, so it is restored here, once.
+ */
+export function withoutUndefined<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  ) as Partial<T>;
+}
+
 export function mapObject<
   TSource extends object,
   TResult extends { [K in keyof TSource]?: unknown },

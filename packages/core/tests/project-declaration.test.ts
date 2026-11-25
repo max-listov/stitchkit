@@ -14,7 +14,7 @@ import { describe, expect, test } from 'bun:test';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import * as declarationModule from '../src/declaration/declaration';
+import * as declarationModule from '../src/entrypoints/declaration';
 import {
   findProjectRole,
   namesAMachine,
@@ -24,7 +24,7 @@ import {
   ProjectIdentitySchema,
   type ProjectRole,
   parseProjectDeclaration,
-} from '../src/declaration/declaration';
+} from '../src/entrypoints/declaration';
 
 const apiRole: ProjectRole = {
   name: 'api',
@@ -406,6 +406,19 @@ const REFUSED: Array<[string, unknown]> = [
     { ...valid, identity: { ...valid.identity, description: {} } },
   ],
   ['a missing release key', { ...valid, release: undefined }],
+
+  // ─── starter provenance carries a semantic version and nothing else ───────
+  ['a starter version that is empty', { ...valid, starter: { version: '' } }],
+  ['a non-semantic starter version', { ...valid, starter: { version: 'latest' } }],
+  [
+    'a machine address smuggled into starter.version',
+    { ...valid, starter: { version: 'https://evil.example' } },
+  ],
+  ['a starter block with no version', { ...valid, starter: {} }],
+  [
+    'an unknown key inside starter',
+    { ...valid, starter: { version: '0.6.23', template: 'application' } },
+  ],
 ];
 
 describe('the boundary rule is enforced by shape', () => {
@@ -611,6 +624,17 @@ describe('build inputs', () => {
     // can run away from the machine that holds the database. "Absent" has to be
     // an answer, or every project is a maybe.
     expect(parseProjectDeclaration(valid).build?.inputs).toBeUndefined();
+  });
+});
+
+describe('starter provenance', () => {
+  test('a repository created from the starter records its scaffolder version', () => {
+    const withStarter = { ...valid, starter: { version: '0.6.23' } };
+    expect(parseProjectDeclaration(withStarter)).toEqual(withStarter);
+  });
+
+  test('a repository not created from the starter legitimately omits starter', () => {
+    expect(parseProjectDeclaration(valid).starter).toBeUndefined();
   });
 });
 

@@ -9,8 +9,9 @@ updated: 2026-08-14
 
 # ADR 0073 — Client request options are not callback context
 
-- **Status:** Accepted — extends [ADR 0005](0005-typed-client.md),
-  [ADR 0008](0008-thin-wrappers.md) and [ADR 0025](0025-typed-scoped-client.md).
+**Relations:** extends [ADR 0005](0005-typed-client.md), [ADR 0008](0008-thin-wrappers.md) and
+[ADR 0025](0025-typed-scoped-client.md).
+
 - **Date:** 2026-08-14
 
 ## Context

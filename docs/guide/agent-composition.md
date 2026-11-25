@@ -36,7 +36,7 @@ const harness = createHeadlessAgentHarness({
     mountAgent([catalogService], {
       context: { ...context, messageId: run.assistantMessageId },
       runtimeTools: resources.runtimeTools,
-      lifecycle: composeToolLifecycle(authorizeTools, toolFenceLifecycle),
+      access: { gate: composeToolLifecycle(authorizeTools, toolFenceLifecycle) },
       hooks: observeTools,
     }),
 });
@@ -54,8 +54,9 @@ because a loader exists. Root IDs, kinds, provenance and limits are unchanged.
 
 ## Server and browser
 
-`stitchkit/agent-runtime/realtime` and `stitchkit/agent-runtime/react` are evolving and
-experimental: no application has committed to them yet, so expect their shape to change.
+`stitchkit/agent-runtime/realtime` and `stitchkit/agent-runtime/react` are evolving: an
+application is building on them, and two independent ones in production would make them
+stable (ADR 0198).
 
 ```ts
 import { bindAgentHarnessRealtime } from 'stitchkit/agent-runtime/realtime';
@@ -115,13 +116,75 @@ To release the session, await `close`; to stop the application, separately close
 binding, transport and harness through the application's shutdown lifecycle. Closing a
 view does not interrupt its remote run. Use explicit `interrupt` for cancellation.
 
-Reconnect reattaches and reads durable state. Mutations are not retried automatically:
-if an acknowledgement is lost, retain the original idempotency key. Incoming event
+Reconnect reattaches and reads durable state; until the attach answers, the view keeps the
+last snapshot and its version (only in-flight run text and run cursors are dropped), so the
+screen does not go blank. Mutations are not retried automatically: if an acknowledgement is
+lost, retain the original idempotency key. Incoming event
 buffers and outgoing requests have finite limits; capacity/overflow/lease failures stay
 visible, each with a code from the one `AgentControlErrorCode` vocabulary. A reconnect
 rejects the requests of the previous connection at once and attaches again, so they
 cannot hold capacity the new attach needs. A server overflow deliberately disconnects the
 transport; reconnect explicitly.
+
+### An offline outbox, and resync by cursor
+
+A client that must accept input while offline keeps an outbox of its own and drains it
+through the controller. The idempotency key is what makes the drain safe: it is chosen
+once, when the user acts, and stored with the entry, so a submit retried after a lost
+acknowledgement is the same admission, not a second run. One drain runs at a time while
+the controller is ready, and an entry leaves the outbox only after its answer: a refusal
+(`outcome: 'error'`) is the application's to keep or drop, and a kept one is sent again
+after the next attach; a dropped connection leaves the entry first.
+
+```ts
+import type { AgentBrowserCommand, AgentController } from 'stitchkit/agent-runtime/browser';
+
+type Submit = Extract<AgentBrowserCommand, { operation: 'submit' }>;
+type Pending = Omit<Submit, 'operation'>;
+
+/** Drain `entries` (persist them; the key is chosen once, when the user acts). */
+function createOutbox(
+  agent: AgentController,
+  entries: Pending[],
+  onRefused: (entry: Pending, error: { code: string; message: string }) => 'keep' | 'drop',
+) {
+  let draining = false;
+  async function drain() {
+    if (draining) return; // one drain at a time: an entry is sent by one loop only
+    draining = true;
+    try {
+      while (agent.getSnapshot().status === 'ready') {
+        const next = entries[0];
+        if (!next) return;
+        const response = await agent.request({ operation: 'submit', ...next });
+        if (response.outcome === 'error' && onRefused(next, response.error) === 'keep') return;
+        entries.shift(); // admitted (or dropped by the application), never before the answer
+      }
+    } catch {
+      // The connection dropped mid-request: the entry stays first, with its key.
+    } finally {
+      draining = false;
+    }
+  }
+  const off = agent.subscribe(() => {
+    if (agent.getSnapshot().status === 'ready') void drain();
+  });
+  return {
+    push(entry: Pending) {
+      entries.push(entry);
+      void drain();
+    },
+    close: off,
+  };
+}
+```
+
+The view resyncs itself. The cursor (`state.view.cursor`) records, per conversation, the
+snapshot version the view was built from and the durable events applied since: a repeated
+event is dropped, and a durable event whose snapshot version does not follow the view's
+marks the conversation `resyncRequired`, after which the controller fetches a fresh
+snapshot. Persist the outbox entries, never the transient view: on restart the attach reads
+durable state, and the outbox drains into it.
 
 ## Check behavior, not just admission
 

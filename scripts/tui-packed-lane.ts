@@ -1,6 +1,7 @@
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { builtByVerify } from './lane-build';
 
 const root = join(import.meta.dir, '..');
 const workspace = await mkdtemp(join(tmpdir(), 'stitchkit-tui-packed-'));
@@ -51,20 +52,30 @@ async function archive(prefix: string): Promise<string> {
 
 try {
   await run(['mkdir', '-p', artifacts, consumer, monitorConsumer], root);
+  // Outside a `verify` run that already built the workspace, rebuild so standalone
+  // invocations never pack a stale `dist` from an earlier edit.
+  if (!builtByVerify()) {
+    await run(['bun', '--filter', 'stitchkit', 'build'], root);
+    await run(['bun', '--filter', 'stitchkit-tui', 'build'], root);
+  }
+  if (!(await Bun.file(join(root, 'packages/core/dist/entrypoints/index.js')).exists())) {
+    throw new Error(
+      'packages/core/dist is missing; run `bun --filter stitchkit build` before tui-packed-lane',
+    );
+  }
+  if (!(await Bun.file(join(root, 'packages/tui/dist/index.js')).exists())) {
+    throw new Error(
+      'packages/tui/dist is missing; run `bun --filter stitchkit-tui build` before tui-packed-lane',
+    );
+  }
   await run(
-    [
-      'bun',
-      '../../scripts/package-build-lock.ts',
-      '--',
-      'bun',
-      'pm',
-      'pack',
-      '--destination',
-      artifacts,
-    ],
+    ['bun', 'pm', 'pack', '--ignore-scripts', '--destination', artifacts],
     join(root, 'packages/core'),
   );
-  await run(['bun', 'pm', 'pack', '--destination', artifacts], join(root, 'packages/tui'));
+  await run(
+    ['bun', 'pm', 'pack', '--ignore-scripts', '--destination', artifacts],
+    join(root, 'packages/tui'),
+  );
 
   const coreArchive = await archive('stitchkit-0.');
   const tuiArchive = await archive('stitchkit-tui-');

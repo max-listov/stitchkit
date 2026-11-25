@@ -4,6 +4,8 @@
  * polling mechanics live in exactly one place. Domain-free (ADR 0002): the
  * caller supplies how to fetch a state (`poll`) and when it is terminal (`done`).
  */
+import { abortReason, withLinkedAbortSignals } from '../../internal/abort-race';
+import { assertTimerSeconds } from '../../internal/deadline';
 import { sleep } from '../../internal/timers';
 
 const DEFAULT_BACKOFF = [2, 3, 5, 5, 8, 10];
@@ -51,6 +53,8 @@ export async function pollUntil<T>(params: PollUntilParams<T>): Promise<PollUnti
   const backoff = params.backoff?.length ? params.backoff : DEFAULT_BACKOFF;
   const lastBackoff = backoff[backoff.length - 1] ?? 5;
   const timeoutSec = params.timeoutSec ?? DEFAULT_TIMEOUT;
+  // Taken here, before the first poll: a per-call timeout comes from the call's own input.
+  assertTimerSeconds('timeoutSec', timeoutSec);
   const pause = params.sleepFn ?? sleep;
   const now = params.nowFn ?? (() => performance.now());
   const startedAt = now();
@@ -63,27 +67,27 @@ export async function pollUntil<T>(params: PollUntilParams<T>): Promise<PollUnti
     if (remainingBeforePoll === 0 && last) {
       return { state: last.state, timedOut: true };
     }
-    const deadlineController = new AbortController();
-    const onCallerAbort = (): void => deadlineController.abort(params.signal?.reason);
-    params.signal?.addEventListener('abort', onCallerAbort, { once: true });
+    // The poll's signal follows the caller and this poll's share of the deadline.
+    const pollDeadline = new AbortController();
     const deadlineTimer = setTimeout(
-      () => deadlineController.abort(new WaitTimeoutError()),
+      () => pollDeadline.abort(new WaitTimeoutError()),
       remainingBeforePoll,
     );
     deadlineTimer.unref?.();
     let state: T;
     try {
-      state = await params.poll(deadlineController.signal);
+      state = await withLinkedAbortSignals(params.signal, pollDeadline.signal, (signal) =>
+        params.poll(signal),
+      );
     } catch (error) {
-      if (params.signal?.aborted) throw params.signal.reason ?? error;
-      if (deadlineController.signal.aborted && now() >= deadline) {
+      if (params.signal?.aborted) throw abortReason(params.signal);
+      if (pollDeadline.signal.aborted && now() >= deadline) {
         if (last) return { state: last.state, timedOut: true };
         throw new WaitTimeoutError();
       }
       throw error;
     } finally {
       clearTimeout(deadlineTimer);
-      params.signal?.removeEventListener('abort', onCallerAbort);
     }
     params.signal?.throwIfAborted();
     last = { state };

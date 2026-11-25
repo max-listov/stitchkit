@@ -97,6 +97,7 @@ const service = implement(contract, {
 describe('MCP 2026-07-28 wire semantics', () => {
   test('serves modern discovery and deterministic cacheable tool lists', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-test', version: '1' },
       auth: () => ({}),
       services: [service],
@@ -135,6 +136,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
 
   test('publishes zero/private cache metadata when no operation override is declared', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-test', version: '1' },
       auth: () => ({}),
       services: [service],
@@ -211,6 +213,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
       handler: () => [1, 2],
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-json-test', version: '1' },
       auth: () => ({}),
       services: [jsonService],
@@ -302,6 +305,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
       },
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-test', version: '1' },
       auth: () => ({}),
       services: [cycleService],
@@ -345,6 +349,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
     );
     const appService = implement(appContract, { show: () => ({ visible: true }) });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-app-test', version: '1' },
       auth: () => ({}),
       services: [appService],
@@ -443,6 +448,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
     );
     const appService = implement(appContract, { show: () => ({ visible: true }) });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'legacy-app-test', version: '1' },
       auth: () => ({}),
       services: [appService],
@@ -490,9 +496,11 @@ describe('MCP 2026-07-28 wire semantics', () => {
       serverInfo: { name: 'modern-test', version: '1' },
       auth: () => ({}),
       services: [routedService],
-      lifecycle: {
-        beforeHandle: () => {
-          lifecycleCalls += 1;
+      access: {
+        gate: {
+          beforeHandle: () => {
+            lifecycleCalls += 1;
+          },
         },
       },
     });
@@ -533,6 +541,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
       tools: { write: (event) => void events.push(event) },
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-test', version: '1' },
       auth: () => ({}),
       services: [service],
@@ -607,9 +616,11 @@ describe('MCP 2026-07-28 wire semantics', () => {
           clientInfo: { name: 'spoofed', version: '0' },
         },
       }),
-      lifecycle: {
-        beforeHandle: (context) => {
-          phases.push({ phase: 'lifecycle', mcp: context.mcp });
+      access: {
+        gate: {
+          beforeHandle: (context) => {
+            phases.push({ phase: 'lifecycle', mcp: context.mcp });
+          },
         },
       },
       hooks: {
@@ -712,6 +723,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
       },
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-trace-test', version: '1' },
       auth: () => ({}),
       services: [traceService],
@@ -733,7 +745,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
         source: 'http',
         method: 'POST',
         path: '/mcp',
-        startedAt: process.hrtime.bigint(),
+        startedAt: performance.now(),
       },
       () =>
         handler.fetch(
@@ -844,6 +856,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
   test('rejects subscriptions and exposes the rejection observer', async () => {
     const statuses: number[] = [];
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-test', version: '1' },
       auth: () => ({}),
       services: [service],
@@ -870,6 +883,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
 
   test('keeps raw multimodal tool output on the modern wire', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-test', version: '1' },
       auth: () => ({}),
       services: [],
@@ -901,6 +915,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
 
   test('close is idempotent and refuses later requests', async () => {
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-test', version: '1' },
       auth: () => ({}),
       services: [service],
@@ -940,6 +955,7 @@ describe('MCP 2026-07-28 wire semantics', () => {
       },
     });
     const handler = createMcpHandler({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'modern-test', version: '1' },
       auth: () => ({}),
       services: [],

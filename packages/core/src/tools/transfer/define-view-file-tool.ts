@@ -1,4 +1,6 @@
 import type { z } from 'zod';
+import { assertTimerMs } from '../../internal/deadline';
+import { assertNoLegacyTransports } from '../internal/expose';
 import { type ManagedNativeToolConfig, managedNativeIdentity } from '../native-definition';
 import {
   defineRuntimeTool,
@@ -7,12 +9,8 @@ import {
   type RuntimeToolDefinitionWithOutput,
   type RuntimeToolPresenters,
 } from '../runtime-tool';
-import {
-  runViewFileOperation,
-  ViewFileInputSchema,
-  type ViewFileOptions,
-  ViewFileOutputSchema,
-} from './view-file';
+import { runViewFileOperation, type ViewFileOptions } from './view-file';
+import { ViewFileInputSchema, ViewFileOutputSchema } from './view-file-contract';
 
 export interface DefineViewFileToolConfig extends ManagedNativeToolConfig, ViewFileOptions {
   present?: RuntimeToolPresenters<z.output<typeof ViewFileOutputSchema>>;
@@ -27,6 +25,8 @@ export function defineViewFileTool(
   undefined,
   RuntimeToolPresenters<z.output<typeof ViewFileOutputSchema>>
 > {
+  assertNoLegacyTransports(config, 'defineViewFileTool');
+  assertTimerMs('defineViewFileTool timeoutMs', config.timeoutMs);
   const defaults: RuntimeToolPresenters<z.output<typeof ViewFileOutputSchema>> = {
     mcp: (output): RuntimeMcpPresentation => ({ content: output.content }),
     agent: (output): RuntimeAgentModelOutput => ({
@@ -48,7 +48,7 @@ export function defineViewFileTool(
     identity: managedNativeIdentity(config.identity, 'GET'),
     input: ViewFileInputSchema,
     output: ViewFileOutputSchema,
-    transports: config.transports,
+    expose: config.expose,
     annotations: config.annotations ?? {
       title: 'View Media',
       readOnlyHint: true,

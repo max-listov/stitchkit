@@ -1,4 +1,5 @@
 import type { ZodType, z } from 'zod';
+import { abortReason } from '../internal/abort-race';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import type { AgentMessage, AgentSnapshot, AgentUsage } from './schemas';
 import type { AgentRuntimeStore, AgentStoreMutationResult } from './store';
@@ -195,7 +196,7 @@ export function structuredCompaction<SUMMARY_SCHEMA extends ZodType>(
         signal: input.signal,
       });
       const summary = config.schema.parse(rawSummary);
-      if (input.signal.aborted) throw input.signal.reason;
+      if (input.signal.aborted) throw abortReason(input.signal);
       const summaryMessage = config.createSummaryMessage({
         conversationId: input.conversationId,
         summary,

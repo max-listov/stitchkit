@@ -58,6 +58,8 @@ describe('SQLite agent-runtime store', () => {
     });
     await runAgentStoreConformance({
       createStore: () => fixture.store,
+      capabilities: { branch: true, planBranch: true, archive: true, historyRestore: true },
+      commitConflict: { impossible: 'single-writer' },
       cleanup: () => fixture.close(),
     });
   });

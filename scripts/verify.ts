@@ -11,12 +11,14 @@ import {
   worktreeTreeHash,
   writeGreenGate,
 } from './gate-memo';
+import { VERIFY_BUILT_ENV } from './lane-build';
 import {
   FAST_GATE,
   FAST_STEPS,
   FAST_SUBSET_STEPS,
   PROFILES,
   releaseProfile,
+  splitProfile,
   VERIFY_FLAGS,
 } from './verify-profiles';
 
@@ -310,13 +312,14 @@ async function main(): Promise<void> {
       }
     }
 
-    const buildIndex = profile.steps.indexOf('build');
-    const sequential =
-      buildIndex === -1 ? profile.steps : profile.steps.slice(0, buildIndex + 1);
-    const heavy = buildIndex === -1 ? [] : profile.steps.slice(buildIndex + 1);
+    // Never trust an inherited freshness marker from the caller's environment.
+    delete process.env[VERIFY_BUILT_ENV];
+    const { sequential, heavy } = splitProfile(profile.steps);
     for (const step of sequential) {
       process.stderr.write(`[gate] ${step}\n`);
       await runStep(step);
+      // The lanes this run starts next stand on the tree this step just built.
+      if (step === 'build') process.env[VERIFY_BUILT_ENV] = '1';
     }
     // Measured, not asserted. The heavy lanes build Next twice, drive real
     // browsers and run a supervisor; two of them at once on a host that cannot

@@ -86,10 +86,13 @@ export function breakingItems(section: string): UpgradeBreakingItemText[] {
 }
 
 /**
- * The items of every `### Fixed` section of a release body; a release may hold more than one.
- * A section ends at the next `### ` heading outside a fence.
+ * The items of every `### <heading>` section of a release body (`Fixed`, `Security`); a release
+ * may hold more than one. A section ends at the next `### ` heading outside a fence.
  */
-export function fixedSectionItems(releaseBody: string): UpgradeBreakingItemText[] {
+export function releaseSectionItems(
+  releaseBody: string,
+  heading: 'Fixed' | 'Security',
+): UpgradeBreakingItemText[] {
   const items: UpgradeBreakingItemText[] = [];
   let section: string[] | undefined;
   let fenced = false;
@@ -101,7 +104,7 @@ export function fixedSectionItems(releaseBody: string): UpgradeBreakingItemText[
     if (FENCE.test(line)) fenced = !fenced;
     if (!fenced && /^### /.test(line)) {
       flush();
-      if (/^### Fixed\b/.test(line)) section = [];
+      if (new RegExp(`^### ${heading}\\b`).test(line)) section = [];
       continue;
     }
     section?.push(line);

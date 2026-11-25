@@ -2,9 +2,8 @@
  * The SQLite store as the guide constructs it, under either runtime.
  *
  * `createBunSqliteAgentRuntimeStore` / `createNodeSqliteAgentRuntimeStore`
- * return the handle whose `database` the companions share and whose
- * `transaction` they write through — the documented path, not a copy of the
- * package's own adapter.
+ * return the handle whose `host` the companions take — the documented path,
+ * not a copy of the package's own adapter.
  */
 const sqliteModule = process.versions.bun
   ? await import('stitchkit/agent-runtime/sqlite/bun')
@@ -14,7 +13,7 @@ export function packedSqlite(filename = ':memory:') {
   const handle = process.versions.bun
     ? sqliteModule.createBunSqliteAgentRuntimeStore({ filename })
     : sqliteModule.createNodeSqliteAgentRuntimeStore({ filename });
-  return { database: handle.database, handle };
+  return { handle };
 }
 
 export async function rawDatabase(filename) {

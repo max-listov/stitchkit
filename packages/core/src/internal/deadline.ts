@@ -1,5 +1,49 @@
-import { assertPositiveSafeInteger } from './positive-integer';
+import { linkAbortSignals } from './abort-race';
 import { MAX_TIMER_MS } from './timers';
+
+/**
+ * Refuse a timer duration `setTimeout` would not honour as written. `undefined` means "not
+ * set" and passes, unless `absent: 'refused'`. A value that is not a number is a
+ * `TypeError`; a number that is not a safe integer, is below `min` (1 by default, 0 for a
+ * pause that may be none) or is past `MAX_TIMER_MS` — where a timer fires at once — is a
+ * `RangeError`.
+ *
+ * The one rule for every timer option: a component calls it in its factory, before it
+ * spawns, allocates or schedules anything.
+ */
+export function assertTimerMs(
+  name: string,
+  value: number | undefined,
+  options: { min?: 0 | 1; absent?: 'passes' | 'refused' } = {},
+): void {
+  if (value === undefined && options.absent !== 'refused') return;
+  if (typeof value !== 'number') {
+    throw new TypeError(`${name} must be a number of milliseconds, received ${String(value)}`);
+  }
+  const min = options.min ?? 1;
+  if (!Number.isSafeInteger(value) || value < min || value > MAX_TIMER_MS) {
+    throw new RangeError(
+      `${name} must be an integer from ${min} to ${MAX_TIMER_MS} milliseconds, received ${value}`,
+    );
+  }
+}
+
+/**
+ * The timer rule for a duration given in seconds, where a fraction is a real value (a 0.5 s wait)
+ * and 0 is a deadline already due: not a number is a `TypeError`; not finite, below 0, or longer
+ * than `MAX_TIMER_MS` once in milliseconds is a `RangeError`. `undefined` means "not set" and passes.
+ */
+export function assertTimerSeconds(name: string, value: number | undefined): void {
+  if (value === undefined) return;
+  if (typeof value !== 'number') {
+    throw new TypeError(`${name} must be a number of seconds, received ${String(value)}`);
+  }
+  if (!Number.isFinite(value) || value < 0 || value * 1000 > MAX_TIMER_MS) {
+    throw new RangeError(
+      `${name} must be a number of seconds from 0 to ${MAX_TIMER_MS / 1000}, received ${value}`,
+    );
+  }
+}
 
 /**
  * Resolve to `{ settled: false }` if the value has not settled in time.
@@ -11,10 +55,10 @@ import { MAX_TIMER_MS } from './timers';
  * The timer is always cleared: a dispatch must not be the reason a process stays
  * alive, and an uncleared timer on every announcement is exactly that.
  */
-export async function withDeadline(
-  value: unknown,
+export async function withDeadline<VALUE = unknown>(
+  value: VALUE | Promise<VALUE>,
   timeoutMs: number,
-): Promise<{ settled: true; value: unknown } | { settled: false }> {
+): Promise<{ settled: true; value: VALUE } | { settled: false }> {
   if (!(value instanceof Promise)) return { settled: true, value };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expiry = new Promise<{ settled: false }>((resolve) => {
@@ -22,7 +66,7 @@ export async function withDeadline(
   });
   try {
     return await Promise.race([
-      value.then((settledValue): { settled: true; value: unknown } => ({
+      value.then((settledValue: VALUE): { settled: true; value: VALUE } => ({
         settled: true,
         value: settledValue,
       })),
@@ -48,17 +92,16 @@ export async function withSignalDeadline<T>(
   makeReason: () => unknown,
   body: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  assertPositiveSafeInteger('Deadline timeoutMs', timeoutMs, RangeError);
-  if (timeoutMs > MAX_TIMER_MS)
-    throw new RangeError('Deadline timeoutMs exceeds the timer range');
+  assertTimerMs('Deadline timeoutMs', timeoutMs);
   caller?.throwIfAborted();
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(makeReason()), timeoutMs);
-  const signal = caller ? AbortSignal.any([caller, deadline.signal]) : deadline.signal;
+  const link = linkAbortSignals(caller, deadline.signal);
   try {
-    return await body(signal);
+    return await body(link.signal);
   } finally {
     clearTimeout(timer);
+    link.release();
   }
 }
 
@@ -89,7 +132,7 @@ export async function withIdleDeadline<T>(
   parent.throwIfAborted();
   const quiet = new AbortController();
   const timer = startIdleTimer(idleMs, () => quiet.abort(makeReason()));
-  const signal = AbortSignal.any([parent, quiet.signal]);
+  const { signal, release } = linkAbortSignals(parent, quiet.signal);
   const touch = () => {
     if (!signal.aborted) timer.touch();
   };
@@ -97,6 +140,7 @@ export async function withIdleDeadline<T>(
     return await body({ signal, touch });
   } finally {
     timer.stop();
+    release();
   }
 }
 
@@ -116,8 +160,7 @@ export function startIdleTimer(
   onIdle: () => void,
   options: { unref?: boolean } = {},
 ): IdleTimer {
-  assertPositiveSafeInteger('Idle timer idleMs', idleMs, RangeError);
-  if (idleMs > MAX_TIMER_MS) throw new RangeError('Idle timer idleMs exceeds the timer range');
+  assertTimerMs('Idle timer idleMs', idleMs);
   let done = false;
   const arm = () => {
     const handle = setTimeout(() => {

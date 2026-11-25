@@ -60,10 +60,14 @@ describe('tool registry', () => {
 
   test('mountAgent accepts the registry and refuses two surface declarations', () => {
     const registry = defineToolRegistry({ defaults }).disable('web_search').build();
-    const tools = mountAgent([], { registry });
+    const tools = mountAgent([], { access: { open: 'local-operator' }, registry });
     expect(Object.keys(tools).sort()).toEqual(['bash', 'read_file']);
-    expect(() => mountAgent([], { registry, runtimeTools: [fake('bash')] })).toThrow(
-      /either runtimeTools or a registry/,
-    );
+    expect(() =>
+      mountAgent([], {
+        access: { open: 'local-operator' },
+        registry,
+        runtimeTools: [fake('bash')],
+      }),
+    ).toThrow(/either runtimeTools or a registry/);
   });
 });

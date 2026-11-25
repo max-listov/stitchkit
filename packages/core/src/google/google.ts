@@ -4,8 +4,11 @@
  * This leaf returns a verified provider identity only. Database persistence,
  * user lookup/merge, sessions, roles, navigation and UI remain application policy.
  */
+
 import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
+import { assertTimerMs } from '../internal/deadline';
+import { secretsEqual } from '../internal/secret-equal';
 
 const DEFAULT_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -116,17 +119,6 @@ function upstreamVerifierFailure(error: unknown): boolean {
   );
 }
 
-function constantTimeEqual(left: string, right: string): boolean {
-  const leftBytes = new TextEncoder().encode(left);
-  const rightBytes = new TextEncoder().encode(right);
-  if (leftBytes.length !== rightBytes.length) return false;
-  let difference = 0;
-  for (let index = 0; index < leftBytes.length; index += 1) {
-    difference |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
-  }
-  return difference === 0;
-}
-
 function defaultTokenTransport(
   fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
 ): GoogleOidcTokenTransport {
@@ -196,11 +188,14 @@ export function createGoogleOidcClient(config: GoogleOidcClientConfig): GoogleOi
     !config.clientId ||
     !config.clientSecret ||
     config.allowedRedirectUris.length === 0 ||
-    config.allowedRedirectUris.some((uri) => !uri) ||
-    !Number.isFinite(timeoutMs) ||
-    timeoutMs <= 0
+    config.allowedRedirectUris.some((uri) => !uri)
   ) {
     throw new GoogleOidcError('MISCONFIGURED');
+  }
+  try {
+    assertTimerMs('timeoutMs', timeoutMs);
+  } catch (cause) {
+    throw new GoogleOidcError('MISCONFIGURED', { cause });
   }
   const allowedRedirectUris = new Set(config.allowedRedirectUris);
   const transport =
@@ -260,7 +255,7 @@ export function createGoogleOidcClient(config: GoogleOidcClientConfig): GoogleOi
         !claims.email ||
         claims.emailVerified !== true ||
         !claims.nonce ||
-        !constantTimeEqual(claims.nonce, input.nonce) ||
+        !secretsEqual(claims.nonce, input.nonce) ||
         !z.email().safeParse(claims.email).success
       ) {
         throw new GoogleOidcError('INVALID_CREDENTIAL');

@@ -6,7 +6,9 @@ const { handle } = packedSqlite();
 let current = new Date('2026-09-08T01:00:00.000Z');
 const deliveries = [];
 const schedules = createAgentScheduleService({
-  sqlite: handle,
+  host: handle.host,
+  maxActivePerConversation: 4,
+  minIntervalMs: 60_000,
   dispatch: (delivery) => {
     deliveries.push(delivery);
   },
@@ -22,15 +24,20 @@ try {
   });
   current = new Date('2026-09-08T01:00:03.000Z');
   await schedules.tick();
+  const listedPromise = schedules.listSchedules('s');
+  const listed = await listedPromise;
   const kinds = (await handle.store.readEvents({ conversationId: 's', limit: 10 })).items.map(
     (e) => e.kind,
   );
   proof(
     'schedules',
-    deliveries.length === 1 &&
+    listedPromise instanceof Promise &&
+      listed.length === 1 &&
+      listed[0].state === 'completed' &&
+      deliveries.length === 1 &&
       deliveries[0].schedule.lateByMs === 2_000 &&
       kinds.includes('schedule/late'),
-    `deliveries ${JSON.stringify(deliveries)}, kinds ${kinds.join(',')}`,
+    `listed ${JSON.stringify(listed)}, deliveries ${JSON.stringify(deliveries)}, kinds ${kinds.join(',')}`,
   );
 } finally {
   schedules.close();

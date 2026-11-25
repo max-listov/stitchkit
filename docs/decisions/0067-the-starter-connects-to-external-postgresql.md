@@ -2,7 +2,7 @@
 title: The starter connects to external PostgreSQL
 description: Keep database process ownership outside generated applications while retaining Prisma schemas and migrations
 type: decision
-status: active
+status: accepted
 created: 2026-08-08
 updated: 2026-08-08
 ---

@@ -1,4 +1,4 @@
-import { untilAborted } from '../internal/until-aborted';
+import { raceAbort } from '../internal/abort-race';
 import { startNativeCommand } from './command-owner';
 import type { NativeCommandOptions, NativeCommandResult } from './contract';
 
@@ -90,7 +90,7 @@ function channel() {
       // Full queue: hold the drain, and with it the pipe, until the reader pulls or the command stops.
       while (!cancelled && !signal.aborted && (controller.desiredSize ?? 0) <= 0) {
         resume = Promise.withResolvers<void>();
-        await untilAborted(resume.promise, signal).catch(() => undefined);
+        await raceAbort(resume.promise, signal).catch(() => undefined);
       }
     },
     close() {

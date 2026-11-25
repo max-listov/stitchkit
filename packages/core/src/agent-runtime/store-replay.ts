@@ -1,4 +1,5 @@
 import type { BranchReplay } from './branch-replay';
+import { AgentStoreUnsupportedCapabilityError } from './store-capabilities';
 import type { AgentRuntimeStoreDriver } from './store-driver-contract';
 
 export async function persistRuntimeReplay<T>(
@@ -15,6 +16,12 @@ export async function persistRuntimeReplay<T>(
         messages: baseline.messages,
         compactedMessageIds: baseline.compacted ?? [],
       });
+    else if (baseline.compacted?.length)
+      // Admitting them would turn compacted rows back into active history.
+      throw new AgentStoreUnsupportedCapabilityError(
+        'historyRestore',
+        'the baseline carries compacted history',
+      );
     else
       for (const message of baseline.messages)
         await driver.history.apply(tx, { type: 'admit', input: message });

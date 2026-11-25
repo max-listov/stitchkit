@@ -11,3 +11,12 @@ export function unavailableCommand(reason: string): ToolFailure {
     }),
   );
 }
+
+/** One refusal for a name no command answers to, on the command line and in process. */
+export function unknownCliCommand(command: string): ToolFailure {
+  return {
+    ok: false,
+    code: 'UNKNOWN_OPERATION',
+    details: { message: `Unknown command "${command}"`, operation: command },
+  };
+}

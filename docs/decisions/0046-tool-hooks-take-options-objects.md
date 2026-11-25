@@ -8,9 +8,10 @@ updated: 2026-08-07
 
 # ADR 0046 — Tool hooks take options objects
 
-- **Status:** Accepted — refines the observability surface of
-  [ADR 0007](0007-mcp-agent-tools.md), [ADR 0041](0041-tool-error-cause-is-observable.md)
-  and [ADR 0042](0042-the-audit-row-may-name-the-cause.md)
+**Relations:** refines the observability surface of [ADR 0007](0007-mcp-agent-tools.md),
+[ADR 0041](0041-tool-error-cause-is-observable.md) and
+[ADR 0042](0042-the-audit-row-may-name-the-cause.md)
+
 - **Date:** 2026-08-07
 
 ## Context

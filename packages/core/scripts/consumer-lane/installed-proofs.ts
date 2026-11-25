@@ -1,9 +1,5 @@
 import { z } from 'zod';
-import {
-  type DeclarationVariantSchema,
-  type InstalledConsumerProof,
-  InstalledConsumerProofSchema,
-} from './installed-proof-contract';
+import { InstalledConsumerProofSchema } from './installed-proof-contract';
 import { proofGroups } from './proof-groups';
 
 const native = {
@@ -65,6 +61,53 @@ export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).par
     runtimes: ['bun'],
     kind: 'runtime',
     marker: 'packed Hermes HTTP client: ok',
+  },
+  {
+    id: 'sync-hermes',
+    fixture: 'minimal',
+    entry: 'sync-hermes.mjs',
+    files: ['sync-hermes-client.mjs', 'sync-hermes-vm-entry.mjs', 'hermes-vm.mjs'],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin'],
+    runtimes: ['bun'],
+    kind: 'runtime',
+    marker: 'packed Hermes sync client: ok',
+  },
+  {
+    id: 'realtime-hermes',
+    fixture: 'minimal',
+    entry: 'realtime-hermes.mjs',
+    files: [
+      'realtime-hermes-client.mjs',
+      'realtime-hermes-vm-entry.mjs',
+      'hermes-vm.mjs',
+      'handler-hermes-rn-globals.js',
+      'handler-hermes-rn-abort.js',
+      'handler-hermes-rn-url.js',
+    ],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin'],
+    runtimes: ['bun'],
+    kind: 'runtime',
+    marker: 'packed Hermes realtime binding: ok',
+  },
+  {
+    id: 'handler-hermes',
+    fixture: 'minimal',
+    entry: 'handler-hermes.mjs',
+    files: [
+      'handler-hermes-graph.mjs',
+      'handler-hermes-vm-entry.mjs',
+      'hermes-vm.mjs',
+      'handler-hermes-rn-globals.js',
+      'handler-hermes-rn-abort.js',
+      'handler-hermes-rn-url.js',
+    ],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin'],
+    runtimes: ['bun'],
+    kind: 'runtime',
+    marker: 'packed Hermes portable handler and bridge: ok',
   },
   {
     id: 'native-packaging',
@@ -447,47 +490,3 @@ export const installedConsumerProofs = z.array(InstalledConsumerProofSchema).par
     marker: 'strict native command reason declarations: ok',
   },
 ]);
-
-/** Both installation lanes execute this list; failures never count as a skipped proof. */
-export type DeclarationVariant = z.infer<typeof DeclarationVariantSchema>;
-
-export function declarationProofVariants(
-  proof: InstalledConsumerProof,
-): readonly DeclarationVariant[] {
-  return (
-    proof.declarationVariants ?? [
-      {
-        id: proof.resolution ?? 'bundler',
-        target: 'ES2022',
-        module: proof.resolution === 'NodeNext' ? 'NodeNext' : 'Preserve',
-        resolution: proof.resolution ?? 'bundler',
-        lib: ['ES2023', 'DOM'],
-        types: ['node'],
-      },
-    ]
-  );
-}
-
-export function declarationProofArguments(
-  entry: string,
-  variant: DeclarationVariant,
-): string[] {
-  return [
-    '--ignoreConfig',
-    '--noEmit',
-    '--strict',
-    '--skipLibCheck',
-    'false',
-    '--target',
-    variant.target,
-    '--module',
-    variant.module,
-    '--moduleResolution',
-    variant.resolution,
-    '--lib',
-    variant.lib.join(','),
-    '--types',
-    variant.types.join(','),
-    entry,
-  ];
-}

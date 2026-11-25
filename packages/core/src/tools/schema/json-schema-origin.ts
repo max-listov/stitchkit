@@ -115,7 +115,7 @@ const REMOTE_SCHEMA_VERDICT = Symbol.for('stitchkit.tools.json-schema-remote-ver
  * schema, names the one field that is wrong. JSON Schema also carries string formats and
  * patterns without the author's error messages; only the remote can report those faithfully.
  */
-export function markRemoteSchemaVerdict(schema: z.ZodObject): void {
+export function markRemoteSchemaVerdict(schema: z.core.$ZodType): void {
   Reflect.defineProperty(schema, REMOTE_SCHEMA_VERDICT, {
     configurable: false,
     enumerable: false,

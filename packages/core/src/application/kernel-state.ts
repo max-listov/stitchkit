@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { untilAborted } from '../internal/abort-race';
 import { type ResolvedManagedResource, resolveResourceGraph } from './graph';
 import {
   type ApplicationConfig,
@@ -126,25 +127,16 @@ export function isStartResult(value: unknown): value is ManagedResourceStartResu
   return typeof value === 'object' && value !== null;
 }
 
-function waitForAbort(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) =>
-    signal.addEventListener('abort', () => resolve(), { once: true }),
-  );
-}
-
 export async function untilDeadline<T>(
   work: Promise<T>,
   signal: AbortSignal,
 ): Promise<{ settled: true; value?: T; error?: unknown } | { settled: false }> {
-  const result = await Promise.race([
-    work.then(
-      (value) => ({ settled: true, value }),
-      (error: unknown) => ({ settled: true, error }),
-    ),
-    waitForAbort(signal).then(() => ({ settled: false })),
-  ]);
-  return result;
+  const settled: Promise<{ settled: true; value?: T; error?: unknown }> = work.then(
+    (value) => ({ settled: true, value }),
+    (error: unknown) => ({ settled: true, error }),
+  );
+  const outcome = await untilAborted(settled, signal);
+  return outcome.aborted ? { settled: false } : outcome.value;
 }
 
 /** Registration: resolve the graph and give every resource its record. */

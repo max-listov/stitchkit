@@ -1,7 +1,7 @@
 ---
 title: Durable inbox and explicit delivery outcomes
 description: One existing inbox accepts programmatic identities under fenced storage, while delivery retries require explicit evidence.
-status: active
+status: accepted
 created: 2026-10-04 12:49 +07:00
 updated: 2026-10-04 12:49 +07:00
 type: decision

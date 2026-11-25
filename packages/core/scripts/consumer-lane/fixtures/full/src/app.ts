@@ -44,8 +44,10 @@ import {
   flattenToolJsonSchema,
   listToolNames,
   summarizeTransports,
+  type ToolAccess,
   type ToolCallContext,
   type ToolCallHooks,
+  type ToolGate,
   type ToolLifecycle,
   type ToolPresentationSchema,
   type ToolResult,
@@ -475,7 +477,7 @@ const packedViewDefinition = defineViewFileTool({
 });
 check(
   'the packed managed view factory carries MCP and Agent exposure by default',
-  JSON.stringify(listToolNames({ runtimeTools: [packedViewDefinition] })[0]?.transports) ===
+  JSON.stringify(listToolNames({ runtimeTools: [packedViewDefinition] })[0]?.expose) ===
     JSON.stringify(['MCP', 'AGENT']),
 );
 const packedRuntimeTools = [
@@ -487,6 +489,7 @@ const packedRuntimeTools = [
 
 const packedNativeServer = buildMcpServer(
   {
+    access: { open: 'local-operator' },
     serverInfo: { name: 'consumer', version: '1' },
     services: [],
     runtimeTools: packedRuntimeTools,
@@ -497,6 +500,7 @@ check('the packed MCP surface accepts a typed runtime definition', !!packedNativ
 let rawMounted = false;
 buildMcpServer(
   {
+    access: { open: 'local-operator' },
     serverInfo: { name: 'consumer-raw', version: '1' },
     services: [],
     rawTools: () => {
@@ -508,11 +512,16 @@ buildMcpServer(
 check('the packed rawTools escape hatch remains explicit', rawMounted);
 check(
   'the packed Agent mount accepts the same runtime definition',
-  typeof mountAgent([], { runtimeTools: [nativeDefinition] }).native_update?.execute ===
-    'function',
+  typeof mountAgent([], {
+    access: { open: 'local-operator' },
+    runtimeTools: [nativeDefinition],
+  }).native_update?.execute === 'function',
 );
 const packedSurface = { services: [service], runtimeTools: packedRuntimeTools };
-const packedInvoker = createToolInvoker(service, { transport: 'AGENT' });
+const packedInvoker = createToolInvoker(service, {
+  access: { open: 'local-operator' },
+  transport: 'AGENT',
+});
 check(
   'the packed in-process invoker runs the canonical contract tool',
   JSON.stringify(
@@ -521,6 +530,7 @@ check(
 );
 let cliVersion = '';
 await createCli({
+  access: { open: 'local-operator' },
   name: 'packed-cli',
   version: '1',
   services: [service],
@@ -537,7 +547,7 @@ const packedCliRuntime = defineRuntimeTool({
   identity: { serviceName: 'local', action: 'runtime', method: 'POST' },
   input: z.object({ value: z.string() }),
   output: z.object({ value: z.string() }),
-  transports: ['CLI'],
+  expose: ['CLI'],
   handler: ({ input }) => input,
 });
 const packedNativeCommand = defineCliCommand({
@@ -551,6 +561,7 @@ const packedNativeCommand = defineCliCommand({
 });
 let cliRuntimeOutput = '';
 await createCli({
+  access: { open: 'local-operator' },
   name: 'packed-cli',
   version: '1',
   services: [],
@@ -569,6 +580,7 @@ check(
 let cliNativeOutput = '';
 let cliNativeExit = -1;
 await createCli({
+  access: { open: 'local-operator' },
   name: 'packed-cli',
   version: '1',
   services: () => {
@@ -579,8 +591,7 @@ await createCli({
   },
   commands: [packedNativeCommand],
   defaultCommand: 'doctor',
-  optionAliases: { doctor: { t: 'target' } },
-  positionals: { doctor: [] },
+  commandSettings: { doctor: { aliases: { t: 'target' }, positionals: [] } },
   argv: ['-t', 'packed'],
   stdout: (text) => {
     cliNativeOutput += text;
@@ -733,6 +744,7 @@ check(
 );
 
 const defaultMcpHandler = createMcpHandler({
+  access: { open: 'local-operator' },
   serverInfo: { name: 'consumer', version: '1' },
   auth: () => ({ id: 'consumer' }),
   security: { allowedHosts: ['consumer.test'] },
@@ -819,6 +831,7 @@ check(
 await stdioClient.close();
 if (process.env.STITCHKIT_COMPILE_REMOVED_API) {
   createMcpHandler({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'consumer', version: '1' },
     auth: () => ({ id: 'consumer' }),
     services: [],
@@ -836,6 +849,9 @@ if (process.env.STITCHKIT_COMPILE_REMOVED_API) {
 // ── types a consumer is required to name ─────────────────────────────────────
 
 const lifecycle: ToolLifecycle = { beforeHandle: () => undefined };
+const gate: ToolGate = { beforeHandle: () => undefined };
+const access: ToolAccess = { gate };
+void lifecycle;
 const errorHint: ErrorHintFn = () => null;
 
 const seenByOnToolError: unknown[] = [];
@@ -871,7 +887,7 @@ const hooks: ToolCallHooks = {
 
 // ── through a real mount ─────────────────────────────────────────────────────
 
-const tools = mountAgent(service, { hooks, lifecycle, errorHint });
+const tools = mountAgent(service, { hooks, access, errorHint });
 const execute = tools.update_widget?.execute;
 if (!execute) {
   console.error('  ✗ the mount produced no update_widget tool');

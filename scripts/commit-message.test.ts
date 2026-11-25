@@ -50,4 +50,46 @@ describe('commit message hygiene', () => {
     ].join('\n');
     expect(findLiteralEscapes(message)).toEqual([]);
   });
+
+  test('supports tilde fences, longer fences, and keeps closed blocks separate from trailing unclosed fences', () => {
+    const tildeClosed = ['docs: example', '', '~~~ts', "join('\\n')", '~~~'].join('\n');
+    expect(findLiteralEscapes(tildeClosed)).toEqual([]);
+
+    const tildeUnclosed = [
+      'chore: tidy',
+      '',
+      '~~~ts',
+      "join('x')",
+      'Body broke.\\nHere.',
+    ].join('\n');
+    expect(findLiteralEscapes(tildeUnclosed)).toHaveLength(1);
+
+    const closedThenUnclosed = [
+      'docs: mixed',
+      '',
+      '```ts',
+      "join('\\n')",
+      '```',
+      '',
+      '```js',
+      'unclosed',
+      'Body broke.\\nHere.',
+    ].join('\n');
+    expect(findLiteralEscapes(closedThenUnclosed)).toEqual(['line 9: Body broke.\\nHere.']);
+
+    const mismatchedFence = [
+      'chore: mismatch',
+      '',
+      '```ts',
+      "join('x')",
+      '~~~',
+      'Body broke.\\nHere.',
+    ].join('\n');
+    expect(findLiteralEscapes(mismatchedFence)).toEqual(['line 6: Body broke.\\nHere.']);
+
+    const longerFence = ['docs: nested', '', '````md', '```', "join('\\n')", '````'].join(
+      '\n',
+    );
+    expect(findLiteralEscapes(longerFence)).toEqual([]);
+  });
 });

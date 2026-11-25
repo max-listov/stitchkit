@@ -4,7 +4,7 @@ description: Package-aware evidence lanes, one-SHA release trains and immutable 
 type: architecture
 status: active
 created: 2026-08-14
-updated: 2026-11-16 20:27 +07:00
+updated: 2026-11-25 06:35 +08:00
 ---
 
 # CI and exact-SHA release pipeline
@@ -139,9 +139,18 @@ The tag workflow:
 1. validates tag, package version, changelog and membership in the train;
 2. requires successful `ci.yml` push CI for the exact tag SHA;
 3. downloads that run's `release-packages` artifact;
-4. publishes only the matching tarball, idempotently refusing different bytes at an existing
+4. waits until every package of its train that it publishes a range for is on npm at the train's
+   version (`release-plan.ts train-requirements`): each tag publishes on its own, and a train
+   publishes whole — `stitchkit-tui` never ships a peer range of a framework release that did not
+   reach npm;
+5. publishes only the matching tarball, idempotently refusing different bytes at an existing
    version;
-5. creates the GitHub release from the validated changelog entry.
+6. creates the GitHub release from the validated changelog entry.
+
+A check that compares a release with the published ones reads release tags (`scripts/release-tags.ts`),
+and a clone without them is refused with how to get them. A job whose scripts reach such a check
+checks out with `fetch-depth: 0`; `scripts/workflow-tags.test.ts` finds those jobs from the scripts'
+imports and holds each to it.
 
 Workflow permissions default to `contents: read`. OIDC `id-token: write` exists only in the
 protected `npm-production` publication job. Every third-party action is pinned to a full commit
@@ -173,20 +182,30 @@ nightly run that goes red for them teaches readers to ignore red. `.github/workf
 runs when `CI` completes and repeats it once, through `scripts/ci-retry.ts`, only when all of these
 hold:
 
-- the run is `schedule`, its first attempt, concluded `failure`;
+- the run is `schedule` or `push`, its first attempt, concluded `failure`;
 - every unproven lane carries GitHub's own loss marker — the annotation "The job was not acquired by
   Runner", or the log line "The runner has received a shutdown signal" / "lost communication with
   the server". An exit code is never a marker: a test can send SIGTERM too;
 - no lane other than the aggregates `artifacts` and `result`, which refuse a lost lane, failed.
 
 The repetition is `rerun-failed-jobs` of the same run: same SHA and plan, only the lost lanes and
-their dependents run again. A push run — the exact-SHA evidence publication reads — is never
-repeated, a code failure stays red, and the second attempt is not repeated, so a lane lost twice
-still leaves the run red. The retry job alone holds `actions: write`.
+their dependents run again. A push run — the exact-SHA evidence publication reads — is repeated by
+the same rule: a lost runner proved nothing about the code, and the repeat runs that code again
+([ADR 0302](../decisions/0302-a-lost-runner-is-repeated-once-on-a-release-too.md)). A code failure
+stays red, a pull request is not repeated, and the second attempt is not repeated, so a lane lost
+twice still leaves the run red. A manual repeat of a candidate is recorded by the release operator
+with its reason. The retry job alone
+holds `actions: write`.
 
 The packed local-HEAD starter lane (`starterModes` containing `head`) follows
 `starterHeadDecision` (`scripts/release-starter-head.ts`, [ADR 0099](../decisions/0099-starter-head-skips-require-versioned-review.md)):
 the planner and the local release profile both pass its answer to `evidenceLanes`, and a recorded
-deferred review for the exact core version removes the `head` mode and nothing else. The plan
-schema accepts that omission and refuses any other contradiction between the targets and the modes.
+deferred review for the exact core version removes the `head` mode and nothing else.
+A core release with a `### Security` section defers the starter only where the starter would
+not receive the fix anyway: the review is refused when the starter targets the core's own minor, and
+on another pre-1.0 minor it must name the follow-up starter release in `followUp`
+(`"create-stitchkit@X.Y.Z"`, later than the current starter); `release:check` and pre-push then
+refuse every train but that one until it is tagged ([ADR 0322](../decisions/0322-a-security-fix-bars-a-starter-deferral-only-where-the-starter-would-receive-it.md)).
+The plan schema accepts a permitted omission and refuses any other
+contradiction between the targets and the modes.
 See [ADR 0226](../decisions/0226-evidence-covers-the-affected-tree.md).

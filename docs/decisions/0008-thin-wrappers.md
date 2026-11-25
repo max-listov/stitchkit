@@ -2,13 +2,13 @@
 title: "ADR 0008 — Thin wrappers over the stack you already use"
 type: decision
 status: accepted
+supersedes: ["0009"]
 created: 2026-05-20
 updated: 2026-05-20
 ---
 
 # ADR 0008 — Thin wrappers over the stack you already use
 
-- **Status:** Accepted
 - **Date:** 2026-05-20
 
 ## Context

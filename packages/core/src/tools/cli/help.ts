@@ -1,5 +1,6 @@
 import { isRecord } from '../../internal/typed';
 import { type JsonSchemaField, jsonSchemaFields } from '../../json-schema/json-schema';
+import { HELP_SHOWN_KEYWORDS } from '../../json-schema/keywords';
 import { STANDARD_STRING_FORMATS } from '../../json-schema/string-format';
 import { describeSchemaFields } from './args-fields';
 import type { CliCommandPresentation } from './policy';
@@ -24,9 +25,13 @@ const GLOBAL_OPTIONS = [
 
 /** A human label for a flag's JSON-Schema type. */
 function typeLabel(schema: Record<string, unknown>): string {
-  if (Array.isArray(schema.enum)) return schema.enum.join('|');
-  if (schema.type === 'array') return 'value';
-  if (typeof schema.type === 'string') return schema.type;
+  if (HELP_SHOWN_KEYWORDS.has('enum') && Array.isArray(schema.enum)) {
+    return schema.enum.join('|');
+  }
+  if (HELP_SHOWN_KEYWORDS.has('type')) {
+    if (schema.type === 'array') return 'value';
+    if (typeof schema.type === 'string') return schema.type;
+  }
   return 'value';
 }
 
@@ -45,8 +50,14 @@ function constraintLabel(schema: Record<string, unknown>): string {
   // beside it is hundreds of characters the name already says. Any other
   // format is a producer's own word (`starts_with`, `nanoid`), and there the
   // pattern is what tells the caller what to type.
-  const format = typeof schema.format === 'string' ? schema.format : undefined;
-  const pattern = typeof schema.pattern === 'string' ? schema.pattern : undefined;
+  const format =
+    HELP_SHOWN_KEYWORDS.has('format') && typeof schema.format === 'string'
+      ? schema.format
+      : undefined;
+  const pattern =
+    HELP_SHOWN_KEYWORDS.has('pattern') && typeof schema.pattern === 'string'
+      ? schema.pattern
+      : undefined;
   const named = format !== undefined && STANDARD_STRING_FORMATS.has(format);
   if (format !== undefined && (named || pattern === undefined)) {
     limits.push(format);
@@ -68,6 +79,7 @@ function constraintLabel(schema: Record<string, unknown>): string {
     ['maxItems', 'items <='],
   ];
   for (const [keyword, label] of bounds) {
+    if (!HELP_SHOWN_KEYWORDS.has(keyword)) continue;
     const bound = schema[keyword];
     if (typeof bound !== 'number') continue;
     if (schema.type === 'integer' && Math.abs(bound) === Number.MAX_SAFE_INTEGER) continue;
@@ -79,6 +91,7 @@ function constraintLabel(schema: Record<string, unknown>): string {
     ['allOf', 'all of', ' & '],
   ];
   for (const [keyword, label, separator] of compositions) {
+    if (!HELP_SHOWN_KEYWORDS.has(keyword)) continue;
     const members = schema[keyword];
     if (!Array.isArray(members)) continue;
     // Under a named format a member that only adds a pattern is the same shape

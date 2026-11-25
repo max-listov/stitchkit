@@ -15,6 +15,8 @@ export interface ToolManifestConfig extends ToolSurfaceProjection<RuntimeToolDef
   transport: ToolTransport;
   extend?: CollectToolsConfig['extend'];
   flattenUnionInput?: boolean;
+  /** Advertise inputs with no `$ref`, recursion unrolled this many levels — as the live mount. */
+  inputRecursionDepth?: number;
 }
 
 export interface ToolCatalogEntry extends ToolManifestEntry {
@@ -41,6 +43,7 @@ export function describeToolCatalog(config: ToolCatalogConfig): ToolCatalogEntry
     transport: config.transport,
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
+    inputRecursionDepth: config.inputRecursionDepth,
   }).map(({ kind, service, action, mountable }) => {
     const schemaBytes = utf8Length(mountable.presentationSchema);
     return {
@@ -78,6 +81,7 @@ export function buildToolManifest(config: ToolManifestConfig): ToolManifestEntry
     transport: config.transport,
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
+    inputRecursionDepth: config.inputRecursionDepth,
   }).map(({ mountable }) => ({
     name: mountable.name,
     description: mountable.method.desc,

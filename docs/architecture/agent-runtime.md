@@ -4,7 +4,7 @@ description: Current ownership, state transitions, linearization points and resi
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-10-15 14:56 +07:00
+updated: 2026-11-22 00:28 +08:00
 ---
 
 # Agent application runtime architecture
@@ -243,19 +243,25 @@ refuse. Provider-message hashes and their request references are recomputed toge
 Application JSON is never recursively rewritten by guessing ID-like strings.
 
 `provider-journal.ts` owns the strict persisted message/request/response schemas used by
-`run-provider-ledger.ts` and `branch-provider.ts`. Provider options on messages and supported
+`run-provider-ledger.ts` and `branch-provider.ts`. The model invocation ledger writes
+`provider/request` and `provider/response` in its own shape; `isModelInvocationRecord` in
+`invocation-schema.ts` tells the two apart for the ledger reader and the branch. Provider options on messages and supported
 content parts, and canonical reasoning/tool-call provider envelopes, remain provider data.
 Their JSON cannot contain undocumented runtime reference keys. Provider-assigned signatures
 remain data; runtime approval signatures are removed. Message hashes are checked before rekey,
 then request message hashes and body digests are recomputed together.
 
-State, schedule, child, approval-rejection, retry, sandbox and durability facts become
-`runtime/branch-observation` records. Operational readers cannot consume these as live commands.
+State, schedule, child, approval-rejection, retry, sandbox, durability and model invocation
+facts become `runtime/branch-observation` records, one rule per event kind in
+`branch-observations.ts`, checked against the event vocabulary by the compiler. Invocation receipts
+keep naming the conversation and run that made the call and lose the encrypted payload body. Operational readers cannot consume these as live commands.
 Normalized terminal runs carry no owner or fencing token, approval signatures are removed, and
 no schedule, child, projection or effect claim is instantiated. Spills require explicit fresh
 `artifactAuthorization`; source authorization is discarded. The destination owner still authorizes
-every artifact read. Unknown event/payload versions, opaque provider envelopes, encrypted invocation
-artifacts refuse until their owning transfer codec exists. `archive-projection.ts` owns ordinary
+every artifact read. Unknown event/payload versions and opaque provider envelopes refuse.
+`branch-runtime-tools.ts` carries what the runtime's own tools wrote into messages by type: coding
+tool spill references follow the spills, a deferred tool selection receipt follows its run, and event
+search calls and answers cross as the model read them, without invocation payload bodies. `archive-projection.ts` owns ordinary
 companion cache envelopes, shared by SQLite import and branch validation. Branch checks unique
 names and checkpoints within the full journal, then discards the caches: application-defined values
 are never interpreted as transfer codecs. Destination folds rebuild from the rekeyed ledger.

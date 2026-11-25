@@ -35,7 +35,7 @@ export interface PostgresTelegramUpdateStoreConfig {
   readonly table?: string;
   /**
    * Create the table on first use when it is missing. Default `true`; set
-   * `false` when migrations own the schema — `postgresTelegramUpdateStoreSchema`
+   * `false` when migrations own the schema — `postgresTelegramUpdateStoreDdl`
    * is the statement to put in one.
    */
   readonly createTable?: boolean;
@@ -53,7 +53,7 @@ function checkedTable(table: string): string {
 }
 
 /** The table and its index, for a migration. Safe to run twice. */
-export function postgresTelegramUpdateStoreSchema(table = 'telegram_updates'): string {
+export function postgresTelegramUpdateStoreDdl(table = 'telegram_updates'): string {
   const name = checkedTable(table);
   return `CREATE TABLE IF NOT EXISTS ${name} (
   update_id BIGINT PRIMARY KEY,
@@ -100,7 +100,7 @@ function createPostgresTelegramUpdateContext(config: PostgresTelegramUpdateStore
   ): Promise<readonly unknown[]> => {
     if (config.createTable !== false) {
       // One statement per call: some clients refuse several in one prepared call.
-      ready ??= postgresTelegramUpdateStoreSchema(table)
+      ready ??= postgresTelegramUpdateStoreDdl(table)
         .split(';')
         .map((statement) => statement.trim())
         .filter((statement) => statement !== '')

@@ -3,6 +3,7 @@ title: "ADR 0182: A durability port exposes step, sleep and wait over the store"
 description: "Runtime-tool bodies checkpoint memoized steps and park on time or an external event through a swappable port; the local implementation sits on our store, and no workflow SDK is added as a dependency."
 type: decision
 status: accepted
+amendedBy: ["0200"]
 created: 2026-09-12
 updated: 2026-09-12T17:51+07:00
 ---

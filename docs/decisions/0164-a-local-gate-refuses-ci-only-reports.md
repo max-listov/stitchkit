@@ -2,7 +2,7 @@
 title: A local gate refuses; CI only reports
 description: The publication-privacy scan sat inside a memo whose key could not describe its input, so a push skipped it and published a real machine path. CI went red afterwards, which for a public repository is a report, not a refusal.
 type: decision
-status: active
+status: accepted
 created: 2026-09-05
 updated: 2026-09-05
 ---

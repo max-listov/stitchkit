@@ -3,8 +3,8 @@
  * one completion line plus observability row when it closes.
  */
 
-import { concatChunks, readBoundedChunks } from '../internal/bounded-body';
-import { getRequestContext } from '../observability/context';
+import { readBoundedText } from '../internal/bounded-body';
+import { getRequestContext, type RequestContext } from '../observability/context';
 import type { CompleteRequest, HandlerState } from './handler-state';
 import {
   buildLogFields,
@@ -13,10 +13,12 @@ import {
   logIncoming,
   logOutgoing,
   type RequestLog,
+  type RequestLogLevel,
   resolveLogFormat,
   shouldLog,
 } from './logger';
 import { collectExtraLogFields, shouldSkipLog } from './logging';
+import { isProtocolOutcome } from './protocol-outcome';
 import type { LoggingConfig } from './types';
 
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -37,12 +39,9 @@ interface PayloadRead {
  */
 async function readPayload(clone: Request, maxBytes: number): Promise<PayloadRead> {
   try {
-    const result = await readBoundedChunks(clone.body, { maxBytes, signal: clone.signal });
+    const result = await readBoundedText(clone, { maxBytes, signal: clone.signal });
     if (result.kind === 'over-limit') return { value: undefined, truncated: true };
-    return {
-      value: JSON.parse(new TextDecoder().decode(concatChunks(result.chunks, result.total))),
-      truncated: false,
-    };
+    return { value: JSON.parse(result.text), truncated: false };
   } catch {
     return { value: undefined, truncated: false };
   }
@@ -53,8 +52,9 @@ export interface RequestWindow {
   req: Request;
   url: URL;
   traceId: string;
-  startedAt: bigint;
+  startedAt: number;
   ipAddress: string | undefined;
+  context?: RequestContext;
 }
 
 /** Open the window — writes the incoming breadcrumb — and return its closer. */
@@ -108,16 +108,18 @@ export function openRequestCompletion<TServer>(
   // default, and a throw in the first call would be swallowed by the
   // `onError` catch only to be re-thrown — uncaught — by the second.
   let completed = false;
-  return (status, errorCode, outcome) => {
+  return (answer, errorCode, outcome) => {
     if (completed) return;
     completed = true;
-    const durationMs = Math.round(Number(process.hrtime.bigint() - startedAt) / 1e6);
+    const status = typeof answer === 'number' ? answer : answer.status;
+    const durationMs = Math.max(0, Math.round(performance.now() - startedAt));
 
     if (reqLog && logConfig) {
       try {
         writeCompletionLine(state, logConfig, window, {
           reqLog,
           status,
+          level: answerLevel(answer, status),
           durationMs,
           errorCode,
           logFormat,
@@ -127,7 +129,7 @@ export function openRequestCompletion<TServer>(
       }
     }
 
-    const context = getRequestContext();
+    const context = window.context ?? getRequestContext();
     if (observability && context) {
       try {
         observability.complete({
@@ -147,9 +149,16 @@ export function openRequestCompletion<TServer>(
   };
 }
 
+/** One level per request: from the status, lowered for a `4xx` its builder marked a protocol outcome. */
+function answerLevel(answer: number | Response, status: number): RequestLogLevel {
+  const marked = typeof answer !== 'number' && isProtocolOutcome(answer);
+  return levelForStatus(status, marked ? 'protocol' : undefined);
+}
+
 interface CompletionLine {
   reqLog: RequestLog;
   status: number;
+  level: RequestLogLevel;
   durationMs: number;
   errorCode: string | undefined;
   logFormat: LogFormat;
@@ -164,12 +173,18 @@ function writeCompletionLine<TServer>(
 ): void {
   const { customLogger, useDefaultLog, warnedEnrichKeys, warn } = state;
   const { req, url, ipAddress } = window;
-  const { reqLog, status, durationMs, errorCode, logFormat } = line;
-  const collected = collectExtraLogFields(logConfig, req, url, {
-    status,
-    durationMs,
-    errorCode,
-  });
+  const { reqLog, status, level, durationMs, errorCode, logFormat } = line;
+  const collected = collectExtraLogFields(
+    logConfig,
+    req,
+    url,
+    {
+      status,
+      durationMs,
+      errorCode,
+    },
+    window.context,
+  );
   const frameworkFields = buildLogFields(
     req.method,
     url.pathname,
@@ -196,6 +211,7 @@ function writeCompletionLine<TServer>(
       req,
       pathname: url.pathname,
       status,
+      level,
       log: reqLog,
       ipAddress,
       errorCode,
@@ -205,7 +221,6 @@ function writeCompletionLine<TServer>(
     });
   }
   if (customLogger) {
-    const level = levelForStatus(status);
     customLogger[level](
       `${req.method} ${url.pathname} ${status}${errorCode ? ` ${errorCode}` : ''} ${durationMs}ms`,
       {

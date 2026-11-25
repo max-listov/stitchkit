@@ -5,10 +5,10 @@ import {
   agentOutlineProjection,
   agentStateSlotsProjection,
   agentSummaryProjection,
+  createAgentProjectionStore,
   createAgentRuntime,
+  createAgentSpillStore,
   createAgentStateSlotStore,
-  createSqliteAgentProjectionStore,
-  createSqliteAgentSpillStore,
   defineAgentProtocol,
   defineStateSlot,
 } from 'stitchkit/agent-runtime';
@@ -17,7 +17,7 @@ import { z } from 'zod';
 /** Real public writes only; also runs unchanged against the published 0.109.4 SDK. */
 export async function streamingFixture(sqlite, providerMetadata) {
   const conversationId = 'stream-source';
-  const spills = createSqliteAgentSpillStore({ sqlite, conversationId });
+  const spills = createAgentSpillStore({ host: sqlite.host, conversationId });
   const artifact = await spills.write({
     data: new TextEncoder().encode('streamed artifact evidence'),
     mediaType: 'text/plain',
@@ -179,7 +179,7 @@ export async function streamingFixture(sqlite, providerMetadata) {
     kind: 'durability/effect',
     payload: { runId, effectName: 'pending', phase: 'intent' },
   });
-  const projections = createSqliteAgentProjectionStore({ sqlite });
+  const projections = createAgentProjectionStore({ store: sqlite.store, host: sqlite.host });
   for (const definition of [
     agentSummaryProjection,
     agentOutlineProjection,

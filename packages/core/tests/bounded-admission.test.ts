@@ -144,6 +144,35 @@ describe('bounded operation admission', () => {
     expect(admission.getSnapshot()).toMatchObject({ active: 0, released: 1 });
   });
 
+  test("a caller's abort ends the wait as cancelled and reaches the work with its reason", async () => {
+    const work = deferred<string>();
+    const admission = createBoundedAdmission({
+      policy: { global: { maxConcurrent: 1 } },
+    });
+    const caller = new AbortController();
+    let seen: unknown;
+    const call = admission.run(
+      undefined,
+      ({ signal }) => {
+        signal.addEventListener('abort', () => {
+          seen = signal.reason;
+        });
+        return work.promise;
+      },
+      { signal: caller.signal, timeoutMs: 60_000 },
+    );
+    await Bun.sleep(0); // the work has started
+    const reason = new Error('caller left');
+    caller.abort(reason);
+    await expect(call).rejects.toEqual(new BoundedOperationWaitError('cancelled'));
+    expect(seen).toBe(reason);
+    // The lease is the work's, not the wait's: it is held until the work settles.
+    expect(admission.getSnapshot().active).toBe(1);
+    work.resolve('late');
+    await Bun.sleep(0);
+    expect(admission.getSnapshot()).toMatchObject({ active: 0, released: 1 });
+  });
+
   test('sync throws release, refusal throws a reasoned run error', async () => {
     const admission = createBoundedAdmission({
       policy: { global: { maxConcurrent: 1 } },

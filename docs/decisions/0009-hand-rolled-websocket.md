@@ -2,13 +2,15 @@
 title: "ADR 0009 — A hand-rolled WebSocket transport"
 type: decision
 status: superseded
+supersededBy: ["0008"]
 created: 2025-05-01
 updated: 2026-05-20
 ---
 
 # ADR 0009 — A hand-rolled WebSocket transport
 
-- **Status:** Superseded by [0008](0008-thin-wrappers.md)
+**Relations:** Superseded by [0008](0008-thin-wrappers.md)
+
 - **Date:** 2025-05 (decided), 2026-05-20 (reverted)
 
 ## Context

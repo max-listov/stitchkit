@@ -8,8 +8,9 @@ updated: 2026-08-05
 
 # ADR 0036 — Cascade `meta`, not `expose`
 
-- **Status:** Accepted — extends [ADR 0021](0021-endpoint-meta-passthrough.md);
-  records a rejection that amends nothing in [ADR 0016](0016-cli-transport.md).
+**Relations:** extends [ADR 0021](0021-endpoint-meta-passthrough.md); records a rejection that
+amends nothing in [ADR 0016](0016-cli-transport.md).
+
 - **Date:** 2026-08-05
 
 ## Context

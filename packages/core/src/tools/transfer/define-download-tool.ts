@@ -2,6 +2,8 @@ import type { ZodObject, z } from 'zod';
 import { AppError } from '../../contract/errors';
 import { ManagedFileRefSchema } from '../../contract/file-ref';
 import type { ManagedFileBoundary } from '../../files/boundary';
+import { assertTimerMs } from '../../internal/deadline';
+import { assertNoLegacyTransports } from '../internal/expose';
 import { type ManagedNativeToolConfig, managedNativeIdentity } from '../native-definition';
 import {
   defineRuntimeTool,
@@ -36,13 +38,15 @@ export function defineDownloadTool<TInput extends ZodObject>(
   undefined,
   RuntimeToolPresenters<z.output<typeof ManagedFileRefSchema>>
 > {
+  assertNoLegacyTransports(config, 'defineDownloadTool');
+  assertTimerMs('defineDownloadTool timeoutMs', config.timeoutMs);
   return defineRuntimeTool({
     name: config.name ?? 'download',
     description: config.description,
     identity: managedNativeIdentity(config.identity, 'POST'),
     input: config.input,
     output: ManagedFileRefSchema,
-    transports: config.transports,
+    expose: config.expose,
     annotations: config.annotations,
     present: config.present,
     handler: async (context) => {

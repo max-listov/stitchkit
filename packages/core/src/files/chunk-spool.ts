@@ -21,24 +21,14 @@
  */
 
 import { createHash } from 'node:crypto';
-import {
-  type FileHandle,
-  link,
-  mkdir,
-  open,
-  readdir,
-  readFile,
-  rm,
-  stat,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import { AppError } from '../contract/errors';
-import { stagingPath } from '../internal/atomic-staging';
+import { writeFileAtomic } from '../internal/atomic-file';
 import { errnoOf } from '../internal/errno';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 
 export type ChunkSpoolErrorCode =
   | 'UPLOAD_INVALID'
@@ -140,22 +130,43 @@ const Declaration = z.object({
 });
 const READ_BYTES = 64 * 1024;
 
-function isErrorCode(error: unknown, code: string): boolean {
-  return errnoOf(error) === code;
+/** Minimal handle contract `concatenated` reads and closes; `FileHandle` satisfies it. */
+export interface ChunkSpoolFileHandle {
+  read(
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: number | null,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
 }
+
+/** Injectable filesystem seam for deterministic fault tests; not part of the public entrypoint. */
+export interface ChunkSpoolIo {
+  open(path: string, flags: 'r'): Promise<ChunkSpoolFileHandle>;
+  readdir(
+    path: string,
+    options: { withFileTypes: true },
+  ): Promise<readonly { name: string; isDirectory(): boolean }[]>;
+  stat(path: string): Promise<{ size: number; mtimeMs: number }>;
+  rm(path: string, options: { recursive: true; force: true }): Promise<void>;
+}
+
+const nodeIo: ChunkSpoolIo = {
+  open,
+  readdir,
+  stat,
+  rm,
+};
 
 /** Publish `bytes` at `path` unless something is already there; `false` if it was. */
 async function publishOnce(path: string, bytes: Uint8Array | string): Promise<boolean> {
-  const staging = stagingPath(path);
-  await writeFile(staging, bytes, { flag: 'wx' });
   try {
-    await link(staging, path);
+    await writeFileAtomic(path, bytes, { replace: false, durability: 'none', mode: 0o600 });
     return true;
   } catch (error) {
-    if (isErrorCode(error, 'EEXIST')) return false;
+    if (errnoOf(error) === 'EEXIST') return false;
     throw error;
-  } finally {
-    await unlink(staging);
   }
 }
 
@@ -163,9 +174,12 @@ async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, 'utf8'));
 }
 
-function concatenated(paths: readonly string[]): ReadableStream<Uint8Array> {
+function concatenated(
+  paths: readonly string[],
+  openFile: ChunkSpoolIo['open'],
+): ReadableStream<Uint8Array> {
   let index = 0;
-  let handle: FileHandle | undefined;
+  let handle: ChunkSpoolFileHandle | undefined;
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       for (;;) {
@@ -174,9 +188,17 @@ function concatenated(paths: readonly string[]): ReadableStream<Uint8Array> {
           controller.close();
           return;
         }
-        handle ??= await open(path, 'r');
+        handle ??= await openFile(path, 'r');
         const buffer = new Uint8Array(READ_BYTES);
-        const { bytesRead } = await handle.read(buffer, 0, READ_BYTES, null);
+        let bytesRead: number;
+        try {
+          ({ bytesRead } = await handle.read(buffer, 0, READ_BYTES, null));
+        } catch (error) {
+          const closing = handle;
+          handle = undefined;
+          await closing.close().catch(() => undefined);
+          throw error;
+        }
         if (bytesRead > 0) {
           controller.enqueue(buffer.subarray(0, bytesRead));
           return;
@@ -187,17 +209,32 @@ function concatenated(paths: readonly string[]): ReadableStream<Uint8Array> {
       }
     },
     async cancel() {
-      await handle?.close();
+      const closing = handle;
+      handle = undefined;
+      await closing?.close();
     },
   });
 }
 
 export function createChunkSpool<TMeta>(config: ChunkSpoolConfig<TMeta>): ChunkSpool<TMeta> {
+  return createChunkSpoolWith(config);
+}
+
+/** {@link createChunkSpool} with injectable filesystem overrides for fault tests. */
+export function createChunkSpoolWith<TMeta>(
+  config: ChunkSpoolConfig<TMeta>,
+  io: Partial<ChunkSpoolIo> = {},
+): ChunkSpool<TMeta> {
   const { directory, chunkBytes, maxFileBytes } = config;
-  if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0) {
-    throw new TypeError('createChunkSpool: chunkBytes must be a positive integer');
-  }
+  assertPositiveSafeInteger('createChunkSpool: chunkBytes', chunkBytes);
+  assertPositiveSafeInteger('createChunkSpool: maxFileBytes', maxFileBytes);
   const staleAfterMs = config.staleAfterMs ?? 24 * 60 * 60 * 1000;
+  if (!Number.isSafeInteger(staleAfterMs) || staleAfterMs < 0) {
+    throw new TypeError(
+      `createChunkSpool: staleAfterMs must be a non-negative safe integer, received ${staleAfterMs}`,
+    );
+  }
+  const fs: ChunkSpoolIo = { ...nodeIo, ...io };
 
   const uploadDir = ({ owner, uploadId }: ChunkSpoolKey): string => {
     if (!UPLOAD_ID.test(uploadId)) {
@@ -212,7 +249,7 @@ export function createChunkSpool<TMeta>(config: ChunkSpoolConfig<TMeta>): ChunkS
       const stored = Declaration.parse(await readJson(join(dir, 'upload.json')));
       return { ...stored, meta: config.meta.parse(stored.meta) };
     } catch (error) {
-      if (isErrorCode(error, 'ENOENT')) {
+      if (errnoOf(error) === 'ENOENT') {
         throw refuse('UPLOAD_NOT_FOUND', 'No such upload: open it first, or it was swept');
       }
       throw error;
@@ -308,41 +345,48 @@ export function createChunkSpool<TMeta>(config: ChunkSpoolConfig<TMeta>): ChunkS
         try {
           receipt = Receipt.parse(await readJson(join(dir, `${index}.receipt.json`)));
         } catch (error) {
-          if (!isErrorCode(error, 'ENOENT')) throw error;
+          if (errnoOf(error) !== 'ENOENT') throw error;
           throw refuse('UPLOAD_INCOMPLETE', `Part ${index} has not arrived`, {
             index,
             chunkCount,
           });
         }
         const path = join(dir, `${index}.${receipt.sha256}.part`);
-        const { size } = await stat(path);
+        const { size } = await fs.stat(path);
         if (size !== receipt.size || size !== partSize(index, totalBytes, chunkCount)) {
           throw new Error(`chunk spool: part ${index} on disk does not match its receipt`);
         }
         chunkPaths.push(path);
       }
-      return { meta, totalBytes, chunkPaths, stream: () => concatenated(chunkPaths) };
+      return { meta, totalBytes, chunkPaths, stream: () => concatenated(chunkPaths, fs.open) };
     },
 
     async discard(key) {
-      await rm(uploadDir(key), { recursive: true, force: true });
+      await fs.rm(uploadDir(key), { recursive: true, force: true });
     },
 
     async sweep() {
-      const entries = await readdir(directory, { withFileTypes: true }).catch(
-        (error: unknown) => {
-          if (isErrorCode(error, 'ENOENT')) return [];
+      const entries = await fs
+        .readdir(directory, { withFileTypes: true })
+        .catch((error: unknown) => {
+          if (errnoOf(error) === 'ENOENT') return [];
           throw error;
-        },
-      );
+        });
       const cutoff = Date.now() - staleAfterMs;
       let removed = 0;
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         const dir = join(directory, entry.name);
         // A part landing renames into the directory and moves its mtime.
-        if ((await stat(dir)).mtimeMs >= cutoff) continue;
-        await rm(dir, { recursive: true, force: true });
+        let dirStat: { mtimeMs: number };
+        try {
+          dirStat = await fs.stat(dir);
+        } catch (error) {
+          if (errnoOf(error) === 'ENOENT') continue;
+          throw error;
+        }
+        if (dirStat.mtimeMs >= cutoff) continue;
+        await fs.rm(dir, { recursive: true, force: true });
         removed += 1;
       }
       return removed;

@@ -2,19 +2,17 @@ import { safeJsonParse } from '../../internal/safe-json';
 import { isRecord } from '../../internal/typed';
 import { jsonSchemaFields } from '../../json-schema/json-schema';
 import { objectShapeKeys } from '../schema/schema';
-import { parseCliArgs } from './args';
+import { type CliRunOptions, cliRunOptions, parseCliArgs } from './args';
+import { coerceField, describeSchemaFields, looseCoerce } from './args-fields';
+import type { CliFrameworkOptions } from './args-scan';
 import { CliArgumentError } from './argument-error';
 import type { CliConfig } from './config';
-import type { CliCommandPresentation } from './policy';
+import { type CliCommandPresentation, cliPassthroughField } from './policy';
 
 /** Best-effort coercion for a passthrough value of unknown schema type. */
 function looseCoerceValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(looseCoerceValue);
-  if (typeof value !== 'string') return value;
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  const n = Number(value);
-  return value.trim() !== '' && !Number.isNaN(n) ? n : value;
+  return typeof value === 'string' ? looseCoerce(value) : value;
 }
 
 /**
@@ -65,31 +63,36 @@ type PreparedCliInvocation =
   | {
       ok: true;
       toolArgs: Record<string, unknown>;
-      options: ReturnType<typeof parseCliArgs>['options'];
+      options: CliRunOptions;
     }
   | { ok: false; message: string };
 
 export async function prepareInvocation(
   command: string,
-  commandArgv: string[],
+  commandTokens: string[],
+  separatedBefore: ReadonlySet<number>,
+  framework: CliFrameworkOptions,
   descriptor: CliCommandPresentation,
-  config: Pick<CliConfig, 'passthrough'>,
+  config: Pick<CliConfig, 'commandSettings'>,
   readStdin: () => Promise<string | null>,
 ): Promise<PreparedCliInvocation> {
+  const passthroughField = cliPassthroughField(config, command);
   let parsed: ReturnType<typeof parseCliArgs>;
   try {
-    parsed = parseCliArgs(commandArgv, descriptor.argumentSchema, {
-      allowUnknown: config.passthrough?.[command] !== undefined,
+    parsed = parseCliArgs(commandTokens, descriptor.argumentSchema, {
+      allowUnknown: passthroughField !== undefined,
       knownFields: jsonSchemaFields(descriptor.presentationSchema).map((field) => field.name),
-      optionAliases: new Map([...descriptor.aliases].map(([field, alias]) => [alias, field])),
+      aliases: new Map([...descriptor.aliases].map(([field, alias]) => [alias, field])),
       positionals: descriptor.positionals,
+      separatedBefore,
     });
   } catch (error) {
     if (!(error instanceof CliArgumentError)) throw error;
     return { ok: false, message: error.message };
   }
 
-  const { toolArgs, options } = parsed;
+  const { toolArgs } = parsed;
+  const options = cliRunOptions(framework);
   const firstUnset = jsonSchemaFields(descriptor.presentationSchema).find(
     (field) => field.required && !(field.name in toolArgs) && field.schema.type !== 'boolean',
   );
@@ -102,17 +105,19 @@ export async function prepareInvocation(
         toolArgs[firstUnset.name] = piped;
       } else {
         // An explicit positional policy makes option-only fields obey the same
-        // field-aware coercion as their equivalent `--field value` invocation.
-        const stdinArgs = parseCliArgs(
-          [`--${firstUnset.name}`, piped],
-          descriptor.argumentSchema,
-        );
-        toolArgs[firstUnset.name] = stdinArgs.toolArgs[firstUnset.name];
+        // field-aware coercion as their equivalent `--field value` invocation,
+        // without re-tokenising literal stdin text as shell flags.
+        const fieldInfo = describeSchemaFields(descriptor.argumentSchema).get(firstUnset.name);
+        try {
+          toolArgs[firstUnset.name] = coerceField(fieldInfo, [piped], `--${firstUnset.name}`);
+        } catch (error) {
+          if (!(error instanceof CliArgumentError)) throw error;
+          return { ok: false, message: error.message };
+        }
       }
     }
   }
 
-  const passthroughField = config.passthrough?.[command];
   if (passthroughField) {
     collectPassthrough(toolArgs, passthroughField, objectShapeKeys(descriptor.argumentSchema));
   }

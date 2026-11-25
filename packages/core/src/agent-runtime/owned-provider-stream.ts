@@ -1,18 +1,10 @@
+import { withDeadline } from '../internal/deadline';
+
 const DEFAULT_CLEANUP_TIMEOUT_MS = 1_000;
 
 async function settleCleanup(operation: Promise<unknown>, timeoutMs: number): Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(
-      () => reject(new Error(`Provider stream cleanup exceeded ${timeoutMs} ms`)),
-      timeoutMs,
-    );
-  });
-  try {
-    await Promise.race([operation, deadline]);
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-  }
+  if (!(await withDeadline(operation, timeoutMs)).settled)
+    throw new Error(`Provider stream cleanup exceeded ${timeoutMs} ms`);
 }
 
 /**

@@ -36,16 +36,30 @@ const SRC = resolve(import.meta.dir, '../src');
 /** Declared directions. A part not listed imports no other part. */
 export const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   internal: [],
+  'agent-parts': [],
+  'agent-executor': [
+    'agent-parts',
+    'contract',
+    'durability',
+    'internal',
+    'process',
+    'realtime',
+  ],
   contract: ['internal'],
   'json-schema': ['internal'],
   durability: ['internal'],
-  release: [],
+  // The one timer rule (`internal/deadline`) is the only thing either takes from another part.
+  release: ['internal'],
+  google: ['internal'],
   telegram: ['internal'],
   oauth: ['internal'],
   primitives: ['contract', 'internal'],
   files: ['contract', 'internal', 'process'],
+  spend: ['internal', 'observability'],
   process: ['contract', 'internal'],
+  'service-host': ['files', 'internal', 'process'],
   voice: ['internal'],
+  sync: ['internal'],
   observability: ['contract', 'internal', 'server', 'tools'],
   realtime: ['contract', 'internal', 'server'],
   browser: ['contract', 'internal', 'observability', 'realtime'],
@@ -86,6 +100,7 @@ export const ALLOWED: Readonly<Record<string, readonly string[]>> = {
     'tools',
   ],
   'agent-runtime': [
+    'agent-parts',
     'process',
     'browser',
     'contract',
@@ -95,6 +110,7 @@ export const ALLOWED: Readonly<Record<string, readonly string[]>> = {
     'primitives',
     'realtime',
     'server',
+    'spend',
     'tools',
   ],
 };
@@ -251,6 +267,17 @@ describe('the module graph', () => {
       targets.includes('agent-runtime'),
     );
     expect(declared).toEqual([]);
+  });
+
+  test('agent-executor and agent-runtime never import each other', () => {
+    const crossing = edges.filter(
+      (edge) =>
+        (edge.from === 'agent-executor' && edge.to === 'agent-runtime') ||
+        (edge.from === 'agent-runtime' && edge.to === 'agent-executor'),
+    );
+    expect(crossing).toEqual([]);
+    expect(ALLOWED['agent-executor']).not.toContain('agent-runtime');
+    expect(ALLOWED['agent-runtime']).not.toContain('agent-executor');
   });
 
   test('internal is the leaf', () => {

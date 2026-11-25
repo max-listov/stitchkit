@@ -3,6 +3,7 @@ title: "ADR 0293: A slow link is bounded by silence and pays for each byte once"
 description: A connection's idle deadline ends an exchange only when nothing arrives, a stored MCP catalog is used while the server's catalog stamp is unchanged, and an interrupted CLI download continues from its kept part.
 type: decision
 status: accepted
+amends: ["0229"]
 created: 2026-11-17 18:12 +07:00
 updated: 2026-11-17 18:12 +07:00
 ---

@@ -3,6 +3,7 @@ title: "ADR 0278: A Telegram 429 holds the chat that got it"
 description: One chat's refusal pauses that chat, several chats at once pause the token, and a queued call can bound its wait.
 type: decision
 status: accepted
+amends: ["0274", "0277"]
 created: 2026-11-03
 updated: 2026-11-03
 ---

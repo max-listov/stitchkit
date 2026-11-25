@@ -64,6 +64,7 @@ async function run(
     name: 'ops',
     version: '1.0.0',
     services: [service],
+    access: { open: 'local-operator' },
     argv,
     ...(defaultCommand && { defaultCommand }),
     stdout: (text) => {

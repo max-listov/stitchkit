@@ -32,6 +32,7 @@ export const AgentStoreTransitionSchema = z.discriminatedUnion('type', [
       type: z.literal('recover'),
       input: RecoverAgentRunSchema,
       assistant: AgentMessageSchema.optional(),
+      usage: AgentUsageSchema.optional(),
     })
     .strict(),
   z.object({ type: z.literal('terminal'), input: CommitRunTerminalSchema }).strict(),

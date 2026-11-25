@@ -2,7 +2,8 @@
 title: "ADR 0223: The candidate's unit tests are checked by the required CI"
 description: The structural preflight of a release branch does not repeat unit tests and does not issue a fast attestation.
 type: decision
-status: active
+status: accepted
+amendedBy: ["0247"]
 created: 2026-10-01 16:40 +07:00
 updated: 2026-10-01 16:40 +07:00
 ---

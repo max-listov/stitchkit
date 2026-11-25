@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import type { createInvocationPayloads } from './invocation-payload';
-import { InvocationPayloadSchema, ModelInvocationRecordSchema } from './invocation-schema';
+import {
+  InvocationPayloadSchema,
+  isModelInvocationRecord,
+  ModelInvocationRecordSchema,
+} from './invocation-schema';
 import type { AgentRuntimeStore } from './store';
 
 export const InvocationReadInputSchema = z
@@ -27,13 +31,8 @@ export async function readInvocationRecords(
         ].includes(event.kind)
       )
         return [];
-      // Non-receipt provider events predate the typed invocation contract.
-      if (
-        !event.payload ||
-        typeof event.payload !== 'object' ||
-        !('invocationId' in event.payload)
-      )
-        return [];
+      // The provider journal writes the same kinds without an invocation.
+      if (!isModelInvocationRecord(event.payload)) return [];
       return [
         {
           seq: event.seq,

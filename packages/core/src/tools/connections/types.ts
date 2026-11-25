@@ -1,6 +1,17 @@
 import type { ToolTransport } from '../../contract/define';
+import type { EndpointToolAnnotations } from '../../contract/tool-options';
 import type { McpCatalogStamp } from '../mcp/catalog-stamp';
 import type { ConnectionTokenProvider, ConnectionToolSkipReporter } from './runtime';
+
+/** One tool discovered from an external MCP server's `tools/list`. */
+export interface DiscoveredMcpTool {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  /** The server's own hints about the tool; whether it only reads is the one the CLI acts on. */
+  annotations?: EndpointToolAnnotations;
+}
 
 /** Where one external MCP server lives, plus static request headers. */
 export interface McpConnectionTransport {
@@ -85,7 +96,7 @@ export interface McpClientConnectionConfig {
    * connection without it contributes nothing to the CLI, because CLI exposure
    * is explicit everywhere else in the framework too.
    */
-  transports?: readonly ToolTransport[];
+  expose?: readonly ToolTransport[];
 }
 
 /** One stored `tools/list` result and the catalog stamp it was listed under. */
@@ -126,7 +137,7 @@ export interface OpenApiConnectionConfig {
   /** Response body ceiling in bytes; defaults to 1 MiB. */
   maxResponseBytes?: number;
   /** Which surfaces every mounted operation appears on; default MCP and AGENT. */
-  transports?: readonly ToolTransport[];
+  expose?: readonly ToolTransport[];
 }
 
 /** A defined OpenAPI connection. */

@@ -6,6 +6,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { ManagedFileBoundary } from '../../files/boundary';
+import { assertTimerMs } from '../../internal/deadline';
 import { isRecord } from '../../internal/typed';
 import { assertToolName } from '../names';
 import { DownloadOperationError, runDownloadOperation } from './download-core';
@@ -49,6 +50,7 @@ export function mountDownload(server: McpServer, config: DownloadToolConfig): vo
   // A native tool lands in the SAME `tools/list` as the contract tools, so one
   // undeliverable name here takes them all down too. → ADR 0035.
   assertToolName(name, '<native>', 'download');
+  assertTimerMs('mountDownload timeoutMs', config.timeoutMs);
   server.registerTool(
     name,
     { description: config.description, inputSchema: z.object(config.inputSchema) },

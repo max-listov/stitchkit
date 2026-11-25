@@ -1,5 +1,6 @@
 import type { LanguageModelUsage } from 'ai';
 import { z } from 'zod';
+import { linkAbortSignals } from '../internal/abort-race';
 import {
   AgentJsonObjectSchema,
   type AgentMessagePart,
@@ -244,6 +245,11 @@ export function normalizeSdkUsage(value: LanguageModelUsage): AgentUsage {
   };
 }
 
+/**
+ * The run's signal plus an idle timer. `dispose` disarms the timer once the run stops working;
+ * `release` detaches from the run's signal once its terminal is committed — until then a late
+ * cancellation of the run still reads on `signal`.
+ */
 export function createIdleDeadline(parent: AbortSignal, timeoutMs: number | undefined) {
   if (timeoutMs === undefined) {
     const noop = (): void => undefined;
@@ -255,9 +261,11 @@ export function createIdleDeadline(parent: AbortSignal, timeoutMs: number | unde
       suspend: noop,
       resume: noop,
       dispose: noop,
+      release: noop,
     };
   }
   const controller = new AbortController();
+  const link = linkAbortSignals(parent, controller.signal);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let active = false;
   let suspended = 0;
@@ -271,7 +279,7 @@ export function createIdleDeadline(parent: AbortSignal, timeoutMs: number | unde
     timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
   };
   return {
-    signal: AbortSignal.any([parent, controller.signal]),
+    signal: link.signal,
     touch,
     start() {
       active = true;
@@ -293,5 +301,6 @@ export function createIdleDeadline(parent: AbortSignal, timeoutMs: number | unde
       active = false;
       clear();
     },
+    release: link.release,
   };
 }

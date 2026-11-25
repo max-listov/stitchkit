@@ -1,6 +1,14 @@
+---
+title: "ADR 0249 — A test run leaves no process behind"
+type: decision
+status: accepted
+amendedBy: ["0321"]
+created: 2026-10-06
+updated: 2026-11-24
+---
+
 # 0249 — A test run leaves no process behind
 
-**Status:** Accepted
 **Date:** 2026-10-06
 
 Practice. Invariant P.
@@ -30,7 +38,9 @@ ends). `reapAfterEachTest()` kills all of it in `afterEach`, which runs after a 
 timeout, and when the runner receives SIGINT, SIGTERM or SIGHUP.
 
 **The run is checked by who the kernel says was orphaned, not by what the process looks like.**
-`bun run test` and `bun run consumer-lane` of the core package run under `scripts/test-leak-gate.ts`. The gate sets
+`bun run test` and `bun run consumer-lane` of the core package run under `scripts/test-leak-gate.ts`
+(amended by ADR 0321: every suite runs under it with `--tmpdir`, which also fails a run on what it
+leaves in its own `TMPDIR`; the package suites with this process check too). The gate sets
 `PR_SET_CHILD_SUBREAPER` on itself, so the kernel reparents every process whose parent died to the
 gate instead of to init, whatever its session, group, environment or working directory. When the
 command has exited, a live child of the gate that is not the command was left behind by it. The gate

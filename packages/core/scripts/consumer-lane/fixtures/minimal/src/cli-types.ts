@@ -76,13 +76,14 @@ const config: CliConfig<{ id: string }, { account: string }, typeof globals> = {
 };
 const invokerConfig: CliInvokerConfig = {
   name: 'strict-invoker',
+  access: { open: 'local-operator' },
   commands: [command],
   runtimeTools: [
     {
       name: 'managed',
       description: 'A managed CLI operation',
       identity: { serviceName: 'probe', action: 'managed', method: 'POST' },
-      transports: ['CLI'],
+      expose: ['CLI'],
       input: z.object({ text: z.string() }),
       output,
       handler: () => ({ size: 1 }),
@@ -91,6 +92,7 @@ const invokerConfig: CliInvokerConfig = {
 };
 const factoryConfig: CliInvokerConfig<{ id: string }> = {
   name: 'factory-invoker',
+  access: { open: 'local-operator' },
   commands: [command],
   auth: { id: 'local' },
   runtimeTools: () => [],
@@ -100,7 +102,7 @@ const managed = {
   name: 'typed-managed',
   description: 'Strict neutral construction',
   identity: { serviceName: 'probe', action: 'managed', method: 'POST' },
-  transports: ['CLI'],
+  expose: ['CLI'],
   input: managedInput,
   output,
   handler: ({ input }) => ({ size: input.text.length }),
@@ -114,7 +116,11 @@ const invalidManaged: RuntimeToolDefinitionWithOutput<typeof managedInput, typeo
   handler: tooNarrow,
 };
 void invalidManaged;
-void createCliInvoker({ name: 'typed-neutral', runtimeTools: [managed] });
+void createCliInvoker({
+  access: { open: 'local-operator' },
+  name: 'typed-neutral',
+  runtimeTools: [managed],
+});
 const registered: readonly RuntimeToolDefinition[] = [managed];
 {
   const first = registered[0];

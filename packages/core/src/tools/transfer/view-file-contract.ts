@@ -7,8 +7,8 @@
  * output shapes, and reaching them through the implementation meant reaching
  * them through a module a browser bundle cannot initialise.
  *
- * The same defect `stitchkit/application/schemas` was created for, one
- * entrypoint over.
+ * The same browser-importability defect that ADR 0156 forbids: a contract
+ * schema must stay reachable without pulling a server runtime into the graph.
  */
 import { z } from 'zod';
 

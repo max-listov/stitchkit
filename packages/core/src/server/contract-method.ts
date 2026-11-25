@@ -39,6 +39,9 @@ export function contractMethodFields(
     // Always populated so `beforeHandle(ctx, endpoint)` can scope-gate from
     // `endpoint.scope` alone — no consumer ever re-resolves against a service.
     scope: endpoint.scope ?? groupScope,
+    // Closed side-effect tag (`'read'` | `'write'`) — propagated onto
+    // `OperationIdentity`/`MethodDef` for hooks, tool gates and read-only hints.
+    effect: endpoint.effect,
     paramsSchema: resolveRouteParamsSchema(endpoint.path, endpoint.params),
     inputSchema: endpoint.input,
     outputSchema: endpoint.output,
@@ -55,6 +58,7 @@ export function contractMethodFields(
     ui: endpoint.tool?.ui,
     annotations: endpoint.tool?.annotations,
     mcp: endpoint.tool?.mcp,
+    inputRecursionDepth: endpoint.tool?.inputRecursionDepth,
     // Opaque app metadata — the contract-wide default shallow-merged with the
     // endpoint's, endpoint keys winning. Undefined on both sides stays
     // undefined: readers test `method.meta?.x`. → ADR 0021 / 0036.

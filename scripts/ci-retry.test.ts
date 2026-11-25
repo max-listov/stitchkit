@@ -76,11 +76,18 @@ describe('which red run is repeated', () => {
     });
   });
 
-  test('push evidence, a second attempt and a non-failed run are left exactly as they are', () => {
+  test('a push run that lost a runner is repeated once, like the nightly run', () => {
+    // 0.124.5 was published from a manual repeat of exactly this: nothing recorded why.
+    expect(
+      decideCiRetry({ ...scheduled, event: 'push' }, [neverAcquired, ...aggregatesRefused]),
+    ).toEqual(decideCiRetry(scheduled, [neverAcquired, ...aggregatesRefused]));
+    expect(decideCiRetry({ ...scheduled, event: 'push' }, [neverAcquired]).retry).toBe(true);
+  });
+
+  test('a pull request, a second attempt and a non-failed run are left exactly as they are', () => {
     const jobs = [neverAcquired, ...aggregatesRefused];
     for (const [run, reason] of [
-      [{ ...scheduled, event: 'push' }, 'a push run is exact evidence'],
-      [{ ...scheduled, event: 'pull_request' }, 'a pull_request run is exact evidence'],
+      [{ ...scheduled, event: 'pull_request' }, 'a pull_request run is not repeated'],
       [{ ...scheduled, run_attempt: 2 }, 'attempt 2 already is the one repetition'],
       [{ ...scheduled, conclusion: 'cancelled' }, 'run concluded cancelled'],
       [{ ...scheduled, conclusion: 'success' }, 'run concluded success'],

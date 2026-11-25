@@ -3,8 +3,10 @@ title: "ADR 0296: Framework options reserve their CLI spellings"
 description: A leading framework flag selects the same grammar before discovery, and older flag-named commands cannot silently redirect execution.
 type: decision
 status: accepted
+amends: ["0083"]
+amendedBy: ["0310"]
 created: 2026-11-20 04:23 +08:00
-updated: 2026-11-20 04:23 +08:00
+updated: 2026-11-23 15:48 +08:00
 ---
 
 # ADR 0296 — Framework options reserve their CLI spellings
@@ -35,4 +37,6 @@ native name might previously have selected an operation from that factory.
 The shell refuses this order with exit code 2 before loading credentials or
 calling either handler. Command-first syntax, such as `app inspect --quiet`,
 selects the native handler offline. With a default command, the earlier grammar
-already interpreted the prefix as options.
+already interpreted the prefix as options. *(Amended by [ADR 0310](0310-one-model-for-cli-invocation-and-json-schema-keywords.md):
+this transitional exit-2 refusal is removed; leading framework flags before a
+native command route identically across all CLI profiles.)*

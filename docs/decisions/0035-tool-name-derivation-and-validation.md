@@ -8,7 +8,8 @@ updated: 2026-08-05
 
 # ADR 0035 — Tool names: normalise the class, assert at mount
 
-- **Status:** Accepted — refines the tool pipeline of [ADR 0007](0007-mcp-agent-tools.md).
+**Relations:** refines the tool pipeline of [ADR 0007](0007-mcp-agent-tools.md).
+
 - **Date:** 2026-08-05
 
 ## Context

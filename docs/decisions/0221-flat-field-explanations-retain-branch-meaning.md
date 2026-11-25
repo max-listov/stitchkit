@@ -2,7 +2,7 @@
 title: "ADR 0221: Flat field explanations retain branch meaning"
 description: "Structural joins deduplicate constraints independently from discriminator-qualified descriptions and applicability."
 type: decision
-status: active
+status: accepted
 created: 2026-10-01 10:30 +07:00
 updated: 2026-10-01 10:30 +07:00
 ---

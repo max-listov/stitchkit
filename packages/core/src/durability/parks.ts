@@ -3,6 +3,7 @@
  * functions over one engine's context. A park is recorded before it waits, so a
  * reconstruction resumes from the record instead of parking again.
  */
+import { linkAbortSignals } from '../internal/abort-race';
 import {
   DURABILITY_PARK_EVENT_KIND,
   type DurabilityClock,
@@ -31,17 +32,40 @@ export interface ParkContext {
   readLedger(): Promise<DurabilityLedgerView>;
 }
 
-export async function executeSleep(
+/**
+ * Run a park under the engine's signal and the call's, linked only while the park lasts: an
+ * engine signal outlives every park it bounds, and must not retain one that has ended.
+ */
+async function withParkSignal<T>(
+  park: ParkContext,
+  runOptions: StepRunOptions | undefined,
+  body: (signal: AbortSignal | undefined) => Promise<T>,
+): Promise<T> {
+  if (!park.signal) return body(runOptions?.signal);
+  const link = linkAbortSignals(runOptions?.signal, park.signal);
+  try {
+    return await body(link.signal);
+  } finally {
+    link.release();
+  }
+}
+
+export function executeSleep(
   park: ParkContext,
   name: string,
   seconds: number,
   runOptions: StepRunOptions | undefined,
 ): Promise<void> {
+  return withParkSignal(park, runOptions, (signal) => sleepPark(park, name, seconds, signal));
+}
+
+async function sleepPark(
+  park: ParkContext,
+  name: string,
+  seconds: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
   const key = sleepParkKey(park.conversationId, park.runId, name);
-  const signal =
-    park.signal && runOptions?.signal
-      ? AbortSignal.any([park.signal, runOptions.signal])
-      : (runOptions?.signal ?? park.signal);
   const ledger = await park.readLedger();
   const existing = ledger.parks.get(key);
   let deadline: number;
@@ -64,18 +88,25 @@ export async function executeSleep(
   await waitForDeadline(park.clock, deadline, name, signal);
 }
 
-export async function executeWait<T>(
+export function executeWait<T>(
   park: ParkContext,
   eventName: string,
   id: string,
   runOptions: StepRunOptions | undefined,
 ): Promise<T> {
+  return withParkSignal(park, runOptions, (signal) =>
+    waitPark<T>(park, eventName, id, signal),
+  );
+}
+
+async function waitPark<T>(
+  park: ParkContext,
+  eventName: string,
+  id: string,
+  signal: AbortSignal | undefined,
+): Promise<T> {
   const key = waitParkKey(park.conversationId, park.runId, eventName, id);
   const label = `${eventName}#${id}`;
-  const signal =
-    park.signal && runOptions?.signal
-      ? AbortSignal.any([park.signal, runOptions.signal])
-      : (runOptions?.signal ?? park.signal);
   for (;;) {
     if (signal?.aborted) throw new ParkAbortedError(label);
     // Register before reading so a delivery landing during the read still

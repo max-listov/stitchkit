@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ToolTransport } from '../contract/define';
+import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { AgentCodingSearchLimitsSchema } from './coding-search-limits';
 import type { AgentProcessSandbox, AgentSandboxRestriction } from './sandbox';
 
@@ -14,6 +15,7 @@ export const AgentCodingToolLimitsSchema = z
     maxArtifactBytes: z.int().positive(),
     maxListEntries: z.int().positive(),
     ...AgentCodingSearchLimitsSchema.shape,
+    // Native command budgets: the process group's deadline steps through scheduleAt.
     shellTimeoutMs: z.int().positive(),
     shellTerminationGraceMs: z.int().positive(),
   })
@@ -147,6 +149,8 @@ export interface AgentCodingArtifactStore {
     mediaType: string;
     data: Uint8Array;
     authorization?: AgentCodingToolAuthorization;
+    /** The provider's id of the tool call whose output this is, when an agent made the call. */
+    toolCallId?: string;
   }): { reference: string } | Promise<{ reference: string }>;
   read(input: { reference: string; offset: number; maxBytes: number }):
     | { data: Uint8Array; totalBytes?: number; authorization?: AgentCodingToolAuthorization }
@@ -174,7 +178,7 @@ export interface AgentCodingToolDefinition {
   };
   input: z.ZodObject;
   output: z.ZodType;
-  transports?: readonly ToolTransport[];
+  expose?: readonly ToolTransport[];
   handler(context: {
     params: undefined;
     input: unknown;
@@ -266,6 +270,50 @@ export const ShellOutputSchema = z
       })
       .strict()
       .optional(),
+  })
+  .strict();
+
+export const ArtifactReadInputSchema = z
+  .object({
+    reference: z.string().min(1),
+    offset: z.int().nonnegative().optional(),
+    maxBytes: z.int().positive().optional(),
+  })
+  .strict();
+
+export const ArtifactReadOutputSchema = z
+  .object({
+    reference: z.string().min(1),
+    offset: z.int().nonnegative(),
+    text: z.string(),
+    bytes: z.int().nonnegative(),
+    totalBytes: z.int().nonnegative().optional(),
+  })
+  .strict();
+
+export const ArtifactSearchInputSchema = z
+  .object({
+    reference: z.string().min(1),
+    query: z.string().min(1),
+    maxMatches: z.int().positive().optional(),
+  })
+  .strict();
+
+export function createArtifactSearchInputSchema(maxSearchResults: number) {
+  assertPositiveSafeInteger('maxSearchResults', maxSearchResults);
+  return ArtifactSearchInputSchema.extend({
+    maxMatches: z
+      .int()
+      .positive()
+      .max(maxSearchResults)
+      .default(Math.min(20, maxSearchResults)),
+  });
+}
+
+export const ArtifactSearchOutputSchema = z
+  .object({
+    reference: z.string().min(1),
+    matches: z.array(z.object({ line: z.int().positive(), text: z.string() }).strict()),
   })
   .strict();
 

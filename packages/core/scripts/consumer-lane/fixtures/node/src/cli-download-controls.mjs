@@ -23,6 +23,7 @@ export async function cliDownloadControls(unavailable = false) {
     let code = -1;
     let error = '';
     await createCli({
+      access: { open: 'local-operator' },
       name: 'artifact-download',
       version: '1',
       runtimeTools: [
@@ -30,7 +31,7 @@ export async function cliDownloadControls(unavailable = false) {
           name: 'media',
           description: 'Download a synthetic file',
           identity: { serviceName: 'media', action: 'get', method: 'GET' },
-          transports: ['CLI'],
+          expose: ['CLI'],
           input: z.object({}),
           output: z.object({ ok: z.boolean() }),
           handler: () => ({ ok: true }),

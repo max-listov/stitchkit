@@ -1,9 +1,32 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { AppendAgentStoreEventSchema } from '../durability/events';
-import type { SqliteDatabase } from '../internal/sqlite';
-import type { SqliteStoreTransaction } from './sqlite';
-import type { SqliteStoreDriver } from './sqlite-rows';
-import { appendEventIn } from './store-reads';
+import { rollbackSqliteFailure, type SqliteDatabase } from '../internal/sqlite';
+import { conversationTables } from './sql-purge';
+import { nextEventSeqByMaximum } from './sql-rows';
+import { type AgentSqlDialect, type AgentSqlSession, agentSqlTables } from './sql-session';
+
+const TABLES = agentSqlTables('stitchkit_agent_runtime');
+
+/** SQLite's side of the shared SQL store: fixed table names, `rowid`, `instr`, `MAX(seq)`. */
+export const sqliteDialect: AgentSqlDialect = {
+  name: 'sqlite',
+  tables: TABLES,
+  conversationTables: conversationTables(TABLES),
+  messageRowId: 'rowid',
+  contains: (column) => `instr(${column}, ?) > 0`,
+  nextEventSeq: (session, conversationId) =>
+    nextEventSeqByMaximum(sqliteDialect, session, conversationId),
+};
+
+/** The synchronous connection as an `AgentSqlSession`; `null` rows read as `undefined`. */
+export function sqliteSession(database: SqliteDatabase): AgentSqlSession {
+  return {
+    all: async (sql, parameters = []) => database.prepare(sql).all(...parameters),
+    get: async (sql, parameters = []) => database.prepare(sql).get(...parameters) ?? undefined,
+    run: async (sql, parameters = []) => {
+      database.prepare(sql).run(...parameters);
+    },
+  };
+}
 
 /**
  * What one SQLite store instance serializes on.
@@ -15,6 +38,7 @@ import { appendEventIn } from './store-reads';
  */
 export interface SqliteStoreState {
   readonly database: SqliteDatabase;
+  readonly session: AgentSqlSession;
   closing: boolean;
   closed: boolean;
   tail: Promise<void>;
@@ -24,6 +48,7 @@ export interface SqliteStoreState {
 export function createSqliteStoreState(database: SqliteDatabase): SqliteStoreState {
   return {
     database,
+    session: sqliteSession(database),
     closing: false,
     closed: false,
     tail: Promise.resolve(),
@@ -38,12 +63,12 @@ function serial<RESULT>(
   if (state.closing || state.closed) {
     return Promise.reject(new Error('SQLite agent-runtime store is closing'));
   }
-  // A store call from inside a `transaction` scope would queue behind the
-  // very transaction that is waiting for it — silently, forever. Refuse.
+  // A store call from inside a companion scope would queue behind the very
+  // transaction that is waiting for it — silently, forever. Refuse.
   if (state.insideScope.getStore()) {
     return Promise.reject(
       new Error(
-        'SQLite agent-runtime store called from inside its own transaction scope; use scope.database and scope.appendEvent',
+        'SQLite agent-runtime store called from inside its own transaction scope; use the scope it handed you',
       ),
     );
   }
@@ -58,37 +83,27 @@ function serial<RESULT>(
 export function runSqliteTransaction<RESULT>(
   state: SqliteStoreState,
   access: 'read' | 'write',
-  work: (transaction: SqliteDatabase) => Promise<RESULT>,
+  work: (transaction: AgentSqlSession) => Promise<RESULT>,
 ): Promise<RESULT> {
   const database = state.database;
   return serial(state, async () => {
     database.exec(access === 'read' ? 'BEGIN' : 'BEGIN IMMEDIATE');
     try {
-      const result = await work(database);
+      const result = await work(state.session);
       database.exec('COMMIT');
       return result;
     } catch (error) {
-      database.exec('ROLLBACK');
-      throw error;
+      throw rollbackSqliteFailure(database, error);
     }
   });
 }
 
-/** A companion's write transaction, marked so a store call from inside it is refused. */
-export function runSqliteStoreScope<RESULT>(
+/** Run `work` marked as inside a store scope, so a store call from it is refused. */
+export function enterSqliteScope<RESULT>(
   state: SqliteStoreState,
-  driver: SqliteStoreDriver,
-  work: (scope: SqliteStoreTransaction) => Promise<RESULT>,
+  work: () => Promise<RESULT>,
 ): Promise<RESULT> {
-  return runSqliteTransaction(state, 'write', (transaction) =>
-    state.insideScope.run(true, () =>
-      work({
-        database: transaction,
-        appendEvent: (input) =>
-          appendEventIn(driver, transaction, AppendAgentStoreEventSchema.parse(input)),
-      }),
-    ),
-  );
+  return state.insideScope.run(true, work);
 }
 
 export async function closeSqliteStore(state: SqliteStoreState): Promise<void> {

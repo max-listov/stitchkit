@@ -27,9 +27,13 @@ function server(fetch: (request: Request) => Response | Promise<Response>) {
 }
 async function call(
   definitions: readonly RuntimeToolDefinition[],
-  config: AgentMountConfig = {},
+  config: Omit<AgentMountConfig, 'access'> & { access?: AgentMountConfig['access'] } = {},
 ) {
-  const tools = mountAgent([], { ...config, runtimeTools: definitions });
+  const tools = mountAgent([], {
+    ...config,
+    access: config.access ?? { open: 'local-operator' },
+    runtimeTools: definitions,
+  });
   const name = Object.keys(tools)[0];
   if (!name) throw new Error('No tool');
   return executable(tools, name)({}, { toolCallId: 'test', messages: [], context: undefined });
@@ -78,12 +82,14 @@ test('mounted reauthorization retains its typed cause and lifecycle runs once', 
     defineOpenApiConnection({ name: 'auth', baseUrl: url.href, spec }),
   ]);
   const config: AgentMountConfig = {
-    lifecycle: {
-      beforeHandle: () => {
-        before++;
-      },
-      afterHandle: () => {
-        after++;
+    access: {
+      gate: {
+        beforeHandle: () => {
+          before++;
+        },
+        afterHandle: () => {
+          after++;
+        },
       },
     },
   };

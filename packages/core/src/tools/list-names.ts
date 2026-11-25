@@ -28,7 +28,7 @@ export interface ToolNameEntry {
   /** Endpoint key in the contract (e.g. `updatePartial`). */
   method: string;
   /** Tool transports the name is exposed on (mount order: MCP, AGENT, CLI). */
-  transports: Transport[];
+  expose: Transport[];
 }
 
 /**
@@ -54,14 +54,14 @@ export function listToolNames(
       const id = `${entry.kind}\u0000${entry.service}\u0000${entry.action}`;
       const existing = entries.get(id);
       if (existing) {
-        existing.transports.push(transport);
+        existing.expose.push(transport);
       } else {
         entries.set(id, {
           kind: entry.kind,
           name: entry.mountable.name,
           service: entry.service,
           method: entry.action,
-          transports: [transport],
+          expose: [transport],
         });
       }
     }

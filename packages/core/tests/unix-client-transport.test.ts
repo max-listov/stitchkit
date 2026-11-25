@@ -1,6 +1,7 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, spyOn, test } from 'bun:test';
 import { once } from 'node:events';
-import { createServer as createNodeServer, type Server } from 'node:http';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { ClientRequest, createServer as createNodeServer, type Server } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,11 +13,13 @@ import {
   createUnixClientTransport,
   UnixClientTransportError,
 } from '../src/server/unix-client';
+import * as unixClientBun from '../src/server/unix-client-bun';
 
+const socketRoot = mkdtempSync(join(tmpdir(), 'skc-'));
 let counter = 0;
 function nextSocketPath(): string {
   counter += 1;
-  return join(tmpdir(), `sk-client-${process.pid}-${counter}.sock`);
+  return join(socketRoot, `${counter}.sock`);
 }
 
 function listen(server: Server, target: string | number): Promise<void> {
@@ -62,6 +65,7 @@ async function rejectedApiError(work: Promise<unknown>): Promise<ApiError> {
 const servers: Server[] = [];
 afterAll(async () => {
   for (const server of servers.reverse()) await close(server);
+  rmSync(socketRoot, { recursive: true, force: true });
 });
 
 describe('createUnixClientTransport', () => {
@@ -422,5 +426,215 @@ describe('createUnixClientTransport', () => {
         fetch: globalThis.fetch,
       }),
     ).toThrow('mutually exclusive');
+  });
+
+  test('transport.close() during slow request body streaming rejects immediately without dialing', async () => {
+    let dialCount = 0;
+    const unix = createNodeServer((_request, response) => {
+      response.end('ok');
+    });
+    unix.on('connection', () => {
+      dialCount += 1;
+    });
+    servers.push(unix);
+    const socketPath = nextSocketPath();
+    await listen(unix, socketPath);
+
+    const transport = createUnixClientTransport({ socketPath });
+    const pullEntered = Promise.withResolvers<void>();
+    let pulls = 0;
+    let cancelled = false;
+    const slowBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls === 1) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          return;
+        }
+        pullEntered.resolve();
+        return new Promise<void>(() => undefined);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    const pending = transport.fetch('http://local/slow-upload', {
+      method: 'POST',
+      body: slowBody,
+    });
+    await pullEntered.promise;
+    await transport.close();
+
+    const outcome = await Promise.race([
+      pending.then(
+        () => ({ kind: 'resolved' as const }),
+        (error: unknown) => ({ kind: 'rejected' as const, error }),
+      ),
+      Bun.sleep(400).then(() => ({ kind: 'timed-out' as const })),
+    ]);
+
+    expect(outcome.kind).toBe('rejected');
+    if (outcome.kind === 'rejected') {
+      expect(outcome.error).toBeInstanceOf(UnixClientTransportError);
+      expect(outcome.error).toMatchObject({
+        code: 'UNIX_CLIENT_CLOSED',
+        delivery: 'not-dispatched',
+        socketPath,
+      });
+    }
+    expect(dialCount).toBe(0);
+    expect(cancelled).toBe(true);
+  });
+
+  test('caller request.signal abort during slow request body preserves caller reason and keeps transport open', async () => {
+    let dialCount = 0;
+    const unix = createNodeServer((_request, response) => {
+      response.end('alive');
+    });
+    unix.on('connection', () => {
+      dialCount += 1;
+    });
+    servers.push(unix);
+    const socketPath = nextSocketPath();
+    await listen(unix, socketPath);
+
+    const transport = createUnixClientTransport({ socketPath });
+    const pullEntered = Promise.withResolvers<void>();
+    const slowBody = new ReadableStream<Uint8Array>({
+      pull() {
+        pullEntered.resolve();
+        return new Promise<void>(() => undefined);
+      },
+    });
+    const callerAbort = new AbortController();
+    const pending = transport.fetch('http://local/abort-upload', {
+      method: 'POST',
+      body: slowBody,
+      signal: callerAbort.signal,
+    });
+    await pullEntered.promise;
+    callerAbort.abort(new Error('caller cancelled upload'));
+
+    await expect(pending).rejects.toThrow('caller cancelled upload');
+    expect(dialCount).toBe(0);
+    expect(transport.closed).toBe(false);
+    expect(await transport.fetch('http://local/ping').then((r) => r.text())).toBe('alive');
+    expect(dialCount).toBeGreaterThanOrEqual(1);
+    await transport.close();
+  });
+
+  test('transport.close() racing right as request body finishes rejects before dialing', async () => {
+    let dialCount = 0;
+    const unix = createNodeServer((_request, response) => {
+      response.end('should-not-reach');
+    });
+    unix.on('connection', () => {
+      dialCount += 1;
+    });
+    servers.push(unix);
+    const socketPath = nextSocketPath();
+    await listen(unix, socketPath);
+
+    const transport = createUnixClientTransport({ socketPath });
+    const closingBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array([4, 5, 6]));
+        controller.close();
+        void transport.close();
+      },
+    });
+
+    await expect(
+      transport.fetch('http://local/race-body', {
+        method: 'POST',
+        body: closingBody,
+      }),
+    ).rejects.toMatchObject({
+      code: 'UNIX_CLIENT_CLOSED',
+      delivery: 'not-dispatched',
+      socketPath,
+    });
+    expect(dialCount).toBe(0);
+  });
+
+  test('transport.close() right after await nodeUnixRequest destroys incoming and rejects as response-received', async () => {
+    const unix = createNodeServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/plain' });
+      response.write('partial');
+    });
+    servers.push(unix);
+    const socketPath = nextSocketPath();
+    await listen(unix, socketPath);
+
+    const transport = createUnixClientTransport({ socketPath });
+    const runtimeSpy = spyOn(unixClientBun, 'hasBunUnixRuntime').mockReturnValue(false);
+    const isDestroyable = (value: unknown): value is { readonly destroyed: boolean } =>
+      typeof value === 'object' &&
+      value !== null &&
+      'destroyed' in value &&
+      typeof value.destroyed === 'boolean';
+    const realEmit = ClientRequest.prototype.emit;
+    let capturedIncoming: { readonly destroyed: boolean } | undefined;
+    const emitSpy = spyOn(ClientRequest.prototype, 'emit').mockImplementation(function (
+      this: ClientRequest,
+      event: string | symbol,
+      ...args: unknown[]
+    ) {
+      const result = Reflect.apply(realEmit, this, [event, ...args]);
+      if (event === 'response' && capturedIncoming === undefined) {
+        const candidate = args[0];
+        if (isDestroyable(candidate)) capturedIncoming = candidate;
+        // Close synchronously after nodeUnixRequest's resolveOnce queued its continuation,
+        // before dispatch resumes after `await nodeUnixRequest`.
+        void transport.close();
+      }
+      return result;
+    });
+
+    try {
+      await expect(transport.fetch('http://local/node-close-race')).rejects.toMatchObject({
+        code: 'UNIX_CLIENT_CLOSED',
+        delivery: 'response-received',
+        socketPath,
+      });
+      expect(capturedIncoming).toBeDefined();
+      expect(capturedIncoming?.destroyed).toBe(true);
+    } finally {
+      emitSpy.mockRestore();
+      runtimeSpy.mockRestore();
+      await transport.close();
+    }
+  });
+
+  test('transport.close() right after await bunUnixRequest rejects as response-received', async () => {
+    const unix = createNodeServer((_request, response) => {
+      response.writeHead(204);
+      response.end();
+    });
+    servers.push(unix);
+    const socketPath = nextSocketPath();
+    await listen(unix, socketPath);
+
+    const transport = createUnixClientTransport({ socketPath });
+    const realBunRequest = unixClientBun.bunUnixRequest;
+    const bunSpy = spyOn(unixClientBun, 'bunUnixRequest').mockImplementation((options) => {
+      const pending = realBunRequest(options);
+      void pending.then(() => {
+        void transport.close();
+      });
+      return pending;
+    });
+
+    try {
+      await expect(transport.fetch('http://local/bun-close-race')).rejects.toMatchObject({
+        code: 'UNIX_CLIENT_CLOSED',
+        delivery: 'response-received',
+        socketPath,
+      });
+    } finally {
+      bunSpy.mockRestore();
+      await transport.close();
+    }
   });
 });

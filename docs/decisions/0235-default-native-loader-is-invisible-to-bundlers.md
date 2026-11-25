@@ -3,6 +3,7 @@ title: "ADR 0235: The default native loader is invisible to bundlers"
 description: "The packaged Darwin loader names its addon by a computed path, so portable entrypoints bundle to one file on every OS; only the packaging plugin produces a static loader, and the packaging leaf stays as the one way to carry an addon."
 type: decision
 status: accepted
+amendedBy: ["0252"]
 created: 2026-10-05
 updated: 2026-10-05
 ---

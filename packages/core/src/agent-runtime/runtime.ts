@@ -8,7 +8,7 @@ import type {
 } from 'ai';
 import type { z } from 'zod';
 import type { LocalStepDurability } from '../durability/engine';
-import type { ToolLifecycle } from '../tools/execute-hooks';
+import type { ToolGate } from '../tools/access';
 import type { AgentChildManager } from './children';
 import type { AgentCompactionResult } from './compaction';
 import type {
@@ -26,6 +26,8 @@ import type { AgentObservability } from './observability';
 import type { ComposedAgentPrompt } from './prompt';
 import type { AgentTerminalAcceptanceInput } from './protocol';
 import type { AgentRetryPolicy } from './retry-policy';
+import type { AgentStepBarriers } from './run-step-barriers';
+import type { AgentStepSpend } from './run-step-spend';
 import { abandonAgentRun, closeAgentRuntime, interruptAgentRun } from './runtime-control';
 import { recoverAgentRuns, resumeAgentRun } from './runtime-recovery';
 import type { AgentRuntimeResult } from './runtime-result';
@@ -162,12 +164,17 @@ export interface AgentRuntimeRunContext<CONTEXT> {
   context: CONTEXT;
   run: AgentRun;
   signal: AbortSignal;
-  toolFenceLifecycle: ToolLifecycle;
+  toolFenceLifecycle: ToolGate;
   /**
    * Absent until a model is resolved for the run; then present on every step,
    * with `usedTokens.provenance === 'unavailable'` until the first step lands.
    */
   contextUsage?: AgentContextUsage;
+  /**
+   * Absent until a model is resolved for the run; carries the resolved model
+   * descriptor and adapter hooks (`normalizeUsage`, `resolveResponseProvider`).
+   */
+  selectedModel?: AgentResolvedModel;
 }
 
 export type AgentRuntimePrepareStep<CONTEXT, TOOLS extends ToolSet = ToolSet> = (
@@ -246,6 +253,8 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
     toolApprovalSecret?: string | Uint8Array;
     /** Retry provider stream failures only before any tool call in that attempt. */
     retry?: AgentRetryPolicy;
+    /** Guards on each model step: call count, call order by entity, reasoning, text after tools. */
+    stepBarriers?: AgentStepBarriers;
   };
   history?: {
     compact?(input: {
@@ -271,6 +280,23 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
   children?: Pick<AgentChildManager, 'stopChildren'>;
   publish?: AgentRuntimePublisher;
   onPublishError?(input: { event: AgentRuntimeEvent; error: unknown }): void | Promise<void>;
+  /**
+   * Observe each billed step (model step, abandoned retry attempt, or
+   * compaction) after its ledger record is written. Awaited up to
+   * `stepSpendTimeoutMs` (default 5 000 ms): the run does not go on to its
+   * next step, or retry a discarded attempt, until this settles, so a slow
+   * hook adds its time to every step. Throws and timeouts never fail the run
+   * and are reported through `onStepSpendError` and `observe`.
+   */
+  onStepSpend?(input: AgentStepSpend & AgentRuntimeRunContext<CONTEXT>): void | Promise<void>;
+  /**
+   * Diagnostic callback invoked when `onStepSpend` throws or exceeds its timeout. Awaited
+   * up to the same `stepSpendTimeoutMs`; a throw or timeout of its own is carried on the
+   * `step-finished` event as `reportFailed`.
+   */
+  onStepSpendError?(input: { spend: AgentStepSpend; error: unknown }): void | Promise<void>;
+  /** Maximum milliseconds to await `onStepSpend` before detaching. Default 5 000 ms. */
+  stepSpendTimeoutMs?: number;
   observe?: AgentObservability;
   persistGeneratedFile?(
     file: GeneratedFile,

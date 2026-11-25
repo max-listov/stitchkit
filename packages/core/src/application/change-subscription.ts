@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { linkAbortSignals } from '../internal/abort-race';
 import { type BackoffPolicy, createBackoff } from '../internal/backoff';
 import { createCoalescedTask } from '../internal/coalesced-task';
 import { withDeadline } from '../internal/deadline';
@@ -90,26 +91,37 @@ class ChangeSubscription {
     const attempt = this.attempt;
     if (!connection || !attempt) return;
     const readAbort = new AbortController();
-    const signal = AbortSignal.any([attempt.signal, readAbort.signal]);
-    const work = this.config.reconcile(key, {
-      signal,
-      commit: (publish) => {
-        if (signal.aborted || this.connection !== connection) return false;
-        publish();
-        return true;
-      },
-    });
-    const outcome = await withDeadline(work, this.timeout);
-    if (!outcome.settled) {
-      readAbort.abort();
-      this.report(new Error('Reconciliation deadline exceeded'));
-      // Retain the key until an uncooperative read settles: never overlap its next pass.
-      await work;
-      throw new Error('Reconciliation deadline exceeded');
-    }
-    if (!signal.aborted && this.connection === connection) {
-      this.failedKeys.delete(key);
-      if (this.failedKeys.size === 0) this.context?.reportHealth('healthy');
+    // Linked while the read runs: the attempt outlives every read it makes. A commit that comes
+    // after the read still answers to the attempt and the read's own abort, not to the link.
+    const { signal, release } = linkAbortSignals(attempt.signal, readAbort.signal);
+    try {
+      const work = this.config.reconcile(key, {
+        signal,
+        commit: (publish) => {
+          if (
+            attempt.signal.aborted ||
+            readAbort.signal.aborted ||
+            this.connection !== connection
+          )
+            return false;
+          publish();
+          return true;
+        },
+      });
+      const outcome = await withDeadline(work, this.timeout);
+      if (!outcome.settled) {
+        readAbort.abort();
+        this.report(new Error('Reconciliation deadline exceeded'));
+        // Retain the key until an uncooperative read settles: never overlap its next pass.
+        await work;
+        throw new Error('Reconciliation deadline exceeded');
+      }
+      if (!signal.aborted && this.connection === connection) {
+        this.failedKeys.delete(key);
+        if (this.failedKeys.size === 0) this.context?.reportHealth('healthy');
+      }
+    } finally {
+      release();
     }
   }
 

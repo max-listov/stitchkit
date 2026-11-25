@@ -3,6 +3,7 @@ title: "ADR 0282: Tracking carries facts, not channel classification"
 description: Attribution separates raw campaign tags, referrer and configured click-marker names; the application classifies channels on the server.
 type: decision
 status: accepted
+amends: ["0166"]
 created: 2026-11-04 15:58 +07:00
 updated: 2026-11-04 15:58 +07:00
 ---

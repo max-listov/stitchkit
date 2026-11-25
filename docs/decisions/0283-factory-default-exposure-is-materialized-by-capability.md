@@ -3,6 +3,7 @@ title: "ADR 0283: Factory defaults materialize endpoint exposure by capability"
 description: A scoped factory snapshots default transports, intersects implicit exposure with endpoint capabilities, and preserves explicit overrides in runtime data and inferred types.
 type: decision
 status: accepted
+amends: ["0062"]
 created: 2026-11-04 18:37 +07:00
 updated: 2026-11-04 18:51 +07:00
 ---

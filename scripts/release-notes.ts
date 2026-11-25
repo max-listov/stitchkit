@@ -1,22 +1,8 @@
 import { BREAKING_HEADING } from '../packages/core/src/internal/upgrade-plan';
+import { type FenceState, linesOutsideFences, stepFence } from './markdown-fences';
 import { RELEASE_TARGETS, type ReleaseTargetInfo } from './release-train';
 
-const FENCE = /^(`{3,}|~{3,})/;
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/** Lines outside every fenced block: an example inside a fence is documentation, not structure. */
-function linesOutsideFences(document: string): string[] {
-  const lines: string[] = [];
-  let inFence = false;
-  for (const line of document.split('\n')) {
-    if (FENCE.test(line.trim())) {
-      inFence = !inFence;
-      continue;
-    }
-    if (!inFence) lines.push(line);
-  }
-  return lines;
-}
 
 function headingOutsideFences(document: string, heading: RegExp): boolean {
   return linesOutsideFences(document).some((line) => heading.test(line));
@@ -30,16 +16,14 @@ function headingOutsideFences(document: string, heading: RegExp): boolean {
 export function extractReleaseNotes(changelog: string, version: string): string {
   const headingPattern = new RegExp(`^## \\[${escapeRegExp(version)}\\]`);
   const lines = changelog.split('\n');
-  let inFence = false;
+  let fence: FenceState | null = null;
   let start = -1;
   let end = lines.length;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? '';
-    if (FENCE.test(line.trim())) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
+    const stepped = stepFence(line, fence);
+    fence = stepped.fence;
+    if (stepped.isDelimiter || fence !== null) continue;
     if (start === -1) {
       if (headingPattern.test(line)) start = index + 1;
     } else if (/^## \[/.test(line)) {
@@ -71,6 +55,7 @@ export function releasedVersionsInOrder(changelog: string): string[] {
   return versions;
 }
 
+/** Compare dotted numeric versions (`major.minor.patch` or `major.minor`). */
 export function comparePreOneVersions(left: string, right: string): number {
   const [leftMajor = 0, leftMinor = 0, leftPatch = 0] = left.split('.').map(Number);
   const [rightMajor = 0, rightMinor = 0, rightPatch = 0] = right.split('.').map(Number);

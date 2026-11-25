@@ -1,11 +1,15 @@
 import { createServer, type ServerResponse } from 'node:http';
 import { z } from 'zod';
+import { MAX_TIMER_MS } from '../internal/timers';
 
 export const AgentFaultStepSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pass'), text: z.string().default('ok') }).strict(),
   z.object({ kind: z.literal('connection-refused') }).strict(),
   z
-    .object({ kind: z.literal('timeout-before-first-byte'), milliseconds: z.int().positive() })
+    .object({
+      kind: z.literal('timeout-before-first-byte'),
+      milliseconds: z.int().positive().max(MAX_TIMER_MS),
+    })
     .strict(),
   z.object({ kind: z.literal('stream-cut'), afterBytes: z.int().nonnegative() }).strict(),
   z.object({ kind: z.literal('http-error'), status: z.int().min(400).max(599) }).strict(),

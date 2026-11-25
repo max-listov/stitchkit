@@ -164,12 +164,14 @@ export interface SurfaceToolDefinition {
 export interface SurfaceAgentProjection extends SurfaceToolDefinition {
   extend?: SurfaceToolExtension;
   flattenUnionInput?: boolean;
+  inputRecursionDepth?: number;
 }
 
 /** Global MCP preparation policy shared by direct and finite named surfaces. */
 export interface SurfaceMcpPreparation {
   extend?: SurfaceToolExtension;
   flattenUnionInput?: boolean;
+  inputRecursionDepth?: number;
   schemaValidation?: McpSchemaValidationConfig;
   multiRound?: { stateConfigured: boolean; maxRounds: number };
 }
@@ -298,7 +300,10 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
     transport: ToolTransport,
     surface: string | null,
     projection: SurfaceToolDefinition,
-    presentation: Pick<SurfaceAgentProjection, 'extend' | 'flattenUnionInput'> = {},
+    presentation: Pick<
+      SurfaceAgentProjection,
+      'extend' | 'flattenUnionInput' | 'inputRecursionDepth'
+    > = {},
   ): void => {
     const projected = projectToolSurface(
       projection,

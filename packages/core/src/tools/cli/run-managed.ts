@@ -1,27 +1,26 @@
 import type { ZodObject } from 'zod';
-import { type ToolFailure, type ToolResult, toolResultFromError } from '../execute-result';
-import { createToolRunner, type MountableTool } from '../mount';
+import { type ToolResult, toolResultFromError } from '../execute-result';
+import type { MountableTool } from '../mount';
 import { isRepeatableRead } from '../read-operation';
 import type { parseCliArgs } from './args';
-import { isReservedBoolWord } from './args-fields';
-import { readCliBooleanFlag } from './args-route';
 import { CliArgumentError } from './argument-error';
-import { emitCliCommandResult } from './command';
+import { emitCliViewOrResult } from './command';
 import { DEFAULT_DOWNLOAD_MAX_BYTES, saveResultMedia } from './download';
-import { DEFAULT_EXIT_CODES, emitPresentationFailure, emitResult } from './format';
+import { cliExitCode, DEFAULT_EXIT_CODES, emitResult } from './format';
 import { filterCommands, renderCommandHelp, renderTopHelp } from './help';
 import { buildManagedSurface, type ManagedSurface } from './managed-surface';
-import { cliResultPolicy } from './policy';
+import { cliResultPolicy, cliWaitConfig } from './policy';
 import { prepareInvocation } from './prepare';
 import { runStreamCommand } from './run-stream';
+import { createCliToolRunner } from './runner';
 import {
   type CliRoute,
   type CliSession,
   emitOptionsFor,
   renderCommandSchema,
 } from './session';
-import { unavailableCommand } from './unavailable';
-import { renderCliView, stringifyGroups } from './view';
+import { unavailableCommand, unknownCliCommand } from './unavailable';
+import { assertViewColumns } from './view-columns';
 import { pollUntilDone } from './wait';
 
 type CliRunOptions = ReturnType<typeof parseCliArgs>['options'];
@@ -35,24 +34,14 @@ export async function runManagedInvocation<
 >(session: CliSession<TAuth, TContext, TGlobals>, route: CliRoute<TGlobals>): Promise<void> {
   const { config } = session;
   const { stdout, stderr, exit } = session.io;
-  const { command, helpRequested, schemaRequested } = route;
-  const topLevelHelp =
-    route.route.topLevelHelp ||
-    command === undefined ||
-    command === 'help' ||
-    command === '--help' ||
-    command === '-h' ||
-    // `--help=<substring>` is the same question written inline; without this it
-    // routed as an unknown command name. `--help=false` stays what it always
-    // was — the boolean negation — so the inline form keeps one meaning per
-    // value rather than two.
-    (command.startsWith('--help=') && !isReservedBoolWord(command.slice('--help='.length)));
+  const { command, topLevelHelp, helpRequested, schemaRequested } = route;
   const managed = await buildManagedSurface(
     session,
     route.typedGlobals,
     !topLevelHelp && !helpRequested && !schemaRequested,
   );
-  if (topLevelHelp) return respondTopLevelHelp(session, route, managed);
+  if (topLevelHelp || command === undefined)
+    return respondTopLevelHelp(session, route, managed);
   if (!managed.resolved) {
     // Every native command already dispatched above, so this name could only
     // have come from the surface that failed to resolve. Report THAT, with the
@@ -61,11 +50,7 @@ export async function runManagedInvocation<
       emitResult(
         managed.failure,
         { stdout, stderr },
-        emitOptionsFor(
-          config,
-          readCliBooleanFlag(route.commandArgv, 'json'),
-          command ?? config.name,
-        ),
+        emitOptionsFor(config, route.framework.json, command),
       ),
     );
   }
@@ -83,11 +68,7 @@ function respondTopLevelHelp<
 ): void {
   const { config, applicationOptions } = session;
   const { stdout, stderr, exit } = session.io;
-  const { command, commandArgv } = route;
-  const helpFilter =
-    route.route.helpFilter ?? (command !== undefined ? commandArgv[0] : undefined);
-  const filter =
-    helpFilter !== undefined && !helpFilter.startsWith('-') ? helpFilter : undefined;
+  const filter = route.helpFilter;
   // Nothing matched is a fact a script branches on, not an empty success —
   // an exit 0 over an empty list reads as "there are none", which is a
   // different statement from "none of these".
@@ -132,7 +113,8 @@ async function runManagedCommand<
     stderr(
       `Unknown command "${command}". Run "${config.name} --help" for the command list.\n`,
     );
-    return exit(1);
+    // The exit table `createCliInvoker` answers an unknown name with: one code for one fact.
+    return exit(cliExitCode(unknownCliCommand(command), config.exitCodes));
   }
   if (route.helpRequested) {
     stdout(renderCommandHelp(config.name, command, descriptor, applicationOptions));
@@ -147,7 +129,7 @@ async function runManagedCommand<
       emitResult(
         unavailableCommand(descriptor.unavailableReason),
         { stdout, stderr },
-        emitOptionsFor(config, readCliBooleanFlag(route.commandArgv, 'json'), command),
+        emitOptionsFor(config, route.framework.json, command),
       ),
     );
   }
@@ -156,7 +138,9 @@ async function runManagedCommand<
   if (!tool && !stream) throw new Error('[stitchkit] managed CLI executable invariant failed');
   const prepared = await prepareInvocation(
     command,
-    route.commandArgv,
+    route.commandTokens,
+    route.separatedBefore,
+    route.framework,
     descriptor,
     config,
     readStdin,
@@ -167,17 +151,13 @@ async function runManagedCommand<
   }
   const { toolArgs, options } = prepared;
 
-  if (options.wait && !config.wait?.[command]) {
+  if (options.wait && !cliWaitConfig(config, command)) {
     stderr(`--wait is not configured for command "${command}"\n`);
     return exit(2);
   }
   if (options.waitTimeout !== undefined && !options.wait) {
     stderr('--wait-timeout requires --wait\n');
     return exit(2);
-  }
-  if (options.help) {
-    stdout(renderCommandHelp(config.name, command, descriptor, applicationOptions));
-    return exit(0);
   }
 
   if (options.dryRun) {
@@ -187,6 +167,15 @@ async function runManagedCommand<
 
   if (stream) return runStreamCommand(session, route, managed, stream, { toolArgs, options });
   if (!tool) throw new Error('[stitchkit] managed CLI executable invariant failed');
+  if (options.view !== undefined && !options.wait) {
+    try {
+      assertViewColumns(options.view, descriptor.outputSchema);
+    } catch (error) {
+      if (!(error instanceof CliArgumentError)) throw error;
+      stderr(`${error.message}\n`);
+      return exit(2);
+    }
+  }
   const result = await executeManagedTool(session, route, command, managed, tool, {
     toolArgs,
     options,
@@ -209,14 +198,12 @@ async function executeManagedTool<
 ): Promise<ToolResult> {
   const { config } = session;
   const { stderr } = session.io;
-  const runTool = createToolRunner({
-    source: 'cli',
-    toolSurface: true,
-    context: { ...config.context?.(managed.auth, route.typedGlobals), signal: config.signal },
-    hooks: config.hooks,
-    lifecycle: config.lifecycle,
-    coerceJsonArgs: config.coerceJsonArgs,
-  });
+  const runTool = createCliToolRunner(
+    config,
+    session.lifecycle,
+    managed.auth,
+    route.typedGlobals,
+  );
   let result: ToolResult;
   try {
     result = await runTool(tool, toolArgs);
@@ -224,7 +211,7 @@ async function executeManagedTool<
     result = toolResultFromError(err);
   }
 
-  const waitConfig = config.wait?.[command];
+  const waitConfig = cliWaitConfig(config, command);
   if (options.wait && waitConfig) {
     result = await pollUntilDone({
       initial: result,
@@ -291,43 +278,15 @@ async function emitManagedResult<
     if (!saved.ok) mediaExitCode = 1;
   }
 
-  if (options.view) {
-    let viewed: ReturnType<typeof renderCliView>;
-    try {
-      viewed = renderCliView(shown.data, options.view);
-    } catch (error) {
-      const failure: ToolFailure =
-        error instanceof CliArgumentError
-          ? {
-              ok: false,
-              code: 'BAD_REQUEST',
-              details: { message: error.message },
-            }
-          : toolResultFromError(error);
-      return exit(emitPresentationFailure(shown, failure, { stdout, stderr }, emit));
-    }
-    if (viewed.kind === 'text') {
-      stdout(viewed.text);
-      return exit(mediaExitCode);
-    }
-    if (viewed.order) {
-      stdout(`${stringifyGroups(viewed.data, viewed.order, options.json === true)}\n`);
-      return exit(mediaExitCode);
-    }
-    shown = { ...shown, data: viewed.data };
-  }
-
-  // The policy speaks only for the operation's own result: a view answers a
-  // different question, and after `--wait` the result is the polled command's.
-  const policy =
-    options.view === undefined && !options.wait ? cliResultPolicy(config, command) : undefined;
-  const exitCode = emitCliCommandResult(
-    policy,
-    result,
-    options,
-    { stdout, stderr },
-    emit,
-    shown,
+  return exit(
+    emitCliViewOrResult(
+      cliResultPolicy(config, command),
+      result,
+      options,
+      { stdout, stderr },
+      emit,
+      shown,
+      mediaExitCode,
+    ),
   );
-  return exit(mediaExitCode || exitCode);
 }

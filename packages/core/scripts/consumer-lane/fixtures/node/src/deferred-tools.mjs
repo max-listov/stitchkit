@@ -63,9 +63,9 @@ const runContext = {
   context: {},
   run,
   signal: new AbortController().signal,
-  toolFenceLifecycle: {},
+  toolFenceLifecycle: { beforeHandle: () => undefined },
 };
-const mounted = deferred.mount(runContext);
+const mounted = deferred.mount(runContext, { access: { open: 'local-operator' } });
 const search = mounted.tool_search?.execute;
 if (!search) throw new Error('Packed deferred search was not mounted');
 const receipt = await search(

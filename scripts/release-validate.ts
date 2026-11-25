@@ -1,8 +1,8 @@
 import {
   affectsLineOf,
   breakingItems,
-  fixedSectionItems,
   parseAffectsLine,
+  releaseSectionItems,
   UpgradeAffectsError,
   type UpgradeAffectsTarget,
 } from '../packages/core/src/internal/upgrade-affects';
@@ -11,7 +11,20 @@ import {
   leadingEntrypoints,
 } from '../packages/core/src/internal/upgrade-plan';
 import { git } from './local-git';
+import {
+  AFFECTS_NAMES_SINCE,
+  assertAffectsNamesExist,
+  breakingSectionBody,
+  PUBLIC_SURFACE_PATH,
+  type PublicSurface,
+  parsePublicSurface,
+  previousCoreSurface,
+} from './release-affects-names';
 import { assertTrainCarriesItsCompanions, readFromReleaseTags } from './release-companions';
+import {
+  assertStarterMigrationMarkers,
+  STARTER_MIGRATION_MARKERS_SINCE,
+} from './release-derived';
 import {
   assertLockfileWorkspaceVersions,
   manifestVersion,
@@ -24,6 +37,10 @@ import {
   comparePreOneVersions,
   extractReleaseNotes,
 } from './release-notes';
+import {
+  assertTrainHonoursStarterFollowUp,
+  pendingStarterFollowUp,
+} from './release-starter-follow-up';
 import { assertReleaseMetadataOnly, isReleaseCommitSubject } from './release-subject';
 import {
   RELEASE_TARGETS,
@@ -96,6 +113,11 @@ export interface ValidateReleaseTagOptions {
    * the commit being pushed, because that is what the push publishes.
    */
   read?: ReleaseTreeReader;
+  /**
+   * The public surface of the previous core release, which `**Affects:**` names a release removes
+   * are found in. Read from the repository's release tags by default.
+   */
+  previousSurface?: () => Promise<PublicSurface>;
 }
 
 /** Where ADR 0103's maturity table lives — the one list of stable entrypoints. */
@@ -128,11 +150,8 @@ export function assertBreakingAffects(
   version: string,
   entrypoints: ReadonlySet<string>,
 ): void {
-  if (!BREAKING_HEADING.test(notes)) return;
-  const start = notes.search(BREAKING_HEADING);
-  const section = notes.slice(start).replace(/^[^\n]*\n/, '');
-  const end = section.search(/^### /m);
-  const body = end === -1 ? section : section.slice(0, end);
+  const body = breakingSectionBody(notes);
+  if (body === undefined) return;
   const items = breakingItems(body);
   if (items.length === 0)
     throw new Error(
@@ -189,7 +208,7 @@ export function assertFixedAffects(
   version: string,
   entrypoints: ReadonlySet<string>,
 ): void {
-  for (const { markdown } of fixedSectionItems(notes)) {
+  for (const { markdown } of releaseSectionItems(notes, 'Fixed')) {
     const first = JSON.stringify(markdown.split('\n')[0]?.slice(0, 120));
     const leading = leadingEntrypoints(markdown);
     let line: string | undefined;
@@ -237,6 +256,37 @@ export async function validateReleaseTag(
       `${tag} does not match ${plan.packageName} package version ${packageVersion}`,
     );
   }
+  const notes = await assertReleaseNotesMetadata(
+    plan,
+    read,
+    options.previousSurface ?? (() => previousCoreSurface(root, plan.version)),
+  );
+  // A starter release is the range AND the lockfile. Only the release channel
+  // checks this: outside a release a lockfile lagging its range is legitimate.
+  if (plan.target === 'create-stitchkit' && options.checkStarterLockfile !== false) {
+    await assertStarterLockfileIsCurrent(root, options.fetch, read);
+  }
+  const lock = await read('bun.lock');
+  const manifests: Record<string, string> = {};
+  for (const directory of WORKSPACE_PACKAGE_DIRS) {
+    manifests[directory] = manifestVersion(await read(`${directory}/package.json`), directory);
+  }
+  assertLockfileWorkspaceVersions(lock, manifests);
+  return { ...plan, notes };
+}
+
+/**
+ * Every check a release makes of its notes and migration guide, in one place:
+ * calibre, audience, the framework's affects lines, the promoted migration
+ * section and the starter's adoption markers. `validateReleaseTag` runs it on
+ * the rolled tree; a rehearsal runs it on `[Unreleased]` rolled in memory, so a
+ * companion's malformed notes are red before the train, not on `release:check`.
+ */
+export async function assertReleaseNotesMetadata(
+  plan: ReleasePlan,
+  read: ReleaseTreeReader,
+  previousSurface: () => Promise<PublicSurface>,
+): Promise<string> {
   const changelog = await read(plan.changelog);
   const notes = extractReleaseNotes(changelog, plan.version);
   assertVersionCalibre(changelog, plan.version);
@@ -261,23 +311,24 @@ export async function validateReleaseTag(
       assertBreakingAffects(notes, plan.version, entrypoints);
     if (comparePreOneVersions(plan.version, FIXED_AFFECTS_SINCE) >= 0)
       assertFixedAffects(notes, plan.version, entrypoints);
+    if (comparePreOneVersions(plan.version, AFFECTS_NAMES_SINCE) >= 0)
+      assertAffectsNamesExist(notes, plan.version, {
+        tree: parsePublicSurface(await read(PUBLIC_SURFACE_PATH)),
+        previous: await previousSurface(),
+      });
   }
   // Each package has its own migration channel: the scaffolder's guide is for
   // the operator of a GENERATED project, a different reader from the framework's.
   const channel = RELEASE_TARGETS[plan.target].migration;
-  assertMigrationSection(await read(channel.guidePath), plan.version, notes, channel);
-  // A starter release is the range AND the lockfile. Only the release channel
-  // checks this: outside a release a lockfile lagging its range is legitimate.
-  if (plan.target === 'create-stitchkit' && options.checkStarterLockfile !== false) {
-    await assertStarterLockfileIsCurrent(root, options.fetch, read);
+  const migrationGuide = await read(channel.guidePath);
+  assertMigrationSection(migrationGuide, plan.version, notes, channel);
+  if (
+    plan.target === 'create-stitchkit' &&
+    comparePreOneVersions(plan.version, STARTER_MIGRATION_MARKERS_SINCE) >= 0
+  ) {
+    assertStarterMigrationMarkers(migrationGuide, await read(RELEASE_TARGETS.core.changelog));
   }
-  const lock = await read('bun.lock');
-  const manifests: Record<string, string> = {};
-  for (const directory of WORKSPACE_PACKAGE_DIRS) {
-    manifests[directory] = manifestVersion(await read(`${directory}/package.json`), directory);
-  }
-  assertLockfileWorkspaceVersions(lock, manifests);
-  return { ...plan, notes };
+  return notes;
 }
 
 /** Read one file out of a commit, so a pre-push check judges what is on the wire. */
@@ -290,8 +341,8 @@ export interface ValidateReleaseCommitOptions extends ValidateReleaseTagOptions 
   changedFiles?: (sha: string) => Promise<readonly string[]>;
   /**
    * Judge the train against the releases already tagged: refuse a package whose packed files
-   * equal its previous release, and a train a published sibling's frozen range would refuse.
-   * Push-time only — a past release commit is not re-judged by tags made after it.
+   * equal its previous release, a train a published sibling's frozen range would refuse, and a
+   * train other than the follow-up starter the newest core tag promised. Push-time only — a past release commit is not re-judged by tags made after it.
    */
   compareWithPublished?: boolean;
 }
@@ -324,6 +375,12 @@ export async function validateReleaseCommit(
   if (options.compareWithPublished) {
     await assertPackagesChanged(root, train, read, commit.sha);
     await assertTrainCarriesItsCompanions(train, read, readFromReleaseTags(root));
+    await assertTrainHonoursStarterFollowUp(
+      root,
+      train,
+      read,
+      await pendingStarterFollowUp(root),
+    );
   }
   let first: (ReleasePlan & { notes: string }) | undefined;
   for (const release of train.releases) {

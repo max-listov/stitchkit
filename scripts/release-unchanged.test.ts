@@ -147,6 +147,19 @@ describe('a package identical to its previous release is refused before the comm
     await expect(verdict(root, train)).resolves.toBeUndefined();
   });
 
+  test('a clone without release tags is refused, not read as a first release', async () => {
+    const root = await repository();
+    await write(root, BUMP);
+    for (const tag of ['v0.9.0', 'stitchkit-tui-v0.1.0']) git(root, 'tag', '-d', tag);
+    const train: ReleaseTrain = {
+      schemaVersion: 1,
+      releases: [{ target: 'core', version: '0.9.1' }],
+    };
+    await expect(verdict(root, train)).rejects.toThrow(
+      /No local release tags matching "v\*"[\s\S]*git fetch origin --tags[\s\S]*fetch-depth: 0/,
+    );
+  });
+
   test('a package that follows a bumped workspace sibling changes with it', async () => {
     const root = await repository();
     await write(root, BUMP);

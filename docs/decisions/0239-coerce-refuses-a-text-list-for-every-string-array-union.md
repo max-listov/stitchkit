@@ -1,6 +1,14 @@
+---
+title: "ADR 0239 — A list written as text is refused for every string-or-array field"
+type: decision
+status: accepted
+amends: ["0218"]
+created: 2026-10-05
+updated: 2026-10-05
+---
+
 # 0239 — A list written as text is refused for every string-or-array field
 
-**Status:** Accepted
 **Date:** 2026-10-05
 
 Amends ADR 0218. Invariants I2, I3, I8 and I13.

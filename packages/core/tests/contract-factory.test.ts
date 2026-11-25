@@ -124,14 +124,14 @@ describe('createContractFactory', () => {
         name: 'inspect_private',
         service: 'private',
         method: 'inspect',
-        transports: ['MCP'],
+        expose: ['MCP'],
       },
       {
         kind: 'contract',
         name: 'search_private',
         service: 'private',
         method: 'search',
-        transports: ['AGENT'],
+        expose: ['AGENT'],
       },
     ]);
   });
@@ -144,7 +144,7 @@ describe('createContractFactory', () => {
         name: 'list_users',
         service: 'users',
         method: 'list',
-        transports: ['MCP', 'AGENT'],
+        expose: ['MCP', 'AGENT'],
       },
     ]);
   });

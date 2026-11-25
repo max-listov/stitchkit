@@ -15,7 +15,7 @@ async function mounted(url: URL, limits?: McpConnectionLimits) {
     defineMcpClientConnection({
       name: 'phase-fixture',
       transport: { url: url.href },
-      transports: ['CLI'],
+      expose: ['CLI'],
       ...(limits && { limits }),
     }),
   ]);
@@ -50,6 +50,7 @@ test('discovery.maxResponseBytes admits a large catalog while call keeps its def
   const definitions = await mounted(fixture.url, { discovery: { maxResponseBytes: 2 * MiB } });
   let cause: unknown;
   const invoker = await createCliInvoker({
+    access: { open: 'local-operator' },
     name: 'phases',
     runtimeTools: definitions,
     hooks: {
@@ -99,7 +100,11 @@ test('call.maxResponseBytes admits a large call without enlarging discovery', as
   });
   const definitions = await mounted(fixture.url, { call: { maxResponseBytes: 2 * MiB } });
   const result = await (
-    await createCliInvoker({ name: 'phases', runtimeTools: definitions })
+    await createCliInvoker({
+      access: { open: 'local-operator' },
+      name: 'phases',
+      runtimeTools: definitions,
+    })
   ).invoke('echo', {});
   expect(result.ok).toBe(true);
   expect(result.data).toEqual({ value: 'x'.repeat(MiB + 1) });
@@ -123,7 +128,11 @@ test('call.timeoutMs admits a slow call and managed-call initialize stays discov
     discovery: { timeoutMs: 40 },
     call: { timeoutMs: 200 },
   });
-  const invoker = await createCliInvoker({ name: 'phases', runtimeTools: definitions });
+  const invoker = await createCliInvoker({
+    access: { open: 'local-operator' },
+    name: 'phases',
+    runtimeTools: definitions,
+  });
   expect(await invoker.invoke('echo', {})).toMatchObject({ ok: true });
   const callCount = fixture.seen.filter((method) => method === 'tools/call').length;
   hangInitialize = true;
@@ -155,10 +164,13 @@ test('discovery.timeoutMs admits a slow catalog while a slow call keeps its call
     call: { timeoutMs: 30 },
   });
   expect(
-    await (await createCliInvoker({ name: 'phases', runtimeTools: definitions })).invoke(
-      'echo',
-      {},
-    ),
+    await (
+      await createCliInvoker({
+        access: { open: 'local-operator' },
+        name: 'phases',
+        runtimeTools: definitions,
+      })
+    ).invoke('echo', {}),
   ).toMatchObject({
     ok: false,
     error: {
@@ -366,6 +378,21 @@ test.each([0, -1, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1])(
     );
   },
 );
+
+test('a connection timeout is refused by the one timer rule, naming the option and the value', () => {
+  const config = { name: 'invalid', transport: { url: 'http://127.0.0.1:1/mcp' } };
+  expect(() => defineMcpClientConnection({ ...config, timeoutMs: 0 })).toThrow(
+    'Connection timeoutMs must be an integer from 1 to 2147483647 milliseconds, received 0',
+  );
+  expect(() =>
+    defineMcpClientConnection({ ...config, limits: { discovery: { idleTimeoutMs: 1.5 } } }),
+  ).toThrow(
+    'Connection idleTimeoutMs must be an integer from 1 to 2147483647 milliseconds, received 1.5',
+  );
+  expect(() =>
+    defineMcpClientConnection({ ...config, timeoutMs: JSON.parse('"30000"') }),
+  ).toThrow(TypeError);
+});
 
 test('timeouts outside the runtime timer range fail at definition', () => {
   expect(() =>

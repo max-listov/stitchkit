@@ -1,4 +1,4 @@
-import { raceAbort } from '../internal/abort-race';
+import { linkAbortSignals, raceAbort } from '../internal/abort-race';
 import { backoffDelay } from '../internal/backoff';
 import {
   completeEntry,
@@ -28,7 +28,9 @@ export function createInboxDelivery<TEntry, TInput>(options: {
   const { access, clock, config } = options;
   return async (taken: DirectoryInboxClaim): Promise<boolean> => {
     const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, options.forced()]);
+    // Linked for this delivery only: the forced-stop signal outlives every delivery.
+    const link = linkAbortSignals(controller.signal, options.forced());
+    const { signal } = link;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let renewing: Promise<void> = Promise.resolve();
     const renew = (): void => {
@@ -152,6 +154,7 @@ export function createInboxDelivery<TEntry, TInput>(options: {
     } finally {
       if (timer) clearTimeout(timer);
       controller.abort(new Error('Inbox delivery ended'));
+      link.release();
       await renewing;
     }
   };

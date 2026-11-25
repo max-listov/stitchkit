@@ -8,7 +8,6 @@ updated: 2026-05-20
 
 # ADR 0005 — The typed client is inferred from the contract
 
-- **Status:** Accepted
 - **Date:** 2025-05 (core), 2026-05 (pilot fixes)
 
 ## Context

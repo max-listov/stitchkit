@@ -56,7 +56,10 @@ function mount(lifecycle?: ToolLifecycle) {
   const events: RequestEvent[] = [];
   const write = (event: RequestEvent) => void events.push(event);
   const audit = createObservability({ request: { write }, tools: { write } });
-  const tools = mountAgent(service, { hooks: audit.toolCall, lifecycle });
+  const access = lifecycle?.beforeHandle
+    ? { gate: { beforeHandle: lifecycle.beforeHandle, afterHandle: lifecycle.afterHandle } }
+    : { open: 'local-operator' as const, afterHandle: lifecycle?.afterHandle };
+  const tools = mountAgent(service, { hooks: audit.toolCall, access });
   const execute = tools.widget_touch?.execute;
   if (!execute) throw new Error('test setup: no widget_touch tool');
   const call = (id: string) =>
@@ -116,6 +119,7 @@ describe('concurrent calls do not write into each other', () => {
     const write = (event: RequestEvent) => void events.push(event);
     const audit = createObservability({ request: { write }, tools: { write } });
     const tools = mountAgent(service, {
+      access: { open: 'local-operator' },
       hooks: {
         beforeToolCall: ({ args }) => {
           setRequestDimensions({ stampedEarly: String((args as { id: string }).id) });
@@ -302,9 +306,11 @@ describe('a failure stays inside the call that failed', () => {
           return audit.toolCall.afterToolCall?.(options);
         },
       },
-      lifecycle: {
-        beforeHandle: () => {
-          seenInHandler = getRequestContext()?.error;
+      access: {
+        gate: {
+          beforeHandle: () => {
+            seenInHandler = getRequestContext()?.error;
+          },
         },
       },
     });
@@ -335,6 +341,7 @@ describe('a failure stays inside the call that failed', () => {
     // The hook that makes this bite: without it nothing writes `ctx.error`, and
     // the assertion below would hold even on the un-forked executor.
     const tools = mountAgent(boom, {
+      access: { open: 'local-operator' },
       hooks: {
         ...audit.toolCall,
         onToolError: () => setRequestError({ code: 'TOOL_BLEW_UP' }),
@@ -369,6 +376,7 @@ describe('the fork starts before the call does', () => {
     const write = (event: RequestEvent) => void events.push(event);
     const audit = createObservability({ request: { write }, tools: { write } });
     const tools = mountAgent(service, {
+      access: { open: 'local-operator' },
       hooks: audit.toolCall,
       extend: {
         schema: { tenantId: z.string() },

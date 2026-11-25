@@ -2,9 +2,10 @@
 title: Starter HEAD skips require an exact-version deferred review
 description: Make packed HEAD the fail-closed default while retaining an explicit bridge for genuinely incompatible breaking releases
 type: decision
-status: active
+status: accepted
+amendedBy: ["0322"]
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-11-25
 ---
 
 # 0099 — Starter HEAD skips require an exact-version deferred review
@@ -30,8 +31,11 @@ would recreate the release cycle ADR 0061 avoided.
 Packed local-HEAD validation is fail-closed: it runs for additive, aligned and
 unaligned breaking releases. An unaligned breaking release may skip it only
 when `scripts/starter-head-review.json` names the exact core version, uses the
-literal outcome `deferred`, and records a non-empty reason. Missing, stale and
-unknown records run HEAD; invalid JSON refuses the release-plan command.
+literal outcome `deferred`, and records a non-empty reason (amended by ADR 0322: a
+core release with a `### Security` section may defer only a starter on another
+pre-1.0 minor, and only when the review names the follow-up starter release in
+`followUp`, which must be the next train). Missing, stale and unknown records
+run HEAD; invalid JSON refuses the release-plan command.
 
 CI and pre-push use the same decision. Target validation is never skipped, and
 the HEAD lane continues to install a locally packed core rather than querying

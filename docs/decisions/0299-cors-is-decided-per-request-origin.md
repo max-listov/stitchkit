@@ -3,6 +3,7 @@ title: "ADR 0299: CORS is decided per request origin, credentials included"
 description: A handler may answer CORS for each exact request origin with an allowance with or without credentials, once per request, failing closed; a safelisted text body needs an origin trusted with credentials.
 type: decision
 status: accepted
+amends: ["0165"]
 created: 2026-11-21 19:53 +08:00
 updated: 2026-11-21 19:53 +08:00
 ---

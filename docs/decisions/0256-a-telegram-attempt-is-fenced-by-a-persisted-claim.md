@@ -3,6 +3,7 @@ title: "ADR 0256: A Telegram attempt is fenced by a persisted claim"
 description: "Attempt-aware Telegram intake uses a persisted globally unique claim identity for ownership checks, and keeps terminal delivery in the update row until exact acknowledgement."
 type: decision
 status: accepted
+amends: ["0213"]
 created: 2026-10-10 21:49 +07:00
 updated: 2026-10-10 21:49 +07:00
 ---

@@ -14,12 +14,18 @@
 import {
   isStyle,
   mayOpenInside,
+  normalizeTelegramHtmlNodes,
+  safeTelegramLinkHref,
+  TELEGRAM_CODE_LANGUAGE_PATTERN,
   type TelegramHtmlElement,
   type TelegramHtmlNode,
   type TelegramHtmlTextNode,
+  withChildren,
 } from './nodes';
 
-const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s[^<>]*?)?)\s*\/?>/y;
+const TAG = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(\s[^<>]*)?\/?>/y;
+/** Elements open at once; a tag opening deeper keeps its words and loses its tag. */
+const MAX_ELEMENT_DEPTH = 32;
 const ATTRIBUTE =
   /([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 const ENTITY = /&(?:(amp|lt|gt|quot|apos|nbsp)|#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6}));/y;
@@ -63,7 +69,6 @@ const BLOCK_BREAKS: Readonly<Record<string, number>> = {
   footer: 1,
 };
 
-const LINK_SCHEMES = new Set(['http:', 'https:', 'tg:', 'mailto:']);
 const TIME_FORMAT = /^(?:r|w?[dD]?[tT]?)$/;
 
 export type Token =
@@ -88,6 +93,13 @@ function decodeEntity(match: RegExpExecArray): string | undefined {
   const code = Number.parseInt(decimal ?? hex ?? '', decimal === undefined ? 16 : 10);
   const valid = code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
   return valid ? String.fromCodePoint(code) : undefined;
+}
+
+/** A tag's attribute text without the `/` of a self-closing tag and the spaces before it. */
+function withoutSelfClose(source: string): string {
+  let end = source.endsWith('/') ? source.length - 1 : source.length;
+  while (end > 0 && /\s/.test(source[end - 1] ?? '')) end -= 1;
+  return source.slice(0, end);
 }
 
 function attributesOf(source: string): Map<string, string> {
@@ -116,7 +128,7 @@ export function* tokenize(markup: string): Generator<Token> {
           type: 'tag',
           closing: tag[1] === '/',
           name: (tag[2] ?? '').toLowerCase(),
-          attributes: attributesOf(tag[3] ?? ''),
+          attributes: attributesOf(withoutSelfClose(tag[3] ?? '')),
         };
         index = TAG.lastIndex;
       } else {
@@ -196,12 +208,6 @@ const KNOWN = new Set([
   'span',
 ]);
 
-function linkOf(href: string | undefined): string | undefined {
-  const value = href?.trim();
-  if (!value || !URL.canParse(value)) return undefined;
-  return LINK_SCHEMES.has(new URL(value).protocol) ? value : undefined;
-}
-
 /** The element a tag opens, before the nesting rules; `undefined` when it stays text. */
 function elementFor(
   tag: string,
@@ -214,7 +220,7 @@ function elementFor(
     return spoiler ? { kind: 'element', tag: 'tg-spoiler', children } : undefined;
   }
   if (tag === 'a') {
-    const href = linkOf(attributes.get('href'));
+    const href = safeTelegramLinkHref(attributes.get('href'));
     return href === undefined ? undefined : { kind: 'element', tag, href, children };
   }
   if (tag === 'pre') return { kind: 'element', tag, children };
@@ -245,17 +251,25 @@ function elementFor(
 class TreeBuilder {
   readonly root: DraftNode[] = [];
   readonly #frames: Frame[] = [];
+  /** The frames' elements, outermost first. */
+  readonly #drafts: DraftElement[] = [];
+  /** Positions in `#frames` of each name, so a closing tag finds its frame at once. */
+  readonly #named = new Map<string, number[]>();
   /** Line breaks the text so far ends with, and how many the next text needs before it. */
   #trailing = 0;
   #needed = 0;
   #started = false;
 
   #innermost(): DraftElement | undefined {
-    for (let index = this.#frames.length - 1; index >= 0; index -= 1) {
-      const draft = this.#frames[index]?.draft;
-      if (draft) return draft;
-    }
-    return undefined;
+    return this.#drafts.at(-1);
+  }
+
+  #push(frame: Frame): void {
+    const positions = this.#named.get(frame.name);
+    if (positions === undefined) this.#named.set(frame.name, [this.#frames.length]);
+    else positions.push(this.#frames.length);
+    this.#frames.push(frame);
+    if (frame.draft) this.#drafts.push(frame.draft);
   }
 
   text(value: string): void {
@@ -275,7 +289,8 @@ class TreeBuilder {
 
   #append(text: string): void {
     if (text === '') return;
-    const trailing = /\n*$/.exec(text)?.[0].length ?? 0;
+    let trailing = 0;
+    while (text[text.length - 1 - trailing] === '\n') trailing += 1;
     this.#trailing = trailing === text.length ? this.#trailing + trailing : trailing;
     const children = this.#innermost()?.children ?? this.root;
     const last = children.at(-1);
@@ -297,60 +312,49 @@ class TreeBuilder {
     const parent = this.#innermost();
     if (tag === 'code' && parent?.element.tag === 'pre') {
       // `<pre><code class="language-x">` names the block's language; the code tag adds nothing.
-      const language = /(?:^|\s)language-([\w+#.-]{1,64})(?:\s|$)/.exec(
-        attributes.get('class') ?? '',
-      );
-      if (language?.[1] && parent.element.language === undefined) {
-        parent.element = { ...parent.element, language: language[1] };
+      if (parent.element.language === undefined) {
+        for (const token of (attributes.get('class') ?? '').split(/\s+/)) {
+          if (!token.startsWith('language-')) continue;
+          const language = token.slice('language-'.length);
+          if (TELEGRAM_CODE_LANGUAGE_PATTERN.test(language)) {
+            parent.element = { ...parent.element, language };
+            break;
+          }
+        }
       }
-      this.#frames.push({ name: tag, draft: undefined });
+      this.#push({ name: tag, draft: undefined });
       return;
     }
     const element = elementFor(tag, attributes);
-    const open = this.#frames.flatMap((frame) =>
-      frame.draft ? [frame.draft.element.tag] : [],
-    );
-    if (!element || !mayOpenInside(element.tag, open)) {
-      this.#frames.push({ name: tag, draft: undefined });
+    const open = this.#drafts.map((draft) => draft.element.tag);
+    if (!element || open.length >= MAX_ELEMENT_DEPTH || !mayOpenInside(element.tag, open)) {
+      this.#push({ name: tag, draft: undefined });
       return;
     }
     // Breaks owed before the element go before its tag, not inside it.
     this.#append(this.#pendingBreaks());
     const draft: DraftElement = { kind: 'element', element, children: [] };
     (parent?.children ?? this.root).push(draft);
-    this.#frames.push({ name: tag, draft });
+    this.#push({ name: tag, draft });
   }
 
   /** Closes the element the tag names and whatever is still open inside it; a stray close is ignored. */
   closeTag(name: string): void {
-    const tag = SYNONYMS[name] ?? name;
-    for (let index = this.#frames.length - 1; index >= 0; index -= 1) {
-      if (this.#frames[index]?.name === tag) {
-        this.#frames.length = index;
-        return;
-      }
+    const index = this.#named.get(SYNONYMS[name] ?? name)?.at(-1);
+    if (index === undefined) return;
+    while (this.#frames.length > index) {
+      const frame = this.#frames.pop();
+      if (frame === undefined) break;
+      this.#named.get(frame.name)?.pop();
+      if (frame.draft) this.#drafts.pop();
     }
   }
 }
 
-/**
- * The finished tree: adjacent text joined, and elements left with no text
- * dropped — they say nothing, and Telegram shows nothing for them either.
- */
-function finish(nodes: readonly DraftNode[]): TelegramHtmlNode[] {
-  const result: TelegramHtmlNode[] = [];
-  for (const node of nodes) {
-    if (node.kind === 'text') {
-      const last = result.at(-1);
-      if (last?.kind === 'text')
-        result[result.length - 1] = { kind: 'text', text: last.text + node.text };
-      else result.push(node);
-      continue;
-    }
-    const children = finish(node.children);
-    if (children.length > 0) result.push({ ...node.element, children });
-  }
-  return result;
+function materialize(nodes: readonly DraftNode[]): TelegramHtmlNode[] {
+  return nodes.map((node) =>
+    node.kind === 'text' ? node : withChildren(node.element, materialize(node.children)),
+  );
 }
 
 /** Parse markup into the tree Telegram accepts. Never throws. */
@@ -366,5 +370,5 @@ export function parseTelegramHtml(markup: string): TelegramHtmlNode[] {
     } else if (token.closing) builder.closeTag(token.name);
     else builder.openTag(token.name, token.attributes);
   }
-  return finish(builder.root);
+  return normalizeTelegramHtmlNodes(materialize(builder.root));
 }

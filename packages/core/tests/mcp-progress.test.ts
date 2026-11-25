@@ -46,6 +46,7 @@ function handlerFor(report: Report) {
     },
   });
   return createMcpHandler({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'progress-test', version: '1' },
     auth: () => ({}),
     services: [service],
@@ -280,7 +281,7 @@ describe('every tool call carries a reporter, listening or not', () => {
   };
 
   test('an agent-mounted tool has one, and calling it is a no-op rather than a crash', async () => {
-    const tools = mountAgent(service as never);
+    const tools = mountAgent(service as never, { access: { open: 'local-operator' } });
     const execute = tools.render_job?.execute;
     if (!execute) throw new Error('expected a mounted tool');
     const result = await execute(

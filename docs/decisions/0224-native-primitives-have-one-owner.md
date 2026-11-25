@@ -2,7 +2,8 @@
 title: "ADR 0224: Shared IO primitives have one owner"
 description: Files is extended explicitly, canonical JSON preserves bytes, commands use a neutral mechanism, a retry requires recipient authority.
 type: decision
-status: active
+status: accepted
+amendedBy: ["0243"]
 created: 2026-10-01 20:44 +07:00
 updated: 2026-10-01 21:03 +07:00
 ---

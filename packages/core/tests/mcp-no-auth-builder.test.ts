@@ -21,6 +21,7 @@ const service = implement(contract, { get: () => ({ ok: true }) });
 describe('buildMcpServer auth overloads', () => {
   test('builds a no-auth server without a cosmetic undefined argument', async () => {
     const server = buildMcpServer({
+      access: { open: 'local-operator' },
       serverInfo: { name: 'status', version: '1.0.0' },
       services: [service],
     });
@@ -31,6 +32,7 @@ describe('buildMcpServer auth overloads', () => {
   test('keeps the explicit auth form unchanged', async () => {
     const server = buildMcpServer(
       {
+        access: { open: 'local-operator' },
         serverInfo: { name: 'status', version: '1.0.0' },
         services: [service],
         context: (auth: { tenantId: string }) => ({ tenantId: auth.tenantId }),
@@ -45,6 +47,7 @@ describe('buildMcpServer auth overloads', () => {
 const authenticatedConfig: McpServerBuildConfig<{ tenantId: string }> = {
   serverInfo: { name: 'status', version: '1.0.0' },
   services: [service],
+  access: { open: 'local-operator' },
   context: (auth) => ({ tenantId: auth.tenantId }),
 };
 

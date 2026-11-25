@@ -19,9 +19,9 @@
  *
  * And it checks that every browser-safe entry is actually *reachable*: a module
  * built node-free but missing from the export map is a promise the package
- * cannot keep. That was a real consumer report — `dist/application/schemas.js`
- * existed, no `exports` path led to it, and the only way to the schema was the
- * server entry that breaks the page.
+ * cannot keep. A consumer once hit that exact gap — a schema module was built
+ * node-free, no `exports` path led to it, and the only reachable path pulled
+ * server code that broke the page.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

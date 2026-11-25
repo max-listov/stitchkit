@@ -13,7 +13,7 @@
  * The ban on nesting one stream inside another was a consequence of the child
  * process, not a rule anybody wanted.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,7 +62,11 @@ const service = createImplement()(contract, {
   },
 });
 
-const base = { name: 'app', services: [service] };
+const base = {
+  name: 'app',
+  services: [service],
+  access: { open: 'local-operator' } as const,
+};
 
 async function invoker() {
   return createCliInvoker(base);
@@ -110,7 +114,13 @@ function answers(out: string): Array<Record<string, unknown>> {
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+// After each test, not on `process.on('exit')`: the runner does not fire that
+// handler, and every directory of a run stayed behind.
 const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0))
+    rmSync(directory, { recursive: true, force: true });
+});
 function scratch(): string {
   const directory = mkdtempSync(join(tmpdir(), 'stitchkit-batch-'));
   directories.push(directory);
@@ -471,8 +481,4 @@ describe('a stream and a prompt resolve the same way', () => {
       'fail_item',
     ]);
   });
-});
-
-process.on('exit', () => {
-  for (const directory of directories) rmSync(directory, { recursive: true, force: true });
 });

@@ -32,8 +32,8 @@ export function createShellCodingTool(
     identity: { serviceName: 'coding', action: 'shell', method: 'POST' },
     input: createShellInputSchema(executableNames),
     output: ShellOutputSchema,
-    transports: ['AGENT'],
-    handler: async ({ input, signal }) => {
+    expose: ['AGENT'],
+    handler: async ({ input, signal, toolCallId }) => {
       if (input.args.length > limits.maxShellArguments) {
         throw new Error('Coding tool shell arguments exceed maxShellArguments');
       }
@@ -155,6 +155,7 @@ export function createShellCodingTool(
           maxOutputBytes: limits.maxShellOutputBytes,
           maxArtifactBytes: limits.maxArtifactBytes,
           ...(config.artifacts && { artifacts: config.artifacts }),
+          ...(toolCallId !== undefined && { toolCallId }),
           authorization: shellAuthorization,
         });
       });

@@ -3,6 +3,7 @@ title: "ADR 0291: --output-dir saves what a result carries"
 description: A CLI saves the files a result carries by their schema, whatever their type, prints a link in place of saved bytes, writes a name once per batch and never turns an executed command into a refusal.
 type: decision
 status: accepted
+amendedBy: ["0292"]
 created: 2026-11-17 13:54 +07:00
 updated: 2026-11-17 15:52 +07:00
 ---

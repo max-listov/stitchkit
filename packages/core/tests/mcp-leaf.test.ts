@@ -32,6 +32,7 @@ test('MCP leaf keeps canonical parsing and full SDK tool compatibility', async (
     present: { ...definition.present, agent: () => ({ type: 'text', value: 'shared' }) },
   });
   const server = buildMcpServer({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'leaf', version: '1' },
     services: [],
     runtimeTools: [full],

@@ -1,9 +1,10 @@
-import type { ModelMessage, ToolSet } from 'ai';
+import type { ModelMessage, ToolApprovalConfiguration, ToolSet } from 'ai';
+import { issueRunContext } from './context-issue';
 import { AgentContextOverflowError } from './context-refusal';
 import { createAgentToolFenceLifecycle } from './managed-tools';
 import type { AgentResolvedModel } from './models';
 import type { ComposedAgentPrompt } from './prompt';
-import { adoptSnapshot, billedUsage, type RunExecution } from './run-execution-state';
+import { adoptSnapshot, type RunExecution } from './run-execution-state';
 import {
   createRunHistoryProjection,
   loadDurableSystem,
@@ -12,8 +13,9 @@ import {
   snapshotForRunPrompt,
   USER_INSTRUCTION_SEED_KEY,
 } from './run-prompt-history';
+import { applyStepBarriers } from './run-step-barriers';
+import { recordStepSpend } from './run-step-spend';
 import type { AgentContextUsage, AgentRuntimeRunContext } from './runtime';
-import { addUsage } from './runtime-internals';
 import type { AgentSnapshot } from './schemas';
 import { appliedSnapshot } from './terminal-commit';
 
@@ -23,6 +25,8 @@ export interface PreparedTurn<CONTEXT, TOOLS extends ToolSet> {
   runtimeContext: AgentRuntimeRunContext<CONTEXT>;
   prompt: ComposedAgentPrompt;
   tools: TOOLS;
+  /** `loop.toolApproval` under the step's call bound. */
+  toolApproval: ToolApprovalConfiguration<TOOLS, CONTEXT> | undefined;
   history: ModelMessage[];
   projection: RunHistoryProjection;
 }
@@ -42,8 +46,6 @@ async function compactHistory<CONTEXT, TOOLS extends ToolSet>(
       store: config.store,
       signal: executionSignal,
     });
-    adoptSnapshot(state, compacted.snapshot);
-    await operationLifecycle.finish('completed');
   } catch (error) {
     const latest = await config.store.loadRun({
       conversationId: state.run.conversationId,
@@ -57,15 +59,19 @@ async function compactHistory<CONTEXT, TOOLS extends ToolSet>(
     throw error;
   }
   // A model call the run caused is the run's cost, even though it made no
-  // step and emitted no event of its own.
+  // step and emitted no model stream event of its own. Record it before
+  // adopting the snapshot or finishing the operation lifecycle so a CAS
+  // conflict cannot erase already-billed compaction spend.
   if (compacted.usage) {
-    // The SDK's terminal total covers only model steps. Compaction and
-    // spend carried by a recovered attempt stay in a separate subtotal,
-    // so reconciling the provider total cannot replace either one.
-    state.nonModelUsage = addUsage(state.nonModelUsage, compacted.usage);
-    const billed = billedUsage(state);
-    state.usage = billed ? addUsage(state.nonModelUsage, billed) : state.nonModelUsage;
+    await recordStepSpend(execution, {
+      phase: 'compaction',
+      usage: compacted.usage,
+      // Counted from one, like a model step's attempt: the try that produced the summary.
+      attempt: compacted.attempts,
+    });
   }
+  adoptSnapshot(state, compacted.snapshot);
+  await operationLifecycle.finish('completed');
 }
 
 function createRuntimeContext<CONTEXT, TOOLS extends ToolSet>(
@@ -95,9 +101,11 @@ function createRuntimeContext<CONTEXT, TOOLS extends ToolSet>(
       ...(state.run.fencingToken !== undefined && { fencingToken: state.run.fencingToken }),
     }),
   });
-  return {
+  return issueRunContext({
     context: execution.input.context,
-    run: state.run,
+    get run() {
+      return state.run;
+    },
     signal: executionSignal,
     toolFenceLifecycle,
     // A getter, because a step reads it after the previous step landed and a
@@ -107,7 +115,10 @@ function createRuntimeContext<CONTEXT, TOOLS extends ToolSet>(
       if (!descriptor) return undefined;
       return { usedTokens: state.lastPromptTokens, contextWindow: descriptor.contextWindow };
     },
-  };
+    get selectedModel(): AgentResolvedModel | undefined {
+      return state.selectedModel;
+    },
+  });
 }
 
 /**
@@ -161,8 +172,9 @@ export async function prepareTurn<CONTEXT, TOOLS extends ToolSet>(
 ): Promise<PreparedTurn<CONTEXT, TOOLS>> {
   const { config } = execution.dependencies;
   const { state, executionSignal } = execution;
-  await compactHistory(execution);
   const runtimeContext = createRuntimeContext(execution);
+  execution.runtimeContext = runtimeContext;
+  await compactHistory(execution);
   const selectedModel = await config.models.resolve({
     context: execution.input.context,
     conversationId: state.run.conversationId,
@@ -171,7 +183,7 @@ export async function prepareTurn<CONTEXT, TOOLS extends ToolSet>(
   });
   state.selectedModel = selectedModel;
   let promptSnapshot: AgentSnapshot = snapshotForRunPrompt(state.snapshot, state.run.id);
-  const [composedPrompt, tools] = await Promise.all([
+  const [composedPrompt, rawTools] = await Promise.all([
     config.prompt({
       context: execution.input.context,
       signal: executionSignal,
@@ -181,6 +193,11 @@ export async function prepareTurn<CONTEXT, TOOLS extends ToolSet>(
     }),
     config.tools(runtimeContext),
   ]);
+  const { tools, toolApproval } = applyStepBarriers(
+    rawTools,
+    config.loop?.toolApproval,
+    config.loop?.stepBarriers,
+  );
   let prompt = composedPrompt;
   const userInstructionsInserted = await seedUserInstructions(execution, prompt);
   if (userInstructionsInserted !== undefined) {
@@ -208,5 +225,5 @@ export async function prepareTurn<CONTEXT, TOOLS extends ToolSet>(
   // were seeded above and survive every retry of this run, so there is
   // nothing to prepend here. → ADR 0178
   const history: ModelMessage[] = [...(await projection.projectHistory(promptSnapshot))];
-  return { selectedModel, runtimeContext, prompt, tools, history, projection };
+  return { selectedModel, runtimeContext, prompt, tools, toolApproval, history, projection };
 }

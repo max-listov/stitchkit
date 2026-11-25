@@ -2,7 +2,7 @@
 title: "ADR 0220: Compose existing agent owners"
 description: "Compose contract tools, authenticated realtime control, React views and exact-run behavioral checks."
 type: decision
-status: active
+status: accepted
 created: 2026-09-30 22:45 +07:00
 updated: 2026-09-30 23:03 +07:00
 ---

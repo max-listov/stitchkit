@@ -6,6 +6,9 @@
     "moduleResolution": "bundler",
     "paths": {
       "stitchkit/agent-runtime": ["../../packages/core/src/entrypoints/agent-runtime.ts"],
+      "stitchkit/agent-runtime/postgres": [
+        "../../packages/core/src/entrypoints/agent-runtime/postgres.ts"
+      ],
       "stitchkit/agent-runtime/testing": [
         "../../packages/core/src/entrypoints/agent-runtime/testing.ts"
       ]

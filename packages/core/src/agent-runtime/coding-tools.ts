@@ -1,9 +1,12 @@
 import path from 'node:path';
-import { z } from 'zod';
 import { defineRuntimeTool } from '../tools/runtime-tool';
 import {
   type AgentCodingToolConfig,
   type AgentCodingToolDefinition,
+  ArtifactReadInputSchema,
+  ArtifactReadOutputSchema,
+  ArtifactSearchOutputSchema,
+  createArtifactSearchInputSchema,
   resolveCodingToolLimits,
 } from './coding-tool-contract';
 import { createFileCodingTools } from './coding-tool-files';
@@ -49,24 +52,11 @@ export function createAgentCodingTools(
         name: AGENT_CODING_TOOL_NAMES.readOutput,
         description: 'Read a bounded byte slice from one opaque coding output artifact.',
         identity: { serviceName: 'coding', action: 'read-artifact', method: 'POST' },
-        input: z
-          .object({
-            reference: z.string().min(1),
-            offset: z.int().nonnegative().default(0),
-            maxBytes: z.int().positive().optional(),
-          })
-          .strict(),
-        output: z
-          .object({
-            reference: z.string().min(1),
-            offset: z.int().nonnegative(),
-            text: z.string(),
-            bytes: z.int().nonnegative(),
-            totalBytes: z.int().nonnegative().optional(),
-          })
-          .strict(),
-        transports: ['AGENT'],
+        input: ArtifactReadInputSchema,
+        output: ArtifactReadOutputSchema,
+        expose: ['AGENT'],
         handler: async ({ input }) => {
+          const offset = input.offset ?? 0;
           const maxBytes = Math.min(
             input.maxBytes ?? limits.maxReadBytes,
             limits.maxReadBytes,
@@ -74,27 +64,27 @@ export function createAgentCodingTools(
           await authorizeCodingTool(config, {
             operation: 'artifact-read',
             reference: input.reference,
-            offset: input.offset,
+            offset,
             maxBytes,
           });
           const originAuthorization = await artifacts.authorization?.(input.reference);
           if (originAuthorization) await authorizeCodingTool(config, originAuthorization);
           const result = await artifacts.read({
             reference: input.reference,
-            offset: input.offset,
+            offset,
             maxBytes,
           });
           if (result.data.byteLength > maxBytes)
             throw new Error('Coding artifact store exceeded the requested byte budget');
           if (
             result.totalBytes !== undefined &&
-            result.totalBytes < input.offset + result.data.byteLength
+            result.totalBytes < offset + result.data.byteLength
           ) {
             throw new Error('Coding artifact store returned inconsistent totalBytes');
           }
           return {
             reference: input.reference,
-            offset: input.offset,
+            offset,
             text: new TextDecoder('utf-8', { fatal: true }).decode(result.data),
             bytes: result.data.byteLength,
             ...(result.totalBytes !== undefined && { totalBytes: result.totalBytes }),
@@ -109,20 +99,9 @@ export function createAgentCodingTools(
           name: AGENT_CODING_TOOL_NAMES.searchOutput,
           description: 'Search a durable spilled output without loading it into context.',
           identity: { serviceName: 'coding', action: 'search-artifact', method: 'POST' },
-          input: z
-            .object({
-              reference: z.string().min(1),
-              query: z.string().min(1),
-              maxMatches: z.int().positive().max(limits.maxSearchResults).default(20),
-            })
-            .strict(),
-          output: z
-            .object({
-              reference: z.string(),
-              matches: z.array(z.object({ line: z.int().positive(), text: z.string() })),
-            })
-            .strict(),
-          transports: ['AGENT'],
+          input: createArtifactSearchInputSchema(limits.maxSearchResults),
+          output: ArtifactSearchOutputSchema,
+          expose: ['AGENT'],
           handler: async ({ input }) => {
             await authorizeCodingTool(config, {
               operation: 'artifact-search',

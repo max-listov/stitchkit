@@ -9,8 +9,8 @@ updated: 2026-08-17
 
 # ADR 0077 — An error definition carries its default message
 
-- **Status:** Accepted — extends
-  [ADR 0058](0058-zod-first-domain-error-definitions.md)
+**Relations:** extends [ADR 0058](0058-zod-first-domain-error-definitions.md)
+
 - **Date:** 2026-08-17
 
 ## Context

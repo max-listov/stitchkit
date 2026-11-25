@@ -25,7 +25,7 @@ const definition = defineRuntimeTool({
   name: 'measure',
   description: 'Typed SDK presenters',
   identity: { serviceName: 'probe', action: 'measure', method: 'POST' },
-  transports: ['CLI', 'MCP', 'AGENT'],
+  expose: ['CLI', 'MCP', 'AGENT'],
   input,
   output,
   handler: ({ input }) => ({ size: input.text.length }),
@@ -40,15 +40,21 @@ const typed: RuntimeToolDefinitionWithOutput<
   undefined,
   RuntimeToolPresenters<z.output<typeof output>>
 > = definition;
-const cli: CliConfig = { name: 'sdk-cli', version: '1', runtimeTools: [typed] };
+const cli: CliConfig = {
+  name: 'sdk-cli',
+  version: '1',
+  access: { open: 'local-operator' },
+  runtimeTools: [typed],
+};
 const invoker: CliInvokerConfig<{ id: string }> = {
   name: 'sdk-invoker',
+  access: { open: 'local-operator' },
   auth: { id: 'local' },
   runtimeTools: () => [typed],
 };
 void createCli(cli);
 void createCliInvoker(invoker);
-void mountAgent([], { runtimeTools: [typed] });
+void mountAgent([], { access: { open: 'local-operator' }, runtimeTools: [typed] });
 // A registered list is the deferred Agent surface's catalog without a conversion.
 const catalog: readonly RuntimeToolDefinition[] = [typed];
 void createDeferredAgentToolSurface({

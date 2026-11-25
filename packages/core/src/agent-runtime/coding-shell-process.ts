@@ -58,6 +58,8 @@ export async function runCodingShell(input: {
   maxArtifactBytes: number;
   artifacts?: AgentCodingToolConfig['artifacts'];
   authorization?: Parameters<NonNullable<AgentCodingToolConfig['authorize']>>[0];
+  /** The call whose output may spill; the spill records it. */
+  toolCallId?: string;
   spawn?: () => ReturnType<NonNullable<AgentProcessSandbox['spawn']>>;
 }) {
   const stdoutHeader = Buffer.from('--- stdout ---\n');
@@ -195,6 +197,7 @@ export async function runCodingShell(input: {
         mediaType: 'text/plain; charset=utf-8',
         data: artifactData ?? new Uint8Array(),
         ...(input.authorization && { authorization: input.authorization }),
+        ...(input.toolCallId !== undefined && { toolCallId: input.toolCallId }),
       })
     : undefined;
   return ShellOutputSchema.parse({

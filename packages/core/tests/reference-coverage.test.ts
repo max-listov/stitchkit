@@ -111,14 +111,15 @@ describe('the published entrypoint list is one list', () => {
   });
 });
 
-const entryFiles = Object.values(ENTRYPOINTS).map((file) => join(SRC, file));
-const program = ts.createProgram(entryFiles, {
+const PROGRAM_OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ES2022,
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler,
   skipLibCheck: true,
   noEmit: true,
-});
+};
+const entryFiles = Object.values(ENTRYPOINTS).map((file) => join(SRC, file));
+const program = ts.createProgram(entryFiles, PROGRAM_OPTIONS);
 const checker = program.getTypeChecker();
 
 /** Every name reachable from an entrypoint, including transitive `export *` declarations. */
@@ -230,13 +231,60 @@ const FULLY_DOCUMENTED = [
   'stitchkit/process/owner-loss',
   'stitchkit/files/packaging',
   'stitchkit/tools/mcp',
+  'stitchkit/handler',
   'stitchkit/agent-runtime/react',
   'stitchkit/agent-runtime/realtime',
+  'stitchkit/agent-runtime/postgres',
+  'stitchkit/agent-executor',
+  'stitchkit/agent-executor/acp',
+  'stitchkit/agent-executor/claude',
+  'stitchkit/agent-executor/claude-sdk',
+  'stitchkit/agent-executor/codex',
+  'stitchkit/agent-executor/testing',
+  'stitchkit/spend',
+  'stitchkit/spend/testing',
+  'stitchkit/service-host',
+  'stitchkit/service-host/macos',
+  'stitchkit/sync',
+  'stitchkit/sync/postgres',
 ];
 
 // Names added to older entrypoints since 0.102.0; the rest of those entrypoints predates this rule.
 const DOCUMENTED_ADDITIONS: Record<string, readonly string[]> = {
-  'stitchkit/tools': ['ToolSurfaceProjection'],
+  'stitchkit/contract': [
+    'OperationEffect',
+    'OperationEffectSchema',
+    'contractOperationEffects',
+    'requireContractOperationEffects',
+  ],
+  'stitchkit/http': [
+    'BRIDGE_ORIGIN',
+    'BridgeAbortFrame',
+    'BridgeAbortFrameSchema',
+    'BridgeClientPort',
+    'BridgeDropReason',
+    'BridgeFailureCode',
+    'BridgeFailureCodeSchema',
+    'BridgeFailureError',
+    'BridgeFailureFrame',
+    'BridgeFailureFrameSchema',
+    'BridgeFetch',
+    'BridgeFetchOptions',
+    'BridgeFrame',
+    'BridgeFrameSchema',
+    'BridgeHeaderEntry',
+    'BridgeHeaderEntrySchema',
+    'BridgeHelloFrame',
+    'BridgeHelloFrameSchema',
+    'BridgeInvoke',
+    'BridgeRequestFrame',
+    'BridgeRequestFrameSchema',
+    'BridgeResponseFrame',
+    'BridgeResponseFrameSchema',
+    'DEFAULT_BRIDGE_MAX_FRAME_BYTES',
+    'createBridgeFetch',
+  ],
+  'stitchkit/tools': ['ToolAccess', 'ToolGate', 'ToolOpenReason', 'ToolSurfaceProjection'],
   'stitchkit/tools/connections': [
     'ConnectionFailureContext',
     'ConnectionOperation',
@@ -248,8 +296,54 @@ const DOCUMENTED_ADDITIONS: Record<string, readonly string[]> = {
   ],
   'stitchkit/cli': ['RuntimeToolDefinitionWithoutOutput'],
   'stitchkit/primitives': ['CanonicalJsonOptions', 'canonicalJson'],
-  'stitchkit/server': ['NormalizeErrorOptions'],
-  'stitchkit/agent-runtime/testing': ['inspectAgentRun'],
+  'stitchkit/server': [
+    'LocalHostGuard',
+    'LocalHostGuardConfig',
+    'NormalizeErrorOptions',
+    'createLocalHostGuard',
+  ],
+  'stitchkit/agent-runtime/testing': ['inspectAgentRun', 'AgentStoreConformanceCapabilities'],
+  'stitchkit/agent-runtime': [
+    'AgentBranchRefusal',
+    'AgentBranchRefusalCode',
+    'AgentChildManagerConfig',
+    'AgentChildToolsConfig',
+    'AgentConversationBranchPlan',
+    'AgentEventSearchToolsConfig',
+    'AgentRuntimeStoreCapabilities',
+    'AgentScheduleToolsConfig',
+    'AgentStateToolsConfig',
+    'AgentStoreOptionalCapability',
+    'AgentStoreUnsupportedCapabilityError',
+    'PostgresAgentEventSearchConfig',
+    'modelInvocationSpendAttribution',
+    'AgentStepBarrierError',
+    'AgentStepBarriers',
+    'AgentToolCallDependencies',
+    'createToolDependencyResolver',
+  ],
+  'stitchkit/agent-runtime/sandbox': [
+    'AgentSandboxGrade',
+    'AgentSandboxGradeSchema',
+    'AgentSandboxRestriction',
+    'AgentSandboxRestrictionSchema',
+    'missingSandboxRestrictions',
+  ],
+  'stitchkit/agent-runtime/openrouter': [
+    'OpenRouterAdmissionPolicy',
+    'OpenRouterAdmissionReason',
+    'OpenRouterCatalogSnapshot',
+    'OpenRouterEndpoint',
+    'OpenRouterMaxPrice',
+    'OpenRouterModelAdmission',
+    'OpenRouterProviderRouting',
+    'OpenRouterReasoningEffort',
+    'OpenRouterRequestPolicy',
+    'OpenRouterRoutePin',
+    'OpenRouterRouteResolver',
+    'OpenRouterSnapshotModel',
+    'OpenRouterSnapshotOptions',
+  ],
   'stitchkit/agent-runtime/browser': [
     'AgentBrowserCommand',
     'AgentBrowserRequest',
@@ -263,6 +357,7 @@ const DOCUMENTED_ADDITIONS: Record<string, readonly string[]> = {
     'createAgentController',
   ],
   'stitchkit/application': [
+    'AppliedSqliteMigration',
     'DiagnosticJournalAnomaly',
     'DiagnosticJournalAnomalySchema',
     'DiagnosticJournalReadResult',
@@ -281,14 +376,30 @@ const DOCUMENTED_ADDITIONS: Record<string, readonly string[]> = {
     'DirectoryInboxAcceptResultSchema',
     'DirectoryInboxIdentity',
     'DirectoryInboxIdentitySchema',
+    'SqliteMigration',
+    'SqliteMigrationDefinition',
+    'SqliteMigrationRun',
     'StateStoreUpdateContext',
     'createDiagnosticJournalReadResultSchema',
+    'planSqliteMigrations',
   ],
   'stitchkit/application/diagnostic-journal': [
     'DiagnosticJournalReaderConfig',
     'readDiagnosticJournal',
   ],
-  'stitchkit/files': ['AtomicFilePublicationError', 'FileObservation'],
+  'stitchkit/files': [
+    'AtomicFilePublicationError',
+    'FileObservation',
+    'MAX_POLLED_JSON_PATHS',
+    'PolledJsonChange',
+    'PolledJsonOptions',
+    'RegularFileAccept',
+    'RegularFileAsyncReadOptions',
+    'RegularFileReadOptions',
+    'RegularFileRefusal',
+    'WaitForDirectoryOptions',
+    'waitForDirectory',
+  ],
   'stitchkit/telegram': [
     'StoredTelegramUpdateExhaustion',
     'TelegramBroadcastFailure',
@@ -321,6 +432,13 @@ const DOCUMENTED_ADDITIONS: Record<string, readonly string[]> = {
     'TelegramWidgetCallOptions',
     'telegramWidgetApi',
   ],
+  'stitchkit/telegram/html': [
+    'TelegramMarkdownSplitError',
+    'TelegramMarkdownSplitOptions',
+    'TelegramMarkdownSplitRefusal',
+    'markdownToTelegramHtml',
+    'splitTelegramMarkdown',
+  ],
 };
 
 describe('public exports explain themselves in one line', () => {
@@ -342,13 +460,7 @@ describe('public exports explain themselves in one line', () => {
         "export * from './owner';\nexport { documentedValue as renamed } from './owner';",
       ],
     ]);
-    const options: ts.CompilerOptions = {
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.ESNext,
-      moduleResolution: ts.ModuleResolutionKind.Bundler,
-      noEmit: true,
-    };
-    const host = ts.createCompilerHost(options);
+    const host = ts.createCompilerHost(PROGRAM_OPTIONS);
     const realSource = host.getSourceFile.bind(host);
     host.getSourceFile = (name, languageVersion, ...rest) => {
       const text = virtual.get(name);
@@ -360,7 +472,7 @@ describe('public exports explain themselves in one line', () => {
     host.directoryExists = (name) =>
       name.startsWith('/virtual') || ts.sys.directoryExists(name);
     host.readFile = (name) => virtual.get(name) ?? ts.sys.readFile(name);
-    const virtualProgram = ts.createProgram(['/virtual/entry.ts'], options, host);
+    const virtualProgram = ts.createProgram(['/virtual/entry.ts'], PROGRAM_OPTIONS, host);
     expect(undocumentedExports(virtualProgram, '/virtual/entry.ts')).toEqual([
       'undocumentedValue',
     ]);

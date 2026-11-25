@@ -7,9 +7,11 @@
  * pinned connection is not a weaker one. The body is a Fetch stream over the
  * socket, with backpressure and cancellation preserved.
  */
+
 import type { IncomingMessage } from 'node:http';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { abortReason } from './abort-race';
 
 /** One hop, already resolved: open the connection to exactly `address`. */
 export type PinnedTransport = (
@@ -57,7 +59,7 @@ export async function requestPinned(
       if (answered) return;
       // A deadline or a caller's cancel must arrive as the reason it was given,
       // not as the socket's own "operation was aborted".
-      reject(signal?.aborted && signal.reason !== undefined ? signal.reason : error);
+      reject(signal?.aborted ? abortReason(signal) : error);
     });
     request.end();
   });

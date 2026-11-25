@@ -9,9 +9,10 @@ updated: 2026-08-08
 
 # ADR 0064 — Runtime-tool factories validate context at execution
 
-- **Status:** Accepted — extends the neutral runtime-tool operation in
-  [ADR 0055](0055-runtime-tools-share-one-neutral-operation.md) without adding a
-  second runner or mount surface.
+**Relations:** extends the neutral runtime-tool operation in
+[ADR 0055](0055-runtime-tools-share-one-neutral-operation.md) without adding a second runner or
+mount surface.
+
 - **Date:** 2026-08-08
 
 ## Context

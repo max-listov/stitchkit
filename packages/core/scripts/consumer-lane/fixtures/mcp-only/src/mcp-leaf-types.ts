@@ -33,6 +33,7 @@ const registered: RuntimeToolDefinition = definition;
 const surface: McpSurfaceDefinition = { services: [], runtimeTools: [registered] };
 const config: McpHandlerConfig<{ id: string }> = {
   serverInfo: { name: 'strict-mcp-only', version: '1' },
+  access: { open: 'local-operator' },
   ...surface,
   auth: () => ({ id: 'reader' }),
 };

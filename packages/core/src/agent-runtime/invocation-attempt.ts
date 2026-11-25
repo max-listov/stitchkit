@@ -13,7 +13,7 @@ import type {
 } from './invocation-schema';
 import type { AgentResolvedModel } from './models';
 import { markProviderOrigin } from './provider-origin';
-import { normalizeSdkUsage } from './runtime-internals';
+import { normalizeStepUsage } from './run-step-spend';
 
 type ProviderResult = Awaited<
   ReturnType<NonNullable<LanguageModelMiddleware['wrapGenerate']>>
@@ -295,5 +295,5 @@ function reportedUsage(
     },
     ...(value?.raw && { raw: value.raw }),
   };
-  return selected.normalizeUsage?.({ usage, providerMetadata }) ?? normalizeSdkUsage(usage);
+  return normalizeStepUsage(selected, usage, providerMetadata);
 }

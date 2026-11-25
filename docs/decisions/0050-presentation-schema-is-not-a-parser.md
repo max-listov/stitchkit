@@ -2,7 +2,9 @@
 title: The tool presentation schema is not a parser
 description: MCP and agent SDKs advertise an immutable JSON Schema through identity adapters while original Zod contracts remain the only executable input parsers.
 type: decision
-status: active
+status: accepted
+amends: ["0031", "0033", "0044"]
+supersedes: ["0034"]
 created: 2026-08-07
 updated: 2026-08-07
 ---

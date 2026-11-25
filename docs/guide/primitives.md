@@ -85,6 +85,31 @@ It returns the due instant, signed remaining days, overdue days and caller-owned
 `queryBoundary(now)` returns instants suitable for a data-adapter predicate; reminders and
 escalations are not included.
 
+## Order keys
+
+```ts
+import { orderKeyBetween } from 'stitchkit/primitives'
+
+const first = orderKeyBetween(null, null)    // 'a0' — the first row of an empty list
+const next = orderKeyBetween(first, null)    // 'a1' — appended
+const between = orderKeyBetween(first, next) // 'a0V' — inserted between them
+```
+
+An order key is the place of a row among its siblings, stored as text and sorted by plain string
+comparison — JavaScript's `<`, `COLLATE "C"` in PostgreSQL, SQLite's default collation. There is
+always a key between two others, so a list is never renumbered: a key written once stays. Appending
+or prepending counts an integer up or down and keeps keys a few characters long; only inserts into
+one gap grow them, by about one character per five inserts.
+
+The format is the one the `fractional-indexing` package makes with its default alphabets, and for
+the same ascending bounds the key is the same, so keys an application already stores read as well-formed and
+new keys sort among them. One case differs: below the integer next to the smallest one the package
+returns a bare integer it then refuses as a bound; here the key carries a fraction.
+`orderKeyBetween` refuses bounds that are not strictly ascending (`OrderKeyError`, `reason: 'order'`)
+or not well-formed (`'malformed'`); `isOrderKey` and `OrderKeySchema` check a key arriving at a
+boundary. Who assigns the key a row is stored with — the server, from the neighbours an edit names —
+is the application's decision.
+
 ## Audit and delivery
 
 Put an audit decision beside each operation:

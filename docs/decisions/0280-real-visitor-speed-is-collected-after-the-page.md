@@ -3,6 +3,7 @@ title: "ADR 0280: Real-visitor speed is collected after the page"
 description: stitchkit/tracking/performance loads web-vitals as an idle chunk, a missing metric is null, and the browser client carries no zod.
 type: decision
 status: accepted
+amends: ["0166"]
 created: 2026-11-03
 updated: 2026-11-03
 ---

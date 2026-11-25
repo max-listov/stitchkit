@@ -1,7 +1,7 @@
 ---
 title: Universal companion selects one runtime target
 description: One plugin and runtime loader for a JS artifact with several Darwin addons.
-status: active
+status: accepted
 created: 2026-10-04 22:33 +07:00
 updated: 2026-10-04 22:33 +07:00
 type: decision

@@ -3,14 +3,15 @@ title: "ADR 0076 — Explicit process-signal binding (bindProcessSignals)"
 description: The framework ships the signal state machine as an explicit opt-in binding while still registering no listener of its own and never choosing an exit code.
 type: decision
 status: accepted
+amends: ["0074"]
 created: 2026-08-17
 updated: 2026-08-17
 ---
 
 # ADR 0076 — Explicit process-signal binding (`bindProcessSignals`)
 
-- **Status:** Accepted — supersedes the signal clause of
-  [ADR 0074](0074-server-owned-managed-shutdown.md)
+**Relations:** supersedes the signal clause of [ADR 0074](0074-server-owned-managed-shutdown.md)
+
 - **Date:** 2026-08-17
 
 ## Context

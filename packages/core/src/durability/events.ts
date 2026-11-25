@@ -1,16 +1,28 @@
 import { z } from 'zod';
 
+// The canonical event log's vocabulary: the id every record carries, the
+// envelope every ledger record has, what an append carries and how a page is
+// read.
+//
+// It lives beside the durability engine rather than inside `agent-runtime`
+// because it is what the engine's two-method ledger speaks: an application that
+// backs `createLocalStepDurability` with its own database implements these
+// shapes and never imports the agent runtime. The agent store is one ledger
+// that speaks them — the kinds below are its vocabulary, and the durability
+// kinds are three of them. → ADR 0187, ADR 0197.
+
 /**
- * The canonical event log's vocabulary: the envelope every ledger record has,
- * what an append carries and how a page is read.
+ * A record id: any non-empty text except NUL.
  *
- * It lives beside the durability engine rather than inside `agent-runtime`
- * because it is what the engine's two-method ledger speaks: an application that
- * backs `createLocalStepDurability` with its own database implements these
- * shapes and never imports the agent runtime. The agent store is one ledger
- * that speaks them — the kinds below are its vocabulary, and the durability
- * kinds are three of them. → ADR 0187, ADR 0197.
+ * Postgres cannot store `\0` in `text` (`22021`); refusing it here makes
+ * SQLite, the memory store and Postgres answer the same, so an archive moves
+ * between stores whole.
  */
+export const AgentRecordIdSchema = z
+  .string()
+  .min(1)
+  .refine((value) => !value.includes('\0'), 'A record id cannot contain NUL');
+
 export const AgentStoreEventKindSchema = z.enum([
   'runtime/baseline',
   'runtime/branched',
@@ -47,8 +59,8 @@ export type AgentStoreEventKind = z.infer<typeof AgentStoreEventKindSchema>;
 export const AgentStoreEventEnvelopeSchema = z
   .object({
     schemaVersion: z.int().positive(),
-    eventId: z.string().min(1),
-    conversationId: z.string().min(1),
+    eventId: AgentRecordIdSchema,
+    conversationId: AgentRecordIdSchema,
     seq: z.int().positive(),
     kind: z.string().min(1),
     occurredAt: z.iso.datetime({ offset: true }),
@@ -61,7 +73,7 @@ export type AgentStoreEventEnvelope = z.infer<typeof AgentStoreEventEnvelopeSche
 
 export const AppendAgentStoreEventSchema = z
   .object({
-    conversationId: z.string().min(1),
+    conversationId: AgentRecordIdSchema,
     kind: AgentStoreEventKindSchema,
     occurredAt: z.iso.datetime({ offset: true }).optional(),
     payload: z.json(),
@@ -73,7 +85,7 @@ export type AppendAgentStoreEvent = z.infer<typeof AppendAgentStoreEventSchema>;
 
 export const ReadAgentStoreEventsSchema = z
   .object({
-    conversationId: z.string().min(1),
+    conversationId: AgentRecordIdSchema,
     fromSeq: z.int().positive().optional(),
     toSeq: z.int().positive().optional(),
     limit: z.int().positive().max(10_000).default(1_000),

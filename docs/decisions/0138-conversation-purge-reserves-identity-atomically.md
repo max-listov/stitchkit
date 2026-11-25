@@ -2,14 +2,13 @@
 title: Conversation purge reserves identity atomically
 description: Optional durable deletion removes runtime payloads and permanently fences a conversation ID in the same transaction.
 type: decision
-status: active
+status: accepted
 created: 2026-08-31
 updated: 2026-08-31
 ---
 
 # ADR 0138 — Conversation purge reserves identity atomically
 
-- Status: Accepted
 - Date: 2026-08-31
 
 ## Context

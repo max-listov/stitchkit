@@ -1,13 +1,13 @@
 import { z } from 'zod';
-import type {
-  AgentStoreEventEnvelope,
-  AgentStoreEventPage,
-  ReadAgentStoreEventsSchema,
+import {
+  AgentRecordIdSchema,
+  type AgentStoreEventEnvelope,
+  type AgentStoreEventPage,
+  type ReadAgentStoreEventsSchema,
 } from '../durability/events';
 import {
   type AgentMessage,
   AgentMessageSchema,
-  AgentRecordIdSchema,
   AgentRecordVersionSchema,
   type AgentRun,
   AgentRunSchema,
@@ -175,10 +175,13 @@ export interface AgentRuntimeStoreDriver<TRANSACTION> {
      *
      * `load` deliberately hides compacted rows, so a seed restored into a
      * conversation whose receipts were not restored can match a message the
-     * active view does not show. Optional because a driver with no inactive
-     * store has nothing `load` hides; the seed write is idempotent either way.
+     * active view does not show. Required on every driver: drivers must retain
+     * compacted message identities (either as inactive rows or a tombstone ID
+     * set) so `hasMessage` still returns `true` after compaction and prevents
+     * `seedConversationInput` from resurrecting compacted instructions under a
+     * new `seedKey`.
      */
-    hasMessage?(
+    hasMessage(
       transaction: TRANSACTION,
       input: { conversationId: string; messageId: string },
     ): Promise<boolean>;
@@ -194,11 +197,15 @@ export interface AgentRuntimeStoreDriver<TRANSACTION> {
       input: z.infer<typeof ReadAgentStoreEventsSchema>,
     ): Promise<AgentStoreEventPage>;
     /**
-     * One event by its identity, or `undefined`. Once-only admission asks this
-     * on every call; without it the store pages through the whole conversation
-     * log, which is linear in its length and reads every payload on the way.
+     * One event by its identity within `conversationId`, or `undefined`.
+     *
+     * Required for once-only admission (`appendEventOnce` / `findEventOnce`).
+     * Back this lookup with a unique index so every admission is a single
+     * indexed lookup rather than a log scan: `(conversationId, eventId)`, or
+     * `eventId` alone — event ids are unique across conversations, a once-only
+     * id because it hashes the conversation, any other because it is random.
      */
-    find?(
+    find(
       transaction: TRANSACTION,
       input: { conversationId: string; eventId: string },
     ): Promise<AgentStoreEventEnvelope | undefined>;

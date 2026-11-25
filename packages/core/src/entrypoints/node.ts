@@ -26,6 +26,12 @@ export {
   type ScopedImplementationRegistry,
   type ScopedRegistryHandlers,
 } from '../server/implement-registry';
+export {
+  createLocalHostGuard,
+  type LocalHostGuard,
+  type LocalHostGuardConfig,
+  type LocalHostRefusal,
+} from '../server/local-host';
 export type { LogFormat } from '../server/logger';
 export {
   type NodeRuntimeServer,
@@ -97,7 +103,6 @@ export {
 } from '../server/unix-client';
 export {
   AppError,
-  appError,
   badRequest,
   conflict,
   forbidden,

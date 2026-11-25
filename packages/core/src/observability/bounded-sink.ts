@@ -1,3 +1,4 @@
+import { assertTimerMs } from '../internal/deadline';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import { type ObservabilitySinkStatus, ObservabilitySinkStatusSchema } from './status';
 
@@ -50,11 +51,7 @@ export interface ObservabilityDrainBound {
  * has no effect — admission stays open rather than half-closed.
  */
 export function assertDrainBound(bound: ObservabilityDrainBound | undefined): void {
-  const timeoutMs = bound?.timeoutMs;
-  if (timeoutMs === undefined) return;
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-    throw new TypeError('Observability drain timeoutMs must be a non-negative finite number');
-  }
+  assertTimerMs('Observability drain timeoutMs', bound?.timeoutMs, { min: 0 });
 }
 
 /**

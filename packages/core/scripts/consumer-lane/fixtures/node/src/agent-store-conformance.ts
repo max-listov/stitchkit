@@ -26,6 +26,8 @@ function yourStore(context: AgentStoreConformanceContext): AgentRuntimeStore {
 
 await runAgentStoreConformance({
   createStore: (context) => yourStore(context),
+  capabilities: { branch: true, planBranch: true, archive: true, historyRestore: true },
+  commitConflict: { impossible: 'single-writer' },
   cleanup: (context) => {
     for (const conversationId of context.conversationIds) parents.delete(conversationId);
   },
@@ -34,6 +36,10 @@ await runAgentStoreConformance({
 if (parents.size !== 0) throw new Error('conformance fixture leaked a parent row');
 
 // A factory that owns no fixture state keeps working unchanged.
-await runAgentStoreConformance({ createStore: () => createMemoryAgentRuntimeStore() });
+await runAgentStoreConformance({
+  createStore: () => createMemoryAgentRuntimeStore(),
+  capabilities: { branch: true, planBranch: true, archive: true, historyRestore: true },
+  commitConflict: { impossible: 'single-writer' },
+});
 
 console.log('agent store conformance (node): ok');

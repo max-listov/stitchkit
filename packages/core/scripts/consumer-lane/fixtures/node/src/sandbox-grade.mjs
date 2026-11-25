@@ -10,6 +10,7 @@ const root = await mkdtemp(join(tmpdir(), 'stitchkit-packed-sandbox-'));
 let preparations = 0;
 try {
   const tools = mountAgent([], {
+    access: { open: 'local-operator' },
     runtimeTools: createAgentCodingTools({
       root,
       authorize: () => true,

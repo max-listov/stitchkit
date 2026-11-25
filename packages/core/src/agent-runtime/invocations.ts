@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { generateText, type LanguageModel } from 'ai';
 import { z } from 'zod';
+import { linkAbortSignals } from '../internal/abort-race';
 import { type InvocationAttemptWriter, wrapInvocationModel } from './invocation-attempt';
 import { createInvocationPayloads, invocationHash } from './invocation-payload';
 import {
@@ -236,12 +237,13 @@ export function createModelInvocationLedger(
       const invocationId = writer.identity.invocationId;
       if (duplicate) return { invocationId, outcome: 'duplicate' };
       const deadline = AbortSignal.timeout(input.timeoutMs);
-      const abortSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+      const { signal: abortSignal, release } = linkAbortSignals(signal, deadline);
       let text: string;
       try {
         text = await generateWithFallback(config.models, writer, input, abortSignal);
       } catch (error) {
         const status = abortSignal.aborted ? 'cancelled' : 'failed';
+        release();
         // Recording the failure must not replace it: a failure payload that
         // cannot be written is recorded without its artifact, and a record
         // that cannot be written is returned beside the outcome.
@@ -259,6 +261,7 @@ export function createModelInvocationLedger(
         }
         return withReceipt({ invocationId, outcome: status }, writer);
       }
+      release();
       // The provider answered and was paid; a receipt that cannot be written
       // does not turn that into a failure or lose the text.
       try {

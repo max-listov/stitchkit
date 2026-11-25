@@ -111,6 +111,9 @@ test('credentials refresh is shared per generation and an old flight cannot clea
       return calls === 1 ? oldRefresh.promise : newRefresh.promise;
     },
     storage: {
+      async read() {
+        return stored === undefined ? null : { session: 'A', credentials: stored };
+      },
       async write(_, value) {
         stored = value;
       },
@@ -146,6 +149,7 @@ test('logout orders an already-started storage write and cannot erase a newer lo
     scope,
     refresh: async () => 'refreshed',
     storage: {
+      read: async () => null,
       async write(_, value) {
         if (block) {
           started.resolve();
@@ -184,6 +188,7 @@ test('storage failure is visible and does not poison the queue; a hung HTTP does
     refreshTimeoutMs: 1000,
     refresh: () => new Promise<string>(() => undefined),
     storage: {
+      read: async () => null,
       async write() {
         if (fail) throw new Error('storage unavailable');
       },
@@ -230,7 +235,11 @@ test('an explicit single auth retry uses refreshed credentials through a real HT
         });
         return z.object({ token: z.string() }).parse(await response.json()).token;
       },
-      storage: { write: async () => undefined, clear: async () => undefined },
+      storage: {
+        read: async () => null,
+        write: async () => undefined,
+        clear: async () => undefined,
+      },
     });
     const operation = await auth.login('A', 'expired');
     const client = createClient(contract, {
@@ -263,7 +272,11 @@ test('credential write capacity and refresh deadline refuse bounded work visibly
     maxPendingWrites: 1,
     refreshTimeoutMs: 5,
     refresh: () => new Promise<string>(() => undefined),
-    storage: { write: () => storage.promise, clear: async () => undefined },
+    storage: {
+      read: async () => null,
+      write: () => storage.promise,
+      clear: async () => undefined,
+    },
   });
   const pending = auth.login('A', 'a').catch((error) => error);
   await expect(auth.login('B', 'b')).rejects.toThrow('capacity');
@@ -299,6 +312,7 @@ test('a storage write that hangs does not keep logout from clearing, and a late 
     storageTimeoutMs: 20,
     refresh: async () => 'refreshed',
     storage: {
+      read: async () => null,
       async write(_, value) {
         if (hang) {
           hang = false;
@@ -334,11 +348,14 @@ test('a refresh whose store is slow keeps the issued credentials, and a slow sto
   let stored: string | undefined;
   let writes = 0;
   let slow = false;
+  const storageEvents: string[] = [];
   const auth = createSessionCredentials({
     scope,
     storageTimeoutMs: 5,
+    onEvent: (event) => storageEvents.push(event.type),
     refresh: async () => 'new-token',
     storage: {
+      read: async () => (stored === undefined ? null : { session: 'A', credentials: stored }),
       async write(_, value) {
         writes++;
         if (slow) await Bun.sleep(20);
@@ -351,11 +368,204 @@ test('a refresh whose store is slow keeps the issued credentials, and a slow sto
   });
   const a = await auth.login('A', 'old-token');
   slow = true;
-  await expect(auth.refresh(a)).rejects.toThrow('storageTimeoutMs');
+  // The server already rotated the credential: refresh resolves with the new pair,
+  // reports storage-failed, and lets storage converge without repeating the rotation.
+  expect(await auth.refresh(a)).toBe('new-token');
+  expect(storageEvents).toEqual(['storage-failed', 'refreshed']);
   // The server issued the new pair; memory holds it and storage ends with it.
   expect(auth.read(a)).toBe('new-token');
   await until(() => stored === 'new-token');
   const settled = writes;
   await Bun.sleep(100);
   expect(writes).toBe(settled);
+});
+
+test('failed login storage.write rolls back the scope, credentials and mid-flight capture', async () => {
+  const scope = createSessionScope<string>();
+  const writing = deferred<void>();
+  const finish = deferred<void>();
+  const auth = createSessionCredentials({
+    scope,
+    refreshAhead: { expiresAt: () => 0, leadMs: 1_000 },
+    refresh: async () => 'refreshed',
+    storage: {
+      read: async () => null,
+      async write() {
+        writing.resolve();
+        await finish.promise;
+      },
+      clear: async () => undefined,
+    },
+  });
+  const pendingLogin = auth.login('A', 'a');
+  await writing.promise;
+  const midOp = scope.capture();
+  expect(midOp.current()).toBe(true);
+  finish.reject(new Error('storage unavailable'));
+  await expect(pendingLogin).rejects.toThrow('storage unavailable');
+  expect(midOp.current()).toBe(false);
+  expect(() => scope.capture()).toThrow(SessionExpiredError);
+  expect(() => auth.read(midOp)).toThrow(SessionExpiredError);
+  await expect(auth.refreshIfDue(midOp)).rejects.toBeInstanceOf(SessionExpiredError);
+});
+
+test('failed login rollback does not clobber a concurrent newer login', async () => {
+  const scope = createSessionScope<string>();
+  const writeAStarted = deferred<void>();
+  const writeAGate = deferred<void>();
+  let stored: string | undefined;
+  const auth = createSessionCredentials({
+    scope,
+    maxPendingWrites: 4,
+    refresh: async () => 'refreshed',
+    storage: {
+      read: async () => (stored === undefined ? null : { session: 'B', credentials: stored }),
+      async write(session, value) {
+        if (session === 'A') {
+          writeAStarted.resolve();
+          await writeAGate.promise;
+        }
+        stored = value;
+      },
+      async clear() {
+        stored = undefined;
+      },
+    },
+  });
+  const loginA = auth.login('A', 'a').catch((error) => error);
+  await writeAStarted.promise;
+  const loginB = auth.login('B', 'b');
+  const writeAFailure = new Error('write A failed');
+  writeAGate.reject(writeAFailure);
+
+  const errorA = await loginA;
+  expect(errorA).toBeInstanceOf(SessionExpiredError);
+  if (!(errorA instanceof SessionExpiredError)) {
+    throw new Error('Expected SessionExpiredError');
+  }
+  expect(errorA.cause).toBe(writeAFailure);
+
+  const opB = await loginB;
+  expect(opB.current()).toBe(true);
+  expect(scope.capture()).toBe(opB);
+  expect(auth.read(opB)).toBe('b');
+  expect(stored).toBe('b');
+});
+
+test('failed login after logout does not bump scope generation or skip logout storage.clear', async () => {
+  const scope = createSessionScope<string>();
+  const writeStarted = deferred<void>();
+  const writeGate = deferred<void>();
+  let clears = 0;
+  const auth = createSessionCredentials({
+    scope,
+    refresh: async () => 'refreshed',
+    storage: {
+      read: async () => null,
+      async write() {
+        writeStarted.resolve();
+        await writeGate.promise;
+      },
+      async clear() {
+        clears++;
+      },
+    },
+  });
+  const loginA = auth.login('A', 'a').catch((error) => error);
+  await writeStarted.promise;
+  const logoutPromise = auth.logout();
+  const generationAfterLogout = scope.generation;
+  const writeFailure = new Error('disk full');
+  writeGate.reject(writeFailure);
+
+  const errorA = await loginA;
+  expect(errorA).toBeInstanceOf(SessionExpiredError);
+  if (!(errorA instanceof SessionExpiredError)) {
+    throw new Error('Expected SessionExpiredError');
+  }
+  expect(errorA.cause).toBe(writeFailure);
+  await logoutPromise;
+  expect(scope.generation).toBe(generationAfterLogout);
+  expect(clears).toBe(1);
+});
+
+test('a login whose storage write times out rolls back and clears a late-landing write', async () => {
+  const scope = createSessionScope<string>();
+  const hung = deferred<void>();
+  const writing = deferred<void>();
+  const landed = deferred<void>();
+  let stored: string | undefined;
+  let clears = 0;
+  const auth = createSessionCredentials({
+    scope,
+    storageTimeoutMs: 20,
+    refresh: async () => 'refreshed',
+    storage: {
+      read: async () => null,
+      async write(_, value) {
+        writing.resolve();
+        await hung.promise;
+        stored = value;
+        landed.resolve();
+      },
+      async clear() {
+        clears++;
+        stored = undefined;
+      },
+    },
+  });
+  const pendingLogin = auth.login('A', 'a');
+  await writing.promise;
+  const midOp = scope.capture();
+  await expect(pendingLogin).rejects.toThrow('storageTimeoutMs');
+  expect(midOp.current()).toBe(false);
+  expect(() => scope.capture()).toThrow(SessionExpiredError);
+  expect(() => auth.read(midOp)).toThrow(SessionExpiredError);
+  // The hung write finally completes after login rolled back: persistence must clear it.
+  hung.resolve();
+  await landed.promise;
+  expect(stored).toBe('a');
+  await until(() => stored === undefined);
+  expect(clears).toBeGreaterThanOrEqual(1);
+});
+
+test('a failed login clears the stored session it replaced, so a restart restores nobody', async () => {
+  const disk: { stored: { session: string; credentials: string } | null } = { stored: null };
+  let refuseWrite = false;
+  let refuseClear = false;
+  const storage = {
+    read: async () => disk.stored,
+    async write(session: string, credentials: string) {
+      if (refuseWrite) throw new Error('disk full');
+      disk.stored = { session, credentials };
+    },
+    async clear() {
+      if (refuseClear) throw new Error('disk gone');
+      disk.stored = null;
+    },
+  };
+  const signIn = () =>
+    createSessionCredentials({
+      scope: createSessionScope<string>(),
+      refresh: async () => 'never',
+      storage,
+    });
+  const first = signIn();
+  await first.login('A', 'a');
+  expect(disk.stored).toEqual({ session: 'A', credentials: 'a' });
+  refuseWrite = true;
+  await expect(first.login('B', 'b')).rejects.toThrow('disk full');
+  expect(disk.stored).toBeNull();
+  expect(await signIn().restore()).toEqual({ status: 'absent' });
+
+  refuseWrite = false;
+  await first.login('A', 'a');
+  refuseWrite = true;
+  refuseClear = true;
+  const both = await first.login('B', 'b').catch((error: unknown) => error);
+  expect(both).toBeInstanceOf(AggregateError);
+  if (!(both instanceof AggregateError)) throw both;
+  expect(both.errors.map((error: Error) => error.message)).toEqual(['disk full', 'disk gone']);
+  expect(both.cause).toBe(both.errors[0]);
+  expect(both.message).toContain('disk full');
 });

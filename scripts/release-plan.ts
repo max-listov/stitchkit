@@ -3,9 +3,18 @@ import { join } from 'node:path';
 import { git } from './local-git';
 import { askReleaseCi, CiRunListSchema, selectSuccessfulCiRun } from './release-ci';
 import { output, run } from './release-command';
-import { assertTrainCarriesItsCompanions, readFromReleaseTags } from './release-companions';
+import {
+  assertTrainCarriesItsCompanions,
+  readFromReleaseTags,
+  trainRequirements,
+} from './release-companions';
+import { assertTreeLockfileMatchesManifests } from './release-lockfile';
 import { parseTrainArguments, prepareTrain } from './release-prepare';
 import { ciAlreadyAnsweredFor, classifyPrePush, prePushMetadataGate } from './release-prepush';
+import {
+  assertTrainHonoursStarterFollowUp,
+  pendingStarterFollowUp,
+} from './release-starter-follow-up';
 import { starterHeadDecision } from './release-starter-head';
 import {
   assertReleaseSubjectForTag,
@@ -95,11 +104,22 @@ async function commitFiles(root: string, sha: string): Promise<string[]> {
  * package whose packed files equal its previous release, while the cost of
  * being wrong is still a one-line edit.
  */
-async function checkWorkingTree(root: string): Promise<void> {
+export async function checkWorkingTree(
+  root: string,
+  options: { checkStarterLockfile?: boolean } = {},
+): Promise<void> {
   const train = await readReleaseTrain(root);
   const read = readFromWorkingTree(root);
+  // `bun install --frozen-lockfile` accepts a manifest the lock never recorded; the release does not.
+  await assertTreeLockfileMatchesManifests(read);
   await assertTrainDoesNotOutrunTheStarter(root, train, read);
   await assertTrainCarriesItsCompanions(train, read, readFromReleaseTags(root));
+  await assertTrainHonoursStarterFollowUp(
+    root,
+    train,
+    read,
+    await pendingStarterFollowUp(root),
+  );
   const checked: string[] = [];
   for (const entry of train.releases) {
     const tag = releaseTagForTarget(entry.target, entry.version);
@@ -112,7 +132,9 @@ async function checkWorkingTree(root: string): Promise<void> {
       });
       process.stderr.write(`[release] ${entry.version}: ${stableCadenceSentence(cadence)}\n`);
     }
-    await validateReleaseTag(root, tag);
+    await validateReleaseTag(root, tag, {
+      checkStarterLockfile: options.checkStarterLockfile,
+    });
     checked.push(tag);
   }
   await assertPackagesChanged(root, train, read);
@@ -214,7 +236,9 @@ async function main(): Promise<void> {
     const releases = parseTrainArguments(Bun.argv.slice(3));
     if (releases.length === 0)
       throw new Error('Usage: release-plan.ts prepare <target>@X.Y.Z…');
-    await prepareTrain(root, releases, new Date().toISOString().slice(0, 10));
+    const paths = await prepareTrain(root, releases, new Date().toISOString().slice(0, 10));
+    // The paths this run wrote, for the caller that commits exactly them.
+    process.stdout.write(`${JSON.stringify({ paths })}\n`);
     return;
   }
   if (command === 'candidate') {
@@ -267,8 +291,21 @@ async function main(): Promise<void> {
     process.stdout.write(await starterHeadDecision(root));
     return;
   }
+  if (command === 'train-requirements') {
+    if (!argument) throw new Error('Usage: release-plan.ts train-requirements <tag>');
+    const plan = releasePlanForTag(argument);
+    const manifest = await readFile(join(root, plan.packageDir, 'package.json'), 'utf8');
+    // One "name version" line per package this tag's package must find on npm first.
+    for (const { packageName, version } of trainRequirements(
+      await readReleaseTrain(root),
+      plan.target,
+      manifest,
+    ))
+      process.stdout.write(`${packageName} ${version}\n`);
+    return;
+  }
   throw new Error(
-    'Usage: release-plan.ts <check|prepare TARGET@X.Y.Z…|preflight TAG|release-metadata TAG|candidate SHA|pre-push|assert-origin|release train|assert-subject SHA TAG|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head>',
+    'Usage: release-plan.ts <check|prepare TARGET@X.Y.Z…|preflight TAG|release-metadata TAG|candidate SHA|pre-push|assert-origin|release train|assert-subject SHA TAG|assert-head TAG_SHA HEAD_SHA|select-ci-run SHA|publish-action ARTIFACT_SHA [PUBLISHED_SHA]|starter-head|train-requirements TAG>',
   );
 }
 

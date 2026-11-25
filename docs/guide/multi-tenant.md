@@ -115,7 +115,7 @@ over HTTP serves the tool call
 createMcpHandler({
   serverInfo, auth,
   services: [widgetsService],
-  lifecycle: { beforeHandle: authHook },
+  access: { gate: { beforeHandle: authHook } },
   extend: {
     schema: { tenantId: z.string().describe('Tenant to act on') },
     resolve: async ({ tenantId }) => ({ tenantId: String(tenantId) }),

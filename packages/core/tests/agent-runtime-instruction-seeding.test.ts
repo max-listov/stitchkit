@@ -15,6 +15,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { openSqliteStore } from './support/sqlite-store';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -111,7 +112,7 @@ function runtimeWith(store: AgentRuntimeStore) {
 describe('durable once-seeding of user-role instructions', () => {
   test('v2 databases migrate without losing existing history and can seed once', async () => {
     const filename = databasePath('seed-v2-migration');
-    const fixture = createBunSqliteAgentRuntimeStore({ filename });
+    const { database: fixtureDatabase, sqlite: fixture } = openSqliteStore(filename);
     await fixture.store.seedConversationInput({
       conversationId: 'old',
       seedKey: 'import',
@@ -119,7 +120,7 @@ describe('durable once-seeding of user-role instructions', () => {
     });
     // V3 adds only this table; dropping it and restoring the meta version
     // constructs the exact V2 schema while retaining real normalized history.
-    fixture.database.exec(`
+    fixtureDatabase.exec(`
       DROP TABLE stitchkit_agent_runtime_seeds;
       DROP INDEX stitchkit_agent_runtime_schedules_due;
       ALTER TABLE stitchkit_agent_runtime_schedules DROP COLUMN eligible_at;
@@ -128,14 +129,14 @@ describe('durable once-seeding of user-role instructions', () => {
       ALTER TABLE stitchkit_agent_runtime_schedules DROP COLUMN last_error;
       CREATE INDEX stitchkit_agent_runtime_schedules_due ON stitchkit_agent_runtime_schedules (state, next_at);
     `);
-    fixture.database
+    fixtureDatabase
       .prepare("UPDATE stitchkit_agent_runtime_meta SET value='2' WHERE key='schema_version'")
       .run();
     await fixture.close();
-    const migrated = createBunSqliteAgentRuntimeStore({ filename });
+    const { database: migratedDatabase, sqlite: migrated } = openSqliteStore(filename);
     try {
       expect(
-        migrated.database
+        migratedDatabase
           .prepare("SELECT value FROM stitchkit_agent_runtime_meta WHERE key='schema_version'")
           .get(),
       ).toEqual({ value: '4' });
@@ -322,7 +323,7 @@ describe('durable once-seeding of user-role instructions', () => {
 
   test('an imported conversation whose compacted seed survived without its receipt re-seeds idempotently', async () => {
     const filename = databasePath('instruction-seeding-compacted');
-    const fixture = createBunSqliteAgentRuntimeStore({ filename });
+    const { database: fixtureDatabase, sqlite: fixture } = openSqliteStore(filename);
     const conversationId = 'compacted-seed-conversation';
     const seed = instructionMessage(conversationId, 'seed-1', BRIEF);
 
@@ -356,7 +357,7 @@ describe('durable once-seeding of user-role instructions', () => {
 
     // A restore that carried messages but not seed receipts: the identity is
     // present only as the inactive row.
-    fixture.database
+    fixtureDatabase
       .prepare('DELETE FROM stitchkit_agent_runtime_seeds WHERE conversation_id = ?')
       .run(conversationId);
 
@@ -372,7 +373,7 @@ describe('durable once-seeding of user-role instructions', () => {
       false,
     );
 
-    const stored = fixture.database
+    const stored = fixtureDatabase
       .prepare(
         'SELECT count(*) AS count FROM stitchkit_agent_runtime_messages WHERE conversation_id = ? AND id = ?',
       )

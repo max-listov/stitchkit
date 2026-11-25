@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { untilAborted } from '../internal/until-aborted';
+import { raceAbort } from '../internal/abort-race';
 import type { EndpointStreamDescriptor } from './define';
 import { AppError } from './errors';
 
@@ -72,7 +72,7 @@ export async function* readContractStreamItems(
   for (;;) {
     const pending = Promise.resolve(iterator.next());
     observe?.(pending);
-    const next = await untilAborted(pending, signal);
+    const next = await raceAbort(pending, signal);
     if (next.done) break;
     const checked = checkContractStreamItem(descriptor, next.value);
     if (checked.terminal) terminalSeen = true;

@@ -3,6 +3,7 @@ title: "ADR 0255: An owner-loss guard belongs to the command group"
 description: "An opt-in per-command guard binds a detached native group to its caller through a private inherited kernel channel, without a consumer daemon or PID reclamation."
 type: decision
 status: accepted
+amends: ["0243"]
 created: 2026-10-09
 updated: 2026-10-09
 ---

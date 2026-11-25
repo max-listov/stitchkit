@@ -416,8 +416,9 @@ describe('scaffoldProject', () => {
 
   test('copies the neutral template and materialises dotfiles', async () => {
     const template = await mkdtemp(join(tmpdir(), 'stitchkit-template-'));
-    const destination = join(await mkdtemp(join(tmpdir(), 'stitchkit-target-')), 'app');
-    created.push(template, destination);
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
+    const destination = join(parent, 'app');
+    created.push(template, parent);
     await writeFile(join(template, 'package.json'), '{"name":"stitchkit-starter"}\n');
     await writeFile(
       join(template, 'project.json'),
@@ -467,8 +468,9 @@ describe('scaffoldProject', () => {
 
   test('excludes local build and dependency artifacts from the generated project', async () => {
     const template = await mkdtemp(join(tmpdir(), 'stitchkit-template-'));
-    const destination = join(await mkdtemp(join(tmpdir(), 'stitchkit-target-')), 'app');
-    created.push(template, destination);
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-target-'));
+    const destination = join(parent, 'app');
+    created.push(template, parent);
     await writeFile(join(template, 'package.json'), '{"name":"stitchkit-starter"}\n');
     await writeFile(
       join(template, 'project.json'),

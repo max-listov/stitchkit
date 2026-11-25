@@ -52,7 +52,7 @@ async function run(argv: string[], defaultCommand?: string) {
     name: 'runtime',
     description: 'Inspect a runtime invocation',
     identity: { serviceName: 'inspection', action: 'runtime', method: 'POST' },
-    transports: ['CLI'],
+    expose: ['CLI'],
     input: Input,
     output: Input,
     handler: ({ input }) => {
@@ -64,6 +64,7 @@ async function run(argv: string[], defaultCommand?: string) {
   let err = '';
   let code = -1;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'inspection',
     version: '1',
     argv,
@@ -71,11 +72,13 @@ async function run(argv: string[], defaultCommand?: string) {
     commands: [native],
     services: [service],
     runtimeTools: [runtime],
-    positionals: { native: ['root', 'words'], managed: ['root'], runtime: ['root'] },
-    optionAliases: {
-      native: { c: 'check', i: 'issuer', t: 'tags', f: 'feature.enabled' },
-      managed: { c: 'check', i: 'issuer' },
-      runtime: { c: 'check', i: 'issuer' },
+    commandSettings: {
+      native: {
+        positionals: ['root', 'words'],
+        aliases: { c: 'check', i: 'issuer', t: 'tags', f: 'feature.enabled' },
+      },
+      managed: { positionals: ['root'], aliases: { c: 'check', i: 'issuer' } },
+      runtime: { positionals: ['root'], aliases: { c: 'check', i: 'issuer' } },
     },
     globalOptions: z.object({
       verbose: z.boolean().optional(),

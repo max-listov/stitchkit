@@ -2,6 +2,7 @@
 title: Lock owners are process instances
 description: Exclusive lock recovery compares kernel boot and process birth identities before treating a reused PID as an owner.
 status: accepted
+amendedBy: ["0265"]
 created: 2026-09-28
 ---
 

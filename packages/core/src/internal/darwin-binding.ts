@@ -24,6 +24,34 @@ export interface DarwinBinding {
   ): readonly DarwinEntry[];
   renameAt(directory: number, source: string, target: string): void;
   unlinkAt(directory: number, name: string): void;
+  renameSwapAt?(
+    fromDirectory: number,
+    fromName: string,
+    toDirectory: number,
+    toName: string,
+  ): void;
+  responsiblePid?(pid: number): number;
+  processPath?(pid: number): string;
+}
+
+export type DarwinServiceHostMethodName = 'renameSwapAt' | 'responsiblePid' | 'processPath';
+
+/**
+ * Retrieve an optional macOS service-host method from a loaded Darwin binding,
+ * throwing a structured `EOPNOTSUPP` error if the packaged native addon predates
+ * the method.
+ */
+export function requireDarwinServiceHostMethod<K extends DarwinServiceHostMethodName>(
+  binding: DarwinBinding,
+  name: K,
+): NonNullable<DarwinBinding[K]> {
+  const fn = binding[name];
+  if (typeof fn !== 'function') {
+    throw Object.assign(new Error(`Darwin native helper missing method: ${name}`), {
+      code: 'EOPNOTSUPP',
+    });
+  }
+  return fn;
 }
 
 export function hasFunctions(value: unknown, names: readonly string[]): boolean {

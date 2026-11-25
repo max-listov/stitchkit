@@ -1,7 +1,7 @@
 ---
 title: CLI separates construction from registration
 description: Strict schema-aware runtime-tool construction and neutral heterogeneous registration keep optional SDK declarations outside CLI.
-status: active
+status: accepted
 created: 2026-10-04 11:48 +07:00
 updated: 2026-10-04 12:07 +07:00
 type: decision

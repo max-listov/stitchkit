@@ -6,14 +6,17 @@ import {
 } from '../../contract/stream';
 import { isAsyncIterable } from '../../internal/typed';
 import { type ToolFailure, type ToolResult, toolResultFromError } from '../execute-result';
-import { createToolRunner, formatToolError } from '../mount';
+import { stringifyJsonSafe } from '../internal/json-projection';
+import { formatToolError } from '../mount';
 import type { CliRunOptions } from './args';
 import type { CliResultPolicy } from './command';
 import { cliExitCode, emitResult } from './format';
 import type { ManagedSurface } from './managed-surface';
 import { cliResultPolicy } from './policy';
+import { createCliToolRunner } from './runner';
 import { type CliRoute, type CliSession, emitOptionsFor } from './session';
 import type { CliStreamOperation } from './stream-surface';
+import { projectCliUnixFailure } from './unix-outcome';
 
 type ResolvedManagedSurface<TAuth> = Extract<ManagedSurface<TAuth>, { resolved: true }>;
 
@@ -57,17 +60,15 @@ export async function runStreamCommand<
   };
   if (config.signal?.aborted) cancel();
   else config.signal?.addEventListener('abort', cancel, { once: true });
-  const runTool = createToolRunner({
-    source: 'cli',
-    toolSurface: true,
-    context: { ...config.context?.(managed.auth, route.typedGlobals), signal: abort.signal },
-    hooks: config.hooks,
-    lifecycle: config.lifecycle,
-    coerceJsonArgs: config.coerceJsonArgs,
-  });
+  const runTool = createCliToolRunner(
+    config,
+    session.lifecycle,
+    managed.auth,
+    route.typedGlobals,
+  );
   let opened: ToolResult;
   try {
-    opened = await runTool(stream.tool, toolArgs);
+    opened = await runTool(stream.tool, toolArgs, { signal: abort.signal });
   } catch (error) {
     opened = toolResultFromError(error);
   }
@@ -106,7 +107,7 @@ function streamLine(
   policy: CliResultPolicy<unknown> | undefined,
   options: Readonly<CliRunOptions>,
 ): string {
-  if (policy?.present === undefined) return `${JSON.stringify(item)}\n`;
+  if (policy?.present === undefined) return `${stringifyJsonSafe(item)}\n`;
   let line: unknown;
   try {
     line = policy.present({ result: item, options });
@@ -152,7 +153,7 @@ async function printStreamItems(
     if (lifetimeExpired) {
       return toolResultFromError(contractStreamLifetimeExceeded());
     }
-    return toolResultFromError(error);
+    return projectCliUnixFailure(toolResultFromError(error));
   } finally {
     if (lifetime !== undefined) clearTimeout(lifetime);
     abort.abort();

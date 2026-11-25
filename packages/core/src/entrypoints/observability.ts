@@ -48,11 +48,29 @@ export {
 } from '../observability/context';
 export type { RequestEvent } from '../observability/event';
 export {
+  createEventLoopDelayMonitor,
+  DEFAULT_EVENT_LOOP_DELAY_BUCKET_MS,
+  DEFAULT_EVENT_LOOP_DELAY_RESOLUTION_MS,
+  DEFAULT_EVENT_LOOP_DELAY_WINDOW_MS,
+  type EventLoopDelayClock,
+  type EventLoopDelayHistogram,
+  type EventLoopDelayMonitor,
+  type EventLoopDelayMonitorOptions,
+  type EventLoopDelaySnapshot,
+  MAX_EVENT_LOOP_DELAY_BUCKETS,
+} from '../observability/event-loop-delay';
+export {
   createJsonLogger,
   JSON_LOG_LEVELS,
   type JsonLoggerOptions,
   type JsonLogLevel,
 } from '../observability/json-logger';
+export {
+  DEFAULT_REPEAT_MAX_KINDS,
+  DEFAULT_REPEAT_WINDOW_MS,
+  type RepeatLimitOptions,
+  repeatLimited,
+} from '../observability/log-repeat';
 export {
   type JsonValue,
   measureSize,

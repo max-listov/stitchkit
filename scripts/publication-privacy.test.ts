@@ -34,6 +34,7 @@ import {
   applyPublicationExemptions,
   inspectPublicationText,
   inspectTrackedPublication,
+  isPublicationTextPath,
   privateShapes,
   STITCHKIT_CONVENTIONS,
   STITCHKIT_EXEMPTIONS,
@@ -277,5 +278,17 @@ describe('public documents are English and carry no agent metadata', () => {
       expect([example.literal, held]).toEqual([example.literal, true]);
       expect(example.because.length).toBeGreaterThan(20);
     }
+  });
+});
+
+describe('recorded engine traffic is scanned', () => {
+  test('a JSON Lines fixture is a publication text path, and a binary is not', () => {
+    // Recorded agent traffic is kept as one JSON record per line; a scan that
+    // skipped the extension would let a recorded home path or token through.
+    expect(
+      isPublicationTextPath('packages/core/tests/fixtures/recorded/agy-1.5.14-text.jsonl'),
+    ).toBe(true);
+    expect(isPublicationTextPath('trace.ndjson')).toBe(true);
+    expect(isPublicationTextPath('packages/core/tests/fixtures/picture.png')).toBe(false);
   });
 });

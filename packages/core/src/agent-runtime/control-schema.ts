@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isDurableAgentRuntimeEvent } from './event-durability';
 import { type AgentRuntimeEvent, AgentRuntimeEventSchema } from './event-schema';
 import { AgentMessagePartSchema, type AgentSnapshot, AgentSnapshotSchema } from './schemas';
 
@@ -142,28 +143,13 @@ export const AgentMultiSessionCursorSchema = z
   .strict();
 export type AgentMultiSessionCursor = z.infer<typeof AgentMultiSessionCursorSchema>;
 
-function durable(event: AgentRuntimeEvent): event is Extract<
-  AgentRuntimeEvent,
-  {
-    type: 'admission' | 'assistant-checkpoint' | 'run-state' | 'run-operation' | 'terminal';
-  }
-> {
-  return [
-    'admission',
-    'assistant-checkpoint',
-    'run-state',
-    'run-operation',
-    'terminal',
-  ].includes(event.type);
-}
-
 export function advanceAgentMultiSessionCursor(
   raw: AgentMultiSessionCursor,
   event: AgentRuntimeEvent,
 ): { status: 'accepted' | 'duplicate' | 'gap'; cursor: AgentMultiSessionCursor } {
   const cursor = AgentMultiSessionCursorSchema.parse(raw);
   const previous = cursor.conversations[event.conversationId] ?? { runs: {} };
-  if (durable(event)) {
+  if (isDurableAgentRuntimeEvent(event)) {
     const ids =
       previous.snapshotVersion === event.snapshotVersion
         ? (previous.durableEventIds ?? [])
@@ -338,7 +324,8 @@ export function reduceAgentControlEvent(
     current.transientByRun[event.runId] ?? EMPTY_TRANSIENT,
     event,
   );
-  const snapshotStale = durable(event) && current.snapshot?.version !== event.snapshotVersion;
+  const snapshotStale =
+    isDurableAgentRuntimeEvent(event) && current.snapshot?.version !== event.snapshotVersion;
   const transientByRun =
     event.type === 'terminal'
       ? Object.fromEntries(

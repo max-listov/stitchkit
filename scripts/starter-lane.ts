@@ -1,6 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { builtByVerify } from './lane-build';
 import {
   assertNothingSurvives,
   claimLaneDirectory,
@@ -261,7 +262,9 @@ try {
   const corePackage = join(repositoryRoot, 'packages/core/package.json');
   const templateTarget = await readStarterStitchkitTarget(templateRoot);
 
-  await run(['bun', '--filter', 'create-stitchkit', 'build'], repositoryRoot);
+  if (!builtByVerify()) {
+    await run(['bun', '--filter', 'create-stitchkit', 'build'], repositoryRoot);
+  }
 
   const createTarball = join(packed, 'create-stitchkit.tgz');
   await run(
@@ -307,17 +310,11 @@ try {
   if (mode === 'head') {
     expectedVersion = await packageVersion(corePackage);
     coreTarball = join(packed, 'stitchkit.tgz');
+    if (!builtByVerify()) {
+      await run(['bun', '--filter', 'stitchkit', 'build'], repositoryRoot);
+    }
     await run(
-      [
-        'bun',
-        '../../scripts/package-build-lock.ts',
-        '--',
-        'bun',
-        'pm',
-        'pack',
-        '--filename',
-        coreTarball,
-      ],
+      ['bun', 'pm', 'pack', '--ignore-scripts', '--filename', coreTarball],
       join(repositoryRoot, 'packages/core'),
     );
   }

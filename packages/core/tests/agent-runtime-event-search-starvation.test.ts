@@ -5,7 +5,7 @@ import {
   type SqliteDatabase,
   type SqliteValue,
 } from '../src/agent-runtime/sqlite-bun';
-import { createSqliteAgentEventSearch } from '../src/entrypoints/agent-runtime';
+import { createAgentEventSearch } from '../src/entrypoints/agent-runtime';
 
 function sqlite(): SqliteDatabase {
   const raw = new Database(':memory:');
@@ -47,7 +47,7 @@ describe('event search under a louder neighbour', () => {
       kind: 'state/set',
       payload: { text: 'one needle' },
     });
-    const search = createSqliteAgentEventSearch({ database });
+    const search = createAgentEventSearch({ host: runtime.host });
     await expect(
       search({ requestingConversationId: 'quiet', query: '--- !!!' }),
     ).rejects.toThrow('searchable terms');
@@ -59,12 +59,15 @@ describe('event search under a louder neighbour', () => {
     ).toEqual([expect.objectContaining({ conversationId: 'quiet', seq: 1 })]);
     // With an authorizer that admits everything, the requester still gets a
     // full page: foreign refusals are paged past, not counted against it.
-    const open = createSqliteAgentEventSearch({ database, authorizeConversation: () => true });
+    const open = createAgentEventSearch({
+      host: runtime.host,
+      authorizeConversation: () => true,
+    });
     expect(
       await open({ requestingConversationId: 'quiet', query: 'needle', limit: 20 }),
     ).toHaveLength(20);
-    const shut = createSqliteAgentEventSearch({
-      database,
+    const shut = createAgentEventSearch({
+      host: runtime.host,
       authorizeConversation: () => false,
     });
     expect(
@@ -86,7 +89,7 @@ describe('event search under a louder neighbour', () => {
       kind: 'state/set',
       payload: { text: 'unrelated shipping note' },
     });
-    const search = createSqliteAgentEventSearch({ database });
+    const search = createAgentEventSearch({ host: runtime.host });
     // Both words occur in the first event, but not adjacent and not in order:
     // the phrase-only query answered `[]` here, which reads as "never said".
     expect(await search({ requestingConversationId: 'talk', query: 'deploy review' })).toEqual(

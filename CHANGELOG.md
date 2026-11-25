@@ -15,6 +15,1640 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** every caller of `branchConversation` that passes `applicationKeys`
+([migration](docs/guide/upgrading.md#branch-application-key-modes)), every host that
+creates a built-in runtime tool, a child manager or a schedule service
+([migration](docs/guide/upgrading.md#runtime-tools-take-the-run)), every caller
+that reads `agentUsageProjection`
+([migration](docs/guide/upgrading.md#agent-usage-projection-v2)), every caller
+of `createSessionCredentials`
+([migration](docs/guide/upgrading.md#session-credentials-refresh-ahead)), and
+every runtime reading `RequestContext.startedAt` or running on Node `< 22.3` /
+Bun `< 1.4` ([migration](docs/guide/upgrading.md#portable-handler-and-runtime-floor)),
+and every caller passing `cost` to `agentChildBudgetStopPolicy` or reading
+`AgentStepFinishedEvent.response` as always present
+([migration](docs/guide/upgrading.md#step-spend-and-child-budget-policy)),
+and CLI/connection callers affected by broken boolean boundaries, pre-call view
+column checks, native view handling, `createCliInvoker` global option errors or
+top-level foreign schema unions
+([migration](docs/guide/upgrading.md#cli-broken-boolean-boundary)),
+every host that mounts discovered MCP or OpenAPI tools whose schemas carry
+non-standard keywords
+([migration](docs/guide/upgrading.md#connections-unknown-schema-keywords)),
+every server and client on a unix socket outside a directory its own user owns
+([migration](docs/guide/upgrading.md#unix-socket-ownership-checks)),
+every reader of `tool-status` events
+([migration](docs/guide/upgrading.md#durable-tool-status)), every SQLite companion
+host caller ([migration](docs/guide/upgrading.md#companions-take-the-host)), every
+custom `AgentRuntimeStore` driver
+([migration](docs/guide/upgrading.md#store-driver-contract-step-2)), every caller of
+`openRouterProvider` passing policy keys in `extraBody`
+([migration](docs/guide/upgrading.md#openrouter-extra-body-policy-keys)),
+and every project affected by the planned `0.127.0` breaking boundary cleanup
+(`access: { gate } | { open }`, `transports` → `expose`, `CliConfig.commandSettings`,
+removal of `appError` and `stitchkit/application/schemas`, sandbox-probe relocation,
+store driver contract step 1, async `listSchedules`, and discovered MCP `structuredContent`
+— [migration](docs/guide/upgrading.md#application-schemas-and-renames)), callers
+switching exhaustively on `NativeCommandError.reason`
+([migration](docs/guide/upgrading.md#native-command-stdin-budget-reason)) or mapping every
+`StitchErrorCode` ([migration](docs/guide/upgrading.md#discovered-mcp-structured-content)) or
+`UnixClientTransportErrorCode` ([migration](docs/guide/upgrading.md#unix-socket-ownership-checks)), every
+caller of `listChildBlocking`, of `respondToChildBlocking` or `sendMessage` on a slow
+child host, or of two `spawnChild` of one id at once
+([migration](docs/guide/upgrading.md#child-blocking-unavailable)), every entry point
+that calls `routeCliArgv` with a default command, parses a pure boolean with
+`parseCliArgs`, branches on the exit code of an unknown command or declares native
+commands `createCli` refuses to `createCliInvoker`
+([migration](docs/guide/upgrading.md#cli-public-projections)), every CLI that declares a
+command named in option syntax or a script that writes a command option before the
+command name ([migration](docs/guide/upgrading.md#cli-option-before-command)), every
+reader of `TelegramOperatorDrop.reason` that switches exhaustively
+([migration](docs/guide/upgrading.md#operator-channel-flood-wait)), every caller that
+catches the refusal of an out-of-range timer option — `reconcileTimeoutMs`, a
+connection `timeoutMs` / `idleTimeoutMs`, a streaming route `heartbeatMs`, an
+observability drain `timeoutMs`, a conformance `watchdogTimeoutMs`, a surface probe
+`timeoutMs`, a realtime request `timeoutMs`, `authorizationTimeoutMs`, an HTTP client,
+endpoint or request `timeout`, `reconnectOnServerDisconnect`, `uploadInChunks`'
+`retryDelayMs`, a `BackoffPolicy`, a cache bridge `freshWindow`, a managed file
+boundary `inspectionTimeoutMs`, a unix client `headersTimeoutMs`, a credit window wait
+`timeoutMs`, an agent session or runtime `close` budget, a Telegram update intake
+`leaseMs` / `sweepEveryMs`, a wait tool `defaultTimeout` or a wait `timeoutSec`, and the
+timer options of `stitchkit/application`, `stitchkit/telegram`, `stitchkit/cli`,
+`stitchkit/agent-runtime`, `stitchkit/tools`, `stitchkit/live`, `stitchkit/geo`, `stitchkit/release`
+and `stitchkit/tracking` listed below — by its class, and every caller passing a fractional,
+negative or `NaN` count, size or age to `createChunkSpool` or `createTelegramOperatorChannel`
+([migration](docs/guide/upgrading.md#timer-options-one-rule)), every script that branches on
+the exit code of a CLI command over a unix socket
+([migration](docs/guide/upgrading.md#cli-unix-delivery-exit-codes)), every caller of
+`createDeferredAgentToolSurface().mount` that passes `extend` or `flattenUnionInput`
+([migration](docs/guide/upgrading.md#deferred-surface-projection)), every runtime whose
+`loop.retry.maxAttempts` is not a positive integer
+([migration](docs/guide/upgrading.md#retry-max-attempts)), and every caller of
+`sanitizeTelegramHtml`, `parseTelegramHtml`, `splitTelegramHtml` or
+`truncateTelegramHtml` that passes links with raw whitespace or a bare `tg:` or
+`mailto:` ([migration](docs/guide/upgrading.md#telegram-html-link-rules)), every caller
+of `splitTelegramHtml` whose markup can hold a custom emoji or a `tg-time` longer than
+its limit ([migration](docs/guide/upgrading.md#telegram-html-split-atom)), every
+`createSpooledSink` whose spool file is past its `maxFileBytes`, that watches `recover()`,
+or whose store can be down for longer than `maxPendingEntries` records
+([migration](docs/guide/upgrading.md#spool-file-over-its-bound)), and every caller that
+branches on the class of a SQLite store's transaction failure or of a failed
+`createSessionCredentials().login()`
+([migration](docs/guide/upgrading.md#double-failure-aggregate-error)).
+
+- `stitchkit/agent-runtime` `branchConversation` declares each application key
+  once with a mode. An application's record of the past — the run that took an
+  input, the IDs a read of its own data returned — names the source conversation,
+  and a declared key refused it, so such a conversation could not be branched.
+  `sourceIdentity: 'retain'` carries a value naming the source conversation, a run
+  or a message byte for byte and never as a reference of the destination; a value
+  naming a spill, an application file or another runtime identity still refuses,
+  as does any source identity under the default `'refuse'`. A key is one of the
+  runtime reference names, declared once, and a refusal names the key's path in
+  the payload. `applicationKeys: ['messageId']` →
+  `applicationKeys: [{ key: 'messageId' }, { key: 'runId', sourceIdentity: 'retain' }]`.
+  → ADR 0300
+  **Affects:** `stitchkit/agent-runtime` BranchAgentConversationInputSchema(applicationKeys), BranchAgentConversationInput(applicationKeys); `stitchkit/agent-runtime` behaviour
+- `stitchkit/agent-runtime` `createAgentChildTools`, `createAgentScheduleTools`,
+  `createAgentStateTools` and `createAgentEventSearchTools` take the run context
+  `tools()` receives. The child and schedule tools took the conversation to act
+  for from the model's input, so a model that knew another conversation's ID could
+  spend its child budget, message or interrupt its children and place or cancel
+  its schedules; the state and event search tools took it from a free host
+  argument that nothing tied to the run. Every tool now acts for the conversation
+  of the run that called it, the model's input carries no conversation address, a
+  child of another parent is refused, and a run context no runtime issued is
+  refused by the factory. The factories' config types are exported
+  (`AgentChildToolsConfig`, `AgentScheduleToolsConfig`, `AgentStateToolsConfig`,
+  `AgentEventSearchToolsConfig`).
+  `createAgentChildTools(manager)` → `tools: (run) => mountAgent([], { access: { gate: run.toolFenceLifecycle }, runtimeTools: createAgentChildTools({ manager, run }) })`;
+  the same `{ …, run }` replaces `service`, `{ conversationId, state }` and
+  `{ conversationId, search, store }`. → ADR 0300
+  **Affects:** `stitchkit/agent-runtime` createAgentChildTools, createAgentScheduleTools, createAgentStateTools, createAgentEventSearchTools
+- `stitchkit/agent-runtime` `createSqliteAgentChildManager` and the schedule
+  service require their limits. The model chose how many children to spawn and,
+  without `remainingBudget`, what budget each got; a schedule could repeat every
+  millisecond, and a conversation could hold any number of them.
+  `remainingBudget` and `maxActiveChildren` are required: a child past the
+  limit, a budget that names no limit and a spent parent are refused. The
+  service takes `maxActivePerConversation` and `minIntervalMs`. Both limits are
+  counted in the transaction that records the row, so they hold between
+  processes. The tools add no limits of their own. The remainder's shape is
+  exported as `AgentChildRemainingBudget`.
+  `createSqliteAgentChildManager({ sqlite, spawn })` →
+  `createAgentChildManager({ store: sqlite.store, host: sqlite.host, spawn, remainingBudget, maxActiveChildren: 4 })`;
+  `createAgentScheduleService({ sqlite, dispatch })` →
+  `createAgentScheduleService({ host: sqlite.host, dispatch, maxActivePerConversation: 20, minIntervalMs: 60_000 })`.
+  **Affects:** `stitchkit/agent-runtime` createSqliteAgentChildManager, SqliteAgentChildManagerConfig(remainingBudget, maxActiveChildren), createAgentScheduleService
+- `stitchkit/agent-runtime` `createSqliteAgentSpillStore` no longer takes
+  `toolCallId`: the store is created once and serves many calls, so a fixed id
+  attributed every spill to one call. Each spill records the call whose output it
+  holds. `createSqliteAgentSpillStore({ sqlite, conversationId, toolCallId })` →
+  `createAgentSpillStore({ host: sqlite.host, conversationId })`.
+  **Affects:** `stitchkit/agent-runtime` createSqliteAgentSpillStore(toolCallId)
+- `stitchkit/agent-runtime`, `stitchkit/agent-runtime/sqlite/bun` and `stitchkit/agent-runtime/sqlite/node` the runtime companions run on a store's companion
+  host, on SQLite and on Postgres alike, and their reads return promises.
+  They took the SQLite handle and wrote through its raw connection, so they ran
+  on SQLite only, and a second store could not have them. The SQLite and
+  Postgres stores now give `host`, one transaction of the store with the purge
+  check and the event append inside it, and every companion is written once
+  against it. `createSqliteAgentChildManager`, `createSqliteAgentSpillStore`,
+  `createSqliteAgentProjectionStore` and `createSqliteAgentEventSearch` are
+  `createAgentChildManager`, `createAgentSpillStore`,
+  `createAgentProjectionStore` and `createAgentEventSearch`, and take
+  `{ host }` (the child manager and the projection store `{ store, host }`);
+  `SqliteAgentChildManagerConfig` is `AgentChildManagerConfig`. The SQLite
+  store's `database` and `transaction` are gone: a companion's row goes through
+  `host.transaction(conversationId, work)`, a read through `host.read(work)`.
+  `manager.listChildren`, `projections.load` / `list`, a spill store's
+  `authorization` / `search` and `service.start()` return promises; await them.
+  The event search runs on both: FTS5 on SQLite, a `tsvector` index on
+  Postgres (see Added). `AgentCompanionHost`, `AgentCompanionScope`, `AgentSqlSession`,
+  `AgentSqlTables` and `AgentSqlValue` are exported for a companion of the
+  application's own (the surface of `stitchkit/agent-runtime` grows by five). `createSqliteAgentProjectionStore({ sqlite })` →
+  `createAgentProjectionStore({ store: sqlite.store, host: sqlite.host })`;
+  `createSqliteAgentEventSearch({ database: sqlite.database })` →
+  `createAgentEventSearch({ host: sqlite.host })`;
+  `manager.listChildren(parent)` → `await manager.listChildren(parent)`. → ADR 0314
+  **Affects:** `stitchkit/agent-runtime` createSqliteAgentChildManager, createSqliteAgentSpillStore, createSqliteAgentProjectionStore, createSqliteAgentEventSearch, SqliteAgentChildManagerConfig, AgentChildManager(listChildren), AgentScheduleService(start); `stitchkit/agent-runtime/sqlite/bun` SqliteAgentRuntimeStore(database, transaction), SqliteStoreTransaction; `stitchkit/agent-runtime/sqlite/node` SqliteAgentRuntimeStore(database, transaction), SqliteStoreTransaction
+- `stitchkit/agent-runtime` `AgentChildManager.listChildBlocking` returns
+  `{ pending, unavailable }` instead of the bare pending list. Each live child is
+  asked for its blocking events within the stop bound; a child that did not answer
+  in time was read as one with nothing pending, and one whose host threw or
+  rejected failed the whole list for every sibling. Such a child is now named in
+  `unavailable` (`reason: 'timeout'`, or `'failed'` with the `cause` — a throw, a
+  rejection or a malformed report), and the other children are still presented.
+  `const pending = await children.listChildBlocking(parentId)` →
+  `const { pending, unavailable } = await children.listChildBlocking(parentId)`.
+  [migration](docs/guide/upgrading.md#child-blocking-unavailable)
+  **Affects:** `stitchkit/agent-runtime` AgentChildManager(listChildBlocking), createAgentChildManager(listChildBlocking), createSqliteAgentChildManager(listChildBlocking)
+- `stitchkit/agent-runtime` `createAgentChildManager` gives a child's host 10 s — the
+  bound a stop already had — to answer a blocking response or a message:
+  `respondToChildBlocking` and `sendMessage` reject when it does not, where they waited
+  without end. An unanswered response leaves its request pending to answer again; an
+  unanswered message records no `message-sent` event. The bound is fixed, and it ends
+  the wait, not the host's work: while an answer or a message that outlived it is still
+  with the host, a second answer to that request is refused (`TypeError`) instead of
+  being delivered twice, and another message to that child is refused while any
+  message that outlived the bound is still with its host — counted one by one, so the
+  first of two to land does not lift the guard for the second; one the host takes late
+  retires the request, or is journaled as `message-sent`, when it lands. A second
+  `spawnChild` of a child id still being spawned is refused with a `TypeError` before
+  its host is asked to start it, where both reached the host.
+  `await children.sendMessage(parentId, childId, text)` →
+  `await children.sendMessage(parentId, childId, text).catch(reportUnreachableChild)`.
+  [migration](docs/guide/upgrading.md#child-blocking-unavailable)
+  **Affects:** `stitchkit/agent-runtime` AgentChildManager(respondToChildBlocking, sendMessage, spawnChild), createAgentChildManager(behaviour)
+- `stitchkit/agent-runtime` a record id containing NUL (`\0`) is refused by the
+  schema. Postgres cannot store it in `text`, so an id the SQLite and memory
+  stores accepted failed only on the way into Postgres, in the middle of moving
+  an archive. Every store now refuses it alike. `{ conversationId: 'a\0b' }`
+  → a different id.
+  **Affects:** `stitchkit/agent-runtime` AgentRecordIdSchema, AgentStoreEventEnvelopeSchema, AppendAgentStoreEventSchema
+- `stitchkit/agent-runtime` `agentUsageProjection` (bumped to `version: 2`) folds
+  canonical `AgentUsage` records from terminal `runtime/transition` events,
+  abandoned `recover` events with checkpointed spend and standalone
+  `provider/response` receipts instead of non-existent top-level numeric fields
+  that always summed to zero. Its projected state changes from
+  `{ inputTokens, outputTokens, cost, sources }` to `{ records, usage }`
+  (`AgentUsage` with per-field `provenance`), so unreported tokens and prices stay
+  `unavailable` instead of collapsing into zero; persisted `version: 1` rows
+  re-fold from sequence 1 on the next `advance()`. A run that did not complete,
+  measured nothing and holds no part of a provider answer (a refused connection,
+  an oversized context, a cancel before the request) is not a record: it leaves
+  the cost of the paid runs around it known.
+  `projected.value.inputTokens` / `projected.value.cost` →
+  `projected.value.usage.inputTokens.value` / `projected.value.usage.cost?.value`
+  (checking `provenance`).
+  **Affects:** `stitchkit/agent-runtime` agentUsageProjection
+- `stitchkit` `SessionCredentialsConfig.storage` requires
+  `read(): Promise<{ session; credentials } | null>` so `restore()` can
+  distinguish an unreadable keychain from an absent session without clearing
+  storage or scope.
+  `storage: { write, clear }` → `storage: { read, write, clear }`. → ADR 0306
+  **Affects:** `stitchkit` createSessionCredentials(storage.read), SessionCredentialsConfig(storage.read)
+- `stitchkit` `createSessionCredentials().refresh()` resolves with the newly
+  rotated credentials when post-rotation `storage.write()` fails or times out,
+  emits `'storage-failed'` through `onEvent`, retries persistence every
+  `storageRetryMs` and refuses to rotate again until flushed; `login()` still
+  rejects on storage errors.
+  `await expect(auth.refresh(op)).rejects.toThrow('storageTimeoutMs')` →
+  `const next = await auth.refresh(op)` and observe `onEvent` (`'storage-failed'`).
+  → ADR 0306
+  **Affects:** `stitchkit` createSessionCredentials(behaviour), SessionCredentials(refresh)
+- `stitchkit/observability` `RequestContext.startedAt` changes from `bigint`
+  (`process.hrtime.bigint()` nanoseconds) to `number` (`performance.now()`
+  milliseconds) so the handler pipeline uses one monotonic clock across Node,
+  Bun, browsers and React Native / Hermes without `process.hrtime`.
+  `Number(process.hrtime.bigint() - ctx.startedAt) / 1e6` →
+  `performance.now() - ctx.startedAt`. → ADR 0307
+  **Affects:** `stitchkit/observability` RequestContext(startedAt); `stitchkit/server` behaviour; `stitchkit/node` behaviour
+- `stitchkit` Minimum supported runtimes rise from `node >=22` / `bun >=1.2.0`
+  to `node >=22.3.0` / `bun >=1.4.0` because `RequestContext` loads
+  `AsyncLocalStorage` lazily through `process.getBuiltinModule('async_hooks')`
+  instead of statically importing `node:async_hooks`. → ADR 0307
+  **Affects:** `stitchkit` behaviour; `stitchkit/observability` behaviour; `stitchkit/server` behaviour; `stitchkit/node` behaviour
+- `stitchkit/agent-runtime` `agentChildBudgetStopPolicy` no longer takes a `cost`
+  callback and `AgentStepFinishedEventSchema.response` is now optional. The child
+  budget stop policy reads provider-normalized usage (including USD cost from
+  adapters such as `openRouterProvider`) through `selectedModel` on
+  `AgentRuntimeRunContext`, using the same normalization path as `onStepSpend`,
+  while compaction spend emits `step-finished` events without a provider response
+  envelope. Every `step-finished` event carries `phase` and `attempt`; a
+  `step` or `abandoned-attempt` always names its `modelId`, `provider` and
+  `response`, a `compaction` names none of them and carries the number of the
+  step it prepared, so model steps are counted by `phase === 'step'`.
+  `AgentStepSpendSchema` is the same split as a union on `phase`.
+  `agentChildBudgetStopPolicy({ manager, childConversationId, cost })` →
+  `agentChildBudgetStopPolicy({ manager, childConversationId })`.
+  **Affects:** `stitchkit/agent-runtime` agentChildBudgetStopPolicy(cost), AgentStepFinishedEventSchema(response), AgentStepFinishedEvent(response)
+- `stitchkit/cli` a bare boolean framework flag separated from a trailing `true`
+  or `false` token by a stripped command name or application option (e.g.
+  `--dry-run inspect false`, `inspect --dry-run --profile demo false`, or before the
+  command `--quiet --profile demo true inspect`, which exited `1` with
+  `Unknown command "true"`) now
+  fails with `CliArgumentError` (exit code 2, zero handler calls) and a hint to
+  write `--flag=false` or `-- false`, replacing silent boundary rewriting. A bare
+  `--help` or `--schema` parted that way asks for nothing, so the line is refused
+  instead of answered: `myapp --schema --profile demo false` exits `2` (it exited
+  `1` with `Unknown command "false"`).
+  Adjacent `--flag false` remains a boolean value. The projections refuse the
+  argv they can no longer write: `routeCliArgv` returns the refusal in `error`
+  with an empty `commandArgv`, and `extractCliGlobalOptions` still returns
+  `globals` but throws `CliArgumentError` when `argv` is read after a lifted
+  global stood between a bare framework boolean and `true` or `false`
+  (non-framework option boundaries return in `separatedBefore`). A line that
+  starts with `--` names no command: `routeCliArgv` reports `A command is
+  required before "--"` instead of `command: "--"`. → ADR 0310
+  **Affects:** `stitchkit/cli` parseCliArgs, extractCliGlobalOptions, routeCliArgv, scanCliInvocation; `stitchkit/cli` behaviour
+- `stitchkit/cli` view column flags (`--table`, `--sort`, `--sum`, `--count-by`,
+  `--top --by`) are now validated against the output schema before calling the
+  handler whenever the schema defines an unambiguous object collection, so an
+  unknown column fails with exit code 2 and zero handler calls — including when
+  the handler would return an empty collection (previously exit code 0). Open or
+  ambiguous output schemas retain post-call validation. → ADR 0310
+  **Affects:** `stitchkit/cli` behaviour
+- `stitchkit/cli` native commands now honour view flags (`--table`, `--sort`,
+  `--sum`, `--count-by`, `--top`) when they declare an `output` schema and fail
+  with exit code 2 (zero handler calls) when view flags are passed to a native
+  command without `output`, instead of silently ignoring those flags. → ADR 0310
+  **Affects:** `stitchkit/cli` defineCliCommand; `stitchkit/cli` behaviour
+- `stitchkit/cli` `createCliInvoker` now parses global option values through the
+  same schema-aware coercer as `createCli` (accepting JSON strings for
+  structured globals) and throws `CliArgumentError` on invalid globals instead of
+  raw `ZodError`. → ADR 0310
+  **Affects:** `stitchkit/cli` createCliInvoker
+- `stitchkit/cli` the public projections read a line with the grammar `createCli` reads it with, so an
+  entry point that lifts, routes and parses argv itself (`extractCliGlobalOptions` → `routeCliArgv` →
+  `parseCliArgs` → `createCliInvoker`) reaches the same refusal, arguments, exit code and handler calls.
+  `routeCliArgv(argv, defaultCommand)` → `routeCliArgv(argv, { defaultCommand, separatedBefore })`: it
+  takes the `separatedBefore` that `extractCliGlobalOptions` returned and returns `separatedBefore`
+  indexed by `commandArgv`, so `inspect --verbose --profile demo false` parses as
+  `{ verbose: true, text: 'false' }` on both paths (it was `{ verbose: false }` through the chain), and a
+  separated value option no longer takes the token after the boundary. `extractCliGlobalOptions` keeps a
+  `--` that stands before the command in `argv` (it was dropped, so the route ran the command `createCli`
+  refuses), and a line answered by help, `--version` or `--schema` reports no application global's error
+  (`--profile --help` shows help instead of throwing). `routeCliArgv` returns `error` for a line that
+  fails before a command is named (`--json=maybe`). It also returns `error` for every other line
+  `createCli` refuses before a command runs, a repeated or malformed framework option on either side of
+  the command included (`nosuch --json --json` is that refusal, exit `2`, not an unknown command), unless
+  help, `--version` or `--schema` answers the line (`--verbose --schema` lists the commands, as
+  `createCli` does). A line help or `--schema` answers is routed even when removing the
+  command parts a bare framework boolean from `true` or `false` (`--json inspect true --help`):
+  the word is kept apart in `separatedBefore`, so `parseCliArgs` reads `--json` as written and
+  answers help, as 0.126 and `createCli` do. `parseCliArgs` refuses a pure boolean written inline
+  with a word that is not a boolean (`--verbose=maybe`) with `CliArgumentError`, as `createCli` does,
+  instead of leaving the string for Zod; a line that asks for help or `--schema` is still answered, before
+  any argument it cannot read (`parseCliArgs(['--verbose=maybe', '--help'], schema).options.help` is
+  `true`, with empty `toolArgs`, as it was `true` in 0.126; `-x --help` and `--count abc --help` answer
+  help too, where 0.126 threw), and a bare framework boolean that `separatedBefore` parts from
+  `true`/`false` is refused instead of read as either. `ParsedCliArgs.options` carries `schema`
+  (`--schema`). `createCli` exits `4` (`UNKNOWN_OPERATION`, overridable through `exitCodes`) for an
+  unknown command, the code `createCliInvoker` already returned; it exited `1`.
+  `routeCliArgv(argv, 'help')` → `routeCliArgv(argv, { defaultCommand: 'help' })`. → ADR 0310
+  [migration](docs/guide/upgrading.md#cli-public-projections)
+  **Affects:** `stitchkit/cli` routeCliArgv(defaultCommand), CliArgvRoute(separatedBefore), CliRouteOptions, parseCliArgs, CliRunOptions(schema), ParsedCliArgs(options), extractCliGlobalOptions, createCli; `stitchkit/cli` behaviour
+- `stitchkit/cli` `createCliInvoker` checks its native commands as `createCli` does, when it is
+  created: a command name declared twice or shared with a managed command, `commandSettings` aliases or
+  positionals that name a field the command does not have, and an alias of its passthrough field throw
+  instead of being accepted, the later declaration silently replacing the earlier one.
+  `invoker.commands` no longer lists a managed command that cannot run (one with an `unavailableReason`).
+  `createCliInvoker({ commands: [inspect, inspect] })` → one `inspect`. → ADR 0310
+  [migration](docs/guide/upgrading.md#cli-public-projections)
+  **Affects:** `stitchkit/cli` createCliInvoker, CliInvoker(commands)
+- `stitchkit/cli` on a CLI without a default command, a command option written where
+  the command name belongs (`myapp --verbose inspect`, `myapp --verbose=maybe inspect`)
+  is a usage error, exit `2`: "`--verbose is an option of a command, not a command: put
+  it after the command name (<command> --verbose)`". It exited `4` with
+  `Unknown command "--verbose"`. `createCli` and `routeCliArgv` (as `error`, no
+  `command`) answer it alike; help and `--version` still answer such a line, and
+  framework options before the command (`myapp --json inspect`) are unchanged. A
+  command name in option syntax (`--custom`, `-x`) is now reserved and refused when
+  declared: no projection can tell it from an option.
+  `myapp --verbose inspect` → `myapp inspect --verbose`. → ADR 0310
+  [migration](docs/guide/upgrading.md#cli-option-before-command)
+  **Affects:** `stitchkit/cli` createCli, createCliInvoker, routeCliArgv; `stitchkit/cli` behaviour
+- `stitchkit/server` and `stitchkit/node` `createServer({ unix })` and
+  `createUnixClientTransport` now reject socket paths exceeding **103 UTF-8
+  bytes** (cross-OS `sun_path` limit) and verify parent directory ownership and
+  permissions (real directory, not symlink, owner uid, `(mode & 0o022) === 0`);
+  `createUnixClientTransport` also verifies the target socket's owner before
+  connecting and throws non-retryable `UNIX_TARGET_REFUSED` (`delivery:
+  'not-dispatched'`) on refusal. A socket in a shared directory such as `/tmp`,
+  a socket owned by another user and a system daemon's socket under a
+  root-owned directory are refused for every caller that is not that owner;
+  there is no option that turns the check off.
+  Before: `createServer({ unix: '/tmp/app.sock' })`. After:
+  `createServer({ unix: join(runtimeDir, 'app.sock') })`, where `runtimeDir` is a
+  directory the same user owns with mode `0700`. → ADR 0318
+  An exhaustive switch on `UnixClientTransportErrorCode` adds `'UNIX_TARGET_REFUSED'`.
+  **Affects:** `stitchkit/server` createServer, createUnixClientTransport, UnixClientTransportErrorCode; `stitchkit/node` createUnixClientTransport, UnixClientTransportErrorCode
+- `stitchkit/tools/connections` a discovered MCP or OpenAPI tool whose input or
+  output schema carries a keyword outside JSON Schema draft-07, draft 2020-12
+  and the OpenAPI 3.0 Schema Object is no longer mounted: it is reported through
+  `onSkippedTool` with the keyword's name. Vendor annotations such as `enumNames`,
+  `markdownDescription` and `propertyOrdering` are such keywords, and so are the
+  refused `$anchor`, `$dynamicRef` and `$dynamicAnchor`; `x-*` extensions pass.
+  A tool that mounted and accepted any value under those keywords is now absent
+  until its schema is written in standard keywords. → ADR 0310
+  **Affects:** `stitchkit/tools/connections` behaviour
+- `stitchkit/tools/connections` top-level `oneOf`/`anyOf` object schemas in
+  discovered MCP and OpenAPI tools now merge their object branches (with any root
+  `properties`/`required`, preserving `$schema`) instead of collapsing into an
+  unvalidated `z.looseObject({})`, while non-object branches fail closed into
+  `onSkippedTool`. A root object schema that carries `allOf`, `minProperties`,
+  `maxProperties`, `propertyNames`, `patternProperties`, or `oneOf`/`anyOf` beside
+  other keywords keeps its properties, its required fields and those constraints the
+  same way, and a root that cannot be read as one object is refused instead of
+  accepted. The constraints are checked locally, on every mount, before the call
+  reaches the server: an argument that breaks one is refused here, where it was sent.
+  [migration](docs/guide/upgrading.md#connections-top-level-union) → ADR 0310
+  **Affects:** `stitchkit/tools/connections` behaviour
+- `stitchkit/application` and `stitchkit/application/schemas` removed the redundant
+  `stitchkit/application/schemas` entrypoint (all canonical schemas are already
+  browser-clean on `stitchkit/application`), renamed `notificationOutboxStateSchema`
+  to `createNotificationOutboxStateSchema`, and tightened
+  `public-surface-budget.test.ts` to refuse limits or overlaps naming nonexistent
+  entrypoints. → ADR 0311
+  **Affects:** `stitchkit/application` createNotificationOutboxStateSchema, notificationOutboxStateSchema; `stitchkit/application/schemas` *
+- `stitchkit/telegram` renamed `postgresTelegramUpdateStoreSchema` to
+  `postgresTelegramUpdateStoreDdl`. → ADR 0311
+  **Affects:** `stitchkit/telegram` postgresTelegramUpdateStoreSchema, postgresTelegramUpdateStoreDdl
+- `stitchkit/telegram/html` decides which `href` stays a link by fixed rules,
+  the same in every runtime, instead of the runtime's `URL`: 0.126 called
+  `URL.canParse`, which React Native does not have, and React Native's `URL`
+  accepts what a WHATWG parser refuses, so one input gave two outputs. An `href`
+  is kept when it is trimmed of whitespace and holds no whitespace or control
+  character anywhere, its scheme is `http:`, `https:`, `tg:` or `mailto:`, an
+  `http:`/`https:` link names a host (a bracketed IPv6 address or a name without
+  the characters a host forbids; optional user info; a port up to 65535), and a
+  `tg:`/`mailto:` link has something after its scheme. Newly refused, so the
+  words stay and the tag goes: an `href` with a raw space or tab inside
+  (`https://x.test/a b`, previously percent-encoded or stripped by `URL`), and a
+  bare `tg:` or `mailto:`. Newly kept: a dotted host that `URL` refused as an
+  invalid IPv4 address (`https://1.2.3.999`), an `xn--` label `URL` could not
+  decode, a host with U+FFFD. Encode a space as `%20` before it reaches the
+  parser: `<a href="https://x.test/a b">` → `<a href="https://x.test/a%20b">`.
+  [migration](docs/guide/upgrading.md#telegram-html-link-rules)
+  **Affects:** `stitchkit/telegram/html` parseTelegramHtml(href), sanitizeTelegramHtml(href), splitTelegramHtml(href), truncateTelegramHtml(href)
+- `stitchkit/telegram/html` `splitTelegramHtml` refuses a custom emoji or a
+  `tg-time` longer than the limit, which cannot be cut, with a `RangeError`. It
+  returned that atom as a part over the limit, followed by an empty part, and
+  Telegram refuses both. A custom emoji or a time whose text begins with a space or
+  a line break is no longer dropped with the break a cut is made at, leaving an
+  empty part: the cut goes before it, and a part whose visible text is blank but
+  holds one is sent (`'abcd<tg-emoji emoji-id="1"> xy</tg-emoji> efgh'` at limit 5
+  gave `['abcd', '', 'efgh']`, now `['abcd', '<tg-emoji emoji-id="1"> xy</tg-emoji>', 'efgh']`).
+  `truncateTelegramHtml` already cut before an atom and is unchanged. `splitTelegramHtml('ab <tg-emoji emoji-id="1">abcdefghij</tg-emoji> cd', { limit: 5 })`:
+  `['ab', '<tg-emoji emoji-id="1">abcdefghij</tg-emoji>', '', 'cd']` → `RangeError`;
+  pass a limit the longest atom fits in.
+  [migration](docs/guide/upgrading.md#telegram-html-split-atom)
+  **Affects:** `stitchkit/telegram/html` splitTelegramHtml(limit)
+- `stitchkit/observability` `createSpooledSink` keeps a spool file within
+  `maxFileBytes` (default 64 MiB) instead of reading it whole. `recover()` and
+  compaction read it line by line, holding at most `maxFileBytes` and
+  `maxPendingEntries` of it. A debt that does not fit the bound — a file a long
+  outage left under 0.126, or one whose bound was lowered — is moved to
+  `<path>.<milliseconds>.overflow`, named by the new `SpoolRecovery.quarantined` and
+  reported as `SPOOL_QUARANTINED`; the spool goes on with an empty file, so new
+  records are spooled instead of refused behind an old debt. Records of a file too
+  large to read within the bound are not offered to the store: the quarantined file
+  is owed work, replayed by a spool at its path with a bound it fits. A file over its
+  bound is compacted once per process even with nothing delivered. A spool file that
+  cannot be read (anything but missing) is no longer answered
+  `{ replayed: 0, failed: 0 }`: `recover()` sets `unread: true`, reports
+  `SPOOL_UNREADABLE` with the read error as `cause`, and leaves the file as it is. A
+  record past `maxPendingEntries` (default 10 000) or `maxFileBytes` is no longer
+  spooled — 0.126 spooled every record while the store was down. It is still offered
+  to the store; when the store refuses it too it is kept nowhere, and `write` rejects
+  with code `SPOOL_UNSPOOLED` and the store's error as `cause`, where a row on disk
+  rejects with the store's own error. `onSpoolError` reports `SPOOL_FULL` with the
+  bound (`entries` or `bytes`).
+  `const { failed } = await sink.recover()` →
+  `const { failed, quarantined, unread } = await sink.recover()`.
+  [migration](docs/guide/upgrading.md#spool-file-over-its-bound). → ADR 0323
+  **Affects:** `stitchkit/observability` createSpooledSink(behaviour), SpooledSink(write), SpoolRecovery(quarantined, unread)
+- `stitchkit` `stitchkit/agent-runtime/sqlite/bun` `stitchkit/agent-runtime/sqlite/node`
+  two failures of one operation reject with one `AggregateError` — the first failure
+  first in `errors` and as its `cause`, then the second — instead of one of them
+  alone. A SQLite store transaction or schema initialization whose `ROLLBACK` fails
+  for a reason other than "no transaction is active" threw the rollback's error and
+  lost the failure that ended the transaction; the connection could be left inside
+  the transaction, and the next `BEGIN` failed for a reason nobody saw.
+  `createSessionCredentials().login()` whose storage write fails and whose clear of
+  the stored session it replaced fails too rejects with the `AggregateError`, where
+  it rejected with the write failure. Code that branches on the class of such a
+  rejection reads the first failure from `cause`.
+  `catch (error) { if (error instanceof X) … }`
+  → `catch (error) { const first = error instanceof AggregateError ? error.cause : error; if (first instanceof X) … }`.
+  [migration](docs/guide/upgrading.md#double-failure-aggregate-error). → ADR 0326
+  **Affects:** `stitchkit` SessionCredentials(login); `stitchkit/agent-runtime/sqlite/bun` behaviour; `stitchkit/agent-runtime/sqlite/node` behaviour
+- `stitchkit/telegram` the operator channel waits Telegram's `retry_after` only up to
+  `maxRetryAfterMs` (new option, default 60 000 ms — the minute over which Telegram
+  counts a group's messages). A longer flood wait would hold every queued message
+  behind one, so that message is dropped with the new reason `flood-wait` (with its
+  classified failure) and the next one is tried at the usual pace. It waited as long
+  as Telegram asked. A `switch` over `TelegramOperatorDrop['reason']` gains a case:
+  `case 'over-budget':` → `case 'over-budget': case 'flood-wait':`.
+  [migration](docs/guide/upgrading.md#operator-channel-flood-wait)
+  **Affects:** `stitchkit/telegram` TelegramOperatorDrop(reason), TelegramOperatorChannelConfig(maxRetryAfterMs), createTelegramOperatorChannel; `stitchkit/telegram` behaviour
+- `stitchkit/agent-runtime` relocated the seven process-sandbox probe exports
+  (`AgentSandboxGradeSchema`, `AgentSandboxGrade`, `AgentSandboxRestrictionSchema`,
+  `AgentSandboxRestriction`, `probeAgentProcessSandbox`,
+  `missingSandboxRestrictions`, `recordAgentSandboxProbe`) to
+  `stitchkit/agent-runtime/sandbox`. → ADR 0311
+  **Affects:** `stitchkit/agent-runtime` probeAgentProcessSandbox, recordAgentSandboxProbe, missingSandboxRestrictions, AgentSandboxGradeSchema, AgentSandboxGrade, AgentSandboxRestrictionSchema, AgentSandboxRestriction
+- `stitchkit`, `stitchkit/contract`, `stitchkit/server` and `stitchkit/node` removed
+  `appError`; `new AppError(code, options?)` now derives its default HTTP status from
+  `STITCH_ERROR_STATUS[code]` (falling back to `500` when unknown, with explicit
+  `status` winning). → ADR 0311
+  **Affects:** `stitchkit` AppError, appError; `stitchkit/contract` AppError, appError; `stitchkit/server` AppError, appError; `stitchkit/node` AppError, appError
+- `stitchkit/agent-runtime` and `stitchkit/agent-runtime/testing` store driver
+  contract step 1 makes `history.hasMessage` and `events.find` required (removing
+  fallback scans) and `AgentScheduleService.listSchedules` async
+  (`Promise<readonly AgentSchedule[]>`); `AgentStoreConformanceConfig` now requires
+  explicit `capabilities: { branch, planBranch }` and
+  `commitConflict: { arm() } | { impossible: 'single-writer' }`. → ADR 0311
+  **Affects:** `stitchkit/agent-runtime` AgentScheduleService(listSchedules), AgentRuntimeStoreDriver; `stitchkit/agent-runtime/testing` runAgentStoreConformance, AgentStoreConformanceConfig
+- `stitchkit/agent-runtime` and `stitchkit/agent-runtime/testing` store driver
+  contract step 2: a store built by `createAgentRuntimeStore` reports
+  `store.capabilities` (`{ archive, historyRestore, purge }`, frozen) for its
+  driver's optional members, and an operation that needs a missing one is refused
+  with `AgentStoreUnsupportedCapabilityError` (a `TypeError` with `.capability`
+  `'archive' | 'historyRestore'`) before it writes. Before, `importConversation`
+  without `driver.archive` dropped an archive's spills and companion projections,
+  and without `driver.history.restore` it turned compacted baseline rows back into
+  active history; `planConversationBranch` answered `ready` for a branch that would
+  then fail. A half-implemented `driver.archive` is refused when the store is
+  built. The memory store keeps companion projections through import and export.
+  `stitchkit/agent-runtime/testing` `capabilities` now also declares `archive` and
+  `historyRestore`, compared with `store.capabilities` and proven by behaviour:
+  `// before: capabilities: { branch: true, planBranch: true }` →
+  `// after: capabilities: { branch: true, planBranch: true, archive: true, historyRestore: true }`.
+  → ADR 0311
+  **Affects:** `stitchkit/agent-runtime` AgentRuntimeStore(importConversation), AgentRuntimeStore(branchConversation), AgentRuntimeStore(planConversationBranch), createAgentRuntimeStore; `stitchkit/agent-runtime` behaviour; `stitchkit/agent-runtime/testing` runAgentStoreConformance, AgentStoreConformanceConfig
+- `stitchkit/agent-runtime` and `stitchkit/agent-runtime/browser` `tool-status` events
+  are durable: each is published right after the checkpoint that holds its call (or
+  its result) and carries `eventId` and `snapshotVersion` instead of `runtimeEpoch`
+  and `sequence`, so a reader that reconnects finds the call (or its result) in the
+  snapshot and the cursor drops a repeat. `// before: { type: 'tool-status', runtimeEpoch, sequence, … }` →
+  `// after: { type: 'tool-status', eventId, snapshotVersion, … }`.
+  **Affects:** `stitchkit/agent-runtime` AgentToolStatusEventSchema, AgentRuntimeEvent; `stitchkit/agent-runtime/browser` AgentToolStatusEventSchema, AgentRuntimeEvent
+- `stitchkit/tools`, `stitchkit/tools/connections` and `stitchkit/agent-runtime/coding-tools`
+  renamed `transports` to `expose` on runtime tool definitions, managed native tool
+  factories, async-operation capability maps, `ToolNameEntry.expose`, coding tool
+  definitions, and MCP/OpenAPI client connection configs; passing the removed
+  `transports` key now throws a `TypeError` at definition/mount time. → ADR 0311
+  **Affects:** `stitchkit/tools` defineRuntimeTool, defineDownloadTool, defineUploadTool, defineWaitTool, defineViewFileTool, ToolNameEntry; `stitchkit/tools/connections` defineMcpClientConnection, defineOpenApiConnection, McpClientConnectionConfig, OpenApiConnectionConfig; `stitchkit/agent-runtime/coding-tools` AgentCodingToolDefinition
+- `stitchkit/cli` consolidated top-level `optionAliases`, `positionals`,
+  `results`, `passthrough`, and `wait` (and duplicate `lifecycle`) into one typed
+  `CliConfig.commandSettings` map (`CliCommandName`, `CliCommandSettings`),
+  validated uniformly with runtime `TypeError` on removed top-level keys; CLI
+  success output now shares the safe JSON projection used by MCP (`bigint` and
+  cycles never crash `JSON.stringify`). `parseCliArgs` takes the same word: its
+  `optionAliases` map is `aliases`. → ADR 0311
+  **Affects:** `stitchkit/cli` createCli, createCliInvoker, CliConfig, CliInvokerConfig, CliPresentationPolicyConfig(optionAliases, positionals, results), parseCliArgs(optionAliases)
+- `stitchkit/tools/connections`, `stitchkit`, `stitchkit/contract` and `stitchkit/server`
+  discovered MCP tools advertising an object `outputSchema` now validate and return `result.structuredContent` across MCP,
+  Agent and CLI mounts (charging `outputSchema` bytes to `maxSchemaBytes`) and
+  fail loudly with `MCP_STRUCTURED_CONTENT_MISSING` (`502`) when an upstream
+  server omits `structuredContent` on a non-error response. For such a tool the
+  structured value is the whole answer on every transport: the `content` parts
+  the server sent beside it (text, images) are no longer passed through. The
+  value is checked with the local verdict its input gets, on every mount (a
+  re-exposed MCP tool and an agent tool included), so a format the remote server
+  judges (`uri-reference` with a relative path) does not fail the call. The code joins
+  `StitchErrorCode` and `STITCH_ERROR_STATUS`, so a map written as
+  `satisfies Record<StitchErrorCode, …>` adds `MCP_STRUCTURED_CONTENT_MISSING`. → ADR 0311
+  **Affects:** `stitchkit/tools/connections` behaviour; `stitchkit` StitchErrorCode, STITCH_ERROR_STATUS; `stitchkit/contract` StitchErrorCode, STITCH_ERROR_STATUS; `stitchkit/server` StitchErrorCode, STITCH_ERROR_STATUS
+- `stitchkit/tools`, `stitchkit/tools/mcp`, `stitchkit/tools/agent`,
+  `stitchkit/tools/invoker`, `stitchkit/tools/toolkit`, `stitchkit/cli` and
+  `stitchkit/agent-runtime` replaced optional `lifecycle` with mandatory mount-time
+  `access: { gate: ToolGate } | { open: ToolOpenReason; afterHandle? }`
+  (`ToolAccess`, `ToolGate`, `ToolOpenReason`) on `mountAgent`, `mountMcp`,
+  `buildMcpServer`, `createMcpHandler`, `createStdioMcpServer`, `createToolInvoker`
+  (moved from per-call `ToolInvocationOptions`),
+  `createDeferredAgentToolSurface().mount`,
+  `createToolkit().{mountMcp,mountAgent,createCli}`, and managed
+  `createCli` / `createCliInvoker` (native-only CLIs without
+  `services`/`runtimeTools` omit `access`), with runtime `TypeError` before the
+  first call and stricter `composeToolLifecycle(gate, ...rest): ToolGate` rejecting
+  `undefined`. → ADR 0311
+  **Affects:** `stitchkit/tools` composeToolLifecycle, createToolInvoker, ToolInvokerConfig, ToolInvocationOptions; `stitchkit/tools/mcp` mountMcp, buildMcpServer, createMcpHandler, createStdioMcpServer; `stitchkit/tools/agent` mountAgent; `stitchkit/tools/invoker` createToolInvoker; `stitchkit/tools/toolkit` createToolkit; `stitchkit/cli` createCli, createCliInvoker, CliConfig, CliInvokerConfig; `stitchkit/agent-runtime` createDeferredAgentToolSurface
+- `stitchkit/agent-runtime` `createDeferredAgentToolSurface` takes the input
+  projection (`extend`, `flattenUnionInput`, `inputRecursionDepth`); `mount` refuses
+  it with a `TypeError`. The manifest the selector ranked and
+  `activation.maxSchemaBytes` measured was built without the projection `mount`
+  applied, so the ceiling did not bound the schemas the model received (`extend`
+  fields and flattened unions were never counted). The manifest, the ceilings and
+  the mount now use the surface's one projection.
+  `deferred.mount(runContext, { access, extend, flattenUnionInput: true })`
+  → `createDeferredAgentToolSurface({ …, extend, flattenUnionInput: true })` and
+  `deferred.mount(runContext, { access })`.
+  [migration](docs/guide/upgrading.md#deferred-surface-projection)
+  **Affects:** `stitchkit/agent-runtime` createDeferredAgentToolSurface(extend, flattenUnionInput, inputRecursionDepth), DeferredAgentToolMountConfig(extend, flattenUnionInput), DeferredAgentToolCommonConfig
+- `stitchkit/agent-runtime` `createAgentRuntime` refuses a `loop.retry.maxAttempts`
+  that is not a positive safe integer, and so does `recordAgentRetryDecision`
+  (`TypeError`). `Infinity` retried a retryable provider failure, each attempt paid,
+  without end; `NaN`, `0`, a negative number or a fraction silently meant "never
+  retry". `loop: { retry: { maxAttempts: 0, delayMs } }`
+  → `loop: { retry: { maxAttempts: 1, delayMs } }`.
+  [migration](docs/guide/upgrading.md#retry-max-attempts)
+  **Affects:** `stitchkit/agent-runtime` createAgentRuntime(loop), recordAgentRetryDecision, AgentRetryPolicy(maxAttempts)
+- `stitchkit/agent-runtime/openrouter` `openRouterProvider(settings, access?)` now
+  refuses `settings.extraBody` keys owned by the request policy (`provider`,
+  `reasoning`, `session_id`, `usage`) with a `TypeError` so provider-level
+  `extraBody` cannot silently overwrite per-request routing, reasoning or usage
+  policies.
+  `openRouterProvider({ apiKey, extraBody: { provider: { order: ['anthropic'] } } })`
+  → `openRouterProvider({ apiKey }, { defaultPolicy: { provider: { order: ['anthropic'] } } })`.
+  **Affects:** `stitchkit/agent-runtime/openrouter` openRouterProvider(extraBody)
+- `stitchkit/process` `NativeCommandError.reason` (when `code === 'COMMAND_LIMIT'`)
+  adds `'stdin-budget'` for streamed `stdin` (`ReadableStream<Uint8Array>`) in
+  `runNativeCommand` and `streamNativeCommand` exceeding `maxStdinBytes`
+  (previously thrown as an untyped `Error`). Exhaustive switches on
+  `NativeCommandError.reason` must add a `'stdin-budget'` branch.
+  `case 'deadline': case 'output-budget':` → `case 'deadline': case 'output-budget': case 'stdin-budget':`.
+  **Affects:** `stitchkit/process` NativeCommandError(reason)
+- `stitchkit/tools` and `stitchkit/tools/connections` a timer option is refused by the
+  one timer rule every other component uses: an integer from 1 to 2147483647
+  milliseconds. `effect(…, { reconcileTimeoutMs })` refused an out-of-range value
+  with a `TypeError` and accepted a fraction such as `1.5`; it now refuses both with a
+  `RangeError`. A connection's `timeoutMs` and `idleTimeoutMs` that are not numbers
+  (a string read from JSON) are a `TypeError` instead of a `RangeError`; numbers out
+  of range stay a `RangeError`. Every refusal names the option and the value it
+  received. `catch (error) { if (error instanceof TypeError) … } // reconcileTimeoutMs: 0`
+  → `catch (error) { if (error instanceof RangeError) … } // reconcileTimeoutMs: 0, 1.5`.
+  [migration](docs/guide/upgrading.md#timer-options-one-rule). → ADR 0320
+  **Affects:** `stitchkit/tools` EffectRunOptions(reconcileTimeoutMs); `stitchkit/tools/connections` defineMcpClientConnection(timeoutMs, idleTimeoutMs), defineOpenApiConnection(timeoutMs, idleTimeoutMs)
+- `stitchkit` `stitchkit/http` `stitchkit/realtime` `stitchkit/contract` `stitchkit/react`
+  `stitchkit/files` `stitchkit/server` `stitchkit/node` `stitchkit/tools`
+  `stitchkit/observability` `stitchkit/testing` `stitchkit/application`
+  `stitchkit/application/diagnostic-journal` `stitchkit/telegram`
+  `stitchkit/telegram/screens` `stitchkit/cli` `stitchkit/agent-runtime`
+  `stitchkit/agent-runtime/browser` `stitchkit/agent-runtime/realtime`
+  `stitchkit/agent-runtime/testing` `stitchkit/agent-runtime/openrouter` `stitchkit/live`
+  `stitchkit/google` `stitchkit/geo` `stitchkit/release` `stitchkit/tracking`
+  `stitchkit/tracking/performance` every other timer option follows the same timer
+  rule: an integer from 1 (0 for a drain bound, a run timeout or a retry delay) to
+  2147483647 milliseconds, refused before anything starts. A value past 2147483647
+  used to pass and fire at once; it is now a `RangeError`. A value these options
+  refused with a `TypeError` — 0, a negative or a fractional number — is now a
+  `RangeError`: a streaming route's `heartbeatMs` (`sseRoute`, `ndjsonRoute`,
+  `streamingRoute`), the drain `timeoutMs` of `createObservability().flush()`/`close()`,
+  `runManagedResourceConformance`'s `watchdogTimeoutMs`, `runSurfaceProbes`'
+  `timeoutMs` (checked before any driver runs), `createBoundedAdmission`'s
+  `drain({ timeoutMs })` and `run(…, { timeoutMs })`, the diagnostic journal's
+  `flush`/`close` `timeoutMs`, `createTelegramBotTransport`'s `connectAttemptMs`,
+  `connectBudgetMs` and `responseTimeoutMs`, `createAgentRuntime`'s
+  `loop.idleTimeoutMs`, a retry policy's `delayMs` result, `createAgentController`'s
+  `timeoutMs`, `createAgentRaceBarrier`'s timeout, the `timeoutMs` of
+  `openRouterModelCatalog` (now checked when the catalog is created, not on its first
+  `load()`) and of `createOpenRouterSpendReconciler`, and `bindAgentHarnessRealtime`'s
+  `authorizationTimeoutMs` (now checked before it creates the control server or binds
+  the realtime contract), `createManagedFileBoundary`'s `inspectionTimeoutMs` (now
+  checked before it binds its root) and `createUnixClientTransport`'s
+  `headersTimeoutMs`. The `gracePeriodMs` / `forceTimeoutMs` of `AgentRuntime.close()`
+  and `createAgentSessionCoordinator().close()` refused a negative, fractional or `NaN`
+  value with a `TypeError` and now with a `RangeError` (0 allowed), still before
+  admission closes. `heartbeatMs`, a drain `timeoutMs` and a realtime request
+  `timeoutMs` accepted a fraction and now refuse it. A value that is not a number is a
+  `TypeError` where it was a `RangeError`: a realtime request `timeoutMs`,
+  `ScreenOutcome.notice`'s `expiresInMs`, the `maxWaitMs` call option of
+  `telegramOutboundBudget`, `applyCliUpdate`'s `verifyTimeoutMs` and
+  `createTelegramUpdateIntake`'s `leaseMs` and `sweepEveryMs`; a number out of range
+  stays a `RangeError`. `createCacheBridge`'s `freshWindow` refused a negative or
+  non-finite value with a plain `Error`, and a credit window's
+  `acquire(bytes, { timeoutMs })` refused with a `ZodError`; both now answer by the
+  timer rule (`freshWindow` 0 allowed), a fraction refused too. Options that reached a
+  timer with no check are now refused where they are taken, before anything is sent,
+  scheduled or opened — 0, a negative, `NaN` or a value past the ceiling used to fire
+  at once: `createHttpClient`'s and `createClient`'s `timeout`, a contract endpoint's
+  `timeout` (at `defineContract`), a request's `timeout` (before the request is sent),
+  `createSocketIOClient`'s `reconnectOnServerDisconnect` (0 allowed) and
+  `uploadInChunks`' `retryDelayMs` (0 allowed, before the first part).
+  `BackoffPolicySchema` refuses a `minDelayMs` or `maxDelayMs` past the ceiling with
+  its `ZodError`. A wait timeout in seconds follows the rule in seconds: `defineWaitTool`
+  and `mountWait` refuse a `defaultTimeout` that is negative, not finite or longer than
+  2147483.647 seconds when they are defined, and a wait refuses such a per-call
+  `timeoutSec` — from `timeoutFromInput`, `timeoutFromArgs`, `timeoutFromId`,
+  `--wait-timeout` or a CLI wait's `timeout` — before its first poll; a fraction and 0
+  stay valid. Such a timeout used to abort every poll at once. The download and
+  view-file tools (`defineDownloadTool`, `mountDownload`, `defineViewFileTool`,
+  `mountViewFile`) refuse `timeoutMs` when they are defined, with a `RangeError`, where
+  they refused it at the first fetch with a plain `Error`;
+  `createSecureClientMetadataFetcher`'s `timeoutMs`, a contract stream endpoint's
+  `lifetimeMs` and `heartbeatMs`, a `defineEvents` topic's `listenerTimeoutMs` and
+  `createDecisionPipeline`'s `policyTimeoutMs` are a `RangeError` (a `TypeError` when
+  not a number) where they were a plain `Error`, and each refuses a fraction too;
+  `applyCliUpdate` refuses `timeoutMs`, `idleTimeoutMs` and `verifyTimeoutMs` before it
+  downloads anything (a `verifyTimeoutMs` was checked only after the download).
+  `createGoogleOidcClient` keeps answering a bad `timeoutMs` with
+  `GoogleOidcError('MISCONFIGURED')`, now also past the range, with the timer refusal as
+  its `cause`. More options that reached their timer with no check are refused where
+  they are taken: `createWatchClient`'s `holdMs` (0 allowed) and `openTimeoutMs`, before
+  a watch opens; `createWatchHub`'s `holdMs` (0 allowed), at construction instead of at
+  the first release, and its `backoff`, parsed with `BackoffPolicySchema` at
+  construction instead of at the first failed read; `createGeoIpResolver`'s
+  `reload.intervalMs`, at creation (an `intervalMs` of 0 or below used to turn reloading
+  off silently; `reload: false` does that); `createReleaseWatcher`'s `maxDeferMs`
+  (0 allowed); `createTrackingClient`'s `heartbeatMs`, `deliverTrackingBatch`'s
+  `retryDelayMs` (0 allowed, before the first request) and
+  `createPerformanceCollector`'s `earlyDelayMs` (0 allowed). A schema field that becomes
+  a timer states the ceiling: `ShutdownOptionsSchema` (`gracePeriodMs`,
+  `realtimeCloseTimeoutMs`, `forceTimeoutMs`), `ApplicationRestartInputSchema`
+  (`gracePeriodMs`, `forceTimeoutMs`), `createNotificationOutbox`'s `pollIntervalMs` and
+  a fault plan's `timeout-before-first-byte` `milliseconds` refuse a value past
+  2147483647 with their `ZodError`. Every refusal names the option and the value it
+  received. A drain or a journal `close` refused this way no
+  longer stops admission first.
+  `catch (error) { if (error instanceof TypeError) … } // sseRoute({ heartbeatMs: 0 })`
+  → `catch (error) { if (error instanceof RangeError) … } // sseRoute({ heartbeatMs: 0 })`.
+  `mountWait(server, { …, defaultTimeout: 30 * 86_400 })`
+  → `mountWait(server, { …, defaultTimeout: 24 * 86_400 })`.
+  [migration](docs/guide/upgrading.md#timer-options-one-rule). → ADR 0320
+  **Affects:** `stitchkit` bindRealtimeClient(behaviour), createHttpClient(timeout), createClient(behaviour), createSocketIOClient(reconnectOnServerDisconnect), uploadInChunks(retryDelayMs), BackoffPolicySchema(minDelayMs, maxDelayMs), defineContract(behaviour); `stitchkit/http` createHttpClient(timeout), createClient(behaviour), uploadInChunks(retryDelayMs); `stitchkit/realtime` createSocketIOClient(reconnectOnServerDisconnect); `stitchkit/contract` defineContract(behaviour); `stitchkit/react` createCacheBridge(freshWindow); `stitchkit/files` createManagedFileBoundary(inspectionTimeoutMs); `stitchkit/server` sseRoute(heartbeatMs), ndjsonRoute(heartbeatMs), streamingRoute(heartbeatMs), createUnixClientTransport(headersTimeoutMs), ShutdownOptionsSchema(gracePeriodMs, realtimeCloseTimeoutMs, forceTimeoutMs); `stitchkit/node` createUnixClientTransport(headersTimeoutMs), ShutdownOptionsSchema(gracePeriodMs, realtimeCloseTimeoutMs, forceTimeoutMs); `stitchkit/tools` defineWaitTool(defaultTimeout), mountWait(defaultTimeout), defineDownloadTool(timeoutMs), mountDownload(timeoutMs), defineViewFileTool(timeoutMs), mountViewFile(timeoutMs), createSecureClientMetadataFetcher(timeoutMs); `stitchkit/observability` createObservability(behaviour); `stitchkit/testing` runManagedResourceConformance(watchdogTimeoutMs), runSurfaceProbes(timeoutMs); `stitchkit/application` createBoundedAdmission(behaviour), createCreditWindow(behaviour), createDecisionPipeline(policyTimeoutMs), ApplicationRestartInputSchema(gracePeriodMs, forceTimeoutMs), createWatchHub(holdMs, backoff), createNotificationOutbox(pollIntervalMs); `stitchkit/application/diagnostic-journal` createDiagnosticJournal(behaviour); `stitchkit/telegram` createTelegramBotTransport(connectAttemptMs, connectBudgetMs, responseTimeoutMs), telegramOutboundBudget(maxWaitMs), createTelegramUpdateIntake(leaseMs, sweepEveryMs); `stitchkit/telegram/screens` ScreenOutcome(notice); `stitchkit/cli` applyCliUpdate(verifyTimeoutMs, timeoutMs, idleTimeoutMs), pollUntilDone(behaviour); `stitchkit/agent-runtime` createAgentRuntime(loop, close), createAgentSessionCoordinator(behaviour), AgentRetryPolicy(delayMs); `stitchkit/agent-runtime/browser` createAgentController(timeoutMs); `stitchkit/agent-runtime/realtime` bindAgentHarnessRealtime(authorizationTimeoutMs); `stitchkit/agent-runtime/testing` createAgentRaceBarrier(behaviour), defineAgentFaultPlan(behaviour), AgentFaultStepSchema(behaviour); `stitchkit/agent-runtime/openrouter` openRouterModelCatalog(timeoutMs), createOpenRouterSpendReconciler(timeoutMs); `stitchkit/live` defineEvents(behaviour), createWatchClient(holdMs, openTimeoutMs); `stitchkit/google` createGoogleOidcClient(timeoutMs); `stitchkit/geo` createGeoIpResolver(reload); `stitchkit/release` createReleaseWatcher(maxDeferMs); `stitchkit/tracking` createTrackingClient(heartbeatMs), deliverTrackingBatch(retryDelayMs); `stitchkit/tracking/performance` createPerformanceCollector(earlyDelayMs)
+- `stitchkit/files` `stitchkit/telegram` a count, a byte size or an age is a safe
+  integer, refused when the factory is created, where it was used as written:
+  `createChunkSpool` refuses a `maxFileBytes` that is not a positive safe integer and
+  a `staleAfterMs` that is not a non-negative one (`TypeError`) — a `NaN`
+  `staleAfterMs` made `sweep()` remove every upload; `createTelegramOperatorChannel`
+  refuses a `maxQueued` or `maxAttempts` that is not a positive safe integer
+  (`TypeError`) — `maxAttempts: NaN` retried forever, `maxQueued: NaN` queued
+  without bound — and a `minIntervalMs` outside the timer rule (`RangeError`, 0
+  allowed), which a negative or `NaN` value silently became 0. A fraction computed
+  from another value (`hours * 3.6e6`) is refused too.
+  `createChunkSpool({ …, staleAfterMs: hours * 3.6e6 })` →
+  `createChunkSpool({ …, staleAfterMs: Math.round(hours * 3.6e6) })`.
+  [migration](docs/guide/upgrading.md#timer-options-one-rule) → ADR 0324
+  **Affects:** `stitchkit/files` createChunkSpool(maxFileBytes, staleAfterMs), ChunkSpoolConfig(maxFileBytes, staleAfterMs); `stitchkit/telegram` createTelegramOperatorChannel(maxQueued, maxAttempts, minIntervalMs), TelegramOperatorChannelConfig(maxQueued, maxAttempts, minIntervalMs)
+- `stitchkit/cli` a command that fails on `createUnixClientTransport` answers the
+  transport's `UNIX_*` code and exits by delivery: `9` when the request never left
+  (`UNIX_CONNECT_FAILED`, `UNIX_TARGET_REFUSED`, `UNIX_CLIENT_CLOSED`,
+  `UNIX_CONNECTION_LIMIT`, `UNIX_REQUEST_TOO_LARGE`; the message names the socket),
+  `10` when it may have reached the application (`UNIX_DELIVERY_UNCERTAIN`,
+  `UNIX_HEADERS_TIMEOUT`; "Outcome unknown, not retried"), and `1` when an answer
+  came back. Every such failure exited `1`. `exitCodes` overrides each.
+  `if [ $? -eq 1 ]; then start-app; fi` → `if [ $? -eq 9 ]; then start-app; fi`.
+  [migration](docs/guide/upgrading.md#cli-unix-delivery-exit-codes) → ADR 0325
+  **Affects:** `stitchkit/cli` DEFAULT_EXIT_CODES, createCli(behaviour)
+
+### Added
+
+- `stitchkit/telegram/html` adds zero-dependency `markdownToTelegramHtml` and
+  `splitTelegramMarkdown` (`TelegramMarkdownSplitOptions`,
+  `TelegramMarkdownSplitError`, `TelegramMarkdownSplitRefusal`): GitHub-flavored
+  Markdown (inline formatting, safe `http`/`https`/`tg`/`mailto` links, fenced
+  code blocks, GFM tables in `<pre>`, headings, lists/checkboxes, blockquotes,
+  `<details>`/`<summary>` with the body's blank lines preserved) compiles through the canonical HTML AST so every
+  output passes `checkTelegramHtml` and is a `sanitizeTelegramHtml` fixed point.
+  Conversion is linear in the text and never recurses on its depth: quotes,
+  `<details>` and inline styles nested deeper than 32 stay text. For Telegram
+  HTML, convert first and cut with `splitTelegramHtml`, which counts what the
+  reader sees — a table aligned in `<pre>` can be several times longer than its
+  Markdown. `splitTelegramMarkdown` is for text that stays Markdown: its `limit`
+  counts Markdown, a fenced block split across chunks is closed and reopened,
+  and a table split across chunks repeats its header row and separator.
+  Plain text stays plain: every emphasis delimiter (`*`, `**`, `_`, `__`, `~~`,
+  `||`) opens only where no letter or digit stands before it and closes only
+  where none follows, so `2*3*4`, `a*b or c*d` and `snake_case` convert to
+  themselves. A link whose destination the link rules refuse stays its source
+  text — `[click](javascript:alert(1))` reads exactly so — instead of losing its
+  destination; it never becomes a link. A literal double quote in a Markdown
+  destination is refused; `%22` is accepted, as are quotes in the label or title.
+  `parseTelegramHtml` / `sanitizeTelegramHtml` also allow `code`, `a`, `pre`,
+  `tg-emoji` and `tg-time` inside `blockquote` (matching Telegram Bot API).
+
+- `stitchkit/agent-runtime` `loop.stepBarriers` guards each model step: a bound on
+  tool calls (`maxToolCallsPerStep`: the extra call is refused to the model as a
+  `STEP_TOOL_CALL_LIMIT` tool error and is not put to approval), call order by
+  entity (`toolDependencies`, with `createToolDependencyResolver` over the
+  `effect` of contract endpoints under their mounted tool names: a read waits for
+  the step's earlier write of its entity, a write for the earlier reads and
+  writes), a bound on reasoning (`maxReasoningCharsPerStep`, `policy_stop`), and
+  `stepText: 'after-tools'` (a step's text shown only after its tool calls all
+  succeeded). A bound no step could meet is refused by `createAgentRuntime`. The
+  browser controller and `useAgent` are no longer marked experimental; both stay
+  `evolving`.
+- `stitchkit/spend` (new, evolving, server-only, peer-free) — one gateway `fetch`
+  per paid model provider (`createSpendGateway(...).fetchFor(name)`): the attempt
+  is recorded before the request is sent and closed on every outcome — success,
+  HTTP error, broken or cancelled stream, transport failure; credentials only for
+  the provider's origin, the caller's credential headers dropped, redirects
+  refused, `x-request-id` = attempt id; attribution required
+  (`runWithSpendAttribution`); usage read from the response
+  (`openAiCompatibleUsage`); a spooled ledger (`createSpooledSpendStore`; a record
+  that could be neither spooled nor stored rejects with `SPOOL_UNSPOOLED`, the
+  database's error as `cause`), the
+  monotone receipt merge (`mergeSpendReceipt`), `reconcilePendingSpend` and
+  `closeOrphanedSpend`. A cost is set only when the provider reported it.
+  `admit` refuses a call before it is sent and records it as `refused`; a
+  receipt whose attempt the database has not taken waits on disk with it, and
+  `reconcilePendingSpend` reports a receipt it cannot merge through `onError`
+  and goes on with the rest. The labels of the current attribution are merged
+  with those of the gateway's `context()` instead of replacing them.
+  `stitchkit/spend/testing` adds `assertSpendCoverage`, red on a model SDK
+  import (subpaths and `@scope/*` included), a provider key or a provider host
+  outside the gateway files, which reads a declaration without a closing `;` as
+  its own statement rather than joining it to the import after it. `stitchkit/agent-runtime`
+  `modelInvocationSpendAttribution` fills a gateway's attribution from the
+  current model attempt. → ADR 0317
+- `stitchkit/agent-runtime/openrouter` — one access layer for OpenRouter models:
+  a request policy (`OpenRouterRequestPolicySchema`: `sessionId` or
+  `provider.order`, routing, `maxPrice`, `reasoning.effort` up to `max`,
+  `looseTools`) applied by `openRouterProvider(settings, { defaultPolicy,
+  resolvePolicy, sessionPerConversation })`, which delivers `looseTools`'
+  `strict: false` for every tool on the wire; a route pinned per thread
+  (`createOpenRouterRouteResolver`, bounded `createMemoryOpenRouterRouteStore`); a
+  stored catalog snapshot with endpoints (`loadOpenRouterCatalogSnapshot`,
+  `fetchOpenRouterModelEndpoints`) and admission from it
+  (`evaluateOpenRouterModelAdmission`: admitted, unverified or rejected with a
+  reason, as a schema; floating aliases and `openrouter/auto` always refused; an
+  unknown price never zero, and a stated price over the policy's limit rejects the
+  model even when the other price is unknown); and the
+  `stitchkit/spend` provider and reconciler (`openRouterSpendProvider`,
+  `createOpenRouterSpendReconciler`). The catalog requests refuse redirects and
+  bound their bodies; `openRouterModelCatalog` leaves out a price OpenRouter does
+  not know instead of failing, and its HTTP error names the request path.
+- `stitchkit/agent-executor` — the contract between an executor that drives
+  external coding agents and the server that hands it turns: hello with
+  engines and private profiles, thread leases under a fence, turn phases and
+  reports applied once, interrupts and answers to an engine's requests, over
+  `defineContract` and the realtime contract. Deltas extend the message parts,
+  which moved to a neutral part the runtime shares; `projectExecutorDeltas`
+  folds them into a message. A lease refusal (`ExecutorLeaseRefusal`) is an
+  `AppError` with status 409 and a code of `EXECUTOR_ERRORS`, so an operation
+  that returns the service's promise answers
+  `409 { error: { code: 'EXECUTOR_FENCE_STALE' } }` without a mapper of its own.
+  A turn carries the `turnOrdinal` the server offered it under (`TurnOfferSchema`,
+  `TurnReportSchema`, `ExecutorResumableTurnSchema`). `createExecutorLeases` keeps
+  receipts for each thread's last `retainedTurns` turns (default 64, at most 1024)
+  and the highest ordinal it let go, so the lease state is bounded by threads, not
+  by history. A report is acknowledged `{ outcome: 'applied' | 'duplicate', ackedSeq }`;
+  a report of a turn at or below the ordinal let go — its first report included — is
+  `{ outcome: 'not-retained' }`, never applied again; a report whose turn belongs to
+  another thread or was offered under another ordinal is refused with
+  `EXECUTOR_UNKNOWN_TURN`. `resume(resumable)` answers a hello the same way: each
+  resumable turn is `{ outcome: 'acked', ackedSeq }` (0 for a turn never seen) or
+  `{ outcome: 'not-retained' }` (`ExecutorHelloAckSchema.resumable`). A hello takes the same ids a report takes (at most 256
+  characters) and bounds its lists (engines, profiles, resumable turns, credential
+  names, model ids, plan windows).
+  `ExecutorEngineInfo.models` names which fact it is: `{ answer: 'listed', ids }`
+  (an empty list — the engine offers none), `{ answer: 'not-asked' }` (the Claude
+  and Codex drivers do not ask their engine) or `{ answer: 'failed', error }`.
+  An ACP profile's `home` is its agent's `HOME` unless `profile.env` sets one, so
+  two profiles with two homes are two sign-ins. Evolving. → ADR 0316
+- The engine drivers, each a leaf the base entrypoint does not know:
+  `stitchkit/agent-executor/claude` (`createClaudeCliDriver`, the unmodified
+  CLI over `stream-json`), `stitchkit/agent-executor/claude-sdk`
+  (`createClaudeSdkDriver`, the Agent SDK's `query` passed in by the
+  application, read by the same classifier; the SDK is an optional peer whose
+  types alone the leaf names), `stitchkit/agent-executor/codex`
+  (`createCodexDriver`, `codex app-server`) and `stitchkit/agent-executor/acp`
+  (`createAcpDriver`, an Agent Client Protocol v1 agent: model, thought level
+  and mode set by category, images when the agent takes them, MCP servers,
+  `session/resume` or `session/load`, `session/list`; protocol 2 refused at
+  hello, a pending permission answered `cancelled` on interrupt, no
+  reconcile; `requestTimeoutMs`, `maxFrameBytes` and `maxImageBytes` out of
+  range are refused when the driver is created, before any agent is spawned).
+  Every driver answers an interrupt alike: a request the engine sends after
+  `interrupt()` is refused at once (ACP `cancelled`, Claude deny, Codex
+  `cancel`), a request the Claude CLI sends between turns is denied, and every
+  request an interrupt, the turn's end or a lost engine answers is closed with a
+  `request-resolved` delta. A session whose engine died on its own fails its turn
+  and lets go of the caller's signal; `close()` only collects what it left. An
+  answer the engine could not take leaves its request held and open to another
+  answer. A failure to stop the engine after opening failed is
+  thrown with that failure as one `AggregateError` whose `cause` is the opening
+  failure. The Claude drivers read `loginExpiresAt` as the ISO-8601 time the CLI
+  writes (any other form is `login: unknown`) and refuse a resume whose
+  transcript cannot be opened for a reason other than absence. A driver refuses a
+  profile whose `engine` is not its own with a `TypeError`, before it reads a file
+  or starts the engine: the profile's home is kept under that engine's variable,
+  so another engine would run on the executor's own account.
+  `spawnEngineProcess` bounds queued stdin (`maxPendingStdinBytes`) and
+  `createJsonRpcPeer` bounds its local waits (`JSON_RPC_LOCAL_TIMEOUT`). Every
+  option of `spawnEngineProcess` is checked before the engine is started, and
+  `maxStdinBytes` (default 256 MiB) bounds what one connection writes over its
+  life: `send()` refuses a line past it with a `RangeError` and the engine keeps
+  running.
+  A `control_request` of a subtype the Claude driver does not know is answered
+  with the CLI's `ControlErrorResponse` and still reaches the consumer as an
+  `unhandled` error, so the turn does not wait on it.
+  `stitchkit/agent-executor/testing` holds the conformance kit and the
+  scripted engine every driver is proven against;
+  `AgentEngineDialectScenarios.requestAfterInterrupt()` proves the interrupt
+  rule on every dialect; `requestAtTurnEnd()` and `requestThenCrash()` prove that
+  a request still held when the turn ends is closed with `request-resolved` before
+  the end, and that neither it nor one held by an engine that died is left open to
+  the consumer's answer. `AgentEngineConformanceConfig.open()` also returns
+  `answered(request)`, how the kit sees that the engine itself was answered when a
+  turn ended with its request held. `runFakeClaudeEngine` plays a scenario as Claude Code
+  does on `stream-json` (Codex and ACP are played by their own fakes); the
+  scenario schemas (`FakeEngineScenarioSchema`, `FakeEngineStepSchema`) stay
+  dialect-neutral. Evolving. → ADR 0316
+
+- `stitchkit/agent-runtime/postgres` — the agent store on Postgres.
+  `createPostgresAgentRuntimeStore({ transaction, query })` gives the store,
+  the conversation reader and the companion host over the application's own
+  client (Bun SQL, Prisma, `pg`): SERIALIZABLE write transactions retried on a
+  serialization conflict, at a statement or at `COMMIT`, up to `maxAttempts` (32; a
+  value that is not a positive safe integer is refused with `TypeError`); a versioned schema
+  created under an advisory lock or checked when migrations own it
+  (`createTables: false`, `postgresAgentRuntimeStoreDdl(prefix)`, which seeds
+  its own schema version); the schema is created in `READ COMMITTED` whatever
+  the database's default isolation; every
+  companion — schedules, children, spills, projections — on the same tables.
+  `createPostgresAgentRuntimeStoreDriver` is the driver alone. Evolving. → ADR 0314
+- `stitchkit/agent-runtime` `createAgentEventSearch` searches the Postgres store
+  too, with the SQLite semantics: every word of the query, in any order, and a
+  query of punctuation refused. Each event gets a `tsvector` (`simple`) in
+  its own table, indexed when a search needs it rather than inside
+  `appendEvent`, so an event of any size is stored; a document past the
+  `tsvector` limit is indexed from fewer characters. `postgres` options:
+  `diacritics` (`preserve`, or `unaccent` through the extension, refused
+  without it), `maxIndexedChars` (65 536) and `maxSyncEvents` (10 000; a search
+  further behind indexes that many and refuses, the next continues).
+  `PostgresAgentEventSearchConfig` is exported. → ADR 0315
+- `stitchkit/server` `createLocalHostGuard` (also on `stitchkit/node`): a desktop
+  app's host is an ordinary server on loopback that answers only its own windows.
+  Loopback keeps other machines out but not a web page on the same machine, which
+  can call the port and open a WebSocket there, nor a DNS-rebinding page. The guard
+  refuses a non-loopback `Host`, an `Origin` outside its list and a missing or wrong
+  Bearer secret (compared in constant time, length included), as `hooks.onRequest`
+  on every route and as Socket.IO `allowRequest` and `handshake`; `guard.cors` allows
+  the same origins, so a window in a webview passes its preflight and reads every
+  answer, and is `undefined` when `origins` is empty, which `createHandler` and
+  `createServer` take as no CORS. → ADR 0303
+- `stitchkit` A call that got no answer — a dropped connection, not a response — is
+  sent again only when that is safe, and the endpoint says when: `idempotent: true`
+  whatever the method, a `GET`/`HEAD` that does not say `idempotent: false` and does
+  not declare `effect: 'write'` (both clients read the declared effect before
+  falling back to the method). The bare
+  `createClient` now repeats such a call up to `ClientConfig.retry.limit` times
+  (default 2; a value that is not a non-negative integer is refused), and a
+  cancellation during the pause ends the call at once; a client on
+  `createHttpClient` passes the endpoint's `idempotent` to its transport retry
+  through the new `RequestOptions.idempotent`, and repeats an unflagged `HEAD` like a
+  `GET`. → ADR 0303
+- `stitchkit/sync` (new, evolving): the client half of an offline-first sync, with
+  no driver and no domain, for a browser, Hermes and Bun. `decideOutboxBatch` says
+  which outbox rows leave next — FIFO across pages, a row ripe when no earlier
+  unresolved row shares one of its keys (`keysOf`, by default its entity), a waiting
+  row holding all its keys, exact message bytes; a quarantined or held row holds its
+  keys until a person retries or discards it, unless the policy says
+  `setAside: 'releases-keys'`. `replaceableOutboxRow` says a row may take another edit
+  only before it ever left, and `coveredOutboxIds` lets a `confirmed` row leave once
+  the cursor covers the version its change got. `deriveOverlay` keeps pending local
+  edits on top of remote rows until acknowledged; `decideRemoteRow`,
+  `staleAfterFullSync` and `orphansOf` keep a local delete winning and clean only
+  what a complete snapshot allows; `createSyncSession` runs one cursor session at a
+  time with catch-up, deferred and server-forced full snapshots, the same page again
+  after a dropped transport and a generation check after every wait, on synchronous
+  or asynchronous ports; a full snapshot saves the version it began at and catches
+  up from there, so an entity deleted while it was paged still disappears. A full
+  snapshot may be paged by an opaque `nextToken`; an interrupted full snapshot —
+  paged by version or by token — continues from a saved `SyncSnapshotResume`
+  (`{ snapshot, after, from }` or `{ snapshot, token, from }`) after a restart, so
+  its last page still rebases pending changes and its catch-up starts at the
+  version it began at, deletes made while it ran included. Every full snapshot has
+  an id: `apply(page, { current, snapshot })` names it on each of its pages (`null`
+  in an incremental session), `rebasePending(snapshot)` after its last one, and a
+  snapshot continued after a restart keeps it. Mark the rows a snapshot page writes
+  with it: the rows marked with the id are the `server` set of
+  `staleAfterFullSync`, so a snapshot continued in a new process does not call the
+  rows of the one before stale; a `stale_cursor` refusal
+  (`SYNC_STALE_CURSOR`) loads a full snapshot at once, a server-forced snapshot that
+  cannot begin is reported as `begin_failed` and retried as a full sync, and after
+  every full snapshot `rebasePending` merges the pending changes onto it before its
+  cursor is saved; `saveProgress` saves where the session stands after every page
+  that has more — the next cursor of an incremental session, a `SyncSnapshotResume`
+  in a full snapshot — and `readCursor` returns it; there is one progress port, no
+  `saveSnapshotToken`. `createSyncSession` refuses a `deadlineMs` outside the timer
+  range, and `decideOutboxBatch` a policy whose `emptyEnvelopeBytes`, `maxBytes` or
+  `maxChanges` is not a positive safe integer or whose `retryAfterMs` is not a timer
+  delay (`RangeError`; a `retryAfterMs` that is not a number is a `TypeError`),
+  before anything is sent or decided.
+  Push results are read one by one with an open outcome vocabulary
+  (`classifyChangeResults`): each says `acknowledge` (with the `version` the change
+  got), `retry` or `hold` — a rejection is held for a person unless
+  `rejected: 'acknowledge'`, a failure after `holdAfterFailures`, an unknown outcome
+  within a bound, instead of dropping the acknowledgements beside it.
+  `syncPushRequestSchema` requires push limits. The client half works against a
+  server of the app's own as well. → ADR 0304
+- `stitchkit/sync/postgres` (new, evolving): the server half inside the
+  application's own transaction. `allocateVersions` and `publish` number every
+  writer of a stream from a counter row locked until commit, so versions commit in
+  their order and a reader never skips one; `push` runs each change once by a
+  `(scope, replicaId, changeId)` ledger with a content fingerprint and the stored
+  outcome — an applied or replayed change answers the newest version its transaction
+  took, so the client keeps it on top until its cursor covers it; a rejection rolls back
+  what the change wrote and is recorded on its own,
+  a failure returns its cause for the server's log; `changesAfter` pages a feed of
+  one row per entity; `prune` forgets old ledger records of one scope or all.
+  `memorySyncStore`, `createSyncServerStore` for another database, and
+  `checkSyncStore`, the rules every store keeps, concurrent writers included.
+  → ADR 0304
+- `stitchkit/application` `runSqliteMigrations` and `runSqliteMigrationsAsync`:
+  ordered SQLite migrations with a `schema_migrations` ledger and a 32-bit FNV-1a
+  checksum — the shape offline-first apps already ship, so their databases read as
+  theirs. Ordering does not mutate the caller's list or require `Array.prototype.toSorted`
+  on React Native. Every applied migration is checked before anything runs
+  (`SqliteMigrationLedgerMismatchError`), a ledger ahead of the code is not an
+  error, and each migration is one transaction that the synchronous runner never
+  awaits inside; a failure is `SqliteMigrationFailedError` naming the scope and
+  version, with the driver's error as `cause`; a ledger row whose version is not a
+  positive safe integer, or a version recorded twice, is
+  `SqliteMigrationLedgerUnreadableError`. The ledger is read again inside
+  each transaction, so two connections that open one file at the same moment
+  both finish: the later one skips what the first already applied. A `ROLLBACK`
+  that fails for a reason other than "no transaction is active" is not swallowed:
+  the `SqliteMigrationFailedError`'s cause is an `AggregateError` of the migration
+  error and the rollback error. `ledger` names the table one list is recorded in
+  (default `schema_migrations`), so independent lists share one database — a
+  queue's tables and a replica's — and each numbers its versions from 1; a ledger
+  name that is not a plain SQL identifier is a `TypeError` before anything runs. A
+  `begin` other than `DEFERRED`, `IMMEDIATE` or `EXCLUSIVE` is a `TypeError` before
+  the ledger is created; it never reaches the SQL.
+  The sync guide's synchronous `expo-sqlite` wrapper binds through
+  `getFirstSync`/`getAllSync`/`runSync`, so no prepared statement stays open, and
+  refuses a `bigint`, which `expo-sqlite` does not bind. → ADR 0304
+- `stitchkit/agent-runtime` `branchConversation` answers every refusal at once,
+  with its address. A branch stopped at the first refusal and named no event, so a
+  host with an archive of hundreds of events learnt what to declare one attempt at
+  a time. Every refusal a declaration or an authorization lifts is now collected
+  into `AgentConversationBranchRefusedError` (a `TypeError`): its `refusals` each
+  carry a `code`, the event `seq` and `eventKind`, the `messageId`, the `toolName`
+  and the key `path`, never a value; a source the branch cannot read stops it at
+  once as an `integrity` refusal with the same address.
+  `store.planConversationBranch(input)` returns the same list without writing, with
+  every attachment reference to grant and declare and the keys to declare. Every
+  identity is defined before any value is judged, so the answer no longer depends on
+  the order the source recorded them in. → ADR 0301
+- `stitchkit/contract` `RuntimeContext.toolCallId` names the provider's id of the
+  call on the agent transport, where it was already set without a declared type.
+  Like every transport-owned field it is reserved: an auth rule that contributes
+  `toolCallId` to the context is refused instead of replacing the call's identity.
+- `stitchkit/agent-runtime/coding-tools` `AgentCodingArtifactStore.write` receives
+  the `toolCallId` of the call whose output it holds; the shell tool passes it.
+- `stitchkit` `createSessionCredentials` adds opt-in proactive refresh
+  (`refreshAhead`, `SessionRefreshAhead`, `refreshIfDue`), startup `restore()`
+  (`SessionRestoreResult`), `refresh(op, { rejected })` (`SessionRefreshOptions`),
+  refresh-endpoint failure classification (`defaultClassifyRefreshFailure`,
+  `SessionRefreshFailure`, `SessionRefreshRejectedError`,
+  `classifyRefreshFailure`), monotonic backoff retries (`retry`), deferred
+  post-rotation write retry (`storageRetryMs`), lifecycle events (`onEvent`,
+  `SessionCredentialsEvent`) and clock injection (`clock`, `SessionClock`).
+  → ADR 0306
+- `stitchkit/handler` (new, evolving, browser & React Native/Hermes safe):
+  portable `createHandler`, `implement`, `createImplement`, `createErrorHook`,
+  error helpers and `serveBridge` with zero Node built-ins; pairs with
+  `createBridgeFetch`, `BridgeFailureError` and the v1 bridge frame schemas on
+  `stitchkit/http` so a WebView / Expo DOM window calls an in-process React
+  Native host through the same typed client and replay rules. `createBridgeFetch`
+  bounds a request body by `maxFrameBytes` while reading it, not after buffering
+  it. Both halves refuse bytes that are not UTF-8 with `failure: 'unsupported'`
+  instead of decoding them with U+FFFD, whatever the type says
+  (`text/plain; charset=windows-1251`, `application/json` with a `0xff` byte) and
+  without a type (fetch gives a string body `text/plain`, so an untyped body was
+  built from bytes); UTF-8 bytes travel unchanged under their own `Content-Type`. A
+  React Native host without a body stream reads a typed body with its own `text()`,
+  and without `TextDecoder` passes an untyped body only when it is ASCII. A
+  streaming response (`text/event-stream`, `application/x-ndjson`: a contract
+  `stream` or a raw route) is refused with `unsupported` as soon as the host sees its
+  type, and its stream is cancelled; one frame carries one whole response. A reply
+  frame the window's `Headers` or `Response` refuses (a header value that is not a
+  ByteString, such as a `Content-Disposition` with a Cyrillic file name from a host
+  whose `Headers` does not check values) rejects the call with a `TypeError` instead
+  of leaving it pending past its abort and timeout, and the client does not replay
+  it, nor an invoke reply that is not a reply frame or answers another id. A reply
+  the window drops — over its own `maxFrameBytes`, or not valid for it (a failure
+  code from a newer host) — still ends the call it names, with `frame-too-large` or
+  a `TypeError`, instead of leaving it to the caller's timeout. `createBridgeFetch`
+  takes a `windowInstance` of 1–128 characters and refuses a longer one with a
+  `TypeError` when it is created, so every id the window sends can be found at the
+  head of a reply too large to parse. A string `init.body`
+  follows the type rule a `Request` body follows (`application/octet-stream`,
+  `application/x-ndjson` and `text/event-stream` are refused before sending), and a
+  UTF-8 byte order mark reaches the window as the handler wrote it. → ADR 0307
+- `stitchkit/files` adds non-blocking regular-file and bounded polled JSON
+  config primitives (`readRegularFile`, `readRegularFileSync`, `fileIdentity`,
+  `RegularFileError`, `JsonValueRefusal`, `DEFAULT_JSON_FILE_BYTES`, `parseJsonBytes`,
+  `readJsonFileSync`, `readJsonOnce`, `PolledJsonFile`, `PolledJsonFiles`, `PolledJsonEntry`,
+  `MAX_POLLED_JSON_CACHE_BYTES`, `JsonFileReading`, `JsonValueSchema`) refusing
+  FIFOs, directories, sockets and concurrent modifications while decoding strict
+  fatal UTF-8. Reads take `{ limit, noFollow, accept }` (plus `signal`
+  async) and refuse with a typed `RegularFileError.reason`: `noFollow` refuses a
+  symbolic link as the last path component through `O_NOFOLLOW`, and `accept`
+  checks the `fstat` of the descriptor the bytes come from before reading them,
+  sync and async, admitting the file only on `true`. Bytes that are not the value
+  are refused too, with the original failure as `cause`: `encoding` (not strict
+  UTF-8), `syntax` (not JSON, or a `__proto__` key at any depth — refused, never
+  dropped) and `schema` (refused or thrown); an error of the operating system keeps
+  its own `code`. A polled reading tells them apart the same way: `unreadable` when
+  the file could not be read, `invalid` with that `reason` when its bytes are not the
+  value. `PolledJsonFiles.refresh(entries)` tracks a set of `{ path, options }` that
+  changes as it runs — each path with its own read options, so explicit files that
+  follow links and drop-ins read with `noFollow` and `accept` share one set — reports
+  `removed` for a path that left it, refuses a path listed twice and refuses rather
+  than evicts past `MAX_POLLED_JSON_PATHS`; `refreshAsync(entries, { signal })` does the
+  same without holding the event loop and commits nothing when aborted. The
+  unchanged-identity shortcut answers from metadata only for a file read at least
+  3 s after its last change (newer of ctime and an mtime not ahead of the clock): a
+  younger file is read and
+  compared again on each poll, since a same-length rewrite inside one tick of a
+  coarse filesystem clock (vfat, FUSE, 9p, kernels without fine-grained timestamps)
+  leaves size, mtime and ctime as they were. `maxCacheBytes` counts the bytes each
+  cached file held when read.
+  `waitForDirectory` resolves when a directory appears, watching its nearest existing
+  ancestor instead of polling; `keepAlive: false` lets the process exit while it waits,
+  and a watch the system refuses with `ENOENT`/`ENOTDIR` is retried after `settleMs`.
+  → ADR 0308
+- `stitchkit/observability` adds `repeatLimited` (`RepeatLimitOptions`,
+  `DEFAULT_REPEAT_WINDOW_MS`, `DEFAULT_REPEAT_MAX_KINDS`) and optional `repeat`
+  integration on `createBoundedLogger` and `createJsonLogger` for bounded
+  per-kind suppression of repeated `warn`/`error` entries with
+  `repeatedSinceLastWrite` and LRU eviction flush, applied after redaction and
+  before `entryBytes` bounding. A kind is the level, the message and the stable
+  data fields with every number as `#` — an attempt, a duration or a status is the
+  same kind whatever its value — and the reason under `cause` or `error`: its `name`,
+  its `code`, and its `message` unless the message names a code that is a name, as a
+  system error's does (`ENOENT: no such file or directory, open '/path'`) — so one
+  `ENOENT` for many paths is one kind, while two failures under one category code
+  (`INTERNAL_ERROR`, `COMMAND_FAILED`) or one numeric code (an exit status `1`, an
+  HTTP `500`) with different messages stay apart.
+  `kindOf(level, message, data)` names the kind instead, for a string field such as
+  a path; levels never merge. The count of a kind that stops repeating is written
+  when its window ends. A kind holds the data of its last suppressed entry only
+  until that count is written. → ADR 0308
+- `stitchkit/contract` (and `stitchkit`) adds closed `OperationEffect`
+  (`'read' | 'write'`), `OperationEffectSchema`, optional `effect` on
+  `defineContract` endpoints (validated at definition time),
+  `contractOperationEffects` and fail-closed `requireContractOperationEffects`.
+  The declared effect reaches hooks and tools as `OperationIdentity.effect` and
+  `RuntimeToolIdentity.effect`, and decides whether a call is a repeatable read
+  before the method does: `effect: 'read'` on a `POST` is one unless it is marked
+  destructive, `effect: 'write'` on a `GET` never is.
+  → ADR 0308
+- `stitchkit/service-host` (new, evolving, peer-free server entrypoint) adds
+  host service supervision primitives: manifest-verified artifact directories
+  and atomic versioned `releases/` + `current` activation/rollback
+  (`verifyArtifactDirectory`, `activateVersionedArtifact`,
+  `rollbackVersionedArtifact`), Linux `systemd` unit rendering/inspection/reload
+  with foreign `UnitPath` drop-in detection and stability-window rollback
+  (`renderSystemdServiceUnit`, `checkSystemdUnit`, `installAndStartSystemdUnit`,
+  `reloadSystemdUnit`, `systemdUnitActive`, `systemdMainPid`), macOS `launchd`
+  plist rendering and `bootout` + `bootstrap` reload with rollback
+  (`renderLaunchdPlist`, `parseLaunchctlPrint`, `inspectLaunchdJob`,
+  `reloadLaunchdJob`; an argument or environment value with a line break is
+  refused, since `launchctl print` shows it unescaped and it could name another
+  program), and live PID / Unix-socket ownership verification with
+  post-check `probeProcessOwner` TOCTOU protection (`verifySupervisedProcess`,
+  `parseProcNetUnixListeningSockets`). A socket path is matched by the
+  filesystem node it resolves to (read with `ss`), so a listener whose name was
+  unlinked does not own the path another process took, and a server that binds
+  one name and publishes another by hard link owns the published one. A socket
+  counts only where `/proc/net/unix` and `ss` agree on it — an `@abstract` name
+  included, which now needs `ss` too — and every line of both tables must be a
+  record: a socket name holding a line break, which would write records of its own,
+  makes the check `socket-unverifiable`; the `ss` name field is read greedily, so a
+  name that spells another socket's node does not claim it. Any other character is
+  part of the name — a carriage return, U+2028, U+2029, a trailing space.
+  Installing a systemd unit refuses a name systemd loads from another file or
+  has masked (`FOREIGN_FRAGMENT`, checked before the write and again after
+  `daemon-reload`) and a `Type=oneshot` unit (`UNSUPPORTED_UNIT_TYPE`);
+  reloading a launchd job refuses a plist whose `Label` is not the job's, and a
+  job of that label loaded from another plist (`FOREIGN_FRAGMENT`, before
+  `bootout`). The path a manager reports is compared with `plistPath` or
+  `unitPath` after resolving the links in their directories, so a file under a
+  linked directory — `/tmp` → `/private/tmp`, `/var`, `/etc` on macOS — is the job's
+  or unit's own; a link at the path itself is still refused. `checkSystemdUnit`
+  reports it as `fragmentIsUnitPath`, and `verifySupervisedProcess` matches
+  `expectedExe` against the kernel's fully resolved executable path. Host adapters
+  carry `canonicalPath(path)` and the process identity adapter
+  `resolveExecutablePath(path)`; a custom adapter implements them. `checkSystemdUnit` answers `missing` only when nothing else
+  answers for the name: a vendor, transient or generated unit, or one loaded
+  with no unit file, is `fragment-mismatch`. Both roll back to the bytes that
+  were there and to the state the service was in: a stopped unit stays stopped,
+  the enable links of the unit and of the units its `[Install]` names in `Also=` are
+  read before an `enable`, and every link it added is removed again — whatever the
+  `[Install]` text says, and also after an `enable` or `bootstrap` that answered an
+  error — the links must then be the ones found before and `is-enabled` must read
+  the state found then; a launchd job ends loaded or not loaded as it was found; a
+  rollback reports `rolledBack: true` only when every step of it succeeded.
+  Host commands run by absolute path (`/usr/bin/systemctl`, `/bin/launchctl`,
+  `/usr/bin/plutil`, iproute2 `ss` at `/usr/bin/ss` or `/usr/sbin/ss`) with a
+  declared environment (`PATH=/usr/sbin:/usr/bin:/sbin:/bin`, `HOME`,
+  `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`); a socket check on a host
+  without `ss`, or whose socket table cannot be read, answers
+  `runtime-unavailable` with reason `socket-unverifiable`. The executable
+  of `execStart` and `execStartPre` may not begin with a systemd prefix
+  (`-`, `@`, `:`, `+`, `!`), and an activated release is writable by its owner
+  only. A relative or unnormalised `unitPath` or `plistPath` (`//`, `/./`, `/../`, a
+  trailing `/`) is `INVALID_CONFIG` before any command. A symbolic link or another
+  non-regular node at `unitPath` or `plistPath` is refused with `FOREIGN_FRAGMENT`
+  (`rolledBack: false`) before anything is read, written or unloaded — the target is
+  not ours to replace — and a rollback puts the previous file back with the mode it
+  had, not the candidate's. Both host adapters carry `inspectPath(path)`
+  (`ServiceHostPathState`: `missing`, `file` with its `mode`, `symlink` with its
+  `target`, `other`, by `lstat`); a custom `SystemdHostAdapter` or
+  `LaunchdHostAdapter` implements it. Activation fsyncs every
+  release file and directory before `current` names the release, and the directory
+  of `current` after each switch. → ADR 0309
+- `stitchkit/agent-runtime` unified per-step spend accounting
+  (`AgentStepSpendSchema`, `AgentStepSpend`, `AgentStepSpendPhaseSchema`,
+  `AgentStepSpendPhase`) with `AgentRuntimeConfig.onStepSpend`,
+  `onStepSpendError`, and `stepSpendTimeoutMs` (default `5000`). Fires after
+  `provider/response` is persisted for every completed model step (`step`),
+  billed retried attempt (`abandoned-attempt`), and compaction call
+  (`compaction`); non-audited `provider/response` records now persist `usage`,
+  and `observe` `step-finished` events emit from the same fact with `phase`,
+  `attempt`, `provider`, and isolated `spendHookError` diagnostics.
+  `onStepSpendError` is awaited up to the same `stepSpendTimeoutMs` as
+  `onStepSpend`, so a store that hangs both cannot hold the step; a reporter that
+  times out is carried on `step-finished` as `reportFailed` with the timeout as
+  `reportError`.
+- `stitchkit/cli` `scanCliInvocation` (with `CliInvocationScanOptions`,
+  `CliInvocationScan`, and `CliFrameworkOptions`): single-pass CLI argv scanner
+  backing `createCli`, `routeCliArgv`, `extractCliGlobalOptions`, and early
+  profile notice suppression. → ADR 0310
+- `stitchkit/files` `writeFileAtomic` and `writeFileAtomicSync` add explicit
+  opt-in `idempotent: true` for `{ replace: false }` (rejected with `TypeError`
+  otherwise): byte-identical existing regular files with matching `0o7777` mode
+  succeed without replacing the inode, using `O_NOFOLLOW`, 1 bounded
+  `EEXIST → ENOENT` retry, staged cleanup and directory sync; `readRegularFile`
+  now also detects `mode` changes during its retry check. → ADR 0312
+- `stitchkit/service-host` adds `startConfigReloader` and
+  `createPolledJsonConfigSource` (`ConfigReloader`, `ConfigReloaderOptions`,
+  `ConfigReloaderShutdownOptions`, `ShutdownTarget` compatible with
+  `bindProcessSignals`): validates new config before stopping the active handle,
+  coalesces burst reloads to 1 pending slot, deduplicates invalid config digests
+  and rolls back on start failure. While nothing is running, each poll starts
+  the last config again, so a transient start failure heals without a file
+  change. A `stop` that outlives `stopTimeoutMs` stays the only `stop` of its
+  handle: later reloads and `shutdown()` wait for it, and the config that waited
+  behind it starts when it ends. `checkSystemdUnit` adds `expectedDigest`,
+  allows trusted `<dir>/service.d/*.conf` and template drop-ins, and handles
+  `LoadState=masked`; `verifySupervisedProcess` re-snapshots `/proc/net/unix`
+  and re-runs `probeProcessOwner` across in-process reloads. → ADR 0312
+- `stitchkit/observability` adds windowed `createEventLoopDelayMonitor`
+  (`EventLoopDelayMonitorOptions`, `EventLoopDelaySnapshot`) over lazy
+  `perf_hooks.monitorEventLoopDelay` with an O(1) ring buffer, Node empty-histogram
+  and Bun `p99 <= max` guards, and an `unref()` bucket timer; browser-safe
+  `repeatLimited` is also re-exported from root `stitchkit`. → ADR 0312
+- `stitchkit/application` adds browser-clean exhaustive
+  `formatDiagnosticJournalLockDiagnosis` over `DiagnosticJournalLockDiagnosis`.
+  → ADR 0312
+- `stitchkit/service-host` extends macOS `launchd` helpers with `lintLaunchdPlist`,
+  `readLaunchdPlist` (`PLUTIL_PATH`, guarding `Code=257`), `bootoutLaunchdJob`,
+  `ReloadLaunchdJobOptions.validatePlist`, `AssociatedBundleIdentifiers` and
+  `LimitLoadToSessionType`. → ADR 0313
+- `stitchkit/declaration` `ProjectDeclarationSchema` adds optional strict
+  `starter: { version }` (semantic version recorded by `create-stitchkit` when
+  scaffolding a repository; omitted legitimately by non-starter projects).
+  → ADR 0311
+- `stitchkit/service-host/macos` (new, evolving, peer-free server entrypoint)
+  adds fail-closed Developer ID `codesign` (`findDeveloperIds`,
+  `resolveSigningIdentity`, `signBundle`, `verifySignedBundle`, which has
+  `codesign` evaluate a requirement anchored in Apple's root with the Developer
+  ID markers and the team, so a self-made chain carrying Apple's names is
+  refused), strict C11
+  `.app` launcher generation/compilation (`renderMacosLauncherSource`,
+  `compileMacosLauncher`), Apple 824×824 squircle `AppIcon.icns` generation
+  (`generateAppIconIcns`, `renderAppleSquircleSvg`, `assertSafeSvg`), idempotent
+  atomic `.app` bundle installation with `RENAME_SWAP` rollback via Darwin N-API
+  (`ensureSignedBundle`, `swapDirectoriesDarwin`, `renderBundleInfoPlist`,
+  `computeBundleSpecDigest`), streaming LaunchServices maintenance
+  (`registerBundle`, `forgetRegistration`, `scanLsregisterDump`,
+  `forgetStaleRegistrations`, `forgetBuildTree`), and TCC responsibility
+  inspection (`inspectResponsibleProcess`, `verifyProcessSubtreeResponsibility`,
+  `MacosResponsibilityReason`; a native lookup that failed without an errno asks
+  the process table whether the process is gone instead of reading it as `ESRCH`).
+  `createDefaultMacosCommandRunner` runs every command with a declared environment
+  only: `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, the caller's `HOME`, `TMPDIR`,
+  `DEVELOPER_DIR`, `SDKROOT` and `TOOLCHAINS` when set, and the call's `env` on top,
+  so a host tool never sees a secret the process happens to hold.
+  → ADR 0313
+- `stitchkit/primitives` `orderKeyBetween`, `isOrderKey`, `OrderKeySchema`, `OrderKeyError`:
+  a fractional order key strictly between two keys (`null` is an open end), sorted by plain
+  string comparison — JavaScript's `<`, `COLLATE "C"`, SQLite's default collation — so a list
+  is never renumbered. The format and, for the same ascending bounds, the keys are those of the
+  `fractional-indexing` package's default alphabets, so keys an application already stores
+  read as well-formed; below the integer next to the smallest one the key carries a fraction
+  where the package returns one it then refuses. Bounds not strictly ascending or not
+  well-formed throw `OrderKeyError` with `reason` `order` or `malformed`. Plain JavaScript,
+  browser- and Hermes-safe.
+- `stitchkit/realtime` exports `bindRealtimeClient` and its types
+  `RealtimeClientTransport`, `BoundRealtimeClient` and `BindRealtimeClientOptions`
+  (the root's one binding, shared by both entrypoints). A React Native/Hermes app
+  binds a contract to the socket it already created with `createSocketIOClient`,
+  so watched reads and an agent controller share one connection without importing
+  the root entry, whose default peer loader is a computed `import()` the Hermes
+  compiler refuses. The consumer lane walks the installed subpath module by module
+  as Metro does, compiles it with `hermesc` and runs the binding in the Hermes V1 VM.
+- `stitchkit/server` `signLink` and `verifySignedLink`: a short-lived link for a request that
+  cannot carry a header (`<audio src>`, `<img src>`). `signLink` appends `expires` and an
+  HMAC-SHA-256 `signature` over the method, the path and every query parameter, for 1 second
+  to `MAX_SIGNED_LINK_SECONDS` (seven days); `verifySignedLink(request, { secret })` compares
+  the signature in constant time, then the expiry, and returns `{ ok: true, expiresAt }` or a
+  `reason` (`unsigned`, `malformed`, `forged`, `expired`). Called from `createAuthHook`'s
+  `resolve`, a `rawResponse` endpoint stays behind the auth gate with no guard of its own.
+  Web Crypto only; nothing is stored.
+- `stitchkit/tools`, `stitchkit/tools/agent`, `stitchkit/tools/mcp`, `stitchkit/contract`
+  `inputRecursionDepth` advertises a tool input with no `$ref`, `definitions` or `$defs`.
+  Some model providers refuse a whole request when one tool carries a reference cycle
+  (`z.lazy`, `z.json()`), others never read a definition behind `allOf: [{ $ref }]`. With
+  the option every reference is written out in place, each recursive definition is
+  unrolled the declared number of levels, and the last level becomes an open node typed by
+  every JSON type the definition accepts (`{ type: 'object' }`, `{ type: 'array', items: {} }`,
+  or an `anyOf` of them), so the document still accepts every value the contract does; the
+  handler parses the contract's own recursive schema. Declare it on a surface — `mountAgent`,
+  `mountMcp`, `buildMcpServer`, `createMcpHandler`, `validateMcpSchemas`, `buildToolManifest`,
+  `describeToolCatalog`, `collectTools`, `createToolInvoker`,
+  `createDeferredAgentToolSurface` and `buildSurfaceManifest` (`toolSurfaces.AGENT`, `mcpPreparation`) — and per tool
+  in the endpoint's `tool` group, where `tool.inputRecursionDepth` wins over the surface's
+  value. A value that is not a positive integer is refused where it is declared. With the
+  option, an `allowUntyped` path for a property inside a recursive definition is reported
+  from its full path. Without it every document is unchanged, byte for byte.
+  `mountAgent(services, { access, inputRecursionDepth: 1 })`;
+  `tool: { name: 'formula_create', inputRecursionDepth: 3 }`. → ADR 0319
+
+### Changed
+
+- `stitchkit/agent-runtime/browser` `createAgentController` keeps the last
+  snapshot on screen across a reconnect, where it showed an empty view, until the
+  new attach answers; that answer replaces it whatever its version.
+  **Affects:** `stitchkit/agent-runtime/browser` createAgentController
+- `stitchkit/observability` `createSpooledSink` keeps its spool file `0o600`
+  (an existing file is narrowed too) and bounded — `maxPendingEntries` (default
+  10 000) and `maxFileBytes` (default 64 MiB, compacting first; → ADR 0323, and what
+  a writer sees at a bound is under ⚠️ Breaking changes) — closes off a
+  line torn by a crash before appending, and keeps a line it cannot decode
+  through compaction instead of erasing it. Compaction replaces the file
+  atomically and leaves no temporary file behind when the rename fails. What
+  `recover()` does with a file past `maxFileBytes`, or one it cannot read, is under
+  ⚠️ Breaking changes ([migration](docs/guide/upgrading.md#spool-file-over-its-bound)).
+  The spool mechanism is shared with
+  `stitchkit/spend`.
+  **Affects:** `stitchkit/observability` createSpooledSink(behaviour), SpooledSinkConfig
+
+- Maturity-table breaking-change cadence figures in `docs/guide/getting-started.md`
+  now cover every core entrypoint over the window since `0.94.0`
+  (`BREAKING_METADATA_SINCE`), derived from breaking-item leading entrypoints
+  instead of the previous 0.56.2 keyword list.
+- `stitchkit/telegram` The outbound budget fails closed: a Bot API method it does
+  not know costs one message instead of nothing, and a 429 on it pauses its chat
+  (or the whole token when no `chat_id` is present). A send method Telegram added
+  after the budget's list was written previously went out unbudgeted into flood
+  waits. Every method and deprecated alias grammY's types name is now classified
+  as a send or as free (`FREE_METHODS`: reads, edits of a sent message,
+  administration, `sendChatAction`, `answerWidgetQuery`, `editSharedWidgetData`),
+  and `sendRichMessageDraft` and `sendChatJoinRequestWebApp` count as sends.
+  → ADR 0305 (amends ADR 0274)
+  **Affects:** `stitchkit/telegram` behaviour
+- `stitchkit/cli` `CliSurfaceSource` factories (`services` and `runtimeTools`)
+  now receive `(auth, globals)` so a local CLI can compute a variant's unix
+  socket path from parsed global options. Its exit codes for a unix-socket failure
+  are under ⚠️ Breaking changes ([migration](docs/guide/upgrading.md#cli-unix-delivery-exit-codes)).
+- `stitchkit/cli` removed the ADR 0296 transitional exit-2 refusal for leading
+  framework flags before a native command in a CLI with a managed factory and no
+  `defaultCommand`; leading framework flags now route identically across all CLI
+  profiles. → ADR 0310 (amends ADR 0296)
+  **Affects:** `stitchkit/cli` behaviour
+- `release:check` refuses an `**Affects:**` line that names an export its entrypoint does not
+  have, from 0.127.0 on. A breaking item's names are looked up in the tree's export snapshot and
+  in the previous core release, since a breaking change may remove the export it names; a fix's
+  names in the tree only, since a fix ships in this release and removes nothing. A misspelt or
+  stale name never matches a consumer's import in `stitchkit upgrade`; the refusal lists each one
+  with where the name is exported now.
+- Signals are linked one way across the framework: the durability parks and effects, the
+  directory inbox, change subscriptions, the surface probes, file inspection, the OpenRouter
+  catalog and spend reads, model invocations, authorization hooks and each provider attempt of a
+  run link a caller's signal for as long as their work runs and detach from it when it ends,
+  instead of `AbortSignal.any`, whose listeners some runtimes keep on a long-lived source until it
+  aborts.
+
+### Fixed
+
+- `stitchkit/agent-runtime/harness` control replies no longer leave an unobserved
+  rejection of the run result behind when the run fails.
+  **Affects:** `stitchkit/agent-runtime/harness` createAgentHarnessControlServer
+- `stitchkit/agent-runtime/harness` `stitchkit/agent-runtime/realtime` a control
+  request the harness rejects still answers `REQUEST_REJECTED`, and its cause now
+  reaches `onError` (new on `AgentHarnessControlServerConfig`;
+  `AgentHarnessRealtimeConfig` inherits it, so its `onError` also sees rejected
+  requests), else `console.error`; it was dropped.
+  **Affects:** `stitchkit/agent-runtime/harness` createAgentHarnessControlServer(onError); `stitchkit/agent-runtime/realtime` bindAgentHarnessRealtime(onError)
+- `stitchkit/agent-runtime/realtime` `bindAgentHarnessRealtime` keeps no entry per
+  revoked conversation on a socket: `revoke()` without `matches` added one to every
+  socket, never removed. A revoke now marks only the authorizations in flight.
+  **Affects:** `stitchkit/agent-runtime/realtime` bindAgentHarnessRealtime(behaviour)
+- `stitchkit/tools` `resolveMedia`, `mountViewFile` and `defineViewFileTool` cancel
+  the body of a URL answered with a status that is not 2xx before refusing it with
+  `VIEW_HTTP_ERROR`, as they already did for a video or an oversized answer, so the
+  pinned connection is released at once instead of when the response is collected.
+  **Affects:** `stitchkit/tools` resolveMedia(behaviour), mountViewFile(behaviour), defineViewFileTool(behaviour)
+
+- `stitchkit` `createHttpClient` on Bun repeats a `GET` whose connection closed
+  before any answer came (`ECONNRESET`, `ConnectionClosed`), as it always did for a
+  refused one. The transport retry promised for network failures recognised only a
+  refused connection there, so a host that restarted mid-call failed every read.
+  Both `createClient` and `createHttpClient` now also classify
+  `UnixClientTransportError` by code and delivery state — retrying idempotent
+  calls only on `UNIX_CONNECT_FAILED` (`not-dispatched`) and
+  `UNIX_DELIVERY_UNCERTAIN` (`possibly-dispatched`) and never retrying
+  `UNIX_RESPONSE_TOO_LARGE` or other post-response failures — while on Node
+  `createUnixClientTransport` classifies `HPE_*` parser failures as
+  `UNIX_RESPONSE_ABORTED` (`response-received`) and in-flight `close()` as
+  `UNIX_CLIENT_CLOSED` without retrying.
+  **Affects:** `stitchkit` behaviour; `stitchkit/server` createUnixClientTransport; `stitchkit/node` createUnixClientTransport
+- `stitchkit/server` `createServer({ unix })` no longer removes a live sibling's
+  unix socket on concurrent starts or shutdown: startup probe, reclaim and bind
+  serialize under a per-socket lock, publish via an atomic staged hard link so
+  Bun's `server.stop()` never unlinks a replaced path, unlink only the `(dev, ino)`
+  recorded at bind time, treat only `ECONNREFUSED` and `ENOENT` as stale (refusing
+  `ENAMETOOLONG`, `EINVAL`, `EACCES` and probe errors without unlinking), and run
+  the liveness probe via `process.execPath` with `BUN_BE_BUN=1` and
+  `--config=/dev/null` so compiled binaries work without `bun` on `PATH` and
+  without `bunfig.toml`/`BUN_OPTIONS` interference. The staging name of the hard
+  link fits the platform's `sun_path` (at most 107 bytes on Linux, 103 on Darwin).
+  The startup lock (`.<name>.lock` beside the socket) records and judges its holder
+  by the exclusive lock's rule, not a bare PID: the record names this machine and
+  one process lifetime, so a lock left by a process that has exited, whose PID now
+  names a different process, or whose boot is over is taken at once, under a guard
+  file that lets only one start take it, and a holder that is still running is
+  waited for (5 s). A lock with no readable owner record is taken once it is 30 s
+  old. On macOS the lock loads the packaged Darwin addon for process identity, like
+  `withExclusiveLock`. A failure to remove the lock after the socket is bound
+  (`EIO`, `EBUSY`, …) is logged with its cause and does not replace the outcome:
+  `createServer` returns the listening server, and the next start takes the lock
+  this process left with no descriptor open on it.
+  **Affects:** `stitchkit/server` createServer(unix)
+- `stitchkit/server` Malformed percent-encoding in URL query parameters now
+  answers `400 BAD_REQUEST` instead of crashing with an uncaught `URIError`
+  (500) on React Native / Hermes and Node/Bun. → ADR 0307
+  **Affects:** `stitchkit/server` createHandler; `stitchkit/node` createHandler; `stitchkit/handler` createHandler
+- `stitchkit/files` declarations resolve without `@types/node`: `fileIdentity`
+  and the `accept` callback of `readRegularFileSync` take `FileIdentityStats`
+  and `FileStatsView`, which `fs.Stats` and `fs.BigIntStats` satisfy, instead of
+  naming `node:fs`; a project that type-checks without Node types can import the
+  entrypoint again. The two types are exported from `stitchkit/files`.
+  **Affects:** `stitchkit/files` fileIdentity, readRegularFileSync, FileIdentityStats, FileStatsView
+- `stitchkit/http` a call that outlives its `timeout` rejects with
+  `REQUEST_TIMEOUT` in React Native. The timeout aborted with a `DOMException`,
+  a global React Native does not have, so the timer threw and the call never
+  settled; uploads and aborted streams raised the same error the same way.
+  Abort and timeout errors are now an `Error` named `AbortError` or
+  `TimeoutError` wherever `DOMException` is missing. An upload that reports
+  progress (`onUploadProgress`) no longer requires the `TextEncoder` and
+  `ReadableStream` globals. Reading a Unicode JSON reply with upload progress
+  enabled preserves the same text as the ordinary call; binary replies stay bytes.
+  **Affects:** `stitchkit/http` behaviour; `stitchkit` behaviour
+- `stitchkit` `createSessionScope` starts an operation in React Native and on a
+  page served over plain HTTP: the operation id no longer comes from
+  `crypto.randomUUID`, which neither has, so `login()` no longer throws there.
+  A refresh that outlives `refreshTimeoutMs` rejects with a `TimeoutError`.
+  **Affects:** `stitchkit` createSessionScope, createSessionCredentials
+- `stitchkit/tools/connections` OpenAPI 3.0 `nullable: true` now validates `null`
+  (passing `dialect: 'openapi-3.0'` for OpenAPI 3.0.x specs and normalizing
+  `nullable: true` for MCP and 2020-12 schemas). → ADR 0310
+  **Affects:** `stitchkit/tools/connections` behaviour
+- `stitchkit/tools/connections` discovered tools using `not`, `if`/`then`/`else`,
+  `dependentRequired`, `dependentSchemas`, `unevaluatedProperties`,
+  `unevaluatedItems`, or draft-07 `dependencies` now mount instead of being
+  dropped, stripping those keywords locally and delegating enforcement to the
+  remote server via `markRemoteSchemaVerdict`. → ADR 0310
+  **Affects:** `stitchkit/tools/connections` behaviour
+- `stitchkit/cli` invalid inline boolean framework flags such as `--quiet=maybe`
+  now refuse with exit code 2 before any profile notice is printed (instead of
+  silently evaluating to `false` in early notice checks). → ADR 0310
+  **Affects:** `stitchkit/cli` behaviour
+- `stitchkit/cli` boolean flag words (`true`/`false`, `TRUE`/`FALSE`) are now
+  matched case-insensitively across routing, framework flags, application
+  globals, and command fields so `--quiet TRUE cmd` routes to `cmd` consistently.
+  → ADR 0310
+  **Affects:** `stitchkit/cli` behaviour
+- `stitchkit/agent-runtime` `branchConversation` carries the runtime's own
+  records by their type. A conversation whose ledger held model invocation
+  records (`invocations`) could not be branched at all, and one whose history
+  held a deferred tool selection receipt or an event search call branched only
+  when the host declared the runtime's reference names with
+  `sourceIdentity: 'retain'`. Invocation records now cross as inert receipts that
+  still name the conversation and run that made the call, without the encrypted
+  payload body; a tool selection receipt follows its run; what `session_search`,
+  `session_trace` and `session_event` were asked and answered crosses as the
+  model read it, payload bodies removed. An event kind without a branch rule no
+  longer compiles. → ADR 0300
+  **Affects:** `stitchkit/agent-runtime` behaviour
+- `stitchkit/agent-runtime` `branchConversation` reads a child's events through
+  the schema the child manager writes them with, so their usage and stop fields
+  (`usage`, `overrun`, `policyName`, `enforced`, `stopDurationMs`) no longer fail
+  the branch with `ZodError: unrecognized_keys`: a conversation whose children
+  reported usage or were stopped can be branched. A spill is read back and exported through
+  the one archive spill schema instead of a looser copy, so a malformed stored
+  spill (an `authorization` of `false`) is refused instead of travelling into an
+  archive.
+  **Affects:** `stitchkit/agent-runtime` AgentRuntimeStore(branchConversation), AgentRuntimeStore(planConversationBranch), createAgentSpillStore
+- `stitchkit/agent-runtime` `createAgentChildManager` no longer writes `stopped`
+  over a child that finished while it was being stopped. A host that answers a
+  stop by finishing the child resolved its result before the stop returned, and
+  `stopChildren` or `interruptChild` then rewrote the finished row to `stopped`,
+  dropped its `resultReference` and journalled a second terminal state. A child
+  now moves out of `spawned`/`running` in one write transaction that reads and
+  updates the row, and the event is appended only when the row moved, on SQLite
+  and Postgres, from one process or two; a result that arrived before the stop
+  returned is recorded first. A late `recordStepUsage` of an ended child is still
+  counted, and its event names the state the row is in rather than `running`.
+  **Affects:** `stitchkit/agent-runtime` createAgentChildManager(stopChildren, interruptChild, recordStepUsage)
+- `stitchkit/agent-runtime` `interruptChild` and the cleanup of a spawn whose
+  record failed ask the child's host to stop within the same stop bound as
+  `stopChildren`: a host that never answered held the `interrupt_child` tool and
+  `spawnChild` forever, and a host that threw escaped `interruptChild` with the
+  child left live. An unconfirmed stop records `lost` with `reason`
+  (`stop-timeout`, `stop-failed`, or `unreachable` for a cascade over a child this
+  process cannot reach), not `stopped`; `waitChild` resolves once a stop has
+  recorded how the child ended — `stopped`, or `lost` for a host that did not confirm
+  or could not be reached — also for a waiter that came before the stop, such as the
+  `subagent` tool, without waiting for a host that never reports a result, and a
+  failed spawn cleanup rejects with an `AggregateError` of the record
+  failure (also its `cause`) and each cleanup failure. A child-budget stop asks the
+  child's stop policy once within the bound (a policy that threw or timed out was
+  asked again, doubling the wait), and its journal entry says `enforced` as the
+  stop ended. A child-budget stop the host confirms records the child `stopped`, as
+  an interrupt does: `recordStepUsage` returned `enforced: true` and left the row
+  `running`, so the child held its place under `maxActiveChildren` until its host
+  reported a result, and the next spawn was refused. Stops that meet on one child
+  while its host is answering — an interrupt and the parent's cascade, a budget stop
+  and either — share one delivery: the host is asked once and each records the same
+  outcome, where a second stop asked the host again and a quick refusal of it could
+  record `lost` over a stop still being confirmed.
+  **Affects:** `stitchkit/agent-runtime` createAgentChildManager(interruptChild, spawnChild, stopChildren, waitChild, recordStepUsage), agentChildBudgetStopPolicy(behaviour), createAgentChildTools(behaviour)
+- `stitchkit/agent-runtime` `createAgentChildManager` stops a child whatever point of
+  its spawn the parent's stop meets. `stopChildren` found a child whose row was
+  written but whose handle was not yet held and recorded it `lost` (`unreachable`)
+  while it kept running and spending; earlier still — while the spawn checked the
+  limit, asked `remainingBudget` or read the seed history — it did not see the child
+  at all, and the spawn went on to start it. A spawn is now visible to a stop from its
+  first line: stopped before the host is asked to start the child, `spawnChild`
+  rejects and no child exists; stopped after, the child is stopped through
+  `stopPolicy` as soon as its handle is held and `spawnChild` returns the state that
+  stop recorded. `stopChildren` waits for a spawn in flight within the stop bound. The
+  `subagent` and `subagent_fork` tools of a run whose signal has aborted refuse before
+  spawning.
+  **Affects:** `stitchkit/agent-runtime` createAgentChildManager(spawnChild, stopChildren), createAgentChildTools(behaviour)
+- `stitchkit/agent-runtime` `createAgentChildManager` keeps one blocking relay queue
+  per parent. There was one queue for every parent, so a child host that never
+  answered held `listChildBlocking` and `respondToChildBlocking` of every other
+  parent too.
+  **Affects:** `stitchkit/agent-runtime` createAgentChildManager(behaviour)
+- `stitchkit/agent-runtime` a streaming tool (`async *execute`) records one
+  `tool-result` and one `completed` tool status — its final value. Each
+  intermediate value was persisted as another result of the same call. Under
+  `stepBarriers.toolDependencies` an `execute` that returns a promise of an async
+  iterable ends in its last value too, whether or not the call waited for another.
+  **Affects:** `stitchkit/agent-runtime` createAgentRuntime(behaviour)
+- `stitchkit/cli` a value piped on stdin into a positional field
+  (`commandSettings.<command>.positionals`) that the field cannot take (`---`,
+  `--hello`, or `abc` for a number) is refused with exit code `2` on native,
+  managed and discovered commands alike, instead of an uncaught
+  `CliArgumentError`.
+  **Affects:** `stitchkit/cli` createCli
+- `stitchkit/cli` a field declared with `.readonly()` parses and shows as the
+  schema it wraps — a boolean is a flag, a number is coerced, a view column is
+  found — as it does without `.readonly()`, and `--no-<name>` sets a boolean
+  `<name>` to `false` only when no field is itself named `no-<name>`.
+  **Affects:** `stitchkit/cli` createCli, createCliInvoker, parseCliArgs
+- `stitchkit` `createSessionCredentials().login()` whose `storage.write()` fails
+  or times out leaves no session behind: the scope is cleared, its timers are
+  stopped and `read()` no longer returns credentials that were never stored. A
+  `login()` or `logout()` that replaced the operation in the meantime is left
+  as it is. Storage is cleared too, of the stored session the login replaced, so
+  a restart no longer restores the previous account the app saw signed out (what
+  `login()` rejects with when that clear fails too is under ⚠️ Breaking changes).
+  **Affects:** `stitchkit` createSessionCredentials, SessionCredentials(login)
+- `stitchkit`, `stitchkit/http` a long-lived caller signal no longer collects one
+  listener per request on React Native, whose `AbortSignal.any` keeps its
+  listeners until a source aborts. A request's link to the caller is released when
+  the call settles, a stream's when the stream ends, the session refresh
+  deadline's when the exchange settles. A caller abort still ends a stream or raw
+  body that outlived its open.
+  **Affects:** `stitchkit` createClient(behaviour), createHttpClient(behaviour), createSessionCredentials(refresh); `stitchkit/http` createClient(behaviour), createHttpClient(behaviour)
+- `stitchkit/tools/mcp` runtime tools take the surface's `flattenUnionInput` on
+  MCP, as contract tools do: `buildMcpServer` / `createMcpHandler` prepared
+  runtime tools (discovered connection tools included) without it, so a
+  discriminated union in a runtime tool's input was listed as `oneOf` while
+  `buildSurfaceManifest` showed it flattened.
+  **Affects:** `stitchkit/tools/mcp` buildMcpServer, createMcpHandler
+- `stitchkit/tools/mcp` the `requireTypedProperties` refusal that recommends
+  `z.json()` now says that its schema refers to itself and that a surface whose
+  model provider refuses recursive schemas also sets `inputRecursionDepth`.
+  **Affects:** `stitchkit/tools/mcp` validateMcpSchemas, createMcpHandler, mountMcp
+- `stitchkit/server`, `stitchkit/node` `createUnixClientTransport` rejects a call
+  with `UNIX_CLIENT_CLOSED` when `close()` lands while the request body is being
+  read (`not-dispatched`, nothing is sent) or after the request went out
+  (`response-received`), on Bun and Node. It checked `closed` only before reading
+  the body and sent the request anyway.
+  **Affects:** `stitchkit/server` createUnixClientTransport; `stitchkit/node` createUnixClientTransport
+- `stitchkit/files` `createChunkSpool` publishes a spool file once through the
+  atomic writer with mode `0o600`, and a failure to remove its staging file no
+  longer replaces the outcome of the publish.
+  **Affects:** `stitchkit/files` createChunkSpool
+- `stitchkit/telegram/html` parses markup in time linear in its length and no
+  longer overflows the stack on deep nesting: `sanitizeTelegramHtml` of 16 000
+  nested `<b>` threw `RangeError`, and a tag with a long run of spaces, a long
+  run of line breaks, or thousands of open `<span>`s took seconds. An element
+  nested more than 32 deep keeps its words and loses its tag. `splitTelegramHtml`
+  and `truncateTelegramHtml` measure the tree once instead of walking and
+  re-measuring it for each part, so a long text cut into many parts no longer
+  takes time that grows with both (400 000 characters of markup cut at 64: 2.4 s →
+  0.17 s). The parts are unchanged.
+  **Affects:** `stitchkit/telegram/html` parseTelegramHtml, sanitizeTelegramHtml, splitTelegramHtml, truncateTelegramHtml, checkTelegramHtml
+- `stitchkit/telegram` `stitchkit/telegram/grammy` `stitchkit/files` `stitchkit/tools`
+  `stitchkit/tools/connections` `stitchkit/agent-runtime` a signal aborted without a
+  reason fails a wait with an
+  `AbortError`, never with `undefined` or a substitute error: in `telegramOutboundBudget`
+  and `callTelegramBotApi`, the grammY `telegramBudgetTransformer`
+  (`'The operation was aborted'`, was `'This operation was aborted'`), the managed file
+  boundary, `withExclusiveLock` (also while its machine identity command runs), the
+  view-file tool (was the read error) and agent-runtime compaction.
+  `createTelegramBotTransport` parsed the bytes received so far as the answer; it now
+  rejects with an `AbortError`. An MCP connection over SSE closes an aborted request's
+  session with the signal's reason, an `AbortError` when it has none, instead of a
+  generic session-closed error. A platform `AbortController` always gives a reason,
+  so only a hand-made signal-like object sees this.
+  **Affects:** `stitchkit/telegram` telegramOutboundBudget(behaviour), callTelegramBotApi(behaviour), createTelegramBotTransport(behaviour); `stitchkit/telegram/grammy` telegramBudgetTransformer(behaviour); `stitchkit/files` createManagedFileBoundary(behaviour), withExclusiveLock(behaviour); `stitchkit/tools` defineViewFileTool(behaviour), mountViewFile(behaviour); `stitchkit/tools/connections` defineMcpClientConnection(behaviour); `stitchkit/agent-runtime` behaviour
+- `stitchkit/observability` `createSpooledSink`: a record written while `recover()`
+  ran and refused by the store was dropped from memory when the replay finished, so
+  the next record of its group could reach the store first; it now stays undelivered
+  behind what the file still owes. A spooled spend ledger shares the spool and keeps
+  the same order.
+  **Affects:** `stitchkit/observability` createSpooledSink(behaviour)
+- `stitchkit/application` a managed schedule whose period, first delay or drain
+  deadline is past 2147483647 ms waits for it in steps of that ceiling instead of a
+  timer that fired at once — `createManagedSchedule({ everyMs })` of more than 24.8
+  days used to tick at once.
+  **Affects:** `stitchkit/application` createManagedSchedule(everyMs, startAfterMs)
+- `stitchkit/application` the application kernel waits for a force deadline — the
+  grace period plus the force timeout — in steps of the longest a timer holds. With
+  both budgets near 2147483647 ms their sum fired at once and aborted the close of a
+  startup rollback, a restart, or the force of a shutdown forced by its signal, before
+  either budget had run.
+  **Affects:** `stitchkit/application` createApplication(behaviour)
+- `stitchkit` `stitchkit/http` `uploadInChunks` doubles its retry pause up to
+  2147483647 ms instead of past it, where the timer fired at once and the repeats of a
+  part ran back to back.
+  **Affects:** `stitchkit` uploadInChunks(retryDelayMs); `stitchkit/http` uploadInChunks(retryDelayMs)
+- `stitchkit/tools/mcp` `stitchkit/server` the request line of an MCP endpoint
+  (`createMcpHandler` mounted by `createMcpHttpRoute`) logs the `405` it answers to
+  the `GET` that opens a Streamable HTTP event stream, and to the `DELETE` that ends
+  a session, at `info` instead of `warn`: the protocol names `405` as the answer
+  "not offered here" and the official client carries on. The handler marks such a
+  response and the line reads the mark, never a path or method, so the `401` of a
+  missing token, a `405` to any other method and every other `4xx` stay `warn`, and
+  a `5xx` stays `error`; the line's format and fields are unchanged, on the built-in
+  sink and on `logging.logger`.
+  **Affects:** `stitchkit/tools/mcp` createMcpHandler(behaviour), createMcpHttpRoute(behaviour); `stitchkit/server` createServer(behaviour), createHandler(behaviour); `stitchkit/node` createHandler(behaviour); `stitchkit/handler` createHandler(behaviour)
+
+### Security
+
+- `stitchkit/agent-runtime` the child and schedule tools act only for the conversation of
+  the run that called them. They took the conversation from the model's input, so a model
+  that knew another conversation's ID could spend that conversation's child budget,
+  message or interrupt its children and place or cancel its schedules; the state and event
+  search tools read a conversation nothing tied to the run. The change and its migration
+  are the breaking item on `createAgentChildTools` above
+  ([migration](docs/guide/upgrading.md#runtime-tools-take-the-run)).
+  **Affects:** `stitchkit/agent-runtime` createAgentChildTools, createAgentScheduleTools, createAgentStateTools, createAgentEventSearchTools
+- `stitchkit/server` and `stitchkit/node` a unix socket is bound and dialled only inside a
+  directory its own user owns, and a client connects only to a socket with that owner. A
+  socket in a shared directory such as `/tmp` could be replaced by another user, who then
+  received the requests or answered them. The change and its migration are the breaking
+  item on `createServer({ unix })` above
+  ([migration](docs/guide/upgrading.md#unix-socket-ownership-checks)).
+  **Affects:** `stitchkit/server` createServer, createUnixClientTransport; `stitchkit/node` createUnixClientTransport
+
 ## [0.126.0] - 2026-11-21
 
 ### ⚠️ Breaking changes

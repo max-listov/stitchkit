@@ -1,7 +1,7 @@
 ---
 title: HTTP remote retains error policy and caller signal
 description: Remote composition uses the existing typed client options and preserves explicit error recommendations without treating cancellation as proof of effect termination.
-status: active
+status: accepted
 created: 2026-10-04 13:40 +07:00
 updated: 2026-10-04 13:40 +07:00
 type: decision

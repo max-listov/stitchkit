@@ -64,6 +64,7 @@ async function lessonsCli(
   argv: string[],
 ): Promise<{ out: string; err: string; code: number }> {
   const handler = createMcpHandler({
+    access: { open: 'local-operator' },
     serverInfo: { name: 'lessons', version: '1' },
     auth: () => ({}),
     context: () => ({}),
@@ -79,13 +80,14 @@ async function lessonsCli(
     defineMcpClientConnection({
       name: 'lessons',
       transport: { url: `http://127.0.0.1:${server.port}/mcp` },
-      transports: ['CLI'],
+      expose: ['CLI'],
     }),
   ]);
   let out = '';
   let err = '';
   let code = -1;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'lessons',
     version: '1.0.0',
     runtimeTools,

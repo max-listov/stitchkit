@@ -3,6 +3,7 @@ title: "ADR 0281: Static files are served by one responder"
 description: staticRoute answers a contained file through serveFile, and serveFile runs on Bun and Node, so every file path has ranges, validators and a streamed body.
 type: decision
 status: accepted
+amends: ["0013", "0023"]
 created: 2026-11-03
 updated: 2026-11-03
 ---

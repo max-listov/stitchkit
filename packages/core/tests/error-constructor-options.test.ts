@@ -4,8 +4,14 @@ import { AppError } from '../src/contract/errors';
 
 test('AppError takes its code first and every other field by name', () => {
   const bare = new AppError('NOT_FOUND');
-  expect(bare).toMatchObject({ code: 'NOT_FOUND', message: 'NOT_FOUND', status: 500 });
+  expect(bare).toMatchObject({ code: 'NOT_FOUND', message: 'NOT_FOUND', status: 404 });
   expect('cause' in bare).toBe(false);
+  const custom = new AppError('CUSTOM_DOMAIN_CODE');
+  expect(custom).toMatchObject({
+    code: 'CUSTOM_DOMAIN_CODE',
+    message: 'CUSTOM_DOMAIN_CODE',
+    status: 500,
+  });
   const cause = new Error('upstream');
   const full = new AppError('CONFLICT', {
     message: 'stale',

@@ -1,11 +1,18 @@
+export { createSandboxCodingTools } from '../../agent-runtime/coding-sandbox';
+export {
+  type AgentSandboxGrade,
+  AgentSandboxGradeSchema,
+  type AgentSandboxRestriction,
+  AgentSandboxRestrictionSchema,
+  missingSandboxRestrictions,
+  probeAgentProcessSandbox,
+  recordAgentSandboxProbe,
+} from '../../agent-runtime/sandbox';
+export type { SandboxCodingBinding } from '../../agent-runtime/sandbox-binding';
 export {
   type BubblewrapSandboxConfig,
   createBubblewrapSandboxBackend,
 } from '../../agent-runtime/sandbox-bubblewrap';
-export {
-  createSandboxCodingTools,
-  type SandboxCodingBinding,
-} from '../../agent-runtime/sandbox-coding';
 export {
   type SandboxBackend,
   type SandboxCommand,

@@ -3,6 +3,7 @@
  * client: every inbound event validated against the contract, every
  * acknowledged request parsed on both sides.
  */
+import { assertTimerMs } from '../internal/deadline';
 import type { StitchLogger } from '../internal/logger';
 import type {
   RealtimeAcknowledgedEvent,
@@ -103,9 +104,7 @@ export function bindRealtimeClient<
       throw new TypeError(`Realtime request "${event}" requires { timeoutMs }`);
     }
     const timeoutMs = options.timeoutMs;
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      throw new RangeError(`Realtime request "${event}" timeoutMs must be finite and > 0`);
-    }
+    assertTimerMs(`Realtime request "${event}" timeoutMs`, timeoutMs, { absent: 'refused' });
     const values = args.slice(0, -1);
     const parsedArgs = parseRealtimeRequestArguments(
       contract.clientToServer,

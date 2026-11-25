@@ -1,3 +1,4 @@
+import { abortReason } from '../internal/abort-race';
 import { ApplicationAdmissionError, type ApplicationOperationLease } from './kernel-contract';
 import { isReady, type KernelState, publish } from './kernel-state';
 
@@ -70,7 +71,7 @@ export function acquireWhenAccepting(
       if (settled) return true;
       if (signal.aborted) {
         finish();
-        reject(signal.reason);
+        reject(abortReason(signal));
         return true;
       }
       if (

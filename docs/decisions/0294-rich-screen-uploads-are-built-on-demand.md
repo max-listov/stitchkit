@@ -3,6 +3,7 @@ title: "ADR 0294: Rich screen uploads are built on demand"
 description: A versioned factory lets grammY upload a file while screen reconciliation compares a small, stable fingerprint.
 type: decision
 status: accepted
+amends: ["0211"]
 created: 2026-11-18 08:39 +07:00
 updated: 2026-11-18 10:01 +07:00
 ---

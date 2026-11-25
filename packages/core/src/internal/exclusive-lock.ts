@@ -20,25 +20,30 @@
  *
  * Grown out of the diagnostic journal's lock, which still sits on it; the
  * journal's refusal policy and the reasons it attaches to a refusal are the
- * same code paths as the public lock's.
+ * same code paths as the public lock's. The unix socket startup lock, which has
+ * to be taken inside a synchronous `createServer`, writes the same owner record
+ * and judges it by the same rule (`exclusive-lock-owner.ts`).
  */
+
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readdir, unlink } from 'node:fs/promises';
-import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
+import { abortReason } from './abort-race';
 import { AtomicFilePublicationError, publishAtomicFile } from './atomic-publication';
+import { errnoOf } from './errno';
 import {
   diagnose,
   type ExclusiveLockDiagnosis,
   type ExclusiveLockOwner,
   type RecordedLock,
   readOwner,
+  reclaimable,
+  recordOwner,
 } from './exclusive-lock-owner';
 import { LockRecordError, readLockRecord } from './exclusive-lock-read';
 import { machineIdentity } from './process-identity';
 import { readProcessInstance } from './process-instance';
-import { isRecord } from './typed';
 
 /** A lock this process holds. */
 export interface HeldExclusiveLock {
@@ -73,10 +78,6 @@ export type ExclusiveLockAttempt =
       /** Present when a reclaim was considered. */
       readonly diagnosis?: ExclusiveLockDiagnosis;
     };
-
-function isCode(error: unknown, code: string): boolean {
-  return isRecord(error) && error.code === code;
-}
 
 interface LockFileState extends RecordedLock {
   /** The record exactly as read: what a reclaimer judged, compared again before it removes the file. */
@@ -149,7 +150,7 @@ async function readLockFile(
       ...(stagedName !== undefined && { stagedName }),
     };
   } catch (cause) {
-    if (!isCode(cause, 'ENOENT')) onFailure?.(cause);
+    if (errnoOf(cause) !== 'ENOENT') onFailure?.(cause);
     return undefined;
   }
 }
@@ -191,7 +192,7 @@ async function unlinkIfSame(path: string, ino: number, dev: number, links = 1): 
       return;
     await unlink(path);
   } catch (error) {
-    if (!isCode(error, 'ENOENT')) throw error;
+    if (errnoOf(error) !== 'ENOENT') throw error;
   }
 }
 
@@ -210,15 +211,8 @@ async function createOwned(
   const identity = await machineIdentity(options.machineIdentity, options.signal);
   // A cancelled detection says nothing about this machine; a record written from it would
   // publish an owner without one. Nothing is staged yet, so the attempt ends here.
-  if (options.signal?.aborted) throw options.signal.reason;
-  const instance = await readProcessInstance(process.pid);
-  const owner: ExclusiveLockOwner = {
-    pid: process.pid,
-    process: instance,
-    host: hostname(),
-    acquiredAt: new Date().toISOString(),
-    ...(identity !== null && { machine: identity }),
-  };
+  if (options.signal?.aborted) throw abortReason(options.signal);
+  const owner = recordOwner(identity, await readProcessInstance(process.pid));
   const ownedRecord = `${JSON.stringify(owner)}\n`;
   const staged = join(dirname(path), `.lock-${randomUUID()}.tmp`);
   const handle = await open(staged, 'wx', options.mode);
@@ -306,7 +300,7 @@ async function removeJudgedLock(
     state.path,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
   ).catch((error: unknown) => {
-    if (isCode(error, 'ENOENT')) return null;
+    if (errnoOf(error) === 'ENOENT') return null;
     throw error;
   });
   if (!pin) return 'absent';
@@ -316,7 +310,7 @@ async function removeJudgedLock(
     const current = await readLockRecord(state.path, {
       singleLink: state.stagedName === undefined,
     }).catch((error: unknown) => {
-      if (error instanceof LockRecordError || isCode(error, 'ENOENT')) return null;
+      if (error instanceof LockRecordError || errnoOf(error) === 'ENOENT') return null;
       throw error;
     });
     if (
@@ -327,24 +321,13 @@ async function removeJudgedLock(
       return 'changed';
     if (state.stagedName !== undefined)
       await unlink(state.stagedName).catch((error: unknown) => {
-        if (!isCode(error, 'ENOENT')) throw error;
+        if (errnoOf(error) !== 'ENOENT') throw error;
       });
     await unlinkIfSame(state.path, state.ino, state.dev);
     return 'removed';
   } finally {
     await pin.close();
   }
-}
-
-function reclaimable(
-  state: LockFileState,
-  diagnosis: ExclusiveLockDiagnosis,
-  graceMs: number | null | undefined,
-): boolean {
-  if (state.owner) return diagnosis.liveness === 'gone';
-  return (
-    state.ownerless && typeof graceMs === 'number' && Date.now() - state.mtimeMs >= graceMs
-  );
 }
 
 /**
@@ -383,7 +366,7 @@ async function reclaimUnderGuard(
   } catch (cause) {
     // Only a generated guard's name refusal belongs to recovery diagnosis.
     // IO refusal for the caller's original path retains its ordinary native error.
-    if (!isCode(cause, 'ENAMETOOLONG')) throw cause;
+    if (errnoOf(cause) !== 'ENAMETOOLONG') throw cause;
     return { refused: true, cause };
   }
   if (!('held' in acquired))
@@ -419,7 +402,7 @@ async function reclaimUnderGuard(
     // An ordinary acquirer never unlinks, but it may create the file between
     // that unlink and this create; it then holds the lock, and this refuses.
     return await createOwned(path, options, state !== undefined).catch((error: unknown) => {
-      if (isCode(error, 'EEXIST') || options.signal?.aborted)
+      if (errnoOf(error) === 'EEXIST' || options.signal?.aborted)
         return { refused: true, cause: error };
       throw error;
     });
@@ -443,7 +426,7 @@ export async function attemptExclusiveLock(
   } catch (error) {
     // A cancelled attempt is a refusal whatever it stopped on; the caller reads its own signal.
     if (options.signal?.aborted) return { error };
-    if (!isCode(error, 'EEXIST')) throw error;
+    if (errnoOf(error) !== 'EEXIST') throw error;
     if (!options.reclaim) return { error };
     let readFailure: unknown;
     const state = await readLockFile(

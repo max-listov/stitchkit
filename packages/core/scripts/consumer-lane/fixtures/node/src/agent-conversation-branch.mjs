@@ -21,7 +21,11 @@ for (const adapter of ['memory', 'sqlite']) {
       'function',
       'Installed SDK has no branchConversation',
     );
-    await runAgentStoreConformance({ createStore: () => store });
+    await runAgentStoreConformance({
+      createStore: () => store,
+      capabilities: { branch: true, planBranch: true, archive: true, historyRestore: true },
+      commitConflict: { impossible: 'single-writer' },
+    });
   } finally {
     await sqlite?.close();
   }

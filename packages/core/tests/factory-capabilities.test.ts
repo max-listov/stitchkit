@@ -76,6 +76,7 @@ async function runCli(services: CliConfig['services'], command: string) {
   let error = '';
   let code = -1;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'capabilities',
     version: '1.0.0',
     services,
@@ -229,14 +230,14 @@ describe('factory capability intersection', () => {
               name: 'echo_capability',
               service: 'capabilities',
               method: 'echo',
-              transports: ['CLI'],
+              expose: ['CLI'],
             },
             {
               kind: 'contract',
               name: 'safe_capability',
               service: 'capabilities',
               method: 'safe',
-              transports: ['CLI'],
+              expose: ['CLI'],
             },
           ]
         : [];
@@ -281,12 +282,12 @@ describe('factory capability intersection', () => {
       }
       for (const key of intrinsic) {
         const refused = await runCli([service], `${key}_capability`);
-        expect(refused.code).toBe(1);
+        expect(refused.code).toBe(4);
         expect(refused.error).toContain('Unknown command');
         expect(counts.get(key) ?? 0).toBe(http ? 1 : 0);
       }
       const echo = await runCli([service], 'echo_capability');
-      expect(echo.code).toBe(cli ? 0 : 1);
+      expect(echo.code).toBe(cli ? 0 : 4);
       expect(counts.get('echo') ?? 0).toBe(cli ? 1 : 0);
       if (cli) expect(JSON.parse(echo.output)).toBe('echo');
     });

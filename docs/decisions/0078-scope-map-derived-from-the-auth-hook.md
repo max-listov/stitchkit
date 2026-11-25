@@ -9,7 +9,8 @@ updated: 2026-08-17
 
 # ADR 0078 — The scope map is derived from the auth hook
 
-- **Status:** Accepted — extends [ADR 0075](0075-per-scope-handler-context.md)
+**Relations:** extends [ADR 0075](0075-per-scope-handler-context.md)
+
 - **Date:** 2026-08-17
 
 ## Context

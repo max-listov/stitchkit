@@ -2,7 +2,8 @@
 title: The starter template is the development workspace
 description: Run the canonical starter directly and reserve generated copies for disposable consumer validation
 type: decision
-status: active
+status: accepted
+amendedBy: ["0070"]
 created: 2026-08-08
 updated: 2026-08-08
 ---

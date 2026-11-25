@@ -1,14 +1,15 @@
 import { z } from 'zod';
 import type { HttpMethod } from '../../contract/define';
 import { isRecord } from '../../internal/typed';
+import { assertNoLegacyTransports } from '../internal/expose';
 import { defineRuntimeTool, type RuntimeToolDefinition } from '../runtime-tool';
 import { ConnectionAuthorizationRequiredError, ConnectionRequestError } from './errors';
 import { fetchConnection } from './http';
 import {
   connectionMaxResponseBytes,
   connectionTimeoutMs,
+  readBoundedConnectionText,
   readBoundedJson,
-  readBoundedText,
   readConnectionErrorText,
   withConnectionDeadline,
 } from './limits';
@@ -45,6 +46,7 @@ export async function mountOpenApiConnection(
   instanceId: string,
   onSkipped: ConnectionToolSkipReporter,
 ): Promise<RuntimeToolDefinition[]> {
+  assertNoLegacyTransports(connection, `OpenAPI connection "${connection.name}"`);
   const timeoutMs = connectionTimeoutMs(connection.timeoutMs);
   const maxResponseBytes = connectionMaxResponseBytes(connection.maxResponseBytes);
   const loaded = await loadOpenApiDocument(connection, timeoutMs, maxResponseBytes);
@@ -75,7 +77,11 @@ export async function mountOpenApiConnection(
           ? entry.operation.description
           : `${entry.method} ${entry.path}`;
       const schema = operationInputSchema(document, entry);
-      const input = zodObjectFromJsonSchema(schema);
+      const dialect =
+        typeof document.openapi === 'string' && document.openapi.startsWith('3.0.')
+          ? 'openapi-3.0'
+          : '2020-12';
+      const input = zodObjectFromJsonSchema(schema, { dialect });
       const auth = resolveAuth(document, entry.operation);
       const definition = defineRuntimeTool({
         name,
@@ -85,7 +91,7 @@ export async function mountOpenApiConnection(
           action: rawName,
           method: entry.method,
         },
-        ...(connection.transports && { transports: connection.transports }),
+        ...(connection.expose && { expose: connection.expose }),
         input,
         output: z.unknown(),
         handler: (context) =>
@@ -463,7 +469,7 @@ async function readResponse(
   const contentType = response.headers.get('content-type') ?? '';
   if (contentType.includes('json'))
     return readBoundedJson(response, maxBytes, connectionName, context);
-  return readBoundedText(response, maxBytes, connectionName, context);
+  return readBoundedConnectionText(response, maxBytes, connectionName, context);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

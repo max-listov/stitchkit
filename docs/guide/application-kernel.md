@@ -18,7 +18,7 @@ Use `stitchkit/application` when several process-local resources must become
 ready and shut down as one application. Keep using the lower-level server and
 signal APIs when one managed server is already the complete lifecycle boundary.
 
-The neutral entrypoint is server-only and works on Bun and Node ≥ 22. It does
+The neutral entrypoint is server-only and works on Bun ≥ 1.4 and Node ≥ 22.3. It does
 not import provider SDKs.
 
 For complete database, poller, queue-consumer and operational-publisher

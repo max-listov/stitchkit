@@ -9,9 +9,10 @@ updated: 2026-08-07
 
 # ADR 0052 — Typed JSON response metadata
 
-- **Status:** Accepted — a controlled HTTP-only extension of
-  [ADR 0027](0027-transport-neutral-contract-execution.md), distinct from the
-  raw-response exception in [ADR 0038](0038-raw-response-endpoints.md)
+**Relations:** a controlled HTTP-only extension of
+[ADR 0027](0027-transport-neutral-contract-execution.md), distinct from the raw-response exception
+in [ADR 0038](0038-raw-response-endpoints.md)
+
 - **Date:** 2026-08-07
 
 ## Context

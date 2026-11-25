@@ -3,6 +3,8 @@ title: "ADR 0274: A Telegram token has one outbound budget"
 description: A bot token's sends share one strict process-local budget, weighted by the messages a call produces; a 429 pauses the token, and the primitive never retries an unknown outcome.
 type: decision
 status: accepted
+amends: ["0201"]
+amendedBy: ["0277", "0278", "0305"]
 created: 2026-10-30
 updated: 2026-10-31
 ---
@@ -58,7 +60,8 @@ burst is one and the sustained rate is the declared rate. An album is weighted,
 not one: `sendMediaGroup` and `sendPaidMedia` cost their media length,
 `copyMessages` and `forwardMessages` cost their ids, and every other
 message-producing method costs one. A non-message method (`getMe`, `getFile`,
-an edit, a delete) costs nothing.
+an edit, a delete) costs nothing (amended by ADR 0305: only explicitly classified
+free methods cost nothing; any unknown method fails closed and costs one).
 
 **A 429 pauses every sender of the token.** The pause is
 `max(pausedUntil, now + retry_after)`; a second, shorter instruction never

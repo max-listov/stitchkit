@@ -119,6 +119,7 @@ export async function acquireRun<CONTEXT, TOOLS extends ToolSet>(
     usage: input.acceptedRun.usage,
     sawProviderFinish: false,
     step: 0,
+    stepGuard: { text: '', toolFailed: false, reasoningChars: 0 },
     selectedModel: undefined,
     internalCause: undefined,
     providerStreamCleanupFailure: undefined,

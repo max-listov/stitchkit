@@ -1,7 +1,7 @@
 ---
 title: Evidence covers the affected tree
 description: Publication intent cannot narrow evidence for code included in the same SHA.
-status: active
+status: accepted
 type: decision
 created: 2026-10-03 13:30 +07:00
 updated: 2026-10-03 13:30 +07:00

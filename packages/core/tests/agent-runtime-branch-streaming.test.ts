@@ -3,8 +3,8 @@ import { z } from 'zod';
 import {
   AgentStoreTransitionRecordSchema,
   agentSummaryProjection,
+  createAgentProjectionStore,
   createMemoryAgentRuntimeStore,
-  createSqliteAgentProjectionStore,
   decodeAgentConversationArchive,
 } from '../src/entrypoints/agent-runtime';
 import { createBunSqliteAgentRuntimeStore } from '../src/entrypoints/agent-runtime/sqlite/bun';
@@ -22,7 +22,7 @@ test('public SQLite streaming export with companion projection branches and rest
       parts: [{ type: 'text', text: 'retain streamed context' }],
       metadata: {},
     }).result;
-    const projections = createSqliteAgentProjectionStore({ sqlite });
+    const projections = createAgentProjectionStore({ store: sqlite.store, host: sqlite.host });
     await projections.advance('source', agentSummaryProjection);
     const bytes = await sqlite.store.exportConversation('source');
     const archive = decodeAgentConversationArchive(bytes);
@@ -74,7 +74,7 @@ test('public SQLite streaming export with companion projection branches and rest
         ),
       ).toBe(true);
     }
-    expect(projections.load('copy', agentSummaryProjection)).toBeUndefined();
+    expect(await projections.load('copy', agentSummaryProjection)).toBeUndefined();
     expect(
       (await projections.advance('copy', agentSummaryProjection)).value.eventCount,
     ).toBeGreaterThan(0);

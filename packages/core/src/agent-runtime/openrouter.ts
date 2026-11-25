@@ -4,7 +4,9 @@ import {
 } from '@openrouter/ai-sdk-provider';
 import type { LanguageModelUsage } from 'ai';
 import { z } from 'zod';
+import { assertTimerMs } from '../internal/deadline';
 import { isRecord } from '../internal/typed';
+import { currentModelInvocationAttempt } from './invocation-attempt';
 import {
   type AgentLanguageModelProvider,
   type AgentModelCapability,
@@ -12,26 +14,26 @@ import {
   AgentModelCatalogSchema,
   type AgentModelMetric,
 } from './models';
+import {
+  type OpenRouterCatalogFetch,
+  type OpenRouterModelSchema,
+  OpenRouterModelsResponseSchema,
+  openRouterJson,
+  usd,
+  withOpenRouterTimeout,
+} from './openrouter-models';
+import {
+  buildOpenRouterChatSettings,
+  type OpenRouterRequestPolicy,
+  rewriteOpenRouterBodyFetch,
+  withOpenRouterLooseTools,
+} from './openrouter-options';
+import { openRouterSessionKey } from './openrouter-route';
 import type { AgentUsage } from './schemas';
 
 export type { OpenRouterProviderSettings } from '@openrouter/ai-sdk-provider';
+export type { OpenRouterCatalogFetch } from './openrouter-models';
 
-const OpenRouterModelSchema = z
-  .object({
-    id: z.string().min(1),
-    canonical_slug: z.string().min(1).optional(),
-    name: z.string().min(1),
-    description: z.string().optional(),
-    context_length: z.int().nonnegative(),
-    architecture: z.object({ input_modalities: z.array(z.string()).default([]) }).loose(),
-    pricing: z
-      .object({ prompt: z.string().optional(), completion: z.string().optional() })
-      .loose(),
-    supported_parameters: z.array(z.string()).default([]),
-  })
-  .loose();
-
-const OpenRouterModelsResponseSchema = z.object({ data: z.array(OpenRouterModelSchema) });
 const OpenRouterBenchmarkMetaSchema = z
   .object({ as_of: z.iso.datetime({ offset: true }) })
   .loose();
@@ -64,8 +66,6 @@ const OpenRouterDesignArenaResponseSchema = z.object({
   meta: OpenRouterBenchmarkMetaSchema,
 });
 
-export type OpenRouterCatalogFetch = (input: URL, init?: RequestInit) => Promise<Response>;
-
 export interface OpenRouterModelCatalogOptions {
   apiKey: string;
   fetcher?: OpenRouterCatalogFetch;
@@ -73,24 +73,13 @@ export interface OpenRouterModelCatalogOptions {
   now?: () => Date;
 }
 
-function catalogSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(timeoutMs);
-  return signal ? AbortSignal.any([signal, timeout]) : timeout;
-}
-
-async function catalogJson(
+function catalogJson(
   fetcher: OpenRouterCatalogFetch,
   url: URL,
   apiKey: string,
   signal: AbortSignal,
 ): Promise<unknown> {
-  const response = await fetcher(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-    signal,
-  });
-  if (!response.ok)
-    throw new Error(`OpenRouter catalog request failed with HTTP ${response.status}`);
-  return response.json();
+  return openRouterJson({ fetcher, url, apiKey, signal });
 }
 
 function capabilities(model: z.infer<typeof OpenRouterModelSchema>): AgentModelCapability[] {
@@ -166,9 +155,9 @@ export function openRouterModelCatalog(options: OpenRouterModelCatalogOptions): 
 } {
   const fetcher = options.fetcher ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
+  assertTimerMs('timeoutMs', timeoutMs);
   return {
     async load(input = {}) {
-      const signal = catalogSignal(timeoutMs, input.signal);
       const modelsUrl = new URL('https://openrouter.ai/api/v1/models');
       modelsUrl.searchParams.set('supported_parameters', 'tools');
       modelsUrl.searchParams.set('output_modalities', 'text');
@@ -178,19 +167,26 @@ export function openRouterModelCatalog(options: OpenRouterModelCatalogOptions): 
       const designUrl = new URL('https://openrouter.ai/api/v1/benchmarks');
       designUrl.searchParams.set('source', 'design-arena');
       designUrl.searchParams.set('arena', 'agents');
-      const [modelsRaw, artificialResult, designResult] = await Promise.all([
-        catalogJson(fetcher, modelsUrl, options.apiKey, signal),
-        catalogJson(fetcher, artificialUrl, options.apiKey, signal).then(
-          (value) => ({ outcome: 'ok', value }) satisfies { outcome: 'ok'; value: unknown },
-          (error: unknown) =>
-            ({ outcome: 'error', error }) satisfies { outcome: 'error'; error: unknown },
-        ),
-        catalogJson(fetcher, designUrl, options.apiKey, signal).then(
-          (value) => ({ outcome: 'ok', value }) satisfies { outcome: 'ok'; value: unknown },
-          (error: unknown) =>
-            ({ outcome: 'error', error }) satisfies { outcome: 'error'; error: unknown },
-        ),
-      ]);
+      const [modelsRaw, artificialResult, designResult] = await withOpenRouterTimeout(
+        timeoutMs,
+        input.signal,
+        (signal) =>
+          Promise.all([
+            catalogJson(fetcher, modelsUrl, options.apiKey, signal),
+            catalogJson(fetcher, artificialUrl, options.apiKey, signal).then(
+              (value) =>
+                ({ outcome: 'ok', value }) satisfies { outcome: 'ok'; value: unknown },
+              (error: unknown) =>
+                ({ outcome: 'error', error }) satisfies { outcome: 'error'; error: unknown },
+            ),
+            catalogJson(fetcher, designUrl, options.apiKey, signal).then(
+              (value) =>
+                ({ outcome: 'ok', value }) satisfies { outcome: 'ok'; value: unknown },
+              (error: unknown) =>
+                ({ outcome: 'error', error }) satisfies { outcome: 'error'; error: unknown },
+            ),
+          ]),
+      );
       const observedAt = (options.now?.() ?? new Date()).toISOString();
       const models = OpenRouterModelsResponseSchema.parse(modelsRaw).data;
       const metrics = new Map<string, AgentModelMetric[]>();
@@ -246,11 +242,15 @@ export function openRouterModelCatalog(options: OpenRouterModelCatalogOptions): 
                 availability: 'available',
               },
               ...(model.description && { description: model.description }),
-              ...((model.pricing.prompt || model.pricing.completion) && {
+              // Only real prices: OpenRouter's "-1" (unknown) is left out, not passed on.
+              ...((usd(model.pricing.prompt) !== undefined ||
+                usd(model.pricing.completion) !== undefined) && {
                 price: {
                   currency: 'USD',
-                  ...(model.pricing.prompt && { inputPerToken: model.pricing.prompt }),
-                  ...(model.pricing.completion && {
+                  ...(usd(model.pricing.prompt) !== undefined && {
+                    inputPerToken: model.pricing.prompt,
+                  }),
+                  ...(usd(model.pricing.completion) !== undefined && {
                     outputPerToken: model.pricing.completion,
                   }),
                 },
@@ -270,13 +270,68 @@ export function openRouterModelCatalog(options: OpenRouterModelCatalogOptions): 
   };
 }
 
+/**
+ * How every request of an `openRouterProvider` is shaped; see {@link OpenRouterRequestPolicy}.
+ * The provider is the one place a policy is applied: `looseTools` and the session can only be
+ * delivered on the wire, which the provider owns.
+ */
+export interface OpenRouterProviderAccess {
+  /** The policy of a model `resolvePolicy` says nothing about. */
+  defaultPolicy?: OpenRouterRequestPolicy;
+  /** The policy of one model, from the application's own model table. */
+  resolvePolicy?(modelId: string): OpenRouterRequestPolicy | undefined;
+  /**
+   * Keep each conversation on one upstream: every request made inside an agent
+   * runtime model attempt carries `session_id` = that attempt's conversation
+   * (hashed when longer than 256 characters), unless its policy pins
+   * `provider.order`. Requires the runtime to be configured with `invocations`
+   * (which tracks the active attempt).
+   */
+  sessionPerConversation?: boolean;
+}
+
+/** Request keys the policy owns; a provider-level `extraBody` would overwrite them silently. */
+const POLICY_KEYS = ['provider', 'reasoning', 'session_id', 'usage'] as const;
+
 /** Isolated OpenRouter adapter; credentials stay inside the provider instance. */
 export function openRouterProvider(
   settings: OpenRouterProviderSettings,
+  access: OpenRouterProviderAccess = {},
 ): AgentLanguageModelProvider {
-  const provider = createOpenRouter(settings);
+  const clash = POLICY_KEYS.filter((key) => settings.extraBody?.[key] !== undefined);
+  if (clash.length > 0)
+    throw new TypeError(
+      `openRouterProvider: extraBody sets ${clash.join(', ')}, which the request policy owns; put it in the policy`,
+    );
+  const policyOf = (modelId: string): OpenRouterRequestPolicy =>
+    access.resolvePolicy?.(modelId) ?? access.defaultPolicy ?? {};
+  // On the wire, per request: the model's own policy decides loose tools, and the
+  // current conversation (when asked) becomes the session.
+  const rewrite = (body: unknown): unknown => {
+    if (!isRecord(body)) return body;
+    const policy = typeof body.model === 'string' ? policyOf(body.model) : {};
+    const loosened = policy.looseTools ? withOpenRouterLooseTools(body) : body;
+    const conversation = currentModelInvocationAttempt()?.conversationId;
+    const pinned = isRecord(body.provider) && Array.isArray(body.provider.order);
+    return access.sessionPerConversation &&
+      conversation !== undefined &&
+      isRecord(loosened) &&
+      loosened.session_id === undefined &&
+      !pinned
+      ? { ...loosened, session_id: openRouterSessionKey(conversation) }
+      : loosened;
+  };
+  const needsWire =
+    access.sessionPerConversation ||
+    access.resolvePolicy !== undefined ||
+    access.defaultPolicy?.looseTools;
+  const provider = createOpenRouter({
+    ...settings,
+    ...(needsWire && { fetch: rewriteOpenRouterBodyFetch(settings.fetch ?? fetch, rewrite) }),
+  });
   return {
-    create: (modelId) => provider.chat(modelId),
+    create: (modelId) =>
+      provider.chat(modelId, buildOpenRouterChatSettings(policyOf(modelId))),
     normalizeUsage: ({ usage, providerMetadata }) =>
       normalizeOpenRouterUsage(usage, providerMetadata),
     resolveResponseProvider: ({ providerMetadata }) => readUpstreamProvider(providerMetadata),

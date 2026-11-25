@@ -5,7 +5,7 @@
  * one is the policy.
  */
 import { isRecord } from '../internal/typed';
-import { getRequestContext } from '../observability/context';
+import { getRequestContext, type RequestContext } from '../observability/context';
 import type { LoggingConfig, LogOutcome } from './types';
 
 const LOGGER_METHODS = ['info', 'warn', 'error', 'debug'];
@@ -67,11 +67,12 @@ export function collectExtraLogFields(
   req: Request,
   url: URL,
   outcome: LogOutcome,
+  requestContext?: RequestContext,
 ): { fields: Record<string, unknown>; enrichKeys: string[] } {
   const fields: Record<string, unknown> = {};
   const enrichKeys: string[] = [];
 
-  const ctx = getRequestContext();
+  const ctx = requestContext ?? getRequestContext();
   if (ctx) {
     if (ctx.userId) fields.userId = ctx.userId;
     if (ctx.serviceName) fields.serviceName = ctx.serviceName;

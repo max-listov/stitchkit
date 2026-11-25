@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { errnoOf } from '../internal/errno';
 import {
   type NativeAssetEntrySchema,
   NativeAssetManifestSchema,
@@ -255,7 +256,7 @@ function readVerifiedAsset(
   try {
     bytes = readFileSync(sourcePath);
   } catch (cause) {
-    if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT') return missing;
+    if (errnoOf(cause) === 'ENOENT') return missing;
     throw cause;
   }
   const actual = nativeAssetDigest(bytes);

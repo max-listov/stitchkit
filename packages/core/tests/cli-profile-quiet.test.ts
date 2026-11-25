@@ -53,6 +53,7 @@ async function runEmbedded(argv: string[], store: ReturnType<typeof profileStore
   let code = -1;
   let catalogBuilds = 0;
   await createCli({
+    access: { open: 'local-operator' },
     name: 'profile-fixture',
     version: '1.0.0',
     argv,
@@ -112,10 +113,14 @@ test('a leading --quiet runs the same discovered command with the same profile',
     ...trailing,
     err: `${notice}\n`,
   });
-  expect(await endpoint(['--quiet', 'endpoint', 'false', '--json'])).toEqual({
+  expect(await endpoint(['--quiet=true', 'endpoint', 'false', '--json'])).toEqual({
     ...trailing,
     out: '{"profile":"prod","input":{"text":"false"}}\n',
   });
+  const brokenExec = await endpoint(['--quiet', 'endpoint', 'false', '--json']);
+  expect(brokenExec.code).not.toBe(0);
+  expect(brokenExec.out).toBe('');
+  expect(brokenExec.err).toContain('--quiet=false');
 }, 15_000);
 
 test('profile notices follow each concurrent invocation including dynamic help', async () => {
@@ -136,7 +141,7 @@ test('profile notices follow each concurrent invocation including dynamic help',
   });
 });
 
-test('profile notices respect the original boundary of a quiet flag', async () => {
+test('profile notices refuse a broken quiet boolean boundary and honour explicit inline spelling', async () => {
   const { store, notice } = soleProfile();
   const quiet = {
     code: 0,
@@ -144,9 +149,22 @@ test('profile notices respect the original boundary of a quiet flag', async () =
     out: '{"profile":"prod","input":{"text":"false"}}\n',
     err: '',
   };
-  expect(await runEmbedded(['--quiet', 'endpoint', 'false', '--json'], store)).toEqual(quiet);
+  for (const brokenArgv of [
+    ['--quiet', 'endpoint', 'false', '--json'],
+    ['endpoint', '--quiet', '--label', 'fixture', 'false', '--json'],
+  ]) {
+    const refused = await runEmbedded(brokenArgv, store);
+    expect(refused).toMatchObject({ code: 2, catalogBuilds: 0, out: '' });
+    expect(refused.err).toContain('--quiet=false');
+  }
+  expect(await runEmbedded(['--quiet=true', 'endpoint', 'false', '--json'], store)).toEqual(
+    quiet,
+  );
   expect(
-    await runEmbedded(['endpoint', '--quiet', '--label', 'fixture', 'false', '--json'], store),
+    await runEmbedded(
+      ['endpoint', '--quiet=true', '--label', 'fixture', 'false', '--json'],
+      store,
+    ),
   ).toEqual(quiet);
   expect(await runEmbedded(['--quiet', 'false', 'endpoint', '--json'], store)).toEqual({
     code: 0,
@@ -191,3 +209,23 @@ test('--quiet preserves profile refusals and their diagnostics', async () => {
     details: { message: `profile "prod" is readable by other users — run: chmod 600 ${file}` },
   });
 });
+
+test('invalid framework flags before createCli exit cleanly with code 2, no profile notice and no stack trace', async () => {
+  const { store, notice } = soleProfile();
+  const cases: readonly (readonly [string[], string])[] = [
+    [['--top', '5', 'endpoint'], '--top'],
+    [['--json', '--json', 'endpoint'], '--json'],
+    [['--wait-timeout', '0', 'endpoint'], '--wait-timeout'],
+    [['--quiet=maybe', 'endpoint'], '--quiet'],
+  ];
+  for (const [argv, expectedFlag] of cases) {
+    const result = await runExecutable(store.directory, argv);
+    expect(result.code).toBe(2);
+    expect(result.out).toBe('');
+    expect(result.err).toContain(expectedFlag);
+    expect(result.err).not.toContain(notice);
+    expect(result.err).not.toContain('using the only configured profile');
+    expect(result.err).not.toContain('CliArgumentError:');
+    expect(result.err).not.toContain('at ');
+  }
+}, 15_000);

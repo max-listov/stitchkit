@@ -1,5 +1,6 @@
 import { git } from './local-git';
 import { comparePreOneVersions } from './release-notes';
+import { releaseTags } from './release-tags';
 import {
   RELEASE_TARGETS,
   type ReleaseTarget,
@@ -143,7 +144,7 @@ export async function assertPackagesChanged(
 ): Promise<void> {
   for (const entry of train.releases) {
     const info = RELEASE_TARGETS[entry.target];
-    const tags = (await git(root, ['tag', '--list', `${info.tagPrefix}*`])).split('\n');
+    const tags = await releaseTags(root, entry.target, { firstRelease: true });
     const previous = previousReleaseTag(tags, entry.target, entry.version);
     if (previous === undefined) continue;
     if (await manifestChanged(entry.target, previous, root, read)) continue;

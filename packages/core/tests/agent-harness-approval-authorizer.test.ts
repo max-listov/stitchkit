@@ -93,6 +93,7 @@ describe('approval response-time authorizer', () => {
         }),
         tools: () =>
           mountAgent([], {
+            access: { open: 'local-operator' },
             runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
           }),
         loop: {

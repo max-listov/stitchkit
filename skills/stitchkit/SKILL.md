@@ -46,14 +46,16 @@ Work in this order; each step links a contract field to a transport.
    context, `createScopedImplement<Scopes>` when each scope guarantees different
    context fields). A handler is a pure `(ctx) => result`; `ctx.input` /
    `ctx.params` are typed from the schemas. → § HTTP server.
-3. **Serve** — `createServer({ services })` on Bun, or `serveNode(...)` on Node
-   ≥ 22. Add lifecycle hooks (`beforeHandle` for auth, `afterHandle`,
-   `onError`). → § HTTP server.
+3. **Serve** — `createServer({ services })` on Bun ≥ 1.4, or `serveNode(...)` on
+   Node ≥ 22.3 (or portable `createHandler` / `serveBridge` via `stitchkit/handler`).
+   Add lifecycle hooks (`hooks.authorize` for HTTP auth before body reads,
+   `beforeHandle`, `afterHandle`, `onError`). → § HTTP server.
 4. **Consume** — `createClient(contract, createHttpClient({ baseUrl }))` for a
    typed client; `createCursorQuery` for the React data layer. → § Typed client.
 5. **Expose to AI** (optional) — `createMcpHandler` (MCP) and `mountAgent` (AI
-   SDK). The *same* handlers run; guard them with the same `createAuthHook` via
-   `lifecycle`. → § MCP & agents.
+   SDK). The *same* handlers run; every tool mount requires explicit `access` —
+   guard them with the same `createAuthHook` via `access: { gate: { beforeHandle: authHook } }`
+   (or declare `{ open: 'public' | 'local-operator' | 'remote' }` when intentionally unguarded). → § MCP & agents.
 6. **Realtime / errors / auth / deploy** as needed — see the map below.
 
 ## Rules that keep a consumer clean
@@ -104,7 +106,7 @@ not restated here, because a second copy is a copy that drifts: the two that
 existed had already lost `srvx` from one and `@socket.io/component-emitter` from
 both. Read it there; the four that come up most:
 
-- `serveNode` on Node ≥ 22 → `srvx`
+- `serveNode` on Node ≥ 22.3 → `srvx`
 - MCP / agent tools → `@modelcontextprotocol/server`, `ai`
 - Socket.IO server → `socket.io`, plus `@socket.io/bun-engine` on Bun
 - React data layer → `@tanstack/react-query`, `react-query-kit`
@@ -114,30 +116,42 @@ both. Read it there; the four that come up most:
 | You're doing… | Guide page | In slice |
 |---------------|------------|----------|
 | a new/edited endpoint, schema, scope, meta, multipart | Contracts | `llms/contract.txt` |
-| handlers, hooks, raw routes, `serveFile`, `scopePrefixes`, multipart limits | HTTP server | `llms/server.txt` |
+| handlers, hooks (`authorize`, `beforeHandle`), raw routes, `serveFile`, `scopePrefixes`, multipart limits | HTTP server | `llms/server.txt` |
+| portable `createHandler` / `serveBridge` over `postMessage` without Node built-ins | HTTP server | `llms/handler.txt` |
 | the typed client, scoped client, SSE | Typed client | `llms/stitchkit.txt` |
-| MCP / agent tools, tool auth, `extend`, identity | MCP & agents | `llms/tools.txt` |
-| a CLI from the contract | CLI | `llms/cli.txt` |
+| MCP / agent tools, tool `access`, `extend`, identity | MCP & agents | `llms/tools.txt` |
+| a CLI from the contract (`commandSettings`, `globalOptions`, Unix-socket remote CLI) | CLI | `llms/cli.txt` |
 | Socket.IO, cache bridge, raw WebSocket lane | Realtime | `llms/server.txt` |
+| watched reads (`defineEvents`, `createWatchClient`), keyspaces | Live data | `llms/live.txt` |
 | scopes, auth hooks, JWT/cookies, error model + code registry | Auth & errors | `llms/server.txt` |
 | request/tool-call logging, trace context, audit | Observability | `llms/observability.txt` |
-| testing, deploy on Bun/Node | Testing & deployment | `llms/testing.txt` |
+| bounded POSIX commands, owner-loss cleanup, atomic files, Unix socket checks | Native IO | `llms/process.txt`, `llms/files.txt` |
+| testing, deploy on Bun ≥ 1.4 / Node ≥ 22.3 | Testing & deployment | `llms/testing.txt` |
 | `/tenants/:id/…` multi-tenant wiring end-to-end | Multi-tenant | `llms/server.txt` |
-| durable agent runs, history, models, fencing, recovery | Agent runtime | `llms/agent-runtime.txt` |
+| durable agent runs, history, models, fencing, recovery, SQLite / Postgres store + companion event search | Agent runtime | `llms/agent-runtime.txt`, `llms/agent-runtime-postgres.txt` |
+| Linux Bubblewrap sessions, host sandbox probes, durable workspaces, credential gateway | Optional process sandbox | `llms/agent-runtime-sandbox.txt` |
+| external coding-agent executor contract and drivers (Claude Code, Claude SDK, Codex, ACP) | API reference | `llms/agent-executor.txt` |
+| spend gateway for paid model APIs, spooled ledger, receipts, reconciliation, coverage guard | Spend | `llms/spend.txt`, `llms/spend-testing.txt` |
+| offline-first client/server sync (browser/Hermes client + Postgres server) | Sync | `llms/sync.txt`, `llms/sync-postgres.txt` |
+| host daemon supervision (`systemd`, `launchd`, reloader, signed macOS `.app` launcher bundles, LaunchServices, TCC) | API reference | `llms/service-host.txt`, `llms/service-host-macos.txt` |
 | process-local resources, readiness, admission, schedules, shutdown | Managed application kernel | `llms/application.txt` |
 | cutting an existing poller, queue or DB bootstrap over to the kernel | Application migration recipes | `llms/application.txt` |
 | moving across stitchkit versions | Upgrading | `llms/upgrading.txt` + its range slices |
 | what a repository says about itself: identity, roles, build, release steps, the names of the values a deployment supplies | Project declaration | `llms/declaration.txt` |
 | visitor tracking: the outbox, the visit lease, the page-leave beacon, visible time, clicks, attribution, and the server-side decisions | Visitor tracking | `llms/tracking.txt` |
 | the page reloads onto the release it was built for: build marker, `X-Build-Id`, socket event, reload policy | Release | `llms/release.txt` |
-| a Telegram bot: journal, operator chat, broadcasts, a webhook only this process may set, updates recorded before Telegram is answered, HTML cleaned and cut to the limit | Telegram bots | `llms/telegram.txt` |
+| live streaming voice replies (`SentenceCutter`, `speakableText`, `SpeechQueue`) | Voice | `llms/voice.txt` |
+| a Telegram bot: journal, operator chat, broadcasts, a webhook only this process may set, updates recorded before Telegram is answered, GFM Markdown → Telegram HTML with fence-aware splitting, HTML cleaned and cut to the limit | Telegram bots | `llms/telegram.txt`, `llms/telegram-html.txt` |
 | a Telegram bot's menus: screens, buttons, actions, input, message editing, a test chat | Telegram screens | `llms/telegram-screens.txt` |
 | keyboard on a React screen: shortcuts, one Escape per level, arrow-key lists with real focus | Keyboard layers and list zones | `llms/react-keyboard.txt` |
 
-Some of those surfaces are declared **evolving** — `stitchkit/declaration`,
-`stitchkit/tracking`, `stitchkit/release`, `stitchkit/live`, `stitchkit/agent-runtime` and `stitchkit/application` may be redefined in any minor, always with a marked
-breaking change and a migration section. The Entrypoints table in the
-getting-started guide is the authoritative list of which is which; read
+Some of those surfaces are declared **evolving** — including `stitchkit/handler`,
+`stitchkit/service-host`, `stitchkit/service-host/macos`, `stitchkit/spend`,
+`stitchkit/sync`, `stitchkit/agent-runtime` (and `/postgres`, `/sandbox`),
+`stitchkit/agent-executor`, `stitchkit/application`, `stitchkit/declaration`,
+`stitchkit/tracking`, `stitchkit/release` and `stitchkit/live` — and may be redefined in
+any minor, always with a marked breaking change and a migration section. The Entrypoints
+table in the getting-started guide is the authoritative list of which is which; read
 `Upgrading` before crossing a minor on an evolving one.
 
 When in doubt, open `llms.txt`, pick the slice of the entrypoint you import,

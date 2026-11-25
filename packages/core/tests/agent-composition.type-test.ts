@@ -43,7 +43,7 @@ createHeadlessAgentHarness({
     void invalid;
     return mountAgent([], {
       context: { tenant, assistantMessageId: run.assistantMessageId },
-      lifecycle: composeToolLifecycle(undefined, toolFenceLifecycle),
+      access: { gate: composeToolLifecycle(toolFenceLifecycle) },
     });
   },
 });

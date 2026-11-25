@@ -8,9 +8,9 @@ updated: 2026-08-07
 
 # ADR 0047 — One MCP schema validation profile
 
-- **Status:** Accepted — completes the schema-parity rule of
-  [ADR 0014](0014-tool-http-parity.md) and the advertised-schema guarantees of
-  [ADR 0034](0034-advertised-schema-key-policy.md)
+**Relations:** completes the schema-parity rule of [ADR 0014](0014-tool-http-parity.md) and the
+advertised-schema guarantees of [ADR 0034](0034-advertised-schema-key-policy.md)
+
 - **Date:** 2026-08-07
 
 ## Context

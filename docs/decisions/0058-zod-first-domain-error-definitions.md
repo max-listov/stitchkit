@@ -9,10 +9,10 @@ updated: 2026-08-08
 
 # ADR 0058 — Zod-first domain error definitions
 
-- **Status:** Accepted — extends the domain-free error boundary of
-  [ADR 0002](0002-generic-core.md), the published framework-code registry of
-  [ADR 0026](0026-stitch-error-code-registry.md), and cross-chunk branding from
-  [ADR 0032](0032-apperror-brand-identity.md)
+**Relations:** extends the domain-free error boundary of [ADR 0002](0002-generic-core.md), the
+published framework-code registry of [ADR 0026](0026-stitch-error-code-registry.md), and cross-chunk
+branding from [ADR 0032](0032-apperror-brand-identity.md)
+
 - **Date:** 2026-08-08
 
 ## Context

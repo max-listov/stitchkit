@@ -369,8 +369,8 @@ The `stitchkit` package itself ships pre-built; you consume `dist/`, not `src/`.
 
 ### Runtime
 
-The recommended target is **Bun ≥ 1.2** — `createServer` is `Bun.serve`. **Node
-≥ 22** is also supported via `stitchkit/node` (see below).
+The recommended target is **Bun ≥ 1.4** — `createServer` is `Bun.serve`. **Node
+≥ 22.3** is also supported via `stitchkit/node` (see below).
 
 ```ts
 createServer({
@@ -613,7 +613,8 @@ Notes for a Node host:
 - **Rate limiting** — `createRateLimiter` in `onRequest` for a global limit;
   per-route limits belong in `beforeHandle`.
 - **Auth** — wire one `createAuthHook` as HTTP `hooks.authorize` and tool
-  `lifecycle.beforeHandle`; do not re-check auth per handler. HTTP authorization
+  `access.gate.beforeHandle` (`access: { gate: { beforeHandle: authHook } }`);
+  do not re-check auth per handler. HTTP authorization
   runs before JSON or multipart body reads.
 - **Errors** — handlers throw `AppError`; let the standard envelope render them.
   Add an `onError` hook only to integrate an error tracker.

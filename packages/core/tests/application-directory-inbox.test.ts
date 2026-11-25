@@ -114,18 +114,24 @@ describe('createDirectoryInbox', () => {
     void dying.inbox.flush();
     await takenByDying;
 
-    const attempts: number[] = [];
-    const successor = await open(
-      dir,
-      ({ attempt }) => {
-        attempts.push(attempt);
-      },
-      { clock: clock.now, leaseMs: 60_000 },
-    );
-    expect(await successor.inbox.flush()).toBe(0);
-    clock.advance(60_001);
-    expect(await successor.inbox.flush()).toBe(1);
-    expect(attempts).toEqual([2]);
+    try {
+      const attempts: number[] = [];
+      const successor = await open(
+        dir,
+        ({ attempt }) => {
+          attempts.push(attempt);
+        },
+        { clock: clock.now, leaseMs: 60_000 },
+      );
+      expect(await successor.inbox.flush()).toBe(0);
+      clock.advance(60_001);
+      expect(await successor.inbox.flush()).toBe(1);
+      expect(attempts).toEqual([2]);
+    } finally {
+      // The "dead" process is only stuck: its lease renewal fires a quarter-lease later and
+      // writes the state file, recreating the directory `afterEach` removed. Force it down.
+      await dying.resource.force?.(context);
+    }
   });
 
   test('a handler that throws leaves the entry, reports it and takes it again after a backoff', async () => {
