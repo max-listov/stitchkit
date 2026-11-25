@@ -54,5 +54,6 @@ execFileSync(
   ],
   { stdio: 'inherit' },
 );
-execFileSync('lipo', ['-verify_arch', machine, output], { stdio: 'inherit' });
+// Apple's lipo treats every argument after -verify_arch as an architecture.
+execFileSync('lipo', [output, '-verify_arch', machine], { stdio: 'inherit' });
 console.log(output);
