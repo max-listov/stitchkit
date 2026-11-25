@@ -1,6 +1,6 @@
 # Upgrading stitchkit-tui
 
-## Unreleased migration: bun-1-4-runtime-floor
+## Released migration: 0.5.0
 
 ### Bun 1.4 runtime floor
 
@@ -12,8 +12,6 @@
 bun upgrade
 bun --version
 ```
-
-## Unreleased migration: stitchkit-0-127-peer
 
 ### stitchkit 0.127 peer
 

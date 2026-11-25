@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-25
+
 ### ⚠️ Breaking changes
 
 **Who must act:** hosts running `stitchkit-tui` on Bun 1.3 must upgrade Bun to `>= 1.4.0`, and
@@ -13,6 +15,10 @@ before upgrading to `0.5.0`.
 - `stitchkit-tui` — **accepts only `stitchkit` 0.127** as its peer: next to 0.126 the peer is
   unmet. Upgrade `stitchkit` first, by its own guide. See the
   [migration](UPGRADING.md).
+
+### Changed
+
+- `stitchkit-tui` accepts `stitchkit@^0.127.0` as its peer, so a project installing both gets one copy of `stitchkit`.
 
 ## [0.4.7] - 2026-11-21
 

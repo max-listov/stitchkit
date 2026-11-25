@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: 0.127.0
+## Released migration: 0.127.0
 
 ### branch-application-key-modes
 
