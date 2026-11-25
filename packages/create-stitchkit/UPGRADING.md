@@ -61,7 +61,7 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
-## Unreleased migration: single-root-version
+## Released migration: 0.8.0
 
 ### single-root-version
 

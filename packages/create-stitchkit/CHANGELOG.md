@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-25
+
 ### ⚠️ Breaking changes
 
 **Who must act:** every project scaffolded from an earlier `create-stitchkit` release that upgrades to `stitchkit@^0.128.0`, still carries `identity.version` in `project.json` or duplicate `"version"` fields in private workspace `packages/*/package.json`, or reads `appDeclaration.identity.version` in `packages/backend/src/{cli,index}.ts` ([migration](./UPGRADING.md#single-root-version)).
