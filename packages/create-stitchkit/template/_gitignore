@@ -1,4 +1,5 @@
 node_modules/
+.data/
 dist/
 .next/
 next-env.d.ts

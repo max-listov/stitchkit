@@ -1,6 +1,0 @@
-{
-  "coreVersion": "0.127.0",
-  "outcome": "deferred",
-  "reason": "The starter template migrated to 0.127.0 does not compile against the published target ^0.126.0, and the current template does not compile against 0.127.0 (packages/backend/src/surface-manifest.ts and scripts/surface-conformance.ts), so one source cannot satisfy both. The starter targets another minor and receives the 0.127.0 security fixes only through its next release: after 0.127.0 is on npm it runs update:starter, migrates the template, removes this record and ships as create-stitchkit 0.7.0.",
-  "followUp": "create-stitchkit@0.7.0"
-}

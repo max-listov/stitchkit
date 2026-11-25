@@ -12,6 +12,53 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** every project scaffolded from an earlier `create-stitchkit` release that still keeps local copies of `surface-manifest.ts` / `surface-conformance.ts` or mounts MCP, Agent or CLI tools without an explicit `access` policy ([migration](./UPGRADING.md#starter-uses-stitchkittesting-and-mandatory-tool-access)).
+
+- Removed the local copies of the framework's surface manifest and conformance runner from
+  the application template (`packages/backend/src/surface-manifest.ts`,
+  `packages/backend/src/surface-manifest.test.ts`, and `scripts/surface-conformance.ts`).
+  `scripts/surface-snapshot.ts` and `scripts/runtime-smoke.ts` now import
+  `buildSurfaceManifest`, `assertSurfaceManifestSnapshot`, `assertSurfaceDiscovery`,
+  `SurfaceManifestSchema`, and `runSurfaceProbes` directly from `stitchkit/testing`, and
+  `packages/backend/src/surface.snapshot.json` uses the canonical `manifestVersion: 3`
+  format. Before: `import { runSurfaceConformance } from './surface-conformance'`. After:
+  `import { assertLiveSurface } from './surface-snapshot'` and
+  `import { runSurfaceProbes } from 'stitchkit/testing'`. Existing projects adopt it by
+  [`UPGRADING.md`](./UPGRADING.md#starter-uses-stitchkittesting-and-mandatory-tool-access).
+- Updated tool mounts in the application and agent templates for mandatory `access` and
+  `ToolNameEntry.expose`: `packages/backend/src/index.ts` passes `access: { open: 'public' }`
+  to `createMcpHandler`, `packages/backend/src/cli.ts` passes
+  `access: { open: 'local-operator' }` to `createCli`, `packages/backend/src/tools.ts` reads
+  `tool.expose`, and `templates/agent/src/runtime.ts` passes
+  `access: { gate: context.toolFenceLifecycle }` to `mountAgent`. Before:
+  `createCli({ name, version, services })` and `mountAgent([], { runtimeTools, lifecycle: context.toolFenceLifecycle })`.
+  After: `createCli({ name, version, services, access: { open: 'local-operator' } })` and
+  `mountAgent([], { runtimeTools, access: { gate: context.toolFenceLifecycle } })`.
+
+### Added
+
+- Newly scaffolded projects record the `create-stitchkit` package version in `project.json`
+  under `starter: { version }` (validated by `ProjectDeclarationSchema` in
+  `stitchkit/declaration`).
+
+### Fixed
+
+- `acceptance:local` gives the realtime socket and the CORS admission this run's
+  ephemeral ports. It moved every role to ephemeral ports but kept
+  `PUBLIC_REALTIME_ORIGIN` and `CORS_ORIGIN` from `.env`, so on a machine where
+  another process listened on 3210 or 3211 the browser under test opened that
+  process's socket. The environment is built by `scripts/acceptance-environment.ts`,
+  and a test refuses any variable of `.env.example` that would still name a
+  deployment port. An existing project adopts it by
+  [`UPGRADING.md`](./UPGRADING.md#acceptance-owns-every-address).
+- The package and the projects generated from it no longer carry
+  `.data/board.sqlite`, the reference board's local database, and a generated
+  project ignores `.data/`. The documents describe the default scaffold as it is:
+  one reference feature, a notes board, beside the `/ui` catalogue and an admin
+  panel on fixture data, and the template README names what depends on the board.
+
 ## [0.6.23] - 2026-11-21
 
 ### Changed

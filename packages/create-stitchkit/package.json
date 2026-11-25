@@ -21,6 +21,7 @@
     "!template/**/.env",
     "!template/**/.build-stamp.json",
     "!template/**/node_modules/**",
+    "!template/**/.data/**",
     "!template/**/.next/**",
     "!template/**/.stitchkit/**",
     "!template/**/dist/**",
@@ -34,6 +35,7 @@
     "!templates/**/.env",
     "!templates/**/.build-stamp.json",
     "!templates/**/node_modules/**",
+    "!templates/**/.data/**",
     "!templates/**/.next/**",
     "!templates/**/.stitchkit/**",
     "!templates/**/dist/**",
@@ -49,6 +51,7 @@
     "!examples/**/.env",
     "!examples/**/.build-stamp.json",
     "!examples/**/node_modules/**",
+    "!examples/**/.data/**",
     "!examples/**/.next/**",
     "!examples/**/.stitchkit/**",
     "!examples/**/dist/**",
@@ -89,7 +92,7 @@
     "typescript": "^7.0.2"
   },
   "engines": {
-    "bun": ">=1.2.0"
+    "bun": ">=1.4.0"
   },
   "packageManager": "bun@1.4.5"
 }

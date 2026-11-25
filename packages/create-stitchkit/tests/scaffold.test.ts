@@ -2,6 +2,13 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createContractFactory } from 'stitchkit/contract';
+import { implement } from 'stitchkit/server';
+import {
+  assertSurfaceManifestSnapshot,
+  buildSurfaceManifest,
+  SurfaceManifestSchema,
+} from 'stitchkit/testing';
 import { z } from 'zod';
 import {
   PROJECT_DECLARATION_SCHEMA_VERSION,
@@ -115,7 +122,10 @@ describe('scaffoldProject', () => {
     );
     expect(features).toContain('GITHUB_REPOSITORY');
     expect(await readFile(join(destination, 'scripts/runtime-smoke.ts'), 'utf8')).toContain(
-      'runSurfaceConformance',
+      'runSurfaceProbes',
+    );
+    expect(await readFile(join(destination, 'scripts/runtime-smoke.ts'), 'utf8')).toContain(
+      'assertLiveSurface',
     );
   });
 
@@ -142,6 +152,12 @@ describe('scaffoldProject', () => {
         ru: 'Talk Control Console — production-приложение на Stitchkit.',
       },
     });
+    const scaffolderVersion = z
+      .looseObject({ version: z.string().min(1) })
+      .parse(
+        JSON.parse(await readFile(resolve(import.meta.dir, '../package.json'), 'utf8')),
+      ).version;
+    expect(declaration.starter).toEqual({ version: scaffolderVersion });
     // Everything that is true of the CODE travels unchanged from the template.
     expect(declaration.roles.map((role) => role.name)).toEqual(['api', 'web']);
     expect(declaration.release.migrations?.engine).toBe('prisma');
@@ -181,7 +197,7 @@ describe('scaffoldProject', () => {
       const guidance = `${await readFile(join(destination, 'AGENTS.md'), 'utf8')}\n${await readFile(join(destination, 'docs/ADDING_A_FEATURE.md'), 'utf8')}`;
 
       expect(guidance).toContain('packages/shared/src/schemas/status.ts');
-      expect(guidance).toContain('defineSurfaceProbe');
+      expect(guidance).toContain('runSurfaceProbes');
       // Absolute machine paths and the maintainer's publishing commands are
       // classes, so they can be named.
       expect(guidance).not.toMatch(/\/home\/|\/Users\/|[A-Za-z]:[\\/]/);
@@ -508,6 +524,9 @@ describe('scaffoldProject', () => {
     expect(isTemplateSourcePathIncluded('test-results/.last-run.json')).toBeFalse();
     expect(isTemplateSourcePathIncluded('packages/frontend/.next/routes.json')).toBeFalse();
     expect(isTemplateSourcePathIncluded('.stitchkit/agent.sqlite')).toBeFalse();
+    // The board's local database reached the published 0.6.23 package and every
+    // project generated from it.
+    expect(isTemplateSourcePathIncluded('.data/board.sqlite')).toBeFalse();
     expect(isTemplateSourcePathIncluded('packages/frontend/next-env.d.ts')).toBeFalse();
     expect(isTemplateSourcePathIncluded('packages/backend/dist/index.js')).toBeFalse();
     expect(isTemplateSourcePathIncluded('packages/db/src/generated/client.ts')).toBeFalse();
@@ -563,14 +582,24 @@ describe('scaffoldProject', () => {
     // No workspace, so no catalog: Bun reads one only in a workspace root.
     expect(manifest).toMatchObject({
       name: 'terminal-agent',
-      dependencies: { stitchkit: '^0.68.6', 'stitchkit-tui': '^0.4.4' },
+      dependencies: { stitchkit: '^0.68.6', 'stitchkit-tui': '^0.5.0' },
     });
     expect(manifest.catalog).toBeUndefined();
     expect(await Bun.file(join(destination, 'bun.lock')).exists()).toBeFalse();
     expect(await Bun.file(join(destination, APP_IDENTITY_PATH)).exists()).toBeFalse();
-    expect(await readFile(join(destination, 'src/runtime.ts'), 'utf8')).toContain(
-      'createHeadlessAgentHarness',
+    const runtimeSource = await readFile(join(destination, 'src/runtime.ts'), 'utf8');
+    expect(runtimeSource).toContain('createHeadlessAgentHarness');
+    expect(runtimeSource).toContain('access: { gate: context.toolFenceLifecycle }');
+    expect(runtimeSource).not.toContain('lifecycle: context.toolFenceLifecycle');
+    const agentDeclaration = parseProjectDeclaration(
+      JSON.parse(await readFile(join(destination, 'project.json'), 'utf8')),
     );
+    const scaffolderVersion = z
+      .looseObject({ version: z.string().min(1) })
+      .parse(
+        JSON.parse(await readFile(resolve(import.meta.dir, '../package.json'), 'utf8')),
+      ).version;
+    expect(agentDeclaration.starter).toEqual({ version: scaffolderVersion });
     expect(await readFile(join(destination, 'stitchkit.agent.ts'), 'utf8')).toContain(
       'defineAgentTui',
     );
@@ -598,9 +627,17 @@ describe('scaffoldProject', () => {
       dependencies: { stitchkit: '^0.96.0', grammy: expect.any(String) },
     });
     expect(manifest.catalog).toBeUndefined();
-    const declaration = JSON.parse(await readFile(join(destination, 'project.json'), 'utf8'));
+    const declaration = parseProjectDeclaration(
+      JSON.parse(await readFile(join(destination, 'project.json'), 'utf8')),
+    );
+    const scaffolderVersion = z
+      .looseObject({ version: z.string().min(1) })
+      .parse(
+        JSON.parse(await readFile(resolve(import.meta.dir, '../package.json'), 'utf8')),
+      ).version;
     expect(declaration.identity.slug).toBe('support-bot');
-    expect(declaration.roles.map((role: { name: string }) => role.name)).toEqual(['bot']);
+    expect(declaration.starter).toEqual({ version: scaffolderVersion });
+    expect(declaration.roles.map((role) => role.name)).toEqual(['bot']);
     expect(await Bun.file(join(destination, 'bun.lock')).exists()).toBeFalse();
     expect(await Bun.file(join(destination, APP_IDENTITY_PATH)).exists()).toBeFalse();
     expect(await readFile(join(destination, 'src/application.ts'), 'utf8')).toContain(
@@ -648,5 +685,105 @@ describe('scaffoldProject', () => {
     await expect(scaffoldProject(template, destination)).rejects.toThrow(
       'Destination cannot be a symbolic link',
     );
+  });
+
+  test('ships no copied surface-manifest or surface-conformance files and imports stitchkit/testing', async () => {
+    const templateRoot = join(import.meta.dir, '..', 'template');
+    const overlayRoot = join(import.meta.dir, '..', 'examples/repository');
+    const parent = await mkdtemp(join(tmpdir(), 'stitchkit-surface-'));
+    created.push(parent);
+    const scaffolderVersion = z
+      .looseObject({ version: z.string().min(1) })
+      .parse(
+        JSON.parse(await readFile(resolve(import.meta.dir, '../package.json'), 'utf8')),
+      ).version;
+
+    for (const [name, overlayDirectory] of [
+      ['blank-surface', undefined],
+      ['repository-surface', overlayRoot],
+    ] satisfies [string, string | undefined][]) {
+      const destination = join(parent, name);
+      await scaffoldProject(templateRoot, destination, { overlayDirectory });
+
+      expect(
+        await Bun.file(join(destination, 'packages/backend/src/surface-manifest.ts')).exists(),
+      ).toBe(false);
+      expect(
+        await Bun.file(
+          join(destination, 'packages/backend/src/surface-manifest.test.ts'),
+        ).exists(),
+      ).toBe(false);
+      expect(
+        await Bun.file(join(destination, 'scripts/surface-conformance.ts')).exists(),
+      ).toBe(false);
+
+      const snapshotScript = await readFile(
+        join(destination, 'scripts/surface-snapshot.ts'),
+        'utf8',
+      );
+      expect(snapshotScript).toContain("from 'stitchkit/testing'");
+      expect(snapshotScript).toContain('buildSurfaceManifest');
+      expect(snapshotScript).toContain('assertSurfaceManifestSnapshot');
+      expect(snapshotScript).toContain('assertSurfaceDiscovery');
+
+      const snapshot = SurfaceManifestSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(destination, 'packages/backend/src/surface.snapshot.json'),
+            'utf8',
+          ),
+        ),
+      );
+      expect(snapshot.operations.length).toBeGreaterThanOrEqual(3);
+
+      // Mutating a declared operation must turn surface snapshot verification red.
+      const { defineContract } = createContractFactory<'public'>();
+      const changed = implement(
+        defineContract(
+          { prefix: 'system', scope: 'public' },
+          {
+            status: {
+              method: 'GET',
+              path: '/status-mutated',
+              desc: 'Changed operation path',
+              output: z.object({ status: z.literal('ok') }),
+            },
+          },
+        ),
+        { status: () => ({ status: 'ok' as const }) },
+      );
+      const mutatedManifest = buildSurfaceManifest({
+        groups: [{ pathPrefix: '/api', services: [changed] }],
+        toolSurfaces: {
+          MCP: { services: [changed] },
+          AGENT: { services: [changed] },
+          CLI: { services: [changed] },
+        },
+      });
+      expect(() => assertSurfaceManifestSnapshot(mutatedManifest, snapshot)).toThrow(
+        /diverged from its committed snapshot/,
+      );
+
+      const declaration = parseProjectDeclaration(
+        JSON.parse(await readFile(join(destination, 'project.json'), 'utf8')),
+      );
+      expect(declaration.starter).toEqual({ version: scaffolderVersion });
+
+      const backendIndex = await readFile(
+        join(destination, 'packages/backend/src/index.ts'),
+        'utf8',
+      );
+      expect(backendIndex).toContain('access:');
+      const backendCli = await readFile(
+        join(destination, 'packages/backend/src/cli.ts'),
+        'utf8',
+      );
+      expect(backendCli).toContain('access:');
+      const backendTools = await readFile(
+        join(destination, 'packages/backend/src/tools.ts'),
+        'utf8',
+      );
+      expect(backendTools).toContain('tool.expose');
+    }
   });
 });

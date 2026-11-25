@@ -2,7 +2,7 @@ import { systemContract } from '@app/shared';
 import { createClient, createHttpClient } from 'stitchkit';
 import { z } from 'zod';
 import { assertDeploymentIsAnswering } from './deployment-preflight';
-import { runSurfaceConformance } from './surface-conformance';
+import { assertLiveSurface } from './surface-snapshot';
 import { loadToolingEnv } from './tooling-env';
 import { assertArtifactIsPlacementFree, assertPublicWebSurface } from './web-surface-smoke';
 
@@ -37,7 +37,7 @@ if (!Object.keys(openApi.paths).includes('/api/system/status')) {
   throw new Error('System status contract is missing from OpenAPI');
 }
 
-await runSurfaceConformance({ apiOrigin });
+await assertLiveSurface(apiOrigin);
 await assertPublicWebSurface(toolingEnv.SMOKE_WEB_ORIGIN);
 await assertArtifactIsPlacementFree(toolingEnv.SMOKE_WEB_ORIGIN, {
   origin: toolingEnv.PUBLIC_WEB_ORIGIN,

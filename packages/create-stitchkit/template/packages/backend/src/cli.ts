@@ -11,6 +11,7 @@ try {
     name: appDeclaration.identity.slug,
     version: appDeclaration.identity.version,
     services,
+    access: { open: 'local-operator' },
   });
 } finally {
   await socket.close();

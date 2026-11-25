@@ -8,7 +8,8 @@
  * A gate may not mutate a deployment; it may only create and destroy its own.
  *
  * So everything here is this run's and nothing else's: its own `PM2_HOME`, its
- * own ephemeral ports, its own public-host allowlist, its own database, and a
+ * own ephemeral ports and every address that names them, its own public-host
+ * allowlist, its own database, and a
  * stop that names the roles the declaration declares rather than deleting
  * whatever the daemon happened to hold.
  *
@@ -22,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { appDeclaration } from '../packages/config/src/declaration';
 import { resolveAcceptanceDatabase } from './acceptance-database';
+import { acceptanceEnvironment } from './acceptance-environment';
 import { awaitRolesAnswering, declaredRoleReadiness } from './readiness';
 import { assertBuildArtifacts, runDeclaredReleaseSteps } from './release-steps';
 import { deploymentEnvironment } from './tooling-env';
@@ -62,37 +64,15 @@ assertBuildArtifacts();
 const home = await mkdtemp(join(tmpdir(), 'acceptance-local-'));
 const apiPort = freePort();
 const webPort = freePort();
-const apiOrigin = `http://127.0.0.1:${apiPort}`;
-const webOrigin = `http://127.0.0.1:${webPort}`;
 const base = deploymentEnvironment(root);
 // Before anything starts, and before the deployment's own URL is copied into
 // the child environment: a refusal here costs a message, a missing one costs
 // rows in someone's database.
-const acceptanceDatabaseUrl = resolveAcceptanceDatabase(base);
-const environment: Record<string, string> = {};
-for (const [name, value] of Object.entries(base)) {
-  if (value !== undefined) environment[name] = value;
-}
-delete environment.ACCEPTANCE_DATABASE_URL;
-Object.assign(environment, {
-  NODE_ENV: 'production',
-  // The gates read the catalogue and the OpenAPI document; the closed default is
-  // proved after them, on the same artifact.
-  SERVICE_SURFACES: 'open',
-  // The one address every role, every migration and every gate here will see.
-  DATABASE_URL: acceptanceDatabaseUrl,
-  PM2_HOME: home,
-  API_PORT: String(apiPort),
-  WEB_PORT: String(webPort),
-  INTERNAL_API_URL: apiOrigin,
-  SMOKE_API_ORIGIN: apiOrigin,
-  SMOKE_WEB_ORIGIN: webOrigin,
-  PLAYWRIGHT_BASE_URL: webOrigin,
-  // The portability proof asks this deployment to answer as addresses other
-  // than the one it is dialled on. Those addresses belong to the CHECK, so
-  // they are supplied here rather than written into the project's own
-  // `.env.example`, where they would be policy a deployment carries for real.
-  PUBLIC_WEB_HOSTS: `127.0.0.1:${webPort},alpha.example,beta.example:8443`,
+const environment = acceptanceEnvironment(base, {
+  apiPort,
+  webPort,
+  home,
+  databaseUrl: resolveAcceptanceDatabase(base),
 });
 
 // Boxed, so a thrown `undefined` is still recorded as a failure.

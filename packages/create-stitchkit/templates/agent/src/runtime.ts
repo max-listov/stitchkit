@@ -110,7 +110,7 @@ export async function createStarterHarness(
     tools: (context) =>
       mountAgent([], {
         runtimeTools: [...codingTools, ...resources.runtimeTools],
-        lifecycle: context.toolFenceLifecycle,
+        access: { gate: context.toolFenceLifecycle },
       }),
     loop: {
       maxSteps: 50,

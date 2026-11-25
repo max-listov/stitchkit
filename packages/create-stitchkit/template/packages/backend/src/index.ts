@@ -23,6 +23,9 @@ async function main(): Promise<void> {
       version: appDeclaration.identity.version,
     },
     auth: () => ({ scope: 'public' }),
+    // Every starter contract is public; replace with `{ gate: { beforeHandle } }`
+    // when adding authenticated scopes so MCP enforces the same gate as HTTP.
+    access: { open: 'public' },
     services,
   });
   const openApi = generateOpenApiDocument({

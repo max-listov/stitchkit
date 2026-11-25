@@ -1,50 +1,90 @@
-[
-  {
-    "service": "board",
-    "action": "list",
-    "scope": "public",
-    "hasInput": false,
-    "hasOutput": true,
-    "inputShape": null,
-    "outputShape": "ce49fe198eb3412f",
-    "http": [
-      {
-        "method": "GET",
-        "path": "/api/board"
-      }
-    ],
-    "tools": {}
-  },
-  {
-    "service": "board",
-    "action": "post",
-    "scope": "public",
-    "hasInput": true,
-    "hasOutput": true,
-    "inputShape": "b1d8eb61c62cafed",
-    "outputShape": "ce49fe198eb3412f",
-    "http": [
-      {
-        "method": "POST",
-        "path": "/api/board"
-      }
-    ],
-    "tools": {}
-  },
-  {
-    "service": "system",
-    "action": "status",
-    "scope": "public",
-    "hasInput": false,
-    "hasOutput": true,
-    "inputShape": null,
-    "outputShape": "58b078ade3ee6167",
-    "http": [
-      {
-        "method": "GET",
-        "path": "/api/system/status"
-      }
-    ],
-    "tools": {}
-  }
-]
+{
+  "manifestVersion": 3,
+  "digestVersion": 1,
+  "operations": [
+    {
+      "kind": "contract",
+      "service": "board",
+      "action": "list",
+      "method": "GET",
+      "scope": "public",
+      "description": "Read the board",
+      "schemas": {
+        "params": null,
+        "input": null,
+        "output": "e486aa374f9a13e0",
+        "multipart": null
+      },
+      "mcp": null,
+      "http": [
+        {
+          "method": "GET",
+          "path": "/api/board"
+        }
+      ]
+    },
+    {
+      "kind": "contract",
+      "service": "board",
+      "action": "post",
+      "method": "POST",
+      "scope": "public",
+      "description": "Add a note to the board",
+      "schemas": {
+        "params": null,
+        "input": "c23c53a4b15afe81",
+        "output": "e486aa374f9a13e0",
+        "multipart": null
+      },
+      "mcp": null,
+      "http": [
+        {
+          "method": "POST",
+          "path": "/api/board"
+        }
+      ]
+    },
+    {
+      "kind": "contract",
+      "service": "system",
+      "action": "status",
+      "method": "GET",
+      "scope": "public",
+      "description": "Read application readiness",
+      "schemas": {
+        "params": null,
+        "input": null,
+        "output": "14a186301eeae875",
+        "multipart": null
+      },
+      "mcp": null,
+      "http": [
+        {
+          "method": "GET",
+          "path": "/api/system/status"
+        }
+      ]
+    }
+  ],
+  "toolSurfaces": [
+    {
+      "transport": "AGENT",
+      "surface": null,
+      "tools": []
+    },
+    {
+      "transport": "CLI",
+      "surface": null,
+      "tools": []
+    },
+    {
+      "transport": "MCP",
+      "surface": null,
+      "tools": []
+    }
+  ],
+  "realtimeContracts": [],
+  "realtime": [],
+  "cliOnly": [],
+  "extensions": []
+}

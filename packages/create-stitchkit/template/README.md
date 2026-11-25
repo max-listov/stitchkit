@@ -51,7 +51,17 @@ database migrations you add and launches:
 - OpenAPI: <http://localhost:3211/openapi.json>
 - MCP: <http://localhost:3211/mcp>
 
-The home page is a compact, domain-free application reference surface.
+The home page carries one reference vertical feature, a notes board, and no
+product of yours. The board is the slice you replace with your first feature:
+`packages/shared/src/{schemas,contracts}/board.ts`, `packages/backend/src/lib/board.ts`,
+`packages/backend/src/transport/board-service.ts`, the live channel in
+`packages/backend/src/lib/live.ts` and `packages/shared/src/contracts/live.ts`,
+`packages/frontend/src/features/board/`, and `BOARD_STORE_PATH` in
+`packages/config/src/variables.ts`. Two checks lean on it: the end-to-end test in
+`e2e/starter.spec.ts` proves the socket by posting a note from one tab to another,
+and `packages/backend/src/surface.snapshot.json` records the board's operations.
+Removing the board without giving the socket another probe leaves the socket
+unproven.
 Add application features as vertical schema → contract → service → client slices.
 The exact workflow is in [`docs/ADDING_A_FEATURE.md`](docs/ADDING_A_FEATURE.md),
 and root [`AGENTS.md`](AGENTS.md) gives coding agents the application boundaries.
@@ -141,7 +151,7 @@ Both read the catalogue or `/openapi.json`, so that deployment needs
 
 ## Requirements
 
-- **Bun** and **Node ≥ 22**.
+- **Bun ≥ 1.4** and **Node ≥ 22.3**.
 - **PostgreSQL** — external infrastructure, in development and production
   alike. This project owns its schema and migrations, never the database
   process.

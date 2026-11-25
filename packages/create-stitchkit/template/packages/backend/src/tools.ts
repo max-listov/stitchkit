@@ -6,7 +6,7 @@ const { services, socket } = await createSurface();
 try {
   const surface = { services };
   const toolNames = listToolNames(surface)
-    .filter((tool) => tool.transports.some((transport) => transport !== 'HTTP'))
+    .filter((tool) => tool.expose.some((transport) => transport !== 'HTTP'))
     .map((tool) => tool.name);
   console.log(
     JSON.stringify(

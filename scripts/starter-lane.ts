@@ -94,8 +94,8 @@ async function assertGeneratedStarterSupportsHead(generatedRoot: string): Promis
   );
   const backend = await readFile(join(generatedRoot, 'packages/backend/src/index.ts'), 'utf8');
   const smoke = await readFile(join(generatedRoot, 'scripts/runtime-smoke.ts'), 'utf8');
-  const surfaceConformance = await readFile(
-    join(generatedRoot, 'scripts/surface-conformance.ts'),
+  const surfaceSnapshot = await readFile(
+    join(generatedRoot, 'scripts/surface-snapshot.ts'),
     'utf8',
   );
 
@@ -112,8 +112,8 @@ async function assertGeneratedStarterSupportsHead(generatedRoot: string): Promis
     // (`scripts/shutdown-budget.test.ts`); that it happens at all is checked
     // here.
     [backend, 'mcp.close()'],
-    [surfaceConformance, "from '@modelcontextprotocol/client'"],
-    [surfaceConformance, "pin: '2026-07-28'"],
+    [surfaceSnapshot, "from '@modelcontextprotocol/client'"],
+    [surfaceSnapshot, "pin: '2026-07-28'"],
   ];
   for (const [source, requirement] of requirements) {
     if (!source.includes(requirement)) {
@@ -124,7 +124,7 @@ async function assertGeneratedStarterSupportsHead(generatedRoot: string): Promis
     rootManifest.includes('@modelcontextprotocol/sdk') ||
     backendManifest.includes('@modelcontextprotocol/sdk') ||
     smoke.includes('@modelcontextprotocol/sdk') ||
-    surfaceConformance.includes('@modelcontextprotocol/sdk') ||
+    surfaceSnapshot.includes('@modelcontextprotocol/sdk') ||
     backend.includes('mcp(req)')
   ) {
     throw new Error('Generated starter still contains an MCP v1 integration path');

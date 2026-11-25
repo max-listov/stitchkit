@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "catalog": {
-    "stitchkit": "^0.126.0"
+    "stitchkit": "^0.127.0"
   },
   "overrides": {
     "@playwright/test": "1.65.1",
@@ -62,8 +62,8 @@
     "zod": "^4.6.7"
   },
   "engines": {
-    "bun": ">=1.2.0",
-    "node": ">=22"
+    "bun": ">=1.4.0",
+    "node": ">=22.3.0"
   },
   "packageManager": "bun@1.4.5"
 }

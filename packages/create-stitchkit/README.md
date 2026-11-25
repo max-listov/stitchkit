@@ -55,7 +55,15 @@ It uses one conventional `packages/*` namespace: `backend`, `frontend`,
 machine-readable statement it makes about itself — and drive package, process,
 transport, UI and SEO identity.
 
-The default scaffold is domain-free. To add the runnable repository example:
+The default scaffold carries no product of its own, but it is not empty. Its home
+page holds one reference vertical feature — a notes board: schema, contract,
+service, live channel, panel and the end-to-end check that a note posted in one
+tab reaches another through the socket — beside the `/ui` catalogue and an admin
+panel on fixture data that runs in development only. Replace the board with your
+first feature; `docs/ADDING_A_FEATURE.md` in the generated project walks the same
+slice, and its README lists what depends on the board.
+
+To add the runnable repository example:
 
 ```bash
 bun create stitchkit my-app --example repository

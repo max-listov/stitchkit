@@ -1,90 +1,177 @@
-[
-  {
-    "service": "board",
-    "action": "list",
-    "scope": "public",
-    "hasInput": false,
-    "hasOutput": true,
-    "inputShape": null,
-    "outputShape": "ce49fe198eb3412f",
-    "http": [
-      {
-        "method": "GET",
-        "path": "/api/board"
-      }
-    ],
-    "tools": {}
-  },
-  {
-    "service": "board",
-    "action": "post",
-    "scope": "public",
-    "hasInput": true,
-    "hasOutput": true,
-    "inputShape": "b1d8eb61c62cafed",
-    "outputShape": "ce49fe198eb3412f",
-    "http": [
-      {
-        "method": "POST",
-        "path": "/api/board"
-      }
-    ],
-    "tools": {}
-  },
-  {
-    "service": "repository",
-    "action": "read",
-    "scope": "public",
-    "hasInput": false,
-    "hasOutput": true,
-    "inputShape": null,
-    "outputShape": "05d1386c30d82f6a",
-    "http": [
-      {
-        "method": "GET",
-        "path": "/api/repository"
-      }
-    ],
-    "tools": {
-      "MCP": "repository_read",
-      "AGENT": "repository_read",
-      "CLI": "repository_read"
+{
+  "manifestVersion": 3,
+  "digestVersion": 1,
+  "operations": [
+    {
+      "kind": "contract",
+      "service": "board",
+      "action": "list",
+      "method": "GET",
+      "scope": "public",
+      "description": "Read the board",
+      "schemas": {
+        "params": null,
+        "input": null,
+        "output": "e486aa374f9a13e0",
+        "multipart": null
+      },
+      "mcp": null,
+      "http": [
+        {
+          "method": "GET",
+          "path": "/api/board"
+        }
+      ]
+    },
+    {
+      "kind": "contract",
+      "service": "board",
+      "action": "post",
+      "method": "POST",
+      "scope": "public",
+      "description": "Add a note to the board",
+      "schemas": {
+        "params": null,
+        "input": "c23c53a4b15afe81",
+        "output": "e486aa374f9a13e0",
+        "multipart": null
+      },
+      "mcp": null,
+      "http": [
+        {
+          "method": "POST",
+          "path": "/api/board"
+        }
+      ]
+    },
+    {
+      "kind": "contract",
+      "service": "repository",
+      "action": "read",
+      "method": "GET",
+      "scope": "public",
+      "description": "Read the server-cached repository snapshot",
+      "schemas": {
+        "params": null,
+        "input": null,
+        "output": "5ae5b88ae9390b60",
+        "multipart": null
+      },
+      "mcp": null,
+      "http": [
+        {
+          "method": "GET",
+          "path": "/api/repository"
+        }
+      ]
+    },
+    {
+      "kind": "contract",
+      "service": "repository",
+      "action": "refresh",
+      "method": "POST",
+      "scope": "public",
+      "description": "Refresh the repository snapshot from GitHub",
+      "schemas": {
+        "params": null,
+        "input": null,
+        "output": "5ae5b88ae9390b60",
+        "multipart": null
+      },
+      "mcp": null,
+      "http": [
+        {
+          "method": "POST",
+          "path": "/api/repository/refresh"
+        }
+      ]
+    },
+    {
+      "kind": "contract",
+      "service": "system",
+      "action": "status",
+      "method": "GET",
+      "scope": "public",
+      "description": "Read application readiness",
+      "schemas": {
+        "params": null,
+        "input": null,
+        "output": "14a186301eeae875",
+        "multipart": null
+      },
+      "mcp": null,
+      "http": [
+        {
+          "method": "GET",
+          "path": "/api/system/status"
+        }
+      ]
     }
-  },
-  {
-    "service": "repository",
-    "action": "refresh",
-    "scope": "public",
-    "hasInput": false,
-    "hasOutput": true,
-    "inputShape": null,
-    "outputShape": "05d1386c30d82f6a",
-    "http": [
-      {
-        "method": "POST",
-        "path": "/api/repository/refresh"
-      }
-    ],
-    "tools": {
-      "MCP": "repository_refresh",
-      "AGENT": "repository_refresh",
-      "CLI": "repository_refresh"
+  ],
+  "toolSurfaces": [
+    {
+      "transport": "AGENT",
+      "surface": null,
+      "tools": [
+        {
+          "kind": "contract",
+          "service": "repository",
+          "action": "read",
+          "name": "repository_read",
+          "input": "7a014b717a77aac9"
+        },
+        {
+          "kind": "contract",
+          "service": "repository",
+          "action": "refresh",
+          "name": "repository_refresh",
+          "input": "7a014b717a77aac9"
+        }
+      ]
+    },
+    {
+      "transport": "CLI",
+      "surface": null,
+      "tools": [
+        {
+          "kind": "contract",
+          "service": "repository",
+          "action": "read",
+          "name": "repository_read",
+          "input": "7a014b717a77aac9"
+        },
+        {
+          "kind": "contract",
+          "service": "repository",
+          "action": "refresh",
+          "name": "repository_refresh",
+          "input": "7a014b717a77aac9"
+        }
+      ]
+    },
+    {
+      "transport": "MCP",
+      "surface": null,
+      "tools": [
+        {
+          "kind": "contract",
+          "service": "repository",
+          "action": "read",
+          "name": "repository_read",
+          "input": "7a014b717a77aac9"
+        },
+        {
+          "kind": "contract",
+          "service": "repository",
+          "action": "refresh",
+          "name": "repository_refresh",
+          "input": "7a014b717a77aac9"
+        }
+      ]
     }
-  },
-  {
-    "service": "system",
-    "action": "status",
-    "scope": "public",
-    "hasInput": false,
-    "hasOutput": true,
-    "inputShape": null,
-    "outputShape": "58b078ade3ee6167",
-    "http": [
-      {
-        "method": "GET",
-        "path": "/api/system/status"
-      }
-    ],
-    "tools": {}
-  }
-]
+  ],
+  "realtimeContracts": [],
+  "realtime": [],
+  "cliOnly": [],
+  "extensions": []
+}

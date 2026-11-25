@@ -1,8 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import {
+  assertSurfaceDiscovery,
+  assertSurfaceManifestSnapshot,
+  SurfaceManifestSchema,
+} from 'stitchkit/testing';
+import { createSurface } from '../packages/backend/src/surface';
 import { appDeclaration } from '../packages/config/src/declaration';
 import { declaredRoleReadiness } from './readiness';
+import {
+  buildAppSurfaceManifest,
+  discoverCliCommands,
+  discoverMcpTools,
+  SURFACE_SNAPSHOT_PATH,
+} from './surface-snapshot';
 import { planPortabilityCheck } from './web-surface-smoke';
 
 const dialled = 'http://127.0.0.1:3210';
@@ -173,5 +185,42 @@ describe('a role is ready when it answers, not when it is spawned', () => {
     expect(() =>
       declaredRoleReadiness(appDeclaration, { ...environment, WEB_PORT: undefined }),
     ).toThrow(/WEB_PORT/);
+  });
+});
+
+describe('committed surface snapshot', () => {
+  const root = resolve(import.meta.dir, '..');
+
+  test('the committed snapshot matches the live contract manifest', async () => {
+    const snapshot = SurfaceManifestSchema.parse(
+      JSON.parse(readFileSync(resolve(root, SURFACE_SNAPSHOT_PATH), 'utf8')),
+    );
+    const { services, socket, hub, board } = await createSurface();
+    try {
+      const manifest = buildAppSurfaceManifest(services);
+      expect(() => assertSurfaceManifestSnapshot(manifest, snapshot)).not.toThrow();
+    } finally {
+      await Promise.allSettled([hub.close(), board.close(), socket.close()]);
+    }
+  });
+
+  test('the CLI surface observed from the spawned process matches the committed snapshot', async () => {
+    const snapshot = SurfaceManifestSchema.parse(
+      JSON.parse(readFileSync(resolve(root, SURFACE_SNAPSHOT_PATH), 'utf8')),
+    );
+    const commands = await discoverCliCommands(root);
+    expect(() => assertSurfaceDiscovery(snapshot, { CLI: commands })).not.toThrow();
+  });
+
+  test('a broken /mcp endpoint rejects discovery even when zero tools are expected', async () => {
+    const broken = Bun.serve({
+      port: 0,
+      fetch: () => new Response('not the MCP endpoint', { status: 404 }),
+    });
+    try {
+      await expect(discoverMcpTools(`http://127.0.0.1:${broken.port}`)).rejects.toThrow();
+    } finally {
+      broken.stop(true);
+    }
   });
 });

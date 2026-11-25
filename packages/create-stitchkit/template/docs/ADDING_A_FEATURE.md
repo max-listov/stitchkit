@@ -102,15 +102,29 @@ application or maintain a parallel event-map API.
 
 Generic smoke already derives expected HTTP operations and MCP tool names from
 the registered services and compares them with live OpenAPI/MCP discovery. Add
-an explicit probe only for handler behavior:
+an explicit probe with `runSurfaceProbes` from `stitchkit/testing` only for
+handler behavior:
 
 ```ts
-defineSurfaceProbe({
-  name: 'status update lifecycle',
-  input: UpdateStatusInputSchema,
-  fixture: { message: 'Ready' },
-  output: StatusSchema,
-  run: (input) => statusClient.update(input),
+import { runSurfaceProbes } from 'stitchkit/testing'
+
+await runSurfaceProbes({
+  probes: [
+    {
+      name: 'status update lifecycle',
+      fixture: { message: 'Ready' },
+      transports: ['HTTP'],
+      expected: { HTTP: { outcome: 'success' } },
+    },
+  ],
+  drivers: {
+    HTTP: {
+      invoke: async (fixture) => {
+        StatusSchema.parse(await statusClient.update(UpdateStatusInputSchema.parse(fixture)))
+        return { outcome: 'success' }
+      },
+    },
+  },
 })
 ```
 

@@ -46,6 +46,16 @@ const RootManifestSchema = z.looseObject({
   devDependencies: z.record(z.string(), z.string()).optional(),
 });
 
+const ScaffolderManifestSchema = z.looseObject({
+  version: z.string().min(1),
+});
+
+async function readScaffolderVersion(): Promise<string> {
+  const manifestPath = resolve(import.meta.dir, '../package.json');
+  return ScaffolderManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')))
+    .version;
+}
+
 /**
  * What never travels — as data, because two consumers read it.
  *
@@ -58,6 +68,8 @@ const RootManifestSchema = z.looseObject({
  * together, so an addition here fails until the manifest carries it too.
  */
 export const IGNORED_DIRECTORIES = new Set([
+  // The reference board's database, written by every local run of the template.
+  '.data',
   '.next',
   '.stitchkit',
   'coverage',
@@ -221,6 +233,8 @@ export async function scaffoldProject(
     stitchkitCatalogTarget?: string;
     /** The formatter run over the finished tree; the generator's own native Biome by default. */
     formatter?: ProjectFormatter;
+    /** Starter version recorded in `project.json`; defaults to `create-stitchkit`'s own package version. */
+    starterVersion?: string;
   } = {},
 ): Promise<void> {
   const resolvedDestination = resolve(destination);
@@ -244,13 +258,15 @@ export async function scaffoldProject(
     if (options.lockfile === false) {
       await rm(join(resolvedDestination, 'bun.lock'), { force: true });
     }
-    // The declaration travels with the template; only its identity is this
-    // project's. Rewriting the whole file here would make the scaffolder a
-    // second author of roles, build and release steps.
+    // The declaration travels with the template; only its identity and starter
+    // version belong to this scaffold pass. Rewriting the whole file here would
+    // make the scaffolder a second author of roles, build and release steps.
     const declarationPath = join(resolvedDestination, 'project.json');
+    const starterVersion = options.starterVersion ?? (await readScaffolderVersion());
     const declaration = withIdentity(
       JSON.parse(await readFile(declarationPath, 'utf8')),
       identity,
+      starterVersion,
     );
     await writeFile(declarationPath, `${JSON.stringify(declaration, undefined, 2)}\n`);
     // Derived from the declaration, so it is stamped in the same pass.

@@ -77,17 +77,24 @@ export function createApplicationIdentity(
 }
 
 /**
- * Give the copied declaration this project's identity.
+ * Give the copied declaration this project's identity and, when supplied,
+ * the scaffolder version that materialised it.
  *
- * Only `identity` is rewritten — roles, build, requirements, release steps and
- * environment names are properties of the template's code and travel with it
- * unchanged. The result is re-parsed rather than trusted, so the scaffolder
- * cannot leave behind a declaration the framework would refuse.
+ * Only `identity` (and optional `starter`) is written — roles, build,
+ * requirements, release steps and environment names are properties of the
+ * template's code and travel with it unchanged. The result is re-parsed rather
+ * than trusted, so the scaffolder cannot leave behind a declaration the
+ * framework would refuse.
  */
 export function withIdentity(
   declaration: unknown,
   identity: ApplicationIdentity,
+  starterVersion?: string,
 ): ProjectDeclaration {
   const copied = parseProjectDeclaration(declaration);
-  return parseProjectDeclaration({ ...copied, identity });
+  return parseProjectDeclaration({
+    ...copied,
+    identity,
+    ...(starterVersion !== undefined && { starter: { version: starterVersion } }),
+  });
 }
