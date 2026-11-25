@@ -267,6 +267,10 @@ package, but validation is paid once per tree rather than once per tag. →
 
 ## Bounded registry visibility
 
+The GitHub release uses the complete changelog entry when it fits the release-body limit.
+For a longer entry it links to the package's changelog at the exact published commit.
+This keeps the full notes available without failing after npm has accepted the package.
+
 The publication job has a 45-minute ceiling. Its idempotent tarball publication step has
 10 minutes, followed by a separate registry visibility step with a 30-minute monotonic
 deadline and one minute of workflow shutdown grace. Every fetch, response body and sleep

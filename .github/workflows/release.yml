@@ -124,7 +124,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          jq -r .notes "$RUNNER_TEMP/release-plan.json" > "$RUNNER_TEMP/release-notes.md"
+          jq -erj --arg tree "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_SHA" \
+            -f scripts/github-release-body.jq "$RUNNER_TEMP/release-plan.json" > "$RUNNER_TEMP/release-notes.md"
           PACKAGE="$(jq -r .packageName "$RUNNER_TEMP/release-plan.json")"
           # Two release lines, one repository "Latest" badge. Left to GitHub it
           # goes to whichever tag was pushed last, so a scaffolder release makes
