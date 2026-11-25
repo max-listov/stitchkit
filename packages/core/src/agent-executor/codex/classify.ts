@@ -215,11 +215,19 @@ export function classifyCodexNotification(
         kind: 'resolved',
         requestId: String(CodexNotificationParams[method].parse(params).requestId),
       };
-    case 'account/rateLimits/updated':
+    case 'account/rateLimits/updated': {
+      const parsed = CodexNotificationParams[method].parse(params);
       return {
         kind: 'limits',
-        rateLimits: CodexNotificationParams[method].parse(params).rateLimits,
+        rateLimits:
+          parsed.rateLimitsByLimitId !== undefined
+            ? {
+                rateLimits: parsed.rateLimits,
+                rateLimitsByLimitId: parsed.rateLimitsByLimitId,
+              }
+            : parsed.rateLimits,
       };
+    }
     default:
       if (CODEX_QUIET_NOTIFICATIONS.has(method)) return { kind: 'ignore', reason: method };
       return {

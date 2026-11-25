@@ -280,3 +280,60 @@ describe('spawnEngineProcess lifetime stdin budget', () => {
     }
   });
 });
+
+describe('spawnEngineProcess pid, pidReady and stdoutMode', () => {
+  test('exposes leader pid via pidReady, drains large stdout under stdoutMode: drain, and refuses invalid stdoutMode', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'stitchkit-engine-drain-mode-'));
+    const pidFile = join(root, 'child.pid');
+    trackPidFile(pidFile);
+    const controller = new AbortController();
+    try {
+      expect(() =>
+        spawnEngineProcess({
+          executable: process.execPath,
+          args: ['-e', 'process.exit(0)'],
+          cwd: root,
+          env: {},
+          signal: controller.signal,
+          // Intentionally pass an invalid mode at runtime to prove eager TypeError refusal.
+          stdoutMode: JSON.parse('"invalid"'),
+        }),
+      ).toThrow(TypeError);
+
+      // Large stdout (>1.5 MiB) under stdoutMode: 'drain' completes cleanly without pipe stall,
+      // and pidReady resolves to the real child PID.
+      const engine = spawnEngineProcess({
+        executable: process.execPath,
+        args: childScript(
+          pidFile,
+          'process.stdout.write("x".repeat(1_500_000)); process.exit(0);',
+        ),
+        cwd: root,
+        env: {},
+        signal: controller.signal,
+        stdoutMode: 'drain',
+      });
+      const pid = await engine.pidReady;
+      expect(pid).toBeNumber();
+      expect(pid).toBeGreaterThan(0);
+      expect(engine.pid).toBe(pid);
+      const result = await engine.result;
+      expect(result.exitCode).toBe(0);
+
+      // Failed startup (missing executable) still settles pidReady without hanging.
+      const missing = spawnEngineProcess({
+        executable: join(root, 'definitely-missing-binary'),
+        args: [],
+        cwd: root,
+        env: {},
+        signal: controller.signal,
+      });
+      const missingPid = await missing.pidReady;
+      expect(missingPid).toBeUndefined();
+      await expect(missing.result).rejects.toThrow();
+    } finally {
+      controller.abort();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

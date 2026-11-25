@@ -5,8 +5,8 @@
     "stitchkit/agent-executor": 80,
     "stitchkit/agent-executor/acp": 11,
     "stitchkit/agent-executor/claude": 5,
-    "stitchkit/agent-executor/claude-sdk": 4,
-    "stitchkit/agent-executor/codex": 4,
+    "stitchkit/agent-executor/claude-sdk": 8,
+    "stitchkit/agent-executor/codex": 19,
     "stitchkit/agent-executor/testing": 8,
     "stitchkit/agent-runtime": 413,
     "stitchkit/agent-runtime/browser": 96,
@@ -1227,6 +1227,37 @@
         "installSystemdTimerPair"
       ],
       "reason": "Systemd .timer rendering, BindReadOnlyPaths typing and rollback-guarded .service + .timer pair inspection/installation extend the existing stitchkit/service-host owner without a second supervision entrypoint."
+    },
+    {
+      "entrypoint": "stitchkit/agent-executor/claude-sdk",
+      "names": [
+        "ClaudeSdkDelegationCheck",
+        "ClaudeSdkDriver",
+        "ClaudeSdkForkSession",
+        "ClaudeSdkSession"
+      ],
+      "reason": "Typed Claude SDK driver/session handles, session forking and fail-closed delegation verification extend the existing stitchkit/agent-executor/claude-sdk leaf without adding a second adapter."
+    },
+    {
+      "entrypoint": "stitchkit/agent-executor/codex",
+      "names": [
+        "CodexApprovalPolicy",
+        "CodexCollaborationMode",
+        "CodexControlClient",
+        "CodexDriver",
+        "CodexForkThreadOptions",
+        "CodexForkedThread",
+        "CodexSandboxMode",
+        "CodexSession",
+        "CodexSteerTurnInput",
+        "CodexThreadContext",
+        "CodexThreadPolicyOverrides",
+        "CodexTransportConfig",
+        "CodexTurnInput",
+        "CodexUnixSocketError",
+        "CodexUnixSocketErrorKind"
+      ],
+      "reason": "Unix-socket app-server transport (typed refusal error), thread policy/delegation hooks and applied context, per-turn overrides and live session controls extend the existing stitchkit/agent-executor/codex leaf."
     }
   ]
 }

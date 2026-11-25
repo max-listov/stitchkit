@@ -23,7 +23,7 @@ const fixture = z
   .parse(
     JSON.parse(
       readFileSync(
-        new URL('../fixtures/codex-app-server-0.162.1.schema.json', import.meta.url),
+        new URL('../fixtures/codex-app-server-0.171.0.schema.json', import.meta.url),
         'utf8',
       ),
     ),
@@ -50,15 +50,101 @@ const FIELDS: Record<string, string[]> = {
   ThreadTokenUsage: ['last'],
   TokenUsageBreakdown: ['inputTokens', 'outputTokens', 'cachedInputTokens'],
   ServerRequestResolvedNotification: ['requestId'],
-  TurnStartParams: ['threadId', 'input', 'clientUserMessageId'],
+  AccountRateLimitsUpdatedNotification: ['rateLimits'],
+  TurnStartParams: [
+    'threadId',
+    'input',
+    'clientUserMessageId',
+    'model',
+    'effort',
+    'collaborationMode',
+    'approvalPolicy',
+    'sandboxPolicy',
+    'runtimeWorkspaceRoots',
+  ],
   TurnStartResponse: ['turn'],
+  TurnSteerParams: ['threadId', 'expectedTurnId', 'input', 'clientUserMessageId'],
+  TurnSteerResponse: ['turnId'],
   TurnInterruptParams: ['threadId', 'turnId'],
-  ThreadStartParams: ['cwd', 'approvalPolicy', 'sandbox', 'model'],
-  ThreadStartResponse: ['thread'],
-  ThreadResumeParams: ['threadId', 'excludeTurns'],
+  ThreadStartParams: [
+    'cwd',
+    'approvalPolicy',
+    'sandbox',
+    'model',
+    'modelProvider',
+    'developerInstructions',
+    'runtimeWorkspaceRoots',
+    'config',
+  ],
+  ThreadStartResponse: [
+    'thread',
+    'model',
+    'modelProvider',
+    'reasoningEffort',
+    'approvalPolicy',
+    'sandbox',
+    'cwd',
+    'runtimeWorkspaceRoots',
+  ],
+  ThreadResumeParams: [
+    'threadId',
+    'excludeTurns',
+    'cwd',
+    'approvalPolicy',
+    'sandbox',
+    'model',
+    'modelProvider',
+    'developerInstructions',
+    'runtimeWorkspaceRoots',
+    'config',
+  ],
+  ThreadResumeResponse: [
+    'thread',
+    'model',
+    'modelProvider',
+    'reasoningEffort',
+    'approvalPolicy',
+    'sandbox',
+    'cwd',
+    'runtimeWorkspaceRoots',
+  ],
+  ThreadForkParams: [
+    'threadId',
+    'cwd',
+    'model',
+    'modelProvider',
+    'approvalPolicy',
+    'sandbox',
+    'developerInstructions',
+    'runtimeWorkspaceRoots',
+    'config',
+    'beforeTurnId',
+    'lastTurnId',
+    'excludeTurns',
+  ],
+  ThreadForkResponse: [
+    'thread',
+    'model',
+    'modelProvider',
+    'reasoningEffort',
+    'approvalPolicy',
+    'sandbox',
+    'cwd',
+    'runtimeWorkspaceRoots',
+  ],
+  ThreadCompactStartParams: ['threadId'],
+  ConfigReadParams: ['cwd', 'includeLayers'],
+  ListMcpServerStatusParams: ['cursor', 'limit', 'threadId', 'serverName', 'detail'],
+  SkillsListParams: ['cwds', 'forceReload'],
+  ModelListParams: ['cursor', 'limit', 'includeHidden', 'modelProvider'],
+  GetAccountParams: ['refreshToken'],
   ThreadTurnsListParams: ['threadId', 'limit', 'cursor', 'itemsView'],
   ThreadTurnsListResponse: ['data', 'nextCursor'],
-  GetAccountRateLimitsResponse: ['rateLimits'],
+  GetAccountRateLimitsResponse: ['rateLimits', 'rateLimitsByLimitId'],
+  RateLimitSnapshot: ['limitId', 'limitName', 'primary', 'secondary'],
+  RateLimitWindow: ['usedPercent', 'windowDurationMins', 'resetsAt'],
+  CollaborationMode: ['mode', 'settings'],
+  Settings: ['model', 'reasoning_effort', 'developer_instructions'],
 };
 
 test(`the driver's fields exist in the schema of codex-cli ${fixture.codexVersion}`, () => {
@@ -78,10 +164,11 @@ test(`the driver's fields exist in the schema of codex-cli ${fixture.codexVersio
   expect(missing).toEqual([]);
 });
 
-test('the turn statuses, error kinds, decisions and item types the driver names are the schema’s', () => {
+test('the turn statuses, error kinds, decisions, collaboration modes and item types the driver names are the schema’s', () => {
   expect(definition('TurnStatus').enum).toEqual(
     expect.arrayContaining(['completed', 'interrupted', 'failed', 'inProgress']),
   );
+  expect(definition('ModeKind').enum).toEqual(expect.arrayContaining(['plan', 'default']));
   const errorKinds = variants(definition('CodexErrorInfo')).flatMap(
     (entry) => entry.enum ?? [],
   );

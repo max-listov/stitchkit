@@ -3,10 +3,11 @@ import { expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { query } from '@anthropic-ai/claude-agent-sdk';
+import type { forkSession, query } from '@anthropic-ai/claude-agent-sdk';
 import { claudeFakeScenarios } from '../../src/agent-executor/claude/scenarios';
 import { claudeTranscriptPath } from '../../src/agent-executor/claude/transcript';
 import {
+  type ClaudeSdkForkSession,
   type ClaudeSdkQuery,
   createClaudeSdkDriver,
 } from '../../src/agent-executor/claude-sdk/driver';
@@ -14,9 +15,12 @@ import { runAgentEngineConformance } from '../../src/agent-executor/testing/conf
 import { fakeClaudeQuery } from '../fixtures/fake-claude-sdk';
 import { recordedLines } from '../support/engine-driver-harness';
 
-// The SDK's own `query` fits the injected type as it is: checked by `tsc`.
+// The SDK's own `query` and `forkSession` fit the injected types as they are: checked by `tsc`.
 export function sdkQueryFits(sdk: typeof query): ClaudeSdkQuery {
   return sdk;
+}
+export function sdkForkSessionFits(sdkFork: typeof forkSession): ClaudeSdkForkSession {
+  return sdkFork;
 }
 
 test('the Agent SDK leaf passes the engine conformance kit', async () => {

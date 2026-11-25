@@ -1,11 +1,37 @@
 import { z } from 'zod';
+import type { JsonRpcValue } from '../json-rpc-peer';
 
 /**
- * The slice of Codex's app-server protocol (0.162.1, JSON-RPC over stdio
- * without the `jsonrpc` header) the driver reads. Every schema lets fields
- * it does not use through; a test checks each against the JSON Schema the
- * pinned CLI generates, so a renamed field fails there and not in a turn.
+ * The slice of Codex's app-server protocol (0.171.0, JSON-RPC over stdio or
+ * WebSocket-over-Unix-socket without the `jsonrpc` header) the driver reads.
+ * Every schema lets fields it does not use through; a test checks each against
+ * the JSON Schema the pinned CLI generates, so a renamed field fails there and
+ * not in a turn.
  */
+
+/** Approval policy values accepted by Codex `thread/start`, `thread/resume`, `thread/fork`, and `turn/start`. */
+export type CodexApprovalPolicy =
+  | 'untrusted'
+  | 'on-failure'
+  | 'on-request'
+  | 'never'
+  | Readonly<Record<string, JsonRpcValue>>;
+
+/** Sandbox mode values accepted by Codex `thread/start`, `thread/resume`, and `thread/fork`. */
+export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
+
+/** Collaboration mode settings passed on `turn/start`. */
+export const CodexCollaborationModeSchema = z.strictObject({
+  mode: z.enum(['plan', 'default']),
+  settings: z.strictObject({
+    model: z.string().min(1),
+    reasoning_effort: z.string().min(1).nullable().optional(),
+    developer_instructions: z.string().nullable().optional(),
+  }),
+});
+/** Collaboration mode override accepted by Codex `turn/start`. */
+export type CodexCollaborationMode = z.infer<typeof CodexCollaborationModeSchema>;
+
 export const CodexThreadItemSchema = z.looseObject({
   type: z.string(),
   id: z.string().min(1),
@@ -41,7 +67,10 @@ export const CodexNotificationParams = {
     }),
   }),
   'serverRequest/resolved': z.looseObject({ requestId: z.union([z.string(), z.int()]) }),
-  'account/rateLimits/updated': z.looseObject({ rateLimits: z.json() }),
+  'account/rateLimits/updated': z.looseObject({
+    rateLimits: z.json(),
+    rateLimitsByLimitId: z.json().optional(),
+  }),
 } as const;
 
 export const CodexApprovalParamsSchema = z.looseObject({
@@ -63,11 +92,45 @@ export const CodexUserInputAnswersSchema = z.record(
   z.strictObject({ answers: z.array(z.string()) }),
 );
 
-export const CodexStartedThreadSchema = z.looseObject({
-  thread: z.looseObject({ id: z.string().min(1) }),
+/** Applied thread policy and runtime context returned by `thread/start`, `thread/resume`, or `thread/fork`. */
+export const CodexThreadContextSchema = z.object({
+  model: z.string().optional(),
+  modelProvider: z.string().optional(),
+  reasoningEffort: z.string().nullable().optional(),
+  approvalPolicy: z.json().optional(),
+  sandbox: z.json().optional(),
+  cwd: z.string().optional(),
+  runtimeWorkspaceRoots: z.array(z.string()).readonly().optional(),
 });
+/** Applied policy and model context reported by Codex when opening, resuming, or forking a thread. */
+export type CodexThreadContext = Readonly<z.infer<typeof CodexThreadContextSchema>>;
+
+export const CodexStartedThreadSchema = CodexThreadContextSchema.extend({
+  thread: z.looseObject({ id: z.string().min(1) }),
+}).loose();
+
+/** Extract the normalized applied thread context from a parsed `thread/start`, `thread/resume`, or `thread/fork` reply. */
+export function extractCodexThreadContext(
+  parsed: z.infer<typeof CodexStartedThreadSchema>,
+): CodexThreadContext {
+  return {
+    ...(parsed.model !== undefined && { model: parsed.model }),
+    ...(parsed.modelProvider !== undefined && { modelProvider: parsed.modelProvider }),
+    ...(parsed.reasoningEffort !== undefined && { reasoningEffort: parsed.reasoningEffort }),
+    ...(parsed.approvalPolicy !== undefined && { approvalPolicy: parsed.approvalPolicy }),
+    ...(parsed.sandbox !== undefined && { sandbox: parsed.sandbox }),
+    ...(parsed.cwd !== undefined && { cwd: parsed.cwd }),
+    ...(parsed.runtimeWorkspaceRoots !== undefined && {
+      runtimeWorkspaceRoots: parsed.runtimeWorkspaceRoots,
+    }),
+  };
+}
+
 export const CodexStartedTurnSchema = z.looseObject({
   turn: z.looseObject({ id: z.string().min(1) }),
+});
+export const CodexTurnSteerResponseSchema = z.looseObject({
+  turnId: z.string().min(1),
 });
 export const CodexListedTurnItemSchema = z.looseObject({
   type: z.string(),

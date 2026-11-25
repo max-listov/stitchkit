@@ -1,6 +1,7 @@
 import { linkSync, lstatSync, type Stats, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { errnoOf } from './errno';
+import type { FileStatsView } from './file-observation';
 import { assertNonNegativeSafeInteger } from './positive-integer';
 import { randomHex } from './random-hex';
 import { UnixClientTransportError } from './unix-client-error';
@@ -116,9 +117,14 @@ export function assertExpectedOwnerUid(uid: number | undefined, caller: string):
   }
 }
 
-function directoryPrivacyViolation(
+/**
+ * Inspect `dir`'s `lstat` result against private Unix socket directory rules (real non-symlink
+ * directory owned by `expectedUid ?? process.getuid()` and not writable by group or others).
+ * Returns a human-readable violation string, or `undefined` when compliant.
+ */
+export function unixSocketDirectoryViolation(
   dir: string,
-  stats: Stats,
+  stats: Pick<FileStatsView, 'mode' | 'uid' | 'isDirectory' | 'isSymbolicLink'>,
   caller: string,
   expectedUid?: number,
 ): string | undefined {
@@ -154,7 +160,7 @@ export function assertPrivateUnixSocketDirectory(socketPath: string, caller: str
   if (stats === undefined) {
     throw new Error(`[stitchkit] ${caller}: unix socket directory "${dir}" does not exist`);
   }
-  const violation = directoryPrivacyViolation(dir, stats, caller);
+  const violation = unixSocketDirectoryViolation(dir, stats, caller);
   if (violation !== undefined) throw new Error(violation);
 }
 
@@ -206,7 +212,7 @@ export function assertUnixSocketClientTarget(
   };
   const dirStats = statForClientTarget(dir, 'directory', caller, socketPath);
   if (dirStats === undefined) return;
-  const dirViolation = directoryPrivacyViolation(dir, dirStats, caller, requiredUid);
+  const dirViolation = unixSocketDirectoryViolation(dir, dirStats, caller, requiredUid);
   if (dirViolation !== undefined) refuse(dirViolation);
   const socketStats = statForClientTarget(socketPath, 'path', caller, socketPath);
   if (socketStats === undefined) return;

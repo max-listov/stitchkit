@@ -28,6 +28,14 @@ const RULE = 'options refused by assertTimerMs where they are taken';
 
 /** File → how many timer calls it makes, and why each delay stays inside the timer range. */
 const timerCalls: Record<string, { calls: number; delays: string }> = {
+  'agent-executor/codex/connect.ts': {
+    calls: 1,
+    delays: 'constant poll backoff (15–50 ms) while waiting for unix-listen socket',
+  },
+  'agent-executor/codex/unix-socket.ts': {
+    calls: 1,
+    delays: 'constant CLOSE_GRACE_MS (250 ms) after sending WebSocket Close frame',
+  },
   'agent-executor/testing/conformance.ts': { calls: 1, delays: 'a constant poll' },
   'agent-executor/json-rpc-peer.ts': {
     calls: 1,

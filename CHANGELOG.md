@@ -15,6 +15,61 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** every caller of `codexPlanWindows` or `createCodexDriver` (`status()`) from
+`stitchkit/agent-executor/codex` that matches window names against `'primary'` or `'secondary'`
+([migration](docs/guide/upgrading.md#codex-plan-window-keys)).
+
+- `stitchkit/agent-executor/codex` `codexPlanWindows` and `createCodexDriver` (`status()`) now
+  unfold the full `account/rateLimits/read` envelope (including multi-bucket `rateLimitsByLimitId`)
+  and key windows as `<limitId|limit>:<windowDurationMins>m` (falling back to `:<slot>` when
+  duration is absent, or adding `:<slot>` when both slots share a duration) instead of bare
+  `'primary'` / `'secondary'`. Positional names dropped per-model quota buckets and allowed a
+  weekly-only window delivered in `primary` to overwrite a five-hour window. Each window also
+  carries optional `windowDurationMins` and `label` on `PlanWindowSchema`.
+  `windows.find(w => w.name === 'primary')` →
+  `windows.find(w => w.windowDurationMins === 300)` (or match `w.name` such as `'codex:300m'` / `'limit:10080m'`).
+  **Affects:** `stitchkit/agent-executor/codex` codexPlanWindows, createCodexDriver(status)
+
+### Added
+
+- `stitchkit/agent-executor/claude-sdk` — extended `createClaudeSdkDriver`, `ClaudeSdkDriver`, and
+  `ClaudeSdkSession` with host launch and delegation options (`pathToClaudeCodeExecutable`,
+  `systemPrompt`, `settingSources`, `enableFileCheckpointing`, `allowDangerouslySkipPermissions`,
+  `supportedDialogKinds`, `onUserDialog`, `hooks`, `tools`, `allowedTools`, `disallowedTools`,
+  `mcpServers`, `mcpServersDelivery`, `strictMcpConfig`, `plugins`, `agents`, `extraArgs`,
+  `stderr`, `spawnClaudeCodeProcess`), `providerPid` / `onProviderPid` observation with safe stderr
+  draining, fail-closed `verifyDelegation` (`requireHooksApplied`, `requireNoMcpServers`,
+  `timeoutMs`) at `open()` and every query restart, `driver.forkSession()`, and 12 live
+  `ClaudeSdkSession` controls (`setModel`, `setPermissionMode`, `applyFlagSettings`,
+  `initializationResult`, `supportedModels`, `supportedCommands`, `accountInfo`, `getContextUsage`,
+  `mcpServerStatus`, `toggleMcpServer`, `reconnectMcpServer`, `rewindFiles`) with live state
+  replayed across query restarts.
+- `stitchkit/agent-executor/codex` — extended `createCodexDriver`, `CodexDriver`, and
+  `CodexSession` with RFC 6455 WebSocket-over-Unix-socket transport (`unix-listen` with
+  `--listen unix://<path>` and `unix-connect` against an existing server, plus typed
+  `CodexUnixSocketError`), `serverArgs`, `providerPid`, thread policy & delegation configuration
+  (`developerInstructions`, `modelProvider`, `runtimeWorkspaceRoots`, `config`, `prepareThread`,
+  `verifyThread`, and applied `threadContext`), per-turn overrides on `startTurn` (`model`,
+  fail-closed `modelProvider`, `reasoningEffort`, `collaborationMode`, `approvalPolicy`,
+  `sandboxPolicy`, `runtimeWorkspaceRoots`), and live `CodexSession` controls (`readConfig`,
+  `listMcpServerStatus`, `listSkills`, `listModels`, `readAccount`, `readRateLimits`, `steerTurn`,
+  non-mutating `forkThread`, `compactThread`).
+- `stitchkit/agent-executor` — added optional `windowDurationMins` and `label` fields to
+  `PlanWindowSchema`, and optional `pid`, `pidReady`, and `stdoutMode` (`'lines' | 'drain'`) to
+  `EngineProcess` / `spawnEngineProcess`.
+
+### Fixed
+
+- `stitchkit/agent-executor/claude`, `stitchkit/agent-executor/claude-sdk` `claudeTranscriptPath`
+  now resolves the canonical `realpath` of `cwd` (or its nearest existing ancestor) before
+  computing the project transcript slug, so symlinked workspaces (such as `/var` → `/private/var`
+  or `/tmp` → `/private/tmp`) match the transcript written by Claude Code for both `findInput`
+  reconciliation and `open` resume detection, while failing closed on symlink loops or permission
+  errors.
+  **Affects:** `stitchkit/agent-executor/claude` claudeTranscriptPath, createClaudeCliDriver(findInput, open); `stitchkit/agent-executor/claude-sdk` createClaudeSdkDriver(findInput, open)
+
 ## [0.128.0] - 2026-11-25
 
 ### ⚠️ Breaking changes

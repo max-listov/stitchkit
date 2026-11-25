@@ -24,6 +24,12 @@ function assertSafeIntegerFrom(
     throw new errorType(`${name} ${rule}, received ${value}`);
 }
 
+/** Return whether `value` is a positive safe integer (`>= 1`). */
+export function isPositiveSafeInteger(value: unknown): value is number {
+  const least = 1;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= least;
+}
+
 /** Refuse a limit that is not a positive safe integer. */
 export function assertPositiveSafeInteger(
   name: string,

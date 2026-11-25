@@ -134,7 +134,10 @@ test('limits are read from the app-server for a subscription profile', async () 
     expect(await driver.status(profile)).toMatchObject({
       login: { state: 'signed-in' },
       effectiveCredential: 'subscription',
-      planLimits: { answer: 'known', windows: [{ name: 'primary', usedPercent: 12 }] },
+      planLimits: {
+        answer: 'known',
+        windows: [{ name: 'limit:10080m', usedPercent: 12, windowDurationMins: 10080 }],
+      },
     });
   } finally {
     await rm(root, { recursive: true, force: true });

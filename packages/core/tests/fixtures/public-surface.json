@@ -2182,13 +2182,32 @@
     "createClaudeCliDriver"
   ],
   "stitchkit/agent-executor/claude-sdk": [
+    "ClaudeSdkDelegationCheck",
+    "ClaudeSdkDriver",
     "ClaudeSdkDriverConfig",
+    "ClaudeSdkForkSession",
     "ClaudeSdkQuery",
     "ClaudeSdkRun",
+    "ClaudeSdkSession",
     "createClaudeSdkDriver"
   ],
   "stitchkit/agent-executor/codex": [
+    "CodexApprovalPolicy",
+    "CodexCollaborationMode",
+    "CodexControlClient",
+    "CodexDriver",
     "CodexDriverConfig",
+    "CodexForkThreadOptions",
+    "CodexForkedThread",
+    "CodexSandboxMode",
+    "CodexSession",
+    "CodexSteerTurnInput",
+    "CodexThreadContext",
+    "CodexThreadPolicyOverrides",
+    "CodexTransportConfig",
+    "CodexTurnInput",
+    "CodexUnixSocketError",
+    "CodexUnixSocketErrorKind",
     "codexFakeScenarios",
     "codexPlanWindows",
     "createCodexDriver"

@@ -1509,14 +1509,14 @@ leaves of their own; this entrypoint knows no vendor. Evolving.
 |--------|------|---------|
 | `defineAgentExecutorContract` / `agentExecutorRealtimeContract` | functions / contract | the operations (`hello`, `claim`, `renew`, `release`, `report`) and the events the server pushes (`turn:offer`, `turn:interrupt`, `turn:reply`) |
 | `ExecutorHelloSchema` / `ExecutorHello` / `ExecutorHelloAckSchema` / `ExecutorHelloAck` / `ExecutorEngineSchema` / `ExecutorEngine` / `ExecutorEngineInfoSchema` / `ExecutorReconcileSchema` / `ExecutorProfileSchema` / `ExecutorProfile` / `ExecutorResumableTurnSchema` | schemas / _types_ | what an executor announces — engines (their `models`: `listed` with ids, `not-asked` or `failed` with why), private profiles, resumable turns with their `turnOrdinal` — and what the server holds of each: `acked` up to `ackedSeq`, or `not-retained` |
-| `PlanLimitsSchema` / `PlanLimits` / `PlanWindowSchema` / `PlanWindow` | schemas / _types_ | a subscription's limits: `known`, `no-plan-limit` or `unpublished`, with the last read's error beside the last answer |
+| `PlanLimitsSchema` / `PlanLimits` / `PlanWindowSchema` / `PlanWindow` | schemas / _types_ | a subscription's limits: `known`, `no-plan-limit` or `unpublished`, with the last read's error beside the last answer; each window carries `name`, `usedPercent`, and optional `resetsAt`, `windowDurationMins` and `label` |
 | `ThreadClaimSchema` / `ThreadClaim` / `ThreadLeaseSchema` / `ThreadLease` / `ThreadRenewSchema` / `ThreadReleaseSchema` | schemas / _types_ | thread leases pinned to an executor and profile, under a fence |
 | `TurnOfferSchema` / `TurnOffer` / `TurnPhaseSchema` / `TurnPhase` / `TurnReportSchema` / `TurnReport` / `TurnReportAckSchema` / `TurnFailureKindSchema` / `TurnInterruptSchema` / `InteractionReplySchema` / `InteractionReply` / `EXECUTOR_ERRORS` | schemas / _types_ / constant | a turn offered under its thread's `turnOrdinal`, its phases and reports applied once by `executorSeq` (acknowledged `applied`, `duplicate` or `not-retained`), interrupts, answers to an engine's requests, and the refusal codes |
 | `ExecutorDeltaSchema` / `ExecutorDelta` / `ExecutorErrorKindSchema` / `ExecutorErrorKind` / `ExecutorRawSchema` | schemas / _types_ | what an engine said: `agent-parts` blocks with `turnId`, `itemId` and `raw`, plus requests, usage, the context gauge (`context-usage`), the end of the turn, errors by kind and window resets |
 | `projectExecutorDeltas` | function | fold a turn's deltas into the message parts the agent runtime stores |
 | `AgentEngineDriver` / `AgentEngineSession` / `AgentEngineTurn` / `ExecutorEngineInfo` | _types_ | one vendor's engine behind one interface: info, login status, a session per connection, turns with `interrupt` and `respond`, `findInput` for a `client-id` engine |
 | `dispatchTurn` / `DispatchOutcome` | function / _type_ | send a turn's input at most once through `LocalStepDurability.effect`: `sent`, `delivered` after a reconcile, or `unknown_after_restart` — never resent |
-| `spawnEngineProcess` / `EngineProcess` | function / _type_ | an engine process talked to by lines over `stitchkit/process`: declared environment, owner-loss termination, bounded lines (`maxLineBytes`), stderr, queued stdin (`maxPendingStdinBytes`) and stdin written over the connection's life (`maxStdinBytes`, a refused `send()` that leaves the engine running); every option checked before the spawn |
+| `spawnEngineProcess` / `EngineProcess` | function / _type_ | an engine process talked to by lines over `stitchkit/process`: declared environment, owner-loss termination, optional leader `pid` / `pidReady`, `stdoutMode` (`'lines'` default or `'drain'` for socket-serving engines), bounded lines (`maxLineBytes`), stderr, queued stdin (`maxPendingStdinBytes`) and stdin written over the connection's life (`maxStdinBytes`, a refused `send()` that leaves the engine running); every option checked before the spawn |
 | `createExecutorLeases` / `memoryExecutorLeaseStore` / `ExecutorLeaseStateStore` / `ExecutorLeaseState` / `ExecutorLeaseStateSchema` / `ExecutorLeaseRefusal` | functions / _types_ / class | the server's thread leases and turn receipts over one atomically updated value, bounded by threads: each thread keeps the receipts of its last `retainedTurns` turns (default 64, at most 1024) and the highest `turnOrdinal` it let go, a report of a turn at or below it is `not-retained`, and `resume(resumable)` answers a hello the same way; a `StateStore` of `stitchkit/application` fits; a refusal is an `ExecutorLeaseRefusal` — an `AppError` with status 409 and a code of `EXECUTOR_ERRORS` — so an operation returning the service's promise answers `409 { error: { code } }` |
 | `ExecutorProfileConfigSchema` / `ExecutorProfileConfig` / `engineEnvironment` / `ownCredentials` / `helloProfile` / `CREDENTIAL_VARIABLES` | schema / _type_ / functions / constant | a profile on the executor's machine, the engine's allowlisted environment with the profile's `home` as `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or (ACP) `HOME`, and `helloProfile({ profile, status, ambient })` carrying no path and no value; a driver refuses a profile whose `engine` is not its own with a `TypeError`, before it reads a file or starts the engine |
 | `mergeRateLimitEvent` / `planLimitsReadFailed` / `planLimitsDue` / `planWindowExpired` | functions | plan limits kept as three answers (`mergeRateLimitEvent`, `planLimitsReadFailed`, `planLimitsDue` take an options object), with a failed read beside the last answer |
@@ -1537,26 +1537,29 @@ Evolving.
 |--------|------|---------|
 | `createClaudeCliDriver` / `ClaudeCliDriverConfig` | function / _type_ | the driver; `permissionMode` defaults to `default`, so the server decides every tool the profile does not already allow; optional `resolveFile` and `maxImageBytes` (default 5 MiB) enable ordered turn-input image attachments |
 | `claudeFakeScenarios` | constant | the conformance scenarios in this dialect, for a scripted engine |
-| `claudeTranscriptPath` | function | where a profile keeps a session's transcript (`{ home, cwd, sessionId }`) |
+| `claudeTranscriptPath` | function | where a profile keeps a session's transcript (`{ home, cwd, sessionId }`), resolving `realpath` of `cwd` (or its nearest existing ancestor) so symlinked workspaces match the canonical transcript location |
 | `claudePlanWindows` | function | Claude's `rate_limit_event` as plan windows (`five_hour`, `seven_day`) |
 
 ---
 
 ## `stitchkit/agent-executor/claude-sdk`
 
-Claude through the Agent SDK. The application imports `query` from
-`@anthropic-ai/claude-agent-sdk` (an optional peer) and passes it in; the leaf
-imports only the SDK's types, so it loads without the SDK. Records are read by
-the same classifier as the CLI's, permissions arrive through `canUseTool`, an
-interrupt is `Query.interrupt()` and denies a permission still pending, and a
-query that breaks fails its turn — the next turn opens a new one that resumes
-the session. Reconcile is by the input's `uuid` in the profile's transcript.
-Evolving.
+Claude through the Agent SDK. The application imports `query` (and optionally
+`forkSession`) from `@anthropic-ai/claude-agent-sdk` (an optional peer) and
+passes them in; the leaf imports only the SDK's types, so it loads without the
+SDK. Records are read by the same classifier as the CLI's, permissions arrive
+through `canUseTool`, an interrupt is `Query.interrupt()` and denies a
+permission still pending, and a query that breaks fails its turn — the next
+turn opens a new one that resumes the session with live model, permission mode
+and flag settings re-applied. Reconcile is by the input's `uuid` in the
+profile's transcript. Evolving.
 
 | Export | Kind | Purpose |
 |--------|------|---------|
-| `createClaudeSdkDriver` / `ClaudeSdkDriverConfig` | function / _type_ | the driver: `query` and `sdkVersion` required; `model`, `permissionMode` (default `default`), optional `resolveFile` and `maxImageBytes` (default 5 MiB) for turn-input images, and the `ambient` environment the profile's allowlist reads. `status` reports the plan windows the session's `rate_limit_event` carried and the login as `unknown`: the SDK has no status call of its own |
-| `ClaudeSdkQuery` / `ClaudeSdkRun` | _types_ | the `query` the leaf takes and the part of a running query it uses; the SDK's own `query` fits as it is |
+| `createClaudeSdkDriver` / `ClaudeSdkDriver` / `ClaudeSdkDriverConfig` | function / _types_ | the driver: `query` and `sdkVersion` required; optional `forkSession`, `model`, `permissionMode` (default `default`), `allowDangerouslySkipPermissions`, `pathToClaudeCodeExecutable`, `systemPrompt`, `settingSources`, `enableFileCheckpointing`, `supportedDialogKinds` / `onUserDialog`, `hooks`, `tools`, `allowedTools`, `disallowedTools`, `mcpServers`, `mcpServersDelivery`, `strictMcpConfig`, `plugins`, `agents`, `extraArgs`, `stderr`, `spawnClaudeCodeProcess`, `onProviderPid`, `verifyDelegation`, `resolveFile`, `maxImageBytes` (default 5 MiB), and `ambient`. `status` reports the plan windows the session's `rate_limit_event` carried and the login as `unknown`; `forkSession(sessionId, options?)` delegates to the injected SDK function |
+| `ClaudeSdkSession` | _type_ | extended session returned by `open()`: exposes `providerPid`, `setModel`, `setPermissionMode`, `applyFlagSettings`, `initializationResult`, `supportedModels`, `supportedCommands`, `accountInfo`, `getContextUsage`, `mcpServerStatus`, `toggleMcpServer`, `reconnectMcpServer`, and `rewindFiles` |
+| `ClaudeSdkDelegationCheck` | _type_ | fail-closed startup verification options (`requireHooksApplied`, `requireNoMcpServers`, `timeoutMs`) enforced at `open()` and on every query restart |
+| `ClaudeSdkQuery` / `ClaudeSdkRun` / `ClaudeSdkForkSession` | _types_ | the SDK `query` / `forkSession` signatures the leaf takes and the subset of a running `Query` it uses; the SDK's own functions fit as they are |
 
 ---
 
@@ -1604,13 +1607,19 @@ them itself, or through this leaf when they speak ACP.
 
 ## `stitchkit/agent-executor/codex`
 
-Codex through `codex app-server` over stdio. Evolving.
+Codex through `codex app-server` over stdio (default) or RFC 6455
+WebSocket-over-Unix-socket (`unix-listen` / `unix-connect`). Evolving.
 
 | Export | Kind | Purpose |
 |--------|------|---------|
-| `createCodexDriver` / `CodexDriverConfig` | function / _type_ | the driver: a thread per session, `turn/start` under the executor's client id, optional `resolveFile` and `maxImageBytes` (default 5 MiB) for turn-input images, approvals and input asked of the host, limits from `account/rateLimits/read` |
+| `createCodexDriver` / `CodexDriver` / `CodexDriverConfig` | function / _types_ | the driver: `transport` (`stdio`, `unix-listen`, `unix-connect`), `serverArgs`, thread policy (`model`, `modelProvider`, `approvalPolicy`, `sandbox`, `developerInstructions`, `runtimeWorkspaceRoots`, `config`), `prepareThread` / `verifyThread` lifecycle hooks, optional `resolveFile` and `maxImageBytes` (default 5 MiB) for turn-input images, approvals and input asked of the host, multi-bucket limits from `account/rateLimits/read` |
+| `CodexTransportConfig` | _type_ | transport selector: `{ kind: 'stdio' }`, `{ kind: 'unix-listen', socketPath, listenTimeoutMs? }`, or `{ kind: 'unix-connect', socketPath, expectedOwnerUid? }` |
+| `CodexSession` / `CodexControlClient` | _types_ | extended session returned by `open()`: exposes `providerPid`, applied `threadContext`, per-turn overrides on `startTurn`, `steerTurn`, non-mutating `forkThread`, `compactThread`, `readConfig`, `listMcpServerStatus`, `listSkills`, `listModels`, `readAccount`, and `readRateLimits` |
+| `CodexThreadContext` / `CodexThreadPolicyOverrides` / `CodexApprovalPolicy` / `CodexSandboxMode` | _types_ | applied policy/model context reported by `thread/start`, `thread/resume`, or `thread/fork`, and overridable thread policy fields |
+| `CodexTurnInput` / `CodexCollaborationMode` / `CodexSteerTurnInput` / `CodexForkThreadOptions` / `CodexForkedThread` | _types_ | per-turn `startTurn` overrides (`model`, fail-closed `modelProvider`, `reasoningEffort`, `collaborationMode`, `approvalPolicy`, `sandboxPolicy`, `runtimeWorkspaceRoots`), `steerTurn` input, and `forkThread` options/result |
+| `CodexUnixSocketError` / `CodexUnixSocketErrorKind` | class / _type_ | typed Unix-socket refusal/transport error distinguishing `endpoint-absent`, `endpoint-not-listening`, `target-refused`, `upgrade-refused`, and `connection-lost` |
 | `codexFakeScenarios` | constant | the conformance scenarios in this dialect, for a scripted app-server |
-| `codexPlanWindows` | function | Codex's `rateLimits` as plan windows (`primary`, `secondary`) |
+| `codexPlanWindows` | function | unfolds Codex's `account/rateLimits/read` envelope (including `rateLimitsByLimitId`) or a single snapshot into `<limitId\|limit>:<minutes>m\|<slot>` plan windows carrying optional `windowDurationMins` and `label` |
 
 ---
 

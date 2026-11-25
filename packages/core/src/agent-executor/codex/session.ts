@@ -1,5 +1,5 @@
-import type { AgentEngineSession, AgentEngineTurn } from '../engine';
-import { spawnEngineProcess } from '../engine-process';
+import { raceAbort } from '../../internal/abort-race';
+import type { AgentEngineTurn } from '../engine';
 import {
   answerEngineRequest,
   drainEngineRequests,
@@ -10,16 +10,15 @@ import {
 } from '../engine-requests';
 import { InteractionReplySchema } from '../executor-contract';
 import type { PlanLimits } from '../hello';
-import { type DriverImageOptions, type InlinedPart, imageTurnStarter } from '../image-input';
+import { type DriverImageOptions, imageTurnStarter } from '../image-input';
 import {
-  createJsonRpcPeer,
   JSON_RPC_METHOD_NOT_FOUND,
   JsonRpcError,
   type JsonRpcPeer,
   type JsonRpcValue,
 } from '../json-rpc-peer';
 import { mergeRateLimitEvent } from '../plan-limits';
-import { type ExecutorProfileConfig, engineEnvironment, engineProfile } from '../profile';
+import { type ExecutorProfileConfig, engineProfile } from '../profile';
 import {
   createTurnDeltaChannel,
   nonEmptyString,
@@ -28,95 +27,54 @@ import {
   stopConnection,
 } from '../session-primitives';
 import { type CodexTurnState, classifyCodexNotification } from './classify';
+import { type CodexConnectConfig, connectCodex } from './connect';
 import { codexPlanWindows } from './limits';
 import {
   CODEX_APPROVAL_DECISION,
   CODEX_APPROVAL_REQUESTS,
   CODEX_INPUT_REQUEST,
-  CODEX_OPTED_OUT_NOTIFICATIONS,
   CodexApprovalParamsSchema,
   CodexStartedThreadSchema,
   CodexStartedTurnSchema,
+  type CodexThreadContext,
   CodexUserInputAnswersSchema,
   CodexUserInputParamsSchema,
+  extractCodexThreadContext,
 } from './protocol';
+import {
+  buildCodexThreadPolicyParams,
+  buildCodexTurnStartParams,
+  type CodexControlClient,
+  type CodexSession,
+  type CodexThreadPolicyOverrides,
+  type CodexTurnInput,
+  createCodexControlClient,
+  createCodexSessionMutators,
+  validateCodexTurnStartOverrides,
+} from './session-controls';
 
-/** How long the app-server may take to initialize and open its thread. */
-const BOOTSTRAP_MS = 45_000;
-const REQUEST_MS = 60_000;
-
-export interface CodexSessionConfig extends DriverImageOptions {
-  executable: string;
-  prefix: readonly string[];
-  model?: string;
-  approvalPolicy: string;
-  sandbox: string;
-  ambient: Readonly<Record<string, string | undefined>>;
-  limits: Map<string, PlanLimits>;
-  version: string;
-  maxLineBytes?: number;
-}
-
-/** Spawn `codex app-server`, initialize it, and return the peer; the caller owns the process. */
-export async function connectCodex(
-  config: CodexSessionConfig,
-  profile: ExecutorProfileConfig,
-  cwd: string,
-  signal: AbortSignal,
-  handlers: Partial<
-    Pick<Parameters<typeof createJsonRpcPeer>[0], 'onRequest' | 'onNotification'>
-  > = {},
-  /** The app-server's output ended, or carried a line that is not JSON-RPC. */
-  onEnd: (error: Error) => void = () => undefined,
-) {
-  // Everything that can refuse runs before the spawn: nothing after it leaves the app-server running.
-  const env = engineEnvironment(profile, config.ambient);
-  const peer: JsonRpcPeer = createJsonRpcPeer({
-    header: 'omitted',
-    requestTimeoutMs: REQUEST_MS,
-    send: (line) => engine.send(line),
-    ...handlers,
-  });
-  const engine = spawnEngineProcess({
-    executable: config.executable,
-    args: [...config.prefix, 'app-server'],
-    cwd,
-    env,
-    signal,
-    ...(config.maxLineBytes !== undefined && { maxLineBytes: config.maxLineBytes }),
-  });
-  const reading = (async () => {
-    try {
-      for await (const line of engine.lines) peer.receive(line);
-      const ended = new Error(`Codex app-server exited: ${engine.stderrTail().slice(-2000)}`);
-      peer.close(ended);
-      onEnd(ended);
-    } catch (error) {
-      const failed = error instanceof Error ? error : new Error(String(error));
-      peer.close(failed);
-      onEnd(failed);
-      await engine.stop().catch(() => undefined);
-    }
-  })();
-  try {
-    await peer.request(
-      'initialize',
-      {
-        clientInfo: { name: 'stitchkit-agent-executor', version: config.version },
-        capabilities: {
-          experimentalApi: true,
-          optOutNotificationMethods: CODEX_OPTED_OUT_NOTIFICATIONS,
-        },
-      },
-      { timeoutMs: BOOTSTRAP_MS },
-    );
-    peer.notify('initialized');
-    return { engine, peer, reading };
-  } catch (error) {
-    // The reader closes the peer once the stopped process's output ends.
-    await stopConnection({ engine, reading }, { error });
-    throw error;
-  }
+export interface CodexSessionConfig extends DriverImageOptions, CodexConnectConfig {
+  readonly model?: string;
+  readonly modelProvider?: string;
+  readonly approvalPolicy: CodexThreadPolicyOverrides['approvalPolicy'];
+  readonly sandbox: CodexThreadPolicyOverrides['sandbox'];
+  readonly developerInstructions?: string;
+  readonly runtimeWorkspaceRoots?: readonly string[];
+  readonly config?: Readonly<Record<string, JsonRpcValue>>;
+  readonly prepareThread?: (context: {
+    readonly controls: CodexControlClient;
+    readonly cwd: string;
+    readonly nativeThreadId?: string;
+  }) =>
+    | Promise<CodexThreadPolicyOverrides | undefined>
+    | CodexThreadPolicyOverrides
+    | undefined;
+  readonly verifyThread?: (context: {
+    readonly nativeThreadId: string;
+    readonly threadContext: CodexThreadContext;
+    readonly controls: CodexControlClient;
+  }) => Promise<void> | void;
+  readonly limits: Map<string, PlanLimits>;
 }
 
 /** The turn running in a session, and the engine's requests it is still to answer, by method. */
@@ -146,19 +104,12 @@ function inputDetail(params: unknown) {
   };
 }
 
-/**
- * The answer to a request the consumer will not answer — the turn was interrupted,
- * ended or lost its app-server: an approval is `cancel` ("the turn will also be
- * immediately interrupted"), never `decline` ("the agent will continue the turn");
- * an input request gets no answers.
- */
 function codexStoppedAnswer(method: string): JsonRpcValue {
   return CODEX_APPROVAL_REQUESTS.has(method)
     ? { decision: CODEX_APPROVAL_DECISION.interrupted }
     : { answers: {} };
 }
 
-/** The answer to one held request of a stopped turn, by its method. */
 const codexStopped = (waiting: { detail: { method: string } }) =>
   codexStoppedAnswer(waiting.detail.method);
 
@@ -193,20 +144,29 @@ function createCodexHandlers(state: {
       }
       switch (verdict.kind) {
         case 'limits':
-          state.limits.set(
-            state.profileId,
-            mergeRateLimitEvent({
-              previous: state.limits.get(state.profileId),
-              windows: codexPlanWindows(verdict.rateLimits),
-              now: new Date(),
-            }),
-          );
+          try {
+            state.limits.set(
+              state.profileId,
+              mergeRateLimitEvent({
+                previous: state.limits.get(state.profileId),
+                windows: codexPlanWindows(verdict.rateLimits),
+                now: new Date(),
+              }),
+            );
+          } catch (error) {
+            if (turn !== undefined) {
+              offerTurnDelta(turn.channel, {
+                type: 'error',
+                turnId: turn.state.turnId,
+                itemId: `unhandled:${method}`,
+                raw: { source: 'codex', type: method },
+                kind: 'unhandled',
+                message: `Codex rate-limit update could not be merged: ${error instanceof Error ? error.message : String(error)}`,
+              });
+            }
+          }
           return;
         case 'resolved':
-          // The engine closed the request itself: nothing is written back to it. The
-          // promise `onRequest` returned stays unsettled on purpose — answering would send a
-          // response for an id the engine no longer waits on — and the peer keeps no table
-          // of inbound requests, so with this entry gone nothing holds it.
           if (turn?.pending.delete(verdict.requestId)) {
             offerTurnDelta(turn.channel, {
               type: 'request-resolved',
@@ -274,133 +234,58 @@ function createCodexHandlers(state: {
   };
 }
 
-function codexTurnInput(parts: readonly InlinedPart[]): JsonRpcValue[] {
-  if (parts.every((part) => part.type === 'text')) {
-    return [
-      { type: 'text', text: parts.map((part) => part.text).join('\n'), text_elements: [] },
-    ];
-  }
-  const out: JsonRpcValue[] = [];
-  for (const part of parts) {
-    if (part.type === 'text') {
-      out.push({ type: 'text', text: part.text, text_elements: [] });
-    } else {
-      out.push({ type: 'image', url: `data:${part.mediaType};base64,${part.base64}` });
-    }
-  }
-  return out;
-}
-
-/**
- * One app-server for one connection, holding one thread. Server requests
- * the driver knows become `request` deltas answered by `respond`; any other
- * is refused at once with `-32601`, so no unanswered request hangs a turn.
- */
-export async function openCodexSession(
-  config: CodexSessionConfig,
-  input: {
-    profile: ExecutorProfileConfig;
-    cwd: string;
-    nativeThreadId?: string;
-    signal?: AbortSignal;
-  },
-): Promise<AgentEngineSession> {
-  const profile = engineProfile('codex', input.profile);
-  const linked = sessionAbort(input.signal);
-  let current: CodexTurnSlot | undefined;
-  let dead: Error | undefined;
-  let connected: Awaited<ReturnType<typeof connectCodex>>;
-  try {
-    connected = await connectCodex(
-      config,
-      profile,
-      input.cwd,
-      linked.signal,
-      createCodexHandlers({
-        profileId: profile.profileId,
-        limits: config.limits,
-        getTurn: () => current,
-        clearTurn: () => {
-          current = undefined;
-        },
-      }),
-      (error) => {
-        dead = error;
-        const turn = current;
-        current = undefined;
-        loseEngineTurn(turn, codexStopped, error);
-        // The session is over: nothing follows the caller's signal any more.
-        linked.abort();
-      },
-    );
-  } catch (error) {
-    linked.release();
-    throw error;
-  }
-  const { peer } = connected;
-  const stop = async (primary?: { error: unknown }) => {
-    linked.abort();
-    await stopConnection(connected, primary);
-  };
-  let threadId: string;
-  try {
-    const threadParams = {
-      cwd: input.cwd,
-      approvalPolicy: config.approvalPolicy,
-      sandbox: config.sandbox,
-      ...(config.model !== undefined && { model: config.model }),
-    };
-    const opened = input.nativeThreadId
-      ? await peer.request('thread/resume', {
-          threadId: input.nativeThreadId,
-          excludeTurns: true,
-          ...threadParams,
-        })
-      : await peer.request('thread/start', threadParams);
-    threadId = CodexStartedThreadSchema.parse(opened).thread.id;
-  } catch (error) {
-    await stop({ error });
-    throw error;
-  }
-  const startTurn = imageTurnStarter<
-    Parameters<AgentEngineSession['startTurn']>[0],
-    AgentEngineTurn
-  >({
+function createCodexStartTurn(input: {
+  config: CodexSessionConfig;
+  peer: JsonRpcPeer;
+  threadId: string;
+  activeModelProvider: string | undefined;
+  signal: AbortSignal;
+  ensureAlive(): void;
+  getTurn(): CodexTurnSlot | undefined;
+  setTurn(turn: CodexTurnSlot | undefined): void;
+}) {
+  return imageTurnStarter<CodexTurnInput, AgentEngineTurn>({
     driverLabel: 'The Codex driver',
     busyMessage: 'A turn is already running in this Codex thread',
-    imageOptions: config,
-    signal: linked.signal,
-    check() {
-      if (dead !== undefined) throw dead;
-      if (current !== undefined)
+    imageOptions: input.config,
+    signal: input.signal,
+    check(turnInput) {
+      input.ensureAlive();
+      if (input.getTurn() !== undefined)
         throw new Error('A turn is already running in this Codex thread');
+      validateCodexTurnStartOverrides(turnInput, input.activeModelProvider);
     },
     async dispatch(turnInput, parts) {
+      const turnParams = buildCodexTurnStartParams(
+        input.threadId,
+        turnInput,
+        parts,
+        input.activeModelProvider,
+      );
       const turn: CodexTurnSlot = {
         state: { turnId: turnInput.turnId, interruptRequested: false },
         channel: createTurnDeltaChannel(),
         pending: new Map(),
       };
-      current = turn;
+      input.setTurn(turn);
       try {
-        const started = await peer.request('turn/start', {
-          threadId,
-          input: codexTurnInput(parts),
-          clientUserMessageId: turnInput.clientId,
-        });
+        const started = await input.peer.request('turn/start', turnParams);
         turn.codexTurnId = CodexStartedTurnSchema.parse(started).turn.id;
       } catch (error) {
-        if (current === turn) current = undefined;
+        if (input.getTurn() === turn) input.setTurn(undefined);
         throw error;
       }
       return {
         deltas: turn.channel,
         async interrupt() {
           turn.state.interruptRequested = true;
-          // Resolve pending approvals/input before sending turn/interrupt so Codex never deadlocks.
           drainEngineRequests(turn, codexStopped);
-          if (turn.codexTurnId !== undefined)
-            await peer.request('turn/interrupt', { threadId, turnId: turn.codexTurnId });
+          if (turn.codexTurnId !== undefined) {
+            await input.peer.request('turn/interrupt', {
+              threadId: input.threadId,
+              turnId: turn.codexTurnId,
+            });
+          }
         },
         async respond(interactionId, rawReply) {
           const reply = InteractionReplySchema.shape.reply.parse(rawReply);
@@ -429,9 +314,164 @@ export async function openCodexSession(
       };
     },
   });
+}
+
+/**
+ * One app-server connection holding one thread. Server requests the driver knows
+ * become `request` deltas answered by `respond`; any other is refused at once with
+ * `-32601`, so no unanswered request hangs a turn.
+ */
+export async function openCodexSession(
+  config: CodexSessionConfig,
+  input: {
+    profile: ExecutorProfileConfig;
+    cwd: string;
+    nativeThreadId?: string;
+    signal?: AbortSignal;
+  },
+): Promise<CodexSession> {
+  const profile = engineProfile('codex', input.profile);
+  const linked = sessionAbort(input.signal);
+  let current: CodexTurnSlot | undefined;
+  let dead: Error | undefined;
+  let closing = false;
+  let connected: Awaited<ReturnType<typeof connectCodex>>;
+  try {
+    connected = await connectCodex(
+      config,
+      profile,
+      input.cwd,
+      linked.signal,
+      createCodexHandlers({
+        profileId: profile.profileId,
+        limits: config.limits,
+        getTurn: () => current,
+        clearTurn: () => {
+          current = undefined;
+        },
+      }),
+      (error) => {
+        dead = error;
+        const turn = current;
+        current = undefined;
+        loseEngineTurn(turn, codexStopped, error);
+        linked.abort();
+      },
+    );
+  } catch (error) {
+    linked.release();
+    throw error;
+  }
+  const { peer, providerPid } = connected;
+  const ensureAlive = () => {
+    if (closing) throw new Error('The Codex session is closed');
+    if (dead !== undefined) throw dead;
+  };
+  const stop = async (primary?: { error: unknown }) => {
+    closing = true;
+    try {
+      await stopConnection(connected, primary);
+    } finally {
+      linked.abort();
+      linked.release();
+    }
+  };
+  const controlClient = createCodexControlClient({ peer, ensureAlive });
+
+  let threadId: string;
+  let threadContext: CodexThreadContext;
+  let dynamicOverrides: CodexThreadPolicyOverrides | undefined;
+  try {
+    if (config.prepareThread !== undefined) {
+      dynamicOverrides = await raceAbort(
+        Promise.resolve(
+          config.prepareThread({
+            controls: controlClient,
+            cwd: input.cwd,
+            ...(input.nativeThreadId !== undefined && {
+              nativeThreadId: input.nativeThreadId,
+            }),
+          }),
+        ),
+        linked.signal,
+      );
+      linked.signal.throwIfAborted();
+    }
+    const basePolicy: CodexThreadPolicyOverrides = {
+      ...(config.model !== undefined && { model: config.model }),
+      ...(config.modelProvider !== undefined && { modelProvider: config.modelProvider }),
+      ...(config.approvalPolicy !== undefined && { approvalPolicy: config.approvalPolicy }),
+      ...(config.sandbox !== undefined && { sandbox: config.sandbox }),
+      ...(config.developerInstructions !== undefined && {
+        developerInstructions: config.developerInstructions,
+      }),
+      ...(config.runtimeWorkspaceRoots !== undefined && {
+        runtimeWorkspaceRoots: config.runtimeWorkspaceRoots,
+      }),
+      ...(config.config !== undefined && { config: config.config }),
+    };
+    const threadParams: Record<string, JsonRpcValue> = {
+      cwd: input.cwd,
+      ...buildCodexThreadPolicyParams(basePolicy, dynamicOverrides),
+    };
+    const opened = input.nativeThreadId
+      ? await peer.request('thread/resume', {
+          threadId: input.nativeThreadId,
+          excludeTurns: true,
+          ...threadParams,
+        })
+      : await peer.request('thread/start', threadParams);
+    const parsed = CodexStartedThreadSchema.parse(opened);
+    threadId = parsed.thread.id;
+    threadContext = extractCodexThreadContext(parsed);
+    if (config.verifyThread !== undefined) {
+      await raceAbort(
+        Promise.resolve(
+          config.verifyThread({
+            nativeThreadId: threadId,
+            threadContext,
+            controls: controlClient,
+          }),
+        ),
+        linked.signal,
+      );
+      linked.signal.throwIfAborted();
+    }
+  } catch (error) {
+    await stop({ error });
+    throw error;
+  }
+
+  const activeModelProvider =
+    threadContext.modelProvider ?? dynamicOverrides?.modelProvider ?? config.modelProvider;
+  const startTurn = createCodexStartTurn({
+    config,
+    peer,
+    threadId,
+    activeModelProvider,
+    signal: linked.signal,
+    ensureAlive,
+    getTurn: () => current,
+    setTurn: (turn) => {
+      current = turn;
+    },
+  });
+  const mutators = createCodexSessionMutators({
+    peer,
+    threadId,
+    imageOptions: config,
+    signal: linked.signal,
+    ensureAlive,
+    getActiveTurn: () => current,
+  });
+
   return {
     nativeThreadId: threadId,
+    providerPid,
+    threadContext,
     startTurn,
+    ...controlClient,
+    ...mutators,
     async close() {
       await stop();
     },

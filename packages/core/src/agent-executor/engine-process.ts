@@ -14,6 +14,10 @@ const STDERR_TAIL_BYTES = 16 * 1024;
 
 /** An engine process talked to by lines: one connection, one process. */
 export interface EngineProcess {
+  /** OS process id of the spawned engine once its leader has started, if available. */
+  readonly pid?: number;
+  /** Settles to the spawned leader PID once started, or `undefined` if startup ended without one. */
+  readonly pidReady?: Promise<number | undefined>;
   /**
    * Write one line; refused once the process closed its input, when queuing
    * the line would exceed `maxPendingStdinBytes`, or when it would take the
@@ -53,6 +57,11 @@ export function spawnEngineProcess(input: {
    * line past it and the engine keeps running. Default 256 MiB.
    */
   maxStdinBytes?: number;
+  /**
+   * How stdout is consumed: `'lines'` (default, caller reads `lines`) or `'drain'` (drained
+   * continuously in the background when the engine speaks over another transport such as a Unix socket).
+   */
+  stdoutMode?: 'lines' | 'drain';
 }): EngineProcess {
   assertPositiveSafeInteger('maxLineBytes', input.maxLineBytes);
   assertPositiveSafeInteger('maxPendingStdinBytes', input.maxPendingStdinBytes);
@@ -60,7 +69,15 @@ export function spawnEngineProcess(input: {
   const maxLineBytes = input.maxLineBytes ?? ENGINE_LINE_BYTES;
   const maxPendingStdinBytes = input.maxPendingStdinBytes ?? ENGINE_PENDING_STDIN_BYTES;
   const maxStdinBytes = input.maxStdinBytes ?? ENGINE_STDIN_BYTES;
+  const stdoutMode = input.stdoutMode ?? 'lines';
+  if (stdoutMode !== 'lines' && stdoutMode !== 'drain') {
+    throw new TypeError(
+      `stdoutMode must be "lines" or "drain", received ${String(stdoutMode)}`,
+    );
+  }
   let written = 0;
+  let pid: number | undefined;
+  const pidReady = Promise.withResolvers<number | undefined>();
   const encoder = new TextEncoder();
   let writer!: ReadableStreamDefaultController<Uint8Array>;
   let open = true;
@@ -85,6 +102,10 @@ export function spawnEngineProcess(input: {
     stdin,
     maxStdinBytes,
     signal: input.signal,
+    onLeaderStarted: ({ pid: startedPid }) => {
+      pid = startedPid;
+      pidReady.resolve(startedPid);
+    },
   });
   let tail = '';
   void (async () => {
@@ -97,6 +118,17 @@ export function spawnEngineProcess(input: {
       // A failed command errors its streams; the result carries why.
     }
   })();
+  if (stdoutMode === 'drain') {
+    void (async () => {
+      try {
+        for await (const _chunk of command.stdout) {
+          // Continuously drain stdout so pipe backpressure never blocks a socket-serving child.
+        }
+      } catch {
+        // A failed command errors its streams; the result carries why.
+      }
+    })();
+  }
   const closeInput = () => {
     if (!open) return;
     open = false;
@@ -106,9 +138,14 @@ export function spawnEngineProcess(input: {
       // Already closed by the process.
     }
   };
-  void command.result.then(closeInput, closeInput);
+  const onCommandSettled = () => {
+    closeInput();
+    pidReady.resolve(pid);
+  };
+  void command.result.then(onCommandSettled, onCommandSettled);
   const cleanLine = (line: string) => (line.endsWith('\r') ? line.slice(0, -1) : line);
   async function* lines(): AsyncGenerator<string> {
+    if (stdoutMode === 'drain') return;
     const decoder = createBoundedLineDecoder(maxLineBytes);
     for await (const chunk of command.stdout) {
       for (const line of decoder.push(chunk)) {
@@ -122,6 +159,10 @@ export function spawnEngineProcess(input: {
     }
   }
   return {
+    get pid() {
+      return pid;
+    },
+    pidReady: pidReady.promise,
     send(line) {
       if (!open) throw new Error('The engine process has closed its input');
       const available = writer.desiredSize;

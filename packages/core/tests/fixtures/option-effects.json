@@ -2030,14 +2030,38 @@
     "prefixArgs": {
       "test": "the Codex driver passes the engine conformance kit"
     },
+    "transport": {
+      "test": "unix-listen and unix-connect transport modes manage providerPid, symlink sockets, stdout draining, and probe non-collision"
+    },
+    "serverArgs": {
+      "test": "unix-listen and unix-connect transport modes manage providerPid, symlink sockets, stdout draining, and probe non-collision"
+    },
     "model": {
       "test": "a new thread carries the approval policy, sandbox and model the driver was given"
+    },
+    "modelProvider": {
+      "test": "thread policy overrides, prepareThread, verifyThread, and applied threadContext enforce delegation fail-closed"
     },
     "approvalPolicy": {
       "test": "a new thread carries the approval policy, sandbox and model the driver was given"
     },
     "sandbox": {
       "test": "a new thread carries the approval policy, sandbox and model the driver was given"
+    },
+    "developerInstructions": {
+      "test": "thread policy overrides, prepareThread, verifyThread, and applied threadContext enforce delegation fail-closed"
+    },
+    "runtimeWorkspaceRoots": {
+      "test": "thread policy overrides, prepareThread, verifyThread, and applied threadContext enforce delegation fail-closed"
+    },
+    "config": {
+      "test": "thread policy overrides, prepareThread, verifyThread, and applied threadContext enforce delegation fail-closed"
+    },
+    "prepareThread": {
+      "test": "thread policy overrides, prepareThread, verifyThread, and applied threadContext enforce delegation fail-closed"
+    },
+    "verifyThread": {
+      "test": "thread policy overrides, prepareThread, verifyThread, and applied threadContext enforce delegation fail-closed"
     },
     "ambient": {
       "test": "the Codex driver passes the engine conformance kit"
@@ -2056,11 +2080,77 @@
     "sdkVersion": {
       "test": "the leaf passes its model, permission mode and the profile environment to the query, and reports its SDK version"
     },
+    "forkSession": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
     "model": {
       "test": "the leaf passes its model, permission mode and the profile environment to the query, and reports its SDK version"
     },
     "permissionMode": {
       "test": "the leaf passes its model, permission mode and the profile environment to the query, and reports its SDK version"
+    },
+    "allowDangerouslySkipPermissions": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "pathToClaudeCodeExecutable": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "systemPrompt": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "settingSources": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "enableFileCheckpointing": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "supportedDialogKinds": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "onUserDialog": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "hooks": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "tools": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "allowedTools": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "disallowedTools": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "mcpServers": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "mcpServersDelivery": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "strictMcpConfig": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "plugins": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "agents": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "extraArgs": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "stderr": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "spawnClaudeCodeProcess": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "onProviderPid": {
+      "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
+    },
+    "verifyDelegation": {
+      "test": "verifyDelegation runs eagerly at open, closes query and releases caller signal on refusal, and re-runs on restart"
     },
     "ambient": {
       "test": "the leaf passes its model, permission mode and the profile environment to the query, and reports its SDK version"

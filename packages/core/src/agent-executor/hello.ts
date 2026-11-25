@@ -29,10 +29,14 @@ export const ExecutorReconcileSchema = z.enum(['client-id', 'none']);
 
 /** One rate-limit window reported by an engine for a subscription profile. */
 export const PlanWindowSchema = z.strictObject({
-  /** The window as the engine names it: `five_hour`, `weekly`, `primary`. */
+  /** The window as the engine names it: `five_hour`, `weekly`, `codex:300m`. */
   name: Name,
   usedPercent: z.number().min(0).max(100),
   resetsAt: z.iso.datetime({ offset: true }).optional(),
+  /** Duration of the quota window in minutes when the engine reports it. */
+  windowDurationMins: z.int().positive().optional(),
+  /** Human-readable bucket or model label when the engine reports it. */
+  label: Name.optional(),
 });
 
 /**

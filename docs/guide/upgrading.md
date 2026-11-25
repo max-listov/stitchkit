@@ -1,5 +1,33 @@
 # Upgrading stitchkit
 
+## Unreleased migration: codex-plan-window-keys
+
+### codex-plan-window-keys
+
+**Who must act:** every caller of `codexPlanWindows` or `createCodexDriver` (`status()`) from
+`stitchkit/agent-executor/codex` that matches plan window names against `'primary'` or
+`'secondary'`.
+
+`codexPlanWindows` now unfolds the full `account/rateLimits/read` response envelope (including
+per-model `rateLimitsByLimitId` buckets) as well as bare `RateLimitSnapshot` objects, keying each
+window as `<limitId|limit>:<windowDurationMins>m` (falling back to `<limitId|limit>:<slot>` when
+duration is absent, or `<limitId|limit>:<windowDurationMins>m:<slot>` when both slots share a
+duration) and populating optional `windowDurationMins` and `label` on `PlanWindow`:
+
+```ts
+// before
+const fiveHour = status.planLimits?.windows.find((w) => w.name === 'primary')
+const weekly = status.planLimits?.windows.find((w) => w.name === 'secondary')
+
+// after
+const fiveHour = status.planLimits?.windows.find(
+  (w) => w.windowDurationMins === 300 || w.name === 'limit:primary',
+)
+const weekly = status.planLimits?.windows.find(
+  (w) => w.windowDurationMins === 10080 || w.name === 'limit:secondary',
+)
+```
+
 ## Released migration: 0.128.0
 
 ### invocation-payload-lifecycle

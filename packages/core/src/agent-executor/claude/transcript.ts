@@ -1,15 +1,50 @@
+import { realpathSync } from 'node:fs';
 import { open } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { errnoOf } from '../../internal/errno';
 import type { ExecutorEngine } from '../hello';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
 
 const SAFE_SESSION_ID = /^[A-Za-z0-9_-]+$/;
 
+function stripTrailingSlashes(path: string): string {
+  const stripped = path.replace(/\/+$/, '');
+  return stripped.length === 0 && path.startsWith('/') ? '/' : stripped;
+}
+
+/**
+ * Resolve `cwd` to its canonical POSIX `realpath`, matching Claude Code's own
+ * project-directory encoding on symlinked workspaces (such as macOS `/var` ->
+ * `/private/var` or `/tmp` -> `/private/tmp`). When a leaf directory does not
+ * exist yet (`ENOENT` / `ENOTDIR`), resolve its nearest existing ancestor and
+ * append the remaining segments deterministically. Other filesystem errors
+ * (`EACCES`, `ELOOP`) are rethrown so `findInput` fails closed rather than
+ * probing a non-canonical path and reporting a false absence.
+ */
+function canonicalClaudeCwd(cwd: string): string {
+  if (cwd.length === 0) return cwd;
+  const normalized = stripTrailingSlashes(cwd);
+  const missingTail: string[] = [];
+  let probe = normalized;
+  for (;;) {
+    try {
+      const resolved = realpathSync(probe);
+      return missingTail.length === 0 ? resolved : join(resolved, ...missingTail.reverse());
+    } catch (error) {
+      const code = errnoOf(error);
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+      const parent = dirname(probe);
+      if (parent === probe) return normalized;
+      missingTail.push(basename(probe));
+      probe = parent;
+    }
+  }
+}
+
 /**
  * Where Claude Code keeps a session's transcript in a profile:
- * `<home>/projects/<cwd with every character but letters, digits and "-"
- * replaced by "-">/<sessionId>.jsonl`, as observed on the CLI.
+ * `<home>/projects/<canonical realpath(cwd) with every character but letters,
+ * digits and "-" replaced by "-">/<sessionId>.jsonl`, as observed on the CLI.
  */
 export function claudeTranscriptPath(input: {
   home: string;
@@ -19,10 +54,11 @@ export function claudeTranscriptPath(input: {
   if (!SAFE_SESSION_ID.test(input.sessionId)) {
     throw new TypeError(`Invalid Claude sessionId: ${input.sessionId}`);
   }
+  const canonicalCwd = canonicalClaudeCwd(input.cwd);
   return join(
     input.home,
     'projects',
-    input.cwd.replace(/[^A-Za-z0-9-]/g, '-'),
+    canonicalCwd.replace(/[^A-Za-z0-9-]/g, '-'),
     `${input.sessionId}.jsonl`,
   );
 }

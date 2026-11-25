@@ -5,8 +5,16 @@
  * or overlong lines when absence cannot be proven.
  */
 import { describe, expect, test } from 'bun:test';
-import { closeSync, mkdirSync, openSync, writeFileSync, writeSync } from 'node:fs';
-import { dirname } from 'node:path';
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 import { claudeTranscriptPath } from '../../src/agent-executor/claude/transcript';
 import { createLocalStepDurability } from '../../src/durability/engine';
 import { dispatchTurn } from '../../src/entrypoints/agent-executor';
@@ -304,5 +312,183 @@ describe('Claude findInput full user history', () => {
       }).catch((error: unknown) => error);
       expect(outcome).toBeInstanceOf(EffectUnresolvedError);
       expect(started).toBe(0);
+    }));
+
+  test('resolves symlinked cwd and symlinked ancestors via realpath while keeping missing paths deterministic and failing closed on symlink loops', () =>
+    inScratch('claude-find-symlink', async (root) => {
+      const home = join(root, 'home');
+      const realDir = join(root, 'real-workspace');
+      const nestedRealDir = join(realDir, 'nested');
+      const symlinkDir = join(root, 'sym-workspace');
+      const danglingLink = join(root, 'dangling-workspace');
+      const loopA = join(root, 'loop-a');
+      const loopB = join(root, 'loop-b');
+      mkdirSync(nestedRealDir, { recursive: true });
+      symlinkSync(realDir, symlinkDir);
+      symlinkSync(join(root, 'does-not-exist-target'), danglingLink);
+      symlinkSync(loopB, loopA);
+      symlinkSync(loopA, loopB);
+
+      // Write transcripts using raw realpath encoding (never calling claudeTranscriptPath)
+      // so the test proves alignment with Claude CLI's own realpath layout rather than tautology.
+      const canonicalReal = realpathSync(realDir);
+      const canonicalNested = realpathSync(nestedRealDir);
+      const writeRawTranscript = (canonicalCwd: string, sessionId: string, uuid: string) => {
+        const encoded = canonicalCwd.replace(/[^A-Za-z0-9-]/g, '-');
+        const transcript = join(home, 'projects', encoded, `${sessionId}.jsonl`);
+        mkdirSync(dirname(transcript), { recursive: true });
+        writeFileSync(
+          transcript,
+          `${JSON.stringify({ type: 'user', uuid, message: { content: 'hi' } })}\n`,
+        );
+        return transcript;
+      };
+
+      const rawRootTranscript = writeRawTranscript(canonicalReal, 'sym-session', 'u-sym');
+      const rawNestedTranscript = writeRawTranscript(
+        canonicalNested,
+        'nested-session',
+        'u-nested',
+      );
+      const rawDeletedLeafTranscript = writeRawTranscript(
+        join(canonicalReal, 'deleted-worktree'),
+        'deleted-leaf-session',
+        'u-deleted',
+      );
+
+      expect(claudeTranscriptPath({ home, cwd: symlinkDir, sessionId: 'sym-session' })).toBe(
+        rawRootTranscript,
+      );
+      expect(
+        claudeTranscriptPath({ home, cwd: `${symlinkDir}/`, sessionId: 'sym-session' }),
+      ).toBe(rawRootTranscript);
+      expect(
+        claudeTranscriptPath({
+          home,
+          cwd: join(symlinkDir, 'nested'),
+          sessionId: 'nested-session',
+        }),
+      ).toBe(rawNestedTranscript);
+      expect(
+        claudeTranscriptPath({
+          home,
+          cwd: join(symlinkDir, 'deleted-worktree'),
+          sessionId: 'deleted-leaf-session',
+        }),
+      ).toBe(rawDeletedLeafTranscript);
+
+      // Nonexistent cwd and dangling symlink do not throw and stay deterministic.
+      const missingPath = claudeTranscriptPath({
+        home,
+        cwd: '/nonexistent-claude-cwd/project/',
+        sessionId: 'missing-s',
+      });
+      expect(missingPath).toBe(
+        join(home, 'projects', '-nonexistent-claude-cwd-project', 'missing-s.jsonl'),
+      );
+      expect(claudeTranscriptPath({ home, cwd: danglingLink, sessionId: 'dangling-s' })).toBe(
+        join(
+          home,
+          'projects',
+          join(realpathSync(root), 'dangling-workspace').replace(/[^A-Za-z0-9-]/g, '-'),
+          'dangling-s.jsonl',
+        ),
+      );
+
+      // Symlink loops (ELOOP) fail closed rather than falling back to a non-canonical path.
+      let loopErr: unknown;
+      try {
+        claudeTranscriptPath({ home, cwd: loopA, sessionId: 'loop-s' });
+      } catch (error) {
+        loopErr = error;
+      }
+      expect(loopErr).toBeDefined();
+      expect(Reflect.get(Object(loopErr), 'code')).toBe('ELOOP');
+
+      const cli = createClaudeCliDriver({ ambient: ambientIn(root) });
+      const openedOptions: Array<{ resume?: string; sessionId?: string }> = [];
+      const sdk = createClaudeSdkDriver({
+        query: ({ prompt, options }) => {
+          openedOptions.push({
+            ...(options?.resume !== undefined && { resume: options.resume }),
+            ...(options?.sessionId !== undefined && { sessionId: options.sessionId }),
+          });
+          async function* run(): AsyncGenerator<unknown> {
+            for await (const message of prompt) {
+              yield {
+                type: 'result',
+                subtype: 'success',
+                is_error: false,
+                session_id: 'sym-session',
+                result: 'ok',
+                uuid: message.uuid,
+              };
+            }
+          }
+          const records = run();
+          return { [Symbol.asyncIterator]: () => records, interrupt: async () => undefined };
+        },
+        sdkVersion: '0.3.330',
+        ambient: ambientIn(root),
+      });
+
+      for (const driver of [cli, sdk]) {
+        const engine =
+          driver.engine === 'claude-cli' ? ('claude-cli' as const) : ('claude-sdk' as const);
+        const profile = { profileId: 'p-sym', engine, home };
+        expect(
+          await driver.findInput?.({
+            profile,
+            cwd: symlinkDir,
+            nativeThreadId: 'sym-session',
+            clientId: 'u-sym',
+          }),
+        ).toBe(true);
+        expect(
+          await driver.findInput?.({
+            profile,
+            cwd: symlinkDir,
+            nativeThreadId: 'sym-session',
+            clientId: 'u-absent',
+          }),
+        ).toBe(false);
+        expect(
+          await driver.findInput?.({
+            profile,
+            cwd: join(symlinkDir, 'nested'),
+            nativeThreadId: 'nested-session',
+            clientId: 'u-nested',
+          }),
+        ).toBe(true);
+        expect(
+          await driver.findInput?.({
+            profile,
+            cwd: join(symlinkDir, 'deleted-worktree'),
+            nativeThreadId: 'deleted-leaf-session',
+            clientId: 'u-deleted',
+          }),
+        ).toBe(true);
+      }
+
+      // Opening an existing session through a symlinked cwd must detect the canonical transcript
+      // and pass `resume` rather than starting a fresh `sessionId`.
+      const session = await sdk.open({
+        profile: { profileId: 'p-sym', engine: 'claude-sdk', home },
+        cwd: symlinkDir,
+        nativeThreadId: 'sym-session',
+      });
+      try {
+        const turn = await session.startTurn({
+          turnId: 't-sym',
+          clientId: crypto.randomUUID(),
+          input: [{ type: 'text', text: 'hi' }],
+        });
+        for await (const _ of turn.deltas) {
+          // Drain turn so query opens with resume.
+        }
+        expect(openedOptions).toEqual([{ resume: 'sym-session' }]);
+      } finally {
+        await session.close();
+      }
     }));
 });

@@ -193,7 +193,7 @@ describe('plan limits', () => {
       claudePlanWindows({ unifiedWindows: { weekly: { utilization: 0.4, resetsAt: 1e16 } } }),
     ).toEqual([{ name: 'weekly', usedPercent: 40 }]);
     expect(codexPlanWindows({ primary: { usedPercent: 15, resetsAt: 1e16 } })).toEqual([
-      { name: 'primary', usedPercent: 15 },
+      { name: 'limit:primary', usedPercent: 15 },
     ]);
 
     const root = await mkdtemp(join(tmpdir(), 'stitchkit-login-expiry-'));

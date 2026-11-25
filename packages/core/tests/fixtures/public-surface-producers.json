@@ -271,6 +271,12 @@
   "stitchkit/agent-executor/acp": {
     "AcpDriver": ["createAcpDriver"]
   },
+  "stitchkit/agent-executor/claude-sdk": {
+    "ClaudeSdkDriver": ["createClaudeSdkDriver"]
+  },
+  "stitchkit/agent-executor/codex": {
+    "CodexDriver": ["createCodexDriver"]
+  },
   "stitchkit/agent-runtime/postgres": {
     "PostgresAgentRuntimeStore": ["createPostgresAgentRuntimeStore"]
   },
