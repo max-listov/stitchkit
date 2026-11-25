@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-25
+
 ### ⚠️ Breaking changes
 
 **Who must act:** every project scaffolded from an earlier `create-stitchkit` release that still keeps local copies of `surface-manifest.ts` / `surface-conformance.ts` or mounts MCP, Agent or CLI tools without an explicit `access` policy ([migration](./UPGRADING.md#starter-uses-stitchkittesting-and-mandatory-tool-access)).

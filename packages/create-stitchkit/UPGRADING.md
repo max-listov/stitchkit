@@ -61,7 +61,9 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
-## Unreleased migration: starter uses stitchkit/testing and mandatory tool access
+## Released migration: 0.7.0
+
+### starter uses stitchkit/testing and mandatory tool access
 
 **Required.** Adopt these edits together with upgrading `stitchkit` to `0.127.0`
 (see [`docs/guide/upgrading.md`](../../docs/guide/upgrading.md) for the framework changes).
@@ -92,7 +94,7 @@ the first scaffolder release with a migration channel of its own.
 5. Run `bun run check`, `bun run test`, and `bun run surface:snapshot` to confirm the
    regenerated snapshot and checks pass.
 
-## Unreleased migration: acceptance owns every address
+### acceptance owns every address
 
 **Voluntary.** Worth taking on a machine that runs other projects. Without it,
 `bun run acceptance:local` can test the socket of whatever else listens on the
