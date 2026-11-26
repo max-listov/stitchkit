@@ -12,6 +12,10 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the starter catalog to `stitchkit@^0.130.0` and the agent template catalog to `stitchkit-tui@^0.5.3`.
+
 ## [0.8.1] - 2026-11-25
 
 ### Changed

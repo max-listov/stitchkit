@@ -581,7 +581,7 @@ describe('scaffoldProject', () => {
     // No workspace, so no catalog: Bun reads one only in a workspace root.
     expect(manifest).toMatchObject({
       name: 'terminal-agent',
-      dependencies: { stitchkit: '^0.68.6', 'stitchkit-tui': '^0.5.2' },
+      dependencies: { stitchkit: '^0.68.6', 'stitchkit-tui': '^0.5.3' },
     });
     expect(manifest.catalog).toBeUndefined();
     expect(await Bun.file(join(destination, 'bun.lock')).exists()).toBeFalse();
