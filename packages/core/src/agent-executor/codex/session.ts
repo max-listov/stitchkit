@@ -1,256 +1,49 @@
 import { abortReason, raceAbort } from '../../internal/abort-race';
-import type { AgentEngineTurn } from '../engine';
-import { drainEngineRequests, loseEngineTurn } from '../engine-requests';
-import type { PlanLimits } from '../hello';
-import { type DriverImageOptions, guardedTurnStarter } from '../image-input';
-import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
+import { loseEngineTurn } from '../engine-requests';
 import { engineProfile } from '../profile';
 import {
-  createTurnDeltaChannel,
   emitStartupPhase,
   invokeSafely,
   sessionAbort,
   stopConnection,
 } from '../session-primitives';
-import { type CodexConnectConfig, connectCodex } from './connect';
+import { connectCodex } from './connect';
 import {
   bindCodexSessionThreadControls,
-  type CodexControlClient,
   type CodexControlConnectInput,
   type CodexControlConnection,
   createCodexControlClient,
 } from './control-client';
-import {
-  type CodexNotificationEvent,
-  type CodexServerRequestEvent,
-  createCodexHandlers,
-} from './handlers';
+import { createCodexHandlers } from './handlers';
 import {
   CodexStartedThreadSchema,
-  CodexStartedTurnSchema,
   type CodexThreadContext,
   extractCodexThreadContext,
 } from './protocol';
 import {
-  answerActiveCodexTurnRequest,
   answerCodexSessionRequest,
   type CodexTurnSlot,
   codexStopped,
   type PendingExternalCodexRequest,
 } from './request-answers';
 import {
-  buildCodexThreadPolicyParams,
-  buildCodexTurnStartParams,
-  type CodexOpenForkOptions,
   type CodexOpenInput,
   type CodexSession,
   type CodexThreadPolicyOverrides,
-  type CodexTurnInput,
   createCodexSessionMutators,
-  validateCodexForkBounds,
-  validateCodexPolicyOverrides,
-  validateCodexTurnStartOverrides,
 } from './session-controls';
-import { inlineCodexParts } from './turn-input';
-
-export interface CodexSessionConfig extends DriverImageOptions, CodexConnectConfig {
-  readonly model?: string;
-  readonly modelProvider?: string;
-  readonly approvalPolicy: CodexThreadPolicyOverrides['approvalPolicy'];
-  readonly sandbox: CodexThreadPolicyOverrides['sandbox'];
-  readonly developerInstructions?: string;
-  readonly runtimeWorkspaceRoots?: readonly string[];
-  readonly config?: Readonly<Record<string, JsonRpcValue>>;
-  readonly prepareThread?: (context: {
-    readonly controls: CodexControlClient;
-    readonly cwd: string;
-    readonly nativeThreadId?: string;
-    readonly forkFrom?: CodexOpenForkOptions;
-  }) =>
-    | Promise<CodexThreadPolicyOverrides | undefined>
-    | CodexThreadPolicyOverrides
-    | undefined;
-  readonly verifyThread?: (context: {
-    readonly nativeThreadId: string;
-    readonly threadContext: CodexThreadContext;
-    readonly controls: CodexControlClient;
-  }) => Promise<void> | void;
-  readonly onNotification?: (event: CodexNotificationEvent) => void;
-  readonly onServerRequest?: (event: CodexServerRequestEvent) => void;
-  readonly onDisconnect?: (error: Error) => void;
-  readonly limits: Map<string, PlanLimits>;
-}
-
-export function createCodexStartTurn(input: {
-  config: CodexSessionConfig;
-  peer: JsonRpcPeer;
-  threadId: string;
-  activeModelProvider: string | undefined;
-  signal: AbortSignal;
-  ensureAlive(): void;
-  getTurn(): CodexTurnSlot | undefined;
-  setTurn(turn: CodexTurnSlot | undefined): void;
-}): (turnInput: CodexTurnInput) => Promise<AgentEngineTurn> {
-  return guardedTurnStarter({
-    busyMessage: 'A turn is already running in this Codex thread',
-    check: (turnInput: CodexTurnInput) => {
-      input.ensureAlive();
-      if (input.getTurn() !== undefined) {
-        throw new Error('A turn is already running in this Codex thread');
-      }
-      validateCodexTurnStartOverrides(turnInput, input.activeModelProvider);
-    },
-    inline: (turnInput) =>
-      inlineCodexParts(turnInput.input, {
-        ...input.config,
-        driverLabel: 'The Codex driver',
-        signal: input.signal,
-      }),
-    dispatch: async (turnInput, parts) => {
-      const turnParams = buildCodexTurnStartParams(
-        input.threadId,
-        turnInput,
-        parts,
-        input.activeModelProvider,
-      );
-      const turn: CodexTurnSlot = {
-        state: { turnId: turnInput.turnId, interruptRequested: false },
-        channel: createTurnDeltaChannel(),
-        pending: new Map(),
-      };
-      input.setTurn(turn);
-      try {
-        const started = await input.peer.request('turn/start', turnParams);
-        turn.codexTurnId = CodexStartedTurnSchema.parse(started).turn.id;
-      } catch (error) {
-        if (input.getTurn() === turn) input.setTurn(undefined);
-        throw error;
-      }
-      return {
-        deltas: turn.channel,
-        async interrupt() {
-          turn.state.interruptRequested = true;
-          drainEngineRequests(turn, codexStopped);
-          if (turn.codexTurnId !== undefined) {
-            await input.peer.request('turn/interrupt', {
-              threadId: input.threadId,
-              turnId: turn.codexTurnId,
-            });
-          }
-        },
-        async respond(interactionId, rawReply) {
-          answerActiveCodexTurnRequest(turn, interactionId, rawReply);
-        },
-      };
-    },
-  });
-}
-
-export function validateCodexOpenInput(input: CodexOpenInput): void {
-  if (input.nativeThreadId !== undefined && input.forkFrom !== undefined) {
-    throw new TypeError(
-      '[stitchkit] CodexDriver.open: nativeThreadId and forkFrom are mutually exclusive',
-    );
-  }
-  if (input.forkFrom !== undefined) {
-    if (
-      typeof input.forkFrom.threadId !== 'string' ||
-      input.forkFrom.threadId.trim().length === 0
-    ) {
-      throw new TypeError(
-        '[stitchkit] CodexDriver.open: forkFrom.threadId must be a non-empty string',
-      );
-    }
-    validateCodexForkBounds(input.forkFrom, 'CodexDriver.open');
-    validateCodexPolicyOverrides(input.forkFrom, 'CodexDriver.open');
-  }
-}
-
-export function mergeOpenThreadPolicy(
-  config: CodexSessionConfig,
-  forkFrom: CodexOpenForkOptions | undefined,
-  dynamicOverrides: CodexThreadPolicyOverrides | undefined,
-): Record<string, JsonRpcValue> {
-  const basePolicy: CodexThreadPolicyOverrides = {
-    ...(config.model !== undefined && { model: config.model }),
-    ...(config.modelProvider !== undefined && { modelProvider: config.modelProvider }),
-    ...(config.approvalPolicy !== undefined && { approvalPolicy: config.approvalPolicy }),
-    ...(config.sandbox !== undefined && { sandbox: config.sandbox }),
-    ...(config.developerInstructions !== undefined && {
-      developerInstructions: config.developerInstructions,
-    }),
-    ...(config.runtimeWorkspaceRoots !== undefined && {
-      runtimeWorkspaceRoots: config.runtimeWorkspaceRoots,
-    }),
-    ...(config.config !== undefined && { config: config.config }),
-  };
-  const withFork: CodexThreadPolicyOverrides =
-    forkFrom === undefined
-      ? basePolicy
-      : {
-          ...basePolicy,
-          ...(forkFrom.model !== undefined && { model: forkFrom.model }),
-          ...(forkFrom.modelProvider !== undefined && {
-            modelProvider: forkFrom.modelProvider,
-          }),
-          ...(forkFrom.approvalPolicy !== undefined && {
-            approvalPolicy: forkFrom.approvalPolicy,
-          }),
-          ...(forkFrom.sandbox !== undefined && { sandbox: forkFrom.sandbox }),
-          ...(forkFrom.developerInstructions !== undefined && {
-            developerInstructions: forkFrom.developerInstructions,
-          }),
-          ...(forkFrom.runtimeWorkspaceRoots !== undefined && {
-            runtimeWorkspaceRoots: forkFrom.runtimeWorkspaceRoots,
-          }),
-          ...(basePolicy.config !== undefined || forkFrom.config !== undefined
-            ? { config: { ...(basePolicy.config ?? {}), ...(forkFrom.config ?? {}) } }
-            : {}),
-        };
-  return buildCodexThreadPolicyParams(withFork, dynamicOverrides);
-}
-
-/** Dispatch `thread/fork`, `thread/resume`, or `thread/start` with merged policy overrides. */
-export function openCodexThreadRpc(
-  peer: JsonRpcPeer,
-  config: CodexSessionConfig,
-  input: {
-    readonly cwd: string;
-    readonly nativeThreadId?: string;
-    readonly forkFrom?: CodexOpenForkOptions;
-  },
-  dynamicOverrides: CodexThreadPolicyOverrides | undefined,
-): Promise<JsonRpcValue> {
-  const threadParams: Record<string, JsonRpcValue> = {
-    cwd: input.cwd,
-    ...mergeOpenThreadPolicy(config, input.forkFrom, dynamicOverrides),
-  };
-  if (input.forkFrom !== undefined) {
-    const fork = input.forkFrom;
-    return peer.request('thread/fork', {
-      threadId: fork.threadId,
-      excludeTurns: fork.excludeTurns ?? true,
-      ...threadParams,
-      ...(fork.beforeTurnId !== undefined && { beforeTurnId: fork.beforeTurnId }),
-      ...(fork.lastTurnId !== undefined && { lastTurnId: fork.lastTurnId }),
-      ...(fork.deferGoalContinuation !== undefined && {
-        deferGoalContinuation: fork.deferGoalContinuation,
-      }),
-    });
-  }
-  if (input.nativeThreadId !== undefined) {
-    return peer.request('thread/resume', {
-      threadId: input.nativeThreadId,
-      excludeTurns: true,
-      ...threadParams,
-    });
-  }
-  return peer.request('thread/start', threadParams);
-}
+import {
+  type CodexSessionConfig,
+  createCodexStartTurn,
+  interruptLocalCodexTurn,
+  openCodexThreadRpc,
+  validateCodexOpenInput,
+} from './thread-open';
 
 /**
  * One app-server connection holding one thread. Server requests during `startTurn()` become
- * `request` deltas answered by `respond`; external/TUI requests route through `onServerRequest`
+ * `request` deltas answered by `respond` (and also reach `onServerRequest` when
+ * `serverRequestDelivery` is `'all'`); external/TUI requests route through `onServerRequest`
  * when configured, and unknown methods are refused `-32601`.
  */
 export async function openCodexSession(
@@ -262,6 +55,7 @@ export async function openCodexSession(
   const linked = sessionAbort(input.signal);
   const externalPending = new Map<string, PendingExternalCodexRequest>();
   let current: CodexTurnSlot | undefined;
+  let activeThreadId: string | undefined;
   let dead: Error | undefined;
   let opened = false;
   let closing = false;
@@ -284,6 +78,9 @@ export async function openCodexSession(
         ...(config.onServerRequest !== undefined && {
           onServerRequest: config.onServerRequest,
         }),
+        ...(config.serverRequestDelivery !== undefined && {
+          serverRequestDelivery: config.serverRequestDelivery,
+        }),
       }),
       (error) => {
         const shouldNotify = opened && !closing && input.signal?.aborted !== true;
@@ -302,7 +99,7 @@ export async function openCodexSession(
     linked.release();
     throw error;
   }
-  const { peer, providerPid } = connected;
+  const { peer, providerPid, userAgent } = connected;
   const ensureAlive = () => {
     if (closing) throw new Error('The Codex session is closed');
     if (dead !== undefined) throw dead;
@@ -317,7 +114,15 @@ export async function openCodexSession(
       linked.release();
     }
   };
-  const controlClient = createCodexControlClient({ peer, ensureAlive });
+  const controlClient = createCodexControlClient({
+    peer,
+    imageOptions: config,
+    signal: linked.signal,
+    ensureAlive,
+    onBeforeInterruptTurn: (targetThreadId, turnId) => {
+      if (targetThreadId === activeThreadId) interruptLocalCodexTurn(current, turnId);
+    },
+  });
 
   let threadId: string;
   let threadContext: CodexThreadContext;
@@ -342,6 +147,7 @@ export async function openCodexSession(
     const openedReply = await openCodexThreadRpc(peer, config, input, dynamicOverrides);
     const parsed = CodexStartedThreadSchema.parse(openedReply);
     threadId = parsed.thread.id;
+    activeThreadId = threadId;
     threadContext = extractCodexThreadContext(parsed);
     if (config.verifyThread !== undefined) {
       emitStartupPhase(input.onStartupPhase, 'verifying');
@@ -394,6 +200,7 @@ export async function openCodexSession(
   return {
     nativeThreadId: threadId,
     providerPid,
+    userAgent,
     threadContext,
     startTurn,
     async respond(interactionId, reply) {
@@ -437,6 +244,9 @@ export async function openCodexControlConnection(
         ...(config.onServerRequest !== undefined && {
           onServerRequest: config.onServerRequest,
         }),
+        ...(config.serverRequestDelivery !== undefined && {
+          serverRequestDelivery: config.serverRequestDelivery,
+        }),
       }),
       (error) => {
         const shouldNotify = opened && !closing && input.signal?.aborted !== true;
@@ -467,10 +277,16 @@ export async function openCodexControlConnection(
     if (closing) throw new Error('The Codex control connection is closed');
     if (dead !== undefined) throw dead;
   };
-  const controlClient = createCodexControlClient({ peer: connected.peer, ensureAlive });
+  const controlClient = createCodexControlClient({
+    peer: connected.peer,
+    imageOptions: config,
+    signal: linked.signal,
+    ensureAlive,
+  });
   opened = true;
   return {
     providerPid: connected.providerPid,
+    userAgent: connected.userAgent,
     ...controlClient,
     async respond(interactionId, reply) {
       ensureAlive();

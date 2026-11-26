@@ -15,6 +15,10 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/agent-executor/codex` — added `interruptTurn` (`CodexInterruptTurnParams`, draining matching local active turns across `CodexSession` and `CodexSharedServer` without touching external pending requests), cross-connection `steerTurn` (`CodexControlSteerTurnParams` on `CodexControlClient`, plus explicit `expectedTurnId` and optional `threadId` on `CodexSession.steerTurn` for external/reconnected turns), `resumeThread` (`CodexResumeThreadParams` defaulting `excludeTurns: true`) and `compactThread` on `CodexControlClient` / `CodexSession`, `CodexTurn` (`nativeTurnId` from `turn/start`) and `CodexTurnInput.cwd`, `CodexLocalImageInputSchema` / `CodexLocalImageInput` (`{ type: 'localImage', path }`) on `CodexTurnInputPart`, `CodexThreadContext.thread`, `userAgent` from `initialize` on `CodexControlConnection` / `CodexSession` / `CodexSharedServer`, `maxFrameBytes` and opt-in `serverRequestDelivery: 'external-only' | 'all'` on `CodexDriverConfig` (`requestId` and `duringActiveTurn` on `CodexServerRequestEvent`), and nullable `cursor` on `CodexListTurnsParams` / `CodexListItemsParams`.
+
 ## [0.130.0] - 2026-11-26
 
 ### ⚠️ Breaking changes

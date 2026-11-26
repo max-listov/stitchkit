@@ -4,11 +4,7 @@ import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
 import type { ExecutorProfileConfig } from '../profile';
 import { emitStartupPhase, sessionAbort } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
-import {
-  bindCodexSessionThreadControls,
-  type CodexControlClient,
-  createCodexControlClient,
-} from './control-client';
+import { bindCodexSessionThreadControls, createCodexControlClient } from './control-client';
 import { createCodexHandlers } from './handlers';
 import {
   CodexStartedThreadSchema,
@@ -22,17 +18,17 @@ import {
   type PendingExternalCodexRequest,
 } from './request-answers';
 import {
-  type CodexSessionConfig,
-  createCodexStartTurn,
-  openCodexThreadRpc,
-  validateCodexOpenInput,
-} from './session';
-import {
   type CodexOpenForkOptions,
   type CodexSession,
   type CodexThreadPolicyOverrides,
   createCodexSessionMutators,
 } from './session-controls';
+import {
+  type CodexSessionConfig,
+  createCodexStartTurn,
+  openCodexThreadRpc,
+  validateCodexOpenInput,
+} from './thread-open';
 
 const CLOSE_UNSUBSCRIBE_TIMEOUT_MS = 5_000;
 
@@ -64,8 +60,9 @@ export interface SharedServerState {
   readonly profile: ExecutorProfileConfig;
   readonly peer: JsonRpcPeer;
   readonly providerPid: number | undefined;
+  readonly userAgent: string | undefined;
   readonly maxThreads: number;
-  readonly controlClient: CodexControlClient;
+  readonly onBeforeInterruptTurn: (threadId: string, turnId: string) => void;
   readonly serverSignal: AbortSignal;
   readonly threads: Map<string, SharedThreadSlot>;
   readonly openingNativeThreadIds: Set<string>;
@@ -103,7 +100,10 @@ function buildSharedThreadSession(params: {
   };
   const threadControlClient = createCodexControlClient({
     peer: state.peer,
+    imageOptions: state.config,
+    signal: threadAbort.signal,
     ensureAlive: ensureThreadAlive,
+    onBeforeInterruptTurn: state.onBeforeInterruptTurn,
   });
   const startTurn = createCodexStartTurn({
     config: state.config,
@@ -163,6 +163,7 @@ function buildSharedThreadSession(params: {
   return {
     nativeThreadId: threadId,
     providerPid: state.providerPid,
+    userAgent: state.userAgent,
     threadContext,
     startTurn,
     async respond(interactionId, reply) {
@@ -217,6 +218,16 @@ export async function openSharedCodexThread(
     state.openingNativeThreadIds.add(threadInput.nativeThreadId);
   }
   let registeredThreadId: string | undefined;
+  const openControls = createCodexControlClient({
+    peer: state.peer,
+    imageOptions: state.config,
+    signal: threadAbort.signal,
+    ensureAlive: () => {
+      threadAbort.signal.throwIfAborted();
+      state.ensureServerAlive();
+    },
+    onBeforeInterruptTurn: state.onBeforeInterruptTurn,
+  });
   try {
     threadAbort.signal.throwIfAborted();
     let dynamicOverrides: CodexThreadPolicyOverrides | undefined;
@@ -224,7 +235,7 @@ export async function openSharedCodexThread(
       dynamicOverrides = await raceAbort(
         Promise.resolve(
           state.config.prepareThread({
-            controls: state.controlClient,
+            controls: openControls,
             cwd: threadInput.cwd,
             ...(threadInput.nativeThreadId !== undefined && {
               nativeThreadId: threadInput.nativeThreadId,
@@ -283,6 +294,9 @@ export async function openSharedCodexThread(
         ...(state.config.onServerRequest !== undefined && {
           onServerRequest: state.config.onServerRequest,
         }),
+        ...(state.config.serverRequestDelivery !== undefined && {
+          serverRequestDelivery: state.config.serverRequestDelivery,
+        }),
       }),
     };
     state.threads.set(threadId, slot);
@@ -295,7 +309,7 @@ export async function openSharedCodexThread(
           state.config.verifyThread({
             nativeThreadId: threadId,
             threadContext,
-            controls: state.controlClient,
+            controls: openControls,
           }),
         ),
         threadAbort.signal,

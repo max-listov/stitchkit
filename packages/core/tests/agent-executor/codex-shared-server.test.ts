@@ -273,4 +273,196 @@ describe('Codex shared multi-thread server (ADR 0329)', () => {
       }),
     ).rejects.toThrow(RangeError);
   });
+
+  test('exposes userAgent, drains local approvals on server/cross-thread interruptTurn, supports serverRequestDelivery all, and aborts in-flight openControls.steerTurn', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-shared-controls-'));
+    const home = join(root, 'home');
+    trackPidFile(join(home, 'shared-pid.txt'));
+    const observedRequests: Array<{
+      interactionId: string;
+      requestId: string | number;
+      duringActiveTurn: boolean;
+      threadId: unknown;
+      respond: (reply: { kind: 'approve' }) => Promise<void>;
+    }> = [];
+
+    const driver = createCodexDriver({
+      executable: process.execPath,
+      prefixArgs: [FAKE_SHARED_CODEX],
+      ambient: { PATH: process.env.PATH, HOME: root },
+      serverRequestDelivery: 'all',
+      onServerRequest: (ev) => {
+        const paramsObj =
+          typeof ev.params === 'object' && ev.params !== null ? ev.params : undefined;
+        observedRequests.push({
+          interactionId: ev.interactionId,
+          requestId: ev.requestId,
+          duringActiveTurn: ev.duringActiveTurn,
+          threadId: paramsObj !== undefined ? Reflect.get(paramsObj, 'threadId') : undefined,
+          respond: (reply) => ev.respond(reply),
+        });
+      },
+    });
+
+    const server = await driver.openSharedServer({
+      profile: { profileId: 'p-shared-ctrl', engine: 'codex', home },
+      cwd: root,
+      maxThreads: 4,
+    });
+    try {
+      expect(server.userAgent).toBe('fake-codex-shared');
+      const threadA = await server.openThread({ cwd: root });
+      const threadB = await server.openThread({ cwd: root });
+      const threadC = await server.openThread({ cwd: root });
+      expect(threadA.userAgent).toBe('fake-codex-shared');
+
+      // Start approval-gated turns on A, B, and C.
+      const turnA = await threadA.startTurn({
+        turnId: 'tA-int',
+        clientId: 'cA-int',
+        input: [{ type: 'text', text: 'NEEDS_APPROVAL alpha' }],
+      });
+      const turnB = await threadB.startTurn({
+        turnId: 'tB-int',
+        clientId: 'cB-int',
+        input: [{ type: 'text', text: 'NEEDS_APPROVAL beta' }],
+      });
+      const turnC = await threadC.startTurn({
+        turnId: 'tC-obs',
+        clientId: 'cC-obs',
+        input: [{ type: 'text', text: 'NEEDS_APPROVAL gamma' }],
+      });
+      expect(turnA.nativeTurnId).toBe('turn-1');
+      expect(turnB.nativeTurnId).toBe('turn-2');
+      expect(turnC.nativeTurnId).toBe('turn-3');
+
+      for (let i = 0; i < 40 && observedRequests.length < 3; i += 1) await Bun.sleep(10);
+      expect(observedRequests).toHaveLength(3);
+      for (const req of observedRequests) {
+        expect(req.duringActiveTurn).toBe(true);
+        expect(typeof req.requestId).toBe('number');
+      }
+
+      // 1) Server-level interruptTurn drains threadA's local pending approval before RPC.
+      await server.interruptTurn({
+        threadId: threadA.nativeThreadId,
+        turnId: turnA.nativeTurnId,
+      });
+      // 2) Cross-thread threadA.interruptTurn({ threadId: threadB }) drains threadB's pending approval!
+      await threadA.interruptTurn({
+        threadId: threadB.nativeThreadId,
+        turnId: turnB.nativeTurnId,
+      });
+      // 3) Answer threadC through onServerRequest.respond; second answer on turnC fails with TypeError.
+      const reqC = observedRequests.find((r) => r.threadId === threadC.nativeThreadId);
+      if (reqC === undefined) throw new Error('expected request for threadC');
+      await reqC.respond({ kind: 'approve' });
+      await expect(turnC.respond(reqC.interactionId, { kind: 'approve' })).rejects.toThrow(
+        TypeError,
+      );
+
+      const [deltasA, deltasB, deltasC] = await Promise.all([
+        collectTurn(turnA),
+        collectTurn(turnB),
+        collectTurn(turnC),
+      ]);
+      expect(deltasA.some((d) => d.type === 'turn-end' && d.outcome === 'interrupted')).toBe(
+        true,
+      );
+      expect(deltasB.some((d) => d.type === 'turn-end' && d.outcome === 'interrupted')).toBe(
+        true,
+      );
+      expect(projectExecutorDeltas(deltasC)).toContainEqual({
+        type: 'text',
+        text: `${threadC.nativeThreadId}:NEEDS_APPROVAL gamma:accept`,
+      });
+
+      const responses = readFileSync(join(home, 'responses.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(responses.filter((r) => r.result?.decision === 'cancel')).toHaveLength(2);
+      const interrupts = readFileSync(join(home, 'turn-interrupt.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(interrupts).toEqual([
+        { threadId: threadA.nativeThreadId, turnId: turnA.nativeTurnId },
+        { threadId: threadB.nativeThreadId, turnId: turnB.nativeTurnId },
+      ]);
+
+      // Control-plane resumeThread, compactThread, and steerTurn on shared server.
+      await server.resumeThread({ threadId: threadA.nativeThreadId });
+      await server.compactThread({ threadId: threadA.nativeThreadId });
+      expect(
+        await server.steerTurn({
+          threadId: threadA.nativeThreadId,
+          expectedTurnId: 'ext-shared-turn',
+          input: [{ type: 'text', text: 'nudge' }],
+        }),
+      ).toEqual({ turnId: 'ext-shared-turn' });
+      expect(readFileSync(join(home, 'resumed.jsonl'), 'utf8')).toContain(
+        threadA.nativeThreadId,
+      );
+      expect(readFileSync(join(home, 'thread-compact.jsonl'), 'utf8')).toContain(
+        threadA.nativeThreadId,
+      );
+      expect(readFileSync(join(home, 'turn-steer.jsonl'), 'utf8')).toContain(
+        'ext-shared-turn',
+      );
+
+      await threadC.close();
+      await threadB.close();
+      await threadA.close();
+    } finally {
+      await server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+
+    // 4) Per-attempt openControls in openThread binds steerTurn resolveFile to threadAbort.signal.
+    const abortRoot = mkdtempSync(join(tmpdir(), 'codex-shared-open-ctrl-'));
+    const abortHome = join(abortRoot, 'home');
+    trackPidFile(join(abortHome, 'shared-pid.txt'));
+    let steerCalledAfterAbort = false;
+    let releaseAbortResolveFile: (() => void) | undefined;
+    const abortResolveGate = new Promise<void>((resolve) => {
+      releaseAbortResolveFile = resolve;
+    });
+    const abortDriver = createCodexDriver({
+      executable: process.execPath,
+      prefixArgs: [FAKE_SHARED_CODEX],
+      ambient: { PATH: process.env.PATH, HOME: abortRoot },
+      resolveFile: async () => {
+        await abortResolveGate;
+        return new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+      },
+      prepareThread: async ({ controls }) => {
+        await controls.steerTurn({
+          threadId: 'shared-thread-0',
+          expectedTurnId: 't-0',
+          input: [{ type: 'file', mediaType: 'image/png', reference: 'wait.png' }],
+        });
+        steerCalledAfterAbort = true;
+        return undefined;
+      },
+    });
+    const abortServer = await abortDriver.openSharedServer({
+      profile: { profileId: 'p-open-ctrl', engine: 'codex', home: abortHome },
+      cwd: abortRoot,
+    });
+    try {
+      const ac = new AbortController();
+      const opening = abortServer.openThread({ cwd: abortRoot, signal: ac.signal });
+      setTimeout(() => ac.abort(new Error('cancel openThread prepare')), 25);
+      await expect(opening).rejects.toThrow(/cancel openThread prepare/);
+      releaseAbortResolveFile?.();
+      await Bun.sleep(25);
+      expect(steerCalledAfterAbort).toBe(false);
+      expect(existsSync(join(abortHome, 'turn-steer.jsonl'))).toBe(false);
+      expect(abortServer.activeThreadCount).toBe(0);
+    } finally {
+      await abortServer.close();
+      rmSync(abortRoot, { recursive: true, force: true });
+    }
+  });
 });

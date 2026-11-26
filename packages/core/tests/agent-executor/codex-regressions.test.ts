@@ -32,7 +32,10 @@ import {
   type CodexTurnSlot,
   type PendingExternalCodexRequest,
 } from '../../src/agent-executor/codex/request-answers';
-import { CodexSkillInputSchema } from '../../src/agent-executor/codex/turn-input';
+import {
+  CodexLocalImageInputSchema,
+  CodexSkillInputSchema,
+} from '../../src/agent-executor/codex/turn-input';
 import {
   CodexUnixSocketError,
   connectCodexUnixSocket,
@@ -3349,4 +3352,934 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       expect(msg).toContain('brandNewVendorCode');
     }
   });
+
+  test('Codex control and session interruptTurn, external steerTurn, nativeTurnId, cwd, localImage, resumeThread, compactThread, threadContext.thread, and nullable cursors', () =>
+    inScratch('codex-control-steer-interrupt-local-image', async (root) => {
+      const home = join(root, 'home-ctrl-steer');
+      let resolveFileCalls = 0;
+      let releaseSlowFile: (() => void) | undefined;
+      const slowFileGate = new Promise<void>((resolve) => {
+        releaseSlowFile = resolve;
+      });
+      const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+      const scenarioPath = await writeScenario(root, [
+        {
+          do: 'emit',
+          record: {
+            id: 'active-appr-1',
+            method: 'item/commandExecution/requestApproval',
+            params: {
+              threadId: 'fake-thread',
+              turnId: 'native-turn-77',
+              itemId: 'cmd-int-1',
+              command: 'sleep 10',
+            },
+          },
+        },
+        { do: 'expect', type: 'response' },
+        { do: 'expect', type: 'turn/interrupt' },
+        {
+          do: 'emit',
+          record: {
+            method: 'turn/completed',
+            params: {
+              threadId: 'fake-thread',
+              turn: { id: 'native-turn-77', status: 'interrupted', items: [] },
+            },
+          },
+        },
+      ]);
+
+      // 1. CodexLocalImageInputSchema validation (positive & negative controls).
+      expect(
+        CodexLocalImageInputSchema.safeParse({ type: 'localImage', path: '/tmp/shot.png' })
+          .success,
+      ).toBe(true);
+      expect(
+        CodexLocalImageInputSchema.safeParse({ type: 'localImage', path: 'relative/shot.png' })
+          .success,
+      ).toBe(false);
+      expect(
+        CodexLocalImageInputSchema.safeParse({ type: 'localImage', path: '   ' }).success,
+      ).toBe(false);
+      expect(
+        CodexLocalImageInputSchema.safeParse({ type: 'localImage', path: '/tmp/a\0b.png' })
+          .success,
+      ).toBe(false);
+
+      const driver = codexDriver(root, {
+        resolveFile: async (ref) => {
+          resolveFileCalls += 1;
+          if (ref === 'slow.png') await slowFileGate;
+          return pngBytes;
+        },
+      });
+      const baseProfile = {
+        profileId: 'ctrl-steer',
+        engine: 'codex' as const,
+        home,
+        env: {
+          FAKE_ENGINE_SCENARIO: scenarioPath,
+          FAKE_ENGINE_PID_FILE: trackedPidFile(root, 'ctrl-steer-c'),
+          FAKE_CODEX_TURN_ID: 'native-turn-77',
+          FAKE_CODEX_THREAD_EXTRA: JSON.stringify({
+            status: { type: 'active', activeFlags: [] },
+            canAcceptDirectInput: true,
+          }),
+          FAKE_CODEX_THREAD_CONTEXT: JSON.stringify({
+            model: 'gpt-5-codex',
+            modelProvider: 'openai',
+          }),
+        },
+      };
+
+      // 2. CodexControlConnection: interruptTurn, steerTurn (with localImage/skill/file & image-only),
+      //    resumeThread (default excludeTurns: true + false + overrides), compactThread, nullable cursors.
+      const ctrl = await driver.connectControl({ profile: baseProfile, cwd: root });
+      try {
+        await expect(ctrl.interruptTurn({ threadId: '  ', turnId: 't-1' })).rejects.toThrow(
+          TypeError,
+        );
+        await expect(ctrl.interruptTurn({ threadId: 'th-1', turnId: '   ' })).rejects.toThrow(
+          TypeError,
+        );
+        await ctrl.interruptTurn({ threadId: 'th-ext', turnId: 'tui-turn-9' });
+
+        // Eager steerTurn validation rejects BEFORE resolveFile is called.
+        await expect(
+          ctrl.steerTurn({
+            threadId: '   ',
+            expectedTurnId: 't-1',
+            input: [{ type: 'file', mediaType: 'image/png', reference: 'never.png' }],
+          }),
+        ).rejects.toThrow(TypeError);
+        await expect(
+          ctrl.steerTurn({
+            threadId: 'th-ext',
+            expectedTurnId: '   ',
+            input: [{ type: 'file', mediaType: 'image/png', reference: 'never.png' }],
+          }),
+        ).rejects.toThrow(TypeError);
+        await expect(
+          ctrl.steerTurn({
+            threadId: 'th-ext',
+            expectedTurnId: 't-1',
+            clientId: '   ',
+            input: [{ type: 'file', mediaType: 'image/png', reference: 'never.png' }],
+          }),
+        ).rejects.toThrow(TypeError);
+        await expect(
+          ctrl.steerTurn({
+            threadId: 'th-ext',
+            expectedTurnId: 't-1',
+            input: [
+              { type: 'localImage', path: 'relative/not-abs.png' },
+              { type: 'file', mediaType: 'image/png', reference: 'never.png' },
+            ],
+          }),
+        ).rejects.toThrow(TypeError);
+        expect(resolveFileCalls).toBe(0);
+
+        // Image-only localImage steerTurn sends wire input without calling resolveFile.
+        const imgOnlySteer = await ctrl.steerTurn({
+          threadId: 'th-ext',
+          expectedTurnId: 'tui-turn-10',
+          input: [{ type: 'localImage', path: '/tmp/only.png' }],
+        });
+        expect(imgOnlySteer).toEqual({ turnId: 'tui-turn-10' });
+        expect(resolveFileCalls).toBe(0);
+
+        // Mixed [text, localImage, skill, file] steerTurn with clientId preserves order.
+        const mixedSteer = await ctrl.steerTurn({
+          threadId: 'th-ext',
+          expectedTurnId: 'tui-turn-11',
+          clientId: 'steer-cid-1',
+          input: [
+            { type: 'text', text: 'check screenshot' },
+            { type: 'localImage', path: '/tmp/screen.png' },
+            { type: 'skill', name: 'qa', path: '/skills/qa/SKILL.md' },
+            { type: 'file', mediaType: 'image/png', reference: 'inline.png' },
+          ],
+        });
+        expect(mixedSteer).toEqual({ turnId: 'tui-turn-11' });
+        expect(resolveFileCalls).toBe(1);
+
+        // resumeThread defaults excludeTurns: true, accepts excludeTurns: false + overrides, refuses invalid inputs.
+        await expect(ctrl.resumeThread({ threadId: '   ' })).rejects.toThrow(TypeError);
+        await expect(ctrl.resumeThread({ threadId: 'th-ext', cwd: '' })).rejects.toThrow(
+          TypeError,
+        );
+        await expect(
+          ctrl.resumeThread({ threadId: 'th-ext', cwd: '/bad\0path' }),
+        ).rejects.toThrow(TypeError);
+        await expect(
+          ctrl.resumeThread({ threadId: 'th-ext', excludeTurns: 'yes' as unknown as boolean }),
+        ).rejects.toThrow(TypeError);
+        await ctrl.resumeThread({ threadId: 'th-ext' });
+        await ctrl.resumeThread({
+          threadId: 'th-ext',
+          excludeTurns: false,
+          cwd: root,
+          model: 'gpt-5-codex',
+        });
+
+        // compactThread returns void and validates threadId.
+        await expect(ctrl.compactThread({ threadId: '  ' })).rejects.toThrow(TypeError);
+        expect(await ctrl.compactThread({ threadId: 'th-ext' })).toBeUndefined();
+
+        // Nullable cursors (and opaque empty string cursor on listTurns) pass validation; invalid types/blank item cursors fail.
+        await ctrl.listTurns({ threadId: 'th-ext', cursor: null });
+        await ctrl.listTurns({ threadId: 'th-ext', cursor: '' });
+        await expect(
+          ctrl.listTurns({ threadId: 'th-ext', cursor: 42 as unknown as string }),
+        ).rejects.toThrow(TypeError);
+        await ctrl.listItems({ threadId: 'th-ext', cursor: null });
+        await expect(ctrl.listItems({ threadId: 'th-ext', cursor: '   ' })).rejects.toThrow(
+          TypeError,
+        );
+      } finally {
+        await ctrl.close();
+      }
+      // Closed control connection refuses interruptTurn / resumeThread / steerTurn / compactThread.
+      await expect(
+        ctrl.interruptTurn({ threadId: 'th-ext', turnId: 't-1' }),
+      ).rejects.toThrow();
+      await expect(ctrl.resumeThread({ threadId: 'th-ext' })).rejects.toThrow();
+      await expect(ctrl.compactThread({ threadId: 'th-ext' })).rejects.toThrow();
+      await expect(
+        ctrl.steerTurn({
+          threadId: 'th-ext',
+          expectedTurnId: 't-1',
+          input: [{ type: 'text', text: 'after close' }],
+        }),
+      ).rejects.toThrow();
+
+      // 2b. Image-only localImage works on a driver with resolveFile omitted (`undefined`).
+      const noResolverCtrl = await codexDriver(root).connectControl({
+        profile: {
+          ...baseProfile,
+          home: join(root, 'home-no-resolver'),
+          env: {
+            ...baseProfile.env,
+            FAKE_ENGINE_PID_FILE: trackedPidFile(root, 'ctrl-no-resolver'),
+          },
+        },
+        cwd: root,
+      });
+      try {
+        expect(
+          await noResolverCtrl.steerTurn({
+            threadId: 'th-no-res',
+            expectedTurnId: 'turn-no-res',
+            input: [{ type: 'localImage', path: '/tmp/no-resolver.png' }],
+          }),
+        ).toEqual({ turnId: 'turn-no-res' });
+      } finally {
+        await noResolverCtrl.close();
+      }
+
+      // 3. CodexSession: threadContext.thread, nativeTurnId, TurnInput.cwd, image-only localImage startTurn,
+      //    session.interruptTurn (external & local active), session.steerTurn (external, cross-thread, post-await races),
+      //    session.resumeThread (does not mutate threadContext), session.compactThread.
+      let releaseEndRaceFile: (() => void) | undefined;
+      const endRaceGate = new Promise<void>((resolve) => {
+        releaseEndRaceFile = resolve;
+      });
+      const sessionDriver = codexDriver(root, {
+        resolveFile: async (ref) => {
+          resolveFileCalls += 1;
+          if (ref === 'slow.png') await slowFileGate;
+          if (ref === 'slow-end.png') await endRaceGate;
+          return pngBytes;
+        },
+      });
+      const session = await sessionDriver.open({
+        profile: {
+          ...baseProfile,
+          env: {
+            ...baseProfile.env,
+            FAKE_ENGINE_PID_FILE: trackedPidFile(root, 'ctrl-steer-s'),
+          },
+        },
+        cwd: root,
+      });
+      try {
+        expect(session.threadContext.thread).toEqual({
+          id: 'fake-thread',
+          status: { type: 'active', activeFlags: [] },
+          canAcceptDirectInput: true,
+        });
+
+        // Session resumeThread defaults threadId + excludeTurns: true and does NOT mutate cached threadContext.
+        const snapshotBefore = session.threadContext;
+        await session.resumeThread({ model: 'gpt-5-mini' });
+        expect(session.threadContext).toBe(snapshotBefore);
+        expect(session.threadContext.model).toBe('gpt-5-codex');
+        expect(await session.compactThread()).toBeUndefined();
+
+        // External steerTurn without local activeTurn requires explicit expectedTurnId.
+        const beforeNoActiveCalls = resolveFileCalls;
+        await expect(
+          session.steerTurn({
+            input: [{ type: 'file', mediaType: 'image/png', reference: 'never.png' }],
+          }),
+        ).rejects.toThrow(/no Codex turn is currently running/);
+        await expect(
+          session.steerTurn({
+            expectedTurnId: '   ',
+            input: [{ type: 'file', mediaType: 'image/png', reference: 'never.png' }],
+          }),
+        ).rejects.toThrow(TypeError);
+        expect(resolveFileCalls).toBe(beforeNoActiveCalls);
+
+        // External/TUI steerTurn with explicit expectedTurnId works when active === undefined.
+        expect(
+          await session.steerTurn({
+            expectedTurnId: 'tui-turn-external',
+            input: [{ type: 'localImage', path: '/tmp/tui.png' }],
+          }),
+        ).toEqual({ turnId: 'tui-turn-external' });
+
+        // Cross-thread steerTurn requires expectedTurnId and ignores own activeTurn.
+        await expect(
+          session.steerTurn({
+            threadId: 'foreign-thread-1',
+            input: [{ type: 'text', text: 'missing expectedTurnId' }],
+          }),
+        ).rejects.toThrow(TypeError);
+        expect(
+          await session.steerTurn({
+            threadId: 'foreign-thread-1',
+            expectedTurnId: 'foreign-turn-1',
+            input: [{ type: 'text', text: 'cross-thread steer' }],
+          }),
+        ).toEqual({ turnId: 'foreign-turn-1' });
+
+        // startTurn validates cwd eagerly before resolveFile.
+        const beforeBadCwd = resolveFileCalls;
+        await expect(
+          session.startTurn({
+            turnId: 't-bad-cwd',
+            clientId: crypto.randomUUID(),
+            cwd: '   ',
+            input: [{ type: 'file', mediaType: 'image/png', reference: 'never.png' }],
+          }),
+        ).rejects.toThrow(TypeError);
+        await expect(
+          session.startTurn({
+            turnId: 't-nul-cwd',
+            clientId: crypto.randomUUID(),
+            cwd: '/bad\0dir',
+            input: [{ type: 'file', mediaType: 'image/png', reference: 'never.png' }],
+          }),
+        ).rejects.toThrow(TypeError);
+        expect(resolveFileCalls).toBe(beforeBadCwd);
+
+        // Post-await race 1: steerTurn starts with active === undefined & explicit expectedTurnId,
+        // awaits slow resolveFile, and while awaiting a new local turn starts with a different nativeTurnId!
+        const racingSteer = session.steerTurn({
+          expectedTurnId: 'tui-turn-old',
+          input: [{ type: 'file', mediaType: 'image/png', reference: 'slow.png' }],
+        });
+        await Bun.sleep(15);
+
+        // Start local turn with cwd + image-only localImage (does NOT increment resolveFileCalls!).
+        const callsBeforeLocalTurn = resolveFileCalls;
+        const turn = await session.startTurn({
+          turnId: 't-native',
+          clientId: crypto.randomUUID(),
+          cwd: root,
+          input: [{ type: 'localImage', path: '/tmp/start-only.png' }],
+        });
+        expect(resolveFileCalls).toBe(callsBeforeLocalTurn);
+        expect(turn.nativeTurnId).toBe('native-turn-77');
+
+        // Release slow.png -> racingSteer MUST refuse because a new local turn owns the thread now!
+        releaseSlowFile?.();
+        await expect(racingSteer).rejects.toThrow(TypeError);
+
+        // While local turn is active, cross-thread steerTurn still succeeds, mismatched expectedTurnId throws.
+        expect(
+          await session.steerTurn({
+            threadId: 'foreign-thread-2',
+            expectedTurnId: 'foreign-turn-2',
+            input: [{ type: 'text', text: 'cross while active' }],
+          }),
+        ).toEqual({ turnId: 'foreign-turn-2' });
+        await expect(
+          session.steerTurn({
+            expectedTurnId: 'wrong-turn-id',
+            input: [{ type: 'text', text: 'mismatch' }],
+          }),
+        ).rejects.toThrow(TypeError);
+
+        // Post-await race 2: steerTurn starts while local turn IS active, then the turn ends before resolveFile resolves.
+        const endingSteer = session.steerTurn({
+          expectedTurnId: turn.nativeTurnId,
+          input: [{ type: 'file', mediaType: 'image/png', reference: 'slow-end.png' }],
+        });
+        await Bun.sleep(15);
+
+        // Wait until active-appr-1 is pending, then verify foreign interruptTurn does NOT drain it,
+        // while own session.interruptTurn({ turnId: turn.nativeTurnId }) DOES drain active-appr-1!
+        let sawRequest = false;
+        let sawInterruptedDone = false;
+        for await (const delta of turn.deltas) {
+          if (delta.type === 'request' && delta.interactionId === 'active-appr-1') {
+            sawRequest = true;
+            // Interrupting a DIFFERENT foreign thread must NOT drain our active turn's pending approval!
+            await session.interruptTurn({
+              threadId: 'other-thread',
+              turnId: 'native-turn-77',
+            });
+            await Bun.sleep(25);
+            expect(existsSync(join(home, 'responses.jsonl'))).toBe(false);
+            // Interrupting our own active nativeTurnId drains active-appr-1 and completes turn as interrupted.
+            await session.interruptTurn({ turnId: turn.nativeTurnId });
+          }
+          if (delta.type === 'turn-end' && delta.outcome === 'interrupted') {
+            sawInterruptedDone = true;
+          }
+        }
+        expect(sawRequest).toBe(true);
+        expect(sawInterruptedDone).toBe(true);
+        // Now release slow-end.png -> endingSteer MUST refuse because the active turn already ended!
+        releaseEndRaceFile?.();
+        await expect(endingSteer).rejects.toThrow(/ended before steering was sent/);
+      } finally {
+        await session.close();
+      }
+
+      const [startedTurn] = await readJsonLines(join(home, 'turn-start.jsonl'));
+      expect(startedTurn).toMatchObject({
+        cwd: root,
+        input: [{ type: 'localImage', path: '/tmp/start-only.png' }],
+      });
+      const steerLog = await readJsonLines(join(home, 'turn-steer.jsonl'));
+      // Exact count 5 proves neither racingSteer nor endingSteer ever reached the wire!
+      expect(steerLog).toHaveLength(5);
+      expect(steerLog[0]).toEqual({
+        threadId: 'th-ext',
+        expectedTurnId: 'tui-turn-10',
+        input: [{ type: 'localImage', path: '/tmp/only.png' }],
+      });
+      expect(steerLog[1]).toMatchObject({
+        threadId: 'th-ext',
+        expectedTurnId: 'tui-turn-11',
+        clientUserMessageId: 'steer-cid-1',
+        input: [
+          { type: 'text', text: 'check screenshot', text_elements: [] },
+          { type: 'localImage', path: '/tmp/screen.png' },
+          { type: 'skill', name: 'qa', path: '/skills/qa/SKILL.md' },
+          { type: 'image', url: expect.stringMatching(/^data:image\/png;base64,/) },
+        ],
+      });
+      expect(steerLog[2]).toEqual({
+        threadId: 'fake-thread',
+        expectedTurnId: 'tui-turn-external',
+        input: [{ type: 'localImage', path: '/tmp/tui.png' }],
+      });
+      expect(steerLog[3]).toEqual({
+        threadId: 'foreign-thread-1',
+        expectedTurnId: 'foreign-turn-1',
+        input: [{ type: 'text', text: 'cross-thread steer', text_elements: [] }],
+      });
+      expect(steerLog[4]).toEqual({
+        threadId: 'foreign-thread-2',
+        expectedTurnId: 'foreign-turn-2',
+        input: [{ type: 'text', text: 'cross while active', text_elements: [] }],
+      });
+      const interruptLog = await readJsonLines(join(home, 'turn-interrupt.jsonl'));
+      expect(interruptLog).toEqual([
+        { threadId: 'th-ext', turnId: 'tui-turn-9' },
+        { threadId: 'other-thread', turnId: 'native-turn-77' },
+        { threadId: 'fake-thread', turnId: 'native-turn-77' },
+      ]);
+      const resumeLog = await readJsonLines(join(home, 'thread-resume.jsonl'));
+      expect(resumeLog).toEqual([
+        { threadId: 'th-ext', excludeTurns: true },
+        { threadId: 'th-ext', excludeTurns: false, cwd: root, model: 'gpt-5-codex' },
+        { threadId: 'fake-thread', excludeTurns: true, model: 'gpt-5-mini' },
+      ]);
+      const compactLog = await readJsonLines(join(home, 'thread-compact.jsonl'));
+      expect(compactLog).toEqual([{ threadId: 'th-ext' }, { threadId: 'fake-thread' }]);
+      const rpcLog = await readJsonLines(join(home, 'rpc.jsonl'));
+      expect(rpcLog).toContainEqual({
+        method: 'thread/turns/list',
+        params: { threadId: 'th-ext', cursor: null },
+      });
+      expect(rpcLog).toContainEqual({
+        method: 'thread/turns/list',
+        params: { threadId: 'th-ext', cursor: '' },
+      });
+      expect(rpcLog).toContainEqual({
+        method: 'thread/items/list',
+        params: { threadId: 'th-ext', cursor: null },
+      });
+      const responses = await readJsonLines(join(home, 'responses.jsonl'));
+      expect(responses).toContainEqual({
+        id: 'active-appr-1',
+        result: { decision: 'cancel' },
+      });
+    }));
+
+  test('Codex driver enforces maxFrameBytes on WebSocket and stdio frames while keeping findInput floor and exposing initialize userAgent', () =>
+    inScratch('codex-max-frame-and-ua', async (root) => {
+      const scenarioPath = await writeScenario(root, []);
+
+      // 1. Eager validation of maxFrameBytes.
+      expect(() => codexDriver(root, { maxFrameBytes: 0 })).toThrow(TypeError);
+      expect(() => codexDriver(root, { maxFrameBytes: -10 })).toThrow(TypeError);
+      expect(() => codexDriver(root, { maxFrameBytes: 1.5 })).toThrow(TypeError);
+
+      // 2. Initialize userAgent across stdio, unix-listen, unix-connect, empty string, omitted, and malformed reply.
+      const uaProfile = (label: string, extraEnv: Record<string, string>) => ({
+        profileId: label,
+        engine: 'codex' as const,
+        home: join(root, `home-${label}`),
+        env: {
+          FAKE_ENGINE_SCENARIO: scenarioPath,
+          FAKE_ENGINE_PID_FILE: trackedPidFile(root, label),
+          ...extraEnv,
+        },
+      });
+
+      const stdioCtrl = await codexDriver(root).connectControl({
+        profile: uaProfile('ua-stdio', { FAKE_CODEX_USER_AGENT: 'codex-cli/0.171.0 (linux)' }),
+        cwd: root,
+      });
+      try {
+        expect(stdioCtrl.userAgent).toBe('codex-cli/0.171.0 (linux)');
+      } finally {
+        await stdioCtrl.close();
+      }
+
+      const emptyUaSession = await codexDriver(root).open({
+        profile: uaProfile('ua-empty', { FAKE_CODEX_USER_AGENT: '   ' }),
+        cwd: root,
+      });
+      try {
+        expect(emptyUaSession.userAgent).toBeUndefined();
+      } finally {
+        await emptyUaSession.close();
+      }
+
+      const omittedUaCtrl = await codexDriver(root).connectControl({
+        profile: uaProfile('ua-omit', { FAKE_CODEX_USER_AGENT: '__OMIT__' }),
+        cwd: root,
+      });
+      try {
+        expect(omittedUaCtrl.userAgent).toBeUndefined();
+      } finally {
+        await omittedUaCtrl.close();
+      }
+
+      // Malformed non-object initialize reply fails BEFORE peer.notify('initialized') is sent.
+      await expect(
+        codexDriver(root).connectControl({
+          profile: uaProfile('ua-bad', { FAKE_CODEX_INITIALIZE_REPLY: '123' }),
+          cwd: root,
+        }),
+      ).rejects.toThrow();
+      expect(existsSync(join(root, 'home-ua-bad', 'initialized.jsonl'))).toBe(false);
+
+      // 3. stdio maxFrameBytes: 8 KiB reply fails with maxFrameBytes: 2048, succeeds with 32768.
+      const smallStdio = await codexDriver(root, { maxFrameBytes: 2048 }).connectControl({
+        profile: uaProfile('frame-stdio-small', { FAKE_CODEX_OVERSIZED_BYTES: '8192' }),
+        cwd: root,
+      });
+      try {
+        await expect(smallStdio.readThread({ threadId: 't-big' })).rejects.toThrow();
+      } finally {
+        await smallStdio.close();
+      }
+
+      const bigStdio = await codexDriver(root, { maxFrameBytes: 32_768 }).connectControl({
+        profile: uaProfile('frame-stdio-big', { FAKE_CODEX_OVERSIZED_BYTES: '8192' }),
+        cwd: root,
+      });
+      try {
+        const res = await bigStdio.readThread({ threadId: 't-big' });
+        expect(res).toMatchObject({ thread: { id: 't-big' } });
+      } finally {
+        await bigStdio.close();
+      }
+
+      // 4. WebSocket (unix-listen + unix-connect) maxFrameBytes + userAgent (both positive and negative controls).
+      const sockDir = join(root, 'sock-frame');
+      mkdirSync(sockDir, { mode: 0o700 });
+      const smallListenSocket = join(sockDir, 'frame-listen-small.sock');
+      const smallListenOwner = await codexDriver(root, {
+        transport: {
+          kind: 'unix-listen',
+          socketPath: smallListenSocket,
+          listenTimeoutMs: 5_000,
+        },
+        maxFrameBytes: 2048,
+      }).open({
+        profile: uaProfile('frame-ws-listen-small', {
+          FAKE_CODEX_USER_AGENT: 'codex-ws/0.171.0',
+          FAKE_CODEX_OVERSIZED_BYTES: '8192',
+        }),
+        cwd: root,
+      });
+      trackProcess(smallListenOwner.providerPid);
+      try {
+        // Negative control for unix-listen maxFrameBytes: 2 KiB limit MUST reject 8 KiB reply!
+        await expect(smallListenOwner.readThread()).rejects.toThrow();
+      } finally {
+        await smallListenOwner.close();
+      }
+
+      const socketPath = join(sockDir, 'frame.sock');
+      const wsOwner = await codexDriver(root, {
+        transport: { kind: 'unix-listen', socketPath, listenTimeoutMs: 5_000 },
+        maxFrameBytes: 32_768,
+      }).open({
+        profile: uaProfile('frame-ws-owner', {
+          FAKE_CODEX_USER_AGENT: 'codex-ws/0.171.0',
+          FAKE_CODEX_OVERSIZED_BYTES: '8192',
+        }),
+        cwd: root,
+      });
+      trackProcess(wsOwner.providerPid);
+      try {
+        expect(wsOwner.userAgent).toBe('codex-ws/0.171.0');
+        // Owner with 32 KiB limit succeeds on 8 KiB reply.
+        expect(await wsOwner.readThread()).toMatchObject({ thread: { id: 'fake-thread' } });
+
+        // unix-connect client with 2 KiB maxFrameBytes sees userAgent on small initialize, then fails on 8 KiB reply.
+        const smallWs = await codexDriver(root, {
+          transport: { kind: 'unix-connect', socketPath },
+          maxFrameBytes: 2048,
+        }).connectControl({
+          profile: uaProfile('frame-ws-small', {}),
+          cwd: root,
+        });
+        try {
+          expect(smallWs.userAgent).toBe('codex-ws/0.171.0');
+          await expect(smallWs.readThread({ threadId: 'fake-thread' })).rejects.toThrow();
+        } finally {
+          await smallWs.close();
+        }
+      } finally {
+        await wsOwner.close();
+      }
+
+      // 5. findInput preserves 64 MiB floor even when driver maxFrameBytes is small (1024).
+      const findHome = join(root, 'home-find-floor');
+      mkdirSync(findHome, { recursive: true });
+      const lines = Array.from({ length: 40 }, (_, i) => `cid-floor-${i}`);
+      writeFileSync(join(findHome, 'client-ids.jsonl'), `${lines.join('\n')}\n`);
+      const found = await codexDriver(root, { maxFrameBytes: 1024 }).findInput({
+        profile: {
+          profileId: 'find-floor',
+          engine: 'codex',
+          home: findHome,
+          env: {
+            FAKE_ENGINE_SCENARIO: scenarioPath,
+            FAKE_ENGINE_PID_FILE: trackedPidFile(root, 'find-floor'),
+          },
+        },
+        cwd: root,
+        nativeThreadId: 'fake-thread',
+        clientId: 'cid-floor-39',
+      });
+      expect(found).toBe(true);
+    }));
+
+  test('Codex serverRequestDelivery delivers active-turn requests to onServerRequest with requestId, duringActiveTurn, and shared single-shot respond', () =>
+    inScratch('codex-server-request-delivery', async (root) => {
+      // 1. Eager validation: 'all' without onServerRequest and invalid delivery strings throw TypeError.
+      expect(() => codexDriver(root, { serverRequestDelivery: 'all' })).toThrow(TypeError);
+      expect(() =>
+        codexDriver(root, {
+          serverRequestDelivery: 'unknown' as unknown as 'all',
+          onServerRequest: () => undefined,
+        }),
+      ).toThrow(TypeError);
+
+      const twoRequestsScenario: FakeEngineStep[] = [
+        {
+          do: 'emit',
+          record: {
+            id: 42,
+            method: 'item/commandExecution/requestApproval',
+            params: {
+              threadId: 'fake-thread',
+              turnId: 'fake-turn',
+              itemId: 'cmd-num',
+              command: 'ls -la',
+              startedAtMs: 1796000001000,
+            },
+          },
+        },
+        { do: 'expect', type: 'response' },
+        {
+          do: 'emit',
+          record: {
+            id: 'req-str-9',
+            method: 'item/fileChange/requestApproval',
+            params: {
+              threadId: 'fake-thread',
+              turnId: 'fake-turn',
+              itemId: 'fc-str',
+              reason: 'Apply patch',
+            },
+          },
+        },
+        { do: 'expect', type: 'response' },
+        turnCompleted('completed'),
+      ];
+
+      // 2. Negative control: default ('external-only') does NOT call onServerRequest during startTurn().
+      const defaultEvents: unknown[] = [];
+      const { session: defaultSession } = await codexSession(
+        root,
+        'delivery-default',
+        twoRequestsScenario,
+        {
+          options: {
+            onServerRequest: (ev) => defaultEvents.push(ev),
+          },
+        },
+      );
+      try {
+        const turn = await defaultSession.startTurn({
+          turnId: 't-def',
+          clientId: crypto.randomUUID(),
+          input: [{ type: 'text', text: 'go' }],
+        });
+        await drainApproving(turn);
+        expect(defaultEvents).toEqual([]);
+      } finally {
+        await defaultSession.close();
+      }
+
+      // 3. serverRequestDelivery: 'all' delivers active-turn requests with numeric vs string requestId,
+      //    duringActiveTurn: true, raw params, shared single-shot respond, and isolated observer errors.
+      const delivered: Array<{
+        interactionId: string;
+        requestId: string | number;
+        duringActiveTurn: boolean;
+        params: unknown;
+      }> = [];
+      const { session: allSession, home: allHome } = await codexSession(
+        root,
+        'delivery-all',
+        twoRequestsScenario,
+        {
+          options: {
+            serverRequestDelivery: 'all',
+            onServerRequest: (ev) => {
+              delivered.push({
+                interactionId: ev.interactionId,
+                requestId: ev.requestId,
+                duringActiveTurn: ev.duringActiveTurn,
+                params: ev.params,
+              });
+              if (ev.requestId === 42) {
+                void ev.respond({ kind: 'approve', scope: 'session' });
+                return;
+              }
+              // Second request throws in observer -> isolated, turn.respond() still answers it!
+              throw new Error('observer crash isolated');
+            },
+          },
+        },
+      );
+      try {
+        const turn = await allSession.startTurn({
+          turnId: 't-all',
+          clientId: crypto.randomUUID(),
+          input: [{ type: 'text', text: 'go' }],
+        });
+        for await (const delta of turn.deltas) {
+          if (delta.type === 'request' && delta.interactionId === '42') {
+            // Already answered through onServerRequest.respond -> duplicate answer throws TypeError!
+            await expect(turn.respond('42', { kind: 'approve' })).rejects.toThrow(TypeError);
+          } else if (delta.type === 'request' && delta.interactionId === 'req-str-9') {
+            // Observer threw, but turn.pending stayed intact and turn.respond answers cleanly.
+            await turn.respond('req-str-9', { kind: 'approve' });
+          }
+        }
+        expect(delivered).toEqual([
+          {
+            interactionId: '42',
+            requestId: 42,
+            duringActiveTurn: true,
+            params: {
+              threadId: 'fake-thread',
+              turnId: 'fake-turn',
+              itemId: 'cmd-num',
+              command: 'ls -la',
+              startedAtMs: 1796000001000,
+            },
+          },
+          {
+            interactionId: 'req-str-9',
+            requestId: 'req-str-9',
+            duringActiveTurn: true,
+            params: {
+              threadId: 'fake-thread',
+              turnId: 'fake-turn',
+              itemId: 'fc-str',
+              reason: 'Apply patch',
+            },
+          },
+        ]);
+        const responses = await readJsonLines(join(allHome, 'responses.jsonl'));
+        expect(responses).toEqual([
+          { id: 42, result: { decision: 'acceptForSession' } },
+          { id: 'req-str-9', result: { decision: 'accept' } },
+        ]);
+      } finally {
+        await allSession.close();
+      }
+
+      // 4. Unit checks: post-interrupt request is NOT delivered to onServerRequest;
+      //    async observer rejection during active turn is isolated without disturbing turn.pending;
+      //    external request delivers duringActiveTurn: false with numeric requestId preserved.
+      const unitEvents: Array<{ requestId: string | number; duringActiveTurn: boolean }> = [];
+      let currentTurn: CodexTurnSlot | undefined = {
+        state: { turnId: 'local-int', interruptRequested: true },
+        channel: createTurnDeltaChannel(),
+        pending: new Map(),
+      };
+      const unitHandlers = createCodexHandlers({
+        profileId: 'p-unit',
+        limits: new Map(),
+        externalPending: new Map(),
+        getTurn: () => currentTurn,
+        clearTurn: () => {
+          currentTurn = undefined;
+        },
+        serverRequestDelivery: 'all',
+        onServerRequest: (ev) => {
+          unitEvents.push({ requestId: ev.requestId, duringActiveTurn: ev.duringActiveTurn });
+          if (ev.duringActiveTurn) {
+            return Promise.reject(new Error('async active-turn observer rejection'));
+          }
+          void ev.respond({ kind: 'approve' });
+          return undefined;
+        },
+      });
+      // Active turn already interruptRequested -> auto-refused with cancel and NOT delivered to onServerRequest!
+      const autoRefused = await unitHandlers.onRequest(
+        'item/commandExecution/requestApproval',
+        { itemId: 'c-post-int', command: 'echo late' },
+        99,
+      );
+      expect(autoRefused).toEqual({ decision: 'cancel' });
+      expect(unitEvents).toEqual([]);
+
+      // Async observer rejection during active turn leaves turn.pending intact for turn/session respond!
+      currentTurn = {
+        state: { turnId: 'local-async-obs', interruptRequested: false },
+        channel: createTurnDeltaChannel(),
+        pending: new Map(),
+      };
+      const activeAsyncPromise = unitHandlers.onRequest(
+        'item/commandExecution/requestApproval',
+        { itemId: 'c-async-obs', command: 'echo ok' },
+        101,
+      );
+      await Bun.sleep(10);
+      expect(currentTurn.pending.has('101')).toBe(true);
+      answerCodexSessionRequest({
+        turn: currentTurn,
+        externalPending: new Map(),
+        interactionId: '101',
+        reply: { kind: 'approve' },
+      });
+      expect(await activeAsyncPromise).toEqual({ decision: 'accept' });
+
+      // External request (no active turn) preserves numeric requestId and sets duringActiveTurn: false.
+      currentTurn = undefined;
+      const extResult = await unitHandlers.onRequest(
+        'item/commandExecution/requestApproval',
+        { itemId: 'c-ext-num', command: 'echo ext' },
+        777,
+      );
+      expect(extResult).toEqual({ decision: 'accept' });
+      expect(unitEvents).toEqual([
+        { requestId: 101, duringActiveTurn: true },
+        { requestId: 777, duringActiveTurn: false },
+      ]);
+
+      // Negative control: interruptTurn for an external/TUI turn on an observer connection does NOT cancel externalPending.
+      const extSockDir = join(root, 'sock-ext-int');
+      mkdirSync(extSockDir, { mode: 0o700 });
+      const extSockPath = join(extSockDir, 'ext-int.sock');
+      const extOwner = await codexDriver(root, {
+        transport: { kind: 'unix-listen', socketPath: extSockPath, listenTimeoutMs: 5_000 },
+      }).open({
+        profile: {
+          profileId: 'ext-int-owner',
+          engine: 'codex',
+          home: join(root, 'home-ext-int'),
+          env: {
+            FAKE_ENGINE_SCENARIO: await writeScenario(root, [
+              {
+                do: 'emit',
+                record: {
+                  id: 'ext-tui-req-1',
+                  method: 'item/commandExecution/requestApproval',
+                  params: {
+                    threadId: 'fake-thread',
+                    turnId: 'fake-turn',
+                    itemId: 'cmd-ext-stay',
+                    command: 'sleep 1',
+                  },
+                },
+              },
+              { do: 'expect', type: 'turn/interrupt' },
+              { do: 'expect', type: 'response' },
+              turnCompleted('interrupted'),
+            ]),
+            FAKE_ENGINE_PID_FILE: trackedPidFile(root, 'ext-int-owner'),
+            FAKE_CODEX_BROADCAST_TUI: '1',
+          },
+        },
+        cwd: root,
+      });
+      trackProcess(extOwner.providerPid);
+      try {
+        let sawBroadcastReq = false;
+        const obsSession = await codexDriver(root, {
+          transport: { kind: 'unix-connect', socketPath: extSockPath },
+          onServerRequest: () => {
+            sawBroadcastReq = true;
+          },
+        }).open({
+          profile: {
+            profileId: 'ext-int-obs',
+            engine: 'codex',
+            home: join(root, 'home-ext-int'),
+            env: { FAKE_ENGINE_PID_FILE: trackedPidFile(root, 'ext-int-obs') },
+          },
+          cwd: root,
+          nativeThreadId: extOwner.nativeThreadId,
+        });
+        try {
+          const ownerTurn = await extOwner.startTurn({
+            turnId: 't-owner-stay',
+            clientId: crypto.randomUUID(),
+            input: [{ type: 'text', text: 'go' }],
+          });
+          for (let i = 0; i < 40 && !sawBroadcastReq; i += 1) await Bun.sleep(10);
+          expect(sawBroadcastReq).toBe(true);
+          // Calling obsSession.interruptTurn for external turnId sends turn/interrupt without cancelling externalPending!
+          await obsSession.interruptTurn({ turnId: ownerTurn.nativeTurnId });
+          // The observer's externalPending entry is still answerable because interruptTurn did NOT drain externalPending.
+          await obsSession.respond('ext-tui-req-1', { kind: 'approve' });
+          await drain(ownerTurn);
+        } finally {
+          await obsSession.close();
+        }
+      } finally {
+        await extOwner.close();
+      }
+    }));
 });

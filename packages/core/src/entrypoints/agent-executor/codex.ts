@@ -3,6 +3,7 @@ export type {
   CodexControlClient,
   CodexControlConnectInput,
   CodexControlConnection,
+  CodexControlSteerTurnParams,
   CodexListItemsParams,
   CodexListTurnsParams,
   CodexReadThreadParams,
@@ -33,6 +34,7 @@ export type {
   CodexSession,
   CodexSteerTurnInput,
   CodexThreadPolicyOverrides,
+  CodexTurn,
   CodexTurnInput,
 } from '../../agent-executor/codex/session-controls';
 export type {
@@ -42,6 +44,7 @@ export type {
 export type { CodexSharedServerThreadInput } from '../../agent-executor/codex/shared-thread';
 export type {
   CodexInjectItemsParams,
+  CodexInterruptTurnParams,
   CodexListLoadedThreadsParams,
   CodexListThreadsParams,
   CodexRevertThreadParams,
@@ -53,7 +56,10 @@ export type {
   CodexThreadSourceKind,
   CodexUpdateThreadMetadataParams,
 } from '../../agent-executor/codex/thread-controls';
+export type { CodexResumeThreadParams } from '../../agent-executor/codex/thread-open';
 export {
+  type CodexLocalImageInput,
+  CodexLocalImageInputSchema,
   type CodexSkillInput,
   CodexSkillInputSchema,
   type CodexTurnInputPart,

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { JsonRpcValue } from '../json-rpc-peer';
+import { safeJsonValue } from '../session-primitives';
 
 /**
  * The slice of Codex's app-server protocol (0.171.0, JSON-RPC over stdio or
@@ -202,9 +203,14 @@ export const CodexThreadContextSchema = z.object({
   sandbox: z.json().optional(),
   cwd: z.string().optional(),
   runtimeWorkspaceRoots: z.array(z.string()).readonly().optional(),
+  thread: z.json().optional(),
 });
 /** Applied policy and model context reported by Codex when opening, resuming, or forking a thread. */
 export type CodexThreadContext = Readonly<z.infer<typeof CodexThreadContextSchema>>;
+
+export const CodexInitializeResponseSchema = z.looseObject({
+  userAgent: z.string().nullable().optional(),
+});
 
 export const CodexStartedThreadSchema = CodexThreadContextSchema.extend({
   thread: z.looseObject({ id: z.string().min(1) }),
@@ -224,6 +230,7 @@ export function extractCodexThreadContext(
     ...(parsed.runtimeWorkspaceRoots !== undefined && {
       runtimeWorkspaceRoots: parsed.runtimeWorkspaceRoots,
     }),
+    thread: safeJsonValue(parsed.thread),
   };
 }
 

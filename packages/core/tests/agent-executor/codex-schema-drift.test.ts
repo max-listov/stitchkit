@@ -79,6 +79,7 @@ const FIELDS: Record<string, string[]> = {
     'threadId',
     'input',
     'clientUserMessageId',
+    'cwd',
     'model',
     'effort',
     'collaborationMode',
@@ -465,6 +466,7 @@ test(`the driver's fields exist in the schema of codex-cli ${fixture.codexVersio
       .map((field) => `${name}.${field}`),
   );
   for (const [name, fields] of [
+    ['InitializeResponse', ['userAgent', 'codexHome', 'platformFamily', 'platformOs']],
     ['InitializeCapabilities', ['experimentalApi', 'optOutNotificationMethods']],
     ['ToolRequestUserInputResponse', ['answers']],
     ['ToolRequestUserInputParams', ['itemId', 'questions']],
@@ -558,6 +560,16 @@ test('the turn statuses, error kinds, decisions, collaboration modes and item ty
   expect(properties(skillInput ?? {})).toEqual(
     expect.arrayContaining(['type', 'name', 'path']),
   );
+  const localImageInput = userInputs.find((entry) => typeOf(entry) === 'localImage');
+  expect(properties(localImageInput ?? {})).toEqual(expect.arrayContaining(['type', 'path']));
+  const turnsCursor = Definition.parse(
+    Reflect.get(definition('ThreadTurnsListParams').properties ?? {}, 'cursor'),
+  );
+  expect(turnsCursor.type).toEqual(expect.arrayContaining(['string', 'null']));
+  const itemsCursor = Definition.parse(
+    Reflect.get(top('ThreadItemsListParams').properties ?? {}, 'cursor'),
+  );
+  expect(variants(itemsCursor).some((entry) => entry.type === 'null')).toBe(true);
   expect(definition('SortDirection').enum).toEqual(expect.arrayContaining(['asc', 'desc']));
   expect(variants(definition('TurnItemsView')).flatMap((entry) => entry.enum ?? [])).toEqual(
     expect.arrayContaining(['notLoaded', 'summary', 'full']),

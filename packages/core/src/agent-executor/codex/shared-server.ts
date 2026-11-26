@@ -10,7 +10,6 @@ import { connectCodex } from './connect';
 import { type CodexControlClient, createCodexControlClient } from './control-client';
 import { createCodexHandlers } from './handlers';
 import { codexStopped, type PendingExternalCodexRequest } from './request-answers';
-import type { CodexSessionConfig } from './session';
 import type { CodexSession } from './session-controls';
 import {
   type CodexSharedServerThreadInput,
@@ -18,6 +17,7 @@ import {
   type SharedServerState,
   type SharedThreadSlot,
 } from './shared-thread';
+import { type CodexSessionConfig, interruptLocalCodexTurn } from './thread-open';
 
 const DEFAULT_MAX_SHARED_THREADS = 32;
 const HARD_MAX_SHARED_THREADS = 256;
@@ -36,6 +36,8 @@ export interface CodexSharedServerOpenInput {
 /** Shared headless `codex app-server` multiplexing up to `maxThreads` independent {@link CodexSession}s. */
 export interface CodexSharedServer extends CodexControlClient {
   readonly providerPid: number | undefined;
+  /** Server-reported `userAgent` from the `initialize` response, or `undefined` when omitted. */
+  readonly userAgent: string | undefined;
   readonly maxThreads: number;
   readonly activeThreadCount: number;
   readonly capabilities: ExecutorDriverCapabilities;
@@ -109,6 +111,9 @@ export async function openCodexSharedServer(
     clearTurn: () => undefined,
     ...(config.onNotification !== undefined && { onNotification: config.onNotification }),
     ...(config.onServerRequest !== undefined && { onServerRequest: config.onServerRequest }),
+    ...(config.serverRequestDelivery !== undefined && {
+      serverRequestDelivery: config.serverRequestDelivery,
+    }),
   });
 
   const failAllThreads = (error: Error) => {
@@ -168,12 +173,21 @@ export async function openCodexSharedServer(
     throw error;
   }
 
-  const { peer, providerPid } = connected;
+  const { peer, providerPid, userAgent } = connected;
   const ensureServerAlive = () => {
     if (serverClosing) throw new Error('The Codex shared server is closed');
     if (serverDead !== undefined) throw serverDead;
   };
-  const controlClient = createCodexControlClient({ peer, ensureAlive: ensureServerAlive });
+  const onBeforeInterruptTurn = (targetThreadId: string, turnId: string) => {
+    interruptLocalCodexTurn(threads.get(targetThreadId)?.current, turnId);
+  };
+  const controlClient = createCodexControlClient({
+    peer,
+    imageOptions: config,
+    signal: linked.signal,
+    ensureAlive: ensureServerAlive,
+    onBeforeInterruptTurn,
+  });
   const sharedCapabilities: ExecutorDriverCapabilities = {
     ...baseCapabilities,
     multiThreadPerProcess: true,
@@ -183,8 +197,9 @@ export async function openCodexSharedServer(
     profile,
     peer,
     providerPid,
+    userAgent,
     maxThreads,
-    controlClient,
+    onBeforeInterruptTurn,
     serverSignal: linked.signal,
     threads,
     openingNativeThreadIds: new Set<string>(),
@@ -210,6 +225,7 @@ export async function openCodexSharedServer(
   opened = true;
   return {
     providerPid,
+    userAgent,
     maxThreads,
     get activeThreadCount() {
       return threads.size;

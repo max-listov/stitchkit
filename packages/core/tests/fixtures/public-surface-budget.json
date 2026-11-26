@@ -6,7 +6,7 @@
     "stitchkit/agent-executor/acp": 29,
     "stitchkit/agent-executor/claude": 5,
     "stitchkit/agent-executor/claude-sdk": 22,
-    "stitchkit/agent-executor/codex": 49,
+    "stitchkit/agent-executor/codex": 55,
     "stitchkit/agent-executor/testing": 23,
     "stitchkit/agent-runtime": 413,
     "stitchkit/agent-runtime/browser": 96,
@@ -1294,6 +1294,18 @@
         "CodexTurnInputPart"
       ],
       "reason": "External turn/request observers, threadless control connections, live thread/turn/item/collaboration-mode RPC parameters, fork-on-open options and ordered skill turn-input parts extend the existing stitchkit/agent-executor/codex leaf."
+    },
+    {
+      "entrypoint": "stitchkit/agent-executor/codex",
+      "names": [
+        "CodexControlSteerTurnParams",
+        "CodexInterruptTurnParams",
+        "CodexLocalImageInput",
+        "CodexLocalImageInputSchema",
+        "CodexResumeThreadParams",
+        "CodexTurn"
+      ],
+      "reason": "Control-plane turn interrupt, explicit-turnId steering, thread resume, native turnId return type, and absolute-path localImage turn input extend the existing stitchkit/agent-executor/codex leaf without a second transport layer."
     }
   ]
 }

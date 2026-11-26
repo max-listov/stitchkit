@@ -6,10 +6,18 @@ import { CodexThreadRevertResponseSchema } from './protocol';
 const MAX_UINT32 = 0xffff_ffff;
 const MAX_THREAD_LIST_IDS = 100;
 
-/** Thread identifier target shared by single-thread Codex RPCs (`thread/unsubscribe`, `thread/archive`, `thread/unarchive`). */
+/** Thread identifier target shared by single-thread Codex RPCs (`thread/unsubscribe`, `thread/archive`, `thread/unarchive`, `thread/compact/start`). */
 export interface CodexThreadIdParams {
   /** Thread identifier to target. */
   readonly threadId: string;
+}
+
+/** Parameters for Codex `turn/interrupt`. */
+export interface CodexInterruptTurnParams {
+  /** Thread identifier whose active turn will be interrupted. */
+  readonly threadId: string;
+  /** Turn identifier to interrupt (including external/TUI or reconnected turns). */
+  readonly turnId: string;
 }
 
 /** Parameters for Codex `thread/revert`. */
@@ -146,6 +154,10 @@ export interface CodexThreadControlMethods {
   updateThreadMetadata(params: CodexUpdateThreadMetadataParams): Promise<JsonRpcValue>;
   /** Set a thread's display name (`thread/name/set`). */
   setThreadName(params: CodexSetThreadNameParams): Promise<JsonRpcValue>;
+  /** Interrupt a running turn on a thread (`turn/interrupt`), including external/TUI or reconnected turns. */
+  interruptTurn(params: CodexInterruptTurnParams): Promise<void>;
+  /** Request context compaction for a thread (`thread/compact/start`). */
+  compactThread(params: CodexThreadIdParams): Promise<void>;
 }
 
 /** Validate a required non-empty thread identifier. */
@@ -177,6 +189,20 @@ export function assertOptionalNonEmptyString(
   if (value === undefined) return;
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new TypeError(`[stitchkit] ${caller}: ${field} must be a non-empty string`);
+  }
+}
+
+/** Validate an optional non-empty string parameter without NUL bytes. */
+export function assertOptionalNonEmptyNoNulString(
+  value: string | undefined,
+  field: string,
+  caller: string,
+): void {
+  if (value === undefined) return;
+  if (typeof value !== 'string' || value.trim().length === 0 || value.includes('\0')) {
+    throw new TypeError(
+      `[stitchkit] ${caller}: ${field} must be a non-empty string without NUL bytes`,
+    );
   }
 }
 
@@ -294,9 +320,13 @@ function buildListThreadsPayload(
   };
 }
 
-/** Build the 9 verified `0.171.0` thread lifecycle, revert, injection, and catalog RPC methods. */
+/** Build the verified `0.171.0` thread lifecycle, revert, injection, interrupt, compaction, and catalog RPC methods. */
 export function createCodexThreadControlMethods(
   call: (method: string, params?: Record<string, JsonRpcValue>) => Promise<JsonRpcValue>,
+  options: {
+    readonly ensureAlive?: () => void;
+    readonly onBeforeInterruptTurn?: (threadId: string, turnId: string) => void;
+  } = {},
 ): CodexThreadControlMethods {
   return {
     async revertThread(params) {
@@ -375,6 +405,21 @@ export function createCodexThreadControlMethods(
       const threadId = assertNonEmptyThreadId(params.threadId, caller);
       const name = assertRequiredNonEmptyString(params.name, 'name', caller);
       return call('thread/name/set', { threadId, name });
+    },
+    async interruptTurn(params) {
+      options.ensureAlive?.();
+      const caller = 'CodexControlClient.interruptTurn';
+      const threadId = assertNonEmptyThreadId(params.threadId, caller);
+      const turnId = assertRequiredNonEmptyString(params.turnId, 'turnId', caller);
+      options.onBeforeInterruptTurn?.(threadId, turnId);
+      await call('turn/interrupt', { threadId, turnId });
+    },
+    async compactThread(params) {
+      const threadId = assertNonEmptyThreadId(
+        params.threadId,
+        'CodexControlClient.compactThread',
+      );
+      await call('thread/compact/start', { threadId });
     },
   };
 }

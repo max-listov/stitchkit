@@ -45,6 +45,10 @@ const extraThreadContext =
   process.env.FAKE_CODEX_THREAD_CONTEXT !== undefined
     ? JSON.parse(process.env.FAKE_CODEX_THREAD_CONTEXT)
     : {};
+const extraThreadFields =
+  process.env.FAKE_CODEX_THREAD_EXTRA !== undefined
+    ? JSON.parse(process.env.FAKE_CODEX_THREAD_EXTRA)
+    : {};
 const customRateLimits =
   process.env.FAKE_CODEX_RATE_LIMITS !== undefined
     ? JSON.parse(process.env.FAKE_CODEX_RATE_LIMITS)
@@ -125,19 +129,38 @@ function createSessionHandler(writeLine: (line: string) => void) {
       return;
     }
     seen(message.method);
-    if (message.id === undefined) return;
+    if (message.id === undefined) {
+      if (message.method === 'initialized')
+        appendFileSync(join(home, 'initialized.jsonl'), '1\n');
+      return;
+    }
     const reply = (result: unknown) => write({ id: message.id, result });
+    const logRpc = () =>
+      appendFileSync(
+        join(home, 'rpc.jsonl'),
+        `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+      );
     switch (message.method) {
-      case 'initialize':
+      case 'initialize': {
         appendFileSync(join(home, 'initialize.jsonl'), `${JSON.stringify(message.params)}\n`);
-        reply({ userAgent: 'fake', codexHome: home });
+        if (process.env.FAKE_CODEX_INITIALIZE_REPLY !== undefined) {
+          reply(JSON.parse(process.env.FAKE_CODEX_INITIALIZE_REPLY));
+        } else if (process.env.FAKE_CODEX_USER_AGENT === '__OMIT__') {
+          reply({ codexHome: home });
+        } else {
+          reply({
+            userAgent: process.env.FAKE_CODEX_USER_AGENT ?? 'fake',
+            codexHome: home,
+          });
+        }
         break;
+      }
       case 'thread/start':
         appendFileSync(
           join(home, 'thread-start.jsonl'),
           `${JSON.stringify(message.params)}\n`,
         );
-        reply({ thread: { id: 'fake-thread' }, ...extraThreadContext });
+        reply({ thread: { id: 'fake-thread', ...extraThreadFields }, ...extraThreadContext });
         break;
       case 'thread/resume':
         appendFileSync(
@@ -145,13 +168,16 @@ function createSessionHandler(writeLine: (line: string) => void) {
           `${JSON.stringify(message.params)}\n`,
         );
         reply({
-          thread: { id: message.params?.threadId ?? 'fake-thread' },
+          thread: { id: message.params?.threadId ?? 'fake-thread', ...extraThreadFields },
           ...extraThreadContext,
         });
         break;
       case 'thread/fork':
         appendFileSync(join(home, 'thread-fork.jsonl'), `${JSON.stringify(message.params)}\n`);
-        reply({ thread: { id: 'forked-thread' }, ...extraThreadContext });
+        reply({
+          thread: { id: 'forked-thread', ...extraThreadFields },
+          ...extraThreadContext,
+        });
         break;
       case 'thread/compact/start':
         appendFileSync(
@@ -164,7 +190,13 @@ function createSessionHandler(writeLine: (line: string) => void) {
         buffered.length = 0;
         appendFileSync(join(home, 'turn-start.jsonl'), `${JSON.stringify(message.params)}\n`);
         appendFileSync(ledger, `${message.params.clientUserMessageId}\n`);
-        reply({ turn: { id: 'fake-turn', status: 'inProgress', items: [] } });
+        reply({
+          turn: {
+            id: process.env.FAKE_CODEX_TURN_ID ?? 'fake-turn',
+            status: 'inProgress',
+            items: [],
+          },
+        });
         void play();
         break;
       case 'turn/steer':
@@ -172,64 +204,50 @@ function createSessionHandler(writeLine: (line: string) => void) {
         reply({ turnId: message.params?.expectedTurnId ?? 'fake-turn' });
         break;
       case 'turn/interrupt':
+        appendFileSync(
+          join(home, 'turn-interrupt.jsonl'),
+          `${JSON.stringify(message.params)}\n`,
+        );
         reply({});
         break;
       case 'config/read':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({ config: { sandbox: 'workspace-write', approvalPolicy: 'on-request' } });
         break;
       case 'mcpServerStatus/list':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({ data: JSON.parse(process.env.FAKE_CODEX_MCP_SERVERS ?? '[]') });
         break;
       case 'skills/list':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({ data: JSON.parse(process.env.FAKE_CODEX_SKILLS ?? '[]') });
         break;
       case 'model/list':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({ data: [{ id: 'gpt-5-codex', model: 'gpt-5-codex' }] });
         break;
       case 'account/read':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({
           account: { type: 'chatgpt', email: 'dev@example.invalid' },
           requiresOpenaiAuth: true,
         });
         break;
-      case 'thread/read':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+      case 'thread/read': {
+        logRpc();
+        const oversizedBytes = Number(process.env.FAKE_CODEX_OVERSIZED_BYTES ?? '0');
         reply({
           thread: {
             id: message.params?.threadId ?? 'fake-thread',
             status: { type: 'idle' },
             canAcceptDirectInput: true,
+            ...(oversizedBytes > 0 && { pad: 'x'.repeat(oversizedBytes) }),
           },
         });
         break;
+      }
       case 'collaborationMode/list':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({
           data: [
             { name: 'Plan', mode: 'plan' },
@@ -238,10 +256,7 @@ function createSessionHandler(writeLine: (line: string) => void) {
         });
         break;
       case 'thread/turns/list':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({
           data: clientIds().map((clientId, index) => ({
             id: `turn-${index}`,
@@ -251,10 +266,7 @@ function createSessionHandler(writeLine: (line: string) => void) {
         });
         break;
       case 'thread/items/list':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({
           data: [
             {
@@ -266,10 +278,7 @@ function createSessionHandler(writeLine: (line: string) => void) {
         });
         break;
       case 'thread/revert':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({
           thread: { id: message.params?.threadId ?? 'fake-thread', turns: [] },
           turnsBackwardsCursor: 'turns-back-1',
@@ -277,10 +286,7 @@ function createSessionHandler(writeLine: (line: string) => void) {
         });
         break;
       case 'thread/inject_items':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         if (process.env.FAKE_CODEX_INJECT_UNSUPPORTED === '1') {
           write({
             id: message.id,
@@ -291,17 +297,11 @@ function createSessionHandler(writeLine: (line: string) => void) {
         }
         break;
       case 'thread/unsubscribe':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({ status: 'unsubscribed' });
         break;
       case 'thread/list':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({
           data: [{ id: 'fake-thread', status: { type: 'idle' } }],
           nextCursor: null,
@@ -309,38 +309,23 @@ function createSessionHandler(writeLine: (line: string) => void) {
         });
         break;
       case 'thread/loaded/list':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({ data: ['fake-thread'], nextCursor: null });
         break;
       case 'thread/archive':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({});
         break;
       case 'thread/unarchive':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({ thread: { id: message.params?.threadId ?? 'fake-thread' } });
         break;
       case 'thread/metadata/update':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({ thread: { id: message.params?.threadId ?? 'fake-thread' } });
         break;
       case 'thread/name/set':
-        appendFileSync(
-          join(home, 'rpc.jsonl'),
-          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
-        );
+        logRpc();
         reply({});
         break;
       case 'account/rateLimits/read':

@@ -8,6 +8,7 @@ import type { ExecutorDelta } from '../vocabulary';
 import { classifyCodexNotification } from './classify';
 import { codexPlanWindows } from './limits';
 import {
+  answerActiveCodexTurnRequest,
   answerCodexSessionRequest,
   type CodexServerRequestMethod,
   type CodexTurnSlot,
@@ -34,17 +35,21 @@ export interface CodexNotificationEvent {
   readonly deltas: readonly ExecutorDelta[];
 }
 
-/** Server request received from Codex outside a driver-initiated `startTurn()` (for example from an attached TUI). */
+/** Server request received from Codex (outside `startTurn()`, or also during `startTurn()` when `serverRequestDelivery` is `'all'`). */
 export interface CodexServerRequestEvent {
   /** JSON-RPC request identifier as a string, also carried on `delta.interactionId`. */
   readonly interactionId: string;
+  /** Original JSON-RPC request identifier preserving numeric vs string wire type. */
+  readonly requestId: string | number;
   /** Codex server request method (`requestApproval`, `requestUserInput`, or `mcpServer/elicitation/request`). */
   readonly method: CodexServerRequestMethod;
   /** Raw JSON-RPC request params as received from the server. */
   readonly params: JsonRpcValue | undefined;
+  /** `true` when a driver-initiated `startTurn()` owned the thread as this request arrived. */
+  readonly duringActiveTurn: boolean;
   /** Normalized executor `request` delta preserving approval, permissions, question, or elicitation metadata. */
   readonly delta: Extract<ExecutorDelta, { type: 'request' }>;
-  /** Answer this external server request once; throws `TypeError` if already resolved or invalid. */
+  /** Answer this server request once; throws `TypeError` if already resolved or invalid. */
   respond(reply: InteractionReply['reply']): Promise<void>;
 }
 
@@ -56,6 +61,7 @@ interface CodexHandlersState {
   clearTurn: () => void;
   onNotification?: (event: CodexNotificationEvent) => void;
   onServerRequest?: (event: CodexServerRequestEvent) => void;
+  serverRequestDelivery?: 'external-only' | 'all';
 }
 
 function emitCodexNotification(
@@ -192,24 +198,46 @@ function handleCodexRequest(
   const interactionId = String(id);
   if (turn !== undefined) {
     const parsed = parseCodexServerRequest(method, params);
-    return new Promise<JsonRpcValue>((resolve) => {
+    const delta: Extract<ExecutorDelta, { type: 'request' }> = {
+      type: 'request',
+      turnId: turn.state.turnId,
+      itemId: `request:${interactionId}`,
+      raw: { source: 'codex', type: method },
+      interactionId,
+      kind: parsed.kind,
+      ...parsed.deltaFields,
+    };
+    const promise = new Promise<JsonRpcValue>((resolve) => {
       holdEngineRequest(turn, {
         interactionId,
         detail: parsed.detail,
         answeredBy: { source: 'codex', type: method },
-        delta: () => ({
-          type: 'request',
-          turnId: turn.state.turnId,
-          itemId: `request:${interactionId}`,
-          raw: { source: 'codex', type: method },
-          interactionId,
-          kind: parsed.kind,
-          ...parsed.deltaFields,
-        }),
+        delta: () => delta,
         refusal: codexStoppedAnswer(method),
         resolve,
       });
     });
+    if (
+      state.serverRequestDelivery === 'all' &&
+      state.onServerRequest !== undefined &&
+      turn.pending.has(interactionId)
+    ) {
+      const observer = state.onServerRequest;
+      invokeSafely(() =>
+        observer({
+          interactionId,
+          requestId: id,
+          method,
+          params,
+          duringActiveTurn: true,
+          delta,
+          async respond(reply) {
+            answerActiveCodexTurnRequest(turn, interactionId, reply);
+          },
+        }),
+      );
+    }
+    return promise;
   }
   const observer = state.onServerRequest;
   if (observer === undefined) {
@@ -254,8 +282,10 @@ function handleCodexRequest(
     try {
       const outcome: unknown = observer({
         interactionId,
+        requestId: id,
         method,
         params,
+        duringActiveTurn: false,
         delta,
         async respond(reply) {
           answerCodexSessionRequest({

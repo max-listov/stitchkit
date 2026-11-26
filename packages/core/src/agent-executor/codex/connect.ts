@@ -7,10 +7,11 @@ import { type ExecutorProfileConfig, engineEnvironment } from '../profile';
 import {
   type EngineConnection,
   emitStartupPhase,
+  nonEmptyString,
   stopConnection,
 } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
-import { CODEX_OPTED_OUT_NOTIFICATIONS } from './protocol';
+import { CODEX_OPTED_OUT_NOTIFICATIONS, CodexInitializeResponseSchema } from './protocol';
 import {
   type CodexUnixSocketClient,
   CodexUnixSocketError,
@@ -52,7 +53,7 @@ export interface CodexConnectConfig {
   readonly serverArgs?: readonly string[];
   readonly ambient: Readonly<Record<string, string | undefined>>;
   readonly version: string;
-  readonly maxLineBytes?: number;
+  readonly maxFrameBytes?: number;
 }
 
 /** Active JSON-RPC connection to a Codex app-server (stdio or Unix socket). */
@@ -60,6 +61,8 @@ export interface CodexConnection extends EngineConnection {
   readonly peer: JsonRpcPeer;
   /** OS process id of the spawned `codex app-server`, or `undefined` in `unix-connect` mode. */
   readonly providerPid: number | undefined;
+  /** Server-reported `userAgent` from the `initialize` response, or `undefined` when omitted. */
+  readonly userAgent: string | undefined;
 }
 
 type PeerHandlers = Partial<
@@ -117,8 +120,11 @@ export function validateCodexTransportAndArgs(config: {
   );
 }
 
-async function initializeCodexPeer(peer: JsonRpcPeer, version: string): Promise<void> {
-  await peer.request(
+async function initializeCodexPeer(
+  peer: JsonRpcPeer,
+  version: string,
+): Promise<string | undefined> {
+  const reply = await peer.request(
     'initialize',
     {
       clientInfo: { name: 'stitchkit-agent-executor', version },
@@ -129,7 +135,9 @@ async function initializeCodexPeer(peer: JsonRpcPeer, version: string): Promise<
     },
     { timeoutMs: BOOTSTRAP_MS },
   );
+  const parsed = CodexInitializeResponseSchema.parse(reply);
   peer.notify('initialized');
+  return nonEmptyString(parsed.userAgent);
 }
 
 function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
@@ -220,6 +228,63 @@ async function dialWithEngineRace(input: {
   );
 }
 
+async function connectCodexStdio(
+  config: CodexConnectConfig,
+  profile: ExecutorProfileConfig,
+  cwd: string,
+  extraArgs: readonly string[],
+  signal: AbortSignal,
+  handlers: PeerHandlers,
+  onEnd: (error: Error) => void,
+  onStartupPhase?: (phase: ExecutorStartupPhase) => void,
+): Promise<CodexConnection> {
+  const env = engineEnvironment(profile, config.ambient);
+  let endedError: Error | undefined;
+  let ready = false;
+  const peer = createJsonRpcPeer({
+    header: 'omitted',
+    requestTimeoutMs: REQUEST_MS,
+    send: (line) => engine.send(line),
+    ...handlers,
+  });
+  const finishEnd = (error: Error) => {
+    if (endedError !== undefined) return;
+    endedError = error;
+    peer.close(error);
+    if (ready) onEnd(error);
+  };
+  emitStartupPhase(onStartupPhase, 'spawning');
+  const engine = spawnEngineProcess({
+    executable: config.executable,
+    args: [...config.prefix, 'app-server', ...extraArgs],
+    cwd,
+    env,
+    signal,
+    ...(config.maxFrameBytes !== undefined && { maxLineBytes: config.maxFrameBytes }),
+  });
+  const reading = (async () => {
+    try {
+      for await (const line of engine.lines) peer.receive(line);
+      finishEnd(new Error(`Codex app-server exited: ${engine.stderrTail().slice(-2000)}`));
+    } catch (error) {
+      const failed = error instanceof Error ? error : new Error(String(error));
+      finishEnd(failed);
+      await engine.stop().catch(() => undefined);
+    }
+  })();
+  try {
+    emitStartupPhase(onStartupPhase, 'initializing');
+    const userAgent = await initializeCodexPeer(peer, config.version);
+    const providerPid = (await engine.pidReady) ?? engine.pid;
+    if (endedError !== undefined) throw endedError;
+    ready = true;
+    return { engine, peer, reading, providerPid, userAgent };
+  } catch (error) {
+    await stopConnection({ engine, reading }, { error });
+    throw error;
+  }
+}
+
 /** Connect to a Codex app-server over stdio, a spawned Unix socket, or an existing Unix socket. */
 export async function connectCodex(
   config: CodexConnectConfig,
@@ -234,51 +299,16 @@ export async function connectCodex(
   const extraArgs = config.serverArgs ?? [];
 
   if (transport.kind === 'stdio') {
-    const env = engineEnvironment(profile, config.ambient);
-    let endedError: Error | undefined;
-    let ready = false;
-    const peer = createJsonRpcPeer({
-      header: 'omitted',
-      requestTimeoutMs: REQUEST_MS,
-      send: (line) => engine.send(line),
-      ...handlers,
-    });
-    const finishEnd = (error: Error) => {
-      if (endedError !== undefined) return;
-      endedError = error;
-      peer.close(error);
-      if (ready) onEnd(error);
-    };
-    emitStartupPhase(onStartupPhase, 'spawning');
-    const engine = spawnEngineProcess({
-      executable: config.executable,
-      args: [...config.prefix, 'app-server', ...extraArgs],
+    return connectCodexStdio(
+      config,
+      profile,
       cwd,
-      env,
+      extraArgs,
       signal,
-      ...(config.maxLineBytes !== undefined && { maxLineBytes: config.maxLineBytes }),
-    });
-    const reading = (async () => {
-      try {
-        for await (const line of engine.lines) peer.receive(line);
-        finishEnd(new Error(`Codex app-server exited: ${engine.stderrTail().slice(-2000)}`));
-      } catch (error) {
-        const failed = error instanceof Error ? error : new Error(String(error));
-        finishEnd(failed);
-        await engine.stop().catch(() => undefined);
-      }
-    })();
-    try {
-      emitStartupPhase(onStartupPhase, 'initializing');
-      await initializeCodexPeer(peer, config.version);
-      const providerPid = (await engine.pidReady) ?? engine.pid;
-      if (endedError !== undefined) throw endedError;
-      ready = true;
-      return { engine, peer, reading, providerPid };
-    } catch (error) {
-      await stopConnection({ engine, reading }, { error });
-      throw error;
-    }
+      handlers,
+      onEnd,
+      onStartupPhase,
+    );
   }
 
   let wsClient: CodexUnixSocketClient | undefined;
@@ -334,13 +364,13 @@ export async function connectCodex(
       env,
       signal,
       stdoutMode: 'drain',
-      ...(config.maxLineBytes !== undefined && { maxLineBytes: config.maxLineBytes }),
+      ...(config.maxFrameBytes !== undefined && { maxLineBytes: config.maxFrameBytes }),
     });
     try {
       wsClient = await dialWithEngineRace({
         socketPath: transport.socketPath,
         listenTimeoutMs: transport.listenTimeoutMs ?? DEFAULT_LISTEN_TIMEOUT_MS,
-        ...(config.maxLineBytes !== undefined && { maxFrameBytes: config.maxLineBytes }),
+        ...(config.maxFrameBytes !== undefined && { maxFrameBytes: config.maxFrameBytes }),
         signal,
         engine: spawnedEngine,
         onMessage,
@@ -359,7 +389,7 @@ export async function connectCodex(
           expectedOwnerUid: transport.expectedOwnerUid,
         }),
         signal,
-        ...(config.maxLineBytes !== undefined && { maxFrameBytes: config.maxLineBytes }),
+        ...(config.maxFrameBytes !== undefined && { maxFrameBytes: config.maxFrameBytes }),
         onMessage,
         onClose,
       });
@@ -383,7 +413,7 @@ export async function connectCodex(
   try {
     if (endedError !== undefined) throw endedError;
     emitStartupPhase(onStartupPhase, 'initializing');
-    await initializeCodexPeer(peer, config.version);
+    const userAgent = await initializeCodexPeer(peer, config.version);
     if (endedError !== undefined) throw endedError;
     const providerPid =
       spawnedEngine !== undefined
@@ -391,7 +421,7 @@ export async function connectCodex(
         : undefined;
     if (endedError !== undefined) throw endedError;
     ready = true;
-    return { engine: compositeEngine, peer, reading, providerPid };
+    return { engine: compositeEngine, peer, reading, providerPid, userAgent };
   } catch (error) {
     await stopConnection({ engine: compositeEngine, reading }, { error });
     throw error;

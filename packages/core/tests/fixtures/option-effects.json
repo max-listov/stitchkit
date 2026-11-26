@@ -2080,6 +2080,12 @@
     },
     "onDisconnect": {
       "test": "Codex driver observes external TUI turns, handles server requests without -32601, preserves full payloads, and fires onDisconnect"
+    },
+    "maxFrameBytes": {
+      "test": "Codex driver enforces maxFrameBytes on WebSocket and stdio frames while keeping findInput floor and exposing initialize userAgent"
+    },
+    "serverRequestDelivery": {
+      "test": "Codex serverRequestDelivery delivers active-turn requests to onServerRequest with requestId, duringActiveTurn, and shared single-shot respond"
     }
   },
   "CodexSharedServerOpenInput": {

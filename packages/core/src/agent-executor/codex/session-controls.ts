@@ -21,22 +21,28 @@ import {
   type CodexSandboxMode,
   CodexStartedThreadSchema,
   type CodexThreadContext,
-  CodexTurnSteerResponseSchema,
   extractCodexThreadContext,
 } from './protocol';
 import type { CodexSharedServer, CodexSharedServerOpenInput } from './shared-server';
-import type {
-  CodexInjectItemsParams,
-  CodexRevertThreadParams,
-  CodexRevertThreadResult,
-  CodexSetThreadNameParams,
-  CodexUpdateThreadMetadataParams,
+import {
+  assertNonEmptyThreadId,
+  assertOptionalNonEmptyNoNulString,
+  assertOptionalNonEmptyString,
+  assertRequiredNonEmptyString,
+  type CodexInjectItemsParams,
+  type CodexInterruptTurnParams,
+  type CodexRevertThreadParams,
+  type CodexRevertThreadResult,
+  type CodexSetThreadNameParams,
+  type CodexUpdateThreadMetadataParams,
 } from './thread-controls';
+import type { CodexResumeThreadParams } from './thread-open';
 import {
   type CodexTurnInputPart,
   codexTurnInput,
   type InlinedCodexPart,
   inlineCodexParts,
+  sendCodexTurnSteer,
 } from './turn-input';
 
 /** Policy and configuration fields forwarded to Codex `thread/start`, `thread/resume`, and `thread/fork`. */
@@ -57,11 +63,13 @@ export interface CodexThreadPolicyOverrides {
   readonly config?: Readonly<Record<string, JsonRpcValue>>;
 }
 
-/** Input to {@link CodexSession.startTurn}, extending the portable turn input with Codex per-turn overrides and `skill` items. */
+/** Input to {@link CodexSession.startTurn}, extending the portable turn input with Codex per-turn overrides, `localImage`, and `skill` items. */
 export interface CodexTurnInput {
   readonly turnId: string;
   readonly clientId: string;
   readonly input: readonly CodexTurnInputPart[];
+  /** Per-turn working directory override forwarded on `turn/start`. */
+  readonly cwd?: string;
   /** Per-turn model override forwarded on `turn/start`. */
   readonly model?: string;
   /**
@@ -81,11 +89,17 @@ export interface CodexTurnInput {
   readonly runtimeWorkspaceRoots?: readonly string[];
 }
 
+/** Codex turn handle returned by {@link CodexSession.startTurn}, exposing the server-assigned `nativeTurnId`. */
+export interface CodexTurn extends AgentEngineTurn {
+  /** Native turn identifier assigned by Codex in the `turn/start` response (`turn.id`). */
+  readonly nativeTurnId: string;
+}
+
 /** Input to {@link CodexSession.steerTurn} (`turn/steer`). */
 export interface CodexSteerTurnInput {
   readonly input: readonly CodexTurnInputPart[];
   readonly clientId?: string;
-  /** Optional guard asserting which active Codex turn id is being steered. */
+  /** Active Codex turn id guard; required when steering an external/TUI turn without a local `startTurn()`. */
   readonly expectedTurnId?: string;
 }
 
@@ -130,14 +144,16 @@ export interface CodexForkedThread {
   readonly threadContext: CodexThreadContext;
 }
 
-/** Extended Codex session handle exposing `providerPid`, applied `threadContext`, and live app-server controls. */
+/** Extended Codex session handle exposing `providerPid`, `userAgent`, applied `threadContext`, and live app-server controls. */
 export interface CodexSession extends AgentEngineSession, CodexControlClient {
   /** OS process id of the spawned `codex app-server`, or `undefined` when attached via `unix-connect`. */
   readonly providerPid: number | undefined;
+  /** Server-reported `userAgent` from the `initialize` response, or `undefined` when omitted. */
+  readonly userAgent: string | undefined;
   /** Applied thread settings reported by `thread/start`, `thread/resume`, or `thread/fork`. */
   readonly threadContext: CodexThreadContext;
-  /** Start a turn with optional per-turn Codex overrides and `skill` items. */
-  startTurn(input: CodexTurnInput): Promise<AgentEngineTurn>;
+  /** Start a turn with optional per-turn Codex overrides, `localImage`, and `skill` items; resolves with `nativeTurnId`. */
+  startTurn(input: CodexTurnInput): Promise<CodexTurn>;
   /** Answer a pending request from either the active turn or an external/TUI server request. */
   respond(interactionId: string, reply: InteractionReply['reply']): Promise<void>;
   /** Read thread metadata (`thread/read`); defaults `threadId` to this session's `nativeThreadId`. */
@@ -151,6 +167,10 @@ export interface CodexSession extends AgentEngineSession, CodexControlClient {
   /** List items (`thread/items/list`); defaults `threadId` to this session's `nativeThreadId`. */
   listItems(
     params?: Omit<CodexListItemsParams, 'threadId'> & { readonly threadId?: string },
+  ): Promise<JsonRpcValue>;
+  /** Resume a thread (`thread/resume`, defaulting `excludeTurns` to `true`); defaults `threadId` to `nativeThreadId` and does not mutate cached `threadContext`. */
+  resumeThread(
+    params?: Omit<CodexResumeThreadParams, 'threadId'> & { readonly threadId?: string },
   ): Promise<JsonRpcValue>;
   /** Revert thread durable history before `beforeTurnId` (`thread/revert`); defaults `threadId` to `nativeThreadId`. */
   revertThread(
@@ -176,12 +196,18 @@ export interface CodexSession extends AgentEngineSession, CodexControlClient {
   setThreadName(
     params: Omit<CodexSetThreadNameParams, 'threadId'> & { readonly threadId?: string },
   ): Promise<JsonRpcValue>;
-  /** Steer the currently running turn with additional input (`turn/steer`). */
-  steerTurn(input: CodexSteerTurnInput): Promise<{ readonly turnId: string }>;
+  /** Interrupt a running turn (`turn/interrupt`), including external/TUI or reconnected turns; defaults `threadId` to `nativeThreadId`. */
+  interruptTurn(
+    params: Omit<CodexInterruptTurnParams, 'threadId'> & { readonly threadId?: string },
+  ): Promise<void>;
+  /** Steer an active turn with additional input (`turn/steer`); accepts explicit `expectedTurnId` for external/TUI turns and optional `threadId`. */
+  steerTurn(
+    input: CodexSteerTurnInput & { readonly threadId?: string },
+  ): Promise<{ readonly turnId: string }>;
   /** Fork the session's thread into a new thread id without mutating the current session (`thread/fork`). */
   forkThread(options?: CodexForkThreadOptions): Promise<CodexForkedThread>;
-  /** Request context compaction for the current thread (`thread/compact/start`). */
-  compactThread(): Promise<void>;
+  /** Request context compaction (`thread/compact/start`); defaults `threadId` to `nativeThreadId`. */
+  compactThread(params?: { readonly threadId?: string }): Promise<void>;
 }
 
 /** Codex driver returned by {@link createCodexDriver}; `open()` resolves to {@link CodexSession} and `connectControl()` opens a threadless control link. */
@@ -274,6 +300,7 @@ export function validateCodexTurnStartOverrides(
   turnInput: CodexTurnInput,
   activeModelProvider: string | undefined,
 ): void {
+  assertOptionalNonEmptyNoNulString(turnInput.cwd, 'cwd', 'CodexSession.startTurn');
   if (turnInput.modelProvider !== undefined) {
     if (activeModelProvider === undefined || turnInput.modelProvider !== activeModelProvider) {
       throw new TypeError(
@@ -311,6 +338,7 @@ export function buildCodexTurnStartParams(
     input: codexTurnInput(parts),
     clientUserMessageId: turnInput.clientId,
   };
+  if (turnInput.cwd !== undefined) params.cwd = turnInput.cwd;
   if (turnInput.model !== undefined) params.model = turnInput.model;
   if (turnInput.reasoningEffort !== undefined) params.effort = turnInput.reasoningEffort;
   if (turnInput.collaborationMode !== undefined) {
@@ -328,7 +356,7 @@ export function buildCodexTurnStartParams(
   return params;
 }
 
-/** Create thread/turn control methods (`steerTurn`, `forkThread`, `compactThread`) for a live Codex session. */
+/** Create session-bound turn/thread mutators (`steerTurn`, `forkThread`) for a live Codex session. */
 export function createCodexSessionMutators(input: {
   peer: JsonRpcPeer;
   threadId: string;
@@ -338,20 +366,56 @@ export function createCodexSessionMutators(input: {
   getActiveTurn(): { readonly codexTurnId?: string } | undefined;
 }) {
   return {
-    async steerTurn(steerInput: CodexSteerTurnInput): Promise<{ readonly turnId: string }> {
+    async steerTurn(
+      steerInput: CodexSteerTurnInput & { readonly threadId?: string },
+    ): Promise<{ readonly turnId: string }> {
       input.ensureAlive();
-      const active = input.getActiveTurn();
-      const expectedTurnId = active?.codexTurnId;
-      if (active === undefined || expectedTurnId === undefined) {
-        throw new Error('Cannot steer turn: no Codex turn is currently running');
-      }
-      if (
-        steerInput.expectedTurnId !== undefined &&
-        steerInput.expectedTurnId !== expectedTurnId
-      ) {
-        throw new TypeError(
-          `Expected active Codex turn ${steerInput.expectedTurnId}, but current turn is ${expectedTurnId}`,
+      const caller = 'CodexSession.steerTurn';
+      const targetThreadId =
+        steerInput.threadId === undefined
+          ? input.threadId
+          : assertNonEmptyThreadId(steerInput.threadId, caller);
+      assertOptionalNonEmptyString(steerInput.clientId, 'clientId', caller);
+      assertOptionalNonEmptyString(steerInput.expectedTurnId, 'expectedTurnId', caller);
+      if (targetThreadId !== input.threadId) {
+        const expectedTurnId = assertRequiredNonEmptyString(
+          steerInput.expectedTurnId,
+          'expectedTurnId',
+          caller,
         );
+        const parts = await inlineCodexParts(steerInput.input, {
+          ...input.imageOptions,
+          driverLabel: 'The Codex driver',
+          signal: input.signal,
+        });
+        input.ensureAlive();
+        return sendCodexTurnSteer(input.peer, {
+          threadId: targetThreadId,
+          expectedTurnId,
+          parts,
+          ...(steerInput.clientId !== undefined && { clientId: steerInput.clientId }),
+        });
+      }
+      const active = input.getActiveTurn();
+      let expectedTurnId: string;
+      if (active !== undefined) {
+        if (active.codexTurnId === undefined) {
+          throw new Error('Cannot steer turn: no Codex turn is currently running');
+        }
+        if (
+          steerInput.expectedTurnId !== undefined &&
+          steerInput.expectedTurnId !== active.codexTurnId
+        ) {
+          throw new TypeError(
+            `Expected active Codex turn ${steerInput.expectedTurnId}, but current turn is ${active.codexTurnId}`,
+          );
+        }
+        expectedTurnId = active.codexTurnId;
+      } else {
+        if (steerInput.expectedTurnId === undefined) {
+          throw new Error('Cannot steer turn: no Codex turn is currently running');
+        }
+        expectedTurnId = steerInput.expectedTurnId;
       }
       const parts = await inlineCodexParts(steerInput.input, {
         ...input.imageOptions,
@@ -360,22 +424,23 @@ export function createCodexSessionMutators(input: {
       });
       input.ensureAlive();
       const afterAwait = input.getActiveTurn();
-      if (afterAwait !== active || afterAwait.codexTurnId !== expectedTurnId) {
-        throw new Error(
-          'Cannot steer turn: the active Codex turn ended before steering was sent',
+      if (active !== undefined) {
+        if (afterAwait !== active || afterAwait.codexTurnId !== expectedTurnId) {
+          throw new Error(
+            'Cannot steer turn: the active Codex turn ended before steering was sent',
+          );
+        }
+      } else if (afterAwait !== undefined && afterAwait.codexTurnId !== expectedTurnId) {
+        throw new TypeError(
+          `Expected active Codex turn ${expectedTurnId}, but current turn is ${afterAwait.codexTurnId ?? 'starting'}`,
         );
       }
-      const steered = CodexTurnSteerResponseSchema.parse(
-        await input.peer.request('turn/steer', {
-          threadId: input.threadId,
-          expectedTurnId,
-          input: codexTurnInput(parts),
-          ...(steerInput.clientId !== undefined && {
-            clientUserMessageId: steerInput.clientId,
-          }),
-        }),
-      );
-      return { turnId: steered.turnId };
+      return sendCodexTurnSteer(input.peer, {
+        threadId: input.threadId,
+        expectedTurnId,
+        parts,
+        ...(steerInput.clientId !== undefined && { clientId: steerInput.clientId }),
+      });
     },
     async forkThread(options: CodexForkThreadOptions = {}): Promise<CodexForkedThread> {
       input.ensureAlive();
@@ -398,10 +463,6 @@ export function createCodexSessionMutators(input: {
         nativeThreadId: forked.thread.id,
         threadContext: extractCodexThreadContext(forked),
       };
-    },
-    async compactThread(): Promise<void> {
-      input.ensureAlive();
-      await input.peer.request('thread/compact/start', { threadId: input.threadId });
     },
   };
 }
