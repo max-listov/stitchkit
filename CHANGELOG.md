@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.130.0] - 2026-11-26
+
 ### ⚠️ Breaking changes
 
 **Who must act:** every caller of `stitchkit/agent-executor` that switches exhaustively on `ExecutorDelta['type']` or forwards `status` deltas to a `0.129.0` server ([migration](docs/guide/upgrading.md#executor-status-delta)).

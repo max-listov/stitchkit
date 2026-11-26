@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: executor-status-delta
+## Released migration: 0.130.0
+
+### executor-status-delta
 
 **Who must act:** every caller of `stitchkit/agent-executor` that switches exhaustively on `ExecutorDelta['type']` or validates wire `TurnReport.deltas` against a `0.129.0` server schema.
 
