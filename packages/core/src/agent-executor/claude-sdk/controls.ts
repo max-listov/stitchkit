@@ -1,6 +1,8 @@
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 import { raceAbort } from '../../internal/abort-race';
-import type { ClaudeSdkRun, ClaudeSdkSession } from './driver';
+import { claudeUsagePlanLimits } from '../claude/limits';
+import { type PlanLimits, PlanLimitsSchema } from '../hello';
+import type { ClaudeSdkRun, ClaudeSdkSession, ClaudeSdkUsageRead } from './driver';
 
 export type ClaudeSdkFlagSettings = Parameters<Query['applyFlagSettings']>[0];
 
@@ -17,6 +19,33 @@ export interface ClaudeSdkControlHost {
   setActiveModel(model: string | undefined): void;
   setActivePermissionMode(mode: NonNullable<Options['permissionMode']>): void;
   recordFlagSettings(settings: ClaudeSdkFlagSettings): void;
+  recordPlanLimits(limits: PlanLimits): void;
+  recordPlanLimitsFailure(error: unknown): void;
+}
+
+/** Build a `ClaudeSdkUsageRead` for an SDK build without the experimental usage endpoint. */
+export function unpublishedClaudeSdkUsageRead(now: Date = new Date()): ClaudeSdkUsageRead {
+  return {
+    supported: false,
+    planLimits: PlanLimitsSchema.parse({
+      answer: 'unpublished',
+      windows: [],
+      observedAt: now.toISOString(),
+    }),
+  };
+}
+
+/** Normalize a raw Claude SDK usage payload into a {@link ClaudeSdkUsageRead} and optionally cache known/no-plan limits. */
+export function normalizeClaudeSdkUsageRead(
+  raw: Extract<ClaudeSdkUsageRead, { readonly supported: true }>['raw'],
+  recordPlanLimits?: (limits: PlanLimits) => void,
+  now: Date = new Date(),
+): ClaudeSdkUsageRead {
+  const planLimits = claudeUsagePlanLimits(raw, now);
+  if (planLimits.answer === 'known' || planLimits.answer === 'no-plan-limit') {
+    recordPlanLimits?.(planLimits);
+  }
+  return { supported: true, planLimits, raw };
 }
 
 function requireMethod<K extends keyof ClaudeSdkRun>(
@@ -76,9 +105,31 @@ export function createClaudeSdkControls(host: ClaudeSdkControlHost): LiveMethods
       const query = await activeQuery();
       return guarded(requireMethod(query, 'getContextUsage').call(query, opts));
     },
+    async readUsage(opts) {
+      const query = await activeQuery();
+      const fn = query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+      if (typeof fn !== 'function') {
+        return unpublishedClaudeSdkUsageRead();
+      }
+      let raw: Awaited<ReturnType<typeof fn>>;
+      try {
+        raw = await guarded(fn.call(query, opts));
+      } catch (error) {
+        if (!host.isClosed() && !host.signal.aborted) {
+          host.recordPlanLimitsFailure(error);
+        }
+        throw error;
+      }
+      if (host.isClosed()) throw new Error('The Claude SDK session is closed');
+      return normalizeClaudeSdkUsageRead(raw, host.recordPlanLimits);
+    },
     async mcpServerStatus() {
       const query = await activeQuery();
       return guarded(requireMethod(query, 'mcpServerStatus').call(query));
+    },
+    async setMcpServers(servers) {
+      const query = await activeQuery();
+      return guarded(requireMethod(query, 'setMcpServers').call(query, servers));
     },
     async toggleMcpServer(serverName, enabled) {
       const query = await activeQuery();
@@ -87,6 +138,25 @@ export function createClaudeSdkControls(host: ClaudeSdkControlHost): LiveMethods
     async reconnectMcpServer(serverName) {
       const query = await activeQuery();
       await guarded(requireMethod(query, 'reconnectMcpServer').call(query, serverName));
+    },
+    async stopTask(taskId) {
+      if (typeof taskId !== 'string' || taskId.trim().length === 0) {
+        throw new TypeError('Claude SDK stopTask requires a non-empty taskId');
+      }
+      const query = await activeQuery();
+      await guarded(requireMethod(query, 'stopTask').call(query, taskId));
+    },
+    async backgroundTasks(toolUseId) {
+      if (
+        toolUseId !== undefined &&
+        (typeof toolUseId !== 'string' || toolUseId.trim().length === 0)
+      ) {
+        throw new TypeError(
+          'Claude SDK backgroundTasks toolUseId must be a non-empty string when provided',
+        );
+      }
+      const query = await activeQuery();
+      return guarded(requireMethod(query, 'backgroundTasks').call(query, toolUseId));
     },
     async rewindFiles(userMessageId, options) {
       const query = await activeQuery();

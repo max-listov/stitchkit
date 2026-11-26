@@ -1,5 +1,30 @@
 # Upgrading stitchkit
 
+## Unreleased migration: executor-status-delta
+
+**Who must act:** every caller of `stitchkit/agent-executor` that switches exhaustively on `ExecutorDelta['type']` or validates wire `TurnReport.deltas` against a `0.129.0` server schema.
+
+`ExecutorDeltaSchema` / `ExecutorDelta` now includes `ExecutorStatusDeltaSchema` (`{ type: 'status', phase: 'spawning' | 'initializing' | 'verifying', ... }`) for structured startup lifecycle deltas. `projectExecutorDeltas` ignores `status` deltas automatically; add a `case 'status':` branch to any custom exhaustive `switch (delta.type)`:
+
+```ts
+// before
+switch (delta.type) {
+  case 'text':
+  // ...
+  case 'window':
+    break;
+}
+
+// after
+switch (delta.type) {
+  case 'text':
+  // ...
+  case 'status':
+  case 'window':
+    break;
+}
+```
+
 ## Released migration: 0.129.0
 
 ### codex-plan-window-keys

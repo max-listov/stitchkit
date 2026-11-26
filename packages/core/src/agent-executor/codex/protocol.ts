@@ -50,6 +50,15 @@ export const CodexTurnSchema = z.looseObject({
     .optional(),
 });
 
+const CodexTokenUsageBreakdownSchema = z.looseObject({
+  inputTokens: z.int().nonnegative().optional(),
+  outputTokens: z.int().nonnegative().optional(),
+  cachedInputTokens: z.int().nonnegative().optional(),
+  cacheWriteInputTokens: z.int().nonnegative().optional(),
+  reasoningOutputTokens: z.int().nonnegative().optional(),
+  totalTokens: z.int().nonnegative().optional(),
+});
+
 export const CodexNotificationParams = {
   'item/agentMessage/delta': z.looseObject({ itemId: z.string(), delta: z.string() }),
   'item/reasoning/textDelta': z.looseObject({ itemId: z.string(), delta: z.string() }),
@@ -63,7 +72,12 @@ export const CodexNotificationParams = {
         inputTokens: z.int().nonnegative(),
         outputTokens: z.int().nonnegative(),
         cachedInputTokens: z.int().nonnegative().optional(),
+        cacheWriteInputTokens: z.int().nonnegative().optional(),
+        reasoningOutputTokens: z.int().nonnegative().optional(),
+        totalTokens: z.int().nonnegative().optional(),
       }),
+      total: CodexTokenUsageBreakdownSchema.optional(),
+      modelContextWindow: z.int().nonnegative().nullable().optional(),
     }),
   }),
   'serverRequest/resolved': z.looseObject({ requestId: z.union([z.string(), z.int()]) }),
@@ -76,14 +90,32 @@ export const CodexNotificationParams = {
 export const CodexApprovalParamsSchema = z.looseObject({
   itemId: z.string(),
   command: z.string().nullable().optional(),
+  cwd: z.string().nullable().optional(),
   reason: z.string().nullable().optional(),
+  grantRoot: z.string().nullable().optional(),
+  kind: z.string().nullable().optional(),
+  approvalId: z.string().nullable().optional(),
+  commandActions: z.array(z.json()).nullable().optional(),
+  availableDecisions: z.array(z.json()).nullable().optional(),
+});
+
+export const CodexUserInputOptionSchema = z.looseObject({
+  label: z.string(),
+  description: z.string(),
+});
+
+export const CodexUserInputQuestionSchema = z.looseObject({
+  id: z.string(),
+  question: z.string(),
+  header: z.string(),
+  isOther: z.boolean().optional(),
+  isSecret: z.boolean().optional(),
+  options: z.array(CodexUserInputOptionSchema).nullable().optional(),
 });
 
 export const CodexUserInputParamsSchema = z.looseObject({
   itemId: z.string(),
-  questions: z.array(
-    z.looseObject({ id: z.string(), question: z.string(), header: z.string() }),
-  ),
+  questions: z.array(CodexUserInputQuestionSchema),
 });
 
 /** Answers to `item/tool/requestUserInput`: question id → the chosen answers. */
@@ -91,6 +123,75 @@ export const CodexUserInputAnswersSchema = z.record(
   z.string(),
   z.strictObject({ answers: z.array(z.string()) }),
 );
+
+/** Permission profile requested or granted on `item/permissions/requestApproval`. */
+export const CodexPermissionProfileSchema = z.looseObject({
+  fileSystem: z.json().nullable().optional(),
+  network: z.json().nullable().optional(),
+});
+
+/** Parameters of Codex `item/permissions/requestApproval` (0.171.0). */
+export const CodexPermissionsApprovalParamsSchema = z.looseObject({
+  threadId: z.string(),
+  turnId: z.string(),
+  itemId: z.string(),
+  cwd: z.string(),
+  permissions: CodexPermissionProfileSchema,
+  startedAtMs: z.number().int(),
+  reason: z.string().nullable().optional(),
+  environmentId: z.string().nullable().optional(),
+});
+
+const CodexMcpElicitationBaseFields = {
+  serverName: z.string(),
+  threadId: z.string(),
+  turnId: z.string().nullable().optional(),
+  environmentId: z.string().nullable().optional(),
+  message: z.string(),
+  _meta: z.json().optional(),
+};
+
+const CodexMcpElicitationFormSchemaSchema = z.looseObject({
+  type: z.literal('object'),
+  properties: z.record(z.string(), z.json()),
+  required: z.array(z.string()).nullable().optional(),
+  $schema: z.string().nullable().optional(),
+});
+
+/** Parameters of Codex `mcpServer/elicitation/request` across all four `oneOf` modes (0.171.0). */
+export const CodexMcpElicitationParamsSchema = z.discriminatedUnion('mode', [
+  z.looseObject({
+    ...CodexMcpElicitationBaseFields,
+    mode: z.literal('form'),
+    requestedSchema: CodexMcpElicitationFormSchemaSchema,
+  }),
+  z.looseObject({
+    ...CodexMcpElicitationBaseFields,
+    mode: z.literal('openai/form'),
+    requestedSchema: z.json(),
+  }),
+  z.looseObject({
+    ...CodexMcpElicitationBaseFields,
+    mode: z.literal('openaiForm'),
+    requestedSchema: z.json(),
+  }),
+  z.looseObject({
+    ...CodexMcpElicitationBaseFields,
+    mode: z.literal('url'),
+    elicitationId: z.string(),
+    url: z.string(),
+  }),
+]);
+
+/** Elicitation request mode discriminated by Codex `mcpServer/elicitation/request`. */
+export type CodexMcpElicitationMode = z.infer<typeof CodexMcpElicitationParamsSchema>['mode'];
+
+/** Answer payload for `mcpServer/elicitation/request`, matching `McpServerElicitationRequestResponse`. */
+export const CodexMcpElicitationAnswerSchema = z.strictObject({
+  action: z.enum(['accept', 'decline', 'cancel']),
+  content: z.json().optional(),
+  _meta: z.json().optional(),
+});
 
 /** Applied thread policy and runtime context returned by `thread/start`, `thread/resume`, or `thread/fork`. */
 export const CodexThreadContextSchema = z.object({
@@ -145,8 +246,15 @@ export const CodexTurnsPageSchema = z.looseObject({
   nextCursor: z.string().nullable().optional(),
 });
 
+export const CodexThreadRevertResponseSchema = z.looseObject({
+  thread: z.looseObject({ id: z.string().min(1) }),
+  turnsBackwardsCursor: z.string().nullable().optional(),
+  itemsBackwardsCursor: z.string().nullable().optional(),
+});
+
 /** Notifications the driver asks the server not to send: noise for a turn. */
 export const CODEX_OPTED_OUT_NOTIFICATIONS = [
+  'app/list/updated',
   'item/commandExecution/outputDelta',
   'item/fileChange/outputDelta',
   'item/fileChange/patchUpdated',
@@ -161,18 +269,49 @@ export const CODEX_QUIET_NOTIFICATIONS = new Set([
   ...CODEX_OPTED_OUT_NOTIFICATIONS,
   'thread/started',
   'thread/status/changed',
+  'thread/readState/changed',
+  'thread/archived',
+  'thread/deleted',
+  'thread/unarchived',
+  'thread/closed',
+  'thread/reverted',
+  'thread/name/updated',
+  'thread/section/changed',
+  'thread/attachment/updated',
+  'thread/goal/updated',
+  'thread/prediction/updated',
+  'thread/goal/cleared',
+  'thread/queue/changed',
+  'project/changed',
+  'thread/project/updated',
+  'thread/environment/connected',
+  'thread/environment/disconnected',
+  'thread/settings/updated',
+  'thread/compacted',
   'turn/started',
   'turn/plan/updated',
+  'turn/moderationMetadata',
   'item/plan/delta',
+  'item/commandExecution/terminalInteraction',
+  'item/mcpToolCall/progress',
+  'item/autoApprovalReview/started',
+  'item/autoApprovalReview/completed',
+  'autoApprovalReview/strictReviewRequired',
   'item/reasoning/summaryPartAdded',
   'hook/started',
   'hook/completed',
   'warning',
+  'guardianWarning',
+  'deprecationNotice',
+  'configWarning',
+  'windows/worldWritableWarning',
   'account/updated',
-  'thread/name/updated',
-  'thread/settings/updated',
-  'thread/compacted',
+  'account/gatewayOAuth/changed',
   'model/rerouted',
+  'model/verification',
+  'model/safetyBuffering/updated',
+  'modelProvider/authRecoveryStarted',
+  'modelProvider/authRecoveryCompleted',
   // The failure arrives again, final, with the turn: `turn/completed` carries it.
   'error',
 ]);
@@ -182,13 +321,16 @@ export const CODEX_APPROVAL_REQUESTS = new Set([
   'item/commandExecution/requestApproval',
   'item/fileChange/requestApproval',
 ]);
+export const CODEX_PERMISSIONS_APPROVAL_REQUEST = 'item/permissions/requestApproval';
 export const CODEX_INPUT_REQUEST = 'item/tool/requestUserInput';
+export const CODEX_ELICITATION_REQUEST = 'mcpServer/elicitation/request';
 /**
  * The decisions the driver answers an approval with, the same for a command and a file
  * change: `deny` lets the agent continue the turn, `interrupted` interrupts it at once.
  */
 export const CODEX_APPROVAL_DECISION = {
   approve: 'accept',
+  approveForSession: 'acceptForSession',
   deny: 'decline',
   interrupted: 'cancel',
 } as const;

@@ -31,8 +31,9 @@ test('every block kind folds into its part, in the order items appeared', () => 
       output: 'bytes',
       ...at('result'),
     },
+    { type: 'status', phase: 'initializing', ...at('status') },
     { type: 'usage', inputTokens: 10, outputTokens: 2, ...at('usage') },
-    { type: 'turn-end', outcome: 'completed', ...at('end') },
+    { type: 'turn-end', outcome: 'completed', threadDisposition: 'reusable', ...at('end') },
   ];
   expect(projectExecutorDeltas(deltas)).toEqual([
     { type: 'reasoning', text: 'thinking more' },

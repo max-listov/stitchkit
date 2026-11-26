@@ -1,6 +1,6 @@
-import type { PlanLimits } from '../hello';
+import type { ExecutorDriverCapabilities, PlanLimits } from '../hello';
 import { validateImageOptions } from '../image-input';
-import type { JsonRpcValue } from '../json-rpc-peer';
+import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
 import { mergeRateLimitEvent, planLimitsReadFailed } from '../plan-limits';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
 import { runEngineCli, withEphemeralConnection } from '../session-primitives';
@@ -9,6 +9,8 @@ import {
   connectCodex,
   validateCodexTransportAndArgs,
 } from './connect';
+import type { CodexControlClient } from './control-client';
+import type { CodexNotificationEvent, CodexServerRequestEvent } from './handlers';
 import { codexPlanWindows } from './limits';
 import {
   type CodexApprovalPolicy,
@@ -16,13 +18,18 @@ import {
   type CodexThreadContext,
   CodexTurnsPageSchema,
 } from './protocol';
-import { type CodexSessionConfig, openCodexSession } from './session';
 import {
-  type CodexControlClient,
+  type CodexSessionConfig,
+  openCodexControlConnection,
+  openCodexSession,
+} from './session';
+import {
   type CodexDriver,
+  type CodexOpenForkOptions,
   type CodexThreadPolicyOverrides,
   validateCodexPolicyOverrides,
 } from './session-controls';
+import { openCodexSharedServer } from './shared-server';
 
 /** Upper bound on paginated `thread/turns/list` requests in one `findInput` call. */
 const MAX_HISTORY_PAGES = 256;
@@ -31,6 +38,44 @@ const MAX_HISTORY_PAGES = 256;
  * `itemsView: 'full'` may carry several base64-encoded image turns on one JSON-RPC line.
  */
 const FIND_INPUT_MAX_LINE_BYTES = 64 * 1024 * 1024;
+
+async function findCodexClientInput(
+  peer: JsonRpcPeer,
+  nativeThreadId: string,
+  clientId: string,
+): Promise<boolean> {
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let pageNumber = 0; pageNumber < MAX_HISTORY_PAGES; pageNumber += 1) {
+    const page = CodexTurnsPageSchema.parse(
+      await peer.request('thread/turns/list', {
+        threadId: nativeThreadId,
+        limit: 50,
+        itemsView: 'full',
+        ...(cursor !== undefined && { cursor }),
+      }),
+    );
+    if (
+      page.data.some((turn) =>
+        turn.items.some((item) => item.type === 'userMessage' && item.clientId === clientId),
+      )
+    ) {
+      return true;
+    }
+    const next = page.nextCursor;
+    if (next === null || next === undefined) return false;
+    if (seen.has(next)) {
+      throw new Error(
+        `Codex thread/turns/list repeated cursor ${JSON.stringify(next)} before history ended`,
+      );
+    }
+    seen.add(next);
+    cursor = next;
+  }
+  throw new Error(
+    `Codex thread/turns/list exceeded ${MAX_HISTORY_PAGES} pages without reaching the end of history`,
+  );
+}
 
 /** Configuration for {@link createCodexDriver}. */
 export interface CodexDriverConfig {
@@ -69,12 +114,13 @@ export interface CodexDriverConfig {
     readonly controls: CodexControlClient;
     readonly cwd: string;
     readonly nativeThreadId?: string;
+    readonly forkFrom?: CodexOpenForkOptions;
   }) =>
     | Promise<CodexThreadPolicyOverrides | undefined>
     | CodexThreadPolicyOverrides
     | undefined;
   /**
-   * Optional hook invoked immediately after `thread/start` or `thread/resume` succeeds.
+   * Optional hook invoked immediately after `thread/start`, `thread/resume`, or `thread/fork` succeeds.
    * May inspect the applied `threadContext` or call `listMcpServerStatus`/`listSkills`;
    * throwing fails `open()` and stops the connection cleanly.
    */
@@ -83,6 +129,23 @@ export interface CodexDriverConfig {
     readonly threadContext: CodexThreadContext;
     readonly controls: CodexControlClient;
   }) => Promise<void> | void;
+  /**
+   * Optional observer invoked for every Codex app-server notification (both during `startTurn()`
+   * and for external/TUI turns or lifecycle updates like `thread/status/changed` and `turn/started`).
+   */
+  onNotification?: (event: CodexNotificationEvent) => void;
+  /**
+   * Optional handler for known server requests (`commandExecution`, `fileChange`, `permissions`
+   * approvals, `requestUserInput`, and `mcpServer/elicitation/request`) arriving
+   * outside a driver-initiated `startTurn()` (for example from an attached TUI client).
+   * When omitted, requests outside `startTurn()` are refused `-32601`.
+   */
+  onServerRequest?: (event: CodexServerRequestEvent) => void;
+  /**
+   * Optional callback invoked immediately when an established session or control connection drops
+   * unexpectedly before `close()` or caller signal abort (including idle socket disconnects).
+   */
+  onDisconnect?: (error: Error) => void;
   /** Read the bytes behind a `file` part's `reference`; without it a file part is refused. */
   resolveFile?: (reference: string) => Promise<Uint8Array>;
   /** Maximum decoded size of one image attachment in bytes. Default 5 MiB. */
@@ -107,10 +170,27 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
   const ambient = config.ambient ?? process.env;
   const limits = new Map<string, PlanLimits>();
   let version = 'unknown';
+  const capabilities: ExecutorDriverCapabilities = {
+    runtimePolicyEnforcement: 'native',
+    sessionApproval: true,
+    interruptOnDeny: true,
+    updatedToolInput: false,
+    structuredInput: true,
+    steer: true,
+    fork: true,
+    revert: true,
+    compact: true,
+    injectItems: true,
+    backgroundWorkOutlivesTurn: false,
+    multiThreadPerProcess: false,
+    images: config.resolveFile !== undefined,
+    planLimits: 'pull',
+  };
 
   const session = (options?: {
     readonly maxLineBytes?: number;
     readonly forceStdioForListen?: boolean;
+    readonly ephemeralProbe?: boolean;
   }): CodexSessionConfig => {
     const transport =
       options?.forceStdioForListen && config.transport?.kind === 'unix-listen'
@@ -134,6 +214,12 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
       ...(config.config !== undefined && { config: config.config }),
       ...(config.prepareThread !== undefined && { prepareThread: config.prepareThread }),
       ...(config.verifyThread !== undefined && { verifyThread: config.verifyThread }),
+      ...(!options?.ephemeralProbe &&
+        config.onNotification !== undefined && { onNotification: config.onNotification }),
+      ...(!options?.ephemeralProbe &&
+        config.onServerRequest !== undefined && { onServerRequest: config.onServerRequest }),
+      ...(!options?.ephemeralProbe &&
+        config.onDisconnect !== undefined && { onDisconnect: config.onDisconnect }),
       ambient,
       limits,
       version,
@@ -163,6 +249,7 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
           session({
             ...(maxLineBytes !== undefined && { maxLineBytes }),
             forceStdioForListen: true,
+            ephemeralProbe: true,
           }),
           engineProfile('codex', profile),
           cwd,
@@ -174,6 +261,7 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
   return {
     engine: 'codex',
     reconcile: 'client-id',
+    capabilities,
     async info() {
       const probe = {
         profileId: 'version-probe',
@@ -188,6 +276,7 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
         version,
         reconcile: 'client-id',
         models: { answer: 'not-asked' },
+        capabilities,
       };
     },
     async status(profile) {
@@ -238,44 +327,12 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
       return ask(
         input.profile,
         input.cwd,
-        async (peer) => {
-          const seen = new Set<string>();
-          let cursor: string | undefined;
-          for (let pageNumber = 0; pageNumber < MAX_HISTORY_PAGES; pageNumber += 1) {
-            const page = CodexTurnsPageSchema.parse(
-              await peer.request('thread/turns/list', {
-                threadId: input.nativeThreadId,
-                limit: 50,
-                itemsView: 'full',
-                ...(cursor !== undefined && { cursor }),
-              }),
-            );
-            if (
-              page.data.some((turn) =>
-                turn.items.some(
-                  (item) => item.type === 'userMessage' && item.clientId === input.clientId,
-                ),
-              )
-            ) {
-              return true;
-            }
-            const next = page.nextCursor;
-            if (next === null || next === undefined) return false;
-            if (seen.has(next)) {
-              throw new Error(
-                `Codex thread/turns/list repeated cursor ${JSON.stringify(next)} before history ended`,
-              );
-            }
-            seen.add(next);
-            cursor = next;
-          }
-          throw new Error(
-            `Codex thread/turns/list exceeded ${MAX_HISTORY_PAGES} pages without reaching the end of history`,
-          );
-        },
+        (peer) => findCodexClientInput(peer, input.nativeThreadId, input.clientId),
         FIND_INPUT_MAX_LINE_BYTES,
       );
     },
     open: (input) => openCodexSession(session(), input),
+    connectControl: (input) => openCodexControlConnection(session(), input),
+    openSharedServer: (input) => openCodexSharedServer(session(), capabilities, input),
   };
 }

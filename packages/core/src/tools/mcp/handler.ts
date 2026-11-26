@@ -24,7 +24,9 @@ import {
 import {
   buildMcpServer,
   buildMcpServerFromPrepared,
-  type McpServerBuildConfig,
+  type DirectMcpSurfaceConfig,
+  type FiniteMcpSurfaceConfig,
+  type McpServerSharedConfig,
   servedMcpCatalog,
 } from './mount';
 import {
@@ -65,12 +67,17 @@ export interface McpHttpConfig<TAuth> {
 }
 
 /**
- * Full config for `createMcpHandler`: the shared surface config plus the HTTP auth settings.
+ * Full config for `createMcpHandler`: the shared surface config (excluding stateful lazy
+ * `discovery`) plus the HTTP auth settings.
  */
 export type McpHandlerConfig<
   TAuth,
   TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
-> = McpServerBuildConfig<TAuth, TSurfaces> & McpHttpConfig<TAuth>;
+> = Omit<McpServerSharedConfig<TAuth>, 'discovery'> & {
+  /** Lazy tool discovery requires a stateful MCP session and is refused on stateless HTTP handlers. */
+  readonly discovery?: never;
+} & (DirectMcpSurfaceConfig<TAuth> | FiniteMcpSurfaceConfig<TAuth, TSurfaces>) &
+  McpHttpConfig<TAuth>;
 
 /** Framework-owned Fetch face for one stateless dual-era MCP endpoint. */
 export interface McpHttpHandler {
@@ -167,6 +174,11 @@ export function createMcpHandler<
   const TSurfaces extends McpSurfaceRegistry = McpSurfaceRegistry,
 >(config: McpHandlerConfig<TAuth, TSurfaces>): McpHttpHandler {
   resolveToolAccess('createMcpHandler', config);
+  if ('discovery' in config && config.discovery !== undefined) {
+    throw new TypeError(
+      '[stitchkit] createMcpHandler: lazy tool discovery requires a stateful MCP session; use createStdioMcpServer, buildMcpServer, or mountMcp instead',
+    );
+  }
   const buildPrepared = prepareStaticSurface(config);
   const authByCarrier = new WeakMap<
     AuthInfo,

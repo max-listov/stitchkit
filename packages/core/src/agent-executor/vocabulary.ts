@@ -54,6 +54,35 @@ export const ExecutorRequestResolvedDeltaSchema = z.strictObject({
 });
 
 const TokenCountSchema = z.int().nonnegative();
+const MAX_MODEL_USAGE_ENTRIES = 64;
+
+/** Token counters for a turn step or cumulative thread total; an unreported figure is absent, not zero. */
+export const ExecutorTokenUsageSchema = z.strictObject({
+  inputTokens: TokenCountSchema.optional(),
+  outputTokens: TokenCountSchema.optional(),
+  cachedInputTokens: TokenCountSchema.optional(),
+  cacheCreationInputTokens: TokenCountSchema.optional(),
+  thinkingTokens: TokenCountSchema.optional(),
+  totalTokens: TokenCountSchema.optional(),
+});
+
+/** Per-model cumulative token and cost breakdown reported on an engine turn result. */
+export const ExecutorModelUsageSchema = z.strictObject({
+  inputTokens: TokenCountSchema,
+  outputTokens: TokenCountSchema,
+  cacheReadInputTokens: TokenCountSchema.optional(),
+  cacheCreationInputTokens: TokenCountSchema.optional(),
+  thinkingTokens: TokenCountSchema.optional(),
+  cacheCreationEphemeral5mInputTokens: TokenCountSchema.optional(),
+  cacheCreationEphemeral1hInputTokens: TokenCountSchema.optional(),
+  webSearchRequests: TokenCountSchema.optional(),
+  costUsd: z.number().nonnegative().optional(),
+  contextWindow: TokenCountSchema.optional(),
+  maxOutputTokens: TokenCountSchema.optional(),
+  canonicalModel: z.string().min(1).max(256).optional(),
+  provider: z.string().min(1).max(128).optional(),
+  costBasis: z.enum(['list', 'managed', 'unknown']).optional(),
+});
 
 /** What the turn cost so far, as the engine reported it; a figure it did not report is absent, not zero. */
 export const ExecutorUsageDeltaSchema = z.strictObject({
@@ -62,7 +91,18 @@ export const ExecutorUsageDeltaSchema = z.strictObject({
   inputTokens: TokenCountSchema.optional(),
   outputTokens: TokenCountSchema.optional(),
   cachedInputTokens: TokenCountSchema.optional(),
+  cacheCreationInputTokens: TokenCountSchema.optional(),
+  thinkingTokens: TokenCountSchema.optional(),
+  totalTokens: TokenCountSchema.optional(),
   costUsd: z.number().nonnegative().optional(),
+  total: ExecutorTokenUsageSchema.optional(),
+  modelUsage: z
+    .record(z.string().min(1).max(256), ExecutorModelUsageSchema)
+    .refine(
+      (entries) => Object.keys(entries).length <= MAX_MODEL_USAGE_ENTRIES,
+      `modelUsage must carry at most ${MAX_MODEL_USAGE_ENTRIES} models`,
+    )
+    .optional(),
 });
 
 /**
@@ -76,10 +116,24 @@ export const ExecutorContextUsageDeltaSchema = z.strictObject({
   windowTokens: TokenCountSchema,
 });
 
+/** Whether a thread's native history remains reusable after a turn finishes, or is broken. */
+export const ExecutorThreadDispositionSchema = z.enum(['reusable', 'broken']);
+
+/** Open bounded startup or lifecycle phase label (`1..64` trimmed characters). */
+export const ExecutorStartupPhaseSchema = z.string().trim().min(1).max(64);
+
+/** Non-content status update reporting a startup or preparation phase during a turn. */
+export const ExecutorStatusDeltaSchema = z.strictObject({
+  type: z.literal('status'),
+  ...base,
+  phase: ExecutorStartupPhaseSchema,
+});
+
 export const ExecutorTurnEndDeltaSchema = z.strictObject({
   type: z.literal('turn-end'),
   ...base,
   outcome: z.enum(['completed', 'interrupted', 'failed']),
+  threadDisposition: ExecutorThreadDispositionSchema.optional(),
 });
 
 /**
@@ -125,6 +179,7 @@ export const ExecutorDeltaSchema = z.discriminatedUnion('type', [
   ExecutorRequestResolvedDeltaSchema,
   ExecutorUsageDeltaSchema,
   ExecutorContextUsageDeltaSchema,
+  ExecutorStatusDeltaSchema,
   ExecutorTurnEndDeltaSchema,
   ExecutorErrorDeltaSchema,
   ExecutorWindowDeltaSchema,
@@ -134,3 +189,11 @@ export const ExecutorDeltaSchema = z.discriminatedUnion('type', [
 export type ExecutorDelta = z.infer<typeof ExecutorDeltaSchema>;
 /** Executor delta error category inferred from `ExecutorErrorKindSchema`. */
 export type ExecutorErrorKind = z.infer<typeof ExecutorErrorKindSchema>;
+/** Thread reusability disposition inferred from `ExecutorThreadDispositionSchema`. */
+export type ExecutorThreadDisposition = z.infer<typeof ExecutorThreadDispositionSchema>;
+/** Bounded startup or preparation phase label inferred from `ExecutorStartupPhaseSchema`. */
+export type ExecutorStartupPhase = z.infer<typeof ExecutorStartupPhaseSchema>;
+/** Token usage counters inferred from `ExecutorTokenUsageSchema`. */
+export type ExecutorTokenUsage = z.infer<typeof ExecutorTokenUsageSchema>;
+/** Per-model cumulative usage breakdown inferred from `ExecutorModelUsageSchema`. */
+export type ExecutorModelUsage = z.infer<typeof ExecutorModelUsageSchema>;

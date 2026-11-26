@@ -37,6 +37,29 @@ export {
   INITIAL_EXECUTOR_CONNECTION,
 } from '../agent-executor/executor-machine';
 export {
+  buildContextHandoff,
+  withInlineHandoffContext,
+} from '../agent-executor/handoff';
+export {
+  ContextHandoffBudgetSchema,
+  ContextHandoffClearEntrySchema,
+  type ContextHandoffEntry,
+  ContextHandoffEntrySchema,
+  type ContextHandoffInput,
+  ContextHandoffInputSchema,
+  ContextHandoffMessageEntrySchema,
+  type ContextHandoffResult,
+  ContextHandoffResultSchema,
+  type ContextHandoffSelectedItem,
+  ContextHandoffSelectedItemSchema,
+  ContextHandoffStrategySchema,
+  type ContextHandoffStructuredItem,
+  ContextHandoffStructuredItemSchema,
+  type InlineHandoffComposition,
+} from '../agent-executor/handoff-schemas';
+export {
+  type ExecutorDriverCapabilities,
+  ExecutorDriverCapabilitiesSchema,
   type ExecutorEngine,
   type ExecutorEngineInfo,
   ExecutorEngineInfoSchema,
@@ -93,5 +116,14 @@ export {
   ExecutorDeltaSchema,
   type ExecutorErrorKind,
   ExecutorErrorKindSchema,
+  type ExecutorModelUsage,
+  ExecutorModelUsageSchema,
   ExecutorRawSchema,
+  type ExecutorStartupPhase,
+  ExecutorStartupPhaseSchema,
+  ExecutorStatusDeltaSchema,
+  type ExecutorThreadDisposition,
+  ExecutorThreadDispositionSchema,
+  type ExecutorTokenUsage,
+  ExecutorTokenUsageSchema,
 } from '../agent-executor/vocabulary';

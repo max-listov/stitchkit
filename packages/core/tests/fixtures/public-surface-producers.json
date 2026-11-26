@@ -266,7 +266,8 @@
     "DispatchOutcome": ["dispatchTurn"],
     "EngineProcess": ["spawnEngineProcess"],
     "ExecutorConnectionState": ["advanceExecutorConnection"],
-    "ExecutorLeaseStateStore": ["memoryExecutorLeaseStore"]
+    "ExecutorLeaseStateStore": ["memoryExecutorLeaseStore"],
+    "InlineHandoffComposition": ["withInlineHandoffContext"]
   },
   "stitchkit/agent-executor/acp": {
     "AcpDriver": ["createAcpDriver"]
@@ -276,6 +277,11 @@
   },
   "stitchkit/agent-executor/codex": {
     "CodexDriver": ["createCodexDriver"]
+  },
+  "stitchkit/agent-executor/testing": {
+    "AgentEngineDialectScenarios": ["replayDialectScenarios"],
+    "ReplayExecutorDriver": ["createReplayExecutorDriver"],
+    "ReplayGate": ["createReplayGate"]
   },
   "stitchkit/agent-runtime/postgres": {
     "PostgresAgentRuntimeStore": ["createPostgresAgentRuntimeStore"]

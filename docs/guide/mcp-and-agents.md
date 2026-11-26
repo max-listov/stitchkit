@@ -708,6 +708,30 @@ hooks: {
 > has no identity and **fails closed**. See
 > [Auth on the tool surface](./auth-and-errors.md#auth-on-the-tool-surface--resolvefromcontext).
 
+### Lazy tool discovery — `discovery`
+
+Large stateful MCP surfaces (for example stdio servers or stateful `McpServer` mounts with dozens of tools) can opt into lazy discovery so clients start with a compact initial tool list and reveal additional tools on demand:
+
+```ts
+createStdioMcpServer({
+  serverInfo: { name: 'my-mcp', version: '1.0.0' },
+  auth: { userId: 'local-operator' },
+  services,
+  access: { gate: { beforeHandle: authHook } },
+  discovery: {
+    mode: 'lazy',
+    initialTools: ['get_status'],
+    searchToolName: 'tool_search', // default
+    maxResults: 10,                // default 10, range 1..50
+  },
+})
+```
+
+- **Opt-in only.** Omitting `discovery` keeps the default full `tools/list` surface untouched. In `'lazy'` mode `initialTools` is required (pass `[]` to hide every contract tool initially).
+- **Session-isolated reveal.** Every contract tool outside `initialTools` starts disabled on that `McpServer` instance. Calling `tool_search` ranks hidden tools by name and description (exact/phrase matches first, then deduplicated word matches), enables up to `maxResults` matches on that session's `McpServer`, and emits a single `notifications/tools/list_changed` when at least one new tool is revealed. Enabling tools in one session never mutates another session or the shared prepared surface.
+- **Identical access & catalog stamp.** `tool_search` and every revealed tool enforce the exact same `access` policy (`gate` / `inspect` / `open`), hooks, and `stitchkit/catalog` `_meta` stamp (which fingerprints the full underlying contract and runtime tool catalog, excluding synthetic `tool_search`). Unknown names in `initialTools`, `searchToolName` collisions with real tools, and out-of-range `maxResults` throw synchronously at mount time.
+- **Stateful mounts only.** `createMcpHandler` creates a fresh stateless `McpServer` per HTTP request and therefore refuses `discovery` synchronously with `TypeError`; use `discovery` on stateful mounts (`createStdioMcpServer`, `buildMcpServer`, `mountMcp`).
+
 ### MCP schema validation profile
 
 A contract schema that JSON Schema cannot represent (a `z.date()`, a `z.map()`)

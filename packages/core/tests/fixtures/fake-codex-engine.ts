@@ -62,10 +62,24 @@ const clientIds = () => {
   }
 };
 
+const broadcastClients = new Set<(line: string) => void>();
+const sharedResolved = new Set<string>();
+const sharedWaiting: { type: string; resolve(): void }[] = [];
+const sharedBuffered: string[] = [];
+
 function createSessionHandler(writeLine: (line: string) => void) {
+  const shared = process.env.FAKE_CODEX_BROADCAST_TUI === '1';
   const write = (message: unknown) => writeLine(JSON.stringify(message));
-  const waiting: { type: string; resolve(): void }[] = [];
-  const buffered: string[] = [];
+  const broadcast = (message: unknown) => {
+    const line = JSON.stringify(message);
+    if (shared && broadcastClients.size > 0) {
+      for (const client of broadcastClients) client(line);
+      return;
+    }
+    writeLine(line);
+  };
+  const waiting: { type: string; resolve(): void }[] = shared ? sharedWaiting : [];
+  const buffered: string[] = shared ? sharedBuffered : [];
   const seen = (type: string) => {
     const index = waiting.findIndex((entry) => entry.type === type);
     if (index !== -1) {
@@ -84,7 +98,7 @@ function createSessionHandler(writeLine: (line: string) => void) {
   };
   const play = async () => {
     for (const step of scenario.steps) {
-      if (step.do === 'emit') write(step.record);
+      if (step.do === 'emit') broadcast(step.record);
       else if (step.do === 'emit-raw') writeLine(step.line);
       else if (step.do === 'delay')
         await new Promise((resolve) => setTimeout(resolve, step.ms));
@@ -98,6 +112,15 @@ function createSessionHandler(writeLine: (line: string) => void) {
     const message = JSON.parse(line);
     if (message.method === undefined) {
       appendFileSync(join(home, 'responses.jsonl'), `${JSON.stringify(message)}\n`);
+      if (
+        process.env.FAKE_CODEX_BROADCAST_TUI === '1' &&
+        message.id !== undefined &&
+        message.error === undefined &&
+        !sharedResolved.has(String(message.id))
+      ) {
+        sharedResolved.add(String(message.id));
+        broadcast({ method: 'serverRequest/resolved', params: { requestId: message.id } });
+      }
       seen('response');
       return;
     }
@@ -106,6 +129,7 @@ function createSessionHandler(writeLine: (line: string) => void) {
     const reply = (result: unknown) => write({ id: message.id, result });
     switch (message.method) {
       case 'initialize':
+        appendFileSync(join(home, 'initialize.jsonl'), `${JSON.stringify(message.params)}\n`);
         reply({ userAgent: 'fake', codexHome: home });
         break;
       case 'thread/start':
@@ -188,7 +212,36 @@ function createSessionHandler(writeLine: (line: string) => void) {
           requiresOpenaiAuth: true,
         });
         break;
+      case 'thread/read':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({
+          thread: {
+            id: message.params?.threadId ?? 'fake-thread',
+            status: { type: 'idle' },
+            canAcceptDirectInput: true,
+          },
+        });
+        break;
+      case 'collaborationMode/list':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({
+          data: [
+            { name: 'Plan', mode: 'plan' },
+            { name: 'Default', mode: 'default' },
+          ],
+        });
+        break;
       case 'thread/turns/list':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
         reply({
           data: clientIds().map((clientId, index) => ({
             id: `turn-${index}`,
@@ -196,6 +249,99 @@ function createSessionHandler(writeLine: (line: string) => void) {
             items: [{ type: 'userMessage', id: `m-${index}`, clientId }],
           })),
         });
+        break;
+      case 'thread/items/list':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({
+          data: [
+            {
+              turnId: message.params?.turnId ?? 'turn-0',
+              item: { type: 'contextCompaction', id: 'cmp-1' },
+            },
+          ],
+          nextCursor: null,
+        });
+        break;
+      case 'thread/revert':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({
+          thread: { id: message.params?.threadId ?? 'fake-thread', turns: [] },
+          turnsBackwardsCursor: 'turns-back-1',
+          itemsBackwardsCursor: 'items-back-1',
+        });
+        break;
+      case 'thread/inject_items':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        if (process.env.FAKE_CODEX_INJECT_UNSUPPORTED === '1') {
+          write({
+            id: message.id,
+            error: { code: -32601, message: 'thread/inject_items is not supported' },
+          });
+        } else {
+          reply({});
+        }
+        break;
+      case 'thread/unsubscribe':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({ status: 'unsubscribed' });
+        break;
+      case 'thread/list':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({
+          data: [{ id: 'fake-thread', status: { type: 'idle' } }],
+          nextCursor: null,
+          backwardsCursor: 'back-0',
+        });
+        break;
+      case 'thread/loaded/list':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({ data: ['fake-thread'], nextCursor: null });
+        break;
+      case 'thread/archive':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({});
+        break;
+      case 'thread/unarchive':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({ thread: { id: message.params?.threadId ?? 'fake-thread' } });
+        break;
+      case 'thread/metadata/update':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({ thread: { id: message.params?.threadId ?? 'fake-thread' } });
+        break;
+      case 'thread/name/set':
+        appendFileSync(
+          join(home, 'rpc.jsonl'),
+          `${JSON.stringify({ method: message.method, params: message.params })}\n`,
+        );
+        reply({});
         break;
       case 'account/rateLimits/read':
         reply(customRateLimits);
@@ -235,6 +381,10 @@ function attachWsClient(socket: Socket) {
       socket.write(encodeServerWsFrame(0x1, Buffer.from(text, 'utf8')));
     }
   };
+  broadcastClients.add(sendText);
+  socket.once('close', () => {
+    broadcastClients.delete(sendText);
+  });
   const onLine = createSessionHandler(sendText);
 
   socket.on('data', (chunk: Buffer) => {

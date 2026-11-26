@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createClaudeCliDriver } from '../../src/agent-executor/claude/cli-driver';
-import { claudePlanWindows } from '../../src/agent-executor/claude/limits';
+import {
+  claudePlanWindows,
+  claudeUsagePlanLimits,
+} from '../../src/agent-executor/claude/limits';
 import { codexPlanWindows } from '../../src/agent-executor/codex/limits';
 import {
   mergeRateLimitEvent,
@@ -119,6 +122,111 @@ describe('plan limits', () => {
     expect(planLimitsReadFailed({ error: 'no answer', now })).toMatchObject({
       answer: 'unpublished',
     });
+  });
+
+  test('claudeUsagePlanLimits distinguishes no-plan-limit, unpublished, and known percent windows with bounded model_scoped', () => {
+    expect(
+      claudeUsagePlanLimits(
+        { rate_limits_available: false, subscription_type: null, rate_limits: null },
+        now,
+      ),
+    ).toEqual({
+      answer: 'no-plan-limit',
+      windows: [],
+      observedAt: now.toISOString(),
+    });
+    // Subscription present without profile scope stays unpublished, never no-plan-limit.
+    expect(
+      claudeUsagePlanLimits(
+        { rate_limits_available: false, subscription_type: 'max', rate_limits: null },
+        now,
+      ),
+    ).toEqual({
+      answer: 'unpublished',
+      windows: [],
+      observedAt: now.toISOString(),
+    });
+    // rate_limits_available: true with all null utilizations stays unpublished (never known with 0 windows).
+    expect(
+      claudeUsagePlanLimits(
+        {
+          rate_limits_available: true,
+          subscription_type: 'max',
+          rate_limits: {
+            five_hour: { utilization: null, resets_at: '2026-11-24T05:00:00Z' },
+            seven_day: { utilization: null, resets_at: null },
+            model_scoped: [{ display_name: 'Fable', utilization: null, resets_at: null }],
+          },
+        },
+        now,
+      ),
+    ).toEqual({
+      answer: 'unpublished',
+      windows: [],
+      observedAt: now.toISOString(),
+    });
+    // One malformed fixed window never discards healthy sibling fixed windows.
+    const partialFixed = claudeUsagePlanLimits(
+      {
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: -5, resets_at: '2026-11-24T05:00:00Z' },
+          seven_day: { utilization: 33, resets_at: '2026-12-01T00:00:00Z' },
+        },
+      },
+      now,
+    );
+    expect(partialFixed).toEqual({
+      answer: 'known',
+      windows: [{ name: 'seven_day', usedPercent: 33, resetsAt: '2026-12-01T00:00:00Z' }],
+      observedAt: now.toISOString(),
+    });
+    const known = claudeUsagePlanLimits(
+      {
+        rate_limits_available: true,
+        subscription_type: 'max',
+        rate_limits: {
+          five_hour: { utilization: 42.5, resets_at: '2026-11-24T05:00:00Z' },
+          seven_day: { utilization: null, resets_at: '2026-12-01T00:00:00Z' },
+          seven_day_sonnet: { utilization: 105, resets_at: 'not-a-timestamp' },
+          model_scoped: [
+            { display_name: 'Fable', utilization: 12, resets_at: '2026-12-01T00:00:00+00:00' },
+            { display_name: 'Fable', utilization: 25, resets_at: null },
+            { display_name: 'NullModel', utilization: null, resets_at: null },
+          ],
+        },
+      },
+      now,
+    );
+    expect(known.answer).toBe('known');
+    expect(known.windows).toEqual([
+      { name: 'five_hour', usedPercent: 42.5, resetsAt: '2026-11-24T05:00:00Z' },
+      { name: 'seven_day_sonnet', usedPercent: 100 },
+      {
+        name: 'model:Fable',
+        usedPercent: 12,
+        resetsAt: '2026-12-01T00:00:00+00:00',
+        label: 'Fable',
+      },
+      {
+        name: expect.stringMatching(/^model:Fable#[0-9a-f]{8}$/),
+        usedPercent: 25,
+        label: 'Fable',
+      },
+    ]);
+    // >32 model_scoped windows are bounded cleanly at 32 with <=256-char unique names.
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      display_name: `${'M'.repeat(280)}_${i}`,
+      utilization: 10,
+      resets_at: null,
+    }));
+    const capped = claudeUsagePlanLimits(
+      { rate_limits_available: true, rate_limits: { model_scoped: many } },
+      now,
+    );
+    expect(capped.windows).toHaveLength(32);
+    expect(new Set(capped.windows.map((w) => w.name)).size).toBe(32);
+    for (const w of capped.windows) expect(w.name.length).toBeLessThanOrEqual(256);
   });
 
   test('planWindowExpired and planLimitsDue check reset timestamps, age bounds, and reject invalid maxAgeMs', () => {

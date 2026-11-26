@@ -1,8 +1,11 @@
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { isPositiveSafeInteger } from '../../internal/positive-integer';
 import { type PlanWindow, PlanWindowSchema } from '../hello';
-import { epochSecondsToIso, nonEmptyString } from '../session-primitives';
+import {
+  clampUniqueWindowName,
+  epochSecondsToIso,
+  nonEmptyString,
+} from '../session-primitives';
 
 const MAX_WINDOW_NAME_CHARS = 256;
 const MAX_PLAN_WINDOWS = 32;
@@ -24,36 +27,6 @@ type ParsedSnapshot = z.infer<typeof SnapshotSchema>;
 
 function positiveSafeInt(value: number | null | undefined): number | undefined {
   return isPositiveSafeInteger(value) ? value : undefined;
-}
-
-function clampWindowName(
-  prefix: string,
-  suffix: string,
-  seenNames: Set<string>,
-  disambiguatorSeed: string,
-): string {
-  const maxPrefix = Math.max(1, MAX_WINDOW_NAME_CHARS - suffix.length);
-  let candidate =
-    prefix.length > maxPrefix
-      ? `${prefix.slice(0, maxPrefix)}${suffix}`.slice(0, MAX_WINDOW_NAME_CHARS)
-      : `${prefix}${suffix}`;
-  if (!seenNames.has(candidate)) {
-    seenNames.add(candidate);
-    return candidate;
-  }
-  const digest = createHash('sha256').update(disambiguatorSeed).digest('hex').slice(0, 8);
-  const tag = `#${digest}${suffix}`;
-  const room = Math.max(1, MAX_WINDOW_NAME_CHARS - tag.length);
-  candidate = `${prefix.slice(0, room)}${tag}`.slice(0, MAX_WINDOW_NAME_CHARS);
-  let n = 2;
-  while (seenNames.has(candidate)) {
-    const indexedTag = `#${digest}_${n}${suffix}`;
-    const indexedRoom = Math.max(1, MAX_WINDOW_NAME_CHARS - indexedTag.length);
-    candidate = `${prefix.slice(0, indexedRoom)}${indexedTag}`.slice(0, MAX_WINDOW_NAME_CHARS);
-    n += 1;
-  }
-  seenNames.add(candidate);
-  return candidate;
 }
 
 function clampLabel(value: string | null | undefined): string | undefined {
@@ -90,11 +63,12 @@ function appendBucketWindows(
     if (window === undefined || out.length >= MAX_PLAN_WINDOWS) continue;
     const suffix =
       mins === undefined ? `:${slot}` : duplicateDuration ? `:${mins}m:${slot}` : `:${mins}m`;
-    const name = clampWindowName(
+    const name = clampUniqueWindowName(
       bucketId,
       suffix,
       seenNames,
       `${seedKey}:${bucketId}:${slot}`,
+      MAX_WINDOW_NAME_CHARS,
     );
     const resetsAt =
       window.resetsAt !== undefined && window.resetsAt !== null && window.resetsAt > 0

@@ -14,6 +14,12 @@ import { type McpResourceDef, RESOURCE_MIME_TYPE } from './app';
 import { mcpCatalogStamp } from './catalog';
 import type { McpCatalogStamp } from './catalog-stamp';
 import {
+  applyMcpLazyDiscovery,
+  type ManagedLazyMcpTool,
+  type McpLazyDiscoveryConfig,
+  validateMcpLazyDiscovery,
+} from './lazy-discovery';
+import {
   formatMcpResult,
   type McpSchemaValidationConfig,
   type McpSurfaceDefinition,
@@ -61,12 +67,16 @@ export interface McpMountConfig {
   errorHint?: ErrorHintFn;
   /** Report output keys the contract schema removed — → ADR 0037. */
   onOutputStrip?: (toolName: string, paths: string[]) => void;
+  /** Opt-in lazy tool discovery hiding non-initial contract tools behind a built-in search tool. */
+  discovery?: McpLazyDiscoveryConfig;
 }
 
 interface PreparedMcpMountConfig extends McpMountConfig {
   multiRoundRuntime?: McpRoundRuntime;
   /** The catalog this surface advertises, stamped onto listings and results. */
   catalog?: McpCatalogStamp;
+  /** Additional tool names mounted on the same server (for example runtime tools) that `searchToolName` cannot collide with. */
+  reservedToolNames?: readonly string[];
 }
 
 /**
@@ -116,6 +126,14 @@ export function mountPreparedMcp(
   config: PreparedMcpMountConfig,
 ): void {
   const lifecycle = resolveToolAccess('mountPreparedMcp', config);
+  const validatedDiscovery =
+    config.discovery !== undefined
+      ? validateMcpLazyDiscovery(
+          config.discovery,
+          prepared.map((descriptor) => descriptor.mountable.name),
+          config.reservedToolNames,
+        )
+      : undefined;
   const runTool = createToolRunner({
     source: 'mcp',
     toolSurface: true,
@@ -127,9 +145,10 @@ export function mountPreparedMcp(
     onOutputStrip: config.onOutputStrip,
   });
 
+  const registeredTools: ManagedLazyMcpTool[] = [];
   for (const descriptor of prepared) {
     const { method, name } = descriptor.mountable;
-    registerMcpTool(
+    const registered = registerMcpTool(
       mcpServer,
       {
         name,
@@ -148,6 +167,22 @@ export function mountPreparedMcp(
         context: config.context,
       },
     );
+    registeredTools.push({ name, description: method.desc, registered });
+  }
+
+  if (validatedDiscovery !== undefined) {
+    applyMcpLazyDiscovery({
+      server: mcpServer,
+      discovery: validatedDiscovery,
+      tools: registeredTools,
+      lifecycle,
+      hooks: config.hooks,
+      context: config.context,
+      catalog: config.catalog,
+      coerceJsonArgs: config.coerceJsonArgs,
+      errorHint: config.errorHint,
+      onOutputStrip: config.onOutputStrip,
+    });
   }
 }
 
@@ -218,6 +253,8 @@ export interface McpServerSharedConfig<TAuth> {
   errorHint?: ErrorHintFn;
   /** Report output keys the contract schema removed — → ADR 0037. */
   onOutputStrip?: (toolName: string, paths: string[]) => void;
+  /** Opt-in lazy tool discovery hiding non-initial contract tools behind a built-in search tool. */
+  discovery?: McpLazyDiscoveryConfig;
 }
 
 /**
@@ -369,6 +406,8 @@ export function buildMcpServerFromPrepared<TAuth>(
     inputRecursionDepth: config.inputRecursionDepth,
     errorHint: config.errorHint,
     onOutputStrip: config.onOutputStrip,
+    discovery: config.discovery,
+    reservedToolNames: prepared.runtimeTools.map((entry) => entry.definition.name),
     ...(roundCodec !== undefined && {
       multiRoundRuntime: {
         codec: roundCodec,

@@ -4,7 +4,12 @@ import { assertExpectedOwnerUid } from '../../internal/unix-socket';
 import { type EngineProcess, spawnEngineProcess } from '../engine-process';
 import { createJsonRpcPeer, type JsonRpcPeer } from '../json-rpc-peer';
 import { type ExecutorProfileConfig, engineEnvironment } from '../profile';
-import { type EngineConnection, stopConnection } from '../session-primitives';
+import {
+  type EngineConnection,
+  emitStartupPhase,
+  stopConnection,
+} from '../session-primitives';
+import type { ExecutorStartupPhase } from '../vocabulary';
 import { CODEX_OPTED_OUT_NOTIFICATIONS } from './protocol';
 import {
   type CodexUnixSocketClient,
@@ -223,18 +228,28 @@ export async function connectCodex(
   signal: AbortSignal,
   handlers: PeerHandlers = {},
   onEnd: (error: Error) => void = () => undefined,
+  onStartupPhase?: (phase: ExecutorStartupPhase) => void,
 ): Promise<CodexConnection> {
   const transport = config.transport ?? { kind: 'stdio' as const };
   const extraArgs = config.serverArgs ?? [];
 
   if (transport.kind === 'stdio') {
     const env = engineEnvironment(profile, config.ambient);
+    let endedError: Error | undefined;
+    let ready = false;
     const peer = createJsonRpcPeer({
       header: 'omitted',
       requestTimeoutMs: REQUEST_MS,
       send: (line) => engine.send(line),
       ...handlers,
     });
+    const finishEnd = (error: Error) => {
+      if (endedError !== undefined) return;
+      endedError = error;
+      peer.close(error);
+      if (ready) onEnd(error);
+    };
+    emitStartupPhase(onStartupPhase, 'spawning');
     const engine = spawnEngineProcess({
       executable: config.executable,
       args: [...config.prefix, 'app-server', ...extraArgs],
@@ -246,21 +261,19 @@ export async function connectCodex(
     const reading = (async () => {
       try {
         for await (const line of engine.lines) peer.receive(line);
-        const ended = new Error(
-          `Codex app-server exited: ${engine.stderrTail().slice(-2000)}`,
-        );
-        peer.close(ended);
-        onEnd(ended);
+        finishEnd(new Error(`Codex app-server exited: ${engine.stderrTail().slice(-2000)}`));
       } catch (error) {
         const failed = error instanceof Error ? error : new Error(String(error));
-        peer.close(failed);
-        onEnd(failed);
+        finishEnd(failed);
         await engine.stop().catch(() => undefined);
       }
     })();
     try {
+      emitStartupPhase(onStartupPhase, 'initializing');
       await initializeCodexPeer(peer, config.version);
       const providerPid = (await engine.pidReady) ?? engine.pid;
+      if (endedError !== undefined) throw endedError;
+      ready = true;
       return { engine, peer, reading, providerPid };
     } catch (error) {
       await stopConnection({ engine, reading }, { error });
@@ -307,6 +320,7 @@ export async function connectCodex(
   if (transport.kind === 'unix-listen') {
     assertCodexUnixListenTargetAvailable(transport.socketPath, 'createCodexDriver');
     const env = engineEnvironment(profile, config.ambient);
+    emitStartupPhase(onStartupPhase, 'spawning');
     spawnedEngine = spawnEngineProcess({
       executable: config.executable,
       args: [
@@ -368,12 +382,14 @@ export async function connectCodex(
   const reading = activeWs.closed;
   try {
     if (endedError !== undefined) throw endedError;
+    emitStartupPhase(onStartupPhase, 'initializing');
     await initializeCodexPeer(peer, config.version);
     if (endedError !== undefined) throw endedError;
     const providerPid =
       spawnedEngine !== undefined
         ? ((await spawnedEngine.pidReady) ?? spawnedEngine.pid)
         : undefined;
+    if (endedError !== undefined) throw endedError;
     ready = true;
     return { engine: compositeEngine, peer, reading, providerPid };
   } catch (error) {

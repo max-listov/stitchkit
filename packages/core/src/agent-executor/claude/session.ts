@@ -9,7 +9,6 @@ import {
   holdEngineRequest,
   loseEngineTurn,
 } from '../engine-requests';
-import { InteractionReplySchema } from '../executor-contract';
 import type { PlanLimits } from '../hello';
 import {
   assertImageFrameBytes,
@@ -21,31 +20,41 @@ import { mergeRateLimitEvent } from '../plan-limits';
 import { type ExecutorProfileConfig, engineEnvironment, engineProfile } from '../profile';
 import {
   createTurnDeltaChannel,
+  emitStartupPhase,
   offerTurnDelta,
   sessionAbort,
   stopConnection,
 } from '../session-primitives';
+import type { ExecutorStartupPhase } from '../vocabulary';
 import { type ClaudeTurnState, classifyClaudeRecord, newClaudeTurnState } from './classify';
 import { claudePlanWindows } from './limits';
 import {
+  type ClaudePendingPermissionDetail,
+  type ClaudePermissionDecision,
   claudeControlError,
   claudeInterrupt,
   claudePermissionResponse,
   claudeUserContent,
   claudeUserMessage,
+  resolveClaudePermissionReply,
 } from './protocol';
 import { claudeTranscriptExists, claudeTranscriptPath } from './transcript';
 
-type ClaudeDecision = Parameters<typeof claudePermissionResponse>[1];
-
 /** A running turn: its state, its deltas and the permission requests it holds, with their input. */
-interface ClaudeTurnSlot extends EngineRequestTurn<ClaudeDecision, { input: unknown }> {
+interface ClaudeTurnSlot
+  extends EngineRequestTurn<ClaudePermissionDecision, ClaudePendingPermissionDetail> {
   readonly state: ClaudeTurnState;
 }
 
-const INTERRUPTED: ClaudeDecision = { behavior: 'deny', message: 'The turn was interrupted' };
-const ENDED: ClaudeDecision = { behavior: 'deny', message: 'The turn ended' };
-const LOST: ClaudeDecision = { behavior: 'deny', message: 'The Claude CLI was lost' };
+const INTERRUPTED: ClaudePermissionDecision = {
+  behavior: 'deny',
+  message: 'The turn was interrupted',
+};
+const ENDED: ClaudePermissionDecision = { behavior: 'deny', message: 'The turn ended' };
+const LOST: ClaudePermissionDecision = {
+  behavior: 'deny',
+  message: 'The Claude CLI was lost',
+};
 
 function claudeTurnHandle(
   turn: ClaudeTurnSlot,
@@ -59,22 +68,14 @@ function claudeTurnHandle(
       send(JSON.stringify(claudeInterrupt(randomUUID())));
     },
     async respond(interactionId, rawReply) {
-      const reply = InteractionReplySchema.shape.reply.parse(rawReply);
       const waiting = turn.pending.get(interactionId);
       if (waiting === undefined) {
         throw new TypeError(`Unknown interaction ${interactionId} for this turn`);
       }
-      if (reply.kind === 'input') {
-        throw new TypeError(
-          'A Claude permission request is approved or denied, not answered with input',
-        );
-      }
       answerEngineRequest(
         turn,
         interactionId,
-        reply.kind === 'approve'
-          ? { behavior: 'allow', input: waiting.detail.input }
-          : { behavior: 'deny', message: reply.message },
+        resolveClaudePermissionReply(waiting.detail, rawReply),
       );
     },
   };
@@ -98,6 +99,7 @@ export async function openClaudeSession(
     profile: ExecutorProfileConfig;
     cwd: string;
     nativeThreadId?: string;
+    onStartupPhase?: (phase: ExecutorStartupPhase) => void;
     signal?: AbortSignal;
   },
 ): Promise<AgentEngineSession> {
@@ -110,6 +112,7 @@ export async function openClaudeSession(
     input.nativeThreadId !== undefined && (await claudeTranscriptExists(transcript));
   const linked = sessionAbort(input.signal);
   let engine: EngineProcess;
+  emitStartupPhase(input.onStartupPhase, 'spawning');
   try {
     engine = spawnEngineProcess({
       executable,
@@ -177,9 +180,9 @@ export async function openClaudeSession(
             for (const delta of verdict.deltas) offerTurnDelta(turn?.channel, delta);
             break;
           case 'request': {
-            const { delta, input } = verdict;
+            const { delta, input, toolName, suppressSessionRule } = verdict;
             // A lost CLI reads nothing: the answer a drain gives it is not written.
-            const answer = (decision: ClaudeDecision) => {
+            const answer = (decision: ClaudePermissionDecision) => {
               if (dead === undefined)
                 engine.send(
                   JSON.stringify(claudePermissionResponse(delta.interactionId, decision)),
@@ -191,7 +194,7 @@ export async function openClaudeSession(
             else
               holdEngineRequest(turn, {
                 interactionId: delta.interactionId,
-                detail: { input },
+                detail: { input, toolName, suppressSessionRule },
                 answeredBy: { source: 'claude', type: 'control_response' },
                 delta: () => delta,
                 refusal: INTERRUPTED,
@@ -212,6 +215,7 @@ export async function openClaudeSession(
             endEngineTurn(turn, () => ENDED, verdict.deltas);
             current = undefined;
             break;
+          case 'event':
           case 'session':
           case 'ignore':
             break;

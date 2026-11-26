@@ -4,14 +4,27 @@ import { abortReason } from '../../internal/abort-race';
 import { newClaudeTurnState } from '../claude/classify';
 import { claudeUserContent } from '../claude/protocol';
 import { claudeTranscriptExists, claudeTranscriptPath } from '../claude/transcript';
-import type { AgentEngineDriver, AgentEngineSession, AgentEngineTurn } from '../engine';
+import type { AgentEngineSession, AgentEngineTurn } from '../engine';
 import { loseEngineTurn } from '../engine-requests';
 import type { PlanLimits } from '../hello';
 import { imageTurnStarter } from '../image-input';
+import { planLimitsReadFailed } from '../plan-limits';
 import { engineEnvironment, engineProfile } from '../profile';
-import { createTurnDeltaChannel, sessionAbort } from '../session-primitives';
+import {
+  createTurnDeltaChannel,
+  emitStartupPhase,
+  invokeSafely,
+  sessionAbort,
+} from '../session-primitives';
+import type { ExecutorStartupPhase } from '../vocabulary';
 import { type ClaudeSdkFlagSettings, createClaudeSdkControls } from './controls';
-import type { ClaudeSdkDriverConfig, ClaudeSdkRun, ClaudeSdkSession } from './driver';
+import type {
+  ClaudeSdkDriverConfig,
+  ClaudeSdkOpenInput,
+  ClaudeSdkQueryExitContext,
+  ClaudeSdkRun,
+  ClaudeSdkSession,
+} from './driver';
 import {
   closeQuerySafely,
   createSdkCanUseTool,
@@ -110,6 +123,8 @@ async function launchSingleSdkQuery(input: {
   limits: Map<string, PlanLimits>;
   sessionId: string;
   resume: boolean;
+  resumeSessionAt?: Options['resumeSessionAt'];
+  resumeDropsTurn?: Options['resumeDropsTurn'];
   activeModel: string | undefined;
   activePermissionMode: NonNullable<Options['permissionMode']>;
   flagSettingsOverlay: ClaudeSdkFlagSettings | undefined;
@@ -121,10 +136,12 @@ async function launchSingleSdkQuery(input: {
   setInFlightClose: (fn: (() => void) | undefined) => void;
   recordPid: (pid: number | undefined) => void;
   onPidExit: (pid: number) => void;
+  onStartupPhase?: (phase: ExecutorStartupPhase) => void;
   onExit: (handle: RunningQueryHandle, error: unknown) => void;
 }): Promise<RunningQueryHandle> {
   if (input.isClosed()) throw new Error('The Claude SDK session is closed');
   input.signal.throwIfAborted();
+  emitStartupPhase(input.onStartupPhase, 'spawning');
   const pushed = pushablePrompt();
   let query: ClaudeSdkRun;
   try {
@@ -137,6 +154,12 @@ async function launchSingleSdkQuery(input: {
         canUseTool: input.canUseTool,
         sessionId: input.sessionId,
         resume: input.resume,
+        ...(input.resumeSessionAt !== undefined && {
+          resumeSessionAt: input.resumeSessionAt,
+        }),
+        ...(input.resumeDropsTurn !== undefined && {
+          resumeDropsTurn: input.resumeDropsTurn,
+        }),
         activeModel: input.activeModel,
         activePermissionMode: input.activePermissionMode,
         recordPid: input.recordPid,
@@ -168,6 +191,10 @@ async function launchSingleSdkQuery(input: {
         limits: input.limits,
         getTurn: input.getTurn,
         clearTurn: input.clearTurn,
+        ...(input.config.onEvent !== undefined && { onEvent: input.config.onEvent }),
+        ...(input.config.onTurnUsage !== undefined && {
+          onTurnUsage: input.config.onTurnUsage,
+        }),
         onExit: input.onExit,
       });
     },
@@ -176,6 +203,7 @@ async function launchSingleSdkQuery(input: {
   input.setInFlightClose(closeHandle);
   try {
     if (hasDelegationVerification(input.config.verifyDelegation)) {
+      emitStartupPhase(input.onStartupPhase, 'verifying');
       await verifyClaudeSdkDelegation(query, input.config.verifyDelegation, input.signal);
     }
     if (input.flagSettingsOverlay !== undefined) {
@@ -196,6 +224,73 @@ async function launchSingleSdkQuery(input: {
   return handle;
 }
 
+function notifyQueryExit(
+  callback: ClaudeSdkDriverConfig['onQueryExit'],
+  error: unknown,
+  context: ClaudeSdkQueryExitContext,
+): void {
+  if (callback === undefined) return;
+  invokeSafely(() => callback(error, context));
+}
+
+function validateClaudeSdkOpenInput(input: ClaudeSdkOpenInput): void {
+  const hasNativeThreadId =
+    typeof input.nativeThreadId === 'string' && input.nativeThreadId.trim().length > 0;
+  if (input.resumeSessionAt !== undefined) {
+    if (
+      typeof input.resumeSessionAt !== 'string' ||
+      input.resumeSessionAt.trim().length === 0
+    ) {
+      throw new TypeError(
+        'Claude SDK open() requires a non-empty resumeSessionAt UUID when provided',
+      );
+    }
+    if (!hasNativeThreadId) {
+      throw new TypeError(
+        'Claude SDK open() requires nativeThreadId when resumeSessionAt is provided',
+      );
+    }
+  }
+  if (input.resumeDropsTurn !== undefined) {
+    if (
+      typeof input.resumeDropsTurn !== 'string' ||
+      input.resumeDropsTurn.trim().length === 0
+    ) {
+      throw new TypeError(
+        'Claude SDK open() requires a non-empty resumeDropsTurn prompt UUID when provided',
+      );
+    }
+    if (!hasNativeThreadId) {
+      throw new TypeError(
+        'Claude SDK open() requires nativeThreadId when resumeDropsTurn is provided',
+      );
+    }
+    if (input.resumeSessionAt === undefined) {
+      throw new TypeError(
+        'Claude SDK open() requires resumeSessionAt when resumeDropsTurn is provided',
+      );
+    }
+  }
+}
+
+function recordSdkPlanLimitsFailure(
+  limits: Map<string, PlanLimits>,
+  profileId: string,
+  error: unknown,
+): void {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const boundedMessage =
+    rawMessage.trim().length > 0 ? rawMessage.slice(0, 4096) : 'Plan limits read failed';
+  limits.set(
+    profileId,
+    planLimitsReadFailed({
+      previous: limits.get(profileId),
+      error: boundedMessage,
+      now: new Date(),
+    }),
+  );
+}
+
 /**
  * One Claude session over Agent SDK queries. A query lives until it breaks;
  * a broken one fails its turn (or clears its handle when idle), and the next
@@ -205,17 +300,22 @@ async function launchSingleSdkQuery(input: {
 export async function openClaudeSdkSession(
   config: ClaudeSdkDriverConfig,
   limits: Map<string, PlanLimits>,
-  input: Parameters<AgentEngineDriver['open']>[0],
+  input: ClaudeSdkOpenInput,
 ): Promise<ClaudeSdkSession> {
+  validateClaudeSdkOpenInput(input);
   const ambient = config.ambient ?? process.env;
   const profile = engineProfile('claude-sdk', input.profile);
   input.signal?.throwIfAborted();
   const sessionId = input.nativeThreadId ?? randomUUID();
   const transcript = claudeTranscriptPath({ home: profile.home, cwd: input.cwd, sessionId });
-  let resume =
+  const transcriptExists =
     input.nativeThreadId !== undefined && (await claudeTranscriptExists(transcript));
+  let resume = transcriptExists || input.resumeSessionAt !== undefined;
+  let pendingResumeSessionAt = input.resumeSessionAt;
+  let pendingResumeDropsTurn = input.resumeDropsTurn;
   let current: SdkTurnSlot | undefined;
   let startingTurn = false;
+  let opened = false;
   let closed = false;
   let providerPid: number | undefined;
   let activeModel = config.model;
@@ -247,6 +347,9 @@ export async function openClaudeSdkSession(
   const canUseTool = createSdkCanUseTool({
     getTurn: () => current,
     isClosed: () => closed,
+    ...(config.onPermissionRequest !== undefined && {
+      onPermissionRequest: config.onPermissionRequest,
+    }),
   });
 
   const ensureQuery = async (startLoopImmediately: boolean): Promise<RunningQueryHandle> => {
@@ -264,6 +367,12 @@ export async function openClaudeSdkSession(
         limits,
         sessionId,
         resume,
+        ...(pendingResumeSessionAt !== undefined && {
+          resumeSessionAt: pendingResumeSessionAt,
+        }),
+        ...(pendingResumeDropsTurn !== undefined && {
+          resumeDropsTurn: pendingResumeDropsTurn,
+        }),
         activeModel,
         activePermissionMode,
         flagSettingsOverlay,
@@ -283,9 +392,12 @@ export async function openClaudeSdkSession(
         onPidExit: (exitedPid) => {
           if (providerPid === exitedPid) providerPid = undefined;
         },
+        ...(input.onStartupPhase !== undefined && { onStartupPhase: input.onStartupPhase }),
         onExit: (exited, error) => {
           const ownsSession = running === exited;
+          const shouldNotify = ownsSession && opened && !closed && !linked.signal.aborted;
           const turn = ownsSession ? current : undefined;
+          const duringTurn = turn !== undefined;
           if (ownsSession) {
             running = undefined;
             current = undefined;
@@ -293,6 +405,12 @@ export async function openClaudeSdkSession(
           }
           loseEngineTurn(turn, stoppedPermission('The Claude SDK query ended'), error);
           exited.close();
+          if (shouldNotify) {
+            notifyQueryExit(config.onQueryExit, error, {
+              duringTurn,
+              nativeThreadId: sessionId,
+            });
+          }
         },
       })
         .then((handle) => {
@@ -335,6 +453,8 @@ export async function openClaudeSdkSession(
     },
     markResumable: () => {
       resume = true;
+      pendingResumeSessionAt = undefined;
+      pendingResumeDropsTurn = undefined;
     },
     ensureQuery,
   });
@@ -352,8 +472,14 @@ export async function openClaudeSdkSession(
     recordFlagSettings: (settings) => {
       flagSettingsOverlay = { ...flagSettingsOverlay, ...settings };
     },
+    recordPlanLimits: (next) => {
+      limits.set(profile.profileId, next);
+    },
+    recordPlanLimitsFailure: (error) =>
+      recordSdkPlanLimitsFailure(limits, profile.profileId, error),
   });
 
+  opened = true;
   return {
     nativeThreadId: sessionId,
     get providerPid() {

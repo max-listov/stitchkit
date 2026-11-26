@@ -132,7 +132,7 @@ test('a stop that fails keeps the failure that made the caller stop, and a probe
           profileId: 'p',
           engine: 'acp',
           home: join(root, 'home'),
-          env: { FAKE_ACP_PROTOCOL: '2', FAKE_ENGINE_PID_FILE: pidFile },
+          env: { FAKE_ACP_PROTOCOL: '0', FAKE_ENGINE_PID_FILE: pidFile },
         },
         cwd: root,
       })
@@ -142,7 +142,7 @@ test('a stop that fails keeps the failure that made the caller stop, and a probe
       );
     expect(failed).toBeInstanceOf(AggregateError);
     expect(failed instanceof Error ? failed.cause : undefined).toMatchObject({
-      message: expect.stringContaining('speaks protocol 2'),
+      message: expect.stringContaining('speaks protocol 0'),
     });
     const [, cleanup] = failed instanceof AggregateError ? failed.errors : [];
     expect(cleanup).toBeInstanceOf(NativeCommandError);

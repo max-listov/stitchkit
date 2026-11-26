@@ -1,4 +1,5 @@
 import type { ModelMessage } from 'ai';
+import { rankToolsByQuery } from '../tools/internal/rank-tools';
 import {
   type DeferredAgentToolManifestEntry,
   DeferredAgentToolReceiptSchema,
@@ -61,64 +62,7 @@ export function ranked(
   query: string,
   manifest: readonly DeferredAgentToolManifestEntry[],
 ): string[] {
-  const phrase = rankedByPhrase(query, manifest);
-  return phrase.length > 0 ? phrase : rankedByWords(query, manifest);
-}
-
-/** Entries matching the most query words, then the fewest, then manifest order. */
-function rankedByWords(
-  query: string,
-  manifest: readonly DeferredAgentToolManifestEntry[],
-): string[] {
-  const words = [
-    ...new Set(
-      query
-        .trim()
-        .toLocaleLowerCase()
-        .split(/\s+/u)
-        .filter((word) => word.length > 0),
-    ),
-  ];
-  // One word is one phrase: it already had its turn above, and running it again
-  // here would only reorder what that pass already refused.
-  if (words.length < 2) return [];
-  return manifest
-    .map((entry, order) => {
-      const haystack = `${entry.name} ${entry.description}`.toLocaleLowerCase();
-      const hits = words.filter((word) => haystack.includes(word)).length;
-      return { name: entry.name, order, hits };
-    })
-    .filter((entry) => entry.hits > 0)
-    .sort((left, right) => right.hits - left.hits || left.order - right.order)
-    .map((entry) => entry.name);
-}
-
-function rankedByPhrase(
-  query: string,
-  manifest: readonly DeferredAgentToolManifestEntry[],
-): string[] {
-  const needle = query.trim().toLocaleLowerCase();
-  return manifest
-    .map((entry, order) => {
-      const name = entry.name.toLocaleLowerCase();
-      const description = entry.description.toLocaleLowerCase();
-      const score =
-        name === needle
-          ? 0
-          : name.startsWith(needle)
-            ? 1
-            : name.split(/[_-]/u).some((token) => token.startsWith(needle))
-              ? 2
-              : name.includes(needle)
-                ? 3
-                : description.includes(needle)
-                  ? 4
-                  : 5;
-      return { name: entry.name, order, score };
-    })
-    .filter((entry) => entry.score < 5)
-    .sort((left, right) => left.score - right.score || left.order - right.order)
-    .map((entry) => entry.name);
+  return rankToolsByQuery(query, manifest).map((entry) => entry.name);
 }
 export function latestSelection(
   messages: readonly ModelMessage[],

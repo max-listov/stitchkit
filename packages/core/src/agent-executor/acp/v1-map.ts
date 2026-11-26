@@ -3,8 +3,8 @@ import type { AgentMessagePart } from '../../agent-parts/parts';
 import { bytesToBase64, resolveImageBytes, validateImageOptions } from '../image-input';
 import { JsonRpcError } from '../json-rpc-peer';
 import { nonEmptyString } from '../session-primitives';
-import type { ExecutorDelta, ExecutorErrorKind } from '../vocabulary';
-import type { AcpSessionUpdate } from './v1-protocol';
+import type { ExecutorDelta, ExecutorErrorKind, ExecutorTokenUsage } from '../vocabulary';
+import type { AcpPromptUsage, AcpSessionUpdate } from './v1-protocol';
 
 const ACP_AUTH_REQUIRED_CODE = -32000;
 const ACP_RATE_LIMIT_RE =
@@ -36,6 +36,10 @@ const QUIET = new Set([
   'session_info_update',
   'current_mode_update',
   'plan',
+  'plan_update',
+  'plan_removed',
+  'compaction_update',
+  'compaction_summary_chunk',
 ]);
 
 function text(update: AcpSessionUpdate): string | undefined {
@@ -175,6 +179,68 @@ export function acpOutcome(
 ): 'completed' | 'interrupted' | 'failed' {
   if (interruptRequested || stopReason === 'cancelled') return 'interrupted';
   return stopReason === 'end_turn' ? 'completed' : 'failed';
+}
+
+/**
+ * Normalize one ACP prompt `usage` object into executor token counters, preserving
+ * `cachedWriteTokens`, `thoughtTokens`, and `totalTokens`. When `usageInputIncludesCachedRead`
+ * is `false`, adds `cachedReadTokens` onto `inputTokens` so total input reflects both uncached
+ * and cache-read tokens.
+ */
+export function normalizeAcpUsage(
+  usage: AcpPromptUsage,
+  options: { readonly usageInputIncludesCachedRead?: boolean } = {},
+): ExecutorTokenUsage {
+  const cachedRead = usage.cachedReadTokens ?? undefined;
+  const inputTokens =
+    usage.inputTokens != null
+      ? options.usageInputIncludesCachedRead === false && cachedRead !== undefined
+        ? usage.inputTokens + cachedRead
+        : usage.inputTokens
+      : undefined;
+  return {
+    ...(inputTokens !== undefined && { inputTokens }),
+    ...(usage.outputTokens != null && { outputTokens: usage.outputTokens }),
+    ...(cachedRead !== undefined && { cachedInputTokens: cachedRead }),
+    ...(usage.cachedWriteTokens != null && {
+      cacheCreationInputTokens: usage.cachedWriteTokens,
+    }),
+    ...(usage.thoughtTokens != null && { thinkingTokens: usage.thoughtTokens }),
+    ...(usage.totalTokens != null && { totalTokens: usage.totalTokens }),
+  };
+}
+
+function sumOptionalCount(
+  left: number | undefined,
+  right: number | undefined,
+): number | undefined {
+  if (left === undefined && right === undefined) return undefined;
+  return (left ?? 0) + (right ?? 0);
+}
+
+/** Accumulate normalized token counters across multiple prompt generations of one steered turn. */
+export function addAcpTokenUsage(
+  total: ExecutorTokenUsage | undefined,
+  next: ExecutorTokenUsage,
+): ExecutorTokenUsage {
+  if (total === undefined) return next;
+  const inputTokens = sumOptionalCount(total.inputTokens, next.inputTokens);
+  const outputTokens = sumOptionalCount(total.outputTokens, next.outputTokens);
+  const cachedInputTokens = sumOptionalCount(total.cachedInputTokens, next.cachedInputTokens);
+  const cacheCreationInputTokens = sumOptionalCount(
+    total.cacheCreationInputTokens,
+    next.cacheCreationInputTokens,
+  );
+  const thinkingTokens = sumOptionalCount(total.thinkingTokens, next.thinkingTokens);
+  const totalTokens = sumOptionalCount(total.totalTokens, next.totalTokens);
+  return {
+    ...(inputTokens !== undefined && { inputTokens }),
+    ...(outputTokens !== undefined && { outputTokens }),
+    ...(cachedInputTokens !== undefined && { cachedInputTokens }),
+    ...(cacheCreationInputTokens !== undefined && { cacheCreationInputTokens }),
+    ...(thinkingTokens !== undefined && { thinkingTokens }),
+    ...(totalTokens !== undefined && { totalTokens }),
+  };
 }
 
 export interface AcpPromptLimits {

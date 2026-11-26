@@ -27,6 +27,38 @@ export const ExecutorEngineSchema = z.enum(['claude-cli', 'claude-sdk', 'codex',
  */
 export const ExecutorReconcileSchema = z.enum(['client-id', 'none']);
 
+/** Declarative capabilities reported by an agent-executor driver and its configuration. */
+export const ExecutorDriverCapabilitiesSchema = z.strictObject({
+  /** Whether runtime tool/policy enforcement is native to the engine or enforced at the client boundary. */
+  runtimePolicyEnforcement: z.enum(['native', 'client-boundary']),
+  /** Whether `approve { scope: 'session' }` is supported by this driver. */
+  sessionApproval: z.boolean(),
+  /** Whether `deny { interrupt: true }` cancels the running turn immediately. */
+  interruptOnDeny: z.boolean(),
+  /** Whether `approve { updatedInput }` rewrites tool arguments before execution. */
+  updatedToolInput: z.boolean(),
+  /** Whether structured `input` replies (`kind: 'input'`) are supported. */
+  structuredInput: z.boolean(),
+  /** Whether an in-flight turn can be steered mid-run. */
+  steer: z.boolean(),
+  /** Whether this driver configuration can fork an existing native thread/session. */
+  fork: z.boolean(),
+  /** Whether native history rewind/revert is supported. */
+  revert: z.boolean(),
+  /** Whether explicit context compaction is supported. */
+  compact: z.boolean(),
+  /** Whether structured history items can be injected into a thread. */
+  injectItems: z.boolean(),
+  /** Whether engine-side background work can outlive a completed turn and still be observed. */
+  backgroundWorkOutlivesTurn: z.boolean(),
+  /** Whether a single spawned engine process multiplexes multiple threads. */
+  multiThreadPerProcess: z.boolean(),
+  /** Whether image attachments can be resolved and sent with this driver configuration. */
+  images: z.boolean(),
+  /** How plan rate-limit windows are observed (`pull`, `passive`, or `none`). */
+  planLimits: z.enum(['pull', 'passive', 'none']),
+});
+
 /** One rate-limit window reported by an engine for a subscription profile. */
 export const PlanWindowSchema = z.strictObject({
   /** The window as the engine names it: `five_hour`, `weekly`, `codex:300m`. */
@@ -86,6 +118,7 @@ export const ExecutorEngineInfoSchema = z.strictObject({
     z.strictObject({ answer: z.literal('not-asked') }),
     z.strictObject({ answer: z.literal('failed'), error: Text }),
   ]),
+  capabilities: ExecutorDriverCapabilitiesSchema.optional(),
 });
 
 /** A turn the executor was running before it restarted, with how far it reported. */
@@ -131,6 +164,8 @@ export const ExecutorHelloAckSchema = z.strictObject({
 
 /** Engine identifier supported by `agent-executor`. */
 export type ExecutorEngine = z.infer<typeof ExecutorEngineSchema>;
+/** Declarative capabilities reported by an engine driver. */
+export type ExecutorDriverCapabilities = z.infer<typeof ExecutorDriverCapabilitiesSchema>;
 /** Reported version, reconcile mode, and discovered models for one engine. */
 export type ExecutorEngineInfo = z.infer<typeof ExecutorEngineInfoSchema>;
 /** Executor-to-server handshake payload. */

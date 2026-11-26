@@ -124,6 +124,8 @@ export function buildClaudeSdkQueryOptions(input: {
   canUseTool: NonNullable<Options['canUseTool']>;
   sessionId: string;
   resume: boolean;
+  resumeSessionAt?: Options['resumeSessionAt'];
+  resumeDropsTurn?: Options['resumeDropsTurn'];
   activeModel: string | undefined;
   activePermissionMode: NonNullable<Options['permissionMode']>;
   recordPid: (pid: number | undefined) => void;
@@ -153,6 +155,7 @@ export function buildClaudeSdkQueryOptions(input: {
       supportedDialogKinds: [...config.supportedDialogKinds],
     }),
     ...(config.onUserDialog !== undefined && { onUserDialog: config.onUserDialog }),
+    ...(config.onElicitation !== undefined && { onElicitation: config.onElicitation }),
     ...(config.hooks !== undefined && { hooks: config.hooks }),
     ...(config.tools !== undefined && { tools: config.tools }),
     ...(config.allowedTools !== undefined && { allowedTools: config.allowedTools }),
@@ -167,7 +170,17 @@ export function buildClaudeSdkQueryOptions(input: {
     ...(config.extraArgs !== undefined && { extraArgs: config.extraArgs }),
     ...(config.stderr !== undefined && { stderr: config.stderr }),
     ...(spawnHook !== undefined && { spawnClaudeCodeProcess: spawnHook }),
-    ...(input.resume ? { resume: input.sessionId } : { sessionId: input.sessionId }),
+    ...(input.resume
+      ? {
+          resume: input.sessionId,
+          ...(input.resumeSessionAt !== undefined && {
+            resumeSessionAt: input.resumeSessionAt,
+          }),
+          ...(input.resumeDropsTurn !== undefined && {
+            resumeDropsTurn: input.resumeDropsTurn,
+          }),
+        }
+      : { sessionId: input.sessionId }),
   };
 }
 

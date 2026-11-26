@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { abortReason, linkAbortSignals } from '../internal/abort-race';
 import { type BoundedChannel, createBoundedChannel } from '../internal/channel';
@@ -5,7 +6,11 @@ import { jsonDataRefusal } from '../internal/json-data';
 import { runNativeCommand } from '../process/command';
 import type { EngineProcess } from './engine-process';
 import { type ExecutorProfileConfig, engineEnvironment } from './profile';
-import type { ExecutorDelta } from './vocabulary';
+import {
+  type ExecutorDelta,
+  type ExecutorStartupPhase,
+  ExecutorStartupPhaseSchema,
+} from './vocabulary';
 
 const TURN_QUEUE = { maxItems: 65_536, maxBytes: 64 * 1024 * 1024 };
 const MAX_DATE_MS = 8.64e15;
@@ -191,4 +196,66 @@ export function safeJsonValue(value: unknown): z.infer<ReturnType<typeof z.json>
     throw new TypeError(`Expected bounded JSON data (refused: ${refusal})`);
   }
   return z.json().parse(snapshot.value);
+}
+
+/** Invoke a callback or cleanup hook while containing both synchronous throws and async rejections. */
+export function invokeSafely(invoke: () => unknown): void {
+  try {
+    const result = invoke();
+    if (
+      typeof result === 'object' &&
+      result !== null &&
+      'then' in result &&
+      typeof result.then === 'function'
+    ) {
+      void Promise.resolve(result).catch(() => undefined);
+    }
+  } catch {
+    // Observer and teardown callback failures must not crash reader loops or mask primary errors.
+  }
+}
+
+/** Validate and forward a session startup phase to an optional observer without letting throws break `open()`. */
+export function emitStartupPhase(
+  callback: ((phase: ExecutorStartupPhase) => void) | undefined,
+  phase: ExecutorStartupPhase,
+): void {
+  if (callback === undefined) return;
+  const parsed = ExecutorStartupPhaseSchema.parse(phase);
+  invokeSafely(() => callback(parsed));
+}
+
+/**
+ * Clamp a plan-window name (`prefix + suffix`) to at most `maxChars` characters and
+ * deterministically disambiguate collisions via a short SHA-256 tag.
+ */
+export function clampUniqueWindowName(
+  prefix: string,
+  suffix: string,
+  seenNames: Set<string>,
+  disambiguatorSeed: string,
+  maxChars = 256,
+): string {
+  const maxPrefix = Math.max(1, maxChars - suffix.length);
+  let candidate =
+    prefix.length > maxPrefix
+      ? `${prefix.slice(0, maxPrefix)}${suffix}`.slice(0, maxChars)
+      : `${prefix}${suffix}`;
+  if (!seenNames.has(candidate)) {
+    seenNames.add(candidate);
+    return candidate;
+  }
+  const digest = createHash('sha256').update(disambiguatorSeed).digest('hex').slice(0, 8);
+  const tag = `#${digest}${suffix}`;
+  const room = Math.max(1, maxChars - tag.length);
+  candidate = `${prefix.slice(0, room)}${tag}`.slice(0, maxChars);
+  let index = 2;
+  while (seenNames.has(candidate)) {
+    const indexedTag = `#${digest}_${index}${suffix}`;
+    const indexedRoom = Math.max(1, maxChars - indexedTag.length);
+    candidate = `${prefix.slice(0, indexedRoom)}${indexedTag}`.slice(0, maxChars);
+    index += 1;
+  }
+  seenNames.add(candidate);
+  return candidate;
 }

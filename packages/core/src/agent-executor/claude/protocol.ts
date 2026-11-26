@@ -1,9 +1,13 @@
 import { z } from 'zod';
+import { type InteractionReply, InteractionReplySchema } from '../executor-contract';
 import {
   type InlinedPart,
   isSupportedImageMediaType,
   type SupportedImageMediaType,
 } from '../image-input';
+import { safeJsonValue } from '../session-primitives';
+
+type JsonValue = z.infer<ReturnType<typeof z.json>>;
 
 /**
  * The slice of Claude Code's `stream-json` dialect the driver reads, as
@@ -40,9 +44,15 @@ export const ClaudeContentBlockSchema = z.union([
 ]);
 
 const Usage = z.looseObject({
-  input_tokens: z.int().nonnegative().optional(),
-  output_tokens: z.int().nonnegative().optional(),
-  cache_read_input_tokens: z.int().nonnegative().optional(),
+  input_tokens: z.int().nonnegative().nullish(),
+  output_tokens: z.int().nonnegative().nullish(),
+  cache_read_input_tokens: z.int().nonnegative().nullish(),
+  cache_creation_input_tokens: z.int().nonnegative().nullish(),
+  output_tokens_details: z
+    .looseObject({
+      thinking_tokens: z.int().nonnegative().nullish(),
+    })
+    .nullish(),
 });
 
 export const ClaudeRecordSchema = z.discriminatedUnion('type', [
@@ -51,6 +61,7 @@ export const ClaudeRecordSchema = z.discriminatedUnion('type', [
     subtype: z.string(),
     session_id: z.string().optional(),
     model: z.string().optional(),
+    uuid: z.string().optional(),
   }),
   z.looseObject({
     type: z.literal('user'),
@@ -62,8 +73,10 @@ export const ClaudeRecordSchema = z.discriminatedUnion('type', [
   }),
   z.looseObject({
     type: z.literal('assistant'),
+    parent_tool_use_id: z.string().nullable().optional(),
     message: z.looseObject({
       id: z.string().min(1),
+      model: z.string().optional(),
       content: z.array(ClaudeContentBlockSchema),
     }),
   }),
@@ -93,7 +106,9 @@ export const ClaudeRecordSchema = z.discriminatedUnion('type', [
     api_error_status: z.union([z.int(), z.string()]).nullable().optional(),
     result: z.string().optional(),
     total_cost_usd: z.number().nonnegative().optional(),
-    usage: Usage.optional(),
+    usage: Usage.nullish(),
+    // Parsed leniently so partial or future per-model rows never drop turn-end.
+    modelUsage: z.record(z.string(), z.unknown()).nullish(),
   }),
   z.looseObject({ type: z.literal('rate_limit_event'), rate_limit_info: z.looseObject({}) }),
   z.looseObject({
@@ -104,6 +119,7 @@ export const ClaudeRecordSchema = z.discriminatedUnion('type', [
       tool_name: z.string().optional(),
       input: z.json().optional(),
       tool_use_id: z.string().optional(),
+      suppress_always_allow_rule: z.boolean().optional(),
     }),
   }),
   z.looseObject({
@@ -114,6 +130,9 @@ export const ClaudeRecordSchema = z.discriminatedUnion('type', [
     type: z.literal('command_lifecycle'),
     command_uuid: z.string().optional(),
     state: z.string(),
+  }),
+  z.looseObject({
+    type: z.literal('tool_progress'),
   }),
 ]);
 
@@ -171,10 +190,94 @@ export function claudeUserMessage(input: {
   };
 }
 
+/** Session-scoped allow rule attached to a Claude `can_use_tool` allow response. */
+export interface ClaudeSessionAllowRule {
+  readonly type: 'addRules';
+  readonly rules: readonly { readonly toolName: string }[];
+  readonly behavior: 'allow';
+  readonly destination: 'session';
+}
+
+/** Metadata kept with one held Claude permission request (CLI `control_request` or SDK `canUseTool`). */
+export interface ClaudePendingPermissionDetail<TInput = unknown> {
+  readonly input: TInput;
+  readonly toolName: string | undefined;
+  readonly suppressSessionRule: boolean;
+}
+
+/** Normalized decision produced from a host `InteractionReply` for a pending Claude permission request. */
+export type ClaudePermissionDecision<TInput = unknown> =
+  | {
+      behavior: 'allow';
+      input: TInput | Record<string, JsonValue>;
+      updatedPermissions?: readonly ClaudeSessionAllowRule[];
+    }
+  | { behavior: 'deny'; message: string; interrupt?: boolean };
+
+function safeJsonObject(value: unknown): Record<string, JsonValue> {
+  const cloned = safeJsonValue(value);
+  if (typeof cloned !== 'object' || cloned === null || Array.isArray(cloned)) {
+    throw new TypeError('Claude permission updatedInput must be a plain JSON object');
+  }
+  return cloned;
+}
+
+/**
+ * Validate a host `InteractionReply` against a held Claude permission request without mutating
+ * pending state on refusal. Shared by both Claude CLI and Claude SDK drivers.
+ */
+export function resolveClaudePermissionReply<TInput>(
+  detail: ClaudePendingPermissionDetail<TInput>,
+  rawReply: InteractionReply['reply'],
+): ClaudePermissionDecision<TInput> {
+  const reply = InteractionReplySchema.shape.reply.parse(rawReply);
+  if (reply.kind === 'input') {
+    throw new TypeError(
+      'A Claude permission request is approved or denied, not answered with input',
+    );
+  }
+  if (reply.kind === 'approve') {
+    if (reply.scope === 'session') {
+      if (detail.toolName === undefined) {
+        throw new TypeError(
+          'Cannot grant a session-scoped Claude approval without a non-empty toolName',
+        );
+      }
+      if (detail.suppressSessionRule) {
+        throw new TypeError(
+          'This Claude permission request does not allow a session-scoped approval rule',
+        );
+      }
+    }
+    const updatedInput =
+      reply.updatedInput !== undefined ? safeJsonObject(reply.updatedInput) : detail.input;
+    return {
+      behavior: 'allow',
+      input: updatedInput,
+      ...(reply.scope === 'session' &&
+        detail.toolName !== undefined && {
+          updatedPermissions: [
+            {
+              type: 'addRules',
+              rules: [{ toolName: detail.toolName }],
+              behavior: 'allow',
+              destination: 'session',
+            },
+          ],
+        }),
+    };
+  }
+  return {
+    behavior: 'deny',
+    message: reply.message,
+    ...(reply.interrupt === true && { interrupt: true }),
+  };
+}
+
 /** An answer to `can_use_tool`, in the dialect's own form: `deny` always carries a message. */
 export function claudePermissionResponse(
   requestId: string,
-  decision: { behavior: 'allow'; input: unknown } | { behavior: 'deny'; message: string },
+  decision: ClaudePermissionDecision,
 ) {
   return {
     type: 'control_response',
@@ -183,8 +286,18 @@ export function claudePermissionResponse(
       request_id: requestId,
       response:
         decision.behavior === 'allow'
-          ? { behavior: 'allow', updatedInput: decision.input }
-          : { behavior: 'deny', message: decision.message },
+          ? {
+              behavior: 'allow',
+              updatedInput: decision.input,
+              ...(decision.updatedPermissions !== undefined && {
+                updatedPermissions: decision.updatedPermissions,
+              }),
+            }
+          : {
+              behavior: 'deny',
+              message: decision.message,
+              ...(decision.interrupt === true && { interrupt: true }),
+            },
     },
   };
 }

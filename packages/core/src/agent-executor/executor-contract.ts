@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { AgentMessagePartSchema } from '../agent-parts/parts';
 import { MAX_TIMER_MS } from '../internal/timers';
-import { ExecutorDeltaSchema } from './vocabulary';
+import { ExecutorDeltaSchema, ExecutorThreadDispositionSchema } from './vocabulary';
 
 /** An id the contract carries: a turn, a thread, an executor, an instance, a profile. */
 export const ExecutorIdSchema = z.string().min(1).max(256);
@@ -107,7 +107,11 @@ export const TurnReportSchema = z.strictObject({
   phase: TurnPhaseSchema,
   deltas: z.array(ExecutorDeltaSchema).max(512),
   failure: z
-    .strictObject({ kind: TurnFailureKindSchema, message: z.string().min(1).max(4096) })
+    .strictObject({
+      kind: TurnFailureKindSchema,
+      message: z.string().min(1).max(4096),
+      threadDisposition: ExecutorThreadDispositionSchema.optional(),
+    })
     .optional(),
 });
 /**
@@ -134,8 +138,19 @@ export const InteractionReplySchema = z.strictObject({
   turnId: ExecutorIdSchema,
   interactionId: ExecutorIdSchema,
   reply: z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('approve') }),
-    z.strictObject({ kind: z.literal('deny'), message: z.string().min(1) }),
+    z.strictObject({
+      kind: z.literal('approve'),
+      /** Approval lifetime: one-shot (`once`, default when omitted) or session-scoped (`session`). */
+      scope: z.enum(['once', 'session']).optional(),
+      /** Optional rewritten tool input object forwarded when the engine supports tool input rewriting. */
+      updatedInput: z.record(z.string(), z.json()).optional(),
+    }),
+    z.strictObject({
+      kind: z.literal('deny'),
+      message: z.string().min(1),
+      /** When `true`, cancel/interrupt the running turn immediately rather than letting it continue. */
+      interrupt: z.boolean().optional(),
+    }),
     z.strictObject({ kind: z.literal('input'), value: z.json() }),
   ]),
 });

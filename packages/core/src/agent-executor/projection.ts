@@ -8,8 +8,8 @@ import type { ExecutorDelta } from './vocabulary';
  * appeared; text and reasoning chunks append to their item; a tool call or
  * result replaces its item; an approval request becomes an approval-request
  * part. A `window` delta discards what was folded and starts again. Usage,
- * the context gauge, the end of the turn, errors and answered requests carry no part — they are
- * the turn's facts, not its content.
+ * the context gauge, lifecycle `status` deltas, the end of the turn, errors and answered requests
+ * carry no part — they are the turn's facts, not its content.
  */
 export function projectExecutorDeltas(deltas: Iterable<ExecutorDelta>): AgentMessagePart[] {
   let items = new Map<string, AgentMessagePart>();
@@ -64,6 +64,7 @@ export function projectExecutorDeltas(deltas: Iterable<ExecutorDelta>): AgentMes
       case 'request-resolved':
       case 'usage':
       case 'context-usage':
+      case 'status':
       case 'turn-end':
       case 'error':
         break;

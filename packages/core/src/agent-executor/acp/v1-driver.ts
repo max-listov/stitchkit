@@ -1,5 +1,5 @@
 import type { AgentEngineDriver } from '../engine';
-import type { ExecutorEngineInfo } from '../hello';
+import type { ExecutorDriverCapabilities, ExecutorEngineInfo } from '../hello';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
 import { withEphemeralConnection } from '../session-primitives';
 import {
@@ -16,7 +16,12 @@ import {
   AcpSessionListResultSchema,
   acpOptionValues,
 } from './v1-protocol';
-import { type AcpApprovalEnforcement, type AcpSession, openAcpSession } from './v1-session';
+import {
+  type AcpApprovalEnforcement,
+  type AcpOpenInput,
+  type AcpSession,
+  openAcpSession,
+} from './v1-session';
 
 export type { AcpDriverConfig } from './v1-connect';
 export type { AcpApprovalEnforcement, AcpSession } from './v1-session';
@@ -31,13 +36,14 @@ export interface AcpSessionSummary {
 
 /** An {@link AgentEngineDriver} speaking ACP v1, adding session listing and session config options. */
 export interface AcpDriver extends AgentEngineDriver {
+  readonly capabilities: ExecutorDriverCapabilities;
   /**
    * How tool approvals are enforced over ACP: always `'agent-initiated'`. The host answers
    * `session/request_permission` requests only when the agent chooses to send them and never
    * synthesizes approvals for unprompted tool calls.
    */
   readonly approvalEnforcement: AcpApprovalEnforcement;
-  open(input: Parameters<AgentEngineDriver['open']>[0]): Promise<AcpSession>;
+  open(input: AcpOpenInput): Promise<AcpSession>;
   /** The sessions the agent keeps for a working directory; refused if it does not declare `list`. */
   sessions(input: {
     profile: ExecutorProfileConfig;
@@ -58,6 +64,29 @@ function probe<T>(
   return withEphemeralConnection((signal) => connectAcp(config, profile, cwd, signal), ask);
 }
 
+/** Close an ephemeral probe session, falling back to `session/delete` when advertised. */
+async function cleanupProbeSession(
+  config: AcpDriverConfig,
+  connection: AcpConnection,
+  sessionId: string,
+): Promise<void> {
+  const timeoutMs = closeRequestTimeoutMs(config);
+  if (acpCan(connection, 'close')) {
+    const closed = await connection.peer
+      .request('session/close', { sessionId }, { timeoutMs })
+      .then(
+        () => true,
+        () => false,
+      );
+    if (closed) return;
+  }
+  if (acpCan(connection, 'delete')) {
+    await connection.peer
+      .request('session/delete', { sessionId }, { timeoutMs })
+      .catch(() => undefined);
+  }
+}
+
 /** The values of the session's model option, or its model list; none when the agent offers neither. */
 async function probeModels(
   config: AcpDriverConfig,
@@ -67,15 +96,7 @@ async function probeModels(
   const session = AcpNewSessionResultSchema.parse(
     await connection.peer.request('session/new', { cwd, mcpServers: [] }),
   );
-  if (acpCan(connection, 'close')) {
-    await connection.peer
-      .request(
-        'session/close',
-        { sessionId: session.sessionId },
-        { timeoutMs: closeRequestTimeoutMs(config) },
-      )
-      .catch(() => undefined);
-  }
+  await cleanupProbeSession(config, connection, session.sessionId);
   const option = session.configOptions?.find((candidate) => candidate.category === 'model');
   if (option !== undefined) return acpOptionValues(option);
   return session.models?.availableModels?.map((model) => model.modelId) ?? [];
@@ -91,36 +112,89 @@ async function probeModels(
 export function createAcpDriver(config: AcpDriverConfig): AcpDriver {
   assertAcpDriverOptions(config);
   const ambientHome = () => (config.ambient ?? process.env).HOME ?? '/';
+  const probeMode = config.probeMode ?? 'ephemeral-session';
+  const capabilities: ExecutorDriverCapabilities = {
+    runtimePolicyEnforcement: 'client-boundary',
+    sessionApproval: true,
+    interruptOnDeny: false,
+    updatedToolInput: false,
+    structuredInput: true,
+    steer: config.steerMode === 'prompt',
+    fork: false,
+    revert: false,
+    compact: false,
+    injectItems: false,
+    backgroundWorkOutlivesTurn:
+      config.onUpdate !== undefined || config.onPermissionRequest !== undefined,
+    multiThreadPerProcess: false,
+    images: config.resolveFile !== undefined,
+    planLimits: 'none',
+  };
   return {
     engine: 'acp',
     reconcile: 'none',
+    capabilities,
     approvalEnforcement: 'agent-initiated',
-    async info() {
-      const profile = { profileId: 'probe', engine: 'acp' as const, home: ambientHome() };
+    async info(): Promise<ExecutorEngineInfo> {
+      if (probeMode === 'passive') {
+        return {
+          engine: 'acp',
+          version: config.passiveVersion?.trim() || 'unknown',
+          reconcile: 'none',
+          models: { answer: 'not-asked' },
+          capabilities,
+        };
+      }
+      const profile: ExecutorProfileConfig = {
+        profileId: 'probe',
+        engine: 'acp',
+        home: ambientHome(),
+      };
       const cwd = process.cwd();
-      return probe(config, profile, cwd, async (connection) => ({
-        engine: 'acp' as const,
-        version: connection.initialized.agentInfo?.version?.trim() || 'unknown',
-        reconcile: 'none' as const,
-        models: await probeModels(config, connection, cwd).then(
-          (ids): ExecutorEngineInfo['models'] => ({ answer: 'listed', ids }),
-          (error: unknown): ExecutorEngineInfo['models'] => ({
-            answer: 'failed',
-            error:
-              (error instanceof Error ? error.message : String(error)) ||
-              'the model probe failed without a message',
-          }),
-        ),
-      }));
+      return probe(config, profile, cwd, async (connection): Promise<ExecutorEngineInfo> => {
+        const version = connection.initialized.agentInfo?.version?.trim() || 'unknown';
+        if (probeMode === 'initialize-only') {
+          return {
+            engine: 'acp',
+            version,
+            reconcile: 'none',
+            models: { answer: 'not-asked' },
+            capabilities,
+          };
+        }
+        return {
+          engine: 'acp',
+          version,
+          reconcile: 'none',
+          models: await probeModels(config, connection, cwd).then(
+            (ids): ExecutorEngineInfo['models'] => ({ answer: 'listed', ids }),
+            (error: unknown): ExecutorEngineInfo['models'] => ({
+              answer: 'failed',
+              error:
+                (error instanceof Error ? error.message : String(error)) ||
+                'the model probe failed without a message',
+            }),
+          ),
+          capabilities,
+        };
+      });
     },
     /**
      * Whether the agent opens a session without signing in: `session/new`
-     * and `session/close`. An agent lists `authMethods` while signed in too,
-     * so the list says nothing; a session refused for auth is `signed-out`.
+     * and `session/close` (or `session/delete`). Under `probeMode: 'passive'`
+     * or `'initialize-only'`, skips `session/new` and returns honest `unknown`
+     * unless `initialize` itself refuses for auth.
      */
     async status(rawProfile) {
       const profile = engineProfile('acp', rawProfile);
+      if (probeMode === 'passive') {
+        return { login: { state: 'unknown' }, effectiveCredential: 'unknown' };
+      }
       try {
+        if (probeMode === 'initialize-only') {
+          await probe(config, profile, process.cwd(), async () => undefined);
+          return { login: { state: 'unknown' }, effectiveCredential: 'unknown' };
+        }
         await probe(config, profile, process.cwd(), (connection) =>
           probeModels(config, connection, process.cwd()),
         );

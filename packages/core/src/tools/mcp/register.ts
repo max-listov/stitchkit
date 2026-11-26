@@ -2,6 +2,7 @@ import {
   type CallToolResult,
   isCallToolResult,
   type McpServer,
+  type RegisteredTool,
 } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { AppError } from '../../contract/errors';
@@ -92,7 +93,7 @@ export function registerMcpTool(
   presentation: McpToolPresentation,
   descriptor: PreparedMcpTool,
   config: McpToolRegistrationConfig,
-): void {
+): RegisteredTool {
   const { mountable } = descriptor;
   const toolConfig: {
     description: string;
@@ -125,7 +126,7 @@ export function registerMcpTool(
   const { name } = presentation;
   const format = config.formatResult;
 
-  server.registerTool(
+  return server.registerTool(
     name,
     stampToolRegistration(toolConfig, config.catalog),
     async (rawArgs, mcpContext) =>

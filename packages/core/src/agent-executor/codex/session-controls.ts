@@ -1,8 +1,19 @@
-import type { AgentMessagePart } from '../../agent-parts/parts';
 import type { AgentEngineDriver, AgentEngineSession, AgentEngineTurn } from '../engine';
-import { type DriverImageOptions, type InlinedPart, inlineParts } from '../image-input';
+import type { InteractionReply } from '../executor-contract';
+import type { ExecutorDriverCapabilities } from '../hello';
+import type { DriverImageOptions } from '../image-input';
 import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
+import type { ExecutorProfileConfig } from '../profile';
 import { safeJsonValue } from '../session-primitives';
+import type { ExecutorStartupPhase } from '../vocabulary';
+import type {
+  CodexControlClient,
+  CodexControlConnectInput,
+  CodexControlConnection,
+  CodexListItemsParams,
+  CodexListTurnsParams,
+  CodexReadThreadParams,
+} from './control-client';
 import {
   type CodexApprovalPolicy,
   type CodexCollaborationMode,
@@ -13,6 +24,20 @@ import {
   CodexTurnSteerResponseSchema,
   extractCodexThreadContext,
 } from './protocol';
+import type { CodexSharedServer, CodexSharedServerOpenInput } from './shared-server';
+import type {
+  CodexInjectItemsParams,
+  CodexRevertThreadParams,
+  CodexRevertThreadResult,
+  CodexSetThreadNameParams,
+  CodexUpdateThreadMetadataParams,
+} from './thread-controls';
+import {
+  type CodexTurnInputPart,
+  codexTurnInput,
+  type InlinedCodexPart,
+  inlineCodexParts,
+} from './turn-input';
 
 /** Policy and configuration fields forwarded to Codex `thread/start`, `thread/resume`, and `thread/fork`. */
 export interface CodexThreadPolicyOverrides {
@@ -32,44 +57,11 @@ export interface CodexThreadPolicyOverrides {
   readonly config?: Readonly<Record<string, JsonRpcValue>>;
 }
 
-/** Read-only and inspection RPCs exposed during thread setup (`prepareThread` / `verifyThread`) and on {@link CodexSession}. */
-export interface CodexControlClient {
-  /** Read effective Codex configuration (`config/read`). */
-  readConfig(params?: {
-    readonly cwd?: string;
-    readonly includeLayers?: boolean;
-  }): Promise<JsonRpcValue>;
-  /** List MCP servers and their statuses (`mcpServerStatus/list`). */
-  listMcpServerStatus(params?: {
-    readonly cursor?: string;
-    readonly limit?: number;
-    readonly threadId?: string;
-    readonly serverName?: string;
-    readonly detail?: string;
-  }): Promise<JsonRpcValue>;
-  /** List discovered Codex skills (`skills/list`). */
-  listSkills(params?: {
-    readonly cwds?: readonly string[];
-    readonly forceReload?: boolean;
-  }): Promise<JsonRpcValue>;
-  /** List available models (`model/list`). */
-  listModels(params?: {
-    readonly cursor?: string;
-    readonly limit?: number;
-    readonly includeHidden?: boolean;
-    readonly modelProvider?: string;
-  }): Promise<JsonRpcValue>;
-  /** Read active account information (`account/read`). */
-  readAccount(params?: { readonly refreshToken?: boolean }): Promise<JsonRpcValue>;
-  /** Read the raw `account/rateLimits/read` response envelope. */
-  readRateLimits(): Promise<JsonRpcValue>;
-}
-
-/** Input to {@link CodexSession.startTurn}, extending the portable turn input with Codex per-turn overrides. */
+/** Input to {@link CodexSession.startTurn}, extending the portable turn input with Codex per-turn overrides and `skill` items. */
 export interface CodexTurnInput {
   readonly turnId: string;
   readonly clientId: string;
-  readonly input: readonly AgentMessagePart[];
+  readonly input: readonly CodexTurnInputPart[];
   /** Per-turn model override forwarded on `turn/start`. */
   readonly model?: string;
   /**
@@ -91,7 +83,7 @@ export interface CodexTurnInput {
 
 /** Input to {@link CodexSession.steerTurn} (`turn/steer`). */
 export interface CodexSteerTurnInput {
-  readonly input: readonly AgentMessagePart[];
+  readonly input: readonly CodexTurnInputPart[];
   readonly clientId?: string;
   /** Optional guard asserting which active Codex turn id is being steered. */
   readonly expectedTurnId?: string;
@@ -103,6 +95,33 @@ export interface CodexForkThreadOptions extends CodexThreadPolicyOverrides {
   readonly beforeTurnId?: string;
   readonly lastTurnId?: string;
   readonly excludeTurns?: boolean;
+  /** Carry the source thread's goal into the fork without starting automatic continuation. */
+  readonly deferGoalContinuation?: boolean;
+}
+
+/** Options to open a new {@link CodexSession} directly via `thread/fork` instead of `thread/start`. */
+export interface CodexOpenForkOptions extends CodexThreadPolicyOverrides {
+  /** Existing thread id to fork from. */
+  readonly threadId: string;
+  readonly beforeTurnId?: string;
+  readonly lastTurnId?: string;
+  /** Defaults to `true` when omitted so large threads do not inline full history into the fork reply. */
+  readonly excludeTurns?: boolean;
+  /** Carry the source thread's goal into the fork without starting automatic continuation. */
+  readonly deferGoalContinuation?: boolean;
+}
+
+/** Input to {@link CodexDriver.open}, extending {@link AgentEngineDriver.open} with `forkFrom`. */
+export interface CodexOpenInput {
+  readonly profile: ExecutorProfileConfig;
+  readonly cwd: string;
+  /** Resume this native thread via `thread/resume` (mutually exclusive with `forkFrom`). */
+  readonly nativeThreadId?: string;
+  /** Open the session by forking an existing thread via `thread/fork` (mutually exclusive with `nativeThreadId`). */
+  readonly forkFrom?: CodexOpenForkOptions;
+  /** Optional observer invoked with startup phases (`spawning`, `initializing`, `verifying`) during open. */
+  readonly onStartupPhase?: (phase: ExecutorStartupPhase) => void;
+  readonly signal?: AbortSignal;
 }
 
 /** Result returned by {@link CodexSession.forkThread} without mutating the current session. */
@@ -115,10 +134,48 @@ export interface CodexForkedThread {
 export interface CodexSession extends AgentEngineSession, CodexControlClient {
   /** OS process id of the spawned `codex app-server`, or `undefined` when attached via `unix-connect`. */
   readonly providerPid: number | undefined;
-  /** Applied thread settings reported by `thread/start` or `thread/resume`. */
+  /** Applied thread settings reported by `thread/start`, `thread/resume`, or `thread/fork`. */
   readonly threadContext: CodexThreadContext;
-  /** Start a turn with optional per-turn Codex overrides. */
+  /** Start a turn with optional per-turn Codex overrides and `skill` items. */
   startTurn(input: CodexTurnInput): Promise<AgentEngineTurn>;
+  /** Answer a pending request from either the active turn or an external/TUI server request. */
+  respond(interactionId: string, reply: InteractionReply['reply']): Promise<void>;
+  /** Read thread metadata (`thread/read`); defaults `threadId` to this session's `nativeThreadId`. */
+  readThread(
+    params?: Omit<CodexReadThreadParams, 'threadId'> & { readonly threadId?: string },
+  ): Promise<JsonRpcValue>;
+  /** List turns (`thread/turns/list`); defaults `threadId` to this session's `nativeThreadId`. */
+  listTurns(
+    params?: Omit<CodexListTurnsParams, 'threadId'> & { readonly threadId?: string },
+  ): Promise<JsonRpcValue>;
+  /** List items (`thread/items/list`); defaults `threadId` to this session's `nativeThreadId`. */
+  listItems(
+    params?: Omit<CodexListItemsParams, 'threadId'> & { readonly threadId?: string },
+  ): Promise<JsonRpcValue>;
+  /** Revert thread durable history before `beforeTurnId` (`thread/revert`); defaults `threadId` to `nativeThreadId`. */
+  revertThread(
+    params: Omit<CodexRevertThreadParams, 'threadId'> & { readonly threadId?: string },
+  ): Promise<CodexRevertThreadResult>;
+  /** Inject raw Responses API items (`thread/inject_items`); defaults `threadId` to `nativeThreadId`. */
+  injectItems(
+    params: Omit<CodexInjectItemsParams, 'threadId'> & { readonly threadId?: string },
+  ): Promise<JsonRpcValue>;
+  /** Unsubscribe this connection (`thread/unsubscribe`); defaults `threadId` to `nativeThreadId`. */
+  unsubscribeThread(params?: { readonly threadId?: string }): Promise<JsonRpcValue>;
+  /** Archive a thread (`thread/archive`); defaults `threadId` to `nativeThreadId`. */
+  archiveThread(params?: { readonly threadId?: string }): Promise<JsonRpcValue>;
+  /** Unarchive a thread (`thread/unarchive`); defaults `threadId` to `nativeThreadId`. */
+  unarchiveThread(params?: { readonly threadId?: string }): Promise<JsonRpcValue>;
+  /** Patch thread metadata (`thread/metadata/update`); defaults `threadId` to `nativeThreadId`. */
+  updateThreadMetadata(
+    params?: Omit<CodexUpdateThreadMetadataParams, 'threadId'> & {
+      readonly threadId?: string;
+    },
+  ): Promise<JsonRpcValue>;
+  /** Set thread display name (`thread/name/set`); defaults `threadId` to `nativeThreadId`. */
+  setThreadName(
+    params: Omit<CodexSetThreadNameParams, 'threadId'> & { readonly threadId?: string },
+  ): Promise<JsonRpcValue>;
   /** Steer the currently running turn with additional input (`turn/steer`). */
   steerTurn(input: CodexSteerTurnInput): Promise<{ readonly turnId: string }>;
   /** Fork the session's thread into a new thread id without mutating the current session (`thread/fork`). */
@@ -127,30 +184,29 @@ export interface CodexSession extends AgentEngineSession, CodexControlClient {
   compactThread(): Promise<void>;
 }
 
-/** Codex driver returned by {@link createCodexDriver}; `open()` resolves to a {@link CodexSession}. */
+/** Codex driver returned by {@link createCodexDriver}; `open()` resolves to {@link CodexSession} and `connectControl()` opens a threadless control link. */
 export interface CodexDriver extends AgentEngineDriver {
   readonly engine: 'codex';
   readonly reconcile: 'client-id';
+  readonly capabilities: ExecutorDriverCapabilities;
   findInput: NonNullable<AgentEngineDriver['findInput']>;
-  open(input: Parameters<AgentEngineDriver['open']>[0]): Promise<CodexSession>;
+  open(input: CodexOpenInput): Promise<CodexSession>;
+  /** Connect to `codex app-server` without starting, resuming, or forking a thread. */
+  connectControl(input: CodexControlConnectInput): Promise<CodexControlConnection>;
+  /** Open a shared headless `stdio` `codex app-server` multiplexing multiple threads (ADR 0329). */
+  openSharedServer(input: CodexSharedServerOpenInput): Promise<CodexSharedServer>;
 }
 
-/** Encode validated host-inlined text and image parts into Codex app-server wire input items. */
-export function codexTurnInput(parts: readonly InlinedPart[]): JsonRpcValue[] {
-  if (parts.every((part) => part.type === 'text')) {
-    return [
-      { type: 'text', text: parts.map((part) => part.text).join('\n'), text_elements: [] },
-    ];
+/** Validate `beforeTurnId` and `lastTurnId` mutual exclusion for `thread/fork`. */
+export function validateCodexForkBounds(
+  options: Pick<CodexForkThreadOptions, 'beforeTurnId' | 'lastTurnId'>,
+  caller: string,
+): void {
+  if (options.beforeTurnId !== undefined && options.lastTurnId !== undefined) {
+    throw new TypeError(
+      `[stitchkit] ${caller}: beforeTurnId and lastTurnId are mutually exclusive`,
+    );
   }
-  const out: JsonRpcValue[] = [];
-  for (const part of parts) {
-    if (part.type === 'text') {
-      out.push({ type: 'text', text: part.text, text_elements: [] });
-    } else {
-      out.push({ type: 'image', url: `data:${part.mediaType};base64,${part.base64}` });
-    }
-  }
-  return out;
 }
 
 /** Validate `runtimeWorkspaceRoots` and `config` policy overrides before sending them to Codex. */
@@ -246,7 +302,7 @@ export function validateCodexTurnStartOverrides(
 export function buildCodexTurnStartParams(
   threadId: string,
   turnInput: CodexTurnInput,
-  parts: readonly InlinedPart[],
+  parts: readonly InlinedCodexPart[],
   activeModelProvider: string | undefined,
 ): Record<string, JsonRpcValue> {
   validateCodexTurnStartOverrides(turnInput, activeModelProvider);
@@ -270,59 +326,6 @@ export function buildCodexTurnStartParams(
     params.runtimeWorkspaceRoots = [...turnInput.runtimeWorkspaceRoots];
   }
   return params;
-}
-
-/** Create the read/inspection control facade backed by an active Codex JSON-RPC peer. */
-export function createCodexControlClient(input: {
-  peer: JsonRpcPeer;
-  ensureAlive(): void;
-}): CodexControlClient {
-  const call = async (
-    method: string,
-    params?: Record<string, JsonRpcValue>,
-  ): Promise<JsonRpcValue> => {
-    input.ensureAlive();
-    return input.peer.request(method, params);
-  };
-  return {
-    readConfig(params) {
-      return call('config/read', {
-        ...(params?.cwd !== undefined && { cwd: params.cwd }),
-        ...(params?.includeLayers !== undefined && { includeLayers: params.includeLayers }),
-      });
-    },
-    listMcpServerStatus(params) {
-      return call('mcpServerStatus/list', {
-        ...(params?.cursor !== undefined && { cursor: params.cursor }),
-        ...(params?.limit !== undefined && { limit: params.limit }),
-        ...(params?.threadId !== undefined && { threadId: params.threadId }),
-        ...(params?.serverName !== undefined && { serverName: params.serverName }),
-        ...(params?.detail !== undefined && { detail: params.detail }),
-      });
-    },
-    listSkills(params) {
-      return call('skills/list', {
-        ...(params?.cwds !== undefined && { cwds: [...params.cwds] }),
-        ...(params?.forceReload !== undefined && { forceReload: params.forceReload }),
-      });
-    },
-    listModels(params) {
-      return call('model/list', {
-        ...(params?.cursor !== undefined && { cursor: params.cursor }),
-        ...(params?.limit !== undefined && { limit: params.limit }),
-        ...(params?.includeHidden !== undefined && { includeHidden: params.includeHidden }),
-        ...(params?.modelProvider !== undefined && { modelProvider: params.modelProvider }),
-      });
-    },
-    readAccount(params) {
-      return call('account/read', {
-        ...(params?.refreshToken !== undefined && { refreshToken: params.refreshToken }),
-      });
-    },
-    readRateLimits() {
-      return call('account/rateLimits/read');
-    },
-  };
 }
 
 /** Create thread/turn control methods (`steerTurn`, `forkThread`, `compactThread`) for a live Codex session. */
@@ -350,7 +353,7 @@ export function createCodexSessionMutators(input: {
           `Expected active Codex turn ${steerInput.expectedTurnId}, but current turn is ${expectedTurnId}`,
         );
       }
-      const parts = await inlineParts(steerInput.input, {
+      const parts = await inlineCodexParts(steerInput.input, {
         ...input.imageOptions,
         driverLabel: 'The Codex driver',
         signal: input.signal,
@@ -376,6 +379,7 @@ export function createCodexSessionMutators(input: {
     },
     async forkThread(options: CodexForkThreadOptions = {}): Promise<CodexForkedThread> {
       input.ensureAlive();
+      validateCodexForkBounds(options, 'CodexSession.forkThread');
       const policyParams = buildCodexThreadPolicyParams({}, options);
       const forked = CodexStartedThreadSchema.parse(
         await input.peer.request('thread/fork', {
@@ -385,6 +389,9 @@ export function createCodexSessionMutators(input: {
           ...(options.beforeTurnId !== undefined && { beforeTurnId: options.beforeTurnId }),
           ...(options.lastTurnId !== undefined && { lastTurnId: options.lastTurnId }),
           ...(options.excludeTurns !== undefined && { excludeTurns: options.excludeTurns }),
+          ...(options.deferGoalContinuation !== undefined && {
+            deferGoalContinuation: options.deferGoalContinuation,
+          }),
         }),
       );
       return {

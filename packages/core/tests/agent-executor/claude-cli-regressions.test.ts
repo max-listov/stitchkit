@@ -15,6 +15,7 @@ import {
   claudeTranscriptHasUuid,
   claudeTranscriptPath,
 } from '../../src/agent-executor/claude/transcript';
+import { projectExecutorDeltas } from '../../src/agent-executor/projection';
 import { ExecutorDeltaSchema } from '../../src/agent-executor/vocabulary';
 import {
   ambientIn,
@@ -340,6 +341,438 @@ describe('Claude CLI control requests', () => {
             error: 'Claude control request vendor_future_request is not known to this driver',
           },
         });
+      } finally {
+        await session.close();
+      }
+    }));
+
+  test('supports session-scoped approval rules, turn-cancelling deny, and preserves per-model usage without failing on null/malformed fields', () =>
+    inScratch('claude-cli-session-approval-usage', async (root) => {
+      const scenario = await writeScenario(root, [
+        { do: 'expect', type: 'user' },
+        {
+          do: 'emit',
+          record: {
+            type: 'control_request',
+            request_id: 'req-session',
+            request: {
+              subtype: 'can_use_tool',
+              tool_name: 'Bash',
+              tool_use_id: 'tu-1',
+              input: { command: 'ls' },
+            },
+          },
+        },
+        { do: 'expect', type: 'control_response', subtype: 'success' },
+        {
+          do: 'emit',
+          record: {
+            type: 'control_request',
+            request_id: 'req-suppressed',
+            request: {
+              subtype: 'can_use_tool',
+              tool_name: 'Write',
+              tool_use_id: 'tu-2',
+              input: { path: 'a.txt' },
+              suppress_always_allow_rule: true,
+            },
+          },
+        },
+        { do: 'expect', type: 'control_response', subtype: 'success' },
+        {
+          do: 'emit',
+          record: {
+            type: 'control_request',
+            request_id: 'req-empty-tool',
+            request: {
+              subtype: 'can_use_tool',
+              tool_name: '',
+              tool_use_id: 'tu-3',
+              input: { path: 'b.txt' },
+            },
+          },
+        },
+        { do: 'expect', type: 'control_response', subtype: 'success' },
+        {
+          do: 'emit',
+          record: {
+            type: 'result',
+            subtype: 'success',
+            is_error: false,
+            total_cost_usd: 0.05,
+            usage: {
+              input_tokens: 100,
+              output_tokens: 40,
+              cache_read_input_tokens: null,
+              cache_creation_input_tokens: 25,
+              output_tokens_details: { thinking_tokens: 11 },
+            },
+            modelUsage: {
+              'claude-sonnet-4-6': {
+                inputTokens: 100,
+                outputTokens: 40,
+                cacheReadInputTokens: 10,
+                cacheCreationInputTokens: 25,
+                thinkingTokens: 11,
+                webSearchRequests: 1,
+                costUSD: 0.05,
+                canonicalModel: 'claude-sonnet-4-6',
+                provider: 'firstParty',
+                costBasis: 'list',
+              },
+              toString: { inputTokens: 2, outputTokens: 3, costBasis: 'future_tier' },
+              constructor: { inputTokens: 4, outputTokens: 5 },
+              ['__proto__']: { inputTokens: 9, outputTokens: 9 },
+              broken: { inputTokens: -5 },
+            },
+          },
+        },
+      ]);
+      const profile = claudeProfile(root, 'claude-cli-session-appr', {
+        FAKE_ENGINE_SCENARIO: scenario,
+      });
+      const session = await claudeDriver(root).open({ profile, cwd: root });
+      try {
+        const turn = await session.startTurn({
+          turnId: 't-cli-appr',
+          clientId: crypto.randomUUID(),
+          input: [{ type: 'text', text: 'hi' }],
+        });
+        const deltas = [];
+        for await (const delta of turn.deltas) {
+          ExecutorDeltaSchema.parse(delta);
+          deltas.push(delta);
+          if (delta.type === 'request' && delta.interactionId === 'req-session') {
+            await turn.respond(delta.interactionId, { kind: 'approve', scope: 'session' });
+          } else if (delta.type === 'request' && delta.interactionId === 'req-suppressed') {
+            await expect(
+              turn.respond(delta.interactionId, { kind: 'approve', scope: 'session' }),
+            ).rejects.toThrow(TypeError);
+            await turn.respond(delta.interactionId, {
+              kind: 'deny',
+              message: 'stop now',
+              interrupt: true,
+            });
+          } else if (delta.type === 'request' && delta.interactionId === 'req-empty-tool') {
+            await expect(
+              turn.respond(delta.interactionId, { kind: 'approve', scope: 'session' }),
+            ).rejects.toThrow(TypeError);
+            await turn.respond(delta.interactionId, { kind: 'approve', scope: 'once' });
+          }
+        }
+        const usage = deltas.find((d) => d.type === 'usage');
+        expect(usage).toMatchObject({
+          inputTokens: 100,
+          outputTokens: 40,
+          cacheCreationInputTokens: 25,
+          thinkingTokens: 11,
+          costUsd: 0.05,
+          modelUsage: {
+            'claude-sonnet-4-6': {
+              inputTokens: 100,
+              outputTokens: 40,
+              cacheReadInputTokens: 10,
+              cacheCreationInputTokens: 25,
+              thinkingTokens: 11,
+              webSearchRequests: 1,
+              costUsd: 0.05,
+              canonicalModel: 'claude-sonnet-4-6',
+              provider: 'firstParty',
+              costBasis: 'list',
+            },
+            toString: { inputTokens: 2, outputTokens: 3 },
+            constructor: { inputTokens: 4, outputTokens: 5 },
+          },
+        });
+        if (usage?.type === 'usage') {
+          expect(Object.hasOwn(usage.modelUsage ?? {}, '__proto__')).toBe(false);
+          expect(
+            new Map(Object.entries(usage.modelUsage ?? {})).get('toString')?.costBasis,
+          ).toBeUndefined();
+        }
+        expect(deltas.at(-1)).toMatchObject({ type: 'turn-end', outcome: 'completed' });
+        const stdin = await readJsonLines(join(profile.home, 'stdin.jsonl'));
+        expect(stdin).toContainEqual({
+          type: 'control_response',
+          response: {
+            subtype: 'success',
+            request_id: 'req-session',
+            response: {
+              behavior: 'allow',
+              updatedInput: { command: 'ls' },
+              updatedPermissions: [
+                {
+                  type: 'addRules',
+                  rules: [{ toolName: 'Bash' }],
+                  behavior: 'allow',
+                  destination: 'session',
+                },
+              ],
+            },
+          },
+        });
+        expect(stdin).toContainEqual({
+          type: 'control_response',
+          response: {
+            subtype: 'success',
+            request_id: 'req-suppressed',
+            response: { behavior: 'deny', message: 'stop now', interrupt: true },
+          },
+        });
+        expect(stdin).toContainEqual({
+          type: 'control_response',
+          response: {
+            subtype: 'success',
+            request_id: 'req-empty-tool',
+            response: { behavior: 'allow', updatedInput: { path: 'b.txt' } },
+          },
+        });
+      } finally {
+        await session.close();
+      }
+    }));
+
+  test('approve with updatedInput answers AskUserQuestion in Claude CLI and rejects non-object updatedInput without clearing pending', () =>
+    inScratch('claude-cli-updated-input', async (root) => {
+      const driver = claudeDriver(root);
+      expect(driver.capabilities.updatedToolInput).toBe(true);
+      const questions = [{ question: 'Which database?', options: ['PostgreSQL', 'SQLite'] }];
+      const scenario = await writeScenario(root, [
+        { do: 'expect', type: 'user' },
+        {
+          do: 'emit',
+          record: {
+            type: 'control_request',
+            request_id: 'req-ask-user',
+            request: {
+              subtype: 'can_use_tool',
+              tool_name: 'AskUserQuestion',
+              tool_use_id: 'tu-ask-1',
+              input: { questions },
+            },
+          },
+        },
+        { do: 'expect', type: 'control_response', subtype: 'success' },
+        {
+          do: 'emit',
+          record: { type: 'result', subtype: 'success', is_error: false, result: 'answered' },
+        },
+      ]);
+      const profile = claudeProfile(root, 'claude-cli-ask', {
+        FAKE_ENGINE_SCENARIO: scenario,
+      });
+      const session = await driver.open({ profile, cwd: root });
+      try {
+        const turn = await session.startTurn({
+          turnId: 't-cli-ask',
+          clientId: crypto.randomUUID(),
+          input: [{ type: 'text', text: 'ask me' }],
+        });
+        const deltas = [];
+        for await (const delta of turn.deltas) {
+          ExecutorDeltaSchema.parse(delta);
+          deltas.push(delta);
+          if (delta.type === 'request' && delta.interactionId === 'req-ask-user') {
+            expect(delta.toolName).toBe('AskUserQuestion');
+            // Non-object updatedInput is refused by schema without clearing the pending request.
+            await expect(
+              turn.respond(delta.interactionId, {
+                kind: 'approve',
+                updatedInput: 'not-an-object' as never,
+              }),
+            ).rejects.toThrow();
+            await expect(
+              turn.respond(delta.interactionId, {
+                kind: 'approve',
+                updatedInput: ['not-an-object'] as never,
+              }),
+            ).rejects.toThrow();
+            await turn.respond(delta.interactionId, {
+              kind: 'approve',
+              updatedInput: {
+                questions,
+                answers: { 'Which database?': 'PostgreSQL' },
+              },
+            });
+          }
+        }
+        expect(deltas.at(-1)).toMatchObject({ type: 'turn-end', outcome: 'completed' });
+        const stdin = await readJsonLines(join(profile.home, 'stdin.jsonl'));
+        expect(stdin).toContainEqual({
+          type: 'control_response',
+          response: {
+            subtype: 'success',
+            request_id: 'req-ask-user',
+            response: {
+              behavior: 'allow',
+              updatedInput: {
+                questions,
+                answers: { 'Which database?': 'PostgreSQL' },
+              },
+            },
+          },
+        });
+      } finally {
+        await session.close();
+      }
+    }));
+
+  test('compact_boundary emits ExecutorWindowDelta reset context and runtime task/retry/elicitation/tool_progress records do not emit unhandled in Claude CLI', () =>
+    inScratch('claude-cli-compact-and-events', async (root) => {
+      const scenario = await writeScenario(root, [
+        { do: 'expect', type: 'user' },
+        {
+          do: 'emit',
+          record: {
+            type: 'stream_event',
+            api_message_id: 'm-before',
+            event: {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'text_delta', text: 'stale-before-compact' },
+            },
+          },
+        },
+        {
+          do: 'emit',
+          record: {
+            type: 'system',
+            subtype: 'compact_boundary',
+            uuid: 'cmp-1',
+            session_id: 's1',
+            compact_metadata: { trigger: 'auto', pre_tokens: 180_000, post_tokens: 12_000 },
+          },
+        },
+        {
+          do: 'emit',
+          record: {
+            type: 'stream_event',
+            api_message_id: 'm-after',
+            event: {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'text_delta', text: 'fresh-after-compact' },
+            },
+          },
+        },
+        {
+          do: 'emit',
+          record: {
+            type: 'system',
+            subtype: 'task_started',
+            task_id: 'task-1',
+            description: 'background build',
+          },
+        },
+        {
+          do: 'emit',
+          record: {
+            type: 'system',
+            subtype: 'task_updated',
+            task_id: 'task-1',
+            patch: { status: 'running', is_backgrounded: true },
+          },
+        },
+        {
+          do: 'emit',
+          record: {
+            type: 'system',
+            subtype: 'task_progress',
+            task_id: 'task-1',
+            description: 'compiling',
+            usage: { total_tokens: 500, tool_uses: 2, duration_ms: 1200 },
+          },
+        },
+        {
+          do: 'emit',
+          record: {
+            type: 'tool_progress',
+            tool_use_id: 'tu-bg-1',
+            tool_name: 'Bash',
+            parent_tool_use_id: null,
+            elapsed_time_seconds: 3.5,
+          },
+        },
+        {
+          do: 'emit',
+          record: {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 1,
+            max_retries: 3,
+            retry_delay_ms: 1000,
+            error_status: 429,
+            error: 'rate_limit',
+          },
+        },
+        {
+          do: 'emit',
+          record: {
+            type: 'system',
+            subtype: 'elicitation_complete',
+            mcp_server_name: 'oauth-mcp',
+            elicitation_id: 'el-1',
+          },
+        },
+        {
+          do: 'emit',
+          record: {
+            type: 'system',
+            subtype: 'background_tasks_changed',
+            tasks: [{ task_id: 'task-1', task_type: 'local_bash', description: 'build' }],
+          },
+        },
+        {
+          do: 'emit',
+          record: {
+            type: 'system',
+            subtype: 'task_notification',
+            task_id: 'task-1',
+            status: 'completed',
+            output_file: '/tmp/out.log',
+            summary: 'ok',
+          },
+        },
+        // Negative control: malformed runtime event fails closed to unhandled.
+        {
+          do: 'emit',
+          record: {
+            type: 'system',
+            subtype: 'task_started',
+            description: 'missing task_id',
+          },
+        },
+        {
+          do: 'emit',
+          record: { type: 'result', subtype: 'success', is_error: false, result: 'done' },
+        },
+      ]);
+      const profile = claudeProfile(root, 'claude-cli-events', {
+        FAKE_ENGINE_SCENARIO: scenario,
+      });
+      const session = await claudeDriver(root).open({ profile, cwd: root });
+      try {
+        const deltas = await drainApproving(
+          await session.startTurn({
+            turnId: 't-cli-events',
+            clientId: crypto.randomUUID(),
+            input: [{ type: 'text', text: 'run' }],
+          }),
+        );
+        for (const delta of deltas) ExecutorDeltaSchema.parse(delta);
+        expect(deltas).toContainEqual({
+          type: 'window',
+          turnId: 't-cli-events',
+          itemId: 'compact:cmp-1',
+          raw: { source: 'claude', type: 'system/compact_boundary' },
+          reset: 'context',
+        });
+        expect(projectExecutorDeltas(deltas)).toEqual([
+          { type: 'text', text: 'fresh-after-compact' },
+        ]);
+        const unhandled = deltas.filter((d) => d.type === 'error' && d.kind === 'unhandled');
+        expect(unhandled).toHaveLength(1);
+        expect(unhandled[0]?.raw).toEqual({ source: 'claude', type: 'system/task_started' });
       } finally {
         await session.close();
       }

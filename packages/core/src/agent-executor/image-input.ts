@@ -92,31 +92,48 @@ export async function resolveImageBytes(
 
 /**
  * Validate every part synchronously before the first `resolveFile` call, then resolve and
- * base64-encode every image attachment in order. Any refusal rejects the whole turn before
- * anything is sent to the engine.
+ * base64-encode every image attachment in order while preserving optional driver-specific parts.
+ * Any refusal rejects the whole turn before anything is sent to the engine.
  */
-export async function inlineParts(
-  parts: readonly AgentMessagePart[],
+export async function inlineOrderedParts<
+  TPart extends { readonly type: string },
+  TExtra = never,
+>(
+  parts: readonly (AgentMessagePart | TPart)[],
   options: DriverImageOptions & {
     driverLabel: string;
+    acceptedDescription?: string;
     signal?: AbortSignal;
+    validateExtra?: (part: AgentMessagePart | TPart) => TExtra | undefined;
   },
-): Promise<InlinedPart[]> {
+): Promise<Array<InlinedPart | TExtra>> {
   const maxImageBytes = options.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES;
   assertPositiveSafeInteger('maxImageBytes', maxImageBytes);
+  const accepted = options.acceptedDescription ?? 'text and images';
 
   // Synchronous pre-pass: refuse unsupported part types, media types, or missing resolver
   // before any `resolveFile` call buffers bytes in memory.
-  for (const part of parts) {
+  const extras = new Map<number, TExtra>();
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part === undefined) continue;
+    const extra = options.validateExtra?.(part);
+    if (extra !== undefined) {
+      extras.set(index, extra);
+      continue;
+    }
     if (part.type === 'text') continue;
     if (part.type !== 'file') {
-      throw new TypeError(
-        `${options.driverLabel} sends text and images, received ${part.type}`,
-      );
+      throw new TypeError(`${options.driverLabel} sends ${accepted}, received ${part.type}`);
     }
-    if (!isSupportedImageMediaType(part.mediaType)) {
+    if (
+      !('mediaType' in part) ||
+      typeof part.mediaType !== 'string' ||
+      !isSupportedImageMediaType(part.mediaType)
+    ) {
+      const mediaType = 'mediaType' in part ? String(part.mediaType) : 'unknown';
       throw new TypeError(
-        `${options.driverLabel} sends PNG, JPEG, GIF or WebP images only, received a file of ${part.mediaType}`,
+        `${options.driverLabel} sends PNG, JPEG, GIF or WebP images only, received a file of ${mediaType}`,
       );
     }
     if (options.resolveFile === undefined) {
@@ -124,13 +141,29 @@ export async function inlineParts(
     }
   }
 
-  const resolved: InlinedPart[] = [];
-  for (const part of parts) {
-    if (part.type === 'text') {
+  const resolved: Array<InlinedPart | TExtra> = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part === undefined) continue;
+    if (extras.has(index)) {
+      const extra = extras.get(index);
+      if (extra !== undefined) resolved.push(extra);
+      continue;
+    }
+    if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
       resolved.push({ type: 'text', text: part.text });
       continue;
     }
-    if (part.type !== 'file' || options.resolveFile === undefined) continue;
+    if (
+      part.type !== 'file' ||
+      !('reference' in part) ||
+      typeof part.reference !== 'string' ||
+      !('mediaType' in part) ||
+      typeof part.mediaType !== 'string' ||
+      options.resolveFile === undefined
+    ) {
+      continue;
+    }
     const read = resolveImageBytes(part.reference, {
       resolveFile: options.resolveFile,
       maxImageBytes,
@@ -143,6 +176,21 @@ export async function inlineParts(
     });
   }
   return resolved;
+}
+
+/**
+ * Validate every part synchronously before the first `resolveFile` call, then resolve and
+ * base64-encode every image attachment in order. Any refusal rejects the whole turn before
+ * anything is sent to the engine.
+ */
+export function inlineParts(
+  parts: readonly AgentMessagePart[],
+  options: DriverImageOptions & {
+    driverLabel: string;
+    signal?: AbortSignal;
+  },
+): Promise<InlinedPart[]> {
+  return inlineOrderedParts(parts, options);
 }
 
 /**
@@ -162,6 +210,31 @@ export function assertImageFrameBytes(serialized: string, maxBytes: number): voi
  * Guard a session's `startTurn` while host attachments are resolved asynchronously: prevents
  * concurrent `startTurn` calls during `resolveFile` and re-checks session liveness after await.
  */
+export function guardedTurnStarter<TInput, TResolved, TTurn>(options: {
+  busyMessage: string;
+  check(input: TInput): void;
+  inline(input: TInput): Promise<readonly TResolved[]>;
+  dispatch(input: TInput, parts: readonly TResolved[]): TTurn | Promise<TTurn>;
+}): (input: TInput) => Promise<TTurn> {
+  let preparing = false;
+  return async (input) => {
+    if (preparing) throw new Error(options.busyMessage);
+    options.check(input);
+    preparing = true;
+    let parts: readonly TResolved[];
+    try {
+      parts = await options.inline(input);
+    } finally {
+      preparing = false;
+    }
+    options.check(input);
+    return await options.dispatch(input, parts);
+  };
+}
+
+/**
+ * Guard a portable `startTurn` (text and image parts) while host attachments are resolved.
+ */
 export function imageTurnStarter<
   TInput extends { readonly input: readonly AgentMessagePart[] },
   TTurn,
@@ -173,22 +246,15 @@ export function imageTurnStarter<
   check(input: TInput): void;
   dispatch(input: TInput, parts: readonly InlinedPart[]): TTurn | Promise<TTurn>;
 }): (input: TInput) => Promise<TTurn> {
-  let preparing = false;
-  return async (input) => {
-    if (preparing) throw new Error(options.busyMessage);
-    options.check(input);
-    preparing = true;
-    let parts: readonly InlinedPart[];
-    try {
-      parts = await inlineParts(input.input, {
+  return guardedTurnStarter({
+    busyMessage: options.busyMessage,
+    check: options.check,
+    inline: (input) =>
+      inlineParts(input.input, {
         ...options.imageOptions,
         driverLabel: options.driverLabel,
         signal: options.signal,
-      });
-    } finally {
-      preparing = false;
-    }
-    options.check(input);
-    return await options.dispatch(input, parts);
-  };
+      }),
+    dispatch: options.dispatch,
+  });
 }

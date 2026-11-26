@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { AgentEngineDriver } from '../engine';
-import type { PlanLimits } from '../hello';
+import type { ExecutorDriverCapabilities, PlanLimits } from '../hello';
 import { validateImageOptions } from '../image-input';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
 import { runEngineCli } from '../session-primitives';
@@ -65,12 +65,30 @@ export interface ClaudeCliDriverConfig {
  * with a control request, and learns whether an input arrived from the
  * session's transcript in the profile.
  */
-export function createClaudeCliDriver(config: ClaudeCliDriverConfig = {}): AgentEngineDriver {
+export function createClaudeCliDriver(
+  config: ClaudeCliDriverConfig = {},
+): AgentEngineDriver & { readonly capabilities: ExecutorDriverCapabilities } {
   validateImageOptions(config);
   const executable = config.executable ?? 'claude';
   const prefix = config.prefixArgs ?? [];
   const ambient = config.ambient ?? process.env;
   const limits = new Map<string, PlanLimits>();
+  const capabilities: ExecutorDriverCapabilities = {
+    runtimePolicyEnforcement: 'native',
+    sessionApproval: true,
+    interruptOnDeny: true,
+    updatedToolInput: true,
+    structuredInput: false,
+    steer: false,
+    fork: false,
+    revert: false,
+    compact: false,
+    injectItems: false,
+    backgroundWorkOutlivesTurn: false,
+    multiThreadPerProcess: false,
+    images: config.resolveFile !== undefined,
+    planLimits: 'passive',
+  };
 
   const cli = (profile: ExecutorProfileConfig, args: string[]) =>
     runEngineCli({ executable, prefix, args, profile, ambient });
@@ -78,6 +96,7 @@ export function createClaudeCliDriver(config: ClaudeCliDriverConfig = {}): Agent
   return {
     engine: 'claude-cli',
     reconcile: 'client-id',
+    capabilities,
     async info() {
       const probe = engineProfile('claude-cli', {
         profileId: 'version-probe',
@@ -92,6 +111,7 @@ export function createClaudeCliDriver(config: ClaudeCliDriverConfig = {}): Agent
         version,
         reconcile: 'client-id',
         models: { answer: 'not-asked' },
+        capabilities,
       };
     },
     async status(rawProfile) {

@@ -478,10 +478,21 @@ test('a timer field of a schema states the timer ceiling', () => {
     'shellTimeoutMs', // a native command budget, stepped by scheduleAt
     'shellTerminationGraceMs',
   ]);
-  const unbounded = sourceFiles(join(import.meta.dir, '..', 'src')).flatMap((path) =>
+  // File-scoped exceptions for engine-reported instants/measurements whose names collide with timer options elsewhere.
+  const notTimersByLocation = new Set([
+    'agent-executor/claude/events.ts: totalPausedMs',
+    'agent-executor/claude/events.ts: waitedMs',
+    'agent-executor/claude/events.ts: retryWaitMs',
+    'agent-executor/claude/events.ts: retryDelayMs',
+    'agent-executor/codex/protocol.ts: startedAtMs',
+  ]);
+  const found = sourceFiles(join(import.meta.dir, '..', 'src')).flatMap((path) =>
     [...readFileSync(path, 'utf8').matchAll(field)]
       .filter(([, name, chain]) => !notTimers.has(name ?? '') && !/\.max\(/.test(chain ?? ''))
       .map(([, name]) => `${path.slice(path.indexOf('/src/') + 5)}: ${name}`),
   );
+  const unbounded = found.filter((location) => !notTimersByLocation.has(location));
   expect(unbounded).toEqual([]);
+  const stale = [...notTimersByLocation].filter((location) => !found.includes(location));
+  expect(stale).toEqual([]);
 });

@@ -23,6 +23,7 @@ export {
   type McpHttpSecurityConfig,
   type McpLegacyPolicy,
 } from '../../tools/mcp/handler';
+export type { McpLazyDiscoveryConfig } from '../../tools/mcp/lazy-discovery';
 export {
   buildMcpServer,
   type DirectMcpSurfaceConfig,

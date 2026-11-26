@@ -2071,6 +2071,32 @@
     },
     "maxImageBytes": {
       "test": "Codex encodes ordered text+image UserInput with data URL and refuses invalid parts before turn/start"
+    },
+    "onNotification": {
+      "test": "Codex driver observes external TUI turns, handles server requests without -32601, preserves full payloads, and fires onDisconnect"
+    },
+    "onServerRequest": {
+      "test": "Codex driver observes external TUI turns, handles server requests without -32601, preserves full payloads, and fires onDisconnect"
+    },
+    "onDisconnect": {
+      "test": "Codex driver observes external TUI turns, handles server requests without -32601, preserves full payloads, and fires onDisconnect"
+    }
+  },
+  "CodexSharedServerOpenInput": {
+    "profile": {
+      "test": "multiplexes concurrent threads with interleaved approvals, thread/unsubscribe on close, and sibling survival"
+    },
+    "cwd": {
+      "test": "multiplexes concurrent threads with interleaved approvals, thread/unsubscribe on close, and sibling survival"
+    },
+    "maxThreads": {
+      "test": "multiplexes concurrent threads with interleaved approvals, thread/unsubscribe on close, and sibling survival"
+    },
+    "onStartupPhase": {
+      "test": "multiplexes concurrent threads with interleaved approvals, thread/unsubscribe on close, and sibling survival"
+    },
+    "signal": {
+      "test": "aborts mid-open and post-open cleanly without leaking slots, listeners, or sending duplicate thread/resume"
     }
   },
   "ClaudeSdkDriverConfig": {
@@ -2149,6 +2175,21 @@
     "onProviderPid": {
       "test": "forwards host launch and delegation options to query, refuses non-empty supportedDialogKinds without onUserDialog, and supports forkSession"
     },
+    "onQueryExit": {
+      "test": "onQueryExit fires on unexpected idle and mid-turn exits, not on close, abort, or failed open"
+    },
+    "onElicitation": {
+      "test": "forwards onElicitation to query and exposes setMcpServers, stopTask, and backgroundTasks with fail-closed validation"
+    },
+    "onPermissionRequest": {
+      "test": "approve with updatedInput answers AskUserQuestion, rejects non-object updatedInput, and onPermissionRequest exposes ExitPlanMode and safety metadata without hardcoded refusal copy"
+    },
+    "onEvent": {
+      "test": "onEvent receives task lifecycle, background_tasks_changed, tool_progress, api_retry and elicitation_complete during and after turns, while compact_boundary emits window reset"
+    },
+    "onTurnUsage": {
+      "test": "onTurnUsage computes additive per-turn modelUsage deltas and otherUsage, resets baseline on query restart, and emits undefined on backwards counters or missing baseline"
+    },
     "verifyDelegation": {
       "test": "verifyDelegation runs eagerly at open, closes query and releases caller signal on refusal, and re-runs on restart"
     },
@@ -2169,6 +2210,21 @@
     "args": {
       "test": "the ACP driver passes the engine conformance kit"
     },
+    "clientInfo": {
+      "test": "clientInfo is sent on initialize and sessionMeta attaches _meta on session/new and session/resume"
+    },
+    "sessionMeta": {
+      "test": "clientInfo is sent on initialize and sessionMeta attaches _meta on session/new and session/resume"
+    },
+    "stdoutLineFilter": {
+      "test": "stdoutLineFilter skips non-JSON stdout lines while unfiltered non-JSON still fails the session"
+    },
+    "probeMode": {
+      "test": "probeMode passive spawns zero processes with passiveVersion, initialize-only skips session/new, and ephemeral-session falls back to session/delete"
+    },
+    "passiveVersion": {
+      "test": "probeMode passive spawns zero processes with passiveVersion, initialize-only skips session/new, and ephemeral-session falls back to session/delete"
+    },
     "model": {
       "test": "model, thought level and mode are set by category, in order, and a value not offered is refused"
     },
@@ -2180,6 +2236,27 @@
     },
     "mcpServers": {
       "test": "an agent that resumes reopens with session/resume, and both pass the MCP servers"
+    },
+    "transformUpdate": {
+      "test": "transformUpdate normalizes or drops updates before mapping to turn deltas"
+    },
+    "onUpdate": {
+      "test": "onUpdate and onPermissionRequest handle post-settle events via event.respond and session.respond, isolating observer errors and enforcing pending bounds"
+    },
+    "onPermissionRequest": {
+      "test": "onUpdate and onPermissionRequest handle post-settle events via event.respond and session.respond, isolating observer errors and enforcing pending bounds"
+    },
+    "onDisconnect": {
+      "test": "onDisconnect fires only for unexpected post-open disconnects and never on close, abort, or open failure"
+    },
+    "watchPromptOutcome": {
+      "test": "watchPromptOutcome runs before session/prompt and can override end_turn into failed with errorKind and threadDisposition"
+    },
+    "usageInputIncludesCachedRead": {
+      "test": "usage preserves cachedWriteTokens, thoughtTokens, totalTokens and usageInputIncludesCachedRead false adds cachedReadTokens to inputTokens"
+    },
+    "steerMode": {
+      "test": "steerMode prompt steers an active turn across session/prompt generations summing usage, while steerMode none refuses steerTurn with TypeError"
     },
     "resolveFile": {
       "test": "an image goes as an image block when the agent takes images, and is refused otherwise"
@@ -2195,6 +2272,49 @@
     },
     "requestTimeoutMs": {
       "test": "a missing agent, a signed-out agent and a silent agent each answer at once"
+    }
+  },
+  "ReplayExecutorDriverConfig": {
+    "engine": {
+      "test": "does not widen ExecutorEngineSchema and supports all 4 wire engines plus info/models/capabilities"
+    },
+    "reconcile": {
+      "test": "passes the entire agent-executor conformance suite in-process for both reconcile modes"
+    },
+    "turns": {
+      "test": "passes the entire agent-executor conformance suite in-process for both reconcile modes"
+    },
+    "gate": {
+      "test": "deterministically pauses and resumes via createReplayGate without timers"
+    },
+    "workspace": {
+      "test": "plays every REPLAY_SCENARIOS preset deterministically with workspace substitution"
+    },
+    "capabilities": {
+      "test": "does not widen ExecutorEngineSchema and supports all 4 wire engines plus info/models/capabilities"
+    },
+    "version": {
+      "test": "does not widen ExecutorEngineSchema and supports all 4 wire engines plus info/models/capabilities"
+    },
+    "models": {
+      "test": "does not widen ExecutorEngineSchema and supports all 4 wire engines plus info/models/capabilities"
+    },
+    "assertCompleteOnClose": {
+      "test": "negative controls: rejects malformed NDJSON, byte/step caps, duplicate gate labels, and incomplete runs"
+    }
+  },
+  "McpLazyDiscoveryConfig": {
+    "mode": {
+      "test": "hides non-initial tools at startup, reveals matched tools with list_changed, and preserves hooks and catalog stamp"
+    },
+    "initialTools": {
+      "test": "hides non-initial tools at startup, reveals matched tools with list_changed, and preserves hooks and catalog stamp"
+    },
+    "searchToolName": {
+      "test": "hides non-initial tools at startup, reveals matched tools with list_changed, and preserves hooks and catalog stamp"
+    },
+    "maxResults": {
+      "test": "negative controls: synchronously refuses unknown initialTools, name collisions, invalid maxResults, and stateless createMcpHandler"
     }
   },
   "SignLinkOptions": {

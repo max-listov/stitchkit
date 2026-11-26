@@ -2,12 +2,12 @@
   "$comment": "Ceilings on the public surface. Raising a limit or adding a shared name is a reviewed change with its reason, not a regenerated snapshot; the reason for each raise lives in its commit and the CHANGELOG. → ADR 0198, docs/PRINCIPLES.md I8.",
   "limits": {
     "stitchkit": 258,
-    "stitchkit/agent-executor": 80,
-    "stitchkit/agent-executor/acp": 11,
+    "stitchkit/agent-executor": 108,
+    "stitchkit/agent-executor/acp": 29,
     "stitchkit/agent-executor/claude": 5,
-    "stitchkit/agent-executor/claude-sdk": 8,
-    "stitchkit/agent-executor/codex": 19,
-    "stitchkit/agent-executor/testing": 8,
+    "stitchkit/agent-executor/claude-sdk": 22,
+    "stitchkit/agent-executor/codex": 49,
+    "stitchkit/agent-executor/testing": 23,
     "stitchkit/agent-runtime": 413,
     "stitchkit/agent-runtime/browser": 96,
     "stitchkit/agent-runtime/coding-tools": 10,
@@ -65,7 +65,7 @@
     "stitchkit/tracking/performance": 8,
     "stitchkit/process": 22,
     "stitchkit/process/owner-loss": 1,
-    "stitchkit/tools/mcp": 47,
+    "stitchkit/tools/mcp": 48,
     "stitchkit/tools/agent": 3,
     "stitchkit/tools/toolkit": 2,
     "stitchkit/handler": 41,
@@ -1258,6 +1258,42 @@
         "CodexUnixSocketErrorKind"
       ],
       "reason": "Unix-socket app-server transport (typed refusal error), thread policy/delegation hooks and applied context, per-turn overrides and live session controls extend the existing stitchkit/agent-executor/codex leaf."
+    },
+    {
+      "entrypoint": "stitchkit/agent-executor",
+      "names": [
+        "ExecutorModelUsage",
+        "ExecutorModelUsageSchema",
+        "ExecutorTokenUsage",
+        "ExecutorTokenUsageSchema"
+      ],
+      "reason": "Neutral cumulative token-usage and per-model usage schemas extend ExecutorUsageDeltaSchema so both Claude and Codex report cache creation, thinking tokens, cumulative totals and per-model usage through one contract."
+    },
+    {
+      "entrypoint": "stitchkit/agent-executor/claude-sdk",
+      "names": ["ClaudeSdkQueryExitContext", "ClaudeSdkUsageRead"],
+      "reason": "Typed active plan-limit pull result (readUsage) and unexpected query-exit observer context (onQueryExit) extend the existing stitchkit/agent-executor/claude-sdk leaf."
+    },
+    {
+      "entrypoint": "stitchkit/agent-executor/codex",
+      "names": [
+        "CodexControlConnectInput",
+        "CodexControlConnection",
+        "CodexListItemsParams",
+        "CodexListTurnsParams",
+        "CodexNotificationEvent",
+        "CodexOpenForkOptions",
+        "CodexOpenInput",
+        "CodexReadThreadParams",
+        "CodexServerRequestEvent",
+        "CodexServerRequestMethod",
+        "CodexSkillInput",
+        "CodexSkillInputSchema",
+        "CodexThreadItemsCursor",
+        "CodexThreadItemsDeferOutput",
+        "CodexTurnInputPart"
+      ],
+      "reason": "External turn/request observers, threadless control connections, live thread/turn/item/collaboration-mode RPC parameters, fork-on-open options and ordered skill turn-input parts extend the existing stitchkit/agent-executor/codex leaf."
     }
   ]
 }

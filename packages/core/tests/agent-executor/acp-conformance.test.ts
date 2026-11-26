@@ -9,6 +9,9 @@ import { type AcpDriverConfig, createAcpDriver } from '../../src/agent-executor/
 import { runAgentEngineConformance } from '../../src/agent-executor/testing/conformance';
 import type { FakeEngineStep } from '../../src/agent-executor/testing/fake-engine';
 import type { ExecutorDelta } from '../../src/agent-executor/vocabulary';
+import { reapAfterEachTest, trackPidFile } from '../support/process-reaper';
+
+reapAfterEachTest();
 
 const FAKE = fileURLToPath(new URL('../fixtures/fake-acp-agent.ts', import.meta.url));
 
@@ -132,14 +135,66 @@ test('info tells an agent that offers no models from a probe that failed', async
   }
 });
 
-test('an agent that speaks protocol 2 is refused at hello', async () => {
-  const fake = await harness([], { agent: { FAKE_ACP_PROTOCOL: '2' } });
+test('handshake accepts protocolVersion 2 with v1 shape and refuses ACP v2 carrying info', async () => {
+  // Real ACP v1 agents may report protocolVersion >= 2 while speaking the v1 initialize shape.
+  const v1Higher = await harness([], { agent: { FAKE_ACP_PROTOCOL: '2' } });
   try {
-    await expect(fake.driver.open({ profile: fake.profile, cwd: fake.root })).rejects.toThrow(
-      'speaks protocol 2',
+    const session = await v1Higher.driver.open({
+      profile: v1Higher.profile,
+      cwd: v1Higher.root,
+    });
+    await session.close();
+  } finally {
+    await v1Higher.cleanup();
+  }
+
+  // Genuine ACP v2 announces itself via `"info"` in the initialize response and must be refused.
+  const v2Root = await mkdtemp(join(tmpdir(), 'stitchkit-acp-v2-'));
+  const v2PidFile = join(v2Root, 'v2.pid');
+  trackPidFile(v2PidFile);
+  try {
+    const scriptPath = join(v2Root, 'v2-agent.mjs');
+    await writeFile(
+      scriptPath,
+      [
+        `import { writeFileSync } from 'node:fs';`,
+        `import { createInterface } from 'node:readline';`,
+        `writeFileSync(${JSON.stringify(v2PidFile)}, String(process.pid));`,
+        'for await (const line of createInterface({ input: process.stdin })) {',
+        '  const msg = JSON.parse(line);',
+        `  if (msg.method === 'initialize') {`,
+        '    process.stdout.write(JSON.stringify({',
+        `      jsonrpc: '2.0',`,
+        '      id: msg.id,',
+        `      result: { protocolVersion: 2, info: { name: 'v2-agent', version: '2.0.0' }, capabilities: {} },`,
+        `    }) + '\\n');`,
+        '  }',
+        '}',
+      ].join('\n'),
+    );
+    const v2Driver = createAcpDriver({
+      executable: process.execPath,
+      args: [scriptPath],
+      ambient: { PATH: process.env.PATH, HOME: v2Root },
+    });
+    await expect(
+      v2Driver.open({
+        profile: { profileId: 'v2', engine: 'acp', home: join(v2Root, 'home') },
+        cwd: v2Root,
+      }),
+    ).rejects.toThrow(/protocol v2.*info/i);
+  } finally {
+    await rm(v2Root, { recursive: true, force: true });
+  }
+
+  // Negative control: protocolVersion < 1 is refused.
+  const zero = await harness([], { agent: { FAKE_ACP_PROTOCOL: '0' } });
+  try {
+    await expect(zero.driver.open({ profile: zero.profile, cwd: zero.root })).rejects.toThrow(
+      'requires protocol >= 1',
     );
   } finally {
-    await fake.cleanup();
+    await zero.cleanup();
   }
 });
 

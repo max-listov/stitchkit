@@ -1,8 +1,14 @@
 import type { AgentMessagePart } from '../agent-parts/parts';
 import type { InteractionReply } from './executor-contract';
-import type { ExecutorEngine, ExecutorEngineInfo, ExecutorProfile, PlanLimits } from './hello';
+import type {
+  ExecutorDriverCapabilities,
+  ExecutorEngine,
+  ExecutorEngineInfo,
+  ExecutorProfile,
+  PlanLimits,
+} from './hello';
 import type { ExecutorProfileConfig } from './profile';
-import type { ExecutorDelta } from './vocabulary';
+import type { ExecutorDelta, ExecutorStartupPhase } from './vocabulary';
 
 /** One turn running in an engine: its deltas, and the two ways to steer it. */
 export interface AgentEngineTurn {
@@ -43,6 +49,8 @@ export interface AgentEngineDriver {
   readonly engine: ExecutorEngine;
   /** `client-id`: `findInput` can answer; `none`: an unknown send stays unknown. */
   readonly reconcile: 'client-id' | 'none';
+  /** Declarative driver capabilities advertised for this driver and configuration. */
+  readonly capabilities?: ExecutorDriverCapabilities;
   info(): Promise<ExecutorEngineInfo>;
   status(profile: ExecutorProfileConfig): Promise<{
     login: ExecutorProfile['login'];
@@ -54,6 +62,8 @@ export interface AgentEngineDriver {
     cwd: string;
     /** Resume this native session; a fresh one is started without it. */
     nativeThreadId?: string;
+    /** Optional observer invoked with startup phases (`spawning`, `initializing`, `verifying`) during open. */
+    onStartupPhase?: (phase: ExecutorStartupPhase) => void;
     signal?: AbortSignal;
   }): Promise<AgentEngineSession>;
   /** Whether the engine holds the input sent under `clientId`; only for `reconcile: 'client-id'`. */

@@ -4,6 +4,7 @@ import { createLocalStepDurability } from '../../durability/engine';
 import type { AgentStoreEventEnvelope } from '../../durability/events';
 import { dispatchTurn } from '../dispatch';
 import type { AgentEngineDriver, AgentEngineSession, AgentEngineTurn } from '../engine';
+import { ExecutorDriverCapabilitiesSchema } from '../hello';
 import type { ExecutorProfileConfig } from '../profile';
 import { projectExecutorDeltas } from '../projection';
 import type { ExecutorDelta } from '../vocabulary';
@@ -151,6 +152,7 @@ export async function runAgentEngineConformance(
 ): Promise<void> {
   const turn = conformanceTurn(config);
   for (const check of [
+    checkCapabilities,
     checkText,
     checkApproval,
     checkFailures,
@@ -169,6 +171,38 @@ type ConformanceCheck = (
   turn: ConformanceTurn,
   scenarios: AgentEngineDialectScenarios,
 ) => Promise<void>;
+
+/** Declared capabilities match the schema, reconcile mode, and ACP enforcement boundary. */
+const checkCapabilities: ConformanceCheck = async (turn, scenarios) => {
+  await turn('capabilities', scenarios.text('cap-check'), async (_session, harness) => {
+    const { driver } = harness;
+    if (driver.capabilities === undefined) return;
+    const parsed = ExecutorDriverCapabilitiesSchema.safeParse(driver.capabilities);
+    if (!parsed.success) {
+      fail(
+        'capabilities',
+        `driver.capabilities failed schema validation: ${parsed.error.message}`,
+      );
+    }
+    if (driver.reconcile === 'client-id' && driver.findInput === undefined) {
+      fail('capabilities', 'a client-id driver must provide findInput');
+    }
+    if (driver.engine === 'acp') {
+      if (parsed.data.runtimePolicyEnforcement !== 'client-boundary') {
+        fail(
+          'capabilities',
+          'ACP driver must declare runtimePolicyEnforcement: client-boundary',
+        );
+      }
+      if (
+        'approvalEnforcement' in driver &&
+        driver.approvalEnforcement !== 'agent-initiated'
+      ) {
+        fail('capabilities', 'ACP driver approvalEnforcement must remain agent-initiated');
+      }
+    }
+  });
+};
 
 /** A text turn folds into its text and ends; a client-id driver finds the input it sent and no other. */
 const checkText: ConformanceCheck = async (turn, scenarios) => {
