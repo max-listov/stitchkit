@@ -78,126 +78,98 @@ function resolveWindowFields(raw: unknown):
   return { usedPercent, mins, resetsAt };
 }
 
-function appendBucketWindows(
-  out: PlanWindow[],
-  seenNames: Set<string>,
-  bucketId: string,
-  seedKey: string,
-  snapshot: ParsedSnapshot,
-): void {
+type BucketWindow = NonNullable<ReturnType<typeof resolveWindowFields>> & {
+  readonly bucket: string;
+  readonly slot: 'primary' | 'secondary';
+  readonly label: string | undefined;
+};
+
+function mergeBucket(windows: BucketWindow[], bucket: string, snapshot: ParsedSnapshot): void {
   const label = clampPlanName(
     snapshot.limitName ?? snapshot.limit_name,
     MAX_WINDOW_NAME_CHARS,
   );
   const primary = resolveWindowFields(snapshot.primary);
   const secondary = resolveWindowFields(snapshot.secondary);
-  const duplicateDuration =
-    primary !== undefined &&
-    secondary !== undefined &&
-    primary.mins !== undefined &&
-    primary.mins === secondary.mins;
+  const sharedDuration = primary?.mins !== undefined && primary.mins === secondary?.mins;
+  const slots = { primary, secondary };
+  for (const slot of ['primary', 'secondary'] as const) {
+    const measurement = slots[slot];
+    if (!measurement) continue;
+    const sameDuration = (w: BucketWindow) =>
+      w.bucket === bucket && w.mins === measurement.mins;
+    let previous = windows.findIndex((w) => sameDuration(w) && w.slot === slot);
+    // A duration can move between slots. Only two equally long windows in the same snapshot
+    // need the slot to distinguish them; an unknown duration always keeps its slot.
+    if (previous < 0 && measurement.mins !== undefined && !sharedDuration) {
+      previous = windows.findIndex(sameDuration);
+    }
+    const window = { ...measurement, bucket, slot, label };
+    if (previous >= 0) windows[previous] = window;
+    else if (windows.length < MAX_PLAN_WINDOWS) windows.push(window);
+  }
+}
 
-  const slots: ReadonlyArray<
-    readonly ['primary' | 'secondary', ReturnType<typeof resolveWindowFields>]
-  > = [
-    ['primary', primary],
-    ['secondary', secondary],
-  ];
-  for (const [slot, window] of slots) {
-    if (window === undefined || out.length >= MAX_PLAN_WINDOWS) continue;
+function nameBucketWindows(windows: BucketWindow[]): PlanWindow[] {
+  const seen = new Set<string>();
+  return windows.map((window) => {
+    const { bucket, slot, usedPercent, mins, resetsAt, label } = window;
+    const sharedDuration =
+      mins !== undefined &&
+      windows.some(
+        (other) => other !== window && other.bucket === bucket && other.mins === mins,
+      );
     const suffix =
-      window.mins === undefined
-        ? `:${slot}`
-        : duplicateDuration
-          ? `:${window.mins}m:${slot}`
-          : `:${window.mins}m`;
+      mins === undefined ? `:${slot}` : sharedDuration ? `:${mins}m:${slot}` : `:${mins}m`;
     const name = clampUniqueWindowName(
-      bucketId,
+      bucket,
       suffix,
-      seenNames,
-      `${seedKey}:${bucketId}:${slot}`,
+      seen,
+      `${bucket}:${slot}`,
       MAX_WINDOW_NAME_CHARS,
     );
-    out.push(
-      PlanWindowSchema.parse({
-        name,
-        usedPercent: Math.min(100, window.usedPercent),
-        ...(window.resetsAt !== undefined && { resetsAt: window.resetsAt }),
-        ...(window.mins !== undefined && { windowDurationMins: window.mins }),
-        ...(label !== undefined && { label }),
-      }),
-    );
-  }
+    return PlanWindowSchema.parse({
+      name,
+      usedPercent: Math.min(100, usedPercent),
+      ...(resetsAt !== undefined && { resetsAt }),
+      ...(mins !== undefined && { windowDurationMins: mins }),
+      ...(label !== undefined && { label }),
+    });
+  });
 }
 
 function parseCodexRateLimitsInternal(reported: unknown): {
   readonly windows: PlanWindow[];
   readonly plan: string | undefined;
 } {
-  const windows: PlanWindow[] = [];
-  const seenNames = new Set<string>();
+  if (!isRecord(reported)) return { windows: [], plan: undefined };
+  const windows: BucketWindow[] = [];
   let plan: string | undefined;
-  const capturePlan = (snapshot: ParsedSnapshot): void => {
-    if (plan === undefined) {
-      plan = clampPlanName(snapshot.planType ?? snapshot.plan_type, MAX_WINDOW_NAME_CHARS);
-    }
-  };
-
-  if (
-    isRecord(reported) &&
-    ('rateLimits' in reported ||
-      'rateLimitsByLimitId' in reported ||
-      'rate_limits' in reported ||
-      'rate_limits_by_limit_id' in reported)
-  ) {
-    const seenLimitIds = new Set<string>();
-    const rawById = reported.rateLimitsByLimitId ?? reported.rate_limits_by_limit_id;
-    if (isRecord(rawById)) {
-      for (const mapKey of Object.keys(rawById).sort((a, b) => a.localeCompare(b))) {
-        const parsed = SnapshotSchema.safeParse(rawById[mapKey]);
-        if (!parsed.success) continue;
-        capturePlan(parsed.data);
-        const limitId =
-          nonEmptyString(parsed.data.limitId ?? parsed.data.limit_id)?.trim() ??
-          nonEmptyString(mapKey)?.trim() ??
-          'limit';
-        seenLimitIds.add(limitId);
-        appendBucketWindows(windows, seenNames, limitId, mapKey, parsed.data);
-        if (windows.length >= MAX_PLAN_WINDOWS) return { windows, plan };
-      }
-    }
-    const rawSingle = reported.rateLimits ?? reported.rate_limits;
-    if (windows.length < MAX_PLAN_WINDOWS && rawSingle !== undefined) {
-      const parsedSingle = SnapshotSchema.safeParse(rawSingle);
-      if (parsedSingle.success) {
-        capturePlan(parsedSingle.data);
-        const explicitId = nonEmptyString(
-          parsedSingle.data.limitId ?? parsedSingle.data.limit_id,
-        )?.trim();
-        const shouldIncludeSingle =
-          seenLimitIds.size === 0 ||
-          (explicitId !== undefined && !seenLimitIds.has(explicitId));
-        if (shouldIncludeSingle) {
-          appendBucketWindows(
-            windows,
-            seenNames,
-            explicitId ?? 'limit',
-            explicitId ?? 'rateLimits',
-            parsedSingle.data,
-          );
-        }
-      }
-    }
-    return { windows, plan };
+  function readBucket(raw: unknown, fallbackId: string): string {
+    const parsed = SnapshotSchema.safeParse(raw);
+    if (!parsed.success) return fallbackId;
+    const snapshot = parsed.data;
+    plan ??= clampPlanName(snapshot.planType ?? snapshot.plan_type, MAX_WINDOW_NAME_CHARS);
+    const id = nonEmptyString(snapshot.limitId ?? snapshot.limit_id)?.trim() ?? fallbackId;
+    mergeBucket(windows, id, snapshot);
+    return id;
   }
 
-  const single = SnapshotSchema.safeParse(reported);
-  if (!single.success) return { windows: [], plan: undefined };
-  capturePlan(single.data);
-  const limitId =
-    nonEmptyString(single.data.limitId ?? single.data.limit_id)?.trim() ?? 'limit';
-  appendBucketWindows(windows, seenNames, limitId, limitId, single.data);
-  return { windows, plan };
+  const byId = reported.rateLimitsByLimitId ?? reported.rate_limits_by_limit_id;
+  // The legacy account view can omit its ID even when the keyed account is also present.
+  const defaultId = isRecord(byId) && isRecord(byId.codex) ? 'codex' : 'limit';
+  const accountId = readBucket(
+    reported.rateLimits ?? reported.rate_limits ?? reported,
+    defaultId,
+  );
+  if (isRecord(byId)) {
+    if (Object.hasOwn(byId, accountId)) readBucket(byId[accountId], accountId);
+    for (const key of Object.keys(byId).sort((a, b) => a.localeCompare(b))) {
+      if (windows.length >= MAX_PLAN_WINDOWS) break;
+      if (key !== accountId) readBucket(byId[key], nonEmptyString(key)?.trim() ?? 'limit');
+    }
+  }
+  return { windows: nameBucketWindows(windows), plan };
 }
 
 /**

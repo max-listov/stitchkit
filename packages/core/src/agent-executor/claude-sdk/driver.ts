@@ -322,7 +322,7 @@ export function createClaudeSdkDriver(config: ClaudeSdkDriverConfig): ClaudeSdkD
       };
     },
     async status(rawProfile) {
-      const profile = engineProfile('claude-sdk', rawProfile);
+      const profile = engineProfile('claude-sdk', rawProfile, config.ambient);
       const known = limits.get(profile.profileId);
       return {
         login: { state: 'unknown' },
@@ -330,7 +330,7 @@ export function createClaudeSdkDriver(config: ClaudeSdkDriverConfig): ClaudeSdkD
         ...(known && { planLimits: known }),
       };
     },
-    findInput: (input) => findTranscriptInput('claude-sdk', input),
+    findInput: (input) => findTranscriptInput('claude-sdk', input, config.ambient),
     open: (input) => openClaudeSdkSession(config, limits, input),
     async forkSession(sessionId, options) {
       if (sessionId.trim().length === 0) {

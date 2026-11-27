@@ -50,6 +50,17 @@ export const proofGroups: InstalledConsumerProof[] = [
     marker: 'packed tracking click URL policy: ok',
   },
   ...agentConversationProofs,
+  {
+    id: 'executor-profile-and-usage',
+    fixture: 'node',
+    entry: 'executor-profile-and-usage.mjs',
+    files: [],
+    peers: ['zod'],
+    platforms: ['linux', 'darwin'],
+    runtimes: ['bun', 'node'],
+    kind: 'runtime',
+    marker: 'packed executor profile and usage: ok',
+  },
   ...requestBoundaryProofs,
   ...cliArgumentProofs,
 ];

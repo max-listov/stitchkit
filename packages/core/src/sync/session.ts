@@ -48,9 +48,9 @@ export interface SyncSessionPorts<PAGE extends SyncPageHeader> {
   /** The transport is connected; without it no session starts. */
   isConnected(): boolean;
   /**
-   * What `saveCursor` or `saveProgress` saved last. Empty or 0 means no snapshot yet,
-   * so a full sync starts; a number starts an incremental session after it; a
-   * `SyncSnapshotResume` continues the interrupted full snapshot where it stands.
+   * What `saveCursor` or `saveProgress` saved last. Return null for an uninitialized store.
+   * A nonnegative integer, including zero, requests changes after that version.
+   * A `SyncSnapshotResume` continues the interrupted full snapshot where it stands.
    */
   readCursor(): Eventually<number | SyncSnapshotResume | null>;
   /**

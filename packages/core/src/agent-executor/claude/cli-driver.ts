@@ -121,7 +121,7 @@ export function createClaudeCliDriver(
       };
     },
     async status(rawProfile) {
-      const profile = engineProfile('claude-cli', rawProfile);
+      const profile = engineProfile('claude-cli', rawProfile, ambient);
       const result = await cli(profile, ['auth', 'status']);
       let decoded: unknown = {};
       try {
@@ -165,7 +165,7 @@ export function createClaudeCliDriver(
         ...(planLimits && { planLimits }),
       };
     },
-    findInput: (input) => findTranscriptInput('claude-cli', input),
+    findInput: (input) => findTranscriptInput('claude-cli', input, ambient),
     open: (input) =>
       openClaudeSession(
         {

@@ -304,8 +304,9 @@ export async function openClaudeSdkSession(
 ): Promise<ClaudeSdkSession> {
   validateClaudeSdkOpenInput(input);
   const ambient = config.ambient ?? process.env;
-  const profile = engineProfile('claude-sdk', input.profile);
+  const profile = engineProfile('claude-sdk', input.profile, ambient);
   input.signal?.throwIfAborted();
+  const env = engineEnvironment(profile, ambient);
   const sessionId = input.nativeThreadId ?? randomUUID();
   const transcript = claudeTranscriptPath({ home: profile.home, cwd: input.cwd, sessionId });
   const transcriptExists =
@@ -362,7 +363,7 @@ export async function openClaudeSdkSession(
       const promise = launchSingleSdkQuery({
         config,
         cwd: input.cwd,
-        env: engineEnvironment(profile, ambient),
+        env: { ...env },
         profileId: profile.profileId,
         limits,
         sessionId,

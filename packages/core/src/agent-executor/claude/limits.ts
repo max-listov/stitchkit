@@ -110,11 +110,10 @@ function extractUsageWindows(bucketMap: Record<string, unknown>): PlanWindow[] {
       const entry = ClaudeModelScopedWindowSchema.safeParse(modelScoped[index]);
       if (!entry.success) continue;
       const { display_name, utilization, resets_at } = entry.data;
-      const label = nonEmptyString(display_name)?.trim().slice(0, MAX_WINDOW_NAME_CHARS);
-      if (label === undefined || utilization == null || !Number.isFinite(utilization))
-        continue;
+      const label = clampPlanName(display_name, MAX_WINDOW_NAME_CHARS);
+      if (utilization == null || !Number.isFinite(utilization)) continue;
       const name = clampUniqueWindowName(
-        `model:${label}`,
+        label === undefined ? 'model_scoped' : `model:${label}`,
         '',
         seenNames,
         `model:${display_name ?? label}:${index}`,
@@ -126,7 +125,7 @@ function extractUsageWindows(bucketMap: Record<string, unknown>): PlanWindow[] {
           name,
           usedPercent: Math.min(100, utilization),
           ...(resetsAt !== undefined && { resetsAt }),
-          label,
+          ...(label !== undefined && { label, scope: label }),
         }),
       );
     }

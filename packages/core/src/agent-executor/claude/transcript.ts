@@ -206,8 +206,9 @@ export async function findTranscriptInput(
     nativeThreadId: string;
     clientId: string;
   },
+  ambient?: Readonly<Record<string, string | undefined>>,
 ): Promise<boolean> {
-  const profile = engineProfile(engine, input.profile);
+  const profile = engineProfile(engine, input.profile, ambient);
   return claudeTranscriptHasUuid(
     claudeTranscriptPath({
       home: profile.home,

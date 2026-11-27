@@ -217,11 +217,13 @@ describe('plan limits', () => {
         usedPercent: 12,
         resetsAt: '2026-12-01T00:00:00+00:00',
         label: 'Fable',
+        scope: 'Fable',
       },
       {
         name: expect.stringMatching(/^model:Fable#[0-9a-f]{8}$/),
         usedPercent: 25,
         label: 'Fable',
+        scope: 'Fable',
       },
     ]);
     // >32 model_scoped windows are bounded cleanly at 32 with <=256-char unique names.

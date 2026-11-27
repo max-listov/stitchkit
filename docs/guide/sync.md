@@ -130,7 +130,7 @@ import { createSyncSession } from 'stitchkit/sync';
 
 const session = createSyncSession({
   isConnected: () => socket.connected,
-  readCursor: () => db.cursor(),          // what saveCursor or saveProgress saved; empty or 0 → a full snapshot starts
+  readCursor: () => db.cursor(),          // null starts a snapshot; a saved version, including 0, starts the feed
   beginFullSync: () => db.resetCursor(),  // keeps the projection; nothing is deleted yet
   send: (request) => socket.emit('sync_request', toWire(request)),
   apply: (page, context) => db.applyPage(page, context), // { current, snapshot }: see above

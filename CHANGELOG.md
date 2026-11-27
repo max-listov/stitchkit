@@ -15,6 +15,30 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** callers that return `0` from `SyncSessionPorts.readCursor` before their first full snapshot. [Migration](docs/guide/upgrading.md#saved-sync-cursor-zero)
+
+- `stitchkit/sync` — `createSyncSession` now reads changes after every saved nonnegative version, including zero. Return `null` to request the initial snapshot. A completed token-paged snapshot retains its known starting version when the final page omits `latestVersion`.
+
+  ```ts
+  // before
+  readCursor: () => row?.version ?? 0
+  // after
+  readCursor: () => row?.version ?? null
+  ```
+
+  **Affects:** `stitchkit/sync` createSyncSession, SyncSessionPorts(readCursor)
+
+### Fixed
+
+- `stitchkit/agent-executor` — Claude CLI and SDK profiles can use the user's native sign-in by setting `claudeConfigDir: 'default'` and keeping `home` at the user's `.claude` transcript directory. The child receives no `CLAUDE_CONFIG_DIR` in this mode. Existing profiles still select their configured directory explicitly.
+  **Affects:** `stitchkit/agent-executor` ExecutorProfileConfig(claudeConfigDir), ExecutorProfileConfigSchema, engineEnvironment; `stitchkit/agent-executor/claude` createClaudeCliDriver, findTranscriptInput; `stitchkit/agent-executor/claude-sdk` createClaudeSdkDriver, findTranscriptInput
+- `stitchkit/agent-executor/codex` — preserve the account plan and quota windows when a snapshot carries a sibling per-model map. Overlapping measurements appear once, and model buckets cannot crowd the account out of the 32-window result.
+  **Affects:** `stitchkit/agent-executor/codex` codexPlanLimits, codexPlanWindows
+- `stitchkit/agent-executor/claude` and `stitchkit/agent-executor/claude-sdk` — named model usage windows carry their reported scope and label. A measured window with no model name still carries its percentage.
+  **Affects:** `stitchkit/agent-executor/claude` claudeUsagePlanLimits; `stitchkit/agent-executor/claude-sdk` claudeUsagePlanLimits, createClaudeSdkDriver
+
 ## [0.131.0] - 2026-11-27
 
 ### ⚠️ Breaking changes

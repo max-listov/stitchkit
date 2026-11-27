@@ -1191,6 +1191,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
             usedPercent: 18,
             resetsAt: '2026-12-07T10:00:00Z',
             label: 'Fable',
+            scope: 'Fable',
           },
         ]);
         expect(res.raw.rate_limits?.extra_usage?.used_credits).toBe(1200);

@@ -33,6 +33,7 @@ const contract = defineContract(
       path: '/',
       desc: 'Create bots',
       expose: ['MCP'],
+      input: z.object({ id: z.uuid() }),
       output: Bots,
       tool: { name: 'bot_create' },
     },
@@ -98,6 +99,12 @@ async function run(argv) {
 }
 
 try {
+  // The CLI receives the UUID format through MCP discovery.
+  const help = await run(['bot_create', '--help']);
+  assert.equal(help.code, 0, help.err);
+  assert.equal(help.err, '');
+  assert.match(help.out, /--id\s+<string> \[uuid\] \(required\)/);
+
   const refusedRead = await run(['bot_list', '--table', 'id,nosuchcolumn']);
   assert.notEqual(refusedRead.code, 0);
   assert.equal(refusedRead.out, '');
@@ -111,7 +118,13 @@ try {
   assert.equal(table.err, '');
   assert.match(table.out, /b1/);
 
-  const refusedWrite = await run(['bot_create', '--table', 'id,nosuchcolumn']);
+  const refusedWrite = await run([
+    'bot_create',
+    '--id',
+    crypto.randomUUID(),
+    '--table',
+    'id,nosuchcolumn',
+  ]);
   assert.notEqual(refusedWrite.code, 0);
   assert.deepEqual(JSON.parse(refusedWrite.out), { result: bots });
   assert.equal(JSON.parse(refusedWrite.err).details.resultOnStdout, true);

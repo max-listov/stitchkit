@@ -6,6 +6,7 @@
  */
 import { type BackoffPolicy, BackoffPolicySchema, backoffDelay } from '../internal/backoff';
 import { assertTimerMs } from '../internal/deadline';
+import { assertNonNegativeSafeInteger } from '../internal/positive-integer';
 import { SYNC_STALE_CURSOR, type SyncPageHeader } from './protocol';
 import type {
   Eventually,
@@ -237,9 +238,13 @@ export class SyncSessionMachine<PAGE extends SyncPageHeader> {
             this.continueSnapshot(checkedResume(cursor));
             return;
           }
-          this.openSession(cursor ? 'incremental' : 'full');
-          return chain(cursor ? undefined : this.ports.beginFullSync(), () => {
-            if (this.alive(stamp)) this.sendPage({ after: cursor || null, token: null });
+          if (cursor !== null)
+            assertNonNegativeSafeInteger('saved sync cursor', cursor, TypeError, {
+              absent: 'refused',
+            });
+          this.openSession(cursor === null ? 'full' : 'incremental');
+          return chain(cursor === null ? this.ports.beginFullSync() : undefined, () => {
+            if (this.alive(stamp)) this.sendPage({ after: cursor, token: null });
           });
         }),
       (error) => {
@@ -356,7 +361,12 @@ export class SyncSessionMachine<PAGE extends SyncPageHeader> {
     const from = full ? this.snapshotFrom : null;
     const catchUp = from !== null && (page.latestVersion ?? from) > from;
     return chain(full ? this.rebasePending() : undefined, () =>
-      this.saveLastPage(stamp, expected, catchUp ? from : page.latestVersion, catchUp),
+      this.saveLastPage(
+        stamp,
+        expected,
+        catchUp ? from : (page.latestVersion ?? from ?? undefined),
+        catchUp,
+      ),
     );
   }
 

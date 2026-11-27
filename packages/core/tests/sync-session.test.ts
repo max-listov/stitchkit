@@ -3,12 +3,12 @@
  * already ships: the same scenarios, on the neutral request and page header.
  */
 import { describe, expect, test } from 'bun:test';
-import type { SyncPageHeader, SyncPageRequest } from '../src/sync/protocol';
 import {
   createSyncSession,
   type SyncSessionPorts,
   type SyncSnapshotResume,
-} from '../src/sync/session';
+} from '../src/entrypoints/sync';
+import type { SyncPageHeader, SyncPageRequest } from '../src/sync/protocol';
 
 interface Timer {
   run: () => void;
@@ -138,10 +138,12 @@ describe('sync session', () => {
   });
 
   test('a saved cursor starts an incremental session, no cursor starts a full one', async () => {
-    const a = harness({ cursor: () => 12 });
-    await a.session.requestSync();
-    expect(first(a.sent)).toMatchObject({ after: 12, full: false });
-    expect(a.events).toEqual([]);
+    for (const cursor of [0, 3, 12]) {
+      const a = harness({ cursor: () => cursor });
+      await a.session.requestSync();
+      expect(first(a.sent)).toMatchObject({ after: cursor, full: false });
+      expect(a.events).toEqual([]);
+    }
     const b = harness({ cursor: () => null });
     await b.session.requestSync();
     expect(first(b.sent)).toMatchObject({ after: null, full: true });
@@ -154,6 +156,16 @@ describe('sync session', () => {
     await h.session.requestSync();
     await h.session.requestFullSync();
     expect(h.sent).toHaveLength(0);
+  });
+
+  test('an invalid stored number fails the cursor read before sending a page', async () => {
+    for (const cursor of [-1, NaN, Infinity, 0.25, Number.MAX_SAFE_INTEGER + 1]) {
+      const h = harness({ cursor: () => cursor });
+      await h.session.requestSync();
+      expect(h.sent).toEqual([]);
+      expect(h.session.diagnostics().lastFailure?.reason).toBe('cursor_unavailable');
+      h.session.stop();
+    }
   });
 
   test('pages follow the continuation cursor with fresh request ids, the cursor is saved on the last', async () => {
@@ -1062,6 +1074,44 @@ describe('sync session', () => {
 });
 
 describe('a snapshot paged by token', () => {
+  test('a stopped token snapshot saves version zero and the next session reads the feed from zero', async () => {
+    const store: { cursor: number | SyncSnapshotResume | null } = { cursor: null };
+    const open = () =>
+      harness({
+        cursor: () => store.cursor,
+        progress: true,
+        saveProgress(value) {
+          store.cursor = value;
+        },
+        saveCursor(value) {
+          if (value !== undefined) store.cursor = value;
+        },
+      });
+    const firstRun = open();
+    await firstRun.session.requestSync();
+    const initial = first(firstRun.sent);
+    expect(initial).toMatchObject({ full: true, after: null });
+    await firstRun.session.handleResponse(
+      page(initial, { hasMore: true, nextToken: 'next', latestVersion: 0 }),
+    );
+    expect(store.cursor).toMatchObject({ token: 'next', from: 0 });
+    firstRun.session.stop();
+
+    const resumed = open();
+    await resumed.session.requestSync();
+    const { sessionId, requestId, full, token } = first(resumed.sent);
+    expect({ full, token }).toEqual({ full: true, token: 'next' });
+    await resumed.session.handleResponse({ sessionId, requestId, hasMore: false });
+    expect(store.cursor).toBe(0);
+    resumed.session.stop();
+
+    const reopened = open();
+    await reopened.session.requestSync();
+    expect(first(reopened.sent)).toMatchObject({ full: false, after: 0 });
+    expect(reopened.events).toEqual([]);
+    reopened.session.stop();
+  });
+
   test('pages follow the token, each saved with the version the snapshot began at', async () => {
     const h = harness({ cursor: () => null, progress: true });
     await h.session.requestSync();
@@ -1155,6 +1205,35 @@ describe('a snapshot paged by token', () => {
 });
 
 describe('a cursor the server no longer keeps', () => {
+  test('a stale feed from zero reloads and rebases the pending operation before saving zero', async () => {
+    const pending = new Map([['local-edit', 'queued']]);
+    const order: string[] = [];
+    const h = harness({
+      cursor: () => 0,
+      begin: () => {
+        order.push('begin');
+      },
+      rebase: () => {
+        expect(pending.get('local-edit')).toBe('queued');
+        pending.set('local-edit', 'rebased');
+        order.push('rebase');
+      },
+      saveCursor: (v) => {
+        order.push(`save:${v}`);
+      },
+    });
+    await h.session.requestSync();
+    const feed = first(h.sent);
+    expect(feed).toMatchObject({ full: false, after: 0 });
+    await h.session.handleError({ ...feed, code: 'stale_cursor' });
+    const snapshot = at(h.sent, -1);
+    expect(snapshot).toMatchObject({ full: true, after: null });
+    await h.session.handleResponse(page(snapshot, { latestVersion: 0 }));
+    expect(order).toEqual(['begin', 'rebase', 'save:0']);
+    expect([...pending]).toEqual([['local-edit', 'rebased']]);
+    h.session.stop();
+  });
+
   test('stale_cursor loads a full snapshot at once, without a pause or a failure', async () => {
     const h = harness({ cursor: () => 4 });
     await h.session.requestSync();

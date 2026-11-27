@@ -105,13 +105,13 @@ export async function probeClaudeSdkCapabilities(
   limits: Map<string, PlanLimits>,
   input: ClaudeSdkProbeCapabilitiesInput,
 ): Promise<ClaudeSdkCapabilitiesProbe> {
-  const profile = engineProfile('claude-sdk', input.profile);
+  const ambient = config.ambient ?? process.env;
+  const profile = engineProfile('claude-sdk', input.profile, ambient);
   if (input.timeoutMs !== undefined) {
     assertTimerMs('timeoutMs', input.timeoutMs);
   }
   input.signal?.throwIfAborted();
   const timeoutMs = input.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
-  const ambient = config.ambient ?? process.env;
   const env = engineEnvironment(profile, ambient);
 
   return withSignalDeadline(

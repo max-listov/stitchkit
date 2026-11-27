@@ -3440,6 +3440,9 @@
     "accountLabel": {
       "test": "a hello of a profile whose home holds a token carries no token, no path and no value"
     },
+    "claudeConfigDir": {
+      "test": "default Claude sign-in reaches SDK queries and the CLI while the same explicit home stays selected"
+    },
     "engine": {
       "test": "a driver refuses a profile of another engine before it starts the engine"
     },

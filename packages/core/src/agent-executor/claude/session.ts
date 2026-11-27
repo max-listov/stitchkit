@@ -104,8 +104,9 @@ export async function openClaudeSession(
   },
 ): Promise<AgentEngineSession> {
   const { executable, prefix, ambient, limits } = config;
-  const profile = engineProfile('claude-cli', input.profile);
+  const profile = engineProfile('claude-cli', input.profile, ambient);
   input.signal?.throwIfAborted();
+  const env = engineEnvironment(profile, ambient);
   const sessionId = input.nativeThreadId ?? randomUUID();
   const transcript = claudeTranscriptPath({ home: profile.home, cwd: input.cwd, sessionId });
   const resume =
@@ -136,7 +137,7 @@ export async function openClaudeSession(
         ...(config.model !== undefined ? ['--model', config.model] : []),
       ],
       cwd: input.cwd,
-      env: engineEnvironment(profile, ambient),
+      env,
       signal: linked.signal,
       maxLineBytes: CLAUDE_CLI_MAX_LINE_BYTES,
     });

@@ -5,10 +5,14 @@ import * as sync from 'stitchkit/sync';
 export function syncStep() {
   const sent = [];
   const saved = [];
+  let cursor = 5;
+  let fullStarts = 0;
   const session = sync.createSyncSession({
     isConnected: () => true,
-    readCursor: () => 5,
-    beginFullSync: () => undefined,
+    readCursor: () => cursor,
+    beginFullSync: () => {
+      fullStarts++;
+    },
     send: (request) => sent.push(request),
     apply: () => undefined,
     saveCursor: (version) => saved.push(version),
@@ -23,6 +27,9 @@ export function syncStep() {
     hasMore: false,
     latestVersion: 9,
   });
+  cursor = 0;
+  session.requestSync();
+  session.stop();
   const batch = sync.decideOutboxBatch(
     [
       {
@@ -80,7 +87,7 @@ export function syncStep() {
   };
   const applied = runSqliteMigrations(database, run);
   const replayed = runSqliteMigrations(database, run);
-  return { sent, saved, batch, results, applied, replayed, executed };
+  return { sent, saved, fullStarts, batch, results, applied, replayed, executed };
 }
 // Metro retains a barrel's exports. Keep the entire sync surface in the compiler proof too.
 globalThis.syncSurface = Object.keys(sync);

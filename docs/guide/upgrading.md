@@ -1,5 +1,25 @@
 # Upgrading stitchkit
 
+## Upcoming migration: 0.132.0
+
+### saved-sync-cursor-zero
+
+**Who must act:** users of `stitchkit/sync` whose cursor reader returns zero for an uninitialized replica.
+
+Return `null` until the first snapshot completes. A saved `0` requests the incremental feed after version zero.
+
+```ts
+// Before: a missing row and a completed snapshot at zero shared the same marker.
+readCursor: () => row?.version ?? 0
+// After: preserve every published server version.
+readCursor: () => row?.version ?? null
+```
+
+If an old store persisted zero for both states and has no completion marker, perform one full
+snapshot for those ambiguous rows. Preserve pending operations and active snapshot resume tokens.
+Adapters that added one to wire versions can now pass them directly. If the offset was applied
+only at the port boundary, remove the translation there and keep the stored server versions.
+
 ## Released migration: 0.131.0
 
 ### codex-typed-control-dtos

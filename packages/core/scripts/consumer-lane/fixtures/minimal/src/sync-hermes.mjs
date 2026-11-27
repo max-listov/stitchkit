@@ -77,6 +77,9 @@ try {
 
 function verifyStep(step) {
   assert.equal(step.sent[0]?.after, 5);
+  assert.equal(step.sent[1]?.after, 0);
+  assert.equal(step.sent[1]?.full, false);
+  assert.equal(step.fullStarts, 0);
   assert.deepEqual(step.saved, [9]);
   assert.equal(step.batch.send.length, 1);
   assert.deepEqual(
