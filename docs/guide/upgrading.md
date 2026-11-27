@@ -1,6 +1,8 @@
 # Upgrading stitchkit
 
-## Unreleased migration: executor-testing-claude-sdk-subpath
+## Released migration: 0.133.0
+
+### executor-testing-claude-sdk-subpath
 
 **Who must act:** tests that import `createFakeClaudeSdkQuery`, `createStubClaudeSdkSession` or a `FakeClaudeSdk*` type from `stitchkit/agent-executor/testing`.
 
@@ -15,7 +17,7 @@ import { createFakeClaudeSdkQuery, createStubClaudeSdkSession } from 'stitchkit/
 
 `stitchkit/agent-executor/testing` no longer names the types of `@anthropic-ai/claude-agent-sdk`, so a project that tests a Codex or ACP driver needs neither the SDK nor `skipLibCheck`.
 
-## Unreleased migration: executor-profile-env-sanitizer
+### executor-profile-env-sanitizer
 
 **Who must act:** callers of `sanitizeProfileEnv` from `stitchkit/agent-executor`.
 
@@ -33,7 +35,7 @@ const env = Object.fromEntries(
 );
 ```
 
-## Unreleased migration: executor-conformance-lifecycle
+### executor-conformance-lifecycle
 
 **Who must act:** tests that run `runAgentEngineConformance` (`stitchkit/agent-executor/testing`) on a driver written outside this package.
 
@@ -61,7 +63,7 @@ async open(input) {
 
 Each wait in these checks is bounded at 10 s and a hang fails as `… did not settle within 10000 ms`; give the conformance test a timeout above that (the tests of this package use 30–60 s), or the runner's own timeout reports the hang without the name.
 
-## Unreleased migration: codex-owned-thread-unsubscribe
+### codex-owned-thread-unsubscribe
 
 **Who must act:** callers of `stitchkit/agent-executor/codex` that call `unsubscribeThread` on a thread their own driver opened.
 
@@ -77,7 +79,7 @@ await session.close();
 
 A thread the driver did not open — an external TUI thread, a sibling client's thread — is still unsubscribed with one raw `thread/unsubscribe`.
 
-## Unreleased migration: process-bootstrap-rename
+### process-bootstrap-rename
 
 **Who must act:** single-file applications (a `bun build` output that routes its own argv) that import `stitchkit/process/owner-loss`.
 
@@ -101,7 +103,7 @@ rg "bootstrapNativeCommandOwnerLoss" .
 
 An application that does not bundle itself into one file, or that never imported the old subpath, has nothing to do.
 
-## Unreleased migration: client-artifact-package-option
+### client-artifact-package-option
 
 **Who must act:** builds that call `buildClientArtifact` (`stitchkit/files/packaging`) with `package` or `executable`, or read `artifact.package`.
 

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-11-27
+
+### Changed
+
+- `stitchkit-tui` accepts `stitchkit@^0.133.0` as its peer, so a project installing both gets one copy of `stitchkit`.
+
 ## [0.5.5] - 2026-11-27
 
 ### Changed
