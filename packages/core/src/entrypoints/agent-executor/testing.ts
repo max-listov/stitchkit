@@ -3,13 +3,50 @@ export {
   type AgentEngineDialectScenarios,
   runAgentEngineConformance,
 } from '../../agent-executor/testing/conformance';
+export {
+  createStubAcpSession,
+  createStubAgentEngineTurn,
+  createStubClaudeSdkSession,
+  createStubCodexControlClient,
+  createStubCodexControlConnection,
+  createStubCodexSession,
+  createStubCodexSharedServer,
+  createStubCodexTurn,
+  type StubAgentEngineTurnOverrides,
+  type StubCodexTurnOverrides,
+  type StubOverrides,
+} from '../../agent-executor/testing/consumer-stubs';
 export { runFakeClaudeEngine } from '../../agent-executor/testing/fake-claude-engine';
+export {
+  createFakeClaudeSdkQuery,
+  type FakeClaudeSdkQueryConfig,
+  type FakeClaudeSdkQueryHarness,
+  type FakeClaudeSdkRecordedCall,
+  type FakeClaudeSdkRunController,
+  type FakeClaudeSdkScriptedTurn,
+} from '../../agent-executor/testing/fake-claude-sdk-query';
+export {
+  createFakeCodexAppServer,
+  type FakeCodexAppServer,
+  type FakeCodexAppServerConfig,
+  type FakeCodexRpcErrorOutcome,
+  type FakeCodexRpcHandler,
+  type FakeCodexRpcHandlerOutcome,
+  type RecordedJsonRpcRequest,
+} from '../../agent-executor/testing/fake-codex-app-server';
 export {
   type FakeEngineScenario,
   FakeEngineScenarioSchema,
   type FakeEngineStep,
   FakeEngineStepSchema,
 } from '../../agent-executor/testing/fake-engine';
+export {
+  type CodexNotificationEventOverrides,
+  type ExecutorDeltaInput,
+  makeCodexNotificationEvent,
+  makeCodexThreadFixture,
+  makeExecutorDelta,
+} from '../../agent-executor/testing/fixtures';
 export {
   createReplayExecutorDriver,
   type ReplayExecutorDriver,

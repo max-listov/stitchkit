@@ -4,28 +4,25 @@
  * and empty tool ids.
  */
 import { beforeAll, describe, expect, test } from 'bun:test';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import type {
-  AccountInfo,
-  McpServerStatus,
-  ModelInfo,
-  Options,
-  RewindFilesResult,
-  SDKControlInitializeResponse,
-  SlashCommand,
-  SpawnedProcess,
+import {
+  type AccountInfo,
+  type McpServerStatus,
+  type ModelInfo,
+  type Options,
+  type RewindFilesResult,
+  query as realClaudeSdkQuery,
+  type SDKControlInitializeResponse,
+  type SlashCommand,
+  type SpawnedProcess,
 } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import {
   type ClaudeRuntimeEvent,
   ClaudeRuntimeEventSchema,
 } from '../../src/agent-executor/claude/events';
-import {
-  type ClaudeSdkQuery,
-  type ClaudeSdkRun,
-  createClaudeSdkDriver,
-} from '../../src/agent-executor/claude-sdk/driver';
 import type { ClaudeSdkPermissionRequestMeta } from '../../src/agent-executor/claude-sdk/query-loop';
 import {
   type ClaudeSdkTurnUsage,
@@ -33,6 +30,16 @@ import {
 } from '../../src/agent-executor/claude-sdk/turn-usage';
 import { projectExecutorDeltas } from '../../src/agent-executor/projection';
 import { type ExecutorDelta, ExecutorDeltaSchema } from '../../src/agent-executor/vocabulary';
+import { claudeTranscriptPath } from '../../src/entrypoints/agent-executor/claude';
+import {
+  type ClaudeSdkFlagSettings,
+  type ClaudeSdkQuery,
+  type ClaudeSdkRun,
+  claudeTranscriptHasUuid,
+  createClaudeSdkDriver,
+  findTranscriptInput,
+  type SDKControlSetPermissionModeResponse,
+} from '../../src/entrypoints/agent-executor/claude-sdk';
 import {
   ambientIn,
   countedSignal,
@@ -2569,5 +2576,150 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       } finally {
         await session.close();
       }
+    }));
+
+  test('ClaudeSdkQuery accepts real @anthropic-ai/claude-agent-sdk query without cast, setPermissionMode returns effective mode, permission meta input is JsonRpcValue record, and standalone transcript helpers work', () =>
+    inScratch('sdk-03332-and-transcripts', async (root) => {
+      // 1. Real SDK query function assigns to ClaudeSdkQuery with zero casts.
+      const boundQuery: ClaudeSdkQuery = realClaudeSdkQuery;
+      expect(typeof boundQuery).toBe('function');
+
+      const flags: ClaudeSdkFlagSettings = { effortLevel: 'high', autoCompact: true };
+      expect(flags.effortLevel).toBe('high');
+
+      // 2. setPermissionMode returns SDKControlSetPermissionModeResponse and records effective mode on restart.
+      const openedModes: Array<string | undefined> = [];
+      const seenPermissionInputs: Array<ClaudeSdkPermissionRequestMeta['input']> = [];
+      let runCount = 0;
+      const driver = createClaudeSdkDriver({
+        sdkVersion: '0.3.332',
+        ambient: ambientIn(root),
+        onPermissionRequest: (meta) => {
+          seenPermissionInputs.push(meta.input);
+        },
+        query: ({ prompt, options }) => {
+          runCount += 1;
+          const n = runCount;
+          openedModes.push(options?.permissionMode);
+          async function* run(): AsyncGenerator<unknown> {
+            for await (const message of prompt) {
+              if (n === 1) {
+                await options?.canUseTool?.(
+                  'Bash',
+                  { command: 'echo hi', nested: [1, true, null] },
+                  {
+                    signal: new AbortController().signal,
+                    toolUseID: 'tu-1',
+                    requestId: 'req-1',
+                  },
+                );
+                throw new Error('restart-to-check-mode');
+              }
+              yield success(message.uuid);
+            }
+          }
+          const records = run();
+          return {
+            [Symbol.asyncIterator]: () => records,
+            interrupt: async () => undefined,
+            setPermissionMode: async () => ({ mode: 'plan' as const }),
+          };
+        },
+      });
+      const session = await driver.open({ profile: sdkProfile(root), cwd: root });
+      try {
+        const res = await session.setPermissionMode('acceptEdits');
+        expect(res).toEqual({ mode: 'plan' });
+        await expect(drainApproving(await session.startTurn(textTurn('t1')))).rejects.toThrow(
+          /restart-to-check-mode/,
+        );
+        await drain(await session.startTurn(textTurn('t2')));
+        expect(openedModes[1]).toBe('plan');
+        expect(seenPermissionInputs).toEqual([
+          { command: 'echo hi', nested: [1, true, null] },
+        ]);
+      } finally {
+        await session.close();
+      }
+
+      // 2b. setPermissionMode falls back to the requested mode for restart replay when SDK returns
+      //     undefined, {}, or an invalid mode, without fabricating an unreturned mode field.
+      const fallbackCases: ReadonlyArray<{
+        reply: unknown;
+        expected: SDKControlSetPermissionModeResponse | undefined;
+      }> = [
+        { reply: undefined, expected: undefined },
+        { reply: {}, expected: {} },
+        { reply: { mode: 'not-a-real-mode' }, expected: undefined },
+      ];
+      for (const { reply: badReply, expected } of fallbackCases) {
+        const fallbackModes: Array<string | undefined> = [];
+        let runs = 0;
+        const fallbackDriver = createClaudeSdkDriver({
+          sdkVersion: '0.3.332',
+          ambient: ambientIn(root),
+          query: ({ prompt, options }) => {
+            runs += 1;
+            const n = runs;
+            fallbackModes.push(options?.permissionMode);
+            async function* run(): AsyncGenerator<unknown> {
+              for await (const message of prompt) {
+                if (n === 1) throw new Error('restart-fallback');
+                yield success(message.uuid);
+              }
+            }
+            const records = run();
+            return {
+              [Symbol.asyncIterator]: () => records,
+              interrupt: async () => undefined,
+              setPermissionMode: async () => badReply as never,
+            };
+          },
+        });
+        const fsess = await fallbackDriver.open({ profile: sdkProfile(root), cwd: root });
+        try {
+          expect(await fsess.setPermissionMode('acceptEdits')).toEqual(expected);
+          await expect(drain(await fsess.startTurn(textTurn('fb-1')))).rejects.toThrow(
+            /restart-fallback/,
+          );
+          await drain(await fsess.startTurn(textTurn('fb-2')));
+          expect(fallbackModes[1]).toBe('acceptEdits');
+        } finally {
+          await fsess.close();
+        }
+      }
+
+      // 3. Standalone findTranscriptInput and claudeTranscriptHasUuid work directly without a driver.
+      const profile = sdkProfile(root);
+      const transcript = claudeTranscriptPath({
+        home: profile.home,
+        cwd: root,
+        sessionId: 'sess-standalone',
+      });
+      const { mkdirSync } = await import('node:fs');
+      const { dirname } = await import('node:path');
+      mkdirSync(dirname(transcript), { recursive: true });
+      writeFileSync(
+        transcript,
+        `${JSON.stringify({ type: 'user', uuid: 'uuid-hit-1', message: { role: 'user', content: 'hi' } })}\n`,
+      );
+      expect(await claudeTranscriptHasUuid(transcript, 'uuid-hit-1')).toBe(true);
+      expect(await claudeTranscriptHasUuid(transcript, 'uuid-miss')).toBe(false);
+      expect(
+        await findTranscriptInput('claude-sdk', {
+          profile,
+          cwd: root,
+          nativeThreadId: 'sess-standalone',
+          clientId: 'uuid-hit-1',
+        }),
+      ).toBe(true);
+      expect(
+        await findTranscriptInput('claude-sdk', {
+          profile,
+          cwd: root,
+          nativeThreadId: 'sess-standalone',
+          clientId: 'uuid-miss',
+        }),
+      ).toBe(false);
     }));
 });

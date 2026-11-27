@@ -1,16 +1,15 @@
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
-import { isRecord } from '../../internal/typed';
 import { loseEngineTurn } from '../engine-requests';
 import type { ExecutorDriverCapabilities } from '../hello';
-import type { JsonRpcValue } from '../json-rpc-peer';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
 import { invokeSafely, sessionAbort, stopConnection } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
 import { connectCodex } from './connect';
 import { type CodexControlClient, createCodexControlClient } from './control-client';
+import { codexThreadIdOf } from './event-routing';
 import { createCodexHandlers } from './handlers';
 import { codexStopped, type PendingExternalCodexRequest } from './request-answers';
-import type { CodexSession } from './session-controls';
+import type { CodexSession } from './session-types';
 import {
   type CodexSharedServerThreadInput,
   openSharedCodexThread,
@@ -27,10 +26,10 @@ export interface CodexSharedServerOpenInput {
   readonly profile: ExecutorProfileConfig;
   readonly cwd: string;
   /** Maximum concurrent open threads multiplexed on this shared server (`1..256`). Default `32`. */
-  readonly maxThreads?: number;
+  readonly maxThreads?: number | undefined;
   /** Optional observer invoked with startup phases (`spawning`, `initializing`) during server startup. */
-  readonly onStartupPhase?: (phase: ExecutorStartupPhase) => void;
-  readonly signal?: AbortSignal;
+  readonly onStartupPhase?: ((phase: ExecutorStartupPhase) => void) | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Shared headless `codex app-server` multiplexing up to `maxThreads` independent {@link CodexSession}s. */
@@ -43,27 +42,6 @@ export interface CodexSharedServer extends CodexControlClient {
   readonly capabilities: ExecutorDriverCapabilities;
   openThread(input: CodexSharedServerThreadInput): Promise<CodexSession>;
   close(): Promise<void>;
-}
-
-function extractCodexThreadId(params: JsonRpcValue | undefined): string | undefined {
-  if (!isRecord(params)) return undefined;
-  if (typeof params.threadId === 'string' && params.threadId.length > 0)
-    return params.threadId;
-  if (
-    isRecord(params.thread) &&
-    typeof params.thread.id === 'string' &&
-    params.thread.id.length > 0
-  ) {
-    return params.thread.id;
-  }
-  if (
-    isRecord(params.turn) &&
-    typeof params.turn.threadId === 'string' &&
-    params.turn.threadId.length > 0
-  ) {
-    return params.turn.threadId;
-  }
-  return undefined;
 }
 
 function validateSharedServerInputs(
@@ -143,7 +121,7 @@ export async function openCodexSharedServer(
             invokeSafely(() => globalHandlers.onNotification(method, params));
             return;
           }
-          const targetId = extractCodexThreadId(params);
+          const targetId = codexThreadIdOf(params);
           const slot = targetId !== undefined ? threads.get(targetId) : undefined;
           if (slot !== undefined) {
             invokeSafely(() => slot.handlers.onNotification(method, params));
@@ -152,7 +130,7 @@ export async function openCodexSharedServer(
           invokeSafely(() => globalHandlers.onNotification(method, params));
         },
         onRequest(method, params, id) {
-          const targetId = extractCodexThreadId(params);
+          const targetId = codexThreadIdOf(params);
           const slot = targetId !== undefined ? threads.get(targetId) : undefined;
           if (slot !== undefined) return slot.handlers.onRequest(method, params, id);
           return globalHandlers.onRequest(method, params, id);

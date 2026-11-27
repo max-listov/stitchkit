@@ -44,16 +44,16 @@ export interface AcpOpenInput {
   readonly profile: ExecutorProfileConfig;
   readonly cwd: string;
   /** Resume or load this native session; a fresh one is started without it. */
-  readonly nativeThreadId?: string;
+  readonly nativeThreadId?: string | undefined;
   /** Per-session model override (overrides {@link AcpDriverConfig.model}). */
-  readonly model?: string;
+  readonly model?: string | undefined;
   /** Per-session thought level override (overrides {@link AcpDriverConfig.thoughtLevel}). */
-  readonly thoughtLevel?: string;
+  readonly thoughtLevel?: string | undefined;
   /** Per-session mode override (overrides {@link AcpDriverConfig.mode}). */
-  readonly mode?: string;
+  readonly mode?: string | undefined;
   /** Optional observer invoked with startup phases (`spawning`, `initializing`) during open. */
-  readonly onStartupPhase?: (phase: ExecutorStartupPhase) => void;
-  readonly signal?: AbortSignal;
+  readonly onStartupPhase?: ((phase: ExecutorStartupPhase) => void) | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Input to {@link AcpSession.steerTurn} when `steerMode` is `'prompt'`. */
@@ -61,8 +61,10 @@ export interface AcpSteerTurnInput {
   readonly input: readonly AgentMessagePart[];
 }
 
-/** A session with what ACP says about it besides turns: its settings, title, commands, steering, and post-settle replies. */
+/** A session with what ACP says about it besides turns: its PID, settings, title, commands, steering, and post-settle replies. */
 export interface AcpSession extends AgentEngineSession {
+  /** OS process id of the active spawned ACP child, or `undefined` once the session has exited or closed. */
+  readonly providerPid: number | undefined;
   /** Always `'agent-initiated'`: whether a tool pauses for host approval is decided by the agent. */
   readonly approvalEnforcement: AcpApprovalEnforcement;
   /** The agent's settings as last reported: on open, on a change, and on `config_option_update`. */
@@ -161,6 +163,61 @@ function drainExternalPending(externalPending: Map<string, PendingExternalAcpReq
   }
 }
 
+function mergeInitialConfigOptions(
+  current: readonly AcpConfigOption[],
+  incoming: readonly AcpConfigOption[] | null | undefined,
+  sawConfigOptionUpdate: boolean,
+): readonly AcpConfigOption[] {
+  if (incoming == null) return current;
+  if (!sawConfigOptionUpdate || (current.length === 0 && incoming.length > 0)) {
+    return incoming;
+  }
+  return current;
+}
+
+async function openOrReopenAcpSession(input: {
+  connected: Awaited<ReturnType<typeof connectAcp>>;
+  cwd: string;
+  nativeThreadId: string | undefined;
+  mcpServers: z.infer<typeof AcpMcpServerSchema>[];
+  meta: ReturnType<typeof resolveAcpSessionMeta>;
+}): Promise<{
+  readonly sessionId: string;
+  readonly configOptions: readonly AcpConfigOption[] | null | undefined;
+  readonly models: z.infer<typeof AcpSessionStateSchema>['models'];
+}> {
+  const { connected, cwd, nativeThreadId, mcpServers, meta } = input;
+  if (nativeThreadId === undefined) {
+    const created = AcpNewSessionResultSchema.parse(
+      await connected.peer.request('session/new', {
+        cwd,
+        mcpServers,
+        ...(meta !== undefined && { _meta: meta }),
+      }),
+    );
+    return {
+      sessionId: created.sessionId,
+      configOptions: created.configOptions,
+      models: created.models,
+    };
+  }
+  // `resume` reopens without replaying the history; `load` replays it.
+  const method = acpCan(connected, 'resume') ? 'session/resume' : 'session/load';
+  const reopened = AcpSessionStateSchema.parse(
+    (await connected.peer.request(method, {
+      sessionId: nativeThreadId,
+      cwd,
+      mcpServers,
+      ...(meta !== undefined && { _meta: meta }),
+    })) ?? {},
+  );
+  return {
+    sessionId: nativeThreadId,
+    configOptions: reopened.configOptions,
+    models: reopened.models,
+  };
+}
+
 export async function openAcpSession(
   config: AcpDriverConfig,
   input: AcpOpenInput,
@@ -175,10 +232,21 @@ export async function openAcpSession(
   let opened = false;
   let closing = false;
   let dead: Error | undefined;
+  let livePid: number | undefined;
+  let pidNotified = false;
   let configOptions: readonly AcpConfigOption[] = [];
+  let sawConfigOptionUpdate = false;
   let title: string | undefined;
   let commands: readonly string[] = [];
   let connected: Awaited<ReturnType<typeof connectAcp>>;
+  const recordPid = (pid: number | undefined) => {
+    if (pid === undefined || closing || dead !== undefined) return;
+    livePid = pid;
+    if (!pidNotified && config.onProviderPid !== undefined) {
+      pidNotified = true;
+      invokeSafely(() => config.onProviderPid?.(pid));
+    }
+  };
   try {
     connected = await connectAcp(config, input.profile, input.cwd, linked.signal, {
       ...createAcpHandlers({
@@ -186,7 +254,10 @@ export async function openAcpSession(
         isOpened: () => opened,
         getTurn: () => current,
         onSessionMeta(meta) {
-          if (meta.configOptions !== undefined) configOptions = meta.configOptions;
+          if (meta.configOptions !== undefined) {
+            configOptions = meta.configOptions;
+            sawConfigOptionUpdate = true;
+          }
           if (meta.title !== undefined) title = meta.title;
           if (meta.commands !== undefined) commands = meta.commands;
         },
@@ -197,9 +268,13 @@ export async function openAcpSession(
         ...(config.onPermissionRequest !== undefined && {
           onPermissionRequest: config.onPermissionRequest,
         }),
+        ...(config.permissionRequestDelivery !== undefined && {
+          permissionRequestDelivery: config.permissionRequestDelivery,
+        }),
         onEnd(error) {
           const shouldNotify = opened && !closing && input.signal?.aborted !== true;
           dead = error;
+          livePid = undefined;
           const turn = current;
           current = undefined;
           externalPending.clear();
@@ -210,8 +285,12 @@ export async function openAcpSession(
           if (shouldNotify) invokeSafely(() => config.onDisconnect?.(error));
         },
       }),
+      onProviderPid: recordPid,
       ...(input.onStartupPhase !== undefined && { onStartupPhase: input.onStartupPhase }),
     });
+    if (livePid === undefined && !closing && dead === undefined) {
+      recordPid((await connected.engine.pidReady) ?? connected.engine.pid);
+    }
   } catch (error) {
     linked.release();
     throw error;
@@ -223,6 +302,7 @@ export async function openAcpSession(
   };
   const stop = async (primary?: { error: unknown }) => {
     closing = true;
+    livePid = undefined;
     drainExternalPending(externalPending);
     linked.abort();
     try {
@@ -233,34 +313,19 @@ export async function openAcpSession(
   };
   try {
     const meta = resolveAcpSessionMeta(config.sessionMeta, initialized);
-    let sessionId: string;
-    let sessionModels: z.infer<typeof AcpSessionStateSchema>['models'];
-    if (input.nativeThreadId === undefined) {
-      const created = AcpNewSessionResultSchema.parse(
-        await peer.request('session/new', {
-          cwd: input.cwd,
-          mcpServers,
-          ...(meta !== undefined && { _meta: meta }),
-        }),
-      );
-      sessionId = created.sessionId;
-      configOptions = created.configOptions ?? configOptions;
-      sessionModels = created.models;
-    } else {
-      // `resume` reopens without replaying the history; `load` replays it.
-      const method = acpCan(connected, 'resume') ? 'session/resume' : 'session/load';
-      const reopened = AcpSessionStateSchema.parse(
-        (await peer.request(method, {
-          sessionId: input.nativeThreadId,
-          cwd: input.cwd,
-          mcpServers,
-          ...(meta !== undefined && { _meta: meta }),
-        })) ?? {},
-      );
-      sessionId = input.nativeThreadId;
-      configOptions = reopened.configOptions ?? configOptions;
-      sessionModels = reopened.models;
-    }
+    const openedSession = await openOrReopenAcpSession({
+      connected,
+      cwd: input.cwd,
+      nativeThreadId: input.nativeThreadId,
+      mcpServers,
+      meta,
+    });
+    const sessionId = openedSession.sessionId;
+    configOptions = mergeInitialConfigOptions(
+      configOptions,
+      openedSession.configOptions,
+      sawConfigOptionUpdate,
+    );
     const desiredModel = input.model ?? config.model;
     const desiredThoughtLevel = input.thoughtLevel ?? config.thoughtLevel;
     const desiredMode = input.mode ?? config.mode;
@@ -268,7 +333,7 @@ export async function openAcpSession(
       peer,
       sessionId,
       configOptions,
-      models: sessionModels,
+      models: openedSession.models,
       ...(desiredModel !== undefined && { model: desiredModel }),
       ...(desiredThoughtLevel !== undefined && { thoughtLevel: desiredThoughtLevel }),
       ...(desiredMode !== undefined && { mode: desiredMode }),
@@ -292,6 +357,9 @@ export async function openAcpSession(
     opened = true;
     return {
       nativeThreadId: sessionId,
+      get providerPid() {
+        return closing || dead !== undefined ? undefined : livePid;
+      },
       approvalEnforcement: 'agent-initiated',
       get configOptions() {
         return configOptions;

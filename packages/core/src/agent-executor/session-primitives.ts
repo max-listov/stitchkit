@@ -12,7 +12,7 @@ import {
   ExecutorStartupPhaseSchema,
 } from './vocabulary';
 
-const TURN_QUEUE = { maxItems: 65_536, maxBytes: 64 * 1024 * 1024 };
+export const TURN_QUEUE = { maxItems: 65_536, maxBytes: 64 * 1024 * 1024 };
 const MAX_DATE_MS = 8.64e15;
 const SAFE_JSON_LIMITS = {
   maxDepth: 100,
@@ -26,12 +26,26 @@ export function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
+/** Trim and clamp a plan or bucket label to `maxChars` (default 256), returning `undefined` when blank. */
+export function clampPlanName(
+  value: string | null | undefined,
+  maxChars = 256,
+): string | undefined {
+  const trimmed = nonEmptyString(value)?.trim();
+  return trimmed !== undefined ? trimmed.slice(0, maxChars) : undefined;
+}
+
+/** Convert epoch milliseconds to ISO-8601 when within JavaScript `Date` range; otherwise `undefined`. */
+export function epochMsToIso(ms: number | null | undefined): string | undefined {
+  if (ms === null || ms === undefined) return undefined;
+  if (!Number.isFinite(ms) || Math.abs(ms) > MAX_DATE_MS) return undefined;
+  return new Date(ms).toISOString();
+}
+
 /** Convert epoch seconds to ISO-8601 when within JavaScript `Date` range; otherwise `undefined`. */
 export function epochSecondsToIso(seconds: number | null | undefined): string | undefined {
   if (seconds === null || seconds === undefined) return undefined;
-  const ms = seconds * 1000;
-  if (!Number.isFinite(ms) || Math.abs(ms) > MAX_DATE_MS) return undefined;
-  return new Date(ms).toISOString();
+  return epochMsToIso(seconds * 1000);
 }
 
 /** Create the bounded ordered delta channel for a single turn. */

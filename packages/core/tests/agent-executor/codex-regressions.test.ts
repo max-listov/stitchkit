@@ -96,11 +96,14 @@ async function codexSession(
   return { session, home };
 }
 
-const turnCompleted = (status: 'completed' | 'interrupted'): FakeEngineStep => ({
+const turnCompleted = (
+  status: 'completed' | 'interrupted',
+  threadId = 'fake-thread',
+): FakeEngineStep => ({
   do: 'emit',
   record: {
     method: 'turn/completed',
-    params: { threadId: 'fake-thread', turn: { id: 'fake-turn', status, items: [] } },
+    params: { threadId, turn: { id: 'fake-turn', status, items: [] } },
   },
 });
 
@@ -1092,7 +1095,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
             model: 'gpt-5-codex',
             modelProvider: 'openai',
             reasoningEffort: 'high',
-            sandbox: 'workspace-write',
+            sandbox: { type: 'workspaceWrite' },
           });
           const mcps = await controls.listMcpServerStatus({ threadId: nativeThreadId });
           expect(mcps).toEqual({ data: [] });
@@ -1112,7 +1115,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
             modelProvider: 'openai',
             reasoningEffort: 'high',
             approvalPolicy: 'never',
-            sandbox: 'workspace-write',
+            sandbox: { type: 'workspaceWrite' },
             cwd: root,
             runtimeWorkspaceRoots: [root],
           }),
@@ -1622,6 +1625,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
         env: {
           FAKE_ENGINE_SCENARIO: scenarioPath,
           FAKE_ENGINE_PID_FILE: trackedPidFile(root, 'tui-owner'),
+          FAKE_CODEX_TURN_ID: 'tui-turn-1',
           FAKE_CODEX_BROADCAST_TUI: '1',
         },
       };
@@ -1800,7 +1804,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
           },
         },
         { do: 'expect', type: 'response' },
-        turnCompleted('completed'),
+        turnCompleted('completed', 'forked-thread'),
       ]);
 
       let resolveFileCalls = 0;
@@ -2986,7 +2990,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
               },
             ],
           }),
-        ).toEqual({});
+        ).toBeUndefined();
         expect(await session.unsubscribeThread()).toEqual({ status: 'unsubscribed' });
         expect(
           await session.listThreads({
@@ -3011,14 +3015,14 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
           data: ['fake-thread'],
           nextCursor: null,
         });
-        expect(await session.archiveThread()).toEqual({});
+        expect(await session.archiveThread()).toBeUndefined();
         expect(await session.unarchiveThread()).toEqual({ thread: { id: 'fake-thread' } });
         expect(
           await session.updateThreadMetadata({
             gitInfo: { branch: 'main', originUrl: null, sha: 'abc123' },
           }),
         ).toEqual({ thread: { id: 'fake-thread' } });
-        expect(await session.setThreadName({ name: 'My Thread' })).toEqual({});
+        expect(await session.setThreadName({ name: 'My Thread' })).toBeUndefined();
 
         // Validation guards fail eagerly with TypeError before RPC.
         await expect(session.revertThread({ beforeTurnId: '   ' })).rejects.toThrow(TypeError);
@@ -3108,7 +3112,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       });
       try {
         await expect(ctrl.archiveThread({ threadId: '  ' })).rejects.toThrow(TypeError);
-        expect(await ctrl.archiveThread({ threadId: 'thr-explicit' })).toEqual({});
+        expect(await ctrl.archiveThread({ threadId: 'thr-explicit' })).toBeUndefined();
         const injectErr = await ctrl
           .injectItems({ threadId: 'thr-explicit', items: [] })
           .catch((error: unknown) => error);

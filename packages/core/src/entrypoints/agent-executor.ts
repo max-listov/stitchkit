@@ -85,7 +85,9 @@ export {
   type JsonRpcHeader,
   type JsonRpcPeer,
   type JsonRpcPeerConfig,
+  JsonRpcRecordSchema,
   type JsonRpcValue,
+  JsonRpcValueSchema,
 } from '../agent-executor/json-rpc-peer';
 export {
   createExecutorLeases,
@@ -99,15 +101,18 @@ export {
   mergeRateLimitEvent,
   planLimitsDue,
   planLimitsReadFailed,
+  planWindowDurationMins,
   planWindowExpired,
 } from '../agent-executor/plan-limits';
 export {
   CREDENTIAL_VARIABLES,
+  EXECUTOR_ENV_KEY_PATTERN,
   type ExecutorProfileConfig,
   ExecutorProfileConfigSchema,
   engineEnvironment,
   helloProfile,
   ownCredentials,
+  sanitizeProfileEnv,
 } from '../agent-executor/profile';
 export { projectExecutorDeltas } from '../agent-executor/projection';
 export { canAdvanceTurnPhase, isTerminalTurnPhase } from '../agent-executor/turn-phases';

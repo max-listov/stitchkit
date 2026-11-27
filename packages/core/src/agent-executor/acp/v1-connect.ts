@@ -5,7 +5,12 @@ import { NativeCommandError } from '../../process/contract';
 import { spawnEngineProcess } from '../engine-process';
 import { createJsonRpcPeer, type JsonRpcPeer, type JsonRpcValue } from '../json-rpc-peer';
 import { type ExecutorProfileConfig, engineEnvironment } from '../profile';
-import { emitStartupPhase, safeJsonValue, stopConnection } from '../session-primitives';
+import {
+  emitStartupPhase,
+  invokeSafely,
+  safeJsonValue,
+  stopConnection,
+} from '../session-primitives';
 import type {
   ExecutorErrorKind,
   ExecutorStartupPhase,
@@ -44,10 +49,10 @@ export type AcpSessionMetaInput =
 
 /** Structured failure override returned by {@link AcpWatchPromptOutcome} to reclassify a prompt response. */
 export interface AcpPromptOutcomeOverride {
-  readonly outcome?: 'failed';
+  readonly outcome?: 'failed' | undefined;
   readonly errorKind: ExecutorErrorKind;
   readonly message: string;
-  readonly threadDisposition?: ExecutorThreadDisposition;
+  readonly threadDisposition?: ExecutorThreadDisposition | undefined;
 }
 
 /**
@@ -73,69 +78,83 @@ export interface AcpDriverConfig {
   /** The agent to run: `agy`, `gemini`. */
   executable: string;
   /** Its arguments: `['acp']`, `['acp', '--sandbox']`, `['--experimental-acp']`. */
-  args?: readonly string[];
+  args?: readonly string[] | undefined;
   /** Optional `clientInfo` sent on `initialize`. */
-  clientInfo?: AcpClientInfo;
+  clientInfo?: AcpClientInfo | undefined;
   /** Optional `_meta` object (or factory over the `initialize` response) sent on session open/resume/load. */
-  sessionMeta?: AcpSessionMetaInput;
+  sessionMeta?: AcpSessionMetaInput | undefined;
   /**
    * Optional filter invoked on every stdout line before JSON-RPC parsing; returning `false`
    * skips non-protocol lines (such as OAuth prompts) instead of failing the connection.
    */
-  stdoutLineFilter?: (line: string) => boolean;
+  stdoutLineFilter?: ((line: string) => boolean) | undefined;
   /**
    * How `info()` and `status()` probe the agent: `'ephemeral-session'` (default, runs `initialize`
    * and an ephemeral `session/new`), `'initialize-only'` (skips `session/new`), or `'passive'`
    * (spawns zero processes and reports honest `unknown`/`not-asked`).
    */
-  probeMode?: AcpProbeMode;
+  probeMode?: AcpProbeMode | undefined;
   /** Version reported by `info()` when `probeMode` is `'passive'` (defaults to `'unknown'`). */
-  passiveVersion?: string;
+  passiveVersion?: string | undefined;
   /** Set at open through the option of category `model`; refused if the agent offers none or not this value. */
-  model?: string;
+  model?: string | undefined;
   /** Set at open through the option of category `thought_level`, after the model, which may narrow it. */
-  thoughtLevel?: string;
+  thoughtLevel?: string | undefined;
   /**
    * Set at open through the option of category `mode`. Negotiates the agent's advertised mode
    * value only; it does not enforce host-side pre-execution tool approval (`approvalEnforcement`
    * is `'agent-initiated'`). Whether an agent sends `session/request_permission` before a tool
    * runs depends on the agent's own permission policy.
    */
-  mode?: string;
+  mode?: string | undefined;
   /** MCP servers the agent connects to, passed on `session/new`, `session/load` and `session/resume`. */
-  mcpServers?: readonly AcpMcpServer[];
+  mcpServers?: readonly AcpMcpServer[] | undefined;
   /** Optional transformer normalizing, expanding, or dropping incoming `session/update` records before mapping. */
-  transformUpdate?: AcpTransformUpdate;
+  transformUpdate?: AcpTransformUpdate | undefined;
   /** Optional observer invoked for `session/update` notifications on an open session (including post-settle). */
-  onUpdate?: (event: AcpUpdateEvent) => void;
+  onUpdate?: ((event: AcpUpdateEvent) => void) | undefined;
   /**
-   * Optional handler for `session/request_permission` arriving outside an active `startTurn()`.
+   * Optional handler for `session/request_permission`. By default invoked only outside an active
+   * `startTurn()` (post-settle background work); set `permissionRequestDelivery: 'all'` to also
+   * receive typed permission requests with full `request.options` during an active `startTurn()`.
    * When omitted, requests outside an active turn are refused with `-32601`.
    */
-  onPermissionRequest?: (event: AcpPermissionRequestEvent) => Promise<void> | void;
+  onPermissionRequest?:
+    | ((event: AcpPermissionRequestEvent) => Promise<void> | void)
+    | undefined;
+  /**
+   * Controls which `session/request_permission` calls reach `onPermissionRequest`:
+   * `'external-only'` (default, only requests outside `startTurn()`) or `'all'` (also notifies
+   * `onPermissionRequest` during active `startTurn()` with `duringActiveTurn: true`, backed by the
+   * same single-shot `turn.pending` slot). Setting `'all'` requires `onPermissionRequest`.
+   */
+  permissionRequestDelivery?: 'external-only' | 'all' | undefined;
+  /** Optional callback invoked with the spawned ACP child PID during `open()`. */
+  onProviderPid?: ((pid: number) => void) | undefined;
   /** Optional callback invoked when an opened session drops unexpectedly before `close()` or caller abort. */
-  onDisconnect?: (error: Error) => void;
+  onDisconnect?: ((error: Error) => void) | undefined;
   /**
    * Optional hook started before `session/prompt` and consulted after it settles so hidden API
    * errors masked as `end_turn` can fail the turn with an error kind and `threadDisposition`.
    */
-  watchPromptOutcome?: AcpWatchPromptOutcome;
+  watchPromptOutcome?: AcpWatchPromptOutcome | undefined;
   /**
    * Whether the agent's `usage.inputTokens` already includes `cachedReadTokens`. Default `true`.
    * Set `false` for agents that report uncached input separately so `cachedReadTokens` is added.
    */
-  usageInputIncludesCachedRead?: boolean;
+  usageInputIncludesCachedRead?: boolean | undefined;
   /** Whether `session.steerTurn()` is disabled (`'none'`, default) or steers via a new `session/prompt` (`'prompt'`). */
-  steerMode?: AcpSteerMode;
+  steerMode?: AcpSteerMode | undefined;
   /** The bytes behind a `file` part's `reference`; without it a file part is refused. */
-  resolveFile?: (reference: string) => Promise<Uint8Array>;
+  resolveFile?: ((reference: string) => Promise<Uint8Array>) | undefined;
   /** The largest image sent. Default 5 MiB. */
-  maxImageBytes?: number;
+  maxImageBytes?: number | undefined;
   /** The longest line the agent may write — a replayed image is one line. Default 8 MiB. */
-  maxFrameBytes?: number;
-  ambient?: Readonly<Record<string, string | undefined>>;
+  maxFrameBytes?: number | undefined;
+  /** Environment variables inherited by the spawned ACP agent process. */
+  ambient?: Readonly<Record<string, string | undefined>> | undefined;
   /** How long one request (`initialize`, `session/new`) may take. Default 60 s. */
-  requestTimeoutMs?: number;
+  requestTimeoutMs?: number | undefined;
 }
 
 /** Bounded timeout for `session/close` and `session/delete`: capped at 5 s and never longer than `requestTimeoutMs`. */
@@ -194,6 +213,20 @@ export function assertAcpDriverOptions(config: AcpDriverConfig): void {
   ) {
     throw new TypeError(`Invalid steerMode ${JSON.stringify(config.steerMode)}`);
   }
+  if (
+    config.permissionRequestDelivery !== undefined &&
+    config.permissionRequestDelivery !== 'external-only' &&
+    config.permissionRequestDelivery !== 'all'
+  ) {
+    throw new TypeError(
+      `[stitchkit] createAcpDriver: permissionRequestDelivery must be "external-only" or "all", received ${JSON.stringify(config.permissionRequestDelivery)}`,
+    );
+  }
+  if (config.permissionRequestDelivery === 'all' && config.onPermissionRequest === undefined) {
+    throw new TypeError(
+      '[stitchkit] createAcpDriver: permissionRequestDelivery "all" requires onPermissionRequest',
+    );
+  }
   if (config.clientInfo !== undefined) {
     AcpClientInfoSchema.parse(config.clientInfo);
   }
@@ -207,6 +240,7 @@ export type AcpHandlers = {
   onNotification?: Parameters<typeof createJsonRpcPeer>[0]['onNotification'];
   onEnd?: (error: Error) => void;
   onStartupPhase?: (phase: ExecutorStartupPhase) => void;
+  onProviderPid?: (pid: number) => void;
 };
 
 /** Spawn the agent and perform the ACP v1 handshake; ACP v2 (`"info" in raw`) or version < 1 is refused. */
@@ -236,6 +270,11 @@ export async function connectAcp(
     signal,
     ...(config.maxFrameBytes !== undefined && { maxLineBytes: config.maxFrameBytes }),
   });
+  if (handlers.onProviderPid !== undefined && engine.pidReady !== undefined) {
+    void engine.pidReady.then((pid) => {
+      if (pid !== undefined) invokeSafely(() => handlers.onProviderPid?.(pid));
+    });
+  }
   const reading = (async () => {
     try {
       for await (const line of engine.lines) {
@@ -270,14 +309,18 @@ export async function connectAcp(
       config.clientInfo !== undefined
         ? AcpClientInfoSchema.parse(config.clientInfo)
         : undefined;
-    const rawInitialized = await peer.request('initialize', {
-      protocolVersion: ACP_PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: false,
+    const rawInitialized = await peer.request(
+      'initialize',
+      {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: false,
+        },
+        ...(clientInfo !== undefined && { clientInfo }),
       },
-      ...(clientInfo !== undefined && { clientInfo }),
-    });
+      { signal },
+    );
     if (
       typeof rawInitialized === 'object' &&
       rawInitialized !== null &&

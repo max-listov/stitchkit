@@ -385,7 +385,7 @@ export function createExecutorLeases(input: {
    * answered `duplicate`; an older turn's report is `not-retained`. Default 64, at most
    * {@link MAX_RETAINED_TURNS}.
    */
-  retainedTurns?: number;
+  retainedTurns?: number | undefined;
 }) {
   const { store, now, ttlMs } = input;
   const retainedTurns = input.retainedTurns ?? DEFAULT_RETAINED_TURNS;

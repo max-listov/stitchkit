@@ -1,9 +1,31 @@
+export type {
+  AccountInfo,
+  EffortLevel,
+  ForkSessionOptions,
+  ForkSessionResult,
+  McpServerStatus,
+  McpSetServersResult,
+  ModelInfo,
+  PermissionMode,
+  RewindFilesResult,
+  SDKControlGetContextUsageResponse,
+  SDKControlGetUsageResponse,
+  SDKControlInitializeResponse,
+  SDKControlSetPermissionModeResponse,
+  SlashCommand,
+} from '@anthropic-ai/claude-agent-sdk';
 export {
   type ClaudeRuntimeEvent,
   ClaudeRuntimeEventSchema,
   type ClaudeTaskUsage,
   ClaudeTaskUsageSchema,
 } from '../../agent-executor/claude/events';
+export { claudeUsagePlanLimits } from '../../agent-executor/claude/limits';
+export {
+  claudeTranscriptHasUuid,
+  findTranscriptInput,
+} from '../../agent-executor/claude/transcript';
+export type { ClaudeSdkFlagSettings } from '../../agent-executor/claude-sdk/controls';
 export {
   type ClaudeSdkDelegationCheck,
   type ClaudeSdkDriver,

@@ -316,6 +316,9 @@ jobs:
       - name: Darwin service host and unix socket tests on APFS
         working-directory: packages/core
         run: bun test --timeout 30000 tests/service-host-macos-darwin.test.ts tests/unix-socket-ownership.test.ts tests/unix-socket-lock.test.ts tests/unix-socket-lock-owner.test.ts tests/unix-client-transport.test.ts tests/unix-socket-birth.test.ts tests/directory-appearance.test.ts tests/host-unix-channel.test.ts tests/cli-local-app.test.ts
+      - name: Codex control RPC over direct and aliased APFS sockets
+        working-directory: packages/core
+        run: bun test --timeout 30000 -t 'Unix socket target inspection' tests/agent-executor/codex-typed-contracts-and-symlinks.test.ts
       - run: bun run contained-files-packed-lane
       - name: Qualify concurrent command lifetimes three consecutive times
         run: |

@@ -2,6 +2,13 @@ export {
   type ClaudeCliDriverConfig,
   createClaudeCliDriver,
 } from '../../agent-executor/claude/cli-driver';
-export { claudePlanWindows } from '../../agent-executor/claude/limits';
+export {
+  claudePlanWindows,
+  claudeUsagePlanLimits,
+} from '../../agent-executor/claude/limits';
 export { claudeFakeScenarios } from '../../agent-executor/claude/scenarios';
-export { claudeTranscriptPath } from '../../agent-executor/claude/transcript';
+export {
+  claudeTranscriptHasUuid,
+  claudeTranscriptPath,
+  findTranscriptInput,
+} from '../../agent-executor/claude/transcript';

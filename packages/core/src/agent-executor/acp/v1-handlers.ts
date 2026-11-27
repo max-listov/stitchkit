@@ -7,6 +7,7 @@ import { type AcpUpdateTrack, mapAcpUpdate } from './v1-map';
 import {
   ACP_CANCELLED,
   answerAcpSessionRequest,
+  answerActiveAcpTurnRequest,
   buildAcpPermissionDeltaFields,
   type PendingExternalAcpRequest,
 } from './v1-permission';
@@ -40,7 +41,7 @@ export interface AcpUpdateEvent {
   readonly deltas: readonly ExecutorDelta[];
 }
 
-/** `session/request_permission` received outside an active `startTurn()` (post-settle background work). */
+/** `session/request_permission` received from ACP (outside `startTurn()`, or also during `startTurn()` when `permissionRequestDelivery` is `'all'`). */
 export interface AcpPermissionRequestEvent {
   /** JSON-RPC request identifier as a string, also carried on `delta.interactionId`. */
   readonly interactionId: string;
@@ -48,9 +49,11 @@ export interface AcpPermissionRequestEvent {
   readonly sessionId: string;
   /** Parsed ACP permission request payload including `toolCall` and full `options`. */
   readonly request: AcpPermissionRequest;
+  /** `true` when a driver-initiated `startTurn()` owned the session as this request arrived. */
+  readonly duringActiveTurn: boolean;
   /** Normalized executor `request` delta preserving tool input and option metadata. */
   readonly delta: Extract<ExecutorDelta, { type: 'request' }>;
-  /** Answer this post-settle permission request once; throws `TypeError` if invalid or already resolved. */
+  /** Answer this permission request once; throws `TypeError` if invalid or already resolved. */
   respond(reply: InteractionReply['reply']): Promise<void>;
 }
 
@@ -66,10 +69,11 @@ interface AcpHandlersState {
   transformUpdate?: AcpTransformUpdate;
   onUpdate?: (event: AcpUpdateEvent) => void;
   onPermissionRequest?: (event: AcpPermissionRequestEvent) => Promise<void> | void;
+  permissionRequestDelivery?: 'external-only' | 'all';
   onEnd: (error: Error) => void;
 }
 
-function normalizeTransformedUpdates(
+export function normalizeTransformedUpdates(
   raw: AcpSessionUpdate,
   transform: AcpTransformUpdate | undefined,
 ): readonly AcpSessionUpdate[] {
@@ -192,25 +196,45 @@ function handleAcpRequest(
   const interactionId = String(id);
   if (turn !== undefined) {
     const asked = AcpPermissionRequestSchema.parse(params);
-    const fields = buildAcpPermissionDeltaFields(asked);
-    return new Promise<JsonRpcValue>((resolve) => {
+    const delta: Extract<ExecutorDelta, { type: 'request' }> = {
+      type: 'request',
+      turnId: turn.state.turnId,
+      itemId: `request:${interactionId}`,
+      raw: { source: 'acp', type: method },
+      interactionId,
+      kind: 'approval',
+      ...buildAcpPermissionDeltaFields(asked),
+    };
+    const promise = new Promise<JsonRpcValue>((resolve) => {
       holdEngineRequest(turn, {
         interactionId,
         detail: { options: asked.options },
         answeredBy: { source: 'acp', type: method },
-        delta: () => ({
-          type: 'request',
-          turnId: turn.state.turnId,
-          itemId: `request:${interactionId}`,
-          raw: { source: 'acp', type: method },
-          interactionId,
-          kind: 'approval',
-          ...fields,
-        }),
+        delta: () => delta,
         refusal: ACP_CANCELLED,
         resolve,
       });
     });
+    if (
+      state.permissionRequestDelivery === 'all' &&
+      state.onPermissionRequest !== undefined &&
+      turn.pending.has(interactionId)
+    ) {
+      const observer = state.onPermissionRequest;
+      invokeSafely(() =>
+        observer({
+          interactionId,
+          sessionId: asked.sessionId,
+          request: asked,
+          duringActiveTurn: true,
+          delta,
+          async respond(reply) {
+            answerActiveAcpTurnRequest(turn, interactionId, reply);
+          },
+        }),
+      );
+    }
+    return promise;
   }
   const observer = state.onPermissionRequest;
   if (observer === undefined || !state.isOpened()) {
@@ -257,6 +281,7 @@ function handleAcpRequest(
         interactionId,
         sessionId: asked.sessionId,
         request: asked,
+        duringActiveTurn: false,
         delta,
         async respond(reply) {
           answerAcpSessionRequest({

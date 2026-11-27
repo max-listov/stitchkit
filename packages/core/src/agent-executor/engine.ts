@@ -61,10 +61,10 @@ export interface AgentEngineDriver {
     profile: ExecutorProfileConfig;
     cwd: string;
     /** Resume this native session; a fresh one is started without it. */
-    nativeThreadId?: string;
+    nativeThreadId?: string | undefined;
     /** Optional observer invoked with startup phases (`spawning`, `initializing`, `verifying`) during open. */
-    onStartupPhase?: (phase: ExecutorStartupPhase) => void;
-    signal?: AbortSignal;
+    onStartupPhase?: ((phase: ExecutorStartupPhase) => void) | undefined;
+    signal?: AbortSignal | undefined;
   }): Promise<AgentEngineSession>;
   /** Whether the engine holds the input sent under `clientId`; only for `reconcile: 'client-id'`. */
   findInput?(input: {

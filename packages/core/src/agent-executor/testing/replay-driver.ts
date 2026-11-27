@@ -14,6 +14,7 @@ import { createTurnDeltaChannel, emitStartupPhase, sessionAbort } from '../sessi
 import type { ReplayGate } from './replay-gate';
 import { type ReplayTurnSlot, runReplayTurnScript } from './replay-runner';
 import {
+  type ExecutorReplayStep,
   type ExecutorReplayTranscript,
   ExecutorReplayTranscriptSchema,
   parseReplayTranscript,
@@ -31,23 +32,23 @@ const DENY_CLOSED: InteractionReply['reply'] = {
 /** Configuration for {@link createReplayExecutorDriver}. */
 export interface ReplayExecutorDriverConfig {
   /** Which wire engine identity to emulate (any existing {@link ExecutorEngine}; default `'acp'`). */
-  readonly engine?: ExecutorEngine;
+  readonly engine?: ExecutorEngine | undefined;
   /** Reconcile strategy emulated by this driver (`'none'` default, or `'client-id'` with `findInput`). */
-  readonly reconcile?: 'client-id' | 'none';
+  readonly reconcile?: 'client-id' | 'none' | undefined;
   /** One transcript per turn (NDJSON string or validated {@link ExecutorReplayTranscript}). */
   readonly turns: readonly (string | ExecutorReplayTranscript)[];
   /** Optional label gate pausing execution on `{ kind: 'gate', label }` steps. */
-  readonly gate?: ReplayGate;
+  readonly gate?: ReplayGate | undefined;
   /** Workspace path substituted for `<workspace>` placeholders in NDJSON transcripts. */
-  readonly workspace?: string;
+  readonly workspace?: string | undefined;
   /** Optional capability overrides merged onto engine defaults and validated strictly. */
-  readonly capabilities?: Partial<ExecutorDriverCapabilities>;
+  readonly capabilities?: Partial<ExecutorDriverCapabilities> | undefined;
   /** Engine version string reported in `info()`. Default `'replay-1.0.0'`. */
-  readonly version?: string;
+  readonly version?: string | undefined;
   /** Optional model ids advertised by `info()`. When omitted, `info().models` is `'not-asked'`. */
-  readonly models?: readonly string[];
+  readonly models?: readonly string[] | undefined;
   /** When `true`, `session.close()` fails if any configured turns or required steps were not consumed. */
-  readonly assertCompleteOnClose?: boolean;
+  readonly assertCompleteOnClose?: boolean | undefined;
 }
 
 /** In-process deterministic replay driver adding inspection and completeness assertions. */
@@ -113,7 +114,7 @@ export function createReplayExecutorDriver(
   const limits = new Map<string, PlanLimits>();
   const recordedInputs = new Map<string, Set<string>>();
   const answeredIds = new Set<string>();
-  const hostAnsweredIds = new Set<string>();
+  const consumedReplies = new Set<ExecutorReplayStep>();
   let nextTurnIndex = 0;
   let completedTurns = 0;
 
@@ -124,14 +125,16 @@ export function createReplayExecutorDriver(
       );
     }
     const missingRequired: string[] = [];
-    for (const transcript of transcripts) {
-      for (const step of transcript.steps) {
+    for (const [turnIndex, transcript] of transcripts.entries()) {
+      for (const [stepIndex, step] of transcript.steps.entries()) {
         if (
           step.kind === 'expectReply' &&
           step.required !== false &&
-          !hostAnsweredIds.has(step.interactionId)
+          !consumedReplies.has(step)
         ) {
-          missingRequired.push(`expectReply:${step.interactionId}`);
+          missingRequired.push(
+            `turn ${turnIndex + 1} step ${stepIndex + 1} expectReply:${step.interactionId}`,
+          );
         }
       }
     }
@@ -213,6 +216,7 @@ export function createReplayExecutorDriver(
             pending: new Map(),
             interruptWaiters: [],
             replyPromises: new Map(),
+            hostAnswered: new Set(),
           };
           activeTurn = turn;
           const runPromise = runReplayTurnScript({
@@ -222,7 +226,7 @@ export function createReplayExecutorDriver(
             profileId: profile.profileId,
             limits,
             answeredIds,
-            hostAnsweredIds,
+            consumedReplies,
             ...(config.gate !== undefined && { gate: config.gate }),
             signal: linked.signal,
             onTurnCompleted: () => {
@@ -250,7 +254,7 @@ export function createReplayExecutorDriver(
               if (!parsed.success) {
                 throw new TypeError(`Invalid interaction reply: ${parsed.error.message}`);
               }
-              hostAnsweredIds.add(interactionId);
+              turn.hostAnswered.add(interactionId);
               answerEngineRequest(turn, interactionId, parsed.data);
             },
           };

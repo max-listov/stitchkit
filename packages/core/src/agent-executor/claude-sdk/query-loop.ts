@@ -25,6 +25,7 @@ import {
   holdEngineRequest,
 } from '../engine-requests';
 import type { PlanLimits } from '../hello';
+import { JsonRpcRecordSchema, type JsonRpcValue } from '../json-rpc-peer';
 import { mergeRateLimitEvent } from '../plan-limits';
 import {
   invokeSafely,
@@ -44,7 +45,7 @@ export interface ClaudeSdkPermissionRequestMeta {
   /** Raw tool name supplied by the SDK (for example `'AskUserQuestion'`, `'ExitPlanMode'`, `'Bash'`). */
   readonly toolName: string;
   /** Bounded JSON snapshot of the tool input passed to `canUseTool`. */
-  readonly input: Record<string, unknown>;
+  readonly input: Readonly<Record<string, JsonRpcValue>>;
   /** Tool call identifier (`options.toolUseID`). */
   readonly toolUseID: string;
   /** Control request identifier (`options.requestId`) when provided. */
@@ -166,7 +167,7 @@ export function createSdkCanUseTool(state: {
       };
       const callId = nonEmptyString(options.toolUseID);
       const rawToolName = nonEmptyString(toolName);
-      let safeInputSnapshot: Record<string, unknown> | undefined;
+      let safeInputSnapshot: Readonly<Record<string, JsonRpcValue>> | undefined;
       holdEngineRequest(turn, {
         interactionId,
         detail: {
@@ -177,12 +178,9 @@ export function createSdkCanUseTool(state: {
         answeredBy: SDK_ANSWER,
         delta: () => {
           const safeInput = safeJsonValue(toolInput);
-          if (
-            typeof safeInput === 'object' &&
-            safeInput !== null &&
-            !Array.isArray(safeInput)
-          ) {
-            safeInputSnapshot = safeInput;
+          const parsedRecord = JsonRpcRecordSchema.safeParse(safeInput);
+          if (parsedRecord.success) {
+            safeInputSnapshot = parsedRecord.data;
           }
           return {
             type: 'request',

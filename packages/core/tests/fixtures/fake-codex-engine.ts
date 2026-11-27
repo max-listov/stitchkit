@@ -212,7 +212,10 @@ function createSessionHandler(writeLine: (line: string) => void) {
         break;
       case 'config/read':
         logRpc();
-        reply({ config: { sandbox: 'workspace-write', approvalPolicy: 'on-request' } });
+        reply({
+          config: { sandbox: 'workspace-write', approvalPolicy: 'on-request' },
+          origins: {},
+        });
         break;
       case 'mcpServerStatus/list':
         logRpc();

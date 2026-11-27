@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { abortReason } from '../internal/abort-race';
 import { assertTimerMs } from '../internal/deadline';
 
 /**
@@ -7,18 +8,24 @@ import { assertTimerMs } from '../internal/deadline';
  */
 export type JsonRpcHeader = 'jsonrpc-2.0' | 'omitted';
 
+/** Zod schema accepting any valid JSON value carried over JSON-RPC. */
+export const JsonRpcValueSchema = z.json();
+
+/** Zod schema accepting a plain JSON object whose values are valid JSON-RPC values. */
+export const JsonRpcRecordSchema = z.record(z.string(), JsonRpcValueSchema);
+
 /** A JSON value as a request, a notification or an answer carries it. */
-export type JsonRpcValue = z.infer<ReturnType<typeof z.json>>;
+export type JsonRpcValue = z.infer<typeof JsonRpcValueSchema>;
 
 const IdSchema = z.union([z.string(), z.int()]);
 const MessageSchema = z.looseObject({
   jsonrpc: z.literal('2.0').optional(),
   id: IdSchema.optional(),
   method: z.string().optional(),
-  params: z.json().optional(),
-  result: z.json().optional(),
+  params: JsonRpcValueSchema.optional(),
+  result: JsonRpcValueSchema.optional(),
   error: z
-    .looseObject({ code: z.int(), message: z.string(), data: z.json().optional() })
+    .looseObject({ code: z.int(), message: z.string(), data: JsonRpcValueSchema.optional() })
     .optional(),
 });
 
@@ -65,6 +72,32 @@ function parseJsonValue(
   }
 }
 
+function buildAnswerPayload(
+  id: string | number,
+  outcome: { result: unknown } | { error: JsonRpcError },
+): Record<string, JsonRpcValue> {
+  if ('result' in outcome) {
+    const checked = parseJsonValue(outcome.result);
+    if (!checked.ok) {
+      return { id, error: { code: JSON_RPC_INTERNAL_ERROR, message: checked.message } };
+    }
+    return { id, result: checked.value };
+  }
+  const code = Number.isSafeInteger(outcome.error.code)
+    ? outcome.error.code
+    : JSON_RPC_INTERNAL_ERROR;
+  const message =
+    typeof outcome.error.message === 'string' ? outcome.error.message : 'Internal error';
+  if (outcome.error.data === undefined) {
+    return { id, error: { code, message } };
+  }
+  const checked = parseJsonValue(outcome.error.data);
+  if (!checked.ok) {
+    return { id, error: { code: JSON_RPC_INTERNAL_ERROR, message: checked.message } };
+  }
+  return { id, error: { code, message, data: checked.value } };
+}
+
 /** Configuration options for `createJsonRpcPeer`. */
 export interface JsonRpcPeerConfig {
   header: JsonRpcHeader;
@@ -73,12 +106,14 @@ export interface JsonRpcPeerConfig {
   /** How long a request waits for its answer before it fails. */
   requestTimeoutMs: number;
   /** A request from the other side. Throw a `JsonRpcError` to answer with its code; no handler answers `-32601`. */
-  onRequest?(
-    method: string,
-    params: JsonRpcValue | undefined,
-    id: string | number,
-  ): Promise<JsonRpcValue> | JsonRpcValue;
-  onNotification?(method: string, params: JsonRpcValue | undefined): void;
+  onRequest?:
+    | ((
+        method: string,
+        params: JsonRpcValue | undefined,
+        id: string | number,
+      ) => Promise<JsonRpcValue> | JsonRpcValue)
+    | undefined;
+  onNotification?: ((method: string, params: JsonRpcValue | undefined) => void) | undefined;
 }
 
 /**
@@ -97,7 +132,7 @@ export function createJsonRpcPeer(config: JsonRpcPeerConfig) {
     {
       resolve(value: JsonRpcValue): void;
       reject(error: unknown): void;
-      timer: ReturnType<typeof setTimeout> | undefined;
+      cleanup(): void;
     }
   >();
   const header = config.header === 'jsonrpc-2.0' ? { jsonrpc: '2.0' } : {};
@@ -117,43 +152,17 @@ export function createJsonRpcPeer(config: JsonRpcPeerConfig) {
     outcome: { result: unknown } | { error: JsonRpcError },
   ): void => {
     if (closed) return;
-    if ('result' in outcome) {
-      const checked = parseJsonValue(outcome.result);
-      if (!checked.ok) {
-        sendResponse({
-          id,
-          error: { code: JSON_RPC_INTERNAL_ERROR, message: checked.message },
-        });
-        return;
-      }
-      sendResponse({ id, result: checked.value });
-      return;
-    }
-    const code = Number.isSafeInteger(outcome.error.code)
-      ? outcome.error.code
-      : JSON_RPC_INTERNAL_ERROR;
-    const message =
-      typeof outcome.error.message === 'string' ? outcome.error.message : 'Internal error';
-    if (outcome.error.data === undefined) {
-      sendResponse({ id, error: { code, message } });
-      return;
-    }
-    const checked = parseJsonValue(outcome.error.data);
-    if (!checked.ok) {
-      sendResponse({
-        id,
-        error: { code: JSON_RPC_INTERNAL_ERROR, message: checked.message },
-      });
-      return;
-    }
-    sendResponse({ id, error: { code, message, data: checked.value } });
+    sendResponse(buildAnswerPayload(id, outcome));
   };
 
   return {
     request(
       method: string,
       params?: JsonRpcValue,
-      options?: { readonly timeoutMs?: number | null },
+      options?: {
+        readonly timeoutMs?: number | null | undefined;
+        readonly signal?: AbortSignal | undefined;
+      },
     ): Promise<JsonRpcValue> {
       const timeoutMs =
         options?.timeoutMs === undefined ? config.requestTimeoutMs : options.timeoutMs;
@@ -164,29 +173,67 @@ export function createJsonRpcPeer(config: JsonRpcPeerConfig) {
           return Promise.reject(error);
         }
       }
+      const signal = options?.signal;
+      if (signal?.aborted) return Promise.reject(abortReason(signal));
       // Nothing reads the stream any more: a request would wait for an answer that cannot come.
       if (closed) return Promise.reject(closedBy);
       const id = nextId++;
       return new Promise<JsonRpcValue>((resolve, reject) => {
-        const timer =
-          timeoutMs === null
-            ? undefined
-            : setTimeout(() => {
-                pending.delete(id);
-                reject(
-                  new JsonRpcError(
-                    JSON_RPC_LOCAL_TIMEOUT,
-                    `${method} had no answer within ${timeoutMs} ms`,
-                  ),
-                );
-              }, timeoutMs);
-        pending.set(id, { resolve, reject, timer });
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const onAbort = (): void => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          pending.delete(id);
+          if (signal !== undefined) reject(abortReason(signal));
+        };
+        const cleanup = (): void => {
+          if (timer !== undefined) {
+            clearTimeout(timer);
+            timer = undefined;
+          }
+          signal?.removeEventListener('abort', onAbort);
+        };
+        if (timeoutMs !== null) {
+          timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            pending.delete(id);
+            reject(
+              new JsonRpcError(
+                JSON_RPC_LOCAL_TIMEOUT,
+                `${method} had no answer within ${timeoutMs} ms`,
+              ),
+            );
+          }, timeoutMs);
+        }
+        signal?.addEventListener('abort', onAbort, { once: true });
+        pending.set(id, {
+          resolve: (value) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(value);
+          },
+          reject: (error) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+          },
+          cleanup,
+        });
         try {
           write({ id, method, ...(params !== undefined && { params }) });
         } catch (error) {
-          if (timer !== undefined) clearTimeout(timer);
-          pending.delete(id);
-          reject(error);
+          if (!settled) {
+            settled = true;
+            cleanup();
+            pending.delete(id);
+            reject(error);
+          }
         }
       });
     },
@@ -208,18 +255,20 @@ export function createJsonRpcPeer(config: JsonRpcPeerConfig) {
           });
           return;
         }
-        void Promise.resolve()
-          .then(() => onRequest(method, message.params, id))
-          .then(
-            (result) => answer(id, { result }),
-            (error: unknown) =>
-              answer(id, {
-                error:
-                  error instanceof JsonRpcError
-                    ? error
-                    : new JsonRpcError(JSON_RPC_INTERNAL_ERROR, errorMessage(error)),
-              }),
-          );
+        // Dispatch in wire order. A later resolution or terminal notification may arrive
+        // in the same batch while the host is still deciding how to answer this request.
+        void new Promise<JsonRpcValue>((resolve) =>
+          resolve(onRequest(method, message.params, id)),
+        ).then(
+          (result) => answer(id, { result }),
+          (error: unknown) =>
+            answer(id, {
+              error:
+                error instanceof JsonRpcError
+                  ? error
+                  : new JsonRpcError(JSON_RPC_INTERNAL_ERROR, errorMessage(error)),
+            }),
+        );
         return;
       }
       if (message.method !== undefined) {
@@ -231,7 +280,6 @@ export function createJsonRpcPeer(config: JsonRpcPeerConfig) {
       const waiter = pending.get(message.id);
       if (waiter === undefined) return;
       pending.delete(message.id);
-      if (waiter.timer !== undefined) clearTimeout(waiter.timer);
       if (message.error !== undefined) {
         waiter.reject(
           new JsonRpcError(message.error.code, message.error.message, message.error.data),
@@ -246,7 +294,6 @@ export function createJsonRpcPeer(config: JsonRpcPeerConfig) {
       closed = true;
       closedBy = reason;
       for (const [id, waiter] of pending) {
-        if (waiter.timer !== undefined) clearTimeout(waiter.timer);
         pending.delete(id);
         waiter.reject(reason);
       }

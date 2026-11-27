@@ -69,6 +69,8 @@ export const PlanWindowSchema = z.strictObject({
   windowDurationMins: z.int().positive().optional(),
   /** Human-readable bucket or model label when the engine reports it. */
   label: Name.optional(),
+  /** Optional scope reported for this quota window (for example model, bucket, or workspace). */
+  scope: Name.optional(),
 });
 
 /**
@@ -81,6 +83,8 @@ export const PlanLimitsSchema = z.strictObject({
   answer: z.enum(['known', 'no-plan-limit', 'unpublished']),
   windows: z.array(PlanWindowSchema).max(HELLO_LIMITS.windows),
   observedAt: z.iso.datetime({ offset: true }),
+  /** Subscription plan identifier reported by the engine (for example `pro`, `max`, `team`). */
+  plan: Name.optional(),
   error: Text.optional(),
 });
 

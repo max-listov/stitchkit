@@ -204,6 +204,8 @@ const COVERED: Record<string, string> = {
   ExecutorProfileConfig: 'entrypoints/agent-executor.ts',
   AgentEngineConformanceConfig: 'entrypoints/agent-executor/testing.ts',
   ReplayExecutorDriverConfig: 'entrypoints/agent-executor/testing.ts',
+  FakeCodexAppServerConfig: 'entrypoints/agent-executor/testing.ts',
+  FakeClaudeSdkQueryConfig: 'entrypoints/agent-executor/testing.ts',
   McpLazyDiscoveryConfig: 'entrypoints/tools/mcp.ts',
   BootoutLaunchdJobOptions: 'entrypoints/service-host.ts',
   InspectLaunchdJobOptions: 'entrypoints/service-host.ts',

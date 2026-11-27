@@ -3,6 +3,7 @@ import { type InteractionReply, InteractionReplySchema } from '../executor-contr
 import type { JsonRpcValue } from '../json-rpc-peer';
 import { nonEmptyString, safeJsonValue } from '../session-primitives';
 import type { CodexTurnState } from './classify';
+import type { CodexStartingTurn } from './event-routing';
 import {
   CODEX_APPROVAL_DECISION,
   CODEX_APPROVAL_REQUESTS,
@@ -38,6 +39,8 @@ export interface CodexRequestDetail {
 /** The turn running in a session, and the engine's requests it is still to answer. */
 export interface CodexTurnSlot extends EngineRequestTurn<JsonRpcValue, CodexRequestDetail> {
   readonly state: CodexTurnState;
+  readonly threadId?: string;
+  starting?: CodexStartingTurn;
   codexTurnId?: string;
 }
 
@@ -45,6 +48,7 @@ export interface CodexTurnSlot extends EngineRequestTurn<JsonRpcValue, CodexRequ
 export interface PendingExternalCodexRequest {
   readonly detail: CodexRequestDetail;
   readonly turnId: string;
+  readonly threadId?: string;
   resolve(answer: JsonRpcValue): void;
 }
 
@@ -55,19 +59,6 @@ export function isKnownCodexRequestMethod(method: string): method is CodexServer
     method === CODEX_INPUT_REQUEST ||
     method === CODEX_ELICITATION_REQUEST
   );
-}
-
-/** Extract a non-empty Codex turn identifier from raw notification/request params when present. */
-export function externalCodexTurnIdOf(params: unknown): string {
-  if (typeof params !== 'object' || params === null) return 'external';
-  const direct = nonEmptyString(Reflect.get(params, 'turnId'));
-  if (direct !== undefined) return direct;
-  const turn = Reflect.get(params, 'turn');
-  if (typeof turn === 'object' && turn !== null) {
-    const nested = nonEmptyString(Reflect.get(turn, 'id'));
-    if (nested !== undefined) return nested;
-  }
-  return 'external';
 }
 
 export function parseCodexApprovalRequest(method: CodexServerRequestMethod, params: unknown) {

@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { AgentMessagePart } from '../../agent-parts/parts';
 import { type DriverImageOptions, type InlinedPart, inlineOrderedParts } from '../image-input';
 import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
-import { CodexTurnSteerResponseSchema } from './protocol';
+import { CodexTurnSteerResponseSchema, parseCodexResponse } from './protocol';
+import type { CodexRpcCallOptions } from './thread-controls';
 
 const NonEmptyNoNulStringSchema = z
   .string()
@@ -76,7 +77,7 @@ export function inlineCodexParts(
   parts: readonly CodexTurnInputPart[],
   options: DriverImageOptions & {
     readonly driverLabel: string;
-    readonly signal?: AbortSignal;
+    readonly signal?: AbortSignal | undefined;
   },
 ): Promise<InlinedCodexPart[]> {
   return inlineOrderedParts<CodexExtraInput, CodexExtraInput>(parts, {
@@ -119,16 +120,23 @@ export async function sendCodexTurnSteer(
     readonly threadId: string;
     readonly expectedTurnId: string;
     readonly parts: readonly InlinedCodexPart[];
-    readonly clientId?: string;
+    readonly clientId?: string | undefined;
   },
+  rpcOptions?: CodexRpcCallOptions,
 ): Promise<{ readonly turnId: string }> {
-  const steered = CodexTurnSteerResponseSchema.parse(
-    await peer.request('turn/steer', {
-      threadId: params.threadId,
-      expectedTurnId: params.expectedTurnId,
-      input: codexTurnInput(params.parts),
-      ...(params.clientId !== undefined && { clientUserMessageId: params.clientId }),
-    }),
+  const steered = parseCodexResponse(
+    'turn/steer',
+    CodexTurnSteerResponseSchema,
+    await peer.request(
+      'turn/steer',
+      {
+        threadId: params.threadId,
+        expectedTurnId: params.expectedTurnId,
+        input: codexTurnInput(params.parts),
+        ...(params.clientId !== undefined && { clientUserMessageId: params.clientId }),
+      },
+      rpcOptions,
+    ),
   );
   return { turnId: steered.turnId };
 }

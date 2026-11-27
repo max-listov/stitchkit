@@ -1,11 +1,19 @@
-import { lstatSync, realpathSync, type Stats } from 'node:fs';
-import { dirname } from 'node:path';
+import { lstatSync, readlinkSync, realpathSync, type Stats } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { errnoOf } from '../../internal/errno';
 import {
   assertExpectedOwnerUid,
   assertUnixSocketPathLength,
   unixSocketDirectoryViolation,
 } from '../../internal/unix-socket';
+
+const MAX_SYMLINK_HOPS = 40;
+
+interface CodexUnixSocketTargetFsOps {
+  readonly lstatSync?: typeof lstatSync;
+  readonly readlinkSync?: typeof readlinkSync;
+  readonly realpathSync?: typeof realpathSync;
+}
 
 /** Distinct failure categories for Codex WebSocket-over-Unix-socket connections. */
 export type CodexUnixSocketErrorKind =
@@ -38,6 +46,11 @@ export function validateCodexUnixSocketPath(socketPath: string, caller: string):
       `[stitchkit] ${caller}: unix socketPath must be an absolute path starting with "/", received ${JSON.stringify(socketPath)}`,
     );
   }
+  if (socketPath.endsWith('/')) {
+    throw new TypeError(
+      `[stitchkit] ${caller}: unix socketPath must not end with "/", received ${JSON.stringify(socketPath)}`,
+    );
+  }
   if (/[\0\r\n\s?#]/.test(socketPath)) {
     throw new TypeError(
       `[stitchkit] ${caller}: unix socketPath contains forbidden characters (whitespace, NUL, ?, or #)`,
@@ -51,9 +64,10 @@ function lstatTarget(
   label: string,
   socketPath: string,
   caller: string,
+  lstat: typeof lstatSync = lstatSync,
 ): Stats | undefined {
   try {
-    return lstatSync(targetPath, { throwIfNoEntry: false });
+    return lstat(targetPath, { throwIfNoEntry: false });
   } catch (error) {
     if (errnoOf(error) === 'ENOENT') return undefined;
     throw new CodexUnixSocketError(
@@ -70,14 +84,47 @@ function assertPrivateDirStats(
   requiredUid: number | undefined,
   socketPath: string,
   caller: string,
+  lstat: typeof lstatSync = lstatSync,
 ): 'present' | 'absent' {
-  const stats = lstatTarget(dir, 'directory', socketPath, caller);
+  const stats = lstatTarget(dir, 'directory', socketPath, caller, lstat);
   if (stats === undefined) return 'absent';
   const violation = unixSocketDirectoryViolation(dir, stats, caller, requiredUid);
   if (violation !== undefined) {
     throw new CodexUnixSocketError('target-refused', socketPath, violation);
   }
   return 'present';
+}
+
+function canonicalizePrivateDir(
+  dir: string,
+  requiredUid: number | undefined,
+  socketPath: string,
+  caller: string,
+  lstat: typeof lstatSync,
+  realpath: typeof realpathSync,
+): string | undefined {
+  if (assertPrivateDirStats(dir, requiredUid, socketPath, caller, lstat) === 'absent') {
+    return undefined;
+  }
+  let realDir: string;
+  try {
+    realDir = realpath(dir);
+  } catch (error) {
+    if (errnoOf(error) === 'ENOENT') return undefined;
+    throw new CodexUnixSocketError(
+      'target-refused',
+      socketPath,
+      `[stitchkit] ${caller}: failed to resolve unix socket directory "${dir}"`,
+      { cause: error },
+    );
+  }
+  if (
+    realDir !== dir &&
+    assertPrivateDirStats(realDir, requiredUid, socketPath, caller, lstat) === 'absent'
+  ) {
+    return undefined;
+  }
+  return realDir;
 }
 
 /**
@@ -113,77 +160,103 @@ export function assertCodexUnixListenTargetAvailable(
  *
  * Real `codex app-server --listen unix://<path>` publishes `<path>` as a user-owned symlink
  * pointing into a private `0o700` daemon directory (`/tmp/codex-daemon-<uid>/<hash>`). When
- * `<path>` is a symlink, both the symlink itself and its resolved target directory + socket inode
- * must satisfy ownership and privacy checks.
+ * `<path>` is a symlink, each link hop is resolved iteratively with `readlinkSync` while
+ * canonicalizing only parent directories via `realpathSync`, never calling `realpathSync` on the
+ * socket inode itself (which fails with `EOPNOTSUPP` on Darwin/macOS). Every symlink hop, parent
+ * directory, and the final socket inode must satisfy ownership and privacy checks.
  */
 export function assertCodexUnixSocketClientTarget(
   socketPath: string,
   caller: string,
   expectedOwnerUid?: number,
+  fsOps?: CodexUnixSocketTargetFsOps,
 ): 'present' | 'absent' {
   assertExpectedOwnerUid(expectedOwnerUid, caller);
+  if (socketPath.length === 0 || socketPath.endsWith('/')) {
+    throw new CodexUnixSocketError(
+      'target-refused',
+      socketPath,
+      `[stitchkit] ${caller}: invalid unix socket target ${JSON.stringify(socketPath)}`,
+    );
+  }
   const requiredUid =
     expectedOwnerUid !== undefined
       ? expectedOwnerUid
       : typeof process.getuid === 'function'
         ? process.getuid()
         : undefined;
-  if (
-    assertPrivateDirStats(dirname(socketPath), requiredUid, socketPath, caller) === 'absent'
-  ) {
-    return 'absent';
-  }
-  const stats = lstatTarget(socketPath, 'path', socketPath, caller);
-  if (stats === undefined) return 'absent';
-  if (requiredUid !== undefined && stats.uid !== requiredUid) {
-    throw new CodexUnixSocketError(
-      'target-refused',
+  const lstat = fsOps?.lstatSync ?? lstatSync;
+  const readlink = fsOps?.readlinkSync ?? readlinkSync;
+  const realpath = fsOps?.realpathSync ?? realpathSync;
+
+  let currentPath = socketPath;
+  for (let hop = 0; hop <= MAX_SYMLINK_HOPS; hop += 1) {
+    const realDir = canonicalizePrivateDir(
+      dirname(currentPath),
+      requiredUid,
       socketPath,
-      `[stitchkit] ${caller}: unix socket "${socketPath}" is owned by uid ${stats.uid}, expected ${requiredUid}`,
+      caller,
+      lstat,
+      realpath,
     );
-  }
-  if (stats.isSymbolicLink()) {
-    let resolved: string;
+    if (realDir === undefined) return 'absent';
+    const candidate = join(realDir, basename(currentPath));
+    const stats = lstatTarget(
+      candidate,
+      hop === 0 ? 'path' : 'resolved target',
+      socketPath,
+      caller,
+      lstat,
+    );
+    if (stats === undefined) return 'absent';
+    if (requiredUid !== undefined && stats.uid !== requiredUid) {
+      throw new CodexUnixSocketError(
+        'target-refused',
+        socketPath,
+        `[stitchkit] ${caller}: ${hop === 0 ? 'unix socket' : 'resolved unix socket target'} "${candidate}" is owned by uid ${stats.uid}, expected ${requiredUid}`,
+      );
+    }
+    if (!stats.isSymbolicLink()) {
+      if (!stats.isSocket()) {
+        throw new CodexUnixSocketError(
+          'target-refused',
+          socketPath,
+          `[stitchkit] ${caller}: ${hop === 0 ? `"${candidate}" is not a unix socket` : `resolved unix socket target "${candidate}" is not a socket`}`,
+        );
+      }
+      return 'present';
+    }
+    if (hop === MAX_SYMLINK_HOPS) {
+      throw new CodexUnixSocketError(
+        'target-refused',
+        socketPath,
+        `[stitchkit] ${caller}: unix socket symlink "${socketPath}" exceeded ${MAX_SYMLINK_HOPS} hops`,
+      );
+    }
+    let linkTarget: string;
     try {
-      resolved = realpathSync(socketPath);
+      linkTarget = readlink(candidate);
     } catch (error) {
       if (errnoOf(error) === 'ENOENT') return 'absent';
       throw new CodexUnixSocketError(
         'target-refused',
         socketPath,
-        `[stitchkit] ${caller}: failed to resolve unix socket symlink "${socketPath}"`,
+        `[stitchkit] ${caller}: failed to read unix socket symlink "${candidate}"`,
         { cause: error },
       );
     }
-    if (
-      assertPrivateDirStats(dirname(resolved), requiredUid, socketPath, caller) === 'absent'
-    ) {
-      return 'absent';
-    }
-    const targetStats = lstatTarget(resolved, 'resolved target', socketPath, caller);
-    if (targetStats === undefined) return 'absent';
-    if (!targetStats.isSocket()) {
+    if (linkTarget.length === 0 || linkTarget.endsWith('/')) {
       throw new CodexUnixSocketError(
         'target-refused',
         socketPath,
-        `[stitchkit] ${caller}: resolved unix socket target "${resolved}" is not a socket`,
+        `[stitchkit] ${caller}: unix socket symlink "${candidate}" points to invalid target ${JSON.stringify(linkTarget)}`,
       );
     }
-    if (requiredUid !== undefined && targetStats.uid !== requiredUid) {
-      throw new CodexUnixSocketError(
-        'target-refused',
-        socketPath,
-        `[stitchkit] ${caller}: resolved unix socket target "${resolved}" is owned by uid ${targetStats.uid}, expected ${requiredUid}`,
-      );
-    }
-    return 'present';
+    currentPath = resolve(realDir, linkTarget);
   }
-  if (!stats.isSocket()) {
-    throw new CodexUnixSocketError(
-      'target-refused',
-      socketPath,
-      `[stitchkit] ${caller}: "${socketPath}" is not a unix socket`,
-    );
-  }
-  return 'present';
+  throw new CodexUnixSocketError(
+    'target-refused',
+    socketPath,
+    `[stitchkit] ${caller}: unix socket symlink "${socketPath}" exceeded ${MAX_SYMLINK_HOPS} hops`,
+  );
 }

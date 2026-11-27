@@ -9,20 +9,28 @@ import {
   claudePlanWindows,
   claudeUsagePlanLimits,
 } from '../../src/agent-executor/claude/limits';
-import { codexPlanWindows } from '../../src/agent-executor/codex/limits';
+import { codexPlanLimits, codexPlanWindows } from '../../src/agent-executor/codex/limits';
 import {
   mergeRateLimitEvent,
   planLimitsDue,
   planLimitsReadFailed,
+  planWindowDurationMins,
   planWindowExpired,
 } from '../../src/agent-executor/plan-limits';
 import {
   CREDENTIAL_VARIABLES,
+  EXECUTOR_ENV_KEY_PATTERN,
   engineEnvironment,
   helloProfile,
+  sanitizeProfileEnv,
 } from '../../src/agent-executor/profile';
 import { isTerminalTurnPhase } from '../../src/agent-executor/turn-phases';
-import { ExecutorHelloSchema } from '../../src/entrypoints/agent-executor';
+import {
+  ExecutorHelloSchema,
+  JsonRpcRecordSchema,
+  JsonRpcValueSchema,
+  PlanLimitsSchema,
+} from '../../src/entrypoints/agent-executor';
 import { runNativeCommand } from '../../src/entrypoints/process';
 import { reapAfterEachTest, trackGroupLeader, trackPidFile } from '../support/process-reaper';
 
@@ -145,6 +153,7 @@ describe('plan limits', () => {
       answer: 'unpublished',
       windows: [],
       observedAt: now.toISOString(),
+      plan: 'max',
     });
     // rate_limits_available: true with all null utilizations stays unpublished (never known with 0 windows).
     expect(
@@ -164,6 +173,7 @@ describe('plan limits', () => {
       answer: 'unpublished',
       windows: [],
       observedAt: now.toISOString(),
+      plan: 'max',
     });
     // One malformed fixed window never discards healthy sibling fixed windows.
     const partialFixed = claudeUsagePlanLimits(
@@ -348,5 +358,200 @@ describe('plan limits', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test('planLimitsDue treats clean no-plan-limit/unpublished as not due, planWindowDurationMins derives durations, and open Claude/Codex limit mappers plus sanitizeProfileEnv preserve metadata', () => {
+    // 1. planLimitsDue: clean no-plan-limit and unpublished are NOT due even past maxAgeMs; errored ones ARE due past maxAgeMs.
+    const pastDue = new Date(now.getTime() + 60_000);
+    const noLimit = claudeUsagePlanLimits(
+      { rate_limits_available: false, subscription_type: null, rate_limits: null },
+      now,
+    );
+    expect(planLimitsDue({ limits: noLimit, now: pastDue, maxAgeMs: 60_000 })).toBe(false);
+    const unpub = claudeUsagePlanLimits(
+      { rate_limits_available: false, subscription_type: 'pro', rate_limits: null },
+      now,
+    );
+    expect(planLimitsDue({ limits: unpub, now: pastDue, maxAgeMs: 60_000 })).toBe(false);
+    const unpubErrored = planLimitsReadFailed({ previous: unpub, error: 'timeout', now });
+    expect(
+      planLimitsDue({
+        limits: unpubErrored,
+        now: new Date(now.getTime() + 30_000),
+        maxAgeMs: 60_000,
+      }),
+    ).toBe(false);
+    expect(planLimitsDue({ limits: unpubErrored, now: pastDue, maxAgeMs: 60_000 })).toBe(true);
+
+    // 2. planWindowDurationMins derives explicit, Claude named, and Codex :<N>m durations.
+    expect(
+      planWindowDurationMins({ name: 'custom', usedPercent: 10, windowDurationMins: 45 }),
+    ).toBe(45);
+    expect(planWindowDurationMins({ name: 'five_hour', usedPercent: 10 })).toBe(300);
+    expect(planWindowDurationMins({ name: 'seven_day_sonnet', usedPercent: 10 })).toBe(10_080);
+    expect(planWindowDurationMins({ name: 'weekly', usedPercent: 10 })).toBe(10_080);
+    expect(planWindowDurationMins({ name: 'codex:15m', usedPercent: 10 })).toBe(15);
+    expect(planWindowDurationMins({ name: 'codex:300m:primary', usedPercent: 10 })).toBe(300);
+    expect(
+      planWindowDurationMins({ name: 'unknown_bucket', usedPercent: 10 }),
+    ).toBeUndefined();
+
+    // 3. PlanLimits.plan & PlanWindow.scope survive schema parse and mergeRateLimitEvent preserves previous.plan.
+    const mergedWithPlan = mergeRateLimitEvent({
+      windows: [{ name: 'five_hour', usedPercent: 15, scope: 'session' }],
+      plan: 'max',
+      now,
+    });
+    expect(PlanLimitsSchema.parse(mergedWithPlan)).toMatchObject({
+      answer: 'known',
+      plan: 'max',
+      windows: [{ name: 'five_hour', usedPercent: 15, scope: 'session' }],
+    });
+    const nextMerge = mergeRateLimitEvent({
+      previous: mergedWithPlan,
+      windows: [{ name: 'seven_day', usedPercent: 40 }],
+      now,
+    });
+    expect(nextMerge.plan).toBe('max');
+
+    // 4. Open claudeUsagePlanLimits buckets (envelope AND flat /api/oauth/usage) skip extra_usage/limits/spend.
+    const openFlat = claudeUsagePlanLimits(
+      {
+        subscription_type: 'max',
+        five_hour: { utilization: 20, resets_at: '2026-11-24T05:00:00Z' },
+        seven_day_cowork: { utilization: 55, resets_at: '2026-12-01T00:00:00Z' },
+        nimbus_quill: { utilization: 11, resets_at: null },
+        extra_usage: { utilization: 99, is_enabled: true },
+        spend: { utilization: 50 },
+        limits: { utilization: 10 },
+      },
+      now,
+    );
+    expect(openFlat).toEqual({
+      answer: 'known',
+      plan: 'max',
+      observedAt: now.toISOString(),
+      windows: [
+        { name: 'five_hour', usedPercent: 20, resetsAt: '2026-11-24T05:00:00Z' },
+        { name: 'nimbus_quill', usedPercent: 11 },
+        { name: 'seven_day_cowork', usedPercent: 55, resetsAt: '2026-12-01T00:00:00Z' },
+      ],
+    });
+
+    // Envelope with rate_limits and omitted rate_limits_available reports answer: 'known' when windows exist
+    // and 'unpublished' when windows are empty; caps at 32 windows and clamps long bucket/plan names to 256 chars.
+    const envWithoutFlag = claudeUsagePlanLimits(
+      {
+        subscription_type: 'p'.repeat(300),
+        rate_limits: {
+          five_hour: { utilization: 42, resets_at: '2026-12-01T00:00:00Z' },
+          seven_day_cowork: { utilization: 17, resets_at: null },
+        },
+      },
+      now,
+    );
+    expect(envWithoutFlag.answer).toBe('known');
+    expect(envWithoutFlag.plan).toHaveLength(256);
+    expect(envWithoutFlag.windows).toEqual([
+      { name: 'five_hour', usedPercent: 42, resetsAt: '2026-12-01T00:00:00Z' },
+      { name: 'seven_day_cowork', usedPercent: 17 },
+    ]);
+    expect(
+      claudeUsagePlanLimits({ subscription_type: 'max', rate_limits: {} }, now).answer,
+    ).toBe('unpublished');
+
+    const manyBuckets: Record<string, unknown> = {};
+    for (let i = 0; i < 40; i += 1) {
+      manyBuckets[`${String(i).padStart(2, '0')}_${'k'.repeat(300)}`] = { utilization: i };
+    }
+    const capped = claudeUsagePlanLimits(manyBuckets, now);
+    expect(capped.windows).toHaveLength(32);
+    expect(capped.windows[0]?.name.length).toBe(256);
+
+    // 5. codexPlanLimits & codexPlanWindows handle snake_case rollout payloads, seconds/ms/ISO resetsAt,
+    //    plan_type, and isolate a corrupt window without dropping its healthy sibling or plan_type.
+    const partialCodex = codexPlanLimits(
+      {
+        plan_type: 'pro',
+        primary: { used_percent: -1, window_minutes: 300 },
+        secondary: { used_percent: 45, window_minutes: 10080, resets_at: 1796637600 },
+      },
+      now,
+    );
+    expect(partialCodex).toEqual({
+      answer: 'known',
+      plan: 'pro',
+      observedAt: now.toISOString(),
+      windows: [
+        {
+          name: 'limit:10080m',
+          usedPercent: 45,
+          windowDurationMins: 10080,
+          resetsAt: new Date(1796637600 * 1000).toISOString(),
+        },
+      ],
+    });
+    const rolloutLimits = codexPlanLimits(
+      {
+        plan_type: 'pro',
+        primary: {
+          used_percent: 22,
+          window_minutes: 300,
+          resets_at: 1796032800,
+        },
+        secondary: {
+          used_percent: 64,
+          window_minutes: 10080,
+          resets_at: 1796637600000,
+        },
+      },
+      now,
+    );
+    expect(rolloutLimits).toEqual({
+      answer: 'known',
+      plan: 'pro',
+      observedAt: now.toISOString(),
+      windows: [
+        {
+          name: 'limit:300m',
+          usedPercent: 22,
+          windowDurationMins: 300,
+          resetsAt: new Date(1796032800 * 1000).toISOString(),
+        },
+        {
+          name: 'limit:10080m',
+          usedPercent: 64,
+          windowDurationMins: 10080,
+          resetsAt: new Date(1796637600000).toISOString(),
+        },
+      ],
+    });
+    expect(
+      codexPlanWindows({
+        primary: { usedPercent: 10, resetsAt: '2026-12-01T00:00:00Z' },
+      }),
+    ).toEqual([{ name: 'limit:primary', usedPercent: 10, resetsAt: '2026-12-01T00:00:00Z' }]);
+
+    // 6. JsonRpcValueSchema / JsonRpcRecordSchema & EXECUTOR_ENV_KEY_PATTERN / sanitizeProfileEnv.
+    expect(JsonRpcValueSchema.safeParse({ a: [1, 'x', null, true] }).success).toBe(true);
+    expect(JsonRpcRecordSchema.safeParse({ ok: 1 }).success).toBe(true);
+    expect(JsonRpcRecordSchema.safeParse([1, 2]).success).toBe(false);
+    expect(EXECUTOR_ENV_KEY_PATTERN.test('MY_VAR_1')).toBe(true);
+    expect(EXECUTOR_ENV_KEY_PATTERN.test('1BAD')).toBe(false);
+    expect(
+      sanitizeProfileEnv({
+        GOOD_VAR: 'ok',
+        EMPTY_VAR: '',
+        'BAD-KEY': 'drop',
+        lowercase: 'drop',
+        '1BAD': 'drop',
+        OMITTED_VAR: undefined,
+        ANTHROPIC_API_KEY: 'kept-profile-cred',
+      }),
+    ).toEqual({
+      GOOD_VAR: 'ok',
+      EMPTY_VAR: '',
+      ANTHROPIC_API_KEY: 'kept-profile-cred',
+    });
   });
 });

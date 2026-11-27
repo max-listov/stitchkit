@@ -11,6 +11,7 @@ import type {
   SDKControlGetContextUsageResponse,
   SDKControlGetUsageResponse,
   SDKControlInitializeResponse,
+  SDKControlSetPermissionModeResponse,
   SDKUserMessage,
   SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -34,9 +35,9 @@ import type { ClaudeSdkTurnUsage } from './turn-usage';
 export interface ClaudeSdkRun extends AsyncIterable<unknown> {
   interrupt(): Promise<unknown>;
   close?(): void;
-  setModel?(model?: string): Promise<void>;
-  setPermissionMode?(mode: NonNullable<Options['permissionMode']>): Promise<void>;
-  applyFlagSettings?(settings: Parameters<Query['applyFlagSettings']>[0]): Promise<void>;
+  setModel?(model?: string): Promise<unknown>;
+  setPermissionMode?(mode: NonNullable<Options['permissionMode']>): Promise<unknown>;
+  applyFlagSettings?(settings: Parameters<Query['applyFlagSettings']>[0]): Promise<unknown>;
   initializationResult?(): Promise<SDKControlInitializeResponse>;
   supportedModels?(): Promise<ModelInfo[]>;
   supportedCommands?(): Promise<SlashCommand[]>;
@@ -49,9 +50,9 @@ export interface ClaudeSdkRun extends AsyncIterable<unknown> {
   ): Promise<SDKControlGetUsageResponse>;
   mcpServerStatus?(): Promise<McpServerStatus[]>;
   setMcpServers?(servers: Parameters<Query['setMcpServers']>[0]): Promise<McpSetServersResult>;
-  toggleMcpServer?(serverName: string, enabled: boolean): Promise<void>;
-  reconnectMcpServer?(serverName: string): Promise<void>;
-  stopTask?(taskId: string): Promise<void>;
+  toggleMcpServer?(serverName: string, enabled: boolean): Promise<unknown>;
+  reconnectMcpServer?(serverName: string): Promise<unknown>;
+  stopTask?(taskId: string): Promise<unknown>;
   backgroundTasks?(toolUseId?: string): Promise<boolean>;
   rewindFiles?(
     userMessageId: string,
@@ -78,11 +79,11 @@ export type ClaudeSdkForkSession = (
 /** Fail-closed startup verification checks for delegated Claude SDK sessions. */
 export interface ClaudeSdkDelegationCheck {
   /** Require `initializationResult().hooks_applied === true` before exposing the query. */
-  readonly requireHooksApplied?: boolean;
+  readonly requireHooksApplied?: boolean | undefined;
   /** Require `mcpServerStatus()` to return an empty list before exposing the query. */
-  readonly requireNoMcpServers?: boolean;
+  readonly requireNoMcpServers?: boolean | undefined;
   /** Maximum milliseconds to wait for delegation verification RPCs. Default 30 000 ms. */
-  readonly timeoutMs?: number;
+  readonly timeoutMs?: number | undefined;
 }
 
 /** Context passed to {@link ClaudeSdkDriverConfig.onQueryExit} when a live query exits unexpectedly. */
@@ -117,81 +118,82 @@ export interface ClaudeSdkDriverConfig {
   /** That SDK's version, reported in `hello`. */
   sdkVersion: string;
   /** Optional `forkSession` from `@anthropic-ai/claude-agent-sdk` for {@link ClaudeSdkDriver.forkSession}. */
-  forkSession?: ClaudeSdkForkSession;
-  model?: string;
+  forkSession?: ClaudeSdkForkSession | undefined;
+  model?: string | undefined;
   /** Default `default`: every tool the profile does not allow is asked of `canUseTool`. */
-  permissionMode?: NonNullable<Options['permissionMode']>;
+  permissionMode?: NonNullable<Options['permissionMode']> | undefined;
   /** Required by the SDK when `permissionMode` is `'bypassPermissions'`. */
-  allowDangerouslySkipPermissions?: Options['allowDangerouslySkipPermissions'];
+  allowDangerouslySkipPermissions?: Options['allowDangerouslySkipPermissions'] | undefined;
   /** Explicit host path to the Claude Code executable. */
-  pathToClaudeCodeExecutable?: Options['pathToClaudeCodeExecutable'];
+  pathToClaudeCodeExecutable?: Options['pathToClaudeCodeExecutable'] | undefined;
   /** System prompt or preset (for example `{ type: 'preset', preset: 'claude_code' }`). */
-  systemPrompt?: Options['systemPrompt'];
+  systemPrompt?: Options['systemPrompt'] | undefined;
   /** Setting sources loaded by Claude Code (for example `['user', 'project', 'local']` or `[]`). */
-  settingSources?: Options['settingSources'];
+  settingSources?: Options['settingSources'] | undefined;
   /** Enable file checkpointing so `rewindFiles()` can restore tracked workspace files. */
-  enableFileCheckpointing?: Options['enableFileCheckpointing'];
+  enableFileCheckpointing?: Options['enableFileCheckpointing'] | undefined;
   /** Dialog kinds handled by `onUserDialog`; non-empty lists require `onUserDialog`. */
-  supportedDialogKinds?: Options['supportedDialogKinds'];
+  supportedDialogKinds?: Options['supportedDialogKinds'] | undefined;
   /** Callback answering host dialog requests advertised in `supportedDialogKinds`. */
-  onUserDialog?: Options['onUserDialog'];
+  onUserDialog?: Options['onUserDialog'] | undefined;
   /** Callback answering MCP elicitation requests (form or URL mode) when no hook handles them. */
-  onElicitation?: Options['onElicitation'];
+  onElicitation?: Options['onElicitation'] | undefined;
   /**
    * Optional observer invoked with structured `canUseTool` metadata (`decisionReason`,
    * `blockedPath`, `title`, `description`, `suggestions`, `agentID`, `toolUseID`) whenever a
    * tool permission request is held for host approval.
    */
-  onPermissionRequest?: (meta: ClaudeSdkPermissionRequestMeta) => void;
+  onPermissionRequest?: ((meta: ClaudeSdkPermissionRequestMeta) => void) | undefined;
   /**
    * Optional observer receiving typed non-delta runtime events (`task_*`, `tool_progress`,
    * `background_tasks_changed`, `api_retry`, `elicitation_complete`) both during turns and
    * between turns while background work runs.
    */
-  onEvent?: (event: ClaudeRuntimeEvent) => void;
+  onEvent?: ((event: ClaudeRuntimeEvent) => void) | undefined;
   /**
    * Optional observer receiving additive per-turn `modelUsage` deltas and non-primary
    * (`otherUsage`) token totals at the end of each turn while preserving cumulative `modelUsage`.
    */
-  onTurnUsage?: (usage: ClaudeSdkTurnUsage) => void;
+  onTurnUsage?: ((usage: ClaudeSdkTurnUsage) => void) | undefined;
   /** Lifecycle hooks registered on initialize (such as `PreToolUse` delegation guards). */
-  hooks?: Options['hooks'];
+  hooks?: Options['hooks'] | undefined;
   /** Built-in tool set available to the session. */
-  tools?: Options['tools'];
+  tools?: Options['tools'] | undefined;
   /** Tool allowlist passed through to the SDK. */
-  allowedTools?: Options['allowedTools'];
+  allowedTools?: Options['allowedTools'] | undefined;
   /** Tool denylist passed through to the SDK. */
-  disallowedTools?: Options['disallowedTools'];
+  disallowedTools?: Options['disallowedTools'] | undefined;
   /** MCP server definitions passed through to the SDK (pass `{}` to isolate). */
-  mcpServers?: Options['mcpServers'];
+  mcpServers?: Options['mcpServers'] | undefined;
   /** Controls how MCP server definitions are delivered to the child CLI. */
-  mcpServersDelivery?: Options['mcpServersDelivery'];
+  mcpServersDelivery?: Options['mcpServersDelivery'] | undefined;
   /** When `true`, ignore ambient MCP configs outside `mcpServers`. */
-  strictMcpConfig?: Options['strictMcpConfig'];
+  strictMcpConfig?: Options['strictMcpConfig'] | undefined;
   /** Plugin configurations passed through to the SDK (pass `[]` to isolate). */
-  plugins?: Options['plugins'];
+  plugins?: Options['plugins'] | undefined;
   /** Subagent definitions passed through to the SDK (pass `{}` to isolate). */
-  agents?: Options['agents'];
+  agents?: Options['agents'] | undefined;
   /** Extra CLI flags passed through to the SDK. */
-  extraArgs?: Options['extraArgs'];
+  extraArgs?: Options['extraArgs'] | undefined;
   /** Callback receiving UTF-8 `stderr` chunks from the spawned Claude Code process. */
-  stderr?: Options['stderr'];
+  stderr?: Options['stderr'] | undefined;
   /** Custom process spawner forwarded to the SDK; wrapped to observe `providerPid` when present. */
-  spawnClaudeCodeProcess?: Options['spawnClaudeCodeProcess'];
+  spawnClaudeCodeProcess?: Options['spawnClaudeCodeProcess'] | undefined;
   /** Invoked with the child process PID whenever a query spawns through a spawner exposing `pid`. */
-  onProviderPid?: (pid: number) => void;
+  onProviderPid?: ((pid: number) => void) | undefined;
   /**
    * Invoked when an established query exits unexpectedly before `session.close()` or caller signal
    * abort (including idle exits between turns).
    */
-  onQueryExit?: (error: unknown, context: ClaudeSdkQueryExitContext) => void;
+  onQueryExit?: ((error: unknown, context: ClaudeSdkQueryExitContext) => void) | undefined;
   /** Fail-closed startup verification run at `open()` and on every query restart. */
-  verifyDelegation?: ClaudeSdkDelegationCheck;
+  verifyDelegation?: ClaudeSdkDelegationCheck | undefined;
   /** Read the bytes behind a `file` part's `reference`; without it a file part is refused. */
-  resolveFile?: (reference: string) => Promise<Uint8Array>;
+  resolveFile?: ((reference: string) => Promise<Uint8Array>) | undefined;
   /** Maximum decoded size of one image attachment in bytes. Default 5 MiB. */
-  maxImageBytes?: number;
-  ambient?: Readonly<Record<string, string | undefined>>;
+  maxImageBytes?: number | undefined;
+  /** Environment variables inherited by the spawned Claude Code process. */
+  ambient?: Readonly<Record<string, string | undefined>> | undefined;
 }
 
 /** A Claude SDK session adding live controls, metadata reads, rewind, and observed `providerPid`. */
@@ -200,8 +202,10 @@ export interface ClaudeSdkSession extends AgentEngineSession {
   readonly providerPid: number | undefined;
   /** Change the model for subsequent turns (or pass `undefined` for default). */
   setModel(model?: string): Promise<void>;
-  /** Change the permission mode for subsequent turns. */
-  setPermissionMode(mode: NonNullable<Options['permissionMode']>): Promise<void>;
+  /** Change the permission mode for subsequent turns, returning the SDK's effective mode response when reported. */
+  setPermissionMode(
+    mode: NonNullable<Options['permissionMode']>,
+  ): Promise<SDKControlSetPermissionModeResponse | undefined>;
   /** Shallow-merge settings (such as `effortLevel`) into the session flag settings layer. */
   applyFlagSettings(settings: Parameters<Query['applyFlagSettings']>[0]): Promise<void>;
   /** Read the SDK initialize response (commands, models, account, `hooks_applied`). */
@@ -239,7 +243,7 @@ export interface ClaudeSdkSession extends AgentEngineSession {
   /** Rewind tracked files to the checkpoint recorded at `userMessageId`. */
   rewindFiles(
     userMessageId: string,
-    options?: { dryRun?: boolean },
+    options?: { readonly dryRun?: boolean | undefined },
   ): Promise<RewindFilesResult>;
 }
 
@@ -248,20 +252,20 @@ export interface ClaudeSdkOpenInput {
   readonly profile: ExecutorProfileConfig;
   readonly cwd: string;
   /** Resume this native session; a fresh one is started without it. */
-  readonly nativeThreadId?: string;
+  readonly nativeThreadId?: string | undefined;
   /** Optional observer invoked with startup phases (`spawning`, `verifying`) during open. */
-  readonly onStartupPhase?: (phase: ExecutorStartupPhase) => void;
-  readonly signal?: AbortSignal;
+  readonly onStartupPhase?: ((phase: ExecutorStartupPhase) => void) | undefined;
+  readonly signal?: AbortSignal | undefined;
   /**
    * When resuming (`nativeThreadId` required), truncate history to messages up to and including
    * this chain-entry UUID. Forwarded to SDK `Options.resumeSessionAt` on the initial query.
    */
-  readonly resumeSessionAt?: Options['resumeSessionAt'];
+  readonly resumeSessionAt?: Options['resumeSessionAt'] | undefined;
   /**
    * With `resumeSessionAt`, declares the prompt UUID of the turn this truncating resume intends
    * to discard. Forwarded to SDK `Options.resumeDropsTurn` on the initial query.
    */
-  readonly resumeDropsTurn?: Options['resumeDropsTurn'];
+  readonly resumeDropsTurn?: Options['resumeDropsTurn'] | undefined;
 }
 
 /** An {@link AgentEngineDriver} over the Claude Agent SDK with typed live sessions, probing and forking. */

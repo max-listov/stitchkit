@@ -6,7 +6,8 @@ import { mergeRateLimitEvent } from '../plan-limits';
 import { invokeSafely, offerTurnDelta } from '../session-primitives';
 import type { ExecutorDelta } from '../vocabulary';
 import { classifyCodexNotification } from './classify';
-import { codexPlanWindows } from './limits';
+import { codexEventTurn, codexThreadIdOf, codexTurnIdOf } from './event-routing';
+import { codexPlanLimits } from './limits';
 import {
   answerActiveCodexTurnRequest,
   answerCodexSessionRequest,
@@ -14,7 +15,6 @@ import {
   type CodexTurnSlot,
   codexStopped,
   codexStoppedAnswer,
-  externalCodexTurnIdOf,
   isKnownCodexRequestMethod,
   type PendingExternalCodexRequest,
   parseCodexServerRequest,
@@ -80,9 +80,9 @@ function handleCodexNotification(
   method: string,
   params: JsonRpcValue | undefined,
 ): void {
-  const turn = state.getTurn();
+  const turn = codexEventTurn(state.getTurn(), params);
   const duringActiveTurn = turn !== undefined;
-  const effectiveTurnId = turn?.state.turnId ?? externalCodexTurnIdOf(params);
+  const effectiveTurnId = turn?.state.turnId ?? codexTurnIdOf(params) ?? 'external';
   let verdict: ReturnType<typeof classifyCodexNotification>;
   try {
     verdict = classifyCodexNotification(
@@ -106,11 +106,13 @@ function handleCodexNotification(
   switch (verdict.kind) {
     case 'limits':
       try {
+        const parsedLimits = codexPlanLimits(verdict.rateLimits, new Date());
         state.limits.set(
           state.profileId,
           mergeRateLimitEvent({
             previous: state.limits.get(state.profileId),
-            windows: codexPlanWindows(verdict.rateLimits),
+            windows: parsedLimits.windows,
+            ...(parsedLimits.plan !== undefined && { plan: parsedLimits.plan }),
             now: new Date(),
           }),
         );
@@ -131,7 +133,15 @@ function handleCodexNotification(
     case 'resolved': {
       const resolvedTurn = turn?.pending.delete(verdict.requestId) === true;
       const externalEntry = state.externalPending.get(verdict.requestId);
-      const resolvedExternal = externalEntry !== undefined;
+      const threadId = codexThreadIdOf(params);
+      const nativeTurnId = codexTurnIdOf(params);
+      const resolvedExternal =
+        !resolvedTurn &&
+        externalEntry !== undefined &&
+        (threadId === undefined ||
+          externalEntry.threadId === undefined ||
+          threadId === externalEntry.threadId) &&
+        (nativeTurnId === undefined || nativeTurnId === externalEntry.turnId);
       if (resolvedExternal) state.externalPending.delete(verdict.requestId);
       const resolvedDelta: ExecutorDelta = {
         type: 'request-resolved',
@@ -147,7 +157,7 @@ function handleCodexNotification(
         state,
         method,
         params,
-        duringActiveTurn,
+        duringActiveTurn && !resolvedExternal,
         resolvedTurn || resolvedExternal ? [resolvedDelta] : [],
       );
       return;
@@ -163,7 +173,7 @@ function handleCodexNotification(
     }
     case 'end':
       endEngineTurn(turn, codexStopped, verdict.deltas);
-      state.clearTurn();
+      if (turn !== undefined) state.clearTurn();
       emitCodexNotification(state, method, params, duringActiveTurn, verdict.deltas);
       return;
     case 'ignore':
@@ -178,7 +188,7 @@ function handleCodexRequest(
   params: JsonRpcValue | undefined,
   id: string | number,
 ): Promise<JsonRpcValue> {
-  const turn = state.getTurn();
+  const turn = codexEventTurn(state.getTurn(), params);
   if (!isKnownCodexRequestMethod(method)) {
     if (turn !== undefined) {
       offerTurnDelta(turn.channel, {
@@ -259,7 +269,7 @@ function handleCodexRequest(
     );
   }
   const parsed = parseCodexServerRequest(method, params);
-  const turnId = externalCodexTurnIdOf(params);
+  const turnId = codexTurnIdOf(params) ?? 'external';
   const delta: Extract<ExecutorDelta, { type: 'request' }> = {
     type: 'request',
     turnId,
@@ -270,7 +280,13 @@ function handleCodexRequest(
     ...parsed.deltaFields,
   };
   return new Promise<JsonRpcValue>((resolve, reject) => {
-    const entry: PendingExternalCodexRequest = { detail: parsed.detail, turnId, resolve };
+    const threadId = codexThreadIdOf(params);
+    const entry: PendingExternalCodexRequest = {
+      detail: parsed.detail,
+      turnId,
+      ...(threadId !== undefined && { threadId }),
+      resolve,
+    };
     state.externalPending.set(interactionId, entry);
     const onObserverError = (error: unknown) => {
       if (state.externalPending.get(interactionId) !== entry) return;
@@ -314,9 +330,25 @@ function handleCodexRequest(
 /** Create JSON-RPC notification and server-request handlers for a Codex session or control link. */
 export function createCodexHandlers(state: CodexHandlersState) {
   return {
-    onNotification: (method: string, params: JsonRpcValue | undefined) =>
-      handleCodexNotification(state, method, params),
-    onRequest: (method: string, params: JsonRpcValue | undefined, id: string | number) =>
-      handleCodexRequest(state, method, params, id),
+    onNotification(method: string, params: JsonRpcValue | undefined) {
+      const starting = codexEventTurn(state.getTurn(), params)?.starting;
+      const deliver = () => handleCodexNotification(state, method, params);
+      if (starting === undefined) deliver();
+      else starting.defer(params, deliver);
+    },
+    onRequest(method: string, params: JsonRpcValue | undefined, id: string | number) {
+      const starting = codexEventTurn(state.getTurn(), params)?.starting;
+      const deliver = () => handleCodexRequest(state, method, params, id);
+      if (starting === undefined) return deliver();
+      return new Promise<JsonRpcValue>((resolve, reject) => {
+        starting.defer(params, () => {
+          try {
+            resolve(deliver());
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+    },
   };
 }

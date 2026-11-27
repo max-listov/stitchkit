@@ -177,11 +177,11 @@ export type ExecutorReplayTranscript = z.infer<typeof ExecutorReplayTranscriptSc
 /** Options for {@link parseReplayTranscript}. */
 export interface ParseReplayTranscriptOptions {
   /** Substitute literal `<workspace>` tokens inside parsed string values with this path. */
-  readonly workspace?: string;
+  readonly workspace?: string | undefined;
   /** Maximum UTF-8 byte length accepted for the NDJSON source. Default 4 MiB. */
-  readonly maxBytes?: number;
+  readonly maxBytes?: number | undefined;
   /** Maximum number of replay steps accepted. Default 4096. */
-  readonly maxSteps?: number;
+  readonly maxSteps?: number | undefined;
 }
 
 const UTF8_ENCODER = new TextEncoder();

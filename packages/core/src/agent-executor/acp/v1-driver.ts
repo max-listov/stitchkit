@@ -7,15 +7,16 @@ import {
   type AcpDriverConfig,
   acpCan,
   assertAcpDriverOptions,
-  closeRequestTimeoutMs,
   connectAcp,
 } from './v1-connect';
 import { classifyAcpRpcRefusal } from './v1-map';
 import {
-  AcpNewSessionResultSchema,
-  AcpSessionListResultSchema,
-  acpOptionValues,
-} from './v1-protocol';
+  type AcpCapabilitiesProbe,
+  type AcpProbeCapabilitiesInput,
+  probeAcpCapabilities,
+  probeAcpModels,
+} from './v1-probe';
+import { AcpSessionListResultSchema } from './v1-protocol';
 import {
   type AcpApprovalEnforcement,
   type AcpOpenInput,
@@ -29,12 +30,12 @@ export type { AcpApprovalEnforcement, AcpSession } from './v1-session';
 /** A session the agent keeps, as `session/list` answers. */
 export interface AcpSessionSummary {
   sessionId: string;
-  cwd?: string;
-  title?: string;
-  updatedAt?: string;
+  cwd?: string | undefined;
+  title?: string | undefined;
+  updatedAt?: string | undefined;
 }
 
-/** An {@link AgentEngineDriver} speaking ACP v1, adding session listing and session config options. */
+/** An {@link AgentEngineDriver} speaking ACP v1, adding capability probing, session listing, and session config options. */
 export interface AcpDriver extends AgentEngineDriver {
   readonly capabilities: ExecutorDriverCapabilities;
   /**
@@ -49,6 +50,11 @@ export interface AcpDriver extends AgentEngineDriver {
     profile: ExecutorProfileConfig;
     cwd: string;
   }): Promise<AcpSessionSummary[]>;
+  /**
+   * Run a non-inference capability probe (`initialize`, ephemeral `session/new`, `configOptions`,
+   * `commands`, `models`) with guaranteed `session/close` + `session/delete` cleanup.
+   */
+  probeCapabilities(input: AcpProbeCapabilitiesInput): Promise<AcpCapabilitiesProbe>;
 }
 
 /**
@@ -62,44 +68,6 @@ function probe<T>(
   ask: (connection: AcpConnection) => Promise<T>,
 ): Promise<T> {
   return withEphemeralConnection((signal) => connectAcp(config, profile, cwd, signal), ask);
-}
-
-/** Close an ephemeral probe session, falling back to `session/delete` when advertised. */
-async function cleanupProbeSession(
-  config: AcpDriverConfig,
-  connection: AcpConnection,
-  sessionId: string,
-): Promise<void> {
-  const timeoutMs = closeRequestTimeoutMs(config);
-  if (acpCan(connection, 'close')) {
-    const closed = await connection.peer
-      .request('session/close', { sessionId }, { timeoutMs })
-      .then(
-        () => true,
-        () => false,
-      );
-    if (closed) return;
-  }
-  if (acpCan(connection, 'delete')) {
-    await connection.peer
-      .request('session/delete', { sessionId }, { timeoutMs })
-      .catch(() => undefined);
-  }
-}
-
-/** The values of the session's model option, or its model list; none when the agent offers neither. */
-async function probeModels(
-  config: AcpDriverConfig,
-  connection: AcpConnection,
-  cwd: string,
-): Promise<string[]> {
-  const session = AcpNewSessionResultSchema.parse(
-    await connection.peer.request('session/new', { cwd, mcpServers: [] }),
-  );
-  await cleanupProbeSession(config, connection, session.sessionId);
-  const option = session.configOptions?.find((candidate) => candidate.category === 'model');
-  if (option !== undefined) return acpOptionValues(option);
-  return session.models?.availableModels?.map((model) => model.modelId) ?? [];
 }
 
 /**
@@ -166,7 +134,7 @@ export function createAcpDriver(config: AcpDriverConfig): AcpDriver {
           engine: 'acp',
           version,
           reconcile: 'none',
-          models: await probeModels(config, connection, cwd).then(
+          models: await probeAcpModels(config, connection, cwd).then(
             (ids): ExecutorEngineInfo['models'] => ({ answer: 'listed', ids }),
             (error: unknown): ExecutorEngineInfo['models'] => ({
               answer: 'failed',
@@ -196,7 +164,7 @@ export function createAcpDriver(config: AcpDriverConfig): AcpDriver {
           return { login: { state: 'unknown' }, effectiveCredential: 'unknown' };
         }
         await probe(config, profile, process.cwd(), (connection) =>
-          probeModels(config, connection, process.cwd()),
+          probeAcpModels(config, connection, process.cwd()),
         );
         return { login: { state: 'signed-in' }, effectiveCredential: 'unknown' };
       } catch (error) {
@@ -229,5 +197,6 @@ export function createAcpDriver(config: AcpDriverConfig): AcpDriver {
         }));
       });
     },
+    probeCapabilities: (input) => probeAcpCapabilities(config, input),
   };
 }

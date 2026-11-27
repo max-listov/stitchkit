@@ -20,6 +20,7 @@ const DENY_FAILED: InteractionReply['reply'] = {
 export interface ReplayTurnSlot
   extends EngineRequestTurn<InteractionReply['reply'], { readonly interactionId: string }> {
   readonly turnId: string;
+  readonly hostAnswered: Set<string>;
   readonly interruptWaiters: Array<() => void>;
   readonly replyPromises: Map<string, Promise<InteractionReply['reply']>>;
 }
@@ -139,7 +140,7 @@ export interface ReplayTurnRunnerContext {
   readonly profileId: string;
   readonly limits: Map<string, PlanLimits>;
   readonly answeredIds: Set<string>;
-  readonly hostAnsweredIds: Set<string>;
+  readonly consumedReplies: Set<ExecutorReplayStep>;
   readonly gate?: ReplayGate;
   readonly signal: AbortSignal;
   readonly onTurnCompleted: () => void;
@@ -179,6 +180,7 @@ export async function runReplayTurnScript(context: ReplayTurnRunnerContext): Pro
         continue;
       }
       if (step.kind === 'request') {
+        turn.hostAnswered.delete(step.interactionId);
         const replyPromise = new Promise<InteractionReply['reply']>((resolve) => {
           holdEngineRequest(turn, {
             interactionId: step.interactionId,
@@ -214,6 +216,7 @@ export async function runReplayTurnScript(context: ReplayTurnRunnerContext): Pro
           );
         }
         const reply = await pendingReply;
+        turn.replyPromises.delete(step.interactionId);
         if (signal.aborted) throw new Error('Replay session aborted');
         if (
           !turn.state.interruptRequested &&
@@ -233,6 +236,7 @@ export async function runReplayTurnScript(context: ReplayTurnRunnerContext): Pro
             `Replay expectReply(${step.interactionId}) expected scope ${step.scope}`,
           );
         }
+        if (turn.hostAnswered.delete(step.interactionId)) context.consumedReplies.add(step);
         continue;
       }
       if (step.kind === 'usage') {

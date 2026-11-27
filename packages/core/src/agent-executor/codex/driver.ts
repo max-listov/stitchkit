@@ -1,8 +1,8 @@
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
 import type { ExecutorDriverCapabilities, PlanLimits } from '../hello';
 import { validateImageOptions } from '../image-input';
-import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
-import { mergeRateLimitEvent, planLimitsReadFailed } from '../plan-limits';
+import type { JsonRpcValue } from '../json-rpc-peer';
+import { planLimitsReadFailed } from '../plan-limits';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
 import { runEngineCli, withEphemeralConnection } from '../session-primitives';
 import {
@@ -10,128 +10,88 @@ import {
   connectCodex,
   validateCodexTransportAndArgs,
 } from './connect';
-import type { CodexControlClient } from './control-client';
+import { type CodexControlClient, createCodexControlClient } from './control-client';
 import type { CodexNotificationEvent, CodexServerRequestEvent } from './handlers';
-import { codexPlanWindows } from './limits';
-import {
-  type CodexApprovalPolicy,
-  type CodexSandboxMode,
-  type CodexThreadContext,
-  CodexTurnsPageSchema,
-} from './protocol';
+import { codexPlanLimits } from './limits';
+import { findCodexTurnByClientId } from './pagination';
+import type { CodexApprovalPolicy, CodexSandboxMode, CodexThreadContext } from './protocol';
 import { openCodexControlConnection, openCodexSession } from './session';
-import {
-  type CodexDriver,
-  type CodexOpenForkOptions,
-  type CodexThreadPolicyOverrides,
-  validateCodexPolicyOverrides,
-} from './session-controls';
+import { validateCodexPolicyOverrides } from './session-controls';
+import type {
+  CodexDriver,
+  CodexOpenForkOptions,
+  CodexThreadPolicyOverrides,
+} from './session-types';
 import { openCodexSharedServer } from './shared-server';
 import type { CodexSessionConfig } from './thread-open';
 
-/** Upper bound on paginated `thread/turns/list` requests in one `findInput` call. */
-const MAX_HISTORY_PAGES = 256;
 /**
  * Bounded stdout/frame limit for `thread/turns/list` (64 MiB): a 50-turn page with
  * `itemsView: 'full'` may carry several base64-encoded image turns on one JSON-RPC line.
  */
 const FIND_INPUT_MAX_LINE_BYTES = 64 * 1024 * 1024;
 
-async function findCodexClientInput(
-  peer: JsonRpcPeer,
-  nativeThreadId: string,
-  clientId: string,
-): Promise<boolean> {
-  const seen = new Set<string>();
-  let cursor: string | undefined;
-  for (let pageNumber = 0; pageNumber < MAX_HISTORY_PAGES; pageNumber += 1) {
-    const page = CodexTurnsPageSchema.parse(
-      await peer.request('thread/turns/list', {
-        threadId: nativeThreadId,
-        limit: 50,
-        itemsView: 'full',
-        ...(cursor !== undefined && { cursor }),
-      }),
-    );
-    if (
-      page.data.some((turn) =>
-        turn.items.some((item) => item.type === 'userMessage' && item.clientId === clientId),
-      )
-    ) {
-      return true;
-    }
-    const next = page.nextCursor;
-    if (next === null || next === undefined) return false;
-    if (seen.has(next)) {
-      throw new Error(
-        `Codex thread/turns/list repeated cursor ${JSON.stringify(next)} before history ended`,
-      );
-    }
-    seen.add(next);
-    cursor = next;
-  }
-  throw new Error(
-    `Codex thread/turns/list exceeded ${MAX_HISTORY_PAGES} pages without reaching the end of history`,
-  );
-}
-
 /** Configuration for {@link createCodexDriver}. */
 export interface CodexDriverConfig {
   /** The CLI to run. Default `codex`, found on the engine's `PATH`. */
-  executable?: string;
+  executable?: string | undefined;
   /** Arguments before the driver's own — a runtime running a script, as a fake engine is run. */
-  prefixArgs?: readonly string[];
+  prefixArgs?: readonly string[] | undefined;
   /**
    * Transport for `codex app-server`: `'stdio'` (default), `'unix-listen'` (spawns with
    * `--listen unix://<path>` so another client can attach to the same writer), or
    * `'unix-connect'` (attaches to an existing app-server without owning its lifecycle).
    */
-  transport?: CodexTransportConfig;
+  transport?: CodexTransportConfig | undefined;
   /** Additional CLI arguments appended to `codex app-server` (for example `-c` overrides); must not include `--listen` or `--stdio`. */
-  serverArgs?: readonly string[];
+  serverArgs?: readonly string[] | undefined;
   /** Default model id passed to `thread/start` and `thread/resume`. */
-  model?: string;
+  model?: string | undefined;
   /** Default model provider passed to `thread/start` and `thread/resume`. */
-  modelProvider?: string;
+  modelProvider?: string | undefined;
   /** `approvalPolicy` of a new or resumed thread. Default `on-request`: the engine asks the host. */
-  approvalPolicy?: CodexApprovalPolicy;
+  approvalPolicy?: CodexApprovalPolicy | undefined;
   /** `sandbox` of a new or resumed thread. Default `workspace-write`. */
-  sandbox?: CodexSandboxMode;
+  sandbox?: CodexSandboxMode | undefined;
   /** Developer instructions passed to `thread/start` and `thread/resume`. */
-  developerInstructions?: string;
+  developerInstructions?: string | undefined;
   /** Additional workspace roots allowed for runtime filesystem access on the thread. */
-  runtimeWorkspaceRoots?: readonly string[];
+  runtimeWorkspaceRoots?: readonly string[] | undefined;
   /** Codex app-server config overrides passed on `thread/start` and `thread/resume` (writable roots, disabled MCP/plugins/features, network policy). */
-  config?: Readonly<Record<string, JsonRpcValue>>;
+  config?: Readonly<Record<string, JsonRpcValue>> | undefined;
   /**
    * Optional hook invoked after `initialize` and before `thread/start` or `thread/resume`.
    * May inspect server state (`readConfig`, `listModels`, etc.) and return dynamic per-thread policy overrides;
    * throwing stops the connection cleanly before opening the thread.
    */
-  prepareThread?: (context: {
-    readonly controls: CodexControlClient;
-    readonly cwd: string;
-    readonly nativeThreadId?: string;
-    readonly forkFrom?: CodexOpenForkOptions;
-  }) =>
-    | Promise<CodexThreadPolicyOverrides | undefined>
-    | CodexThreadPolicyOverrides
+  prepareThread?:
+    | ((context: {
+        readonly controls: CodexControlClient;
+        readonly cwd: string;
+        readonly nativeThreadId?: string | undefined;
+        readonly forkFrom?: CodexOpenForkOptions | undefined;
+      }) =>
+        | Promise<CodexThreadPolicyOverrides | undefined>
+        | CodexThreadPolicyOverrides
+        | undefined)
     | undefined;
   /**
    * Optional hook invoked immediately after `thread/start`, `thread/resume`, or `thread/fork` succeeds.
    * May inspect the applied `threadContext` or call `listMcpServerStatus`/`listSkills`;
    * throwing fails `open()` and stops the connection cleanly.
    */
-  verifyThread?: (context: {
-    readonly nativeThreadId: string;
-    readonly threadContext: CodexThreadContext;
-    readonly controls: CodexControlClient;
-  }) => Promise<void> | void;
+  verifyThread?:
+    | ((context: {
+        readonly nativeThreadId: string;
+        readonly threadContext: CodexThreadContext;
+        readonly controls: CodexControlClient;
+      }) => Promise<void> | void)
+    | undefined;
   /**
    * Optional observer invoked for every Codex app-server notification (both during `startTurn()`
    * and for external/TUI turns or lifecycle updates like `thread/status/changed` and `turn/started`).
    */
-  onNotification?: (event: CodexNotificationEvent) => void;
+  onNotification?: ((event: CodexNotificationEvent) => void) | undefined;
   /**
    * Optional handler for known server requests (`commandExecution`, `fileChange`, `permissions`
    * approvals, `requestUserInput`, and `mcpServer/elicitation/request`). By default invoked only
@@ -139,26 +99,27 @@ export interface CodexDriverConfig {
    * to also deliver requests arriving during a driver-initiated `startTurn()`.
    * When omitted, requests outside `startTurn()` are refused `-32601`.
    */
-  onServerRequest?: (event: CodexServerRequestEvent) => void;
+  onServerRequest?: ((event: CodexServerRequestEvent) => void) | undefined;
   /**
    * Controls which server requests reach `onServerRequest`: `'external-only'` (default, only
    * requests outside `startTurn()`) or `'all'` (also notifies `onServerRequest` during active
    * `startTurn()` runs with `duringActiveTurn: true`, backed by the same single-shot `turn.pending`
    * slot). Setting `'all'` requires `onServerRequest`.
    */
-  serverRequestDelivery?: 'external-only' | 'all';
+  serverRequestDelivery?: 'external-only' | 'all' | undefined;
   /**
    * Optional callback invoked immediately when an established session or control connection drops
    * unexpectedly before `close()` or caller signal abort (including idle socket disconnects).
    */
-  onDisconnect?: (error: Error) => void;
+  onDisconnect?: ((error: Error) => void) | undefined;
   /** Maximum incoming JSON-RPC frame/line size in bytes (WebSocket default 16 MiB, stdio default 8 MiB). */
-  maxFrameBytes?: number;
+  maxFrameBytes?: number | undefined;
   /** Read the bytes behind a `file` part's `reference`; without it a file part is refused. */
-  resolveFile?: (reference: string) => Promise<Uint8Array>;
+  resolveFile?: ((reference: string) => Promise<Uint8Array>) | undefined;
   /** Maximum decoded size of one image attachment in bytes. Default 5 MiB. */
-  maxImageBytes?: number;
-  ambient?: Readonly<Record<string, string | undefined>>;
+  maxImageBytes?: number | undefined;
+  /** Environment variables inherited by the spawned Codex CLI process. */
+  ambient?: Readonly<Record<string, string | undefined>> | undefined;
 }
 
 function validateCodexDriverOptions(config: CodexDriverConfig): void {
@@ -340,39 +301,60 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
       // Real `codex login status` writes its status line to stderr; check both streams.
       const text =
         `${decoder.decode(loginResult.stdout)}\n${decoder.decode(loginResult.stderr)}`.trim();
-      const signedIn = loginResult.exitCode === 0 && /(?:^|\n)Logged in/im.test(text);
-      const credential = !signedIn
-        ? 'none'
-        : /chatgpt/i.test(text)
+      const line = text
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .find((value) => /^Logged in(?:\s|$)/i.test(value));
+      const signedIn = loginResult.exitCode === 0 && line !== undefined;
+      const signedOut = loginResult.exitCode === 1 && /^Not logged in\s*$/im.test(text);
+      const credential = signedIn
+        ? /chatgpt/i.test(line)
           ? 'subscription'
-          : /api key/i.test(text)
+          : /api key/i.test(line)
             ? 'api-key'
-            : 'unknown';
-      let planLimits: PlanLimits | undefined = limits.get(parsed.profileId);
+            : 'unknown'
+        : signedOut
+          ? 'none'
+          : 'unknown';
+      let planLimits: PlanLimits | undefined;
       if (credential === 'subscription') {
         try {
           const answer = await ask(parsed, process.cwd(), (peer) =>
             peer.request('account/rateLimits/read'),
           );
-          const windows = codexPlanWindows(answer);
-          planLimits = mergeRateLimitEvent({ previous: planLimits, windows, now: new Date() });
+          const snapshot = codexPlanLimits(answer);
+          planLimits = {
+            ...snapshot,
+            windows: snapshot.windows.toSorted((a, b) => a.name.localeCompare(b.name)),
+          };
           limits.set(parsed.profileId, planLimits);
         } catch (error) {
           planLimits = planLimitsReadFailed({
-            previous: planLimits,
+            previous: limits.get(parsed.profileId),
             error: error instanceof Error ? error.message : String(error),
             now: new Date(),
           });
         }
       } else if (credential === 'api-key') {
+        limits.delete(parsed.profileId);
         planLimits = {
           answer: 'no-plan-limit',
           windows: [],
           observedAt: new Date().toISOString(),
         };
       }
+      if (signedOut) limits.delete(parsed.profileId);
+      if (credential === 'unknown') {
+        const previous = limits.get(parsed.profileId);
+        if (previous !== undefined)
+          planLimits = planLimitsReadFailed({
+            previous,
+            error: 'Codex login status could not confirm the credential',
+            now: new Date(),
+          });
+      }
       return {
-        login: { state: signedIn ? 'signed-in' : 'signed-out' },
+        login: { state: signedIn ? 'signed-in' : signedOut ? 'signed-out' : 'unknown' },
         effectiveCredential: credential,
         ...(planLimits && { planLimits }),
       };
@@ -381,7 +363,19 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
       return ask(
         input.profile,
         input.cwd,
-        (peer) => findCodexClientInput(peer, input.nativeThreadId, input.clientId),
+        async (peer) => {
+          const controls = createCodexControlClient({
+            peer,
+            imageOptions: config,
+            signal: new AbortController().signal,
+            ensureAlive: () => undefined,
+          });
+          const found = await findCodexTurnByClientId(controls, {
+            threadId: input.nativeThreadId,
+            clientId: input.clientId,
+          });
+          return found !== null;
+        },
         Math.max(FIND_INPUT_MAX_LINE_BYTES, config.maxFrameBytes ?? 0),
       );
     },

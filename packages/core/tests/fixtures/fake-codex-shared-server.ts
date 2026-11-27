@@ -97,7 +97,7 @@ function handleLine(line: string): void {
     case 'thread/unsubscribe': {
       const threadId = String(msg.params?.threadId ?? '');
       appendFileSync(unsubscribedLog, `${JSON.stringify({ threadId })}\n`);
-      send({ id: msg.id, result: {} });
+      send({ id: msg.id, result: { status: 'unsubscribed' } });
       return;
     }
     case 'thread/loaded/list': {
@@ -105,12 +105,51 @@ function handleLine(line: string): void {
       return;
     }
     case 'turn/start': {
+      const prevTurnId = nextTurnSeq > 0 ? `turn-${nextTurnSeq}` : undefined;
       nextTurnSeq += 1;
       const threadId = String(msg.params?.threadId ?? '');
       const turnId = `turn-${nextTurnSeq}`;
       const inputItems = Array.isArray(msg.params?.input) ? msg.params.input : [];
       const firstText = String(inputItems[0]?.text ?? '');
+      if (firstText.includes('EARLY_BEFORE_REPLY')) {
+        if (prevTurnId !== undefined) {
+          send({
+            method: 'turn/completed',
+            params: {
+              threadId,
+              turn: { id: prevTurnId, status: 'completed', items: [] },
+            },
+          });
+        }
+        send({
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId,
+            turnId,
+            itemId: `msg-${turnId}`,
+            delta: `${threadId}:${firstText}`,
+          },
+        });
+        send({
+          method: 'turn/completed',
+          params: {
+            threadId,
+            turn: { id: turnId, status: 'completed', items: [] },
+          },
+        });
+        send({ id: msg.id, result: { turn: { id: turnId } } });
+        return;
+      }
       send({ id: msg.id, result: { turn: { id: turnId } } });
+      if (firstText.includes('STALE_PREV_TURN_COMPLETED') && prevTurnId !== undefined) {
+        send({
+          method: 'turn/completed',
+          params: {
+            threadId,
+            turn: { id: prevTurnId, status: 'completed', items: [] },
+          },
+        });
+      }
       if (firstText.includes('CRASH_SERVER')) {
         setTimeout(() => {
           process.stderr.write('simulated shared server crash\n');

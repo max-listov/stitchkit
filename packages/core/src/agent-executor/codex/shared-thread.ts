@@ -4,12 +4,13 @@ import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
 import type { ExecutorProfileConfig } from '../profile';
 import { emitStartupPhase, sessionAbort } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
-import { bindCodexSessionThreadControls, createCodexControlClient } from './control-client';
+import { createCodexControlClient } from './control-client';
 import { createCodexHandlers } from './handlers';
 import {
   CodexStartedThreadSchema,
   type CodexThreadContext,
   extractCodexThreadContext,
+  parseCodexResponse,
 } from './protocol';
 import {
   answerCodexSessionRequest,
@@ -17,12 +18,13 @@ import {
   codexStopped,
   type PendingExternalCodexRequest,
 } from './request-answers';
-import {
-  type CodexOpenForkOptions,
-  type CodexSession,
-  type CodexThreadPolicyOverrides,
-  createCodexSessionMutators,
-} from './session-controls';
+import { bindCodexSessionThreadControls } from './session-bind';
+import { createCodexSessionMutators } from './session-controls';
+import type {
+  CodexOpenForkOptions,
+  CodexSession,
+  CodexThreadPolicyOverrides,
+} from './session-types';
 import {
   type CodexSessionConfig,
   createCodexStartTurn,
@@ -36,12 +38,12 @@ const CLOSE_UNSUBSCRIBE_TIMEOUT_MS = 5_000;
 export interface CodexSharedServerThreadInput {
   readonly cwd: string;
   /** Resume this native thread via `thread/resume` (mutually exclusive with `forkFrom`). */
-  readonly nativeThreadId?: string;
+  readonly nativeThreadId?: string | undefined;
   /** Open the thread by forking an existing thread via `thread/fork` (mutually exclusive with `nativeThreadId`). */
-  readonly forkFrom?: CodexOpenForkOptions;
+  readonly forkFrom?: CodexOpenForkOptions | undefined;
   /** Optional observer invoked with startup phases (`verifying`) during thread open. */
-  readonly onStartupPhase?: (phase: ExecutorStartupPhase) => void;
-  readonly signal?: AbortSignal;
+  readonly onStartupPhase?: ((phase: ExecutorStartupPhase) => void) | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface SharedThreadSlot {
@@ -262,7 +264,13 @@ export async function openSharedCodexThread(
     threadAbort.signal.throwIfAborted();
     state.ensureServerAlive();
 
-    const parsed = CodexStartedThreadSchema.parse(openedReply);
+    const openMethod =
+      threadInput.forkFrom !== undefined
+        ? 'thread/fork'
+        : threadInput.nativeThreadId !== undefined
+          ? 'thread/resume'
+          : 'thread/start';
+    const parsed = parseCodexResponse(openMethod, CodexStartedThreadSchema, openedReply);
     const threadId = parsed.thread.id;
     const threadContext: CodexThreadContext = extractCodexThreadContext(parsed);
     if (state.threads.has(threadId)) {

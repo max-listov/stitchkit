@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { createAcpDriver } from '../../src/agent-executor/acp/v1-driver';
 import { createClaudeCliDriver } from '../../src/agent-executor/claude/cli-driver';
 import { createCodexDriver } from '../../src/agent-executor/codex/driver';
+import { CodexNotificationParams } from '../../src/agent-executor/codex/notifications';
 import type { AgentEngineDriver } from '../../src/agent-executor/engine';
 import { projectExecutorDeltas } from '../../src/agent-executor/projection';
 import type { FakeEngineStep } from '../../src/agent-executor/testing/fake-engine';
@@ -21,7 +22,7 @@ const fixture = (name: string) =>
 
 async function records(
   file: string,
-): Promise<{ type?: string; method?: string; isReplay?: boolean }[]> {
+): Promise<{ type?: string; method?: string; params?: unknown; isReplay?: boolean }[]> {
   return (await readFile(fixture(`recorded/${file}`), 'utf8'))
     .trim()
     .split('\n')
@@ -34,6 +35,7 @@ async function replay(
   engine: 'claude-cli' | 'codex' | 'acp',
   steps: FakeEngineStep[],
   answer?: (delta: ExecutorDelta) => { kind: 'deny'; message: string } | undefined,
+  env: Record<string, string> = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'stitchkit-replay-'));
   try {
@@ -45,7 +47,7 @@ async function replay(
         profileId: 'replay',
         engine,
         home: join(root, 'home'),
-        env: { FAKE_ENGINE_SCENARIO: scenarioPath },
+        env: { FAKE_ENGINE_SCENARIO: scenarioPath, ...env },
       },
       cwd: root,
     });
@@ -120,6 +122,9 @@ test('Claude Code 2.1.330: a recorded Write asked of the host and denied', async
 
 test('Codex 0.162.1: a recorded turn the server failed ends failed, nothing unhandled', async () => {
   const recorded = await records('codex-0.162.1-failed-turn.jsonl');
+  const started = CodexNotificationParams['turn/started'].parse(
+    recorded.find((record) => record.method === 'turn/started')?.params,
+  );
   const deltas = await replay(
     (fake, ambient) =>
       createCodexDriver({ executable: process.execPath, prefixArgs: [fake], ambient }),
@@ -128,6 +133,11 @@ test('Codex 0.162.1: a recorded turn the server failed ends failed, nothing unha
     recorded.map(
       (record): FakeEngineStep => ({ do: 'emit', record: JSON.parse(JSON.stringify(record)) }),
     ),
+    undefined,
+    {
+      FAKE_CODEX_THREAD_EXTRA: JSON.stringify({ id: started.threadId }),
+      FAKE_CODEX_TURN_ID: started.turn.id,
+    },
   );
   expect(
     deltas

@@ -120,14 +120,50 @@ function createByteQueue() {
   };
 }
 
-/** Bounded streaming RFC 6455 server-to-client frame decoder (UTF-8 text + control frames). */
+/** Encode a single unmasked server-to-client RFC 6455 WebSocket frame. */
+export function encodeUnmaskedWsFrame(opcode: number, payload: Uint8Array): Buffer {
+  const len = payload.byteLength;
+  const headerLen = len < 126 ? 2 : len <= 0xffff ? 4 : 10;
+  const frame = Buffer.allocUnsafe(headerLen + len);
+  frame[0] = 0x80 | (opcode & 0x0f);
+  if (len < 126) {
+    frame[1] = len;
+  } else if (len <= 0xffff) {
+    frame[1] = 126;
+    frame.writeUInt16BE(len, 2);
+  } else {
+    frame[1] = 127;
+    const hi = Math.floor(len / 0x1_0000_0000);
+    const lo = len >>> 0;
+    frame.writeUInt32BE(hi, 2);
+    frame.writeUInt32BE(lo, 6);
+  }
+  Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength).copy(frame, headerLen);
+  return frame;
+}
+
+function unmaskInPlace(payload: Buffer, mask: Buffer): void {
+  const m0 = mask[0] ?? 0;
+  const m1 = mask[1] ?? 0;
+  const m2 = mask[2] ?? 0;
+  const m3 = mask[3] ?? 0;
+  for (let i = 0; i < payload.byteLength; i += 1) {
+    const k = (i & 3) === 0 ? m0 : (i & 3) === 1 ? m1 : (i & 3) === 2 ? m2 : m3;
+    payload[i] = (payload[i] ?? 0) ^ k;
+  }
+}
+
+/** Bounded streaming RFC 6455 frame decoder (UTF-8 text + control frames; unmasked by default, or masked when `expectMasked` is `true`). */
 export function createWsFrameDecoder(handlers: {
   maxFrameBytes: number;
+  expectMasked?: boolean;
   onMessage(text: string): void;
   onPing(payload: Buffer): void;
   onClose(code: number | undefined, reason: string): void;
   onProtocolError(message: string): void;
 }): { push(chunk: Buffer): void } {
+  const expectMasked = handlers.expectMasked === true;
+  const maskLen = expectMasked ? 4 : 0;
   const utf8 = new TextDecoder('utf-8', { fatal: true });
   const queue = createByteQueue();
   let fragments: Buffer[] | undefined;
@@ -150,8 +186,10 @@ export function createWsFrameDecoder(handlers: {
         const head2 = queue.peekBytes(2);
         const b0 = head2[0] ?? 0;
         const b1 = head2[1] ?? 0;
-        if ((b0 & 0x70) !== 0) return fail('Server WebSocket frame set reserved RSV bits');
-        if ((b1 & 0x80) !== 0) return fail('Server WebSocket frame must not be masked');
+        if ((b0 & 0x70) !== 0) return fail('WebSocket frame set reserved RSV bits');
+        const masked = (b1 & 0x80) !== 0;
+        if (expectMasked && !masked) return fail('Client WebSocket frame must be masked');
+        if (!expectMasked && masked) return fail('Server WebSocket frame must not be masked');
         const fin = (b0 & 0x80) !== 0;
         const opcode = b0 & 0x0f;
         const len7 = b1 & 0x7f;
@@ -207,9 +245,11 @@ export function createWsFrameDecoder(handlers: {
             }
           }
         }
-        if (queue.length < headerLen + payloadLen) break;
+        if (queue.length < headerLen + maskLen + payloadLen) break;
         queue.skip(headerLen);
+        const mask = expectMasked ? queue.consume(4) : undefined;
         const payload = queue.consume(payloadLen);
+        if (mask !== undefined) unmaskInPlace(payload, mask);
         if (opcode === 0x9) {
           handlers.onPing(payload);
         } else if (opcode === 0xa) {

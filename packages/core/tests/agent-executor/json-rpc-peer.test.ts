@@ -215,6 +215,35 @@ describe('json-rpc-peer', () => {
     await expect(peer2.request('after')).rejects.toBeUndefined();
   });
 
+  test('dispatches server requests in wire order before a following resolution or turn end', async () => {
+    const seen: string[] = [];
+    const writes: string[] = [];
+    const reply = Promise.withResolvers<string>();
+    const peer = createJsonRpcPeer({
+      header: 'omitted',
+      requestTimeoutMs: 500,
+      send: (line) => {
+        writes.push(line);
+      },
+      onRequest(method) {
+        seen.push(method);
+        return reply.promise;
+      },
+      onNotification(method) {
+        seen.push(method);
+      },
+    });
+    peer.receive(JSON.stringify({ id: 7, method: 'approval' }));
+    peer.receive(JSON.stringify({ method: 'serverRequest/resolved' }));
+    peer.receive(JSON.stringify({ method: 'turn/completed' }));
+    expect(seen).toEqual(['approval', 'serverRequest/resolved', 'turn/completed']);
+    expect(writes).toEqual([]);
+    reply.resolve('approved');
+    await flushMicrotasks();
+    expect(writes.map((line) => JSON.parse(line))).toEqual([{ id: 7, result: 'approved' }]);
+    peer.close();
+  });
+
   test('receive and notify are ignored after close', async () => {
     const writes: string[] = [];
     let requests = 0;
@@ -420,5 +449,66 @@ describe('json-rpc-peer', () => {
       },
     ]);
     peer.close(new Error('done'));
+  });
+
+  test('request accepts per-call AbortSignal without closing the peer and cleans up listeners', async () => {
+    const writes: string[] = [];
+    const peer = createJsonRpcPeer({
+      header: 'jsonrpc-2.0',
+      requestTimeoutMs: 5_000,
+      send: (line) => writes.push(line),
+    });
+
+    // 1. Pre-aborted signal rejects before writing anything to the wire.
+    const preAborted = new AbortController();
+    const preReason = new Error('pre-aborted');
+    preAborted.abort(preReason);
+    await expect(
+      peer.request('never/sent', { x: 1 }, { signal: preAborted.signal }),
+    ).rejects.toBe(preReason);
+    expect(writes).toEqual([]);
+
+    // 2. Mid-flight abort rejects only that call, keeps the peer usable, and ignores a late reply.
+    const controller = new AbortController();
+    const midReason = new Error('mid-flight-abort');
+    const abortedCall = peer.request('slow/op', { a: 1 }, { signal: controller.signal });
+    const siblingCall = peer.request('sibling/op', { b: 2 });
+    expect(writes).toHaveLength(2);
+    const abortedReq = JSON.parse(writes[0] ?? '{}');
+    const siblingReq = JSON.parse(writes[1] ?? '{}');
+
+    controller.abort(midReason);
+    await expect(abortedCall).rejects.toBe(midReason);
+
+    // Late reply for the aborted id is silently ignored and does not affect siblingCall.
+    peer.receive(
+      JSON.stringify({ jsonrpc: '2.0', id: abortedReq.id, result: { late: true } }),
+    );
+    peer.receive(
+      JSON.stringify({ jsonrpc: '2.0', id: siblingReq.id, result: { alive: true } }),
+    );
+    expect(await siblingCall).toEqual({ alive: true });
+
+    // 3. After normal resolution, aborting the caller signal later has no effect (listener removed).
+    const doneController = new AbortController();
+    let listeners = 0;
+    const origAdd = doneController.signal.addEventListener.bind(doneController.signal);
+    const origRemove = doneController.signal.removeEventListener.bind(doneController.signal);
+    doneController.signal.addEventListener = ((...args: Parameters<typeof origAdd>) => {
+      listeners += 1;
+      return origAdd(...args);
+    }) as typeof origAdd;
+    doneController.signal.removeEventListener = ((...args: Parameters<typeof origRemove>) => {
+      listeners -= 1;
+      return origRemove(...args);
+    }) as typeof origRemove;
+    const okCall = peer.request('fast/op', {}, { signal: doneController.signal });
+    const okReq = JSON.parse(writes[2] ?? '{}');
+    peer.receive(JSON.stringify({ jsonrpc: '2.0', id: okReq.id, result: { ok: 1 } }));
+    expect(await okCall).toEqual({ ok: 1 });
+    expect(listeners).toBe(0);
+    doneController.abort(new Error('late-abort'));
+
+    peer.close(new Error('cleanup'));
   });
 });

@@ -98,9 +98,9 @@ export async function openClaudeSession(
   input: {
     profile: ExecutorProfileConfig;
     cwd: string;
-    nativeThreadId?: string;
-    onStartupPhase?: (phase: ExecutorStartupPhase) => void;
-    signal?: AbortSignal;
+    nativeThreadId?: string | undefined;
+    onStartupPhase?: ((phase: ExecutorStartupPhase) => void) | undefined;
+    signal?: AbortSignal | undefined;
   },
 ): Promise<AgentEngineSession> {
   const { executable, prefix, ambient, limits } = config;

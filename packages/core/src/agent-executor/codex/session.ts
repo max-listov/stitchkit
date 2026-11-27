@@ -9,7 +9,6 @@ import {
 } from '../session-primitives';
 import { connectCodex } from './connect';
 import {
-  bindCodexSessionThreadControls,
   type CodexControlConnectInput,
   type CodexControlConnection,
   createCodexControlClient,
@@ -19,6 +18,7 @@ import {
   CodexStartedThreadSchema,
   type CodexThreadContext,
   extractCodexThreadContext,
+  parseCodexResponse,
 } from './protocol';
 import {
   answerCodexSessionRequest,
@@ -26,12 +26,13 @@ import {
   codexStopped,
   type PendingExternalCodexRequest,
 } from './request-answers';
-import {
-  type CodexOpenInput,
-  type CodexSession,
-  type CodexThreadPolicyOverrides,
-  createCodexSessionMutators,
-} from './session-controls';
+import { bindCodexSessionThreadControls } from './session-bind';
+import { createCodexSessionMutators } from './session-controls';
+import type {
+  CodexOpenInput,
+  CodexSession,
+  CodexThreadPolicyOverrides,
+} from './session-types';
 import {
   type CodexSessionConfig,
   createCodexStartTurn,
@@ -145,7 +146,13 @@ export async function openCodexSession(
       linked.signal.throwIfAborted();
     }
     const openedReply = await openCodexThreadRpc(peer, config, input, dynamicOverrides);
-    const parsed = CodexStartedThreadSchema.parse(openedReply);
+    const openMethod =
+      input.forkFrom !== undefined
+        ? 'thread/fork'
+        : input.nativeThreadId !== undefined
+          ? 'thread/resume'
+          : 'thread/start';
+    const parsed = parseCodexResponse(openMethod, CodexStartedThreadSchema, openedReply);
     threadId = parsed.thread.id;
     activeThreadId = threadId;
     threadContext = extractCodexThreadContext(parsed);

@@ -5,8 +5,13 @@ import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
 import { createTurnDeltaChannel } from '../session-primitives';
 import type { CodexConnectConfig } from './connect';
 import type { CodexControlClient } from './control-client';
+import { CodexStartingTurn } from './event-routing';
 import type { CodexNotificationEvent, CodexServerRequestEvent } from './handlers';
-import { CodexStartedTurnSchema, type CodexThreadContext } from './protocol';
+import {
+  CodexStartedTurnSchema,
+  type CodexThreadContext,
+  parseCodexResponse,
+} from './protocol';
 import {
   answerActiveCodexTurnRequest,
   type CodexTurnSlot,
@@ -14,16 +19,18 @@ import {
 } from './request-answers';
 import {
   buildCodexThreadPolicyParams,
-  buildCodexTurnStartParams,
-  type CodexOpenForkOptions,
-  type CodexOpenInput,
-  type CodexThreadPolicyOverrides,
-  type CodexTurn,
-  type CodexTurnInput,
+  buildCodexTurnStartRpcParams,
   validateCodexForkBounds,
   validateCodexPolicyOverrides,
   validateCodexTurnStartOverrides,
 } from './session-controls';
+import type {
+  CodexOpenForkOptions,
+  CodexOpenInput,
+  CodexThreadPolicyOverrides,
+  CodexTurn,
+  CodexTurnInput,
+} from './session-types';
 import { assertNonEmptyThreadId, assertOptionalNonEmptyNoNulString } from './thread-controls';
 import { inlineCodexParts } from './turn-input';
 
@@ -32,37 +39,41 @@ export interface CodexResumeThreadParams extends CodexThreadPolicyOverrides {
   /** Thread identifier to resume. */
   readonly threadId: string;
   /** Optional working directory override forwarded on `thread/resume`. */
-  readonly cwd?: string;
+  readonly cwd?: string | undefined;
   /** Defaults to `true` when omitted so large threads do not inline full history into the resume reply. */
-  readonly excludeTurns?: boolean;
+  readonly excludeTurns?: boolean | undefined;
 }
 
 export interface CodexSessionConfig extends DriverImageOptions, CodexConnectConfig {
-  readonly model?: string;
-  readonly modelProvider?: string;
+  readonly model?: string | undefined;
+  readonly modelProvider?: string | undefined;
   readonly approvalPolicy: CodexThreadPolicyOverrides['approvalPolicy'];
   readonly sandbox: CodexThreadPolicyOverrides['sandbox'];
-  readonly developerInstructions?: string;
-  readonly runtimeWorkspaceRoots?: readonly string[];
-  readonly config?: Readonly<Record<string, JsonRpcValue>>;
-  readonly prepareThread?: (context: {
-    readonly controls: CodexControlClient;
-    readonly cwd: string;
-    readonly nativeThreadId?: string;
-    readonly forkFrom?: CodexOpenForkOptions;
-  }) =>
-    | Promise<CodexThreadPolicyOverrides | undefined>
-    | CodexThreadPolicyOverrides
+  readonly developerInstructions?: string | undefined;
+  readonly runtimeWorkspaceRoots?: readonly string[] | undefined;
+  readonly config?: Readonly<Record<string, JsonRpcValue>> | undefined;
+  readonly prepareThread?:
+    | ((context: {
+        readonly controls: CodexControlClient;
+        readonly cwd: string;
+        readonly nativeThreadId?: string | undefined;
+        readonly forkFrom?: CodexOpenForkOptions | undefined;
+      }) =>
+        | Promise<CodexThreadPolicyOverrides | undefined>
+        | CodexThreadPolicyOverrides
+        | undefined)
     | undefined;
-  readonly verifyThread?: (context: {
-    readonly nativeThreadId: string;
-    readonly threadContext: CodexThreadContext;
-    readonly controls: CodexControlClient;
-  }) => Promise<void> | void;
-  readonly onNotification?: (event: CodexNotificationEvent) => void;
-  readonly onServerRequest?: (event: CodexServerRequestEvent) => void;
-  readonly serverRequestDelivery?: 'external-only' | 'all';
-  readonly onDisconnect?: (error: Error) => void;
+  readonly verifyThread?:
+    | ((context: {
+        readonly nativeThreadId: string;
+        readonly threadContext: CodexThreadContext;
+        readonly controls: CodexControlClient;
+      }) => Promise<void> | void)
+    | undefined;
+  readonly onNotification?: ((event: CodexNotificationEvent) => void) | undefined;
+  readonly onServerRequest?: ((event: CodexServerRequestEvent) => void) | undefined;
+  readonly serverRequestDelivery?: 'external-only' | 'all' | undefined;
+  readonly onDisconnect?: ((error: Error) => void) | undefined;
   readonly limits: Map<string, PlanLimits>;
 }
 
@@ -112,7 +123,11 @@ export function createCodexStartTurn(input: {
       if (input.getTurn() !== undefined) {
         throw new Error('A turn is already running in this Codex thread');
       }
-      validateCodexTurnStartOverrides(turnInput, input.activeModelProvider);
+      validateCodexTurnStartOverrides(
+        'CodexSession.startTurn',
+        turnInput,
+        input.activeModelProvider,
+      );
     },
     inline: (turnInput) =>
       inlineCodexParts(turnInput.input, {
@@ -121,13 +136,17 @@ export function createCodexStartTurn(input: {
         signal: input.signal,
       }),
     dispatch: async (turnInput, parts) => {
-      const turnParams = buildCodexTurnStartParams(
+      const turnParams = buildCodexTurnStartRpcParams(
+        'CodexSession.startTurn',
         input.threadId,
         turnInput,
         parts,
         input.activeModelProvider,
       );
+      const starting = new CodexStartingTurn();
       const turn: CodexTurnSlot = {
+        threadId: input.threadId,
+        starting,
         state: { turnId: turnInput.turnId, interruptRequested: false },
         channel: createTurnDeltaChannel(),
         pending: new Map(),
@@ -136,10 +155,17 @@ export function createCodexStartTurn(input: {
       let nativeTurnId: string;
       try {
         const started = await input.peer.request('turn/start', turnParams);
-        nativeTurnId = CodexStartedTurnSchema.parse(started).turn.id;
+        nativeTurnId = parseCodexResponse('turn/start', CodexStartedTurnSchema, started).turn
+          .id;
         turn.codexTurnId = nativeTurnId;
+        delete turn.starting;
+        starting.flush();
       } catch (error) {
         if (input.getTurn() === turn) input.setTurn(undefined);
+        if (turn.starting !== undefined) {
+          delete turn.starting;
+          starting.flush();
+        }
         throw error;
       }
       return {
@@ -230,8 +256,8 @@ export function openCodexThreadRpc(
   config: CodexSessionConfig,
   input: {
     readonly cwd: string;
-    readonly nativeThreadId?: string;
-    readonly forkFrom?: CodexOpenForkOptions;
+    readonly nativeThreadId?: string | undefined;
+    readonly forkFrom?: CodexOpenForkOptions | undefined;
   },
   dynamicOverrides: CodexThreadPolicyOverrides | undefined,
 ): Promise<JsonRpcValue> {

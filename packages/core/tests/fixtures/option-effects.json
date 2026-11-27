@@ -2252,6 +2252,12 @@
     "onPermissionRequest": {
       "test": "onUpdate and onPermissionRequest handle post-settle events via event.respond and session.respond, isolating observer errors and enforcing pending bounds"
     },
+    "permissionRequestDelivery": {
+      "test": "AcpSession.providerPid, open-only onProviderPid, probeCapabilities (independent of probeMode + close and delete cleanup), acpOptionChoices, and permissionRequestDelivery all"
+    },
+    "onProviderPid": {
+      "test": "AcpSession.providerPid, open-only onProviderPid, probeCapabilities (independent of probeMode + close and delete cleanup), acpOptionChoices, and permissionRequestDelivery all"
+    },
     "onDisconnect": {
       "test": "onDisconnect fires only for unexpected post-open disconnects and never on close, abort, or open failure"
     },
@@ -2278,6 +2284,58 @@
     },
     "requestTimeoutMs": {
       "test": "a missing agent, a signed-out agent and a silent agent each answer at once"
+    }
+  },
+  "FakeCodexAppServerConfig": {
+    "socketPath": {
+      "test": "createFakeCodexAppServer speaks WebSocket-over-Unix-socket JSON-RPC with real createCodexDriver"
+    },
+    "userAgent": {
+      "test": "createFakeCodexAppServer speaks WebSocket-over-Unix-socket JSON-RPC with real createCodexDriver"
+    },
+    "handlers": {
+      "test": "createFakeCodexAppServer speaks WebSocket-over-Unix-socket JSON-RPC with real createCodexDriver"
+    },
+    "maxFrameBytes": {
+      "test": "createFakeCodexAppServer speaks WebSocket-over-Unix-socket JSON-RPC with real createCodexDriver"
+    }
+  },
+  "FakeClaudeSdkQueryConfig": {
+    "turns": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "onRun": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "initializationResult": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "models": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "commands": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "account": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "mcpServers": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "contextUsage": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "usage": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "onSetPermissionMode": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "rewindFilesResult": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
+    },
+    "setMcpServersResult": {
+      "test": "createFakeClaudeSdkQuery drives multi-turn createClaudeSdkDriver flows, canUseTool, live controls, optional usage, and probeCapabilities"
     }
   },
   "ReplayExecutorDriverConfig": {

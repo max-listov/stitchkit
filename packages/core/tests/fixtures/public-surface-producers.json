@@ -270,16 +270,20 @@
     "InlineHandoffComposition": ["withInlineHandoffContext"]
   },
   "stitchkit/agent-executor/acp": {
+    "AcpConfigOptionChoice": ["acpOptionChoices"],
     "AcpDriver": ["createAcpDriver"]
   },
   "stitchkit/agent-executor/claude-sdk": {
     "ClaudeSdkDriver": ["createClaudeSdkDriver"]
   },
   "stitchkit/agent-executor/codex": {
-    "CodexDriver": ["createCodexDriver"]
+    "CodexDriver": ["createCodexDriver"],
+    "IterateCodexPagesResult": ["iterateCodexPages"]
   },
   "stitchkit/agent-executor/testing": {
     "AgentEngineDialectScenarios": ["replayDialectScenarios"],
+    "FakeClaudeSdkQueryHarness": ["createFakeClaudeSdkQuery"],
+    "FakeCodexAppServer": ["createFakeCodexAppServer"],
     "ReplayExecutorDriver": ["createReplayExecutorDriver"],
     "ReplayGate": ["createReplayGate"]
   },

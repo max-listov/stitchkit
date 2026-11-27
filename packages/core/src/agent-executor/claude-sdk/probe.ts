@@ -20,11 +20,11 @@ const DEFAULT_PROBE_TIMEOUT_MS = 30_000;
 export interface ClaudeSdkProbeCapabilitiesInput {
   readonly profile: ExecutorProfileConfig;
   readonly cwd: string;
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /** Maximum milliseconds to wait before aborting and closing the probe query. Default 30 000 ms. */
-  readonly timeoutMs?: number;
+  readonly timeoutMs?: number | undefined;
   /** When `true`, also pull subscription plan limits via `get_usage({ skipBehaviors: true })`. */
-  readonly includeUsage?: boolean;
+  readonly includeUsage?: boolean | undefined;
 }
 
 /** Result of a non-inference {@link ClaudeSdkDriver.probeCapabilities} call. */

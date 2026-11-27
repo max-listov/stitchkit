@@ -1,12 +1,42 @@
+import { withLinkedAbortSignals } from '../../internal/abort-race';
 import type { InteractionReply } from '../executor-contract';
 import type { DriverImageOptions } from '../image-input';
 import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
 import type { ExecutorProfileConfig } from '../profile';
-import { safeJsonValue } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
+import { createCodexReadMethods } from './control-read-methods';
+import {
+  type CodexApprovalPolicy,
+  type CodexCollaborationMode,
+  type CodexSandboxPolicy,
+  CodexStartedTurnSchema,
+  type CodexTurnsPage,
+  parseCodexResponse,
+} from './protocol';
+import {
+  type CodexAccountReadResponse,
+  type CodexCollaborationModesResponse,
+  type CodexConfigReadResponse,
+  type CodexItemsPage,
+  type CodexLoadedThreadsPage,
+  type CodexMcpServerStatusPage,
+  type CodexModelsPage,
+  type CodexRateLimitsResponse,
+  type CodexReadThreadResponse,
+  type CodexResumeThreadResponse,
+  CodexResumeThreadResponseSchema,
+  type CodexSkillsListResponse,
+  type CodexThreadMetadataUpdateResponse,
+  type CodexThreadsPage,
+  type CodexThreadUnarchiveResponse,
+  type CodexThreadUnsubscribeResponse,
+} from './responses';
+import {
+  buildCodexTurnStartRpcParams,
+  validateCodexTurnStartOverrides,
+} from './session-controls';
 import {
   assertNonEmptyThreadId,
-  assertOptionalLimit,
   assertOptionalNonEmptyString,
   assertRequiredNonEmptyString,
   type CodexInjectItemsParams,
@@ -15,10 +45,12 @@ import {
   type CodexListThreadsParams,
   type CodexRevertThreadParams,
   type CodexRevertThreadResult,
+  type CodexRpcCallOptions,
   type CodexSetThreadNameParams,
   type CodexThreadIdParams,
   type CodexUpdateThreadMetadataParams,
   createCodexThreadControlMethods,
+  validateCodexRpcCallOptions,
 } from './thread-controls';
 import { buildCodexResumeThreadParams, type CodexResumeThreadParams } from './thread-open';
 import { type CodexTurnInputPart, inlineCodexParts, sendCodexTurnSteer } from './turn-input';
@@ -28,7 +60,7 @@ export interface CodexReadThreadParams {
   /** Thread identifier to inspect. */
   readonly threadId: string;
   /** When `true`, include full rollout turns (deprecated for large threads). */
-  readonly includeTurns?: boolean;
+  readonly includeTurns?: boolean | undefined;
 }
 
 /** Parameters for Codex `thread/turns/list`. */
@@ -36,13 +68,13 @@ export interface CodexListTurnsParams {
   /** Thread identifier whose turns to list. */
   readonly threadId: string;
   /** Opaque continuation cursor returned by a previous page, or `null` for the first page. */
-  readonly cursor?: string | null;
+  readonly cursor?: string | null | undefined;
   /** Optional page size (`uint32`). */
-  readonly limit?: number;
+  readonly limit?: number | undefined;
   /** Level of item detail per turn (`notLoaded`, `summary`, or `full`). */
-  readonly itemsView?: 'notLoaded' | 'summary' | 'full';
+  readonly itemsView?: 'notLoaded' | 'summary' | 'full' | undefined;
   /** Pagination direction (`asc` or `desc`). */
-  readonly sortDirection?: 'asc' | 'desc';
+  readonly sortDirection?: 'asc' | 'desc' | undefined;
 }
 
 /** Starting position for a `thread/items/list` page: opaque string cursor or exclusive item anchor. */
@@ -53,9 +85,9 @@ export type CodexThreadItemsCursor =
 /** Output deferral preferences accepted by Codex `thread/items/list`. */
 export interface CodexThreadItemsDeferOutput {
   /** Defer nonempty output from successful commands. */
-  readonly commandExecution?: boolean;
+  readonly commandExecution?: boolean | undefined;
   /** Defer nonempty plain-text results from successful MCP tool calls. */
-  readonly mcpToolCall?: boolean;
+  readonly mcpToolCall?: boolean | undefined;
 }
 
 /** Parameters for Codex `thread/items/list`. */
@@ -63,15 +95,15 @@ export interface CodexListItemsParams {
   /** Thread identifier whose items to list. */
   readonly threadId: string;
   /** Optional turn identifier to filter items to one turn. */
-  readonly turnId?: string;
+  readonly turnId?: string | undefined;
   /** Opaque continuation cursor, exclusive item anchor within `turnId`, or `null` for the first page. */
-  readonly cursor?: CodexThreadItemsCursor | null;
+  readonly cursor?: CodexThreadItemsCursor | null | undefined;
   /** Optional page size (`uint32`). */
-  readonly limit?: number;
+  readonly limit?: number | undefined;
   /** Pagination direction (`asc` or `desc`). */
-  readonly sortDirection?: 'asc' | 'desc';
+  readonly sortDirection?: 'asc' | 'desc' | undefined;
   /** Output deferral flags for single-turn item reads. */
-  readonly deferOutput?: CodexThreadItemsDeferOutput;
+  readonly deferOutput?: CodexThreadItemsDeferOutput | undefined;
 }
 
 /** Parameters for steering an active Codex turn on any thread via {@link CodexControlClient.steerTurn} (`turn/steer`). */
@@ -83,74 +115,159 @@ export interface CodexControlSteerTurnParams {
   /** Ordered turn input parts (text, resolved images, `localImage`, and `skill` items). */
   readonly input: readonly CodexTurnInputPart[];
   /** Optional client-generated idempotency identifier (`clientUserMessageId`). */
-  readonly clientId?: string;
+  readonly clientId?: string | undefined;
 }
 
-/** Read-only and inspection RPCs exposed during thread setup (`prepareThread` / `verifyThread`), on {@link CodexControlConnection}, and on {@link CodexSession}. */
+/** Parameters for starting a turn on any thread via {@link CodexControlClient.startThreadTurn} (`turn/start`) without occupying a local session turn slot. */
+export interface CodexControlStartTurnParams {
+  /** Thread identifier on which to start the turn. */
+  readonly threadId: string;
+  /** Required client-generated idempotency identifier (`clientUserMessageId`). */
+  readonly clientId: string;
+  /** Ordered turn input parts (text, resolved images, `localImage`, and `skill` items). */
+  readonly input: readonly CodexTurnInputPart[];
+  /** Optional per-turn working directory override forwarded on `turn/start`. */
+  readonly cwd?: string | undefined;
+  /** Optional per-turn model override forwarded on `turn/start`. */
+  readonly model?: string | undefined;
+  /** Optional per-turn reasoning effort override (forwarded to Codex as `effort`). */
+  readonly reasoningEffort?: string | undefined;
+  /** Optional per-turn collaboration mode override (`plan` or `default`). */
+  readonly collaborationMode?: CodexCollaborationMode | undefined;
+  /** Optional per-turn approval policy override. */
+  readonly approvalPolicy?: CodexApprovalPolicy | undefined;
+  /** Optional per-turn sandbox policy override (`sandboxPolicy`). */
+  readonly sandboxPolicy?: CodexSandboxPolicy | undefined;
+  /** Optional per-turn runtime workspace roots override. */
+  readonly runtimeWorkspaceRoots?: readonly string[] | undefined;
+}
+
+/** Thread, turn, inspection, and catalog RPCs exposed during thread setup (`prepareThread` / `verifyThread`), on {@link CodexControlConnection}, {@link CodexSharedServer}, and {@link CodexSession}. */
 export interface CodexControlClient {
   /** Read effective Codex configuration (`config/read`). */
-  readConfig(params?: {
-    readonly cwd?: string;
-    readonly includeLayers?: boolean;
-  }): Promise<JsonRpcValue>;
+  readConfig(
+    params?: {
+      readonly cwd?: string | undefined;
+      readonly includeLayers?: boolean | undefined;
+    },
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexConfigReadResponse>;
   /** Read thread metadata and live status (`thread/read`). */
-  readThread(params: CodexReadThreadParams): Promise<JsonRpcValue>;
+  readThread(
+    params: CodexReadThreadParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexReadThreadResponse>;
   /** List collaboration mode presets (`collaborationMode/list`). */
-  listCollaborationModes(): Promise<JsonRpcValue>;
+  listCollaborationModes(
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexCollaborationModesResponse>;
   /** List turns in a thread (`thread/turns/list`). */
-  listTurns(params: CodexListTurnsParams): Promise<JsonRpcValue>;
+  listTurns(
+    params: CodexListTurnsParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexTurnsPage>;
   /** List items in a thread or single turn (`thread/items/list`). */
-  listItems(params: CodexListItemsParams): Promise<JsonRpcValue>;
+  listItems(
+    params: CodexListItemsParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexItemsPage>;
   /** List MCP servers and their statuses (`mcpServerStatus/list`). */
-  listMcpServerStatus(params?: {
-    readonly cursor?: string;
-    readonly limit?: number;
-    readonly threadId?: string;
-    readonly serverName?: string;
-    readonly detail?: string;
-  }): Promise<JsonRpcValue>;
+  listMcpServerStatus(
+    params?: {
+      readonly cursor?: string | undefined;
+      readonly limit?: number | undefined;
+      readonly threadId?: string | undefined;
+      readonly serverName?: string | undefined;
+      readonly detail?: string | undefined;
+    },
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexMcpServerStatusPage>;
   /** List discovered Codex skills (`skills/list`). */
-  listSkills(params?: {
-    readonly cwds?: readonly string[];
-    readonly forceReload?: boolean;
-  }): Promise<JsonRpcValue>;
+  listSkills(
+    params?: {
+      readonly cwds?: readonly string[] | undefined;
+      readonly forceReload?: boolean | undefined;
+    },
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexSkillsListResponse>;
   /** List available models (`model/list`). */
-  listModels(params?: {
-    readonly cursor?: string;
-    readonly limit?: number;
-    readonly includeHidden?: boolean;
-    readonly modelProvider?: string;
-  }): Promise<JsonRpcValue>;
+  listModels(
+    params?: {
+      readonly cursor?: string | undefined;
+      readonly limit?: number | undefined;
+      readonly includeHidden?: boolean | undefined;
+      readonly modelProvider?: string | undefined;
+    },
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexModelsPage>;
   /** Read active account information (`account/read`). */
-  readAccount(params?: { readonly refreshToken?: boolean }): Promise<JsonRpcValue>;
-  /** Read the raw `account/rateLimits/read` response envelope. */
-  readRateLimits(): Promise<JsonRpcValue>;
+  readAccount(
+    params?: { readonly refreshToken?: boolean | undefined },
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexAccountReadResponse>;
+  /** Read the `account/rateLimits/read` response envelope. */
+  readRateLimits(options?: CodexRpcCallOptions): Promise<CodexRateLimitsResponse>;
   /** Revert a thread's durable history to before `beforeTurnId` (`thread/revert`). */
-  revertThread(params: CodexRevertThreadParams): Promise<CodexRevertThreadResult>;
+  revertThread(
+    params: CodexRevertThreadParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexRevertThreadResult>;
   /** Append raw Responses API items to a thread's model-visible history (`thread/inject_items`). */
-  injectItems(params: CodexInjectItemsParams): Promise<JsonRpcValue>;
+  injectItems(params: CodexInjectItemsParams, options?: CodexRpcCallOptions): Promise<void>;
   /** Unsubscribe this connection from a thread (`thread/unsubscribe`). */
-  unsubscribeThread(params: CodexThreadIdParams): Promise<JsonRpcValue>;
+  unsubscribeThread(
+    params: CodexThreadIdParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexThreadUnsubscribeResponse>;
   /** List threads with pagination and bounded filters (`thread/list`). */
-  listThreads(params?: CodexListThreadsParams): Promise<JsonRpcValue>;
+  listThreads(
+    params?: CodexListThreadsParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexThreadsPage>;
   /** List thread identifiers currently loaded in memory (`thread/loaded/list`). */
-  listLoadedThreads(params?: CodexListLoadedThreadsParams): Promise<JsonRpcValue>;
+  listLoadedThreads(
+    params?: CodexListLoadedThreadsParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexLoadedThreadsPage>;
   /** Archive a thread (`thread/archive`). */
-  archiveThread(params: CodexThreadIdParams): Promise<JsonRpcValue>;
+  archiveThread(params: CodexThreadIdParams, options?: CodexRpcCallOptions): Promise<void>;
   /** Unarchive a thread (`thread/unarchive`). */
-  unarchiveThread(params: CodexThreadIdParams): Promise<JsonRpcValue>;
+  unarchiveThread(
+    params: CodexThreadIdParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexThreadUnarchiveResponse>;
   /** Patch stored metadata (such as Git info) for a thread (`thread/metadata/update`). */
-  updateThreadMetadata(params: CodexUpdateThreadMetadataParams): Promise<JsonRpcValue>;
+  updateThreadMetadata(
+    params: CodexUpdateThreadMetadataParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexThreadMetadataUpdateResponse>;
   /** Set a thread's display name (`thread/name/set`). */
-  setThreadName(params: CodexSetThreadNameParams): Promise<JsonRpcValue>;
-  /** Resume a thread (`thread/resume`, defaulting `excludeTurns` to `true`); returns the raw response without mutating a session's cached `threadContext`. */
-  resumeThread(params: CodexResumeThreadParams): Promise<JsonRpcValue>;
+  setThreadName(
+    params: CodexSetThreadNameParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<void>;
+  /** Resume a thread (`thread/resume`, defaulting `excludeTurns` to `true`); returns the typed response without mutating a session's cached `threadContext`. */
+  resumeThread(
+    params: CodexResumeThreadParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexResumeThreadResponse>;
+  /** Start a turn on any thread via `turn/start` without subscribing to deltas or occupying a local session turn slot. */
+  startThreadTurn(
+    params: CodexControlStartTurnParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<{ readonly turnId: string }>;
   /** Interrupt a running turn on a thread (`turn/interrupt`), including external/TUI or reconnected turns. */
-  interruptTurn(params: CodexInterruptTurnParams): Promise<void>;
+  interruptTurn(
+    params: CodexInterruptTurnParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<void>;
   /** Steer an active turn on a thread by explicit `expectedTurnId` (`turn/steer`). */
-  steerTurn(params: CodexControlSteerTurnParams): Promise<{ readonly turnId: string }>;
+  steerTurn(
+    params: CodexControlSteerTurnParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<{ readonly turnId: string }>;
   /** Request context compaction for a thread (`thread/compact/start`). */
-  compactThread(params: CodexThreadIdParams): Promise<void>;
+  compactThread(params: CodexThreadIdParams, options?: CodexRpcCallOptions): Promise<void>;
 }
 
 /** Input to {@link CodexDriver.connectControl} for a threadless app-server connection. */
@@ -158,8 +275,8 @@ export interface CodexControlConnectInput {
   readonly profile: ExecutorProfileConfig;
   readonly cwd: string;
   /** Optional observer invoked with startup phases (`spawning`, `initializing`) during connect. */
-  readonly onStartupPhase?: (phase: ExecutorStartupPhase) => void;
-  readonly signal?: AbortSignal;
+  readonly onStartupPhase?: ((phase: ExecutorStartupPhase) => void) | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** Threadless connection to a Codex app-server for catalog/config reads and external observation. */
@@ -174,29 +291,6 @@ export interface CodexControlConnection extends CodexControlClient {
   close(): Promise<void>;
 }
 
-function assertOptionalItemsCursor(
-  cursor: CodexThreadItemsCursor | null | undefined,
-  caller: string,
-): void {
-  if (cursor === undefined || cursor === null) return;
-  if (typeof cursor === 'string') {
-    if (cursor.trim().length === 0) {
-      throw new TypeError(`[stitchkit] ${caller}: cursor must be a non-empty string`);
-    }
-    return;
-  }
-  if (
-    typeof cursor !== 'object' ||
-    cursor.type !== 'item' ||
-    typeof cursor.itemId !== 'string' ||
-    cursor.itemId.trim().length === 0
-  ) {
-    throw new TypeError(
-      `[stitchkit] ${caller}: item cursor must have type "item" and a non-empty itemId`,
-    );
-  }
-}
-
 /** Create the read/inspection and turn/thread control facade backed by an active Codex JSON-RPC peer. */
 export function createCodexControlClient(input: {
   peer: JsonRpcPeer;
@@ -208,102 +302,48 @@ export function createCodexControlClient(input: {
   const call = async (
     method: string,
     params?: Record<string, JsonRpcValue>,
+    rpcOptions?: CodexRpcCallOptions,
   ): Promise<JsonRpcValue> => {
+    validateCodexRpcCallOptions(rpcOptions);
     input.ensureAlive();
-    return input.peer.request(method, params);
+    return input.peer.request(method, params, rpcOptions);
   };
   return {
-    readConfig(params) {
-      return call('config/read', {
-        ...(params?.cwd !== undefined && { cwd: params.cwd }),
-        ...(params?.includeLayers !== undefined && { includeLayers: params.includeLayers }),
-      });
-    },
-    async readThread(params) {
-      const threadId = assertNonEmptyThreadId(
-        params.threadId,
-        'CodexControlClient.readThread',
+    ...createCodexReadMethods(call),
+    async resumeThread(params, rpcOptions) {
+      input.ensureAlive();
+      return parseCodexResponse(
+        'thread/resume',
+        CodexResumeThreadResponseSchema,
+        await call('thread/resume', buildCodexResumeThreadParams(params), rpcOptions),
       );
-      return call('thread/read', {
-        threadId,
-        ...(params.includeTurns !== undefined && { includeTurns: params.includeTurns }),
-      });
     },
-    listCollaborationModes() {
-      return call('collaborationMode/list', {});
-    },
-    async listTurns(params) {
-      const caller = 'CodexControlClient.listTurns';
+    async startThreadTurn(params, rpcOptions) {
+      input.ensureAlive();
+      validateCodexRpcCallOptions(rpcOptions);
+      const caller = 'CodexControlClient.startThreadTurn';
       const threadId = assertNonEmptyThreadId(params.threadId, caller);
-      assertOptionalLimit(params.limit, caller);
-      if (
-        params.cursor !== undefined &&
-        params.cursor !== null &&
-        typeof params.cursor !== 'string'
-      ) {
-        throw new TypeError(`[stitchkit] ${caller}: cursor must be a string or null`);
-      }
-      return call('thread/turns/list', {
-        threadId,
-        ...(params.cursor !== undefined && { cursor: params.cursor }),
-        ...(params.limit !== undefined && { limit: params.limit }),
-        ...(params.itemsView !== undefined && { itemsView: params.itemsView }),
-        ...(params.sortDirection !== undefined && { sortDirection: params.sortDirection }),
-      });
-    },
-    async listItems(params) {
-      const threadId = assertNonEmptyThreadId(params.threadId, 'CodexControlClient.listItems');
-      assertOptionalLimit(params.limit, 'CodexControlClient.listItems');
-      assertOptionalNonEmptyString(params.turnId, 'turnId', 'CodexControlClient.listItems');
-      assertOptionalItemsCursor(params.cursor, 'CodexControlClient.listItems');
-      return call('thread/items/list', {
-        threadId,
-        ...(params.turnId !== undefined && { turnId: params.turnId }),
-        ...(params.cursor !== undefined && { cursor: safeJsonValue(params.cursor) }),
-        ...(params.limit !== undefined && { limit: params.limit }),
-        ...(params.sortDirection !== undefined && { sortDirection: params.sortDirection }),
-        ...(params.deferOutput !== undefined && {
-          deferOutput: safeJsonValue(params.deferOutput),
+      validateCodexTurnStartOverrides(caller, params);
+      const parts = await withLinkedAbortSignals(rpcOptions?.signal, input.signal, (signal) =>
+        inlineCodexParts(params.input, {
+          ...input.imageOptions,
+          driverLabel: 'The Codex driver',
+          signal,
         }),
-      });
-    },
-    listMcpServerStatus(params) {
-      return call('mcpServerStatus/list', {
-        ...(params?.cursor !== undefined && { cursor: params.cursor }),
-        ...(params?.limit !== undefined && { limit: params.limit }),
-        ...(params?.threadId !== undefined && { threadId: params.threadId }),
-        ...(params?.serverName !== undefined && { serverName: params.serverName }),
-        ...(params?.detail !== undefined && { detail: params.detail }),
-      });
-    },
-    listSkills(params) {
-      return call('skills/list', {
-        ...(params?.cwds !== undefined && { cwds: [...params.cwds] }),
-        ...(params?.forceReload !== undefined && { forceReload: params.forceReload }),
-      });
-    },
-    listModels(params) {
-      return call('model/list', {
-        ...(params?.cursor !== undefined && { cursor: params.cursor }),
-        ...(params?.limit !== undefined && { limit: params.limit }),
-        ...(params?.includeHidden !== undefined && { includeHidden: params.includeHidden }),
-        ...(params?.modelProvider !== undefined && { modelProvider: params.modelProvider }),
-      });
-    },
-    readAccount(params) {
-      return call('account/read', {
-        ...(params?.refreshToken !== undefined && { refreshToken: params.refreshToken }),
-      });
-    },
-    readRateLimits() {
-      return call('account/rateLimits/read');
-    },
-    async resumeThread(params) {
+      );
       input.ensureAlive();
-      return call('thread/resume', buildCodexResumeThreadParams(params));
+      validateCodexRpcCallOptions(rpcOptions);
+      const rpcParams = buildCodexTurnStartRpcParams(caller, threadId, params, parts);
+      const started = parseCodexResponse(
+        'turn/start',
+        CodexStartedTurnSchema,
+        await call('turn/start', rpcParams, rpcOptions),
+      );
+      return { turnId: started.turn.id };
     },
-    async steerTurn(params) {
+    async steerTurn(params, rpcOptions) {
       input.ensureAlive();
+      validateCodexRpcCallOptions(rpcOptions);
       const caller = 'CodexControlClient.steerTurn';
       const threadId = assertNonEmptyThreadId(params.threadId, caller);
       const expectedTurnId = assertRequiredNonEmptyString(
@@ -312,18 +352,25 @@ export function createCodexControlClient(input: {
         caller,
       );
       assertOptionalNonEmptyString(params.clientId, 'clientId', caller);
-      const parts = await inlineCodexParts(params.input, {
-        ...input.imageOptions,
-        driverLabel: 'The Codex driver',
-        signal: input.signal,
-      });
+      const parts = await withLinkedAbortSignals(rpcOptions?.signal, input.signal, (signal) =>
+        inlineCodexParts(params.input, {
+          ...input.imageOptions,
+          driverLabel: 'The Codex driver',
+          signal,
+        }),
+      );
       input.ensureAlive();
-      return sendCodexTurnSteer(input.peer, {
-        threadId,
-        expectedTurnId,
-        parts,
-        ...(params.clientId !== undefined && { clientId: params.clientId }),
-      });
+      validateCodexRpcCallOptions(rpcOptions);
+      return sendCodexTurnSteer(
+        input.peer,
+        {
+          threadId,
+          expectedTurnId,
+          parts,
+          ...(params.clientId !== undefined && { clientId: params.clientId }),
+        },
+        rpcOptions,
+      );
     },
     ...createCodexThreadControlMethods(call, {
       ensureAlive: input.ensureAlive,
@@ -331,108 +378,5 @@ export function createCodexControlClient(input: {
         onBeforeInterruptTurn: input.onBeforeInterruptTurn,
       }),
     }),
-  };
-}
-
-/** Bind all thread-scoped {@link CodexControlClient} methods to default `threadId` to a session's `nativeThreadId`. */
-export function bindCodexSessionThreadControls(
-  controlClient: CodexControlClient,
-  threadId: string,
-) {
-  return {
-    readThread(
-      params?: Omit<CodexReadThreadParams, 'threadId'> & { readonly threadId?: string },
-    ) {
-      return controlClient.readThread({
-        ...params,
-        threadId: params?.threadId ?? threadId,
-      });
-    },
-    listTurns(
-      params?: Omit<CodexListTurnsParams, 'threadId'> & { readonly threadId?: string },
-    ) {
-      return controlClient.listTurns({
-        ...params,
-        threadId: params?.threadId ?? threadId,
-      });
-    },
-    listItems(
-      params?: Omit<CodexListItemsParams, 'threadId'> & { readonly threadId?: string },
-    ) {
-      return controlClient.listItems({
-        ...params,
-        threadId: params?.threadId ?? threadId,
-      });
-    },
-    resumeThread(
-      params?: Omit<CodexResumeThreadParams, 'threadId'> & { readonly threadId?: string },
-    ) {
-      return controlClient.resumeThread({
-        ...params,
-        threadId: params?.threadId ?? threadId,
-      });
-    },
-    revertThread(
-      params: Omit<CodexRevertThreadParams, 'threadId'> & { readonly threadId?: string },
-    ) {
-      return controlClient.revertThread({
-        ...params,
-        threadId: params.threadId ?? threadId,
-      });
-    },
-    injectItems(
-      params: Omit<CodexInjectItemsParams, 'threadId'> & { readonly threadId?: string },
-    ) {
-      return controlClient.injectItems({
-        ...params,
-        threadId: params.threadId ?? threadId,
-      });
-    },
-    unsubscribeThread(params?: { readonly threadId?: string }) {
-      return controlClient.unsubscribeThread({
-        threadId: params?.threadId ?? threadId,
-      });
-    },
-    archiveThread(params?: { readonly threadId?: string }) {
-      return controlClient.archiveThread({
-        threadId: params?.threadId ?? threadId,
-      });
-    },
-    unarchiveThread(params?: { readonly threadId?: string }) {
-      return controlClient.unarchiveThread({
-        threadId: params?.threadId ?? threadId,
-      });
-    },
-    updateThreadMetadata(
-      params?: Omit<CodexUpdateThreadMetadataParams, 'threadId'> & {
-        readonly threadId?: string;
-      },
-    ) {
-      return controlClient.updateThreadMetadata({
-        ...params,
-        threadId: params?.threadId ?? threadId,
-      });
-    },
-    setThreadName(
-      params: Omit<CodexSetThreadNameParams, 'threadId'> & { readonly threadId?: string },
-    ) {
-      return controlClient.setThreadName({
-        ...params,
-        threadId: params.threadId ?? threadId,
-      });
-    },
-    interruptTurn(
-      params: Omit<CodexInterruptTurnParams, 'threadId'> & { readonly threadId?: string },
-    ) {
-      return controlClient.interruptTurn({
-        ...params,
-        threadId: params.threadId ?? threadId,
-      });
-    },
-    compactThread(params?: { readonly threadId?: string }) {
-      return controlClient.compactThread({
-        threadId: params?.threadId ?? threadId,
-      });
-    },
   };
 }

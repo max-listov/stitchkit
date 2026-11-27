@@ -1,10 +1,49 @@
+import { abortReason } from '../../internal/abort-race';
+import { assertTimerMs } from '../../internal/deadline';
 import { assertNonNegativeSafeInteger } from '../../internal/positive-integer';
 import type { JsonRpcValue } from '../json-rpc-peer';
 import { safeJsonValue } from '../session-primitives';
-import { CodexThreadRevertResponseSchema } from './protocol';
+import {
+  type CodexThread,
+  CodexThreadRevertResponseSchema,
+  type CodexThreadSourceKind,
+  parseCodexResponse,
+} from './protocol';
+import {
+  CodexEmptyResponseSchema,
+  type CodexLoadedThreadsPage,
+  CodexLoadedThreadsPageSchema,
+  type CodexThreadMetadataUpdateResponse,
+  CodexThreadMetadataUpdateResponseSchema,
+  type CodexThreadsPage,
+  CodexThreadsPageSchema,
+  type CodexThreadUnarchiveResponse,
+  CodexThreadUnarchiveResponseSchema,
+  type CodexThreadUnsubscribeResponse,
+  CodexThreadUnsubscribeResponseSchema,
+} from './responses';
+import { buildListThreadsPayload, validateGitInfoUpdate } from './thread-list-query';
 
 const MAX_UINT32 = 0xffff_ffff;
-const MAX_THREAD_LIST_IDS = 100;
+
+/** Per-call timeout and cancellation options accepted by {@link CodexControlClient} and {@link CodexSession} RPC methods. */
+export interface CodexRpcCallOptions {
+  /** Override the JSON-RPC request timeout in milliseconds for this call only. */
+  readonly timeoutMs?: number | undefined;
+  /** Cancel only this RPC call when aborted, leaving the underlying connection open. */
+  readonly signal?: AbortSignal | undefined;
+}
+
+/** Eagerly validate per-call RPC timeout and abort state before doing async pre-work or side effects. */
+export function validateCodexRpcCallOptions(options: CodexRpcCallOptions | undefined): void {
+  if (options === undefined) return;
+  if (options.timeoutMs !== undefined) {
+    assertTimerMs('timeoutMs', options.timeoutMs);
+  }
+  if (options.signal?.aborted) {
+    throw abortReason(options.signal);
+  }
+}
 
 /** Thread identifier target shared by single-thread Codex RPCs (`thread/unsubscribe`, `thread/archive`, `thread/unarchive`, `thread/compact/start`). */
 export interface CodexThreadIdParams {
@@ -31,7 +70,7 @@ export interface CodexRevertThreadParams {
 /** Result returned by Codex `thread/revert`. */
 export interface CodexRevertThreadResult {
   /** Updated loaded thread metadata (`turns` is empty; hydrate via `thread/turns/list`). */
-  readonly thread: JsonRpcValue;
+  readonly thread: CodexThread;
   /** Opaque cursor for hydrating retained turns backwards, or `null` when absent. */
   readonly turnsBackwardsCursor: string | null;
   /** Opaque cursor for hydrating retained items backwards, or `null` when absent. */
@@ -53,69 +92,56 @@ export type CodexThreadSortKey =
   | 'recency_at'
   | 'section_position';
 
-/** Thread source kind filter accepted by Codex `thread/list`. */
-export type CodexThreadSourceKind =
-  | 'cli'
-  | 'vscode'
-  | 'exec'
-  | 'appServer'
-  | 'subAgent'
-  | 'subAgentReview'
-  | 'subAgentCompact'
-  | 'subAgentThreadSpawn'
-  | 'subAgentOther'
-  | 'unknown';
-
 /** Parameters for Codex `thread/list`. */
 export interface CodexListThreadsParams {
   /** Opaque pagination cursor returned by a previous call. */
-  readonly cursor?: string | null;
+  readonly cursor?: string | null | undefined;
   /** Optional page size (`uint32`). */
-  readonly limit?: number | null;
+  readonly limit?: number | null | undefined;
   /** Optional sort key (`created_at`, `updated_at`, `recency_at`, or `section_position`). */
-  readonly sortKey?: CodexThreadSortKey | null;
+  readonly sortKey?: CodexThreadSortKey | null | undefined;
   /** Optional sort direction (`asc` or `desc`). */
-  readonly sortDirection?: 'asc' | 'desc' | null;
+  readonly sortDirection?: 'asc' | 'desc' | null | undefined;
   /** Optional provider allowlist filter. */
-  readonly modelProviders?: readonly string[] | null;
+  readonly modelProviders?: readonly string[] | null | undefined;
   /** Optional source kind filter. */
-  readonly sourceKinds?: readonly CodexThreadSourceKind[] | null;
+  readonly sourceKinds?: readonly CodexThreadSourceKind[] | null | undefined;
   /** Optional archived filter (`true` for archived only; `false`/`null` for non-archived). */
-  readonly archived?: boolean | null;
+  readonly archived?: boolean | null | undefined;
   /** Optional exact working directory filter (one path or list of paths). */
-  readonly cwd?: string | readonly string[] | null;
+  readonly cwd?: string | readonly string[] | null | undefined;
   /** Optional substring filter for the extracted thread title. */
-  readonly searchTerm?: string | null;
+  readonly searchTerm?: string | null | undefined;
   /** Section filter: omit for all sections, `null` for unsectioned, or a section id string. */
-  readonly sectionId?: string | null;
+  readonly sectionId?: string | null | undefined;
   /** Restrict results to up to 100 thread IDs before pagination. */
-  readonly includedThreadIds?: readonly string[] | null;
+  readonly includedThreadIds?: readonly string[] | null | undefined;
   /** Exclude up to 100 thread IDs before applying the page limit. */
-  readonly excludedThreadIds?: readonly string[] | null;
+  readonly excludedThreadIds?: readonly string[] | null | undefined;
   /** Optional originator allowlist (hosted backends only). */
-  readonly originators?: readonly string[] | null;
+  readonly originators?: readonly string[] | null | undefined;
   /** Show local history visible to the current ChatGPT account. */
-  readonly currentAccountOnly?: boolean;
+  readonly currentAccountOnly?: boolean | undefined;
   /** Return indexed local state-DB metadata without scanning JSONL rollouts. */
-  readonly useStateDbOnly?: boolean;
+  readonly useStateDbOnly?: boolean | undefined;
 }
 
 /** Parameters for Codex `thread/loaded/list`. */
 export interface CodexListLoadedThreadsParams {
   /** Opaque pagination cursor returned by a previous call. */
-  readonly cursor?: string | null;
+  readonly cursor?: string | null | undefined;
   /** Optional page size (`uint32`). */
-  readonly limit?: number | null;
+  readonly limit?: number | null | undefined;
 }
 
 /** Git metadata patch accepted by Codex `thread/metadata/update`. */
 export interface CodexThreadGitInfoUpdate {
   /** Omit to leave unchanged, `null` to clear, or a non-empty string to replace. */
-  readonly branch?: string | null;
+  readonly branch?: string | null | undefined;
   /** Omit to leave unchanged, `null` to clear, or a non-empty string to replace. */
-  readonly originUrl?: string | null;
+  readonly originUrl?: string | null | undefined;
   /** Omit to leave unchanged, `null` to clear, or a non-empty string to replace. */
-  readonly sha?: string | null;
+  readonly sha?: string | null | undefined;
 }
 
 /** Parameters for Codex `thread/metadata/update`. */
@@ -123,7 +149,7 @@ export interface CodexUpdateThreadMetadataParams {
   /** Thread identifier whose stored metadata will be patched. */
   readonly threadId: string;
   /** Patch stored Git metadata for the thread. */
-  readonly gitInfo?: CodexThreadGitInfoUpdate | null;
+  readonly gitInfo?: CodexThreadGitInfoUpdate | null | undefined;
 }
 
 /** Parameters for Codex `thread/name/set`. */
@@ -137,27 +163,51 @@ export interface CodexSetThreadNameParams {
 /** Thread lifecycle, history, and catalog RPCs verified in `codex-cli 0.171.0`. */
 export interface CodexThreadControlMethods {
   /** Revert a thread's durable history to before `beforeTurnId` (`thread/revert`). */
-  revertThread(params: CodexRevertThreadParams): Promise<CodexRevertThreadResult>;
+  revertThread(
+    params: CodexRevertThreadParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexRevertThreadResult>;
   /** Append raw Responses API items to a thread's model-visible history (`thread/inject_items`). */
-  injectItems(params: CodexInjectItemsParams): Promise<JsonRpcValue>;
+  injectItems(params: CodexInjectItemsParams, options?: CodexRpcCallOptions): Promise<void>;
   /** Unsubscribe this connection from a thread (`thread/unsubscribe`). */
-  unsubscribeThread(params: CodexThreadIdParams): Promise<JsonRpcValue>;
+  unsubscribeThread(
+    params: CodexThreadIdParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexThreadUnsubscribeResponse>;
   /** List threads with pagination and bounded filters (`thread/list`). */
-  listThreads(params?: CodexListThreadsParams): Promise<JsonRpcValue>;
+  listThreads(
+    params?: CodexListThreadsParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexThreadsPage>;
   /** List thread identifiers currently loaded in memory (`thread/loaded/list`). */
-  listLoadedThreads(params?: CodexListLoadedThreadsParams): Promise<JsonRpcValue>;
+  listLoadedThreads(
+    params?: CodexListLoadedThreadsParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexLoadedThreadsPage>;
   /** Archive a thread (`thread/archive`). */
-  archiveThread(params: CodexThreadIdParams): Promise<JsonRpcValue>;
+  archiveThread(params: CodexThreadIdParams, options?: CodexRpcCallOptions): Promise<void>;
   /** Unarchive a thread (`thread/unarchive`). */
-  unarchiveThread(params: CodexThreadIdParams): Promise<JsonRpcValue>;
+  unarchiveThread(
+    params: CodexThreadIdParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexThreadUnarchiveResponse>;
   /** Patch stored metadata (such as Git info) for a thread (`thread/metadata/update`). */
-  updateThreadMetadata(params: CodexUpdateThreadMetadataParams): Promise<JsonRpcValue>;
+  updateThreadMetadata(
+    params: CodexUpdateThreadMetadataParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<CodexThreadMetadataUpdateResponse>;
   /** Set a thread's display name (`thread/name/set`). */
-  setThreadName(params: CodexSetThreadNameParams): Promise<JsonRpcValue>;
+  setThreadName(
+    params: CodexSetThreadNameParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<void>;
   /** Interrupt a running turn on a thread (`turn/interrupt`), including external/TUI or reconnected turns. */
-  interruptTurn(params: CodexInterruptTurnParams): Promise<void>;
+  interruptTurn(
+    params: CodexInterruptTurnParams,
+    options?: CodexRpcCallOptions,
+  ): Promise<void>;
   /** Request context compaction for a thread (`thread/compact/start`). */
-  compactThread(params: CodexThreadIdParams): Promise<void>;
+  compactThread(params: CodexThreadIdParams, options?: CodexRpcCallOptions): Promise<void>;
 }
 
 /** Validate a required non-empty thread identifier. */
@@ -215,121 +265,20 @@ export function assertOptionalLimit(limit: number | null | undefined, caller: st
   }
 }
 
-function assertBoundedThreadIdFilter(
-  ids: readonly string[] | null | undefined,
-  field: 'includedThreadIds' | 'excludedThreadIds',
-  caller: string,
-): readonly string[] | null | undefined {
-  if (ids === undefined || ids === null) return ids;
-  if (!Array.isArray(ids)) {
-    throw new TypeError(`[stitchkit] ${caller}: ${field} must be an array of strings`);
-  }
-  if (ids.length > MAX_THREAD_LIST_IDS) {
-    throw new TypeError(
-      `[stitchkit] ${caller}: ${field} must contain at most ${MAX_THREAD_LIST_IDS} entries`,
-    );
-  }
-  for (const id of ids) {
-    if (typeof id !== 'string' || id.trim().length === 0) {
-      throw new TypeError(
-        `[stitchkit] ${caller}: every ${field} entry must be a non-empty string`,
-      );
-    }
-  }
-  return [...ids];
-}
-
-function validateGitInfoUpdate(
-  gitInfo: CodexThreadGitInfoUpdate | null | undefined,
-  caller: string,
-): JsonRpcValue | undefined {
-  if (gitInfo === undefined) return undefined;
-  if (gitInfo === null) return null;
-  if (typeof gitInfo !== 'object' || Array.isArray(gitInfo)) {
-    throw new TypeError(`[stitchkit] ${caller}: gitInfo must be a plain object or null`);
-  }
-  const normalized: Record<string, JsonRpcValue> = {};
-  for (const field of ['branch', 'originUrl', 'sha'] as const) {
-    const value = gitInfo[field];
-    if (value === undefined) continue;
-    if (value === null) {
-      normalized[field] = null;
-      continue;
-    }
-    if (typeof value !== 'string' || value.trim().length === 0) {
-      throw new TypeError(
-        `[stitchkit] ${caller}: gitInfo.${field} must be a non-empty string or null`,
-      );
-    }
-    normalized[field] = value;
-  }
-  return normalized;
-}
-
-function normalizeListThreadsCwd(
-  cwd: string | readonly string[] | null | undefined,
-): string | string[] | null | undefined {
-  if (cwd === undefined || cwd === null || typeof cwd === 'string') return cwd;
-  return [...cwd];
-}
-
-function buildListThreadsPayload(
-  params: CodexListThreadsParams | undefined,
-): Record<string, JsonRpcValue> {
-  const caller = 'CodexControlClient.listThreads';
-  assertOptionalLimit(params?.limit, caller);
-  const includedThreadIds = assertBoundedThreadIdFilter(
-    params?.includedThreadIds,
-    'includedThreadIds',
-    caller,
-  );
-  const excludedThreadIds = assertBoundedThreadIdFilter(
-    params?.excludedThreadIds,
-    'excludedThreadIds',
-    caller,
-  );
-  const cwd = normalizeListThreadsCwd(params?.cwd);
-  return {
-    ...(params?.cursor !== undefined && { cursor: params.cursor }),
-    ...(params?.limit !== undefined && { limit: params.limit }),
-    ...(params?.sortKey !== undefined && { sortKey: params.sortKey }),
-    ...(params?.sortDirection !== undefined && { sortDirection: params.sortDirection }),
-    ...(params?.modelProviders !== undefined && {
-      modelProviders: params.modelProviders === null ? null : [...params.modelProviders],
-    }),
-    ...(params?.sourceKinds !== undefined && {
-      sourceKinds: params.sourceKinds === null ? null : [...params.sourceKinds],
-    }),
-    ...(params?.archived !== undefined && { archived: params.archived }),
-    ...(cwd !== undefined && { cwd }),
-    ...(params?.searchTerm !== undefined && { searchTerm: params.searchTerm }),
-    ...(params?.sectionId !== undefined && { sectionId: params.sectionId }),
-    ...(includedThreadIds !== undefined && {
-      includedThreadIds: includedThreadIds === null ? null : [...includedThreadIds],
-    }),
-    ...(excludedThreadIds !== undefined && {
-      excludedThreadIds: excludedThreadIds === null ? null : [...excludedThreadIds],
-    }),
-    ...(params?.originators !== undefined && {
-      originators: params.originators === null ? null : [...params.originators],
-    }),
-    ...(params?.currentAccountOnly !== undefined && {
-      currentAccountOnly: params.currentAccountOnly,
-    }),
-    ...(params?.useStateDbOnly !== undefined && { useStateDbOnly: params.useStateDbOnly }),
-  };
-}
-
 /** Build the verified `0.171.0` thread lifecycle, revert, injection, interrupt, compaction, and catalog RPC methods. */
 export function createCodexThreadControlMethods(
-  call: (method: string, params?: Record<string, JsonRpcValue>) => Promise<JsonRpcValue>,
+  call: (
+    method: string,
+    params?: Record<string, JsonRpcValue>,
+    options?: CodexRpcCallOptions,
+  ) => Promise<JsonRpcValue>,
   options: {
     readonly ensureAlive?: () => void;
     readonly onBeforeInterruptTurn?: (threadId: string, turnId: string) => void;
   } = {},
 ): CodexThreadControlMethods {
   return {
-    async revertThread(params) {
+    async revertThread(params, rpcOptions) {
       const threadId = assertNonEmptyThreadId(
         params.threadId,
         'CodexControlClient.revertThread',
@@ -339,15 +288,19 @@ export function createCodexThreadControlMethods(
         'beforeTurnId',
         'CodexControlClient.revertThread',
       );
-      const rawReply = await call('thread/revert', { threadId, beforeTurnId });
-      const parsed = CodexThreadRevertResponseSchema.parse(rawReply);
+      const rawReply = await call('thread/revert', { threadId, beforeTurnId }, rpcOptions);
+      const parsed = parseCodexResponse(
+        'thread/revert',
+        CodexThreadRevertResponseSchema,
+        rawReply,
+      );
       return {
-        thread: safeJsonValue(parsed.thread),
+        thread: parsed.thread,
         turnsBackwardsCursor: parsed.turnsBackwardsCursor ?? null,
         itemsBackwardsCursor: parsed.itemsBackwardsCursor ?? null,
       };
     },
-    async injectItems(params) {
+    async injectItems(params, rpcOptions) {
       const threadId = assertNonEmptyThreadId(
         params.threadId,
         'CodexControlClient.injectItems',
@@ -358,68 +311,100 @@ export function createCodexThreadControlMethods(
         );
       }
       const items = params.items.map((item) => safeJsonValue(item));
-      return call('thread/inject_items', { threadId, items });
+      const raw = await call('thread/inject_items', { threadId, items }, rpcOptions);
+      parseCodexResponse('thread/inject_items', CodexEmptyResponseSchema, raw);
     },
-    async unsubscribeThread(params) {
+    async unsubscribeThread(params, rpcOptions) {
       const threadId = assertNonEmptyThreadId(
         params.threadId,
         'CodexControlClient.unsubscribeThread',
       );
-      return call('thread/unsubscribe', { threadId });
+      return parseCodexResponse(
+        'thread/unsubscribe',
+        CodexThreadUnsubscribeResponseSchema,
+        await call('thread/unsubscribe', { threadId }, rpcOptions),
+      );
     },
-    async listThreads(params) {
-      return call('thread/list', buildListThreadsPayload(params));
+    async listThreads(params, rpcOptions) {
+      return parseCodexResponse(
+        'thread/list',
+        CodexThreadsPageSchema,
+        await call('thread/list', buildListThreadsPayload(params), rpcOptions),
+      );
     },
-    async listLoadedThreads(params) {
+    async listLoadedThreads(params, rpcOptions) {
       assertOptionalLimit(params?.limit, 'CodexControlClient.listLoadedThreads');
-      return call('thread/loaded/list', {
-        ...(params?.cursor !== undefined && { cursor: params.cursor }),
-        ...(params?.limit !== undefined && { limit: params.limit }),
-      });
+      return parseCodexResponse(
+        'thread/loaded/list',
+        CodexLoadedThreadsPageSchema,
+        await call(
+          'thread/loaded/list',
+          {
+            ...(params?.cursor !== undefined && { cursor: params.cursor }),
+            ...(params?.limit !== undefined && { limit: params.limit }),
+          },
+          rpcOptions,
+        ),
+      );
     },
-    async archiveThread(params) {
+    async archiveThread(params, rpcOptions) {
       const threadId = assertNonEmptyThreadId(
         params.threadId,
         'CodexControlClient.archiveThread',
       );
-      return call('thread/archive', { threadId });
+      const raw = await call('thread/archive', { threadId }, rpcOptions);
+      parseCodexResponse('thread/archive', CodexEmptyResponseSchema, raw);
     },
-    async unarchiveThread(params) {
+    async unarchiveThread(params, rpcOptions) {
       const threadId = assertNonEmptyThreadId(
         params.threadId,
         'CodexControlClient.unarchiveThread',
       );
-      return call('thread/unarchive', { threadId });
+      return parseCodexResponse(
+        'thread/unarchive',
+        CodexThreadUnarchiveResponseSchema,
+        await call('thread/unarchive', { threadId }, rpcOptions),
+      );
     },
-    async updateThreadMetadata(params) {
+    async updateThreadMetadata(params, rpcOptions) {
       const caller = 'CodexControlClient.updateThreadMetadata';
       const threadId = assertNonEmptyThreadId(params.threadId, caller);
       const gitInfo = validateGitInfoUpdate(params.gitInfo, caller);
-      return call('thread/metadata/update', {
-        threadId,
-        ...(gitInfo !== undefined && { gitInfo }),
-      });
+      return parseCodexResponse(
+        'thread/metadata/update',
+        CodexThreadMetadataUpdateResponseSchema,
+        await call(
+          'thread/metadata/update',
+          {
+            threadId,
+            ...(gitInfo !== undefined && { gitInfo }),
+          },
+          rpcOptions,
+        ),
+      );
     },
-    async setThreadName(params) {
+    async setThreadName(params, rpcOptions) {
       const caller = 'CodexControlClient.setThreadName';
       const threadId = assertNonEmptyThreadId(params.threadId, caller);
       const name = assertRequiredNonEmptyString(params.name, 'name', caller);
-      return call('thread/name/set', { threadId, name });
+      const raw = await call('thread/name/set', { threadId, name }, rpcOptions);
+      parseCodexResponse('thread/name/set', CodexEmptyResponseSchema, raw);
     },
-    async interruptTurn(params) {
+    async interruptTurn(params, rpcOptions) {
       options.ensureAlive?.();
+      validateCodexRpcCallOptions(rpcOptions);
       const caller = 'CodexControlClient.interruptTurn';
       const threadId = assertNonEmptyThreadId(params.threadId, caller);
       const turnId = assertRequiredNonEmptyString(params.turnId, 'turnId', caller);
       options.onBeforeInterruptTurn?.(threadId, turnId);
-      await call('turn/interrupt', { threadId, turnId });
+      await call('turn/interrupt', { threadId, turnId }, rpcOptions);
     },
-    async compactThread(params) {
+    async compactThread(params, rpcOptions) {
       const threadId = assertNonEmptyThreadId(
         params.threadId,
         'CodexControlClient.compactThread',
       );
-      await call('thread/compact/start', { threadId });
+      await call('thread/compact/start', { threadId }, rpcOptions);
     },
   };
 }

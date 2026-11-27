@@ -1,12 +1,8 @@
 import type { z } from 'zod';
 import { nonEmptyString, safeJsonValue } from '../session-primitives';
 import type { ExecutorDelta, ExecutorErrorKind, ExecutorTokenUsage } from '../vocabulary';
-import {
-  CODEX_QUIET_NOTIFICATIONS,
-  CodexNotificationParams,
-  type CodexThreadItem,
-  type CodexTurnSchema,
-} from './protocol';
+import { CODEX_QUIET_NOTIFICATIONS, CodexNotificationParams } from './notifications';
+import type { CodexThreadItem, CodexTurnSchema } from './protocol';
 
 export interface CodexTurnState {
   readonly turnId: string;

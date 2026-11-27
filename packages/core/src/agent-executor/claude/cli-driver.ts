@@ -39,23 +39,29 @@ function loginExpiryState(
 /** Configuration for {@link createClaudeCliDriver}. */
 export interface ClaudeCliDriverConfig {
   /** The CLI to run. Default `claude`, found on the engine's `PATH`. */
-  executable?: string;
+  executable?: string | undefined;
   /** Arguments before the driver's own — a runtime running a script, as a fake engine is run. */
-  prefixArgs?: readonly string[];
+  prefixArgs?: readonly string[] | undefined;
   /** Passed as `--model` when set. */
-  model?: string;
+  model?: string | undefined;
   /**
    * Passed as `--permission-mode`. Default `default`: every tool the profile
    * does not already allow is asked of the host, so the server decides. A
    * profile's own setting (`auto`, `acceptEdits`) is not inherited by accident.
    */
-  permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'auto';
+  permissionMode?:
+    | 'default'
+    | 'acceptEdits'
+    | 'plan'
+    | 'bypassPermissions'
+    | 'auto'
+    | undefined;
   /** Read the bytes behind a `file` part's `reference`; without it a file part is refused. */
-  resolveFile?: (reference: string) => Promise<Uint8Array>;
+  resolveFile?: ((reference: string) => Promise<Uint8Array>) | undefined;
   /** Maximum decoded size of one image attachment in bytes. Default 5 MiB. */
-  maxImageBytes?: number;
+  maxImageBytes?: number | undefined;
   /** The executor's own environment, read for the allowlist. Default `process.env`. */
-  ambient?: Readonly<Record<string, string | undefined>>;
+  ambient?: Readonly<Record<string, string | undefined>> | undefined;
 }
 
 /**

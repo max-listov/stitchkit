@@ -76,7 +76,7 @@ const agentExecutorEndpoints = {
 export function defineAgentExecutorContract<TScope extends string>(config: {
   scope: TScope;
   /** Route prefix; default `agent-executor`. */
-  prefix?: string;
+  prefix?: string | undefined;
 }): ContractDef<typeof agentExecutorEndpoints, TScope> {
   return defineContract(
     { prefix: config.prefix ?? 'agent-executor', scope: config.scope },

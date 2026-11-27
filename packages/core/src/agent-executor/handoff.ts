@@ -180,6 +180,22 @@ interface PreparedHandoffItem {
   readonly structuredDeltaBytes: number;
 }
 
+/** Keep the widest IDs in bounded batches. A stable sort retains input order on ties. */
+function widestOmittedIds(prepared: readonly PreparedHandoffItem[], limit: number): string[] {
+  if (limit === 0) return [];
+  const widest: Array<{ id: string; width: number }> = [];
+  const trim = () => {
+    widest.sort((a, b) => b.width - a.width);
+    if (widest.length > limit) widest.length = limit;
+  };
+  for (const { item } of prepared) {
+    widest.push({ id: item.id, width: worstCaseSerializedBytes(item.id) });
+    if (widest.length === 2 * limit) trim();
+  }
+  trim();
+  return widest.map((candidate) => candidate.id);
+}
+
 /**
  * Deterministically select intact historical items into strict byte and token ceilings
  * for cross-engine context handoff or portable thread forks without calling an LLM.
@@ -229,11 +245,7 @@ export function buildContextHandoff(rawInput: ContextHandoffInput): ContextHando
   const byteCap = Math.min(input.budget.maxBytes, tokenCap * 4);
   const maxOmittedCap = input.budget.maxOmittedIds ?? HANDOFF_LIMITS.defaultMaxOmittedIds;
 
-  // Sort by worst-case UTF-8 / JSON-escaped serialized width so omitted IDs cannot overflow the header.
-  const widestOmitted = prepared
-    .map((entry) => entry.item.id)
-    .toSorted((a, b) => worstCaseSerializedBytes(b) - worstCaseSerializedBytes(a))
-    .slice(0, maxOmittedCap);
+  const widestOmitted = widestOmittedIds(prepared, maxOmittedCap);
   const omittedClauseCap = Math.floor(byteCap / 8);
   while (
     widestOmitted.length > 0 &&
@@ -265,7 +277,7 @@ export function buildContextHandoff(rawInput: ContextHandoffInput): ContextHando
     const omittedIds =
       omittedListLimit === 0
         ? []
-        : prepared.map((entry) => entry.item.id).slice(-omittedListLimit);
+        : prepared.slice(-omittedListLimit).map((entry) => entry.item.id);
     return {
       strategy: resolved.strategy,
       selectedItems: [],
@@ -304,11 +316,17 @@ export function buildContextHandoff(rawInput: ContextHandoffInput): ContextHando
 
   const selectedPrepared = prepared.filter((_, index) => selectedIndices.has(index));
   const selectedItems = selectedPrepared.map((entry) => entry.item);
-  const allOmittedIds = prepared
-    .filter((_, index) => !selectedIndices.has(index))
-    .map((entry) => entry.item.id);
-  const omittedItemIds = omittedListLimit === 0 ? [] : allOmittedIds.slice(-omittedListLimit);
-  const omittedTotal = allOmittedIds.length;
+  const omittedTotal = prepared.length - selectedItems.length;
+  const omittedItemIds: string[] = [];
+  for (
+    let index = prepared.length - 1;
+    index >= 0 && omittedItemIds.length < omittedListLimit;
+    index--
+  ) {
+    const entry = prepared[index];
+    if (entry !== undefined && !selectedIndices.has(index)) omittedItemIds.push(entry.item.id);
+  }
+  omittedItemIds.reverse();
 
   const assemble = (ids: readonly string[]) => {
     const header = formatHeader({

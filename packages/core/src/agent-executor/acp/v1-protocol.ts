@@ -89,6 +89,7 @@ export type AcpClientInfo = z.infer<typeof AcpClientInfoSchema>;
 /** A capability is declared by its presence: `{}` or `true`; `false`, `null`, or absence is none. */
 const CapabilitySchema = z.union([z.boolean(), z.looseObject({})]).nullish();
 
+/** Loose Zod schema for ACP v1 `initialize` response. */
 export const AcpInitializeResultSchema = z.looseObject({
   protocolVersion: z.int(),
   agentCapabilities: z
@@ -137,14 +138,40 @@ export const AcpConfigOptionSchema = z.looseObject({
 /** ACP session configuration option inferred from `AcpConfigOptionSchema`. */
 export type AcpConfigOption = z.infer<typeof AcpConfigOptionSchema>;
 
-/** Every value an option accepts, its groups flattened. */
-export function acpOptionValues(option: AcpConfigOption): string[] {
+/** Flattened choice extracted from a flat or grouped {@link AcpConfigOption}. */
+export interface AcpConfigOptionChoice {
+  /** Selectable option value passed to `session/set_config_option`. */
+  readonly value: string;
+  /** Human-readable display label when advertised by the agent. */
+  readonly name?: string | undefined;
+  /** Parent group label when the choice came from a grouped option list. */
+  readonly group?: string | undefined;
+}
+
+/** Flatten a flat or grouped {@link AcpConfigOption} into selectable choices preserving `name` and `group`. */
+export function acpOptionChoices(option: AcpConfigOption): AcpConfigOptionChoice[] {
   return (option.options ?? []).flatMap((choice) => {
     const group = GroupSchema.safeParse(choice);
-    return group.success
-      ? group.data.options.map((inner) => inner.value)
-      : [ChoiceSchema.parse(choice).value];
+    if (group.success) {
+      return group.data.options.map((inner) => ({
+        value: inner.value,
+        ...(inner.name !== undefined && { name: inner.name }),
+        ...(group.data.group !== undefined && { group: group.data.group }),
+      }));
+    }
+    const parsed = ChoiceSchema.parse(choice);
+    return [
+      {
+        value: parsed.value,
+        ...(parsed.name !== undefined && { name: parsed.name }),
+      },
+    ];
   });
+}
+
+/** Every value an option accepts, its groups flattened. */
+export function acpOptionValues(option: AcpConfigOption): string[] {
+  return acpOptionChoices(option).map((choice) => choice.value);
 }
 
 /** What `session/new`, `session/load` and `session/resume` answer about the session. */
@@ -206,6 +233,7 @@ export type AcpMcpServer = z.infer<typeof AcpMcpServerSchema>;
 
 const ContentSchema = z.looseObject({ type: z.string(), text: z.string().optional() });
 
+/** Loose Zod schema for one ACP v1 `session/update` payload. */
 export const AcpSessionUpdateSchema = z.looseObject({
   sessionUpdate: z.string(),
   content: z.union([ContentSchema, z.array(z.json())]).optional(),
@@ -248,6 +276,7 @@ export const AcpPromptResultSchema = z.looseObject({
 /** ACP v1 `session/prompt` response inferred from `AcpPromptResultSchema`. */
 export type AcpPromptResult = z.infer<typeof AcpPromptResultSchema>;
 
+/** Loose Zod schema for one selectable permission option on ACP `session/request_permission`. */
 export const AcpPermissionOptionSchema = z.looseObject({
   optionId: z.string(),
   kind: z.string(),
@@ -257,6 +286,7 @@ export const AcpPermissionOptionSchema = z.looseObject({
 /** One selectable option on `session/request_permission`, inferred from `AcpPermissionOptionSchema`. */
 export type AcpPermissionOption = z.infer<typeof AcpPermissionOptionSchema>;
 
+/** Loose Zod schema for ACP v1 `session/request_permission` request params. */
 export const AcpPermissionRequestSchema = z.looseObject({
   sessionId: z.string(),
   toolCall: z.looseObject({

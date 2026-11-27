@@ -101,7 +101,7 @@ own, recorded as an ADR.
 | `stitchkit/agent-executor/claude-sdk` | server (Bun or Node) | evolving<br>_redefined in 0 of the 4 minors since 0.127.0_ | Claude through the Agent SDK: the application's `query` (optional peer `@anthropic-ai/claude-agent-sdk`), the CLI's classifier, `canUseTool` asked of the host |
 | `stitchkit/agent-executor/acp` | server (Bun or Node) | evolving<br>_redefined in 0 of the 4 minors since 0.127.0_ | an Agent Client Protocol v1 agent over stdio: settings by category, images, MCP servers, `session/resume`/`load`/`list`, `session/cancel`; no reconcile |
 | `stitchkit/agent-executor/codex` | server (Bun or Node) | evolving<br>_redefined in 1 of the 4 minors since 0.127.0, most recently 0.129.0_ | the Codex driver: `codex app-server` over stdio or Unix-socket WebSocket (`unix-listen` / `unix-connect`), thread policy and live controls, approval and input requests answered by the host, unknown server requests refused, reconcile by the client id in `thread/turns/list` |
-| `stitchkit/agent-executor/testing` | server (Bun or Node) | evolving<br>_redefined in 0 of the 4 minors since 0.127.0_ | the engine conformance kit and the scripted fake engine a driver is proven against |
+| `stitchkit/agent-executor/testing` | server (Bun or Node) | evolving<br>_redefined in 0 of the 4 minors since 0.127.0_ | the engine conformance kit, deterministic replay driver, portable fake Codex app-server, multi-turn fake Claude SDK query harness, fail-loud consumer stub factories, and schema-validated test fixtures |
 | `stitchkit/agent-runtime/postgres` | server (Bun or Node) | evolving<br>_redefined in 0 of the 4 minors since 0.127.0_ | the agent store, conversation reader and companion host on Postgres, over the application's own client (Bun SQL, Prisma, `pg`) |
 | `stitchkit/agent-runtime/sqlite/bun` | server (Bun) | evolving<br>_redefined in 1 of the 37 minors since 0.94.0, most recently 0.127.0_ | durable built-in SQLite store for the agent runtime |
 | `stitchkit/agent-runtime/sqlite/node` | server (Node ≥ 22.5) | evolving<br>_redefined in 1 of the 37 minors since 0.94.0, most recently 0.127.0_ | durable built-in SQLite store for the agent runtime |
@@ -219,6 +219,7 @@ map — feature → packages:
 | Postgres agent store (`stitchkit/agent-runtime/postgres`) | — (the application's own Postgres client) |
 | SQLite agent store (`stitchkit/agent-runtime/sqlite/bun` or `/node`) | — (runtime built-in) |
 | Agent executor — Claude Agent SDK leaf (`stitchkit/agent-executor/claude-sdk`) | `@anthropic-ai/claude-agent-sdk` |
+| Agent executor — consumer testing kit (`stitchkit/agent-executor/testing`) | `@anthropic-ai/claude-agent-sdk` (types only; runtime peer-free) |
 | MCP host/client tests | `@modelcontextprotocol/client` |
 | MCP Apps UI widgets | `@modelcontextprotocol/ext-apps` |
 | React data layer (`stitchkit/react`) | `@tanstack/react-query` `react-query-kit` |

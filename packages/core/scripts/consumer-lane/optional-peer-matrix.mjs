@@ -681,7 +681,7 @@ console.log('handler browser: ok');`,
     target: 'node',
     source: featureSource('stitchkit/agent-executor/testing', 'runAgentEngineConformance'),
     runtimePeers: [],
-    declarationPeers: [],
+    declarationPeers: ['@anthropic-ai/claude-agent-sdk'],
     execute: true,
   },
   {

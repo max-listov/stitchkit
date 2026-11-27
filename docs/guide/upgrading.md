@@ -1,5 +1,58 @@
 # Upgrading stitchkit
 
+## Unreleased migration: agent-executor-typed-contracts
+
+### codex-typed-control-dtos
+
+**Who must act:** every caller of `stitchkit/agent-executor/codex` that treats `CodexControlClient` / `CodexSession` / `CodexControlConnection` / `CodexSharedServer` RPC replies as raw `JsonRpcValue`, reads `CodexThreadContext.sandbox` as a plain string or `approvalPolicy` as raw `JsonRpcValue`, or passes an untyped `JsonRpcValue` to `CodexTurnInput.sandboxPolicy`.
+
+`CodexControlClient` methods (all 19 inspection/thread/turn RPCs, including `listTurns` → `CodexTurnsPage`, and empty-object mutators `injectItems`, `archiveThread`, `setThreadName` → `Promise<void>`) now validate and return typed loose Zod DTOs, throwing `CodexProtocolError` on malformed replies. `CodexThreadContext.sandbox` and `CodexTurnInput.sandboxPolicy` now use `CodexSandboxPolicy` (`{ type: 'workspaceWrite' | 'readOnly' | 'dangerFullAccess' | 'externalSandbox' | string }`), `CodexThreadContext.approvalPolicy` uses `CodexApprovalPolicy`, and `thread` uses `CodexThread`:
+
+```ts
+// before
+const raw = (await session.readThread({ threadId })) as { thread?: { id?: string } }
+const mode = session.threadContext.sandbox // string
+const archived: JsonRpcValue = await session.archiveThread({ threadId })
+
+// after
+const { thread } = await session.readThread({ threadId })
+const policyType = session.threadContext.sandbox?.type
+await session.archiveThread({ threadId }) // Promise<void>
+```
+
+### claude-sdk-03332-and-typed-permission-controls
+
+**Who must act:** every caller of `stitchkit/agent-executor/claude-sdk` that assigns `ClaudeSdkSession.setPermissionMode` to `() => Promise<void>`, mutates `ClaudeSdkPermissionRequestMeta.input` in place or builds it from non-JSON `unknown` values, or pins `@anthropic-ai/claude-agent-sdk` below `0.3.332`.
+
+Upgrade `@anthropic-ai/claude-agent-sdk` to `^0.3.332`, read the optional effective mode returned by `setPermissionMode`, and treat `ClaudeSdkPermissionRequestMeta.input` as `Readonly<Record<string, JsonRpcValue>>`:
+
+```ts
+// before
+meta.input.command = 'rewritten' // mutable Record<string, unknown>
+const done: void = await session.setPermissionMode('acceptEdits')
+
+// after
+const updatedInput = { ...meta.input, command: 'rewritten' } // Readonly<Record<string, JsonRpcValue>>
+const applied = await session.setPermissionMode('acceptEdits')
+const effectiveMode = applied?.mode ?? 'acceptEdits'
+```
+
+### plan-limits-due-clean-answers
+
+**Who must act:** every caller of `planLimitsDue` from `stitchkit/agent-executor` that relied on clean `no-plan-limit` or `unpublished` answers returning `true` once `maxAgeMs` elapsed.
+
+`planLimitsDue` now returns `false` when `limits.answer !== 'known'` and `limits.error === undefined`. Re-poll explicitly when credentials change or an active session opens, or keep relying on `planLimitsDue` for `known` and errored reads:
+
+```ts
+// before
+// planLimitsDue returned true for no-plan-limit / unpublished once maxAgeMs passed
+
+// after
+const shouldPoll =
+  limits === undefined ||
+  planLimitsDue({ limits, now, maxAgeMs })
+```
+
 ## Released migration: 0.130.0
 
 ### executor-status-delta

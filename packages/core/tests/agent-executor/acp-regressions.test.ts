@@ -8,15 +8,17 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { closeRequestTimeoutMs } from '../../src/agent-executor/acp/v1-connect';
-import { createAcpDriver } from '../../src/agent-executor/acp/v1-driver';
-import type {
-  AcpPermissionRequestEvent,
-  AcpUpdateEvent,
-} from '../../src/agent-executor/acp/v1-handlers';
 import { classifyAcpRpcRefusal } from '../../src/agent-executor/acp/v1-map';
 import { JsonRpcError } from '../../src/agent-executor/json-rpc-peer';
 import type { FakeEngineStep } from '../../src/agent-executor/testing/fake-engine';
 import { type ExecutorDelta, ExecutorDeltaSchema } from '../../src/agent-executor/vocabulary';
+import {
+  type AcpPermissionRequestEvent,
+  type AcpUpdateEvent,
+  acpOptionChoices,
+  acpOptionValues,
+  createAcpDriver,
+} from '../../src/entrypoints/agent-executor/acp';
 import { StreamLineLimitError } from '../../src/internal/bounded-lines';
 import {
   ambientIn,
@@ -1820,4 +1822,475 @@ describe('ACP protocol compatibility, probes, post-settle events, usage, steerin
       ).rejects.toThrow(/filter exploded/);
     });
   });
+
+  test('AcpSession.providerPid, open-only onProviderPid, probeCapabilities (independent of probeMode + close and delete cleanup), acpOptionChoices, and permissionRequestDelivery all', () =>
+    inScratch('acp-pid-probe-delivery', async (root) => {
+      // 1. acpOptionChoices preserves flat + grouped option metadata and acpOptionValues derives from it.
+      const flat = acpOptionChoices({
+        id: 'model',
+        name: 'Model',
+        currentValue: 'a',
+        options: [{ value: 'a', name: 'Alpha' }],
+      });
+      expect(flat).toEqual([{ value: 'a', name: 'Alpha' }]);
+      const grouped = acpOptionChoices({
+        id: 'model',
+        name: 'Model',
+        currentValue: 'g1',
+        options: [
+          {
+            group: 'fast',
+            options: [{ value: 'g1', name: 'G1' }],
+          },
+        ],
+      });
+      expect(grouped).toEqual([{ value: 'g1', name: 'G1', group: 'fast' }]);
+      expect(
+        acpOptionValues({
+          id: 'model',
+          name: 'Model',
+          currentValue: 'g1',
+          options: [
+            {
+              group: 'fast',
+              name: 'Fast Models',
+              options: [{ value: 'g1', name: 'G1' }],
+            },
+          ],
+        }),
+      ).toEqual(['g1']);
+
+      // 2. permissionRequestDelivery: 'all' without onPermissionRequest fails eagerly.
+      expect(() =>
+        createAcpDriver({
+          executable: process.execPath,
+          permissionRequestDelivery: 'all',
+        }),
+      ).toThrow(/permissionRequestDelivery/);
+
+      // 3. Custom ACP agent recording methods, emitting available_commands_update + config_option_update,
+      //    and supporting both session/close and session/delete plus active-turn permission request.
+      const script = await writeCustomAcpAgent(
+        root,
+        'probe-and-delivery-agent',
+        `
+        for await (const line of createInterface({ input: process.stdin })) {
+          const msg = JSON.parse(line);
+          if (msg.method === undefined) {
+            record('responses.jsonl', msg);
+            continue;
+          }
+          record('methods.jsonl', { method: msg.method, params: msg.params });
+          if (msg.method === 'initialize') {
+            write({
+              id: msg.id,
+              result: {
+                protocolVersion: 1,
+                agentCapabilities: {
+                  loadSession: true,
+                  sessionCapabilities: { close: {}, delete: {} },
+                },
+                agentInfo: { name: 'probe-agent', version: '1.2.3' },
+              },
+            });
+          } else if (msg.method === 'session/new') {
+            write({
+              method: 'session/update',
+              params: {
+                sessionId: 's-probe-1',
+                update: {
+                  sessionUpdate: 'available_commands_update',
+                  availableCommands: [{ name: 'plan', description: 'Plan work' }],
+                },
+              },
+            });
+            write({
+              method: 'session/update',
+              params: {
+                sessionId: 's-probe-1',
+                update: {
+                  sessionUpdate: 'config_option_update',
+                  configOptions: [
+                    {
+                      id: 'model',
+                      name: 'Model',
+                      category: 'model',
+                      currentValue: 'm1',
+                      options: [{ value: 'm1', name: 'Model One' }],
+                    },
+                    {
+                      id: 'thought_level',
+                      name: 'Reasoning',
+                      category: 'thought_level',
+                      currentValue: 'medium',
+                      options: [
+                        { value: 'low', name: 'Low' },
+                        { value: 'medium', name: 'Medium' },
+                      ],
+                    },
+                  ],
+                },
+              },
+            });
+            write({
+              id: msg.id,
+              result: {
+                sessionId: 's-probe-1',
+              },
+            });
+          } else if (msg.method === 'session/close' || msg.method === 'session/delete') {
+            write({ id: msg.id, result: {} });
+          } else if (msg.method === 'session/prompt') {
+            write({
+              id: 'active-perm-1',
+              method: 'session/request_permission',
+              params: {
+                sessionId: 's-probe-1',
+                toolCall: { toolCallId: 'tc-act-1', title: 'Write file' },
+                options: [
+                  { optionId: 'opt-allow', kind: 'allow_once', name: 'Allow once' },
+                  { optionId: 'opt-deny', kind: 'reject_once', name: 'Deny' },
+                ],
+              },
+            });
+            setTimeout(() => {
+              write({ id: msg.id, result: { stopReason: 'end_turn' } });
+            }, 40);
+          }
+        }
+        `,
+      );
+
+      const observedPids: number[] = [];
+      const observedPerms: AcpPermissionRequestEvent[] = [];
+      const profile = acpProfile(root, 'acp-probe-all');
+      const driver = createAcpDriver({
+        executable: process.execPath,
+        args: [script],
+        ambient: ambientIn(root),
+        probeMode: 'passive',
+        passiveVersion: '1.2.3',
+        sessionMeta: { host: 'test' },
+        onProviderPid: (pid) => observedPids.push(pid),
+        permissionRequestDelivery: 'all',
+        onPermissionRequest: async (event) => {
+          observedPerms.push(event);
+          await event.respond({ kind: 'approve' });
+        },
+      });
+
+      // probeCapabilities runs actively even under probeMode: 'passive', never fires onProviderPid,
+      // captures notifications, forwards sessionMeta, and calls BOTH session/close and session/delete!
+      const cap = await driver.probeCapabilities({ profile, cwd: root });
+      expect(observedPids).toEqual([]);
+      expect(cap.initialized.agentInfo).toMatchObject({
+        name: 'probe-agent',
+        version: '1.2.3',
+      });
+      expect(cap.models).toEqual(['m1']);
+      expect(cap.commands).toEqual(['plan']);
+      expect(cap.configOptions.map((c) => c.id)).toEqual(['model', 'thought_level']);
+
+      const probeMethods = await readMethodLines(join(profile.home, 'methods.jsonl'));
+      expect(probeMethods.map((m) => m.method)).toEqual([
+        'initialize',
+        'session/new',
+        'session/close',
+        'session/delete',
+      ]);
+      expect(probeMethods[1]?.params).toMatchObject({ _meta: { host: 'test' } });
+
+      // open() populates session.providerPid and fires onProviderPid once; close() clears providerPid.
+      const session = await driver.open({ profile, cwd: root });
+      const pid = session.providerPid;
+      expect(pid).toBeNumber();
+      expect(observedPids).toEqual(pid !== undefined ? [pid] : []);
+      try {
+        // Active-turn permission request is delivered to onPermissionRequest with duringActiveTurn: true
+        // and answered cleanly through the shared single-shot slot.
+        const deltas = await drain(await startText(session));
+        expect(deltas.at(-1)).toMatchObject({ type: 'turn-end', outcome: 'completed' });
+        expect(observedPerms).toHaveLength(1);
+        expect(observedPerms[0]?.duringActiveTurn).toBe(true);
+        expect(observedPerms[0]?.request.options).toHaveLength(2);
+        const responses = await recordedLines(join(profile.home, 'responses.jsonl'));
+        expect(
+          responses.filter((r) => Reflect.get(Object(r), 'id') === 'active-perm-1'),
+        ).toEqual([
+          {
+            jsonrpc: '2.0',
+            id: 'active-perm-1',
+            result: { outcome: { outcome: 'selected', optionId: 'opt-allow' } },
+          },
+        ]);
+      } finally {
+        await session.close();
+      }
+      expect(session.providerPid).toBeUndefined();
+    }));
+
+  test('permissionRequestDelivery isolates stale active-turn respond handles, double replies, observer throws, and external-only default', () =>
+    inScratch('acp-perm-isolation', async (root) => {
+      const script = await writeCustomAcpAgent(
+        root,
+        'perm-isolation-agent',
+        `
+        let turnNum = 0;
+        for await (const line of createInterface({ input: process.stdin })) {
+          const msg = JSON.parse(line);
+          if (msg.method === undefined) {
+            record('responses.jsonl', msg);
+            continue;
+          }
+          if (msg.method === 'initialize') {
+            write({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+          } else if (msg.method === 'session/new') {
+            write({ id: msg.id, result: { sessionId: 's-iso' } });
+          } else if (msg.method === 'session/prompt') {
+            turnNum += 1;
+            const n = turnNum;
+            write({
+              id: 'reused-id-1',
+              method: 'session/request_permission',
+              params: {
+                sessionId: 's-iso',
+                toolCall: { toolCallId: 'tc-' + n, title: 'Step ' + n },
+                options: [
+                  { optionId: 'opt-allow', kind: 'allow_once', name: 'Allow' },
+                  { optionId: 'opt-deny', kind: 'reject_once', name: 'Deny' },
+                ],
+              },
+            });
+            setTimeout(() => {
+              write({ id: msg.id, result: { stopReason: 'end_turn' } });
+              if (n === 1) {
+                setTimeout(() => {
+                  write({
+                    id: 'reused-id-1',
+                    method: 'session/request_permission',
+                    params: {
+                      sessionId: 's-iso',
+                      toolCall: { toolCallId: 'tc-ext', title: 'External reused id' },
+                      options: [
+                        { optionId: 'opt-allow', kind: 'allow_once', name: 'Allow' },
+                        { optionId: 'opt-deny', kind: 'reject_once', name: 'Deny' },
+                      ],
+                    },
+                  });
+                }, 20);
+              }
+            }, 40);
+          } else if (msg.method === 'session/close') {
+            write({ id: msg.id, result: {} });
+          }
+        }
+        `,
+      );
+
+      // Case 1: permissionRequestDelivery: 'all' — stale active-turn event.respond MUST NOT settle
+      // a subsequent idle external request that reuses the same JSON-RPC id, and double reply refuses.
+      const events: AcpPermissionRequestEvent[] = [];
+      const extReady = Promise.withResolvers<AcpPermissionRequestEvent>();
+      const profile1 = acpProfile(root, 'acp-iso-all');
+      const driverAll = createAcpDriver({
+        executable: process.execPath,
+        args: [script],
+        ambient: ambientIn(root),
+        permissionRequestDelivery: 'all',
+        onPermissionRequest: (event) => {
+          events.push(event);
+          if (!event.duringActiveTurn) {
+            extReady.resolve(event);
+            return;
+          }
+          if (events.length === 1) {
+            // Sync throw inside observer must be isolated without breaking the active turn.
+            throw new Error('observer-sync-boom');
+          }
+          // Rejected async observer must also be isolated.
+          return Promise.reject(new Error('observer-async-boom'));
+        },
+      });
+
+      const session1 = await driverAll.open({ profile: profile1, cwd: root });
+      try {
+        const deltas1 = await drainApproving(await startText(session1));
+        expect(deltas1.at(-1)).toMatchObject({ type: 'turn-end', outcome: 'completed' });
+        const staleActiveEvent = events[0];
+        expect(staleActiveEvent?.duringActiveTurn).toBe(true);
+
+        // Wait for the post-turn external request reusing id 'reused-id-1'.
+        const extEvent = await extReady.promise;
+        expect(extEvent.duringActiveTurn).toBe(false);
+
+        // Calling staleActiveEvent.respond() MUST refuse and MUST NOT steal extEvent's slot!
+        await expect(
+          staleActiveEvent?.respond({ kind: 'deny', message: 'stale' }),
+        ).rejects.toThrow();
+
+        // Now extEvent still responds cleanly with approve, and a second reply refuses.
+        await extEvent.respond({ kind: 'approve' });
+        await expect(extEvent.respond({ kind: 'deny', message: 'double' })).rejects.toThrow();
+
+        // Second turn verifies async observer rejection is also isolated while turn.respond still wins.
+        const deltas2 = await drainApproving(await startText(session1));
+        expect(deltas2.at(-1)).toMatchObject({ type: 'turn-end', outcome: 'completed' });
+
+        const respPath = join(profile1.home, 'responses.jsonl');
+        let replies: unknown[] = [];
+        for (let i = 0; i < 40; i += 1) {
+          replies = await recordedLines(respPath);
+          if (replies.length >= 3) break;
+          await Bun.sleep(10);
+        }
+        expect(replies).toHaveLength(3);
+        for (const reply of replies) {
+          expect(reply).toMatchObject({
+            id: 'reused-id-1',
+            result: { outcome: { outcome: 'selected', optionId: 'opt-allow' } },
+          });
+        }
+      } finally {
+        await session1.close();
+      }
+
+      // Case 2: default permissionRequestDelivery ('external-only') skips active-turn requests
+      // and only invokes onPermissionRequest for idle external requests.
+      const extOnlyEvents: AcpPermissionRequestEvent[] = [];
+      const extOnlyReady = Promise.withResolvers<AcpPermissionRequestEvent>();
+      const profile2 = acpProfile(root, 'acp-iso-ext-only');
+      const driverExtOnly = createAcpDriver({
+        executable: process.execPath,
+        args: [script],
+        ambient: ambientIn(root),
+        onPermissionRequest: async (event) => {
+          extOnlyEvents.push(event);
+          await event.respond({ kind: 'approve' });
+          extOnlyReady.resolve(event);
+        },
+      });
+      const session2 = await driverExtOnly.open({ profile: profile2, cwd: root });
+      try {
+        await drainApproving(await startText(session2));
+        const ext = await extOnlyReady.promise;
+        expect(ext.duringActiveTurn).toBe(false);
+        expect(extOnlyEvents).toHaveLength(1);
+      } finally {
+        await session2.close();
+      }
+    }));
+
+  test('probeCapabilities preserves config_option_update over empty session.configOptions, honors timeout/abort, and onProviderPid clears on crash and stays silent on info/status/sessions', () =>
+    inScratch('acp-probe-edge-and-pid', async (root) => {
+      const script = await writeCustomAcpAgent(
+        root,
+        'probe-edge-agent',
+        `
+        const mode = process.env.EDGE_MODE ?? 'empty-overwrite';
+        for await (const line of createInterface({ input: process.stdin })) {
+          const msg = JSON.parse(line);
+          if (msg.method === 'initialize') {
+            write({
+              id: msg.id,
+              result: {
+                protocolVersion: 1,
+                agentCapabilities: { sessionCapabilities: { list: {}, close: {} } },
+              },
+            });
+          } else if (msg.method === 'session/list') {
+            write({ id: msg.id, result: { sessions: [] } });
+          } else if (msg.method === 'session/new') {
+            if (mode === 'hang-new') {
+              await new Promise(() => undefined);
+            }
+            write({
+              method: 'session/update',
+              params: {
+                sessionId: 's-edge',
+                update: {
+                  sessionUpdate: 'config_option_update',
+                  configOptions: [
+                    {
+                      id: 'model',
+                      name: 'Model',
+                      category: 'model',
+                      currentValue: 'm-live',
+                      options: [{ value: 'm-live', name: 'Live Model' }],
+                    },
+                  ],
+                },
+              },
+            });
+            // session/new returns empty configOptions: [] which must NOT wipe config_option_update!
+            write({ id: msg.id, result: { sessionId: 's-edge', configOptions: [] } });
+          } else if (msg.method === 'session/close') {
+            if (mode === 'hang-close') {
+              await new Promise(() => undefined);
+            }
+            write({ id: msg.id, result: {} });
+          } else if (msg.method === 'session/prompt') {
+            process.exit(1);
+          }
+        }
+        `,
+      );
+
+      const observedPids: number[] = [];
+      const driver = createAcpDriver({
+        executable: process.execPath,
+        args: [script],
+        ambient: ambientIn(root),
+        onProviderPid: (pid) => observedPids.push(pid),
+      });
+
+      // 1. config_option_update survives empty session.configOptions: [].
+      const cap = await driver.probeCapabilities({
+        profile: acpProfile(root, 'edge-empty'),
+        cwd: root,
+      });
+      expect(cap.configOptions.map((c) => c.id)).toEqual(['model']);
+      expect(cap.models).toEqual(['m-live']);
+
+      // 2. Active info(), status(), and sessions() never fire onProviderPid.
+      const baseProfile = acpProfile(root, 'edge-meta');
+      await driver.info();
+      await driver.status(baseProfile);
+      await driver.sessions({ profile: baseProfile, cwd: root });
+      expect(observedPids).toEqual([]);
+
+      // 3. Timeout expiring during cleanupProbeSession (session/close hangs) rejects probeCapabilities.
+      await expect(
+        driver.probeCapabilities({
+          profile: acpProfile(root, 'edge-hang-close', { EDGE_MODE: 'hang-close' }),
+          cwd: root,
+          timeoutMs: 120,
+        }),
+      ).rejects.toThrow();
+
+      // 4. Caller AbortSignal aborts hung session/new cleanly.
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(new Error('probe-caller-abort')), 40);
+      await expect(
+        driver.probeCapabilities({
+          profile: acpProfile(root, 'edge-hang-new', { EDGE_MODE: 'hang-new' }),
+          cwd: root,
+          signal: ac.signal,
+        }),
+      ).rejects.toThrow(/probe-caller-abort/);
+
+      // 5. Unexpected child crash clears session.providerPid without close().
+      const crashSession = await driver.open({
+        profile: acpProfile(root, 'edge-crash'),
+        cwd: root,
+      });
+      try {
+        expect(crashSession.providerPid).toBeNumber();
+        expect(observedPids).toHaveLength(1);
+        await expect(drain(await startText(crashSession))).rejects.toThrow();
+        await Bun.sleep(25);
+        expect(crashSession.providerPid).toBeUndefined();
+      } finally {
+        await crashSession.close();
+      }
+    }));
 });

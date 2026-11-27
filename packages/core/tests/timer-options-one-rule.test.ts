@@ -485,6 +485,8 @@ test('a timer field of a schema states the timer ceiling', () => {
     'agent-executor/claude/events.ts: retryWaitMs',
     'agent-executor/claude/events.ts: retryDelayMs',
     'agent-executor/codex/protocol.ts: startedAtMs',
+    'agent-executor/codex/responses.ts: startedAtMs',
+    'agent-executor/codex/responses.ts: completedAtMs',
   ]);
   const found = sourceFiles(join(import.meta.dir, '..', 'src')).flatMap((path) =>
     [...readFileSync(path, 'utf8').matchAll(field)]

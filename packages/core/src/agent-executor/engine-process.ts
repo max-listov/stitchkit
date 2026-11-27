@@ -49,19 +49,19 @@ export function spawnEngineProcess(input: {
   /** The connection's lifetime: aborting it stops the engine. */
   signal: AbortSignal;
   /** The longest line the engine may write. Default 8 MiB. */
-  maxLineBytes?: number;
+  maxLineBytes?: number | undefined;
   /** Maximum bytes queued for the engine's stdin before `send()` refuses. Default 16 MiB. */
-  maxPendingStdinBytes?: number;
+  maxPendingStdinBytes?: number | undefined;
   /**
    * The most bytes the connection writes into the engine over its life; `send()` refuses a
    * line past it and the engine keeps running. Default 256 MiB.
    */
-  maxStdinBytes?: number;
+  maxStdinBytes?: number | undefined;
   /**
    * How stdout is consumed: `'lines'` (default, caller reads `lines`) or `'drain'` (drained
    * continuously in the background when the engine speaks over another transport such as a Unix socket).
    */
-  stdoutMode?: 'lines' | 'drain';
+  stdoutMode?: 'lines' | 'drain' | undefined;
 }): EngineProcess {
   assertPositiveSafeInteger('maxLineBytes', input.maxLineBytes);
   assertPositiveSafeInteger('maxPendingStdinBytes', input.maxPendingStdinBytes);

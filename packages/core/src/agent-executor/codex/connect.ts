@@ -11,7 +11,8 @@ import {
   stopConnection,
 } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
-import { CODEX_OPTED_OUT_NOTIFICATIONS, CodexInitializeResponseSchema } from './protocol';
+import { CODEX_OPTED_OUT_NOTIFICATIONS } from './notifications';
+import { CodexInitializeResponseSchema, parseCodexResponse } from './protocol';
 import {
   type CodexUnixSocketClient,
   CodexUnixSocketError,
@@ -35,25 +36,25 @@ export type CodexTransportConfig =
       /** Absolute Unix domain socket path where the spawned `codex app-server` will listen (`--listen unix://<path>`). */
       readonly socketPath: string;
       /** Maximum time in milliseconds to wait for the spawned server to begin listening. Default 15 000 ms. */
-      readonly listenTimeoutMs?: number;
+      readonly listenTimeoutMs?: number | undefined;
     }
   | {
       readonly kind: 'unix-connect';
       /** Absolute Unix domain socket path of an already-running `codex app-server`. */
       readonly socketPath: string;
       /** Expected POSIX UID owning the socket and its directory. Defaults to `process.getuid()`. */
-      readonly expectedOwnerUid?: number;
+      readonly expectedOwnerUid?: number | undefined;
     };
 
 /** Connection inputs needed to spawn or dial a Codex app-server. */
 export interface CodexConnectConfig {
   readonly executable: string;
   readonly prefix: readonly string[];
-  readonly transport?: CodexTransportConfig;
-  readonly serverArgs?: readonly string[];
+  readonly transport?: CodexTransportConfig | undefined;
+  readonly serverArgs?: readonly string[] | undefined;
   readonly ambient: Readonly<Record<string, string | undefined>>;
   readonly version: string;
-  readonly maxFrameBytes?: number;
+  readonly maxFrameBytes?: number | undefined;
 }
 
 /** Active JSON-RPC connection to a Codex app-server (stdio or Unix socket). */
@@ -71,8 +72,8 @@ type PeerHandlers = Partial<
 
 /** Eagerly validate `transport` and `serverArgs` before creating a Codex driver. */
 export function validateCodexTransportAndArgs(config: {
-  readonly transport?: CodexTransportConfig;
-  readonly serverArgs?: readonly string[];
+  readonly transport?: CodexTransportConfig | undefined;
+  readonly serverArgs?: readonly string[] | undefined;
 }): void {
   if (config.serverArgs !== undefined) {
     if (!Array.isArray(config.serverArgs)) {
@@ -135,7 +136,7 @@ async function initializeCodexPeer(
     },
     { timeoutMs: BOOTSTRAP_MS },
   );
-  const parsed = CodexInitializeResponseSchema.parse(reply);
+  const parsed = parseCodexResponse('initialize', CodexInitializeResponseSchema, reply);
   peer.notify('initialized');
   return nonEmptyString(parsed.userAgent);
 }

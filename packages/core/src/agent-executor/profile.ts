@@ -1,6 +1,26 @@
 import { z } from 'zod';
 import { type ExecutorEngine, ExecutorEngineSchema, type ExecutorProfile } from './hello';
 
+/** Pattern matched by every environment variable name accepted in {@link ExecutorProfileConfigSchema}. */
+export const EXECUTOR_ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+
+/**
+ * Filter an environment record down to entries whose keys match {@link EXECUTOR_ENV_KEY_PATTERN}
+ * and whose values are defined strings, preserving empty strings without trimming.
+ */
+export function sanitizeProfileEnv(
+  env: Readonly<Record<string, string | undefined>> | undefined,
+): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  if (env === undefined) return sanitized;
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === 'string' && EXECUTOR_ENV_KEY_PATTERN.test(key)) {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
 /**
  * A profile as the executor's machine configures it: an account's own engine
  * home and the variables the operator declared for it. Its `home` never
@@ -16,7 +36,7 @@ export const ExecutorProfileConfigSchema = z.strictObject({
   home: z.string().min(1),
   accountLabel: z.string().min(1).max(200).optional(),
   /** Variables the operator declared for this profile, passed to the engine as they are. */
-  env: z.record(z.string().regex(/^[A-Z_][A-Z0-9_]*$/), z.string()).default({}),
+  env: z.record(z.string().regex(EXECUTOR_ENV_KEY_PATTERN), z.string()).default({}),
 });
 /** Input configuration for one local engine profile, parsed by {@link ExecutorProfileConfigSchema}. */
 export type ExecutorProfileConfig = z.input<typeof ExecutorProfileConfigSchema>;

@@ -1,10 +1,30 @@
-import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  Options,
+  PermissionMode,
+  Query,
+  SDKControlSetPermissionModeResponse,
+} from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 import { raceAbort } from '../../internal/abort-race';
 import { claudeUsagePlanLimits } from '../claude/limits';
 import { type PlanLimits, PlanLimitsSchema } from '../hello';
 import type { ClaudeSdkRun, ClaudeSdkSession, ClaudeSdkUsageRead } from './driver';
 
+/** Shallow-merged flag settings payload accepted by {@link ClaudeSdkSession.applyFlagSettings}. */
 export type ClaudeSdkFlagSettings = Parameters<Query['applyFlagSettings']>[0];
+
+const PermissionModeSchema = z.enum([
+  'default',
+  'acceptEdits',
+  'bypassPermissions',
+  'plan',
+  'dontAsk',
+  'auto',
+] as const satisfies readonly PermissionMode[]);
+
+const SetPermissionModeResponseSchema = z.looseObject({
+  mode: PermissionModeSchema.optional(),
+});
 
 type LiveMethods = Omit<
   ClaudeSdkSession,
@@ -75,10 +95,15 @@ export function createClaudeSdkControls(host: ClaudeSdkControlHost): LiveMethods
       await guarded(requireMethod(query, 'setModel').call(query, model));
       host.setActiveModel(model);
     },
-    async setPermissionMode(mode) {
+    async setPermissionMode(mode): Promise<SDKControlSetPermissionModeResponse | undefined> {
       const query = await activeQuery();
-      await guarded(requireMethod(query, 'setPermissionMode').call(query, mode));
-      host.setActivePermissionMode(mode);
+      const raw = await guarded(requireMethod(query, 'setPermissionMode').call(query, mode));
+      const parsed = SetPermissionModeResponseSchema.safeParse(raw);
+      const effectiveMode =
+        parsed.success && parsed.data.mode !== undefined ? parsed.data.mode : mode;
+      host.setActivePermissionMode(effectiveMode);
+      if (!parsed.success) return undefined;
+      return parsed.data.mode !== undefined ? { mode: parsed.data.mode } : {};
     },
     async applyFlagSettings(settings) {
       const query = await activeQuery();
@@ -160,7 +185,15 @@ export function createClaudeSdkControls(host: ClaudeSdkControlHost): LiveMethods
     },
     async rewindFiles(userMessageId, options) {
       const query = await activeQuery();
-      return guarded(requireMethod(query, 'rewindFiles').call(query, userMessageId, options));
+      const normalized =
+        options === undefined
+          ? undefined
+          : options.dryRun !== undefined
+            ? { dryRun: options.dryRun }
+            : {};
+      return guarded(
+        requireMethod(query, 'rewindFiles').call(query, userMessageId, normalized),
+      );
     },
   };
 }
