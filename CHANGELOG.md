@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.133.1] - 2026-11-27
+
 ### Added
 
 - `stitchkit/files/packaging` — `buildClientPackage` takes `exportedFiles` and `replaceModules`, so a client package that publishes its own manifest, a data file or a version read from the project's `package.json` can be built by it. `exportedFiles: ['./package.json', './native-stream.json']` writes the archive's own manifest and paths from `files` into `exports`; the proof resolves each by the package name to its packed file in every runtime, imports a `.json` one as JSON and typechecks `import pkg from '<name>/package.json' with { type: 'json' }` under Bundler and NodeNext, and `ClientPackage.proof.exportedFiles` lists them. `replaceModules: { 'package.json': JSON.stringify({ version }) }` builds every import of that file from the given contents, so the client ships one field instead of the project's `scripts` and `devDependencies`; a replacement no bundled module imports is refused with the new reason `replacement-unused`. The entries are now built by `Bun.build` from a script the build writes and runs in the same bounded `bun`, as the command line takes no plugin; the options it passes are the ones the command line spelled. → ADR 0335
