@@ -100,6 +100,14 @@ export interface EndpointMcpPolicy<
  * added in one place. `expose` is not in it: it chooses transports, HTTP
  * included. → ADR 0196.
  */
+/** The `tool` options an operation's identity carries to every tool transport. */
+export type OperationToolOption =
+  | 'ui'
+  | 'annotations'
+  | 'mcp'
+  | 'inputRecursionDepth'
+  | 'inputNestingDepth';
+
 export interface EndpointToolOptions {
   /** The tool name on MCP / AGENT / CLI; unique per transport within a contract. */
   name?: string;
@@ -122,4 +130,6 @@ export interface EndpointToolOptions {
    * none. A positive integer. → ADR 0319.
    */
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
 }

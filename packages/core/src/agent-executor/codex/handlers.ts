@@ -1,13 +1,21 @@
-import { endEngineTurn, holdEngineRequest } from '../engine-requests';
+import {
+  type EngineTurnLiveness,
+  endEngineTurn,
+  holdEngineRequest,
+  leaveEngineRequestUnanswered,
+} from '../engine-requests';
 import type { InteractionReply } from '../executor-contract';
-import type { PlanLimits } from '../hello';
 import { JSON_RPC_METHOD_NOT_FOUND, JsonRpcError, type JsonRpcValue } from '../json-rpc-peer';
-import { mergeRateLimitEvent } from '../plan-limits';
-import { invokeSafely, offerTurnDelta } from '../session-primitives';
+import {
+  invokeObserver,
+  type ObserverErrorHandler,
+  offerTurnDelta,
+  reportObserverError,
+} from '../session-primitives';
 import type { ExecutorDelta } from '../vocabulary';
 import { classifyCodexNotification } from './classify';
 import { codexEventTurn, codexThreadIdOf, codexTurnIdOf } from './event-routing';
-import { codexPlanLimits } from './limits';
+import type { CodexLimitBook } from './limits';
 import {
   answerActiveCodexTurnRequest,
   answerCodexSessionRequest,
@@ -15,6 +23,7 @@ import {
   type CodexTurnSlot,
   codexStopped,
   codexStoppedAnswer,
+  codexStoppedReply,
   isKnownCodexRequestMethod,
   type PendingExternalCodexRequest,
   parseCodexServerRequest,
@@ -55,23 +64,48 @@ export interface CodexServerRequestEvent {
 
 interface CodexHandlersState {
   profileId: string;
-  limits: Map<string, PlanLimits>;
+  limits: CodexLimitBook;
   externalPending: Map<string, PendingExternalCodexRequest>;
-  ensureAlive: () => void;
+  liveness: EngineTurnLiveness;
   getTurn: () => CodexTurnSlot | undefined;
   clearTurn: () => void;
   onNotification?: (event: CodexNotificationEvent) => void;
   onServerRequest?: (event: CodexServerRequestEvent) => void;
   serverRequestDelivery?: 'external-only' | 'all';
+  onObserverError?: ObserverErrorHandler;
+  /**
+   * `true` while the owner closes a connection only this driver talks to and the engine can still
+   * read: a request arriving then is answered as stopped. After an abort or a lost connection
+   * nothing is written, and on a transport shared with a TUI the request is left for it.
+   */
+  closingGracefully?: () => boolean;
+  /**
+   * Another client of the same app-server (a TUI on a Unix socket) may answer an external request
+   * this driver's observer failed on; without one, a failed observer is answered with a refusal so
+   * the engine's turn does not wait forever.
+   */
+  sharedWithOtherClients: boolean;
 }
 
-function isHandlersAlive(state: CodexHandlersState): boolean {
-  try {
-    state.ensureAlive();
-    return true;
-  } catch {
-    return false;
-  }
+type CodexObserverOptions = Pick<
+  CodexHandlersState,
+  'onNotification' | 'onServerRequest' | 'serverRequestDelivery' | 'onObserverError'
+>;
+
+/** The observer options of a driver configuration as its handlers take them: absent ones left out. */
+export function codexObserverOptions(
+  config: {
+    readonly [K in keyof CodexObserverOptions]?: CodexObserverOptions[K] | undefined;
+  },
+): CodexObserverOptions {
+  return {
+    ...(config.onNotification !== undefined && { onNotification: config.onNotification }),
+    ...(config.onServerRequest !== undefined && { onServerRequest: config.onServerRequest }),
+    ...(config.serverRequestDelivery !== undefined && {
+      serverRequestDelivery: config.serverRequestDelivery,
+    }),
+    ...(config.onObserverError !== undefined && { onObserverError: config.onObserverError }),
+  };
 }
 
 function emitCodexNotification(
@@ -82,7 +116,9 @@ function emitCodexNotification(
   deltas: readonly ExecutorDelta[],
 ): void {
   if (state.onNotification === undefined) return;
-  invokeSafely(() => state.onNotification?.({ method, params, duringActiveTurn, deltas }));
+  invokeObserver(state.onObserverError, 'onNotification', () =>
+    state.onNotification?.({ method, params, duringActiveTurn, deltas }),
+  );
 }
 
 function handleCodexNotification(
@@ -116,16 +152,7 @@ function handleCodexNotification(
   switch (verdict.kind) {
     case 'limits':
       try {
-        const parsedLimits = codexPlanLimits(verdict.rateLimits, new Date());
-        state.limits.set(
-          state.profileId,
-          mergeRateLimitEvent({
-            previous: state.limits.get(state.profileId),
-            windows: parsedLimits.windows,
-            ...(parsedLimits.plan !== undefined && { plan: parsedLimits.plan }),
-            now: new Date(),
-          }),
-        );
+        state.limits.update(state.profileId, verdict.rateLimits, new Date());
         emitCodexNotification(state, method, params, duringActiveTurn, []);
       } catch (error) {
         const errorDelta: ExecutorDelta = {
@@ -241,10 +268,10 @@ function handleCodexRequest(
       state.serverRequestDelivery === 'all' &&
       state.onServerRequest !== undefined &&
       turn.pending.has(interactionId) &&
-      isHandlersAlive(state)
+      state.liveness.isAlive()
     ) {
       const observer = state.onServerRequest;
-      invokeSafely(() =>
+      invokeObserver(state.onObserverError, 'onServerRequest', () =>
         observer({
           interactionId,
           requestId: id,
@@ -253,8 +280,7 @@ function handleCodexRequest(
           duringActiveTurn: true,
           delta,
           async respond(reply) {
-            state.ensureAlive();
-            answerActiveCodexTurnRequest(turn, interactionId, reply);
+            answerActiveCodexTurnRequest(turn, state.liveness, interactionId, reply);
           },
         }),
       );
@@ -300,13 +326,27 @@ function handleCodexRequest(
       resolve,
     };
     state.externalPending.set(interactionId, entry);
-    const onObserverError = (error: unknown) => {
+    // A `JsonRpcError` is the observer's own refusal of the request, not its failure.
+    const report = (error: unknown) => {
+      if (!(error instanceof JsonRpcError))
+        reportObserverError(state.onObserverError, 'onServerRequest', error);
+    };
+    const onObserverFailure = (error: unknown) => {
+      report(error);
       if (state.externalPending.get(interactionId) !== entry) return;
       state.externalPending.delete(interactionId);
-      if (!isHandlersAlive(state)) return;
-      // Forward only explicit JsonRpcError refusals; isolate arbitrary host exceptions so a local
-      // observer crash never leaks internal error strings or kills an active external TUI prompt.
+      if (!state.liveness.isAlive()) return;
+      // Forward explicit JsonRpcError refusals. Any other host exception never reaches the wire as
+      // text: on a connection shared with a TUI it stays unanswered (a human may still answer);
+      // on a process only this driver talks to it is answered with a refusal that names nothing.
       if (error instanceof JsonRpcError) reject(error);
+      else if (!state.sharedWithOtherClients)
+        reject(
+          new JsonRpcError(
+            JSON_RPC_INTERNAL_ERROR,
+            'The executor could not handle this request',
+          ),
+        );
     };
     try {
       const outcome: unknown = observer({
@@ -317,8 +357,8 @@ function handleCodexRequest(
         duringActiveTurn: false,
         delta,
         async respond(reply) {
-          state.ensureAlive();
           answerCodexSessionRequest({
+            liveness: state.liveness,
             turn: undefined,
             externalPending: state.externalPending,
             expectedEntry: entry,
@@ -332,58 +372,68 @@ function handleCodexRequest(
         outcome !== null &&
         'then' in outcome &&
         typeof outcome.then === 'function';
-      if (!isHandlersAlive(state)) {
+      if (!state.liveness.isAlive()) {
         if (state.externalPending.get(interactionId) === entry) {
           state.externalPending.delete(interactionId);
         }
-        if (thenable) void Promise.resolve(outcome).catch(() => undefined);
+        if (thenable) void Promise.resolve(outcome).catch(report);
         return;
       }
       if (thenable) {
         void Promise.resolve(outcome).then(() => {
-          if (!isHandlersAlive(state) && state.externalPending.get(interactionId) === entry) {
+          if (
+            !state.liveness.isAlive() &&
+            state.externalPending.get(interactionId) === entry
+          ) {
             state.externalPending.delete(interactionId);
           }
-        }, onObserverError);
+        }, onObserverFailure);
       }
     } catch (error) {
-      onObserverError(error);
+      onObserverFailure(error);
     }
   });
 }
 
 /** Create JSON-RPC notification and server-request handlers for a Codex session or control link. */
 export function createCodexHandlers(state: CodexHandlersState) {
-  const dropClosedRequest = (): Promise<JsonRpcValue> =>
-    new Promise<JsonRpcValue>(() => undefined);
+  const answerClosedRequest = (method: string): Promise<JsonRpcValue> =>
+    state.closingGracefully?.() === true && !state.sharedWithOtherClients
+      ? codexStoppedReply(method)
+      : leaveEngineRequestUnanswered();
   return {
     onNotification(method: string, params: JsonRpcValue | undefined) {
-      if (!isHandlersAlive(state)) return;
+      if (!state.liveness.isAlive()) return;
       const starting = codexEventTurn(state.getTurn(), params)?.starting;
       const deliver = () => {
-        if (!isHandlersAlive(state)) return;
+        if (!state.liveness.isAlive()) return;
         handleCodexNotification(state, method, params);
       };
       if (starting === undefined || !starting.isBuffering) deliver();
       else starting.defer(params, deliver);
     },
     onRequest(method: string, params: JsonRpcValue | undefined, id: string | number) {
-      if (!isHandlersAlive(state)) return dropClosedRequest();
+      if (!state.liveness.isAlive()) return answerClosedRequest(method);
       const starting = codexEventTurn(state.getTurn(), params)?.starting;
       const deliver = () =>
-        isHandlersAlive(state)
+        state.liveness.isAlive()
           ? handleCodexRequest(state, method, params, id)
-          : dropClosedRequest();
+          : answerClosedRequest(method);
       if (starting === undefined || !starting.isBuffering) return deliver();
       return new Promise<JsonRpcValue>((resolve, reject) => {
-        starting.defer(params, () => {
-          if (!isHandlersAlive(state)) return;
-          try {
-            resolve(deliver());
-          } catch (error) {
-            reject(error);
-          }
-        });
+        const overflow = starting.defer(
+          params,
+          () => {
+            if (!state.liveness.isAlive()) return;
+            try {
+              resolve(deliver());
+            } catch (error) {
+              reject(error);
+            }
+          },
+          () => codexStoppedReply(method).then(resolve, reject),
+        );
+        if (overflow !== undefined) reject(overflow);
       });
     },
   };

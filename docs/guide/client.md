@@ -772,6 +772,37 @@ seventh constructor argument remains `ErrorOptions`, including `cause`; the opti
 retryability argument is eighth. Closed error/frame schemas must accept the new optional
 field before their producer declares it.
 
+### Read a refusal the operation declared
+
+When an endpoint declares `refuses` ([Auth & errors](./auth-and-errors.md#the-codes-an-operation-refuses-with)),
+every client method carries `refusal(error)`. It returns the rejection as one of
+that operation's refusals — `code` narrowed to the declared codes plus the
+framework codes (`STITCH_ERROR_STATUS`) and the client's own (`CLIENT_ERROR_CODES`),
+`details` typed by the declared code's schema — or `undefined` for anything else:
+
+```ts
+try {
+  await api.sleep({ id })
+} catch (error) {
+  const refusal = api.sleep.refusal(error)
+  switch (refusal?.code) {
+    case 'NOT_IDLE':
+      return showBusy()
+    case 'MIN_AWAKE':
+      return showMinimum(refusal.details.minimum) // number, from the schema
+    case 'REQUEST_TIMEOUT':
+      return retryLater()
+  }
+  throw error
+}
+```
+
+`undefined` covers an error that is no `ApiError`, a code the operation did not
+declare (a newer server, another vocabulary) and details its schema refuses — the
+client never hands back a type the value does not have. Comparing with a code the
+operation did not declare does not type-check. An endpoint without `refuses` still
+reads the framework and client codes.
+
 ## Which contract does the server speak
 
 A client is built from one version of a contract and a server from another

@@ -1,4 +1,5 @@
 import { afterEach } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 /**
@@ -15,6 +16,7 @@ import { readFileSync } from 'node:fs';
 const groups = new Set<number>();
 const pids = new Set<number>();
 const pidFiles = new Set<string>();
+const scopes = new Map<string, 'system' | 'user'>();
 
 function kill(target: number): void {
   try {
@@ -46,6 +48,32 @@ export function trackPidFile(path: string): void {
   pidFiles.add(path);
 }
 
+/**
+ * A transient systemd scope the test is about to create. Registered by name before the scope can
+ * exist; the manager kills every process in its control group — the ones that left the root's
+ * process group too — and an absent unit means the scope never started or already emptied.
+ */
+export function trackWorkScope(unit: { manager: 'system' | 'user'; name: string }): void {
+  scopes.set(unit.name, unit.manager);
+}
+
+function stopScope(name: string, manager: 'system' | 'user'): void {
+  const scope = manager === 'user' ? ['--user'] : [];
+  const env = {
+    PATH: '/usr/sbin:/usr/bin:/sbin:/bin',
+    ...(manager === 'user' && {
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid?.() ?? 0}`,
+    }),
+  };
+  // Neither command fails the reap: a unit that is not loaded is the state being asked for.
+  for (const verb of [['kill', '--signal=SIGKILL'], ['stop']])
+    spawnSync('/usr/bin/systemctl', [...scope, ...verb, '--', name], {
+      env,
+      stdio: 'ignore',
+      timeout: 10_000,
+    });
+}
+
 function recordedPid(path: string): number | undefined {
   let text: string;
   try {
@@ -62,6 +90,8 @@ function recordedPid(path: string): number | undefined {
 
 /** Kill everything registered, groups first so a member cannot respawn from a leader we missed. */
 export function reapTrackedProcesses(): void {
+  for (const [name, manager] of scopes) stopScope(name, manager);
+  scopes.clear();
   for (const leader of groups) kill(-leader);
   for (const path of pidFiles) {
     const pid = recordedPid(path);

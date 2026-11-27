@@ -115,6 +115,8 @@ export interface DeferredAgentToolCommonConfig<CONTEXT> {
   flattenUnionInput?: boolean;
   /** Advertise inputs with no `$ref`, recursion unrolled this many levels. */
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
   observe?(event: DeferredAgentToolEvent): void;
 }
 export type DeferredAgentToolSurfaceConfig<CONTEXT> = DeferredAgentToolCommonConfig<CONTEXT> &

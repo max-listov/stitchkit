@@ -1,5 +1,6 @@
 import { agentConversationProofs } from './agent-conversation-proofs';
 import { cliArgumentProofs } from './cli-argument-proofs';
+import { clientPackageProofs } from './client-package-proofs';
 import type { InstalledConsumerProof } from './installed-proof-contract';
 import { requestBoundaryProofs } from './request-boundary-proofs';
 
@@ -63,4 +64,5 @@ export const proofGroups: InstalledConsumerProof[] = [
   },
   ...requestBoundaryProofs,
   ...cliArgumentProofs,
+  ...clientPackageProofs,
 ];

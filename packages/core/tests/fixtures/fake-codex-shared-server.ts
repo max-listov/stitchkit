@@ -83,6 +83,14 @@ function handleLine(line: string): void {
     case 'thread/resume': {
       const threadId = String(msg.params?.threadId ?? '');
       appendFileSync(resumedLog, `${JSON.stringify({ threadId })}\n`);
+      // A request on the thread before its resume reply: the driver holds it before the slot exists.
+      const earlyRequest = threadId.includes('EARLY_REQUEST');
+      if (earlyRequest)
+        send({
+          id: `early-${threadId}`,
+          method: 'item/commandExecution/requestApproval',
+          params: { threadId, turnId: 'tui-turn', itemId: 'tui-cmd', command: 'echo tui' },
+        });
       send({
         id: msg.id,
         result: {
@@ -136,8 +144,63 @@ function handleLine(line: string): void {
         writeFileSync(join(home, `hold-started-${threadId}.txt`), String(reqId));
         const replyDelayMs = firstText.includes('LATE_SUCCESS') ? 120 : 10_000;
         setTimeout(() => {
+          writeFileSync(join(home, `late-reply-sent-${threadId}.txt`), turnId);
           send({ id: msg.id, result: { turn: { id: turnId } } });
         }, replyDelayMs);
+        return;
+      }
+      if (threadId.includes('EARLY_REQUEST')) {
+        // The early request is resolved elsewhere (a TUI answered) once the thread is open here.
+        send({
+          method: 'serverRequest/resolved',
+          params: { threadId, requestId: `early-${threadId}` },
+        });
+      }
+      if (firstText.includes('FLOOD_BEFORE_REPLY')) {
+        // One event more than the pre-start buffer holds, all before the reply that names the turn.
+        for (let index = 0; index <= 65_536; index += 1)
+          send({
+            method: 'item/agentMessage/delta',
+            params: { threadId, turnId, itemId: `flood-${turnId}`, delta: '.' },
+          });
+        send({ id: msg.id, result: { turn: { id: turnId } } });
+        return;
+      }
+      if (firstText.includes('CLOSE_THREAD_MIDTURN')) {
+        send({ id: msg.id, result: { turn: { id: turnId } } });
+        send({
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId,
+            turnId,
+            itemId: `msg-${turnId}`,
+            delta: `${threadId}:before-close`,
+          },
+        });
+        // The server unloads the thread with its turn still open, as after an archive by another client.
+        send({ method: 'thread/closed', params: { threadId } });
+        return;
+      }
+      if (firstText.includes('HOLD_STREAMING') || firstText.includes('MALFORMED_START')) {
+        // Written before anything is sent: the driver may settle the turn on the next line.
+        writeFileSync(join(home, `streaming-${threadId}.txt`), turnId);
+        send({
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId,
+            turnId,
+            itemId: `msg-${turnId}`,
+            delta: `${threadId}:streaming`,
+          },
+        });
+        // A turn that keeps running until interrupted; MALFORMED_START answers turn/start with a
+        // body the driver cannot read, so only the delta above names the turn.
+        send({
+          id: msg.id,
+          result: firstText.includes('MALFORMED_START')
+            ? { turn: { status: 'inProgress' } }
+            : { turn: { id: turnId } },
+        });
         return;
       }
       if (firstText.includes('EARLY_BEFORE_REPLY')) {

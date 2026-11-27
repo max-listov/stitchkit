@@ -1,13 +1,14 @@
 {
   "$comment": "Ceilings on the public surface. Raising a limit or adding a shared name is a reviewed change with its reason, not a regenerated snapshot; the reason for each raise lives in its commit and the CHANGELOG. → ADR 0198, docs/PRINCIPLES.md I8.",
   "limits": {
-    "stitchkit": 258,
-    "stitchkit/agent-executor": 113,
+    "stitchkit": 265,
+    "stitchkit/agent-executor": 112,
     "stitchkit/agent-executor/acp": 39,
     "stitchkit/agent-executor/claude": 8,
     "stitchkit/agent-executor/claude-sdk": 40,
     "stitchkit/agent-executor/codex": 134,
-    "stitchkit/agent-executor/testing": 52,
+    "stitchkit/agent-executor/testing": 45,
+    "stitchkit/agent-executor/testing/claude-sdk": 7,
     "stitchkit/agent-runtime": 413,
     "stitchkit/agent-runtime/browser": 96,
     "stitchkit/agent-runtime/coding-tools": 10,
@@ -27,10 +28,10 @@
     "stitchkit/application/opentelemetry": 5,
     "stitchkit/cli": 98,
     "stitchkit/cli/publish": 4,
-    "stitchkit/contract": 113,
+    "stitchkit/contract": 120,
     "stitchkit/declaration": 30,
     "stitchkit/files": 66,
-    "stitchkit/files/packaging": 15,
+    "stitchkit/files/packaging": 20,
     "stitchkit/spend": 34,
     "stitchkit/spend/testing": 8,
     "stitchkit/geo": 11,
@@ -54,7 +55,7 @@
     "stitchkit/telegram/html": 24,
     "stitchkit/telegram/voice": 9,
     "stitchkit/telegram/screens": 77,
-    "stitchkit/testing": 81,
+    "stitchkit/testing": 83,
     "stitchkit/tools": 175,
     "stitchkit/tools/connections": 30,
     "stitchkit/tools/contract": 16,
@@ -64,7 +65,7 @@
     "stitchkit/tracking/contract": 32,
     "stitchkit/tracking/performance": 8,
     "stitchkit/process": 22,
-    "stitchkit/process/owner-loss": 1,
+    "stitchkit/process/bootstrap": 1,
     "stitchkit/tools/mcp": 48,
     "stitchkit/tools/agent": 3,
     "stitchkit/tools/toolkit": 2,
@@ -74,7 +75,8 @@
     "stitchkit/sync": 51,
     "stitchkit/sync/postgres": 25,
     "stitchkit/service-host": 104,
-    "stitchkit/service-host/macos": 103
+    "stitchkit/service-host/macos": 103,
+    "stitchkit/service-host/work": 31
   },
   "overlaps": [
     {
@@ -84,6 +86,8 @@
         "ALL_TRANSPORTS",
         "AppError",
         "BodyHttpSuccessStatus",
+        "CLIENT_ERROR_CODES",
+        "ClientErrorCode",
         "ClientRequestOptions",
         "ConfiguredScopedDefineContract",
         "ConfiguredToolExposureEndpoints",
@@ -98,10 +102,12 @@
         "ContractStreamFrameSchema",
         "ContractStreamFraming",
         "DEFAULT_CONTRACT_STREAM_FRAME_BYTES",
+        "DeclaredRefusal",
         "DeclaredToolView",
         "DefaultsOnlyToolView",
         "DefinedAppError",
         "DefinedErrors",
+        "DescribedRefusal",
         "EndpointDef",
         "EndpointFn",
         "EndpointMcpInputRequired",
@@ -146,9 +152,12 @@
         "MultipartFilePolicy",
         "OperationEffect",
         "OperationEffectSchema",
+        "OperationRefusal",
+        "OperationToolOption",
         "Paginated",
         "PathParams",
         "ProjectedToolView",
+        "RefusalDeclaration",
         "ReshapedToolView",
         "ResponseMetadata",
         "RuntimeContext",
@@ -1321,10 +1330,9 @@
         "EXECUTOR_ENV_KEY_PATTERN",
         "JsonRpcRecordSchema",
         "JsonRpcValueSchema",
-        "planWindowDurationMins",
-        "sanitizeProfileEnv"
+        "planWindowDurationMins"
       ],
-      "reason": "Shared JSON-RPC Zod schemas, profile env sanitization, and canonical plan-window duration derivation extend stitchkit/agent-executor so consumers validate and normalize payloads with one canonical owner (I3, I8)."
+      "reason": "Shared JSON-RPC Zod schemas, the profile env-name rule, and canonical plan-window duration derivation extend stitchkit/agent-executor so consumers validate and normalize payloads with one canonical owner (I3, I8)."
     },
     {
       "entrypoint": "stitchkit/agent-executor/acp",
@@ -1461,11 +1469,6 @@
       "names": [
         "CodexNotificationEventOverrides",
         "ExecutorDeltaInput",
-        "FakeClaudeSdkQueryConfig",
-        "FakeClaudeSdkQueryHarness",
-        "FakeClaudeSdkRecordedCall",
-        "FakeClaudeSdkRunController",
-        "FakeClaudeSdkScriptedTurn",
         "FakeCodexAppServer",
         "FakeCodexAppServerConfig",
         "FakeCodexRpcErrorOutcome",
@@ -1475,11 +1478,9 @@
         "StubAgentEngineTurnOverrides",
         "StubCodexTurnOverrides",
         "StubOverrides",
-        "createFakeClaudeSdkQuery",
         "createFakeCodexAppServer",
         "createStubAcpSession",
         "createStubAgentEngineTurn",
-        "createStubClaudeSdkSession",
         "createStubCodexControlClient",
         "createStubCodexControlConnection",
         "createStubCodexSession",
@@ -1489,7 +1490,20 @@
         "makeCodexThreadFixture",
         "makeExecutorDelta"
       ],
-      "reason": "Portable Unix-socket fake Codex app-server, multi-turn fake Claude SDK query harness, fail-loud typed consumer stubs, and schema-validated fixture builders extend stitchkit/agent-executor/testing so consumers test against real drivers without re-implementing wire fakes."
+      "reason": "Portable Unix-socket fake Codex app-server, fail-loud typed consumer stubs, and schema-validated fixture builders extend stitchkit/agent-executor/testing so consumers test against real drivers without re-implementing wire fakes."
+    },
+    {
+      "entrypoint": "stitchkit/agent-executor/testing/claude-sdk",
+      "names": [
+        "FakeClaudeSdkQueryConfig",
+        "FakeClaudeSdkQueryHarness",
+        "FakeClaudeSdkRecordedCall",
+        "FakeClaudeSdkRunController",
+        "FakeClaudeSdkScriptedTurn",
+        "createFakeClaudeSdkQuery",
+        "createStubClaudeSdkSession"
+      ],
+      "reason": "The multi-turn fake Claude SDK query harness and the Claude SDK session stub are typed by @anthropic-ai/claude-agent-sdk, so they live on their own subpath and stitchkit/agent-executor/testing declares no optional peer (I7)."
     }
   ]
 }

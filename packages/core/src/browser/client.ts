@@ -20,6 +20,7 @@ import {
 } from './client-executors';
 import { createClientRouteMatcher, joinClientBaseUrl, planClientRequest } from './client-url';
 import type { HttpClient as HttpAdapter, UnauthorizedMatcher } from './http';
+import { readOperationRefusal } from './operation-refusal';
 import type { ClientFetch } from './transport';
 import { namedOperation } from './unknown-operation';
 
@@ -293,6 +294,7 @@ function createEndpointMethod(
     });
     const method = (requestArgs: unknown) => settle(execute, readArgs(requestArgs), undefined);
     return Object.assign(method, {
+      refusal: (error: unknown) => readOperationRefusal(endpoint, error),
       withOptions: (...args: unknown[]) => {
         refuseExtraWithOptionsArguments(endpoint, args.length, 2);
         return settle(execute, readArgs(args[0]), readClientRequestOptions(endpoint, args[1]));
@@ -302,6 +304,7 @@ function createEndpointMethod(
 
   const method = () => settle(execute, { ...bound.values }, undefined);
   return Object.assign(method, {
+    refusal: (error: unknown) => readOperationRefusal(endpoint, error),
     withOptions: (...args: unknown[]) => {
       refuseExtraWithOptionsArguments(endpoint, args.length, 1);
       return settle(execute, { ...bound.values }, readClientRequestOptions(endpoint, args[0]));

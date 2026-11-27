@@ -540,6 +540,9 @@
     },
     "inputRecursionDepth": {
       "test": "a tool declares its own depth over the surface depth"
+    },
+    "inputNestingDepth": {
+      "test": "a tool declares its own nesting limit over the surface"
     }
   },
   "ToolInputProjection": {
@@ -548,6 +551,9 @@
     },
     "inputRecursionDepth": {
       "test": "depth %i writes every reference out and still accepts every deeper value"
+    },
+    "inputNestingDepth": {
+      "test": "mountAgent and the MCP surface advertise the limited document, typed checks included, and the handler still validates"
     }
   },
   "EndpointToolView": {
@@ -1636,10 +1642,10 @@
   },
   "ClientArtifactOptions": {
     "entry": {
-      "test": "one call gives the file, its hash and an archive that installs and imports"
+      "test": "one call gives the self-contained file and its hash"
     },
     "outFile": {
-      "test": "one call gives the file, its hash and an archive that installs and imports"
+      "test": "one call gives the self-contained file and its hash"
     },
     "runtime": {
       "test": "runtime selects what the file may import from its platform"
@@ -1647,17 +1653,61 @@
     "forbiddenModules": {
       "test": "a forbidden module in the graph is refused by name and leaves no file"
     },
-    "package": {
-      "test": "one call gives the file, its hash and an archive that installs and imports"
-    },
-    "executable": {
-      "test": "executable, timeoutMs and signal bound the build tool"
+    "executables": {
+      "test": "executables, timeoutMs and signal bound the build tool"
     },
     "timeoutMs": {
-      "test": "executable, timeoutMs and signal bound the build tool"
+      "test": "executables, timeoutMs and signal bound the build tool"
     },
     "signal": {
-      "test": "executable, timeoutMs and signal bound the build tool"
+      "test": "executables, timeoutMs and signal bound the build tool"
+    }
+  },
+  "ClientPackageOptions": {
+    "name": {
+      "test": "two entries share one module graph in Node and Bun"
+    },
+    "version": {
+      "test": "two entries share one module graph in Node and Bun"
+    },
+    "entries": {
+      "test": "two entries share one module graph in Node and Bun"
+    },
+    "tsconfig": {
+      "test": "a type error in the client graph fails the declarations, one outside it does not"
+    },
+    "peerDependencies": {
+      "test": "peers stay outside the archive"
+    },
+    "dependencies": {
+      "test": "a declaration that needs an undeclared package is refused"
+    },
+    "forbiddenModules": {
+      "test": "a forbidden module in the graph is refused by name and leaves no archive"
+    },
+    "runtime": {
+      "test": "runtime selects the platform the package is built for and where it is proven"
+    },
+    "outDir": {
+      "test": "two entries share one module graph in Node and Bun"
+    },
+    "manifest": {
+      "test": "manifest fields and extra files are packed, and a field the package owns is refused"
+    },
+    "files": {
+      "test": "manifest fields and extra files are packed, and a field the package owns is refused"
+    },
+    "proof": {
+      "test": "an export that differs between entries is refused by name"
+    },
+    "executables": {
+      "test": "executables, timeoutMs and signal bound every tool of the package build"
+    },
+    "timeoutMs": {
+      "test": "executables, timeoutMs and signal bound every tool of the package build"
+    },
+    "signal": {
+      "test": "executables, timeoutMs and signal bound every tool of the package build"
     }
   },
   "OperationProcessesConfig": {
@@ -2001,6 +2051,9 @@
     }
   },
   "ClaudeCliDriverConfig": {
+    "onObserverError": {
+      "test": "Claude CLI: an onStartupPhase failure is reported and open() still succeeds"
+    },
     "executable": {
       "test": "the Claude CLI driver passes the engine conformance kit"
     },
@@ -2024,6 +2077,9 @@
     }
   },
   "CodexDriverConfig": {
+    "onObserverError": {
+      "test": "Codex: onStartupPhase, onNotification, onServerRequest and onDisconnect failures are reported and the connection keeps working"
+    },
     "executable": {
       "test": "the Codex driver passes the engine conformance kit"
     },
@@ -2106,6 +2162,9 @@
     }
   },
   "ClaudeSdkDriverConfig": {
+    "onObserverError": {
+      "test": "Claude SDK: onStartupPhase, onPermissionRequest, onTurnUsage and onQueryExit failures are reported and the turn still completes"
+    },
     "query": {
       "test": "the Agent SDK leaf passes the engine conformance kit"
     },
@@ -2210,6 +2269,9 @@
     }
   },
   "AcpDriverConfig": {
+    "onObserverError": {
+      "test": "ACP: onStartupPhase, onProviderPid, onUpdate and onPermissionRequest failures are reported and the turn still completes"
+    },
     "executable": {
       "test": "a missing agent, a signed-out agent and a silent agent each answer at once"
     },
@@ -2339,6 +2401,9 @@
     }
   },
   "ReplayExecutorDriverConfig": {
+    "onObserverError": {
+      "test": "Replay driver: an onStartupPhase failure is reported and open() still succeeds"
+    },
     "engine": {
       "test": "does not widen ExecutorEngineSchema and supports all 4 wire engines plus info/models/capabilities"
     },
@@ -2369,13 +2434,13 @@
   },
   "McpLazyDiscoveryConfig": {
     "mode": {
-      "test": "hides non-initial tools at startup, reveals matched tools with list_changed, and preserves hooks and catalog stamp"
+      "test": "hides non-initial tools at startup, reveals matched tools with list_changed, preserves hooks, and claims no catalog stamp"
     },
     "initialTools": {
-      "test": "hides non-initial tools at startup, reveals matched tools with list_changed, and preserves hooks and catalog stamp"
+      "test": "hides non-initial tools at startup, reveals matched tools with list_changed, preserves hooks, and claims no catalog stamp"
     },
     "searchToolName": {
-      "test": "hides non-initial tools at startup, reveals matched tools with list_changed, and preserves hooks and catalog stamp"
+      "test": "hides non-initial tools at startup, reveals matched tools with list_changed, preserves hooks, and claims no catalog stamp"
     },
     "maxResults": {
       "test": "negative controls: synchronously refuses unknown initialTools, name collisions, invalid maxResults, and stateless createMcpHandler"
@@ -3285,6 +3350,9 @@
     },
     "observe": {
       "test": "bounds custom selection, results and evidence without retaining query content"
+    },
+    "inputNestingDepth": {
+      "test": "the nesting limit shapes the schemas the deferred surface mounts"
     }
   },
   "OpenRouterProviderAccess": {
@@ -3855,5 +3923,26 @@
     "limit": {
       "test": "purgePayloads redacts expired bodies in SQLite + FTS5, preserves fresh rows, paginates without starvation, is idempotent, and branches cleanly"
     }
+  },
+  "WorkScopePlacement": {
+    "kind": {
+      "test": "placement kind decides the wrapper: a process root is the package entry, not systemd"
+    },
+    "manager": {
+      "test": "manager 'user' and 'system' address different managers in every command"
+    },
+    "slice": {
+      "test": "slice 'caller' keeps the caller's own slice and a named slice replaces it"
+    },
+    "limits": {
+      "test": "scope limit %s becomes its own unit property"
+    }
+  },
+  "WorkScopeLimits": {
+    "memoryMaxMb": { "test": "scope limit %s becomes its own unit property" },
+    "memorySwapMaxMb": { "test": "scope limit %s becomes its own unit property" },
+    "cpuQuotaPercent": { "test": "scope limit %s becomes its own unit property" },
+    "cpuWeight": { "test": "scope limit %s becomes its own unit property" },
+    "runtimeMaxSeconds": { "test": "scope limit %s becomes its own unit property" }
   }
 }

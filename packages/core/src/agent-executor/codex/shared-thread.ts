@@ -2,11 +2,15 @@ import { abortReason, linkAbortSignals, raceAbort } from '../../internal/abort-r
 import { loseEngineTurn } from '../engine-requests';
 import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
 import type { ExecutorProfileConfig } from '../profile';
-import { emitStartupPhase } from '../session-primitives';
+import {
+  emitStartupPhase,
+  type SessionLiveness,
+  sessionLiveness,
+} from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
 import { createCodexControlClient } from './control-client';
-import { discardStartingTurn } from './event-routing';
-import { createCodexHandlers } from './handlers';
+import { refuseStartingTurn } from './event-routing';
+import { codexObserverOptions, createCodexHandlers } from './handlers';
 import {
   CodexStartedThreadSchema,
   type CodexThreadContext,
@@ -18,6 +22,7 @@ import {
   type CodexTurnSlot,
   codexStopped,
   type PendingExternalCodexRequest,
+  releaseExternalCodexRequests,
 } from './request-answers';
 import { bindCodexSessionThreadControls } from './session-bind';
 import { createCodexSessionMutators } from './session-controls';
@@ -29,6 +34,7 @@ import type {
 import {
   type CodexSessionConfig,
   createCodexStartTurn,
+  interruptAbandonedCodexTurn,
   openCodexThreadRpc,
   validateCodexOpenInput,
 } from './thread-open';
@@ -52,9 +58,8 @@ export interface SharedThreadSlot {
   current: CodexTurnSlot | undefined;
   readonly externalPending: Map<string, PendingExternalCodexRequest>;
   readonly handlers: ReturnType<typeof createCodexHandlers>;
-  readonly ensureAlive: () => void;
-  closed: boolean;
-  dead: { readonly reason: unknown } | undefined;
+  /** Closing is the thread's own `close()`; a loss is the server's, the caller's or `thread/closed`. */
+  readonly liveness: SessionLiveness;
   readonly abortThread: (reason?: unknown) => void;
   readonly releaseThreadSignal: () => void;
 }
@@ -69,15 +74,15 @@ export interface SharedServerState {
   readonly onBeforeInterruptTurn: (threadId: string, turnId: string) => void;
   readonly serverSignal: AbortSignal;
   readonly threads: Map<string, SharedThreadSlot>;
+  /** Threads closed locally whose unsubscribe has not settled: their late traffic is refused. */
+  readonly closingThreadIds: Set<string>;
   readonly openingNativeThreadIds: Set<string>;
   openingThreads: number;
-  readonly isServerClosing: () => boolean;
-  readonly getServerDead: () => Error | undefined;
-  readonly ensureServerAlive: () => void;
+  readonly liveness: SessionLiveness;
 }
 
 function bestEffortUnsubscribe(state: SharedServerState, threadId: string): Promise<void> {
-  if (state.isServerClosing() || state.getServerDead() !== undefined) {
+  if (state.liveness.closing || state.liveness.lost !== undefined) {
     return Promise.resolve();
   }
   return state.peer
@@ -100,7 +105,8 @@ function buildSharedThreadSession(params: {
   };
 }): CodexSession {
   const { state, slot, threadContext, activeModelProvider, threadAbort } = params;
-  const { threadId, ensureAlive: ensureThreadAlive } = slot;
+  const { threadId, liveness } = slot;
+  const ensureThreadAlive = () => liveness.ensureAlive();
   const threadControlClient = createCodexControlClient({
     peer: state.peer,
     imageOptions: state.config,
@@ -114,7 +120,7 @@ function buildSharedThreadSession(params: {
     threadId,
     activeModelProvider,
     signal: threadAbort.signal,
-    ensureAlive: ensureThreadAlive,
+    liveness,
     getTurn: () => slot.current,
     setTurn: (turn) => {
       slot.current = turn;
@@ -129,22 +135,37 @@ function buildSharedThreadSession(params: {
     getActiveTurn: () => slot.current,
   });
 
+  /**
+   * Detach the thread from a server that keeps running for its siblings: interrupt the turn the
+   * server may still run, answer every request it holds as stopped, fail the local turn with
+   * `reason`, and unsubscribe. Until the unsubscribe settles, the thread's late traffic is refused
+   * instead of reaching the consumer as an external turn.
+   */
+  const retire = (reason: unknown): Promise<void> => {
+    const turn = slot.current;
+    slot.current = undefined;
+    const interrupted = interruptAbandonedCodexTurn(state.peer, threadId, turn);
+    refuseStartingTurn(turn);
+    releaseExternalCodexRequests(slot.externalPending, true);
+    loseEngineTurn(turn, codexStopped, reason);
+    state.threads.delete(threadId);
+    state.closingThreadIds.add(threadId);
+    return interrupted
+      .then(() => bestEffortUnsubscribe(state, threadId))
+      .finally(() => state.closingThreadIds.delete(threadId));
+  };
+
   const closeThread = async () => {
-    if (slot.closed) return;
-    slot.closed = true;
-    if (slot.dead !== undefined) {
+    if (liveness.closing) return;
+    liveness.markClosing();
+    if (liveness.lost !== undefined) {
       slot.releaseThreadSignal();
       return;
     }
-    const turn = slot.current;
-    slot.current = undefined;
-    discardStartingTurn(turn);
-    slot.externalPending.clear();
-    loseEngineTurn(turn, codexStopped, new Error('The Codex session closed'));
-    state.threads.delete(threadId);
+    const retired = retire(new Error('The Codex session closed'));
     threadAbort.abort();
     try {
-      await bestEffortUnsubscribe(state, threadId);
+      await retired;
     } finally {
       slot.releaseThreadSignal();
     }
@@ -153,17 +174,11 @@ function buildSharedThreadSession(params: {
   threadAbort.signal.addEventListener(
     'abort',
     () => {
-      if (slot.closed || slot.dead !== undefined) return;
+      if (liveness.closing || liveness.lost !== undefined) return;
       const reason = abortReason(threadAbort.signal);
-      slot.dead = { reason };
-      const turn = slot.current;
-      slot.current = undefined;
-      discardStartingTurn(turn);
-      slot.externalPending.clear();
-      loseEngineTurn(turn, codexStopped, reason);
-      state.threads.delete(threadId);
+      liveness.markLost(reason);
       slot.releaseThreadSignal();
-      void bestEffortUnsubscribe(state, threadId);
+      void retire(reason);
     },
     { once: true },
   );
@@ -175,8 +190,8 @@ function buildSharedThreadSession(params: {
     threadContext,
     startTurn,
     async respond(interactionId, reply) {
-      ensureThreadAlive();
       answerCodexSessionRequest({
+        liveness,
         turn: slot.current,
         externalPending: slot.externalPending,
         interactionId,
@@ -184,7 +199,11 @@ function buildSharedThreadSession(params: {
       });
     },
     ...threadControlClient,
-    ...bindCodexSessionThreadControls(threadControlClient, threadId),
+    ...bindCodexSessionThreadControls(
+      threadControlClient,
+      threadId,
+      (id) => state.threads.has(id) || state.closingThreadIds.has(id),
+    ),
     ...mutators,
     close: closeThread,
   };
@@ -194,7 +213,7 @@ export async function openSharedCodexThread(
   state: SharedServerState,
   threadInput: CodexSharedServerThreadInput,
 ): Promise<CodexSession> {
-  state.ensureServerAlive();
+  state.liveness.ensureAlive();
   validateCodexOpenInput({ ...threadInput, profile: state.profile });
   if (
     threadInput.nativeThreadId !== undefined &&
@@ -210,8 +229,6 @@ export async function openSharedCodexThread(
       `[stitchkit] CodexSharedServer.openThread: active thread limit (${state.maxThreads}) reached`,
     );
   }
-  if (threadInput.signal?.aborted) throw abortReason(threadInput.signal);
-  if (state.serverSignal.aborted) throw abortReason(state.serverSignal);
   const ownThreadAbort = new AbortController();
   const threadLink = linkAbortSignals(
     threadInput.signal,
@@ -229,6 +246,18 @@ export async function openSharedCodexThread(
     abort: (reason?: unknown) => ownThreadAbort.abort(reason),
     release: releaseThreadSignal,
   };
+  const liveness = sessionLiveness({
+    closedMessage: 'The Codex session is closed',
+    caller: threadInput.signal,
+    linked: threadAbort.signal,
+    within: state.liveness,
+  });
+  try {
+    liveness.ensureAlive();
+  } catch (error) {
+    releaseThreadSignal();
+    throw error;
+  }
 
   state.openingThreads += 1;
   if (threadInput.nativeThreadId !== undefined) {
@@ -239,15 +268,10 @@ export async function openSharedCodexThread(
     peer: state.peer,
     imageOptions: state.config,
     signal: threadAbort.signal,
-    ensureAlive: () => {
-      if (threadInput.signal?.aborted) throw abortReason(threadInput.signal);
-      threadAbort.signal.throwIfAborted();
-      state.ensureServerAlive();
-    },
+    ensureAlive: () => liveness.ensureAlive(),
     onBeforeInterruptTurn: state.onBeforeInterruptTurn,
   });
   try {
-    threadAbort.signal.throwIfAborted();
     let dynamicOverrides: CodexThreadPolicyOverrides | undefined;
     if (state.config.prepareThread !== undefined) {
       dynamicOverrides = await raceAbort(
@@ -263,8 +287,7 @@ export async function openSharedCodexThread(
         ),
         threadAbort.signal,
       );
-      threadAbort.signal.throwIfAborted();
-      state.ensureServerAlive();
+      liveness.ensureAlive();
     }
     const disposeLateOpen = (reply: JsonRpcValue) => {
       const parsedLate = CodexStartedThreadSchema.safeParse(reply);
@@ -277,8 +300,7 @@ export async function openSharedCodexThread(
       threadAbort.signal,
       disposeLateOpen,
     );
-    threadAbort.signal.throwIfAborted();
-    state.ensureServerAlive();
+    liveness.ensureAlive();
 
     const openMethod =
       threadInput.forkFrom !== undefined
@@ -296,47 +318,31 @@ export async function openSharedCodexThread(
     }
 
     const externalPending = new Map<string, PendingExternalCodexRequest>();
-    const ensureAlive = () => {
-      if (slot.closed) throw new Error('The Codex session is closed');
-      if (slot.dead !== undefined) throw slot.dead.reason;
-      state.ensureServerAlive();
-      if (threadInput.signal?.aborted) throw abortReason(threadInput.signal);
-      if (threadAbort.signal.aborted) throw abortReason(threadAbort.signal);
-    };
     const slot: SharedThreadSlot = {
       threadId,
       current: undefined,
       externalPending,
-      ensureAlive,
-      closed: false,
-      dead: undefined,
+      liveness,
       abortThread: (reason) => threadAbort.abort(reason),
       releaseThreadSignal,
       handlers: createCodexHandlers({
+        sharedWithOtherClients: false,
         profileId: state.profile.profileId,
         limits: state.config.limits,
         externalPending,
-        ensureAlive,
+        liveness,
         getTurn: () => slot.current,
         clearTurn: () => {
           slot.current = undefined;
         },
-        ...(state.config.onNotification !== undefined && {
-          onNotification: state.config.onNotification,
-        }),
-        ...(state.config.onServerRequest !== undefined && {
-          onServerRequest: state.config.onServerRequest,
-        }),
-        ...(state.config.serverRequestDelivery !== undefined && {
-          serverRequestDelivery: state.config.serverRequestDelivery,
-        }),
+        ...codexObserverOptions(state.config),
       }),
     };
     state.threads.set(threadId, slot);
     registeredThreadId = threadId;
 
     if (state.config.verifyThread !== undefined) {
-      emitStartupPhase(threadInput.onStartupPhase, 'verifying');
+      emitStartupPhase(threadInput.onStartupPhase, 'verifying', state.config.onObserverError);
       await raceAbort(
         Promise.resolve(
           state.config.verifyThread({
@@ -347,11 +353,8 @@ export async function openSharedCodexThread(
         ),
         threadAbort.signal,
       );
-      threadAbort.signal.throwIfAborted();
     }
-    state.ensureServerAlive();
-    threadAbort.signal.throwIfAborted();
-    if (slot.dead !== undefined) throw slot.dead.reason;
+    liveness.ensureAlive();
 
     const activeModelProvider =
       threadContext.modelProvider ??
@@ -369,7 +372,7 @@ export async function openSharedCodexThread(
     if (registeredThreadId !== undefined) {
       const failedSlot = state.threads.get(registeredThreadId);
       if (failedSlot !== undefined) {
-        failedSlot.closed = true;
+        failedSlot.liveness.markClosing();
         failedSlot.externalPending.clear();
       }
       state.threads.delete(registeredThreadId);

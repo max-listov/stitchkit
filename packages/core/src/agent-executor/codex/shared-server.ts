@@ -1,15 +1,28 @@
 import { abortReason } from '../../internal/abort-race';
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
+import { isRecord } from '../../internal/typed';
 import { loseEngineTurn } from '../engine-requests';
 import type { ExecutorDriverCapabilities } from '../hello';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
-import { invokeSafely, sessionAbort, stopConnection } from '../session-primitives';
+import {
+  invokeObserver,
+  sessionAbort,
+  sessionLiveness,
+  stopConnection,
+} from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
+import { codexSharedServerCapabilities } from './capabilities';
 import { connectCodex } from './connect';
 import { type CodexControlClient, createCodexControlClient } from './control-client';
 import { codexThreadIdOf, discardStartingTurn } from './event-routing';
-import { createCodexHandlers } from './handlers';
-import { codexStopped, type PendingExternalCodexRequest } from './request-answers';
+import { codexObserverOptions, createCodexHandlers } from './handlers';
+import {
+  codexStopped,
+  codexStoppedReply,
+  type PendingExternalCodexRequest,
+  releaseExternalCodexRequestsBeforeStop,
+} from './request-answers';
+import { refuseOwnedUnsubscribe } from './session-bind';
 import type { CodexSession } from './session-types';
 import {
   type CodexSharedServerThreadInput,
@@ -77,34 +90,36 @@ export async function openCodexSharedServer(
   const profile = engineProfile('codex', input.profile);
   const linked = sessionAbort(input.signal);
   const threads = new Map<string, SharedThreadSlot>();
+  const closingThreadIds = new Set<string>();
   const globalExternalPending = new Map<string, PendingExternalCodexRequest>();
-  let serverDead: Error | undefined;
-  let serverClosing = false;
   let opened = false;
-
-  const ensureServerAlive = () => {
-    if (serverClosing) throw new Error('The Codex shared server is closed');
-    if (serverDead !== undefined) throw serverDead;
-    if (input.signal?.aborted) throw abortReason(input.signal);
-    if (linked.signal.aborted) throw abortReason(linked.signal);
-  };
+  const liveness = sessionLiveness({
+    closedMessage: 'The Codex shared server is closed',
+    caller: input.signal,
+    linked: linked.signal,
+  });
   const globalHandlers = createCodexHandlers({
+    sharedWithOtherClients: false,
     profileId: profile.profileId,
     limits: config.limits,
     externalPending: globalExternalPending,
-    ensureAlive: ensureServerAlive,
+    liveness,
+    closingGracefully: () => liveness.closingGracefully,
     getTurn: () => undefined,
     clearTurn: () => undefined,
-    ...(config.onNotification !== undefined && { onNotification: config.onNotification }),
-    ...(config.onServerRequest !== undefined && { onServerRequest: config.onServerRequest }),
-    ...(config.serverRequestDelivery !== undefined && {
-      serverRequestDelivery: config.serverRequestDelivery,
-    }),
+    ...codexObserverOptions(config),
   });
 
+  const heldGlobally = (params: unknown): boolean => {
+    const requestId = isRecord(params) ? params.requestId : undefined;
+    return (
+      (typeof requestId === 'string' || typeof requestId === 'number') &&
+      globalExternalPending.has(String(requestId))
+    );
+  };
   const failAllThreads = (reason: unknown) => {
     for (const slot of [...threads.values()]) {
-      slot.dead = slot.dead ?? { reason };
+      slot.liveness.markLost(reason);
       const turn = slot.current;
       slot.current = undefined;
       discardStartingTurn(turn);
@@ -116,6 +131,10 @@ export async function openCodexSharedServer(
     threads.clear();
   };
 
+  // A failure inside one thread's handling stays with that notification: siblings keep running.
+  const contained = (handle: () => void) =>
+    invokeObserver(config.onObserverError, 'driver:notification', handle);
+
   let connected: Awaited<ReturnType<typeof connectCodex>>;
   try {
     connected = await connectCodex(
@@ -126,34 +145,49 @@ export async function openCodexSharedServer(
       {
         onNotification(method, params) {
           if (method === 'account/rateLimits/updated') {
-            invokeSafely(() => globalHandlers.onNotification(method, params));
+            contained(() => globalHandlers.onNotification(method, params));
             return;
           }
           const targetId = codexThreadIdOf(params);
-          const slot = targetId !== undefined ? threads.get(targetId) : undefined;
-          if (slot !== undefined) {
-            invokeSafely(() => slot.handlers.onNotification(method, params));
+          if (targetId !== undefined && closingThreadIds.has(targetId)) return;
+          // A request that arrived before its thread registered is held globally; its resolution
+          // must reach that same map, or the entry stays until the global cap refuses new requests.
+          if (method === 'serverRequest/resolved' && heldGlobally(params)) {
+            contained(() => globalHandlers.onNotification(method, params));
             return;
           }
-          invokeSafely(() => globalHandlers.onNotification(method, params));
+          const slot = targetId !== undefined ? threads.get(targetId) : undefined;
+          if (slot !== undefined) {
+            contained(() => slot.handlers.onNotification(method, params));
+            // The server unloaded a thread this driver still owns: its slot and turn end here.
+            if (method === 'thread/closed')
+              slot.abortThread(new Error(`Codex closed thread ${slot.threadId}`));
+            return;
+          }
+          contained(() => globalHandlers.onNotification(method, params));
         },
         onRequest(method, params, id) {
           const targetId = codexThreadIdOf(params);
+          if (targetId !== undefined && closingThreadIds.has(targetId))
+            return codexStoppedReply(method);
           const slot = targetId !== undefined ? threads.get(targetId) : undefined;
           if (slot !== undefined) return slot.handlers.onRequest(method, params, id);
           return globalHandlers.onRequest(method, params, id);
         },
       },
       (error) => {
-        const abortedByCaller = input.signal?.aborted === true;
-        const shouldNotify = opened && !serverClosing && !abortedByCaller;
-        if (!serverClosing && !abortedByCaller) serverDead = error;
+        const { abortedByCaller } = liveness;
+        const shouldNotify = opened && !liveness.closing && !abortedByCaller;
+        if (!liveness.closing && !abortedByCaller) liveness.markLost(error);
         globalExternalPending.clear();
         failAllThreads(
           abortedByCaller && input.signal !== undefined ? abortReason(input.signal) : error,
         );
         linked.abort();
-        if (shouldNotify) invokeSafely(() => config.onDisconnect?.(error));
+        if (shouldNotify)
+          invokeObserver(config.onObserverError, 'onDisconnect', () =>
+            config.onDisconnect?.(error),
+          );
       },
       input.onStartupPhase,
     );
@@ -170,13 +204,10 @@ export async function openCodexSharedServer(
     peer,
     imageOptions: config,
     signal: linked.signal,
-    ensureAlive: ensureServerAlive,
+    ensureAlive: () => liveness.ensureAlive(),
     onBeforeInterruptTurn,
   });
-  const sharedCapabilities: ExecutorDriverCapabilities = {
-    ...baseCapabilities,
-    multiThreadPerProcess: true,
-  };
+  const sharedCapabilities = codexSharedServerCapabilities(baseCapabilities);
   const state: SharedServerState = {
     config,
     profile,
@@ -187,24 +218,32 @@ export async function openCodexSharedServer(
     onBeforeInterruptTurn,
     serverSignal: linked.signal,
     threads,
+    closingThreadIds,
     openingNativeThreadIds: new Set<string>(),
     openingThreads: 0,
-    isServerClosing: () => serverClosing,
-    getServerDead: () => serverDead,
-    ensureServerAlive,
+    liveness,
   };
 
-  const closeServer = async () => {
-    if (serverClosing) return;
-    serverClosing = true;
-    globalExternalPending.clear();
-    failAllThreads(new Error('The Codex shared server closed'));
-    try {
-      await stopConnection(connected);
-    } finally {
-      linked.abort();
-      linked.release();
-    }
+  // Every caller of close() waits for the same stop: the second must not return while the process lives.
+  let closing: Promise<void> | undefined;
+  const closeServer = (): Promise<void> => {
+    closing ??= (async () => {
+      liveness.markClosing();
+      // The process is this driver's alone (stdio): what it still asks is answered as stopped.
+      const answer = liveness.closingGracefully;
+      await releaseExternalCodexRequestsBeforeStop(
+        [globalExternalPending, ...[...threads.values()].map((slot) => slot.externalPending)],
+        answer,
+      );
+      failAllThreads(new Error('The Codex shared server closed'));
+      try {
+        await stopConnection(connected);
+      } finally {
+        linked.abort();
+        linked.release();
+      }
+    })();
+    return closing;
   };
 
   opened = true;
@@ -217,6 +256,12 @@ export async function openCodexSharedServer(
     },
     capabilities: sharedCapabilities,
     ...controlClient,
+    // A thread open on this server leaves only through its session's close(); see refuseOwnedUnsubscribe.
+    unsubscribeThread(params, options) {
+      if (threads.has(params.threadId) || closingThreadIds.has(params.threadId))
+        return refuseOwnedUnsubscribe(params.threadId);
+      return controlClient.unsubscribeThread(params, options);
+    },
     openThread: (threadInput) => openSharedCodexThread(state, threadInput),
     close: closeServer,
   };

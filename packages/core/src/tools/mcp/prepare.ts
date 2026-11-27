@@ -8,8 +8,8 @@ import {
   type McpProjectionPreparationConfig,
   type McpSchemaValidationConfig,
   prepareProjectedMcpTools,
-  type ToolSurfaceProjection,
-} from '../internal/surface-projector';
+} from '../internal/mcp-projection';
+import type { ToolSurfaceProjection } from '../internal/surface-projector';
 import { toolSurfaceOutputSchema } from '../internal/tool-view';
 import { collectTools, formatToolError, type MountableTool, type ToolExtend } from '../mount';
 import type { RuntimeToolDefinition } from '../runtime-tool-declaration';
@@ -29,7 +29,7 @@ import { collectToolSurface } from '../surface';
 export type {
   IncompatibleSchemaPolicy,
   McpSchemaValidationConfig,
-} from '../internal/surface-projector';
+} from '../internal/mcp-projection';
 
 /** Standalone schema-validation input, including the exact surface-shaping options. */
 export interface ValidateMcpSchemasConfig extends McpSchemaValidationConfig {
@@ -39,6 +39,8 @@ export interface ValidateMcpSchemasConfig extends McpSchemaValidationConfig {
   flattenUnionInput?: boolean;
   /** Validate the reference-free documents the live mount advertises. */
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
 }
 
 /** A single-element MCP text content block list. */
@@ -126,6 +128,9 @@ function prepareMcpTools(
         ...(mountable.method.inputRecursionDepth !== undefined && {
           inputRecursionDepth: mountable.method.inputRecursionDepth,
         }),
+        ...(mountable.method.inputNestingDepth !== undefined && {
+          inputNestingDepth: mountable.method.inputNestingDepth,
+        }),
         // The advertised answer is the one the call returns: the tool view's
         // when one is declared. → ADR 0196.
         ...(outputSchema !== undefined && { outputSchema }),
@@ -184,6 +189,7 @@ export function prepareMcpServerSurface(
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
+    inputNestingDepth: config.inputNestingDepth,
   })) {
     if (entry.kind === 'contract') {
       contractMountables.push(entry.mountable);
@@ -199,6 +205,7 @@ export function prepareMcpServerSurface(
   const runtimeDescriptors = prepareMcpTools(runtimeMountables, {
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
+    inputNestingDepth: config.inputNestingDepth,
     schemaValidation: config.schemaValidation,
     logger: config.logger,
     multiRound: config.multiRound,

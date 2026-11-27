@@ -133,6 +133,7 @@ const COVERED: Record<string, string> = {
   OperationProcessesConfig: 'entrypoints/process.ts',
   OperationProcessIo: 'entrypoints/process.ts',
   ClientArtifactOptions: 'entrypoints/files/packaging.ts',
+  ClientPackageOptions: 'entrypoints/files/packaging.ts',
   NativePackagingOptions: 'entrypoints/files/packaging.ts',
   EffectRunOptions: 'entrypoints/tools.ts',
   AgentControllerConfig: 'entrypoints/agent-runtime/browser.ts',
@@ -205,7 +206,7 @@ const COVERED: Record<string, string> = {
   AgentEngineConformanceConfig: 'entrypoints/agent-executor/testing.ts',
   ReplayExecutorDriverConfig: 'entrypoints/agent-executor/testing.ts',
   FakeCodexAppServerConfig: 'entrypoints/agent-executor/testing.ts',
-  FakeClaudeSdkQueryConfig: 'entrypoints/agent-executor/testing.ts',
+  FakeClaudeSdkQueryConfig: 'entrypoints/agent-executor/testing/claude-sdk.ts',
   McpLazyDiscoveryConfig: 'entrypoints/tools/mcp.ts',
   BootoutLaunchdJobOptions: 'entrypoints/service-host.ts',
   InspectLaunchdJobOptions: 'entrypoints/service-host.ts',
@@ -221,6 +222,8 @@ const COVERED: Record<string, string> = {
   ScanLsregisterDumpOptions: 'entrypoints/service-host/macos.ts',
   CompileMacosLauncherOptions: 'entrypoints/service-host/macos.ts',
   MacosCommandOptions: 'entrypoints/service-host/macos.ts',
+  WorkScopePlacement: 'entrypoints/service-host/work.ts',
+  WorkScopeLimits: 'entrypoints/service-host/work.ts',
 };
 
 const EntrySchema = z.union([

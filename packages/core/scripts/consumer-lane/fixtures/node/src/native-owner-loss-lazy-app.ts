@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { bootstrapNativeCommandOwnerLoss } from 'stitchkit/process/owner-loss';
+import { bootstrapPackageProcess } from 'stitchkit/process/bootstrap';
 
 const TARGET_SOURCE = `
 const { spawn } = require('node:child_process');
@@ -68,4 +68,4 @@ async function main(): Promise<void> {
 
 // The bootstrap owns only its private guard invocation. Every application invocation keeps the
 // existing lazy dispatcher: the full process runner is imported only inside `main`.
-if (!bootstrapNativeCommandOwnerLoss()) await main();
+if (!bootstrapPackageProcess()) await main();

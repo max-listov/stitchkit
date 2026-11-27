@@ -3,18 +3,19 @@ import { loseEngineTurn } from '../engine-requests';
 import { engineProfile } from '../profile';
 import {
   emitStartupPhase,
-  invokeSafely,
+  invokeObserver,
   sessionAbort,
+  sessionLiveness,
   stopConnection,
 } from '../session-primitives';
-import { connectCodex } from './connect';
+import { codexTransportShared, connectCodex } from './connect';
 import {
   type CodexControlConnectInput,
   type CodexControlConnection,
   createCodexControlClient,
 } from './control-client';
-import { discardStartingTurn } from './event-routing';
-import { createCodexHandlers } from './handlers';
+import { codexThreadIdOf, discardStartingTurn } from './event-routing';
+import { codexObserverOptions, createCodexHandlers } from './handlers';
 import {
   CodexStartedThreadSchema,
   type CodexThreadContext,
@@ -26,6 +27,7 @@ import {
   type CodexTurnSlot,
   codexStopped,
   type PendingExternalCodexRequest,
+  releaseExternalCodexRequestsBeforeStop,
 } from './request-answers';
 import { bindCodexSessionThreadControls } from './session-bind';
 import { createCodexSessionMutators } from './session-controls';
@@ -43,6 +45,26 @@ import {
 } from './thread-open';
 
 /**
+ * The session's handlers, plus one fact they cannot see: the server unloaded the session's own
+ * thread (`thread/closed`), after which nothing on it can run or be answered.
+ */
+function threadClosedAware(
+  handlers: ReturnType<typeof createCodexHandlers>,
+  ownThreadId: () => string | undefined,
+  onOwnThreadClosed: (reason: Error) => void,
+): ReturnType<typeof createCodexHandlers> {
+  return {
+    onNotification(method, params) {
+      handlers.onNotification(method, params);
+      const own = ownThreadId();
+      if (method === 'thread/closed' && own !== undefined && codexThreadIdOf(params) === own)
+        onOwnThreadClosed(new Error(`Codex closed thread ${own}`));
+    },
+    onRequest: handlers.onRequest,
+  };
+}
+
+/**
  * One app-server connection holding one thread. Server requests during `startTurn()` become
  * `request` deltas answered by `respond` (and also reach `onServerRequest` when
  * `serverRequestDelivery` is `'all'`); external/TUI requests route through `onServerRequest`
@@ -58,15 +80,13 @@ export async function openCodexSession(
   const externalPending = new Map<string, PendingExternalCodexRequest>();
   let current: CodexTurnSlot | undefined;
   let activeThreadId: string | undefined;
-  let dead: Error | undefined;
   let opened = false;
-  let closing = false;
-  const ensureAlive = () => {
-    if (closing) throw new Error('The Codex session is closed');
-    if (dead !== undefined) throw dead;
-    if (input.signal?.aborted) throw abortReason(input.signal);
-    if (linked.signal.aborted) throw abortReason(linked.signal);
-  };
+  const liveness = sessionLiveness({
+    closedMessage: 'The Codex session is closed',
+    caller: input.signal,
+    linked: linked.signal,
+  });
+  const ensureAlive = () => liveness.ensureAlive();
   let connected: Awaited<ReturnType<typeof connectCodex>>;
   try {
     connected = await connectCodex(
@@ -74,27 +94,34 @@ export async function openCodexSession(
       profile,
       input.cwd,
       linked.signal,
-      createCodexHandlers({
-        profileId: profile.profileId,
-        limits: config.limits,
-        externalPending,
-        ensureAlive,
-        getTurn: () => current,
-        clearTurn: () => {
+      threadClosedAware(
+        createCodexHandlers({
+          sharedWithOtherClients: codexTransportShared(config),
+          profileId: profile.profileId,
+          limits: config.limits,
+          externalPending,
+          liveness,
+          closingGracefully: () => liveness.closingGracefully,
+          getTurn: () => current,
+          clearTurn: () => {
+            current = undefined;
+          },
+          ...codexObserverOptions(config),
+        }),
+        () => activeThreadId,
+        (closed) => {
+          if (liveness.closing || liveness.lost !== undefined) return;
+          liveness.markLost(closed);
+          const turn = current;
           current = undefined;
+          discardStartingTurn(turn);
+          loseEngineTurn(turn, codexStopped, closed);
         },
-        ...(config.onNotification !== undefined && { onNotification: config.onNotification }),
-        ...(config.onServerRequest !== undefined && {
-          onServerRequest: config.onServerRequest,
-        }),
-        ...(config.serverRequestDelivery !== undefined && {
-          serverRequestDelivery: config.serverRequestDelivery,
-        }),
-      }),
+      ),
       (error) => {
-        const abortedByCaller = input.signal?.aborted === true;
-        const shouldNotify = opened && !closing && !abortedByCaller;
-        if (!closing && !abortedByCaller) dead = error;
+        const { abortedByCaller } = liveness;
+        const shouldNotify = opened && !liveness.closing && !abortedByCaller;
+        if (!liveness.closing && !abortedByCaller) liveness.markLost(error);
         const turn = current;
         current = undefined;
         discardStartingTurn(turn);
@@ -106,7 +133,10 @@ export async function openCodexSession(
           abortedByCaller && input.signal !== undefined ? abortReason(input.signal) : error,
         );
         linked.abort();
-        if (shouldNotify) invokeSafely(() => config.onDisconnect?.(error));
+        if (shouldNotify)
+          invokeObserver(config.onObserverError, 'onDisconnect', () =>
+            config.onDisconnect?.(error),
+          );
       },
       input.onStartupPhase,
     );
@@ -115,10 +145,12 @@ export async function openCodexSession(
     throw error;
   }
   const { peer, providerPid, userAgent } = connected;
+  const answersWhileClosing = () =>
+    liveness.closingGracefully && !codexTransportShared(config);
   const stop = async (primary?: { error: unknown }) => {
-    closing = true;
+    liveness.markClosing();
     discardStartingTurn(current);
-    externalPending.clear();
+    await releaseExternalCodexRequestsBeforeStop([externalPending], answersWhileClosing());
     try {
       await stopConnection(connected, primary);
     } finally {
@@ -168,7 +200,7 @@ export async function openCodexSession(
     activeThreadId = threadId;
     threadContext = extractCodexThreadContext(parsed);
     if (config.verifyThread !== undefined) {
-      emitStartupPhase(input.onStartupPhase, 'verifying');
+      emitStartupPhase(input.onStartupPhase, 'verifying', config.onObserverError);
       await raceAbort(
         Promise.resolve(
           config.verifyThread({
@@ -181,7 +213,7 @@ export async function openCodexSession(
       );
       linked.signal.throwIfAborted();
     }
-    if (dead !== undefined) throw dead;
+    if (liveness.lost !== undefined) throw liveness.lost.reason;
     linked.signal.throwIfAborted();
   } catch (error) {
     await stop({ error });
@@ -199,7 +231,7 @@ export async function openCodexSession(
     threadId,
     activeModelProvider,
     signal: linked.signal,
-    ensureAlive,
+    liveness,
     getTurn: () => current,
     setTurn: (turn) => {
       current = turn;
@@ -222,8 +254,13 @@ export async function openCodexSession(
     threadContext,
     startTurn,
     async respond(interactionId, reply) {
-      ensureAlive();
-      answerCodexSessionRequest({ turn: current, externalPending, interactionId, reply });
+      answerCodexSessionRequest({
+        liveness,
+        turn: current,
+        externalPending,
+        interactionId,
+        reply,
+      });
     },
     ...controlClient,
     ...bindCodexSessionThreadControls(controlClient, threadId),
@@ -242,15 +279,13 @@ export async function openCodexControlConnection(
   const profile = engineProfile('codex', input.profile);
   const linked = sessionAbort(input.signal);
   const externalPending = new Map<string, PendingExternalCodexRequest>();
-  let dead: Error | undefined;
   let opened = false;
-  let closing = false;
-  const ensureAlive = () => {
-    if (closing) throw new Error('The Codex control connection is closed');
-    if (dead !== undefined) throw dead;
-    if (input.signal?.aborted) throw abortReason(input.signal);
-    if (linked.signal.aborted) throw abortReason(linked.signal);
-  };
+  const liveness = sessionLiveness({
+    closedMessage: 'The Codex control connection is closed',
+    caller: input.signal,
+    linked: linked.signal,
+  });
+  const ensureAlive = () => liveness.ensureAlive();
   let connected: Awaited<ReturnType<typeof connectCodex>>;
   try {
     connected = await connectCodex(
@@ -259,27 +294,26 @@ export async function openCodexControlConnection(
       input.cwd,
       linked.signal,
       createCodexHandlers({
+        sharedWithOtherClients: codexTransportShared(config),
         profileId: profile.profileId,
         limits: config.limits,
         externalPending,
-        ensureAlive,
+        liveness,
+        closingGracefully: () => liveness.closingGracefully,
         getTurn: () => undefined,
         clearTurn: () => undefined,
-        ...(config.onNotification !== undefined && { onNotification: config.onNotification }),
-        ...(config.onServerRequest !== undefined && {
-          onServerRequest: config.onServerRequest,
-        }),
-        ...(config.serverRequestDelivery !== undefined && {
-          serverRequestDelivery: config.serverRequestDelivery,
-        }),
+        ...codexObserverOptions(config),
       }),
       (error) => {
-        const abortedByCaller = input.signal?.aborted === true;
-        const shouldNotify = opened && !closing && !abortedByCaller;
-        if (!closing && !abortedByCaller) dead = error;
+        const { abortedByCaller } = liveness;
+        const shouldNotify = opened && !liveness.closing && !abortedByCaller;
+        if (!liveness.closing && !abortedByCaller) liveness.markLost(error);
         externalPending.clear();
         linked.abort();
-        if (shouldNotify) invokeSafely(() => config.onDisconnect?.(error));
+        if (shouldNotify)
+          invokeObserver(config.onObserverError, 'onDisconnect', () =>
+            config.onDisconnect?.(error),
+          );
       },
       input.onStartupPhase,
     );
@@ -287,9 +321,10 @@ export async function openCodexControlConnection(
     linked.release();
     throw error;
   }
-  if (dead !== undefined || linked.signal.aborted) {
-    const reason = dead ?? abortReason(linked.signal);
-    closing = true;
+  const failedOpening = liveness.terminated();
+  if (failedOpening !== undefined) {
+    const { reason } = failedOpening;
+    liveness.markClosing();
     externalPending.clear();
     try {
       await stopConnection(connected, { error: reason });
@@ -311,12 +346,20 @@ export async function openCodexControlConnection(
     userAgent: connected.userAgent,
     ...controlClient,
     async respond(interactionId, reply) {
-      ensureAlive();
-      answerCodexSessionRequest({ turn: undefined, externalPending, interactionId, reply });
+      answerCodexSessionRequest({
+        liveness,
+        turn: undefined,
+        externalPending,
+        interactionId,
+        reply,
+      });
     },
     async close() {
-      closing = true;
-      externalPending.clear();
+      liveness.markClosing();
+      await releaseExternalCodexRequestsBeforeStop(
+        [externalPending],
+        liveness.closingGracefully && !codexTransportShared(config),
+      );
       try {
         await stopConnection(connected);
       } finally {

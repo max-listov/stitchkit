@@ -51,26 +51,66 @@ async function marker(name: string): Promise<boolean> {
   }
 }
 
-function startOwner(mode: 'guarded' | 'unguarded', phase: string) {
+interface Owner {
+  readonly pid: number;
+  exit?: { code: number | null; signal: NodeJS.Signals | null };
+  output: string;
+}
+
+function startOwner(mode: 'guarded' | 'unguarded', phase: string): Owner {
   trackPidFile(join(root, 'target.pid'));
   trackPidFile(join(root, 'member.pid'));
-  const owner = spawn(process.execPath, [ownerFixture, mode, phase, root, targetFixture], {
-    stdio: 'ignore',
+  const child = spawn(process.execPath, [ownerFixture, mode, phase, root, targetFixture], {
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
-  trackProcess(owner.pid);
+  trackProcess(child.pid);
+  if (child.pid === undefined) throw new Error('owner started without a pid');
+  const owner: Owner = { pid: child.pid, output: '' };
+  // The owner's exit and output are its only account of a refused start: a start wait reads them.
+  const keep = (chunk: string) => {
+    owner.output = (owner.output + chunk).slice(-4096);
+  };
+  child.stdout.setEncoding('utf8').on('data', keep);
+  child.stderr.setEncoding('utf8').on('data', keep);
+  child.once('exit', (code, signal) => {
+    owner.exit = { code, signal };
+  });
   return owner;
+}
+
+/** A start fact read while its owner lives; an owner that exited first fails the wait at once. */
+function whileOwnerLives<T>(owner: Owner, read: () => Promise<T>): () => Promise<T> {
+  return async () => {
+    const value = await read();
+    if (owner.exit !== undefined && (value === undefined || value === false))
+      throw new Error(
+        `Owner exited code=${owner.exit.code} signal=${owner.exit.signal} before the start: ${owner.output.trim() || 'no output'}`,
+      );
+    return value;
+  };
 }
 
 test('without an owner-loss guard, SIGKILL of the caller leaves its detached command alive', async () => {
   const owner = startOwner('unguarded', 'after-initialize');
-  await until(() => marker('initialized'), 'unguarded command initialization');
-  const leader = await observe(() => numberFile('leader.pid'), 'unguarded group leader');
-  const target = await observe(() => numberFile('target.pid'), 'unguarded target');
-  const member = await observe(() => numberFile('member.pid'), 'unguarded descendant');
+  await until(
+    whileOwnerLives(owner, () => marker('initialized')),
+    'unguarded command initialization',
+  );
+  const leader = await observe(
+    whileOwnerLives(owner, () => numberFile('leader.pid')),
+    'unguarded group leader',
+  );
+  const target = await observe(
+    whileOwnerLives(owner, () => numberFile('target.pid')),
+    'unguarded target',
+  );
+  const member = await observe(
+    whileOwnerLives(owner, () => numberFile('member.pid')),
+    'unguarded descendant',
+  );
   expect(leader).toBe(target);
   trackGroupLeader({ pid: leader });
   const ownerPid = owner.pid;
-  if (ownerPid === undefined) throw new Error('owner started without a pid');
   process.kill(ownerPid, 'SIGKILL');
   await until(() => !processAlive(ownerPid), 'unguarded owner death');
   expect(processAlive(target)).toBe(true);
@@ -92,17 +132,25 @@ async function proveOwnerLossPhase(
   if (neighbor.pid === undefined) throw new Error('neighbor started without a pid');
   trackGroupLeader({ pid: neighbor.pid });
   const owner = startOwner('guarded', phase);
-  const leader = await observe(() => numberFile('leader.pid'), 'owner-loss guard leader');
-  const target = await observe(() => numberFile('target.pid'), 'guarded target');
-  const member = await observe(() => numberFile('member.pid'), 'guarded descendant');
+  const leader = await observe(
+    whileOwnerLives(owner, () => numberFile('leader.pid')),
+    'owner-loss guard leader',
+  );
+  const target = await observe(
+    whileOwnerLives(owner, () => numberFile('target.pid')),
+    'guarded target',
+  );
+  const member = await observe(
+    whileOwnerLives(owner, () => numberFile('member.pid')),
+    'guarded descendant',
+  );
   expect(leader).not.toBe(target);
   trackGroupLeader({ pid: leader });
   if (phase !== 'before-listen')
     await until(
-      () => marker(phase === 'hanging-rpc' ? 'rpc' : 'initialized'),
+      whileOwnerLives(owner, () => marker(phase === 'hanging-rpc' ? 'rpc' : 'initialized')),
       `guarded ${phase} marker`,
     );
-  if (owner.pid === undefined) throw new Error('owner started without a pid');
   process.kill(owner.pid, 'SIGKILL');
   await until(
     () => !processAlive(leader) && !processAlive(target) && !processAlive(member),

@@ -52,7 +52,8 @@ describe('createReplayExecutorDriver', () => {
         },
       });
     }
-  });
+    // Above the kit's own 10 s bound: a wait that hangs fails by the name of its check.
+  }, 30_000);
 
   test('does not widen ExecutorEngineSchema and supports all 4 wire engines plus info/models/capabilities', async () => {
     expect(ExecutorEngineSchema.options).toEqual(['claude-cli', 'claude-sdk', 'codex', 'acp']);
@@ -70,6 +71,51 @@ describe('createReplayExecutorDriver', () => {
     expect(info.reconcile).toBe('client-id');
     expect(info.models).toEqual({ answer: 'listed', ids: ['claude-sonnet-4-6'] });
     expect(info.capabilities?.steer).toBe(true);
+  });
+
+  test("a caller abort fails the turn waiting on expectReply with the caller's reason and refuses respond and startTurn", async () => {
+    const step = (value: unknown) => JSON.stringify(value);
+    const driver = createReplayExecutorDriver({
+      turns: [
+        [
+          step({ kind: 'request', interactionId: 'r1', requestKind: 'approval' }),
+          step({ kind: 'expectReply', interactionId: 'r1' }),
+          step({ kind: 'emit', block: 'turn-end', outcome: 'completed' }),
+        ].join('\n'),
+        step({ kind: 'emit', block: 'turn-end', outcome: 'completed' }),
+      ],
+    });
+    const controller = new AbortController();
+    const reason = new Error('caller abort');
+    const session = await driver.open({
+      profile: { profileId: 'p', engine: 'acp', home: '/tmp' },
+      cwd: '/tmp',
+      signal: controller.signal,
+    });
+    const turn = await session.startTurn({
+      turnId: 't1',
+      clientId: 'c1',
+      input: [{ type: 'text', text: 'hi' }],
+    });
+    // Before the fix the stream waited forever: nothing listened to the caller's signal.
+    const failure = await collectTurn(turn, async (delta) => {
+      if (delta.type === 'request') controller.abort(reason);
+    }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBe(reason);
+    await expect(turn.respond('r1', { kind: 'approve' })).rejects.toBe(reason);
+    await expect(
+      session.startTurn({
+        turnId: 't2',
+        clientId: 'c2',
+        input: [{ type: 'text', text: 'x' }],
+      }),
+    ).rejects.toBe(reason);
+    // The second transcript was not consumed by the refused start.
+    expect(driver.inputsFor(session.nativeThreadId)).toBe(1);
+    await session.close();
   });
 
   test('deterministically pauses and resumes via createReplayGate without timers', async () => {

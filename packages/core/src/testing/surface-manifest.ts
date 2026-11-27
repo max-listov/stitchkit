@@ -9,6 +9,8 @@ import {
   type McpSchemaValidationConfig,
   mcpProjectionCandidate,
   prepareProjectedMcpTools,
+} from '../tools/internal/mcp-projection';
+import {
   projectToolSurface,
   type SurfaceRuntimeToolDefinition,
   type SurfaceToolExtension,
@@ -25,7 +27,11 @@ import {
   sortTools,
 } from './surface-manifest-digest';
 
-/** The snapshot format's own version — bumped whenever an operation gains a field. */
+/**
+ * The snapshot format's own version — bumped whenever an operation gains a field every snapshot
+ * carries. An optional one absent where undeclared (`toolView`, `refusals`) leaves old snapshots
+ * byte-identical and keeps the version.
+ */
 export const SURFACE_MANIFEST_VERSION = 3;
 
 const HttpMethodSchema = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
@@ -72,6 +78,16 @@ export const SurfaceManifestOperationToolViewSchema = z.object({
   project: z.boolean(),
 });
 
+/**
+ * One code an operation declared it refuses with (`refuses`, ADR 0330). Present only on an
+ * operation that declares refusals, so a snapshot of an application without them does not move.
+ */
+export const SurfaceManifestOperationRefusalSchema = z.object({
+  code: z.string(),
+  status: z.number().int(),
+  details: z.string().nullable(),
+});
+
 export const SurfaceManifestOperationSchema = z.object({
   kind: z.enum(['contract', 'runtime']),
   service: z.string(),
@@ -82,6 +98,7 @@ export const SurfaceManifestOperationSchema = z.object({
   schemas: SurfaceSchemaDigestsSchema,
   mcp: SurfaceManifestOperationMcpSchema,
   toolView: SurfaceManifestOperationToolViewSchema.optional(),
+  refusals: z.array(SurfaceManifestOperationRefusalSchema).optional(),
   http: z.array(z.object({ method: HttpMethodSchema, path: z.string() })),
 });
 
@@ -137,6 +154,9 @@ export const SurfaceManifestSchema = z.object({
 
 export type SurfaceManifest = z.infer<typeof SurfaceManifestSchema>;
 export type SurfaceManifestOperation = z.infer<typeof SurfaceManifestOperationSchema>;
+export type SurfaceManifestOperationRefusal = z.infer<
+  typeof SurfaceManifestOperationRefusalSchema
+>;
 export type SurfaceManifestOperationToolView = z.infer<
   typeof SurfaceManifestOperationToolViewSchema
 >;
@@ -148,8 +168,6 @@ export type SurfaceManifestExtension = z.infer<typeof SurfaceManifestExtensionSc
 
 /** Peer-free runtime-operation descriptor consumed only by manifest projection. */
 export type {
-  IncompatibleSchemaPolicy,
-  McpSchemaValidationConfig,
   SurfaceRuntimeToolDefinition,
   SurfaceToolExtension,
 } from '../tools/internal/surface-projector';
@@ -165,6 +183,8 @@ export interface SurfaceAgentProjection extends SurfaceToolDefinition {
   extend?: SurfaceToolExtension;
   flattenUnionInput?: boolean;
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
 }
 
 /** Global MCP preparation policy shared by direct and finite named surfaces. */
@@ -172,6 +192,8 @@ export interface SurfaceMcpPreparation {
   extend?: SurfaceToolExtension;
   flattenUnionInput?: boolean;
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
   schemaValidation?: McpSchemaValidationConfig;
   multiRound?: { stateConfigured: boolean; maxRounds: number };
 }
@@ -302,7 +324,7 @@ export function buildSurfaceManifest(config: SurfaceManifestConfig): SurfaceMani
     projection: SurfaceToolDefinition,
     presentation: Pick<
       SurfaceAgentProjection,
-      'extend' | 'flattenUnionInput' | 'inputRecursionDepth'
+      'extend' | 'flattenUnionInput' | 'inputRecursionDepth' | 'inputNestingDepth'
     > = {},
   ): void => {
     const projected = projectToolSurface(

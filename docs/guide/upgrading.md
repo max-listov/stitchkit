@@ -1,18 +1,186 @@
 # Upgrading stitchkit
 
+## Unreleased migration: executor-testing-claude-sdk-subpath
+
+**Who must act:** tests that import `createFakeClaudeSdkQuery`, `createStubClaudeSdkSession` or a `FakeClaudeSdk*` type from `stitchkit/agent-executor/testing`.
+
+Import them from `stitchkit/agent-executor/testing/claude-sdk`. Nothing else changes: the functions, their options and `StubOverrides` (still exported by `stitchkit/agent-executor/testing`) are the same.
+
+```ts
+// Before
+import { createFakeClaudeSdkQuery, createStubClaudeSdkSession } from 'stitchkit/agent-executor/testing';
+// After
+import { createFakeClaudeSdkQuery, createStubClaudeSdkSession } from 'stitchkit/agent-executor/testing/claude-sdk';
+```
+
+`stitchkit/agent-executor/testing` no longer names the types of `@anthropic-ai/claude-agent-sdk`, so a project that tests a Codex or ACP driver needs neither the SDK nor `skipLibCheck`.
+
+## Unreleased migration: executor-profile-env-sanitizer
+
+**Who must act:** callers of `sanitizeProfileEnv` from `stitchkit/agent-executor`.
+
+The function is removed: it dropped a variable whose name the profile schema refuses, so one bad name had two outcomes. Pass the variables to the profile and let `ExecutorProfileConfigSchema` refuse a bad name, or filter in the application where dropping is a decision:
+
+```ts
+// Before
+const env = sanitizeProfileEnv(untrusted);
+// After
+const env = Object.fromEntries(
+  Object.entries(untrusted).filter(
+    (entry): entry is [string, string] =>
+      typeof entry[1] === 'string' && EXECUTOR_ENV_KEY_PATTERN.test(entry[0]),
+  ),
+);
+```
+
+## Unreleased migration: executor-conformance-lifecycle
+
+**Who must act:** tests that run `runAgentEngineConformance` (`stitchkit/agent-executor/testing`) on a driver written outside this package.
+
+The kit now proves what a driver does when its session stops, and fails by the name of the rule a driver breaks. The drivers of this package and the replay driver pass. For your own driver, make each of these true:
+
+- `open({ signal })` rejects with `signal.reason` when the signal is already aborted, and when it aborts while `open` runs — the kit aborts it from `onStartupPhase`. A driver that reports no startup phase is not asked the second.
+- An abort while a turn runs fails that turn's `deltas` with `signal.reason`; afterwards `turn.respond()` and `session.startTurn()` reject with the same reason.
+- `turn.interrupt()` resolves, without an error, once the turn ended, the signal aborted or the session closed.
+- `session.close()` during a turn fails the turn's `deltas` instead of leaving them open, resolves when called twice at once and again later, and `onStartupPhase` is not called after it.
+- `(await driver.info()).capabilities` equals `driver.capabilities` — both absent, or the same object by value.
+
+```ts
+// Before: nothing followed the caller's signal, and the kit did not ask.
+async open(input) {
+  return openSession(input.profile, input.cwd);
+}
+// After
+async open(input) {
+  input.signal?.throwIfAborted();
+  const session = await openSession(input.profile, input.cwd);
+  input.signal?.addEventListener('abort', () => session.fail(input.signal?.reason), { once: true });
+  return session;
+}
+```
+
+Each wait in these checks is bounded at 10 s and a hang fails as `… did not settle within 10000 ms`; give the conformance test a timeout above that (the tests of this package use 30–60 s), or the runner's own timeout reports the hang without the name.
+
+## Unreleased migration: codex-owned-thread-unsubscribe
+
+**Who must act:** callers of `stitchkit/agent-executor/codex` that call `unsubscribeThread` on a thread their own driver opened.
+
+`CodexSession.unsubscribeThread()` without a `threadId`, with the session's own id, or with the id of any thread open on the same shared server now rejects with `TypeError`. Close the session instead: `close()` interrupts the thread's turn, answers what it still holds and unsubscribes it, and a shared server frees its slot.
+
+```ts
+// Before: detached the thread behind the driver; a shared server kept counting it.
+await session.unsubscribeThread();
+await server.unsubscribeThread({ threadId: session.nativeThreadId });
+// After: one way to detach a thread the driver opened.
+await session.close();
+```
+
+A thread the driver did not open — an external TUI thread, a sibling client's thread — is still unsubscribed with one raw `thread/unsubscribe`.
+
+## Unreleased migration: process-bootstrap-rename
+
+**Who must act:** single-file applications (a `bun build` output that routes its own argv) that import `stitchkit/process/owner-loss`.
+
+The narrow bootstrap entry now carries every invocation the package starts for itself — the owner-loss guard of `runNativeCommand` and the process root of `stitchkit/service-host/work` — so both the subpath and the function are renamed. Nothing else changes: call it once before your argv dispatcher and skip the dispatcher when it returns `true`.
+
+```ts
+// Before
+import { bootstrapNativeCommandOwnerLoss } from 'stitchkit/process/owner-loss';
+if (!bootstrapNativeCommandOwnerLoss()) await main();
+// After
+import { bootstrapPackageProcess } from 'stitchkit/process/bootstrap';
+if (!bootstrapPackageProcess()) await main();
+```
+
+The rename is mechanical; these two commands find every site:
+
+```bash
+rg "stitchkit/process/owner-loss" .
+rg "bootstrapNativeCommandOwnerLoss" .
+```
+
+An application that does not bundle itself into one file, or that never imported the old subpath, has nothing to do.
+
+## Unreleased migration: client-artifact-package-option
+
+**Who must act:** builds that call `buildClientArtifact` (`stitchkit/files/packaging`) with `package` or `executable`, or read `artifact.package`.
+
+`buildClientArtifact` now builds the self-contained file and its hash, nothing else. Find the calls:
+
+```bash
+rg "buildClientArtifact" .
+```
+
+1. A call with `executable` and no `package`: rename the option.
+
+   ```ts
+   // Before
+   await buildClientArtifact({ entry, outFile, executable: '/opt/bun/bin/bun' });
+   // After
+   await buildClientArtifact({ entry, outFile, executables: { bun: '/opt/bun/bin/bun' } });
+   ```
+
+2. A call with `package`: the npm archive is built by `buildClientPackage`. It builds from the
+   entry itself, not from the bundled file, so keep the `buildClientArtifact` call only if you
+   still ship the single file.
+
+   ```ts
+   // Before
+   const artifact = await buildClientArtifact({
+     entry: 'src/api-client.ts',
+     outFile: 'dist/api-client.js',
+     forbiddenModules: ['src/terminal/'],
+     package: { name: '@acme/api-client', version: '1.4.0', outDir: 'dist', exports: ['createApiClient'] },
+   });
+   publish(artifact.package.tarball);
+   // After
+   const client = await buildClientPackage({
+     name: '@acme/api-client',
+     version: '1.4.0',
+     entries: { '.': 'src/api-client.ts' },
+     tsconfig: 'tsconfig.json',
+     peerDependencies: { zod: '^4.6.0' },
+     forbiddenModules: ['src/terminal/'],
+     outDir: 'dist',
+     proof: { exports: { '.': ['createApiClient'] } },
+   });
+   publish(client.tarball);
+   ```
+
+What differs from the old archive, and may refuse a client the old one packed:
+
+- The entry is a `.ts` or `.tsx` module under the directory of `tsconfig`, and a `typescript`
+  package is installed in the project: the archive now carries declarations.
+- A package the client imports is bundled unless you list it in `peerDependencies` or
+  `dependencies`. A public type that names a package you did not list is refused as
+  `declaration-dependency` — list it, usually as a peer.
+- The main module moves from `index.js` to `dist/<path under the tsconfig directory>.js`, behind
+  `exports`. A consumer that imports the package by name is unaffected; one that reached for
+  `<package>/index.js` imports the package name instead.
+- A failure is a `ClientPackageError` with a `reason` (`missing-export` for a name in
+  `proof.exports`), not an `Error` to match by message.
+
+[The guide](native-io.md#a-typed-client-as-an-npm-package) describes the options and every refusal.
+
 ## Released migration: 0.132.0
 
 ### saved-sync-cursor-zero
 
-**Who must act:** users of `stitchkit/sync` whose cursor reader returns zero for an uninitialized replica.
+**Who must act:** users of `stitchkit/sync` whose cursor reader returns zero for an uninitialized replica, or whose `beginFullSync` resets the saved cursor to zero.
 
 Return `null` until the first snapshot completes. A saved `0` requests the incremental feed after version zero.
+`beginFullSync` follows the same rule: reset the saved cursor to `null`, not to `0`, or a session
+restarted before the snapshot's first page was saved reads the feed instead of starting the snapshot again.
 
 ```ts
 // Before: a missing row and a completed snapshot at zero shared the same marker.
 readCursor: () => row?.version ?? 0
 // After: preserve every published server version.
 readCursor: () => row?.version ?? null
+// Before: the reset wrote the same marker a completed snapshot at zero has.
+beginFullSync: () => db.run('UPDATE sync_state SET version = 0')
+// After: the reset is "no completed snapshot".
+beginFullSync: () => db.run('UPDATE sync_state SET version = NULL')
 ```
 
 If an old store persisted zero for both states and has no completion marker, perform one full
@@ -77,9 +245,9 @@ const shouldPoll =
 
 ### executor-status-delta
 
-**Who must act:** every caller of `stitchkit/agent-executor` that switches exhaustively on `ExecutorDelta['type']` or validates wire `TurnReport.deltas` against a `0.129.0` server schema.
+**Who must act:** every caller of `stitchkit/agent-executor` that switches exhaustively on `ExecutorDelta['type']`, and every operator who runs an executor and its server on different releases across `0.130.0`.
 
-`ExecutorDeltaSchema` / `ExecutorDelta` now includes `ExecutorStatusDeltaSchema` (`{ type: 'status', phase: 'spawning' | 'initializing' | 'verifying', ... }`) for structured startup lifecycle deltas. `projectExecutorDeltas` ignores `status` deltas automatically; add a `case 'status':` branch to any custom exhaustive `switch (delta.type)`:
+`ExecutorDeltaSchema` / `ExecutorDelta` now includes `ExecutorStatusDeltaSchema` (`{ type: 'status', phase, ... }`) for structured startup lifecycle deltas. `phase` is an open label of 1–64 trimmed characters: the drivers emit `spawning`, `initializing` and `verifying`, and a reader treats any other label as a phase it does not know rather than refusing it. `projectExecutorDeltas` ignores `status` deltas automatically; add a `case 'status':` branch to any custom exhaustive `switch (delta.type)`:
 
 ```ts
 // before
@@ -99,6 +267,24 @@ switch (delta.type) {
     break;
 }
 ```
+
+**The wire changed in both directions, not only by the `status` delta.** Every object of the
+executor ↔ server contract is strict, so a reader on `0.129.x` refuses a whole message that carries
+a key `0.130.0` added:
+
+| Travels | Message | A `0.129.x` reader refuses |
+|---------|---------|----------------------------|
+| executor → server | `hello` | `engines[].capabilities` — written by every driver, so the handshake itself fails |
+| executor → server | `report` | a `status` delta; `threadDisposition` on `turn-end` and on `failure`; `cacheCreationInputTokens`, `thinkingTokens`, `totalTokens`, `total` and `modelUsage` on a `usage` delta |
+| server → executor | `reply` | `scope` and `updatedInput` on `approve`; `interrupt` on `deny` |
+
+Upgrade the server before any executor: an older executor writes none of these keys and keeps
+working. Until every executor is upgraded, the server sends `scope: 'session'`, `updatedInput` and
+`interrupt` only to an executor whose `hello` declared `sessionApproval`, `updatedToolInput` and
+`interruptOnDeny` for the engine — an engine announced without `capabilities` is on `0.129.x`.
+`0.131.0` added `plan` and `windows[].scope` to `planLimits` in `hello` the same way. The rule
+and the table of every release are in the
+[API reference](../api/reference.md#version-skew-between-an-executor-and-its-server) (ADR 0334).
 
 ## Released migration: 0.129.0
 

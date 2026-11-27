@@ -5,7 +5,6 @@ import { resolveRouteParamsSchema } from '../internal/route-pattern';
 import type { MultipartDescriptor } from './client-types';
 import {
   assertHeadEndpoint,
-  assertInputRecursionDepth,
   assertMultipartEndpoint,
   assertNoUngroupedToolOptions,
   assertRawBodyEndpoint,
@@ -13,9 +12,11 @@ import {
   assertResponseMetaEndpoint,
   assertSafelistedBodyEndpoint,
   assertStreamingResponseEndpoint,
+  assertToolDepthOptions,
 } from './define-validation';
 import { assertEndpointExposure } from './endpoint-capabilities';
 import { assertEndpointEffect, type OperationEffect } from './operation-effect';
+import { assertEndpointRefusals, type RefusalDeclaration } from './operation-refusals';
 import type { EndpointToolOptions } from './tool-options';
 import { assertToolView } from './tool-view';
 import { TOOL_TRANSPORTS, type Transport } from './transports';
@@ -150,6 +151,8 @@ interface EndpointRouteBase {
   idempotent?: boolean;
   /** Closed side-effect tag (`'read'` or `'write'`) for read-only grant projection. */
   effect?: OperationEffect;
+  /** Codes this operation refuses with — factories from `defineErrors`; the server holds it to them. → ADR 0330 */
+  refuses?: readonly RefusalDeclaration[];
   /**
    * Opaque, app-defined per-endpoint metadata. The core attaches **no** meaning
    * to it (like `scope`, it is a free escape-hatch — ADR 0002/0021): it rides
@@ -426,6 +429,7 @@ export function defineContract(
   for (const [key, ep] of Object.entries(materializedEndpoints)) {
     assertEndpointExposure(meta.prefix, key, ep);
     assertEndpointEffect(meta.prefix, key, ep);
+    assertEndpointRefusals(`Contract "${meta.prefix}": endpoint "${key}"`, ep.refuses);
     // `desc` is the description a model reads to decide whether to call the
     // tool — an empty one passes the type check but ships an unusable tool.
     if (ep.desc.trim() === '') {
@@ -467,10 +471,7 @@ export function defineContract(
       );
     }
     if (tool.view !== undefined) assertToolView(meta.prefix, key, ep);
-    assertInputRecursionDepth(
-      `Contract "${meta.prefix}": endpoint "${key}" tool.inputRecursionDepth`,
-      tool.inputRecursionDepth,
-    );
+    assertToolDepthOptions(`Contract "${meta.prefix}": endpoint "${key}" tool`, tool);
 
     if (!tool.name) continue;
     const existing = toolTransports.get(tool.name);

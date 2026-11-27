@@ -187,6 +187,9 @@ export const STITCH_ERROR_STATUS = {
   CONNECTION_TIMEOUT: 504,
   CONNECTION_RESPONSE_TOO_LARGE: 413,
   CONNECTION_REQUEST_FAILED: 502,
+  // A remote service answered with an error and no envelope of its own; the projection keeps
+  // the upstream status, so this is only the default.
+  HTTP_ERROR: 502,
   UPSTREAM_TOOL_ERROR: 502,
   MCP_STRUCTURED_CONTENT_MISSING: 502,
   OPERATION_NOT_SUCCEEDED: 409,
@@ -227,6 +230,20 @@ export function isRetryableStatus(status: number): boolean {
     status === 408 || status === 429 || status === 502 || status === 503 || status === 504
   );
 }
+
+/**
+ * Codes the typed client raises itself, with no server answer to carry a status: a body it could
+ * not read (`UNKNOWN_ERROR`) and a stream it could not follow. Every other code a client failure
+ * carries is in `STITCH_ERROR_STATUS` or was the server's.
+ */
+export const CLIENT_ERROR_CODES = [
+  'UNKNOWN_ERROR',
+  'STREAM_TRUNCATED',
+  'STREAM_PROTOCOL_ERROR',
+] as const;
+
+/** A code only the typed client raises. */
+export type ClientErrorCode = (typeof CLIENT_ERROR_CODES)[number];
 
 /** A code stitchkit itself emits — derived from `STITCH_ERROR_STATUS` (no dup). */
 export type StitchErrorCode = keyof typeof STITCH_ERROR_STATUS;

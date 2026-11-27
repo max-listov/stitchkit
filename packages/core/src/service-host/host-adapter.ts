@@ -26,7 +26,7 @@ const HOST_COMMAND_SESSION_KEYS: readonly string[] = [
 ];
 
 /** The declared environment of a host command: the fixed `PATH` plus the session keys set now. */
-function hostCommandEnv(): Record<string, string> {
+export function hostCommandEnv(): Record<string, string> {
   const env: Record<string, string> = { PATH: HOST_COMMAND_PATH };
   for (const key of HOST_COMMAND_SESSION_KEYS) {
     const value = process.env[key];

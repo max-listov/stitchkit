@@ -158,21 +158,29 @@ export function applyMcpLazyDiscovery(input: {
     annotations: { readOnlyHint: true, idempotentHint: true },
     handler: ({ input: args }) => {
       const cap = Math.min(args.limit ?? discovery.maxResults, discovery.maxResults);
-      const ranked = rankToolsByQuery(args.query, hiddenTools).slice(0, cap);
+      // The enable slots go to tools still hidden: a tool already enabled never takes one, so a
+      // repeated search reaches the matches past the first `cap`. Enabled matches are still told.
+      const toEnable = rankToolsByQuery(
+        args.query,
+        hiddenTools.filter((entry) => !entry.registered.enabled),
+      ).slice(0, cap);
+      const alreadyEnabled = rankToolsByQuery(
+        args.query,
+        hiddenTools.filter((entry) => entry.registered.enabled),
+      ).slice(0, cap);
       const enabledTools: string[] = [];
       const matches: Array<z.infer<typeof LazySearchMatchSchema>> = [];
-      for (const entry of ranked) {
-        const newlyEnabled = !entry.registered.enabled;
-        if (newlyEnabled) {
-          entry.registered.enabled = true;
-          enabledTools.push(entry.name);
-        }
+      for (const entry of toEnable) {
+        entry.registered.enabled = true;
+        enabledTools.push(entry.name);
+        matches.push({ name: entry.name, description: entry.description, newlyEnabled: true });
+      }
+      for (const entry of alreadyEnabled)
         matches.push({
           name: entry.name,
           description: entry.description,
-          newlyEnabled,
+          newlyEnabled: false,
         });
-      }
       if (enabledTools.length > 0) {
         server.sendToolListChanged();
       }

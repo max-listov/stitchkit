@@ -5,13 +5,14 @@ import { createAcpHandlers } from '../../src/agent-executor/acp/v1-handlers';
 import type { PendingExternalAcpRequest } from '../../src/agent-executor/acp/v1-permission';
 import { newAcpTurn, runAcpPrompt } from '../../src/agent-executor/acp/v1-turn';
 import { createJsonRpcPeer, JsonRpcError } from '../../src/agent-executor/json-rpc-peer';
+import { sessionLiveness } from '../../src/agent-executor/session-primitives';
 import {
   type AcpPermissionRequestEvent,
   type AcpUpdateEvent,
   createAcpDriver,
 } from '../../src/entrypoints/agent-executor/acp';
 import { probeLiveness } from '../../src/internal/process-identity';
-import { ambientIn, drain, inScratch } from '../support/engine-driver-harness';
+import { ambientIn, drain, inScratch, promiseJobsRan } from '../support/engine-driver-harness';
 import { reapAfterEachTest, trackPidFile } from '../support/process-reaper';
 
 reapAfterEachTest();
@@ -123,7 +124,7 @@ describe('ACP close, disconnect, and abort liveness', () => {
     }));
 
   test.each(['close-active', 'close-external'] as const)(
-    'session/close window (%s) rejects respond(), fails active turn immediately, deduplicates close(), and drops late observers/requests',
+    'session/close window (%s) rejects respond(), fails active turn immediately, deduplicates close(), refuses late requests, and drops late observers',
     (mode) =>
       inScratch(`acp-liveness-${mode}`, async (root) => {
         trackPidFile(join(root, 'pid'));
@@ -163,8 +164,6 @@ describe('ACP close, disconnect, and abort liveness', () => {
         const closingA = session.close();
         const closingB = session.close();
         await waitForFile(join(root, 'close-received'));
-        // Allow any late updates/requests/prompt replies written before close-received to flush through the reader.
-        await Bun.sleep(40);
 
         expect(session.providerPid).toBeUndefined();
         if (mode === 'close-active') {
@@ -211,6 +210,8 @@ describe('ACP close, disconnect, and abort liveness', () => {
           );
         }
 
+        // close() resolved, so the reader it waits for has read every late update, request and
+        // prompt reply the agent wrote: what was dropped is dropped for good.
         expect(updates).toEqual([]);
         expect(perms.map((p) => p.interactionId)).toEqual([heldEvent.interactionId]);
         expect(session.title).toBe('initial');
@@ -223,12 +224,22 @@ describe('ACP close, disconnect, and abort liveness', () => {
         expect(
           calls.some((entry) => Array.isArray(entry) && entry[0] === 'session/cancel'),
         ).toBe(false);
+        // The agent is still read while close() waits for `session/close`: what it asks then is
+        // refused, so it never waits on an answer nobody will give.
         const responses = readJsonLines(join(root, 'responses.jsonl'));
-        expect(
-          responses.some(
-            (entry) => Reflect.get(Object(entry), 'id') === 'late-perm-during-close',
-          ),
-        ).toBe(false);
+        expect(responses).toContainEqual({
+          jsonrpc: '2.0',
+          id: 'late-perm-during-close',
+          result: { outcome: { outcome: 'cancelled' } },
+        });
+        expect(responses).toContainEqual({
+          jsonrpc: '2.0',
+          id: 'late-read-during-close',
+          error: {
+            code: -32601,
+            message: 'fs/read_text_file is not handled by this executor',
+          },
+        });
         expect(JSON.stringify(responses)).not.toContain('"selected"');
       }),
   );
@@ -462,13 +473,16 @@ describe('ACP handlers and runAcpPrompt deterministic liveness guards', () => {
     let alive = true;
     let transformCalls = 0;
     const reason = new Error('unit-aborted');
-    const ensureAlive = () => {
-      if (!alive) throw reason;
+    const liveness = {
+      ensureAlive: () => {
+        if (!alive) throw reason;
+      },
+      isAlive: () => alive,
     };
 
     const handlers = createAcpHandlers({
       externalPending,
-      ensureAlive,
+      liveness,
       isOpened: () => true,
       getTurn: () => undefined,
       onSessionMeta: (meta) => {
@@ -573,7 +587,7 @@ describe('ACP handlers and runAcpPrompt deterministic liveness guards', () => {
     peer.receive(
       JSON.stringify({ jsonrpc: '2.0', id: 'closed-unknown', method: 'unknown/foo' }),
     );
-    await Bun.sleep(20);
+    await promiseJobsRan();
     expect(sent).toEqual([]);
     expect(externalPending.size).toBe(0);
 
@@ -601,7 +615,7 @@ describe('ACP handlers and runAcpPrompt deterministic liveness guards', () => {
           },
         }),
       );
-      await Bun.sleep(20);
+      await promiseJobsRan();
       expect(sent).toEqual([]);
       expect(externalPending.size).toBe(0);
     }
@@ -611,7 +625,7 @@ describe('ACP handlers and runAcpPrompt deterministic liveness guards', () => {
     const activeTurn = newAcpTurn('t-xform');
     const throwHandlers = createAcpHandlers({
       externalPending: new Map(),
-      ensureAlive,
+      liveness,
       isOpened: () => true,
       getTurn: () => activeTurn,
       onSessionMeta: () => undefined,
@@ -631,6 +645,12 @@ describe('ACP handlers and runAcpPrompt deterministic liveness guards', () => {
 
   test('runAcpPrompt fails with liveness error without calling checkOutcome or emitting turn-end on abort', async () => {
     const abortErr = new Error('prompt-aborted');
+    const abortedSession = sessionLiveness({
+      closedMessage: 'The ACP session is closing',
+      caller: undefined,
+      linked: new AbortController().signal,
+    });
+    abortedSession.markLost(abortErr);
 
     // Case A: session/prompt resolves after abort -> checkOutcome is never called, pending requests are not replied to.
     {
@@ -657,9 +677,7 @@ describe('ACP handlers and runAcpPrompt deterministic liveness guards', () => {
         prompt: [{ type: 'text', text: 'hi' }],
         turn,
         generation: 1,
-        ensureAlive: () => {
-          throw abortErr;
-        },
+        liveness: abortedSession,
         checkOutcome: () => {
           checkCalled = true;
           return undefined;
@@ -694,9 +712,7 @@ describe('ACP handlers and runAcpPrompt deterministic liveness guards', () => {
         prompt: [{ type: 'text', text: 'hi' }],
         turn,
         generation: 1,
-        ensureAlive: () => {
-          throw abortErr;
-        },
+        liveness: abortedSession,
         done: () => undefined,
       });
       const req = JSON.parse(sent[0] ?? '{}');

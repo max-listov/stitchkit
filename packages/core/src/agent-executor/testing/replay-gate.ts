@@ -16,7 +16,10 @@ interface GateSlot {
   readonly resolve: () => void;
 }
 
-/** Create a deterministic label gate for replay drivers; rejects empty or duplicate labels. */
+/**
+ * Create a deterministic label gate for replay drivers; rejects empty or duplicate labels. A label
+ * is compared without its surrounding whitespace, when the gate is created and on every lookup.
+ */
 export function createReplayGate(labels: readonly string[]): ReplayGate {
   const slots = new Map<string, GateSlot>();
   for (const rawLabel of labels) {
@@ -45,9 +48,11 @@ export function createReplayGate(labels: readonly string[]): ReplayGate {
     });
   }
 
+  const slotOf = (label: string) => slots.get(label.trim());
+
   return {
     beforeEmit(label, signal) {
-      const slot = slots.get(label);
+      const slot = slotOf(label);
       if (slot === undefined) return Promise.resolve();
       slot.reached = true;
       slot.resolveReached();
@@ -63,14 +68,14 @@ export function createReplayGate(labels: readonly string[]): ReplayGate {
       });
     },
     waitForReached(label) {
-      const slot = slots.get(label);
+      const slot = slotOf(label);
       return slot === undefined
         ? Promise.resolve(false)
         : slot.reachedPromise.then(() => true);
     },
-    hasReached: (label) => slots.get(label)?.reached ?? false,
+    hasReached: (label) => slotOf(label)?.reached ?? false,
     release(label) {
-      const slot = slots.get(label);
+      const slot = slotOf(label);
       if (slot === undefined || slot.released) return false;
       slot.released = true;
       slot.resolve();

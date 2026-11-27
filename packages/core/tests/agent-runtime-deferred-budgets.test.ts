@@ -120,6 +120,39 @@ describe('deferred Agent tool ceilings', () => {
     ).rejects.toBeInstanceOf(AgentContextOverflowError);
   });
 
+  test('the nesting limit shapes the schemas the deferred surface mounts', async () => {
+    let inner: z.ZodType = z.string();
+    for (const name of ['f9', 'f8', 'f7', 'f6', 'f5', 'f4', 'f3', 'f2', 'f1'])
+      inner = z.object({ [name]: inner });
+    const lessonInput = z.object({ items: inner });
+    const lesson = defineRuntimeTool({
+      name: 'lesson_put',
+      description: 'put a lesson',
+      identity: { serviceName: 'bounded', action: 'lesson_put', method: 'POST' },
+      input: lessonInput,
+      output: z.object({ ok: z.boolean() }),
+      handler: () => ({ ok: true }),
+    });
+    const mounted = async (inputNestingDepth?: number) => {
+      const deferred = createDeferredAgentToolSurface({
+        runtimeTools: [lesson],
+        alwaysOn: ['lesson_put'],
+        ...(inputNestingDepth !== undefined && { inputNestingDepth }),
+        search: { name: 'tool_search', maxQueryBytes: 64, maxResults: 1, maxResultBytes: 512 },
+        activation: { maxSelectedTools: 1, maxActiveTools: 2, maxSchemaBytes: 100_000 },
+      });
+      const tool = deferred.mount(runContext, {
+        access: { open: 'local-operator' },
+      }).lesson_put;
+      if (!tool) throw new Error('expected the lesson_put tool');
+      return JSON.stringify(await asSchema(tool.inputSchema).jsonSchema);
+    };
+    const limited = await mounted(10);
+    // The node at f8 opens: its step to f9 would be the eleventh level.
+    expect(limited).not.toContain('"f9"');
+    expect(await mounted()).toContain('"f9"');
+  });
+
   test('the schema-byte ceiling measures every schema as the mount advertises it', async () => {
     interface Expression {
       field?: string;

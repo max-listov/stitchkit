@@ -227,7 +227,7 @@ the field is ignored and the query is ranked as usual.
 
 Every ceiling is required. `maxSchemaBytes` measures UTF-8 bytes over canonical
 name, description and presentation schema. The options that shape how inputs are
-advertised — `extend`, `flattenUnionInput`, `inputRecursionDepth` — are set on
+advertised — `extend`, `flattenUnionInput`, `inputRecursionDepth`, `inputNestingDepth` — are set on
 `createDeferredAgentToolSurface`, not on `mount`, so the manifest the selector
 ranks and the ceilings measure is the one the model receives; a `mount` that
 names one is refused. It is useful for before/after

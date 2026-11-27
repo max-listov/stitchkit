@@ -1,7 +1,16 @@
-import { holdEngineRequest } from '../engine-requests';
+import {
+  type EngineTurnLiveness,
+  holdEngineRequest,
+  leaveEngineRequestUnanswered,
+} from '../engine-requests';
 import type { InteractionReply } from '../executor-contract';
 import { JSON_RPC_METHOD_NOT_FOUND, JsonRpcError, type JsonRpcValue } from '../json-rpc-peer';
-import { invokeSafely, offerTurnDelta } from '../session-primitives';
+import {
+  invokeObserver,
+  type ObserverErrorHandler,
+  offerTurnDelta,
+  reportObserverError,
+} from '../session-primitives';
 import type { ExecutorDelta } from '../vocabulary';
 import { type AcpUpdateTrack, mapAcpUpdate } from './v1-map';
 import {
@@ -59,7 +68,7 @@ export interface AcpPermissionRequestEvent {
 
 interface AcpHandlersState {
   externalPending: Map<string, PendingExternalAcpRequest>;
-  ensureAlive: () => void;
+  liveness: EngineTurnLiveness;
   isOpened: () => boolean;
   getTurn: () => AcpTurnSlot | undefined;
   onSessionMeta: (meta: {
@@ -71,16 +80,13 @@ interface AcpHandlersState {
   onUpdate?: (event: AcpUpdateEvent) => void;
   onPermissionRequest?: (event: AcpPermissionRequestEvent) => Promise<void> | void;
   permissionRequestDelivery?: 'external-only' | 'all';
+  onObserverError?: ObserverErrorHandler;
+  /**
+   * `true` while `close()` waits for the agent's `session/close`: the agent is still read, so a
+   * request it sends then is refused. After an abort or a lost connection nothing is written.
+   */
+  closingGracefully?: () => boolean;
   onEnd: (error: Error) => void;
-}
-
-function isHandlersAlive(state: AcpHandlersState): boolean {
-  try {
-    state.ensureAlive();
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function normalizeTransformedUpdates(
@@ -136,7 +142,8 @@ function handleAcpNotification(
   try {
     updates = normalizeTransformedUpdates(parsed.data.update, state.transformUpdate);
   } catch (error) {
-    if (!isHandlersAlive(state)) return;
+    reportObserverError(state.onObserverError, 'transformUpdate', error);
+    if (!state.liveness.isAlive()) return;
     if (turn !== undefined) {
       turn.chunk += 1;
       offerTurnDelta(turn.channel, {
@@ -152,7 +159,7 @@ function handleAcpNotification(
   }
   const opened = state.isOpened();
   for (const update of updates) {
-    if (!isHandlersAlive(state)) return;
+    if (!state.liveness.isAlive()) return;
     state.onSessionMeta({
       ...(update.configOptions !== undefined && { configOptions: update.configOptions }),
       ...(update.sessionUpdate === 'session_info_update' &&
@@ -177,7 +184,7 @@ function handleAcpNotification(
         duringActiveTurn: turn !== undefined,
         deltas,
       };
-      invokeSafely(() => state.onUpdate?.(event));
+      invokeObserver(state.onObserverError, 'onUpdate', () => state.onUpdate?.(event));
     }
   }
 }
@@ -231,10 +238,10 @@ function handleAcpRequest(
       state.permissionRequestDelivery === 'all' &&
       state.onPermissionRequest !== undefined &&
       turn.pending.has(interactionId) &&
-      isHandlersAlive(state)
+      state.liveness.isAlive()
     ) {
       const observer = state.onPermissionRequest;
-      invokeSafely(() =>
+      invokeObserver(state.onObserverError, 'onPermissionRequest', () =>
         observer({
           interactionId,
           sessionId: asked.sessionId,
@@ -242,8 +249,7 @@ function handleAcpRequest(
           duringActiveTurn: true,
           delta,
           async respond(reply) {
-            state.ensureAlive();
-            answerActiveAcpTurnRequest(turn, interactionId, reply);
+            answerActiveAcpTurnRequest(turn, state.liveness, interactionId, reply);
           },
         }),
       );
@@ -282,10 +288,16 @@ function handleAcpRequest(
   return new Promise<JsonRpcValue>((resolve, reject) => {
     const entry: PendingExternalAcpRequest = { detail: { options: asked.options }, resolve };
     state.externalPending.set(interactionId, entry);
-    const onObserverError = (error: unknown) => {
+    // A `JsonRpcError` is the observer's own refusal of the request, not its failure.
+    const report = (error: unknown) => {
+      if (!(error instanceof JsonRpcError))
+        reportObserverError(state.onObserverError, 'onPermissionRequest', error);
+    };
+    const onObserverFailure = (error: unknown) => {
+      report(error);
       if (state.externalPending.get(interactionId) !== entry) return;
       state.externalPending.delete(interactionId);
-      if (!isHandlersAlive(state)) return;
+      if (!state.liveness.isAlive()) return;
       // Forward explicit JsonRpcError refusals; isolate arbitrary host exceptions as a clean
       // cancellation so internal host errors never leak and the stdio agent is never left hanging.
       if (error instanceof JsonRpcError) reject(error);
@@ -299,8 +311,8 @@ function handleAcpRequest(
         duringActiveTurn: false,
         delta,
         async respond(reply) {
-          state.ensureAlive();
           answerAcpSessionRequest({
+            liveness: state.liveness,
             turn: undefined,
             externalPending: state.externalPending,
             expectedEntry: entry,
@@ -314,22 +326,25 @@ function handleAcpRequest(
         outcome !== null &&
         'then' in outcome &&
         typeof outcome.then === 'function';
-      if (!isHandlersAlive(state)) {
+      if (!state.liveness.isAlive()) {
         if (state.externalPending.get(interactionId) === entry) {
           state.externalPending.delete(interactionId);
         }
-        if (thenable) void Promise.resolve(outcome).catch(() => undefined);
+        if (thenable) void Promise.resolve(outcome).catch(report);
         return;
       }
       if (thenable) {
         void Promise.resolve(outcome).then(() => {
-          if (!isHandlersAlive(state) && state.externalPending.get(interactionId) === entry) {
+          if (
+            !state.liveness.isAlive() &&
+            state.externalPending.get(interactionId) === entry
+          ) {
             state.externalPending.delete(interactionId);
           }
-        }, onObserverError);
+        }, onObserverFailure);
       }
     } catch (error) {
-      onObserverError(error);
+      onObserverFailure(error);
     }
   });
 }
@@ -340,15 +355,20 @@ export function createAcpHandlers(state: AcpHandlersState) {
     chunk: 0,
     track: { segment: 0, toolNames: new Map() },
   };
-  const dropClosedRequest = (): Promise<JsonRpcValue> =>
-    new Promise<JsonRpcValue>(() => undefined);
+  const answerClosedRequest = (method: string): Promise<JsonRpcValue> => {
+    if (state.closingGracefully?.() !== true) return leaveEngineRequestUnanswered();
+    if (method === 'session/request_permission') return Promise.resolve(ACP_CANCELLED);
+    return Promise.reject(
+      new JsonRpcError(JSON_RPC_METHOD_NOT_FOUND, `${method} is not handled by this executor`),
+    );
+  };
   return {
     onNotification: (method: string, params: JsonRpcValue | undefined) => {
-      if (!isHandlersAlive(state)) return;
+      if (!state.liveness.isAlive()) return;
       handleAcpNotification(state, externalState, method, params);
     },
     onRequest: (method: string, params: JsonRpcValue | undefined, id: string | number) => {
-      if (!isHandlersAlive(state)) return dropClosedRequest();
+      if (!state.liveness.isAlive()) return answerClosedRequest(method);
       return handleAcpRequest(state, method, params, id);
     },
     onEnd: state.onEnd,

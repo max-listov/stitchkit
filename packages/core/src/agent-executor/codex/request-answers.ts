@@ -1,6 +1,10 @@
-import { answerEngineRequest, type EngineRequestTurn } from '../engine-requests';
+import {
+  type EngineRequestTurn,
+  type EngineTurnLiveness,
+  respondToEngineRequest,
+} from '../engine-requests';
 import { type InteractionReply, InteractionReplySchema } from '../executor-contract';
-import type { JsonRpcValue } from '../json-rpc-peer';
+import { JSON_RPC_METHOD_NOT_FOUND, JsonRpcError, type JsonRpcValue } from '../json-rpc-peer';
 import { nonEmptyString, safeJsonValue } from '../session-primitives';
 import type { CodexTurnState } from './classify';
 import type { CodexStartingTurn } from './event-routing';
@@ -42,6 +46,10 @@ export interface CodexTurnSlot extends EngineRequestTurn<JsonRpcValue, CodexRequ
   readonly threadId?: string;
   starting?: CodexStartingTurn;
   codexTurnId?: string;
+  /** The `turn/start` request itself, kept past a local abort so a late reply still names the turn. */
+  startReply?: Promise<JsonRpcValue>;
+  /** Set once the driver stopped following a turn the server may run, so it is interrupted once. */
+  abandoned?: boolean;
 }
 
 /** An external/TUI server request held outside `startTurn()`. */
@@ -212,6 +220,46 @@ export const codexStopped = (waiting: { detail: { method: string } }) =>
   codexStoppedAnswer(waiting.detail.method);
 
 /**
+ * Let go of the external requests a closing connection still holds. `answer` — the owner closes a
+ * process only this driver talks to and the engine still reads — answers each as stopped, so the
+ * engine does not wait on it; otherwise they are forgotten: after an abort or a lost connection
+ * nothing is written, and on a transport shared with a TUI the request is left for it.
+ */
+export function releaseExternalCodexRequests(
+  pending: Map<string, PendingExternalCodexRequest>,
+  answer: boolean,
+): void {
+  if (answer) for (const waiting of pending.values()) waiting.resolve(codexStopped(waiting));
+  pending.clear();
+}
+
+/**
+ * {@link releaseExternalCodexRequests} for a connection about to stop its engine. The peer writes
+ * an answer a few microtasks after its request settles, and stopping closes the pipe at once: one
+ * turn of the event loop puts every answer on the pipe first. Nothing answered, nothing awaited.
+ */
+export async function releaseExternalCodexRequestsBeforeStop(
+  held: readonly Map<string, PendingExternalCodexRequest>[],
+  answer: boolean,
+): Promise<void> {
+  const answered = answer && held.some((pending) => pending.size > 0);
+  for (const pending of held) releaseExternalCodexRequests(pending, answer);
+  if (answered) await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+/** The answer to a server request no one is left to answer: stopped, or not handled at all. */
+export function codexStoppedReply(method: string): Promise<JsonRpcValue> {
+  return isKnownCodexRequestMethod(method)
+    ? Promise.resolve(codexStoppedAnswer(method))
+    : Promise.reject(
+        new JsonRpcError(
+          JSON_RPC_METHOD_NOT_FOUND,
+          `${method} is not handled by this executor`,
+        ),
+      );
+}
+
+/**
  * Validate and build the Codex JSON-RPC response payload for one held approval, permissions,
  * user-input, or MCP elicitation request. Refuses unsupported `updatedInput`, invalid kinds,
  * `humanCommand` session approvals, or disallowed `availableDecisions` before state is mutated.
@@ -302,27 +350,27 @@ export function buildCodexRequestAnswer(
 /** Answer one pending request owned by the active turn (`turn.respond`). */
 export function answerActiveCodexTurnRequest(
   turn: CodexTurnSlot,
+  liveness: Pick<EngineTurnLiveness, 'ensureAlive'>,
   interactionId: string,
   rawReply: InteractionReply['reply'],
 ): void {
-  const waiting = turn.pending.get(interactionId);
-  if (waiting === undefined) {
-    throw new TypeError(`Unknown interaction ${interactionId} for this turn`);
-  }
-  const answer = buildCodexRequestAnswer(waiting.detail, rawReply);
-  answerEngineRequest(turn, interactionId, answer);
+  respondToEngineRequest(turn, liveness, interactionId, (detail) =>
+    buildCodexRequestAnswer(detail, rawReply),
+  );
 }
 
 /** Answer one pending external request (`event.respond` / `session.respond` / `control.respond`). */
 export function answerCodexSessionRequest(input: {
+  liveness: Pick<EngineTurnLiveness, 'ensureAlive'>;
   turn: CodexTurnSlot | undefined;
   externalPending: Map<string, PendingExternalCodexRequest>;
   expectedEntry?: PendingExternalCodexRequest;
   interactionId: string;
   reply: InteractionReply['reply'];
 }): void {
+  input.liveness.ensureAlive();
   if (input.turn?.pending.has(input.interactionId)) {
-    answerActiveCodexTurnRequest(input.turn, input.interactionId, input.reply);
+    answerActiveCodexTurnRequest(input.turn, input.liveness, input.interactionId, input.reply);
     return;
   }
   const external = input.externalPending.get(input.interactionId);

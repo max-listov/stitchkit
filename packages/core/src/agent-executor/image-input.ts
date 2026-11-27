@@ -207,21 +207,22 @@ export function assertImageFrameBytes(serialized: string, maxBytes: number): voi
 }
 
 /**
- * Guard a session's `startTurn` while host attachments are resolved asynchronously: prevents
- * concurrent `startTurn` calls during `resolveFile` and re-checks session liveness after await.
+ * Guard a session's `startTurn` while what the turn sends is prepared asynchronously (host
+ * attachments resolved, a host watcher armed): prevents concurrent `startTurn` calls during the
+ * preparation and re-checks session liveness after it. The one starter of every driver.
  */
-export function guardedTurnStarter<TInput, TResolved, TTurn>(options: {
+export function guardedTurnStarter<TInput, TPrepared, TTurn>(options: {
   busyMessage: string;
   check(input: TInput): void;
-  inline(input: TInput): Promise<readonly TResolved[]>;
-  dispatch(input: TInput, parts: readonly TResolved[]): TTurn | Promise<TTurn>;
+  inline(input: TInput): Promise<TPrepared>;
+  dispatch(input: TInput, parts: TPrepared): TTurn | Promise<TTurn>;
 }): (input: TInput) => Promise<TTurn> {
   let preparing = false;
   return async (input) => {
     if (preparing) throw new Error(options.busyMessage);
     options.check(input);
     preparing = true;
-    let parts: readonly TResolved[];
+    let parts: TPrepared;
     try {
       parts = await options.inline(input);
     } finally {

@@ -57,6 +57,7 @@ export function collectToolSurface<TRuntime extends RuntimeToolDefinition>({
     extend: collectConfig.extend,
     flattenUnionInput: collectConfig.flattenUnionInput,
     inputRecursionDepth: collectConfig.inputRecursionDepth,
+    inputNestingDepth: collectConfig.inputNestingDepth,
     assertNames: collectConfig.assertNames,
     assertUniqueNames,
   })) {

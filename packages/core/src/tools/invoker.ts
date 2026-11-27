@@ -23,6 +23,8 @@ export interface ToolInvokerConfig {
   flattenUnionInput?: boolean;
   /** Compiles the same reference-free input documents as the chosen mount. */
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
   /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
   coerceJsonArgs?: boolean;
   /**
@@ -78,6 +80,7 @@ export function createToolInvoker(
       extend: config.extend,
       flattenUnionInput: config.flattenUnionInput,
       inputRecursionDepth: config.inputRecursionDepth,
+      inputNestingDepth: config.inputNestingDepth,
     })) {
       assertUniqueToolName(tool.name, tools.has(tool.name), 'in-process tool name');
       tools.set(tool.name, tool);

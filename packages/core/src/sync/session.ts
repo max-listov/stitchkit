@@ -55,7 +55,10 @@ export interface SyncSessionPorts<PAGE extends SyncPageHeader> {
   readCursor(): Eventually<number | SyncSnapshotResume | null>;
   /**
    * A full sync begins: the local projection is kept, the cursor reset, accumulators
-   * cleared. The outbox stays: pending changes are rebased once the snapshot is in.
+   * cleared. Reset the cursor to `null`, what `readCursor` returns for an uninitialized store:
+   * a `0` is a saved version, and a session restarted before the snapshot's first page was
+   * saved would ask for the feed after it. The outbox stays: pending changes are rebased once
+   * the snapshot is in.
    */
   beginFullSync(): Eventually<void>;
   send(request: SyncPageRequest): void;

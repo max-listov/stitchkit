@@ -3,12 +3,10 @@ import { abortReason } from '../../internal/abort-race';
 import type { AgentEngineSession, AgentEngineTurn } from '../engine';
 import { ENGINE_LINE_BYTES, type EngineProcess, spawnEngineProcess } from '../engine-process';
 import {
-  answerEngineRequest,
-  drainEngineRequests,
-  type EngineRequestTurn,
-  endEngineTurn,
   holdEngineRequest,
+  interruptEngineTurn,
   loseEngineTurn,
+  respondToEngineRequest,
 } from '../engine-requests';
 import type { PlanLimits } from '../hello';
 import {
@@ -17,18 +15,18 @@ import {
   type DriverImageOptions,
   imageTurnStarter,
 } from '../image-input';
-import { mergeRateLimitEvent } from '../plan-limits';
 import { type ExecutorProfileConfig, engineEnvironment, engineProfile } from '../profile';
 import {
   createTurnDeltaChannel,
   emitStartupPhase,
-  offerTurnDelta,
+  type ObserverErrorHandler,
+  type SessionLiveness,
   sessionAbort,
+  sessionLiveness,
   stopConnection,
 } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
-import { type ClaudeTurnState, classifyClaudeRecord, newClaudeTurnState } from './classify';
-import { claudePlanWindows } from './limits';
+import { newClaudeTurnState } from './classify';
 import {
   type ClaudePendingPermissionDetail,
   type ClaudePermissionDecision,
@@ -39,14 +37,14 @@ import {
   claudeUserMessage,
   resolveClaudePermissionReply,
 } from './protocol';
+import { type ClaudeRoutedTurn, routeClaudeRecord } from './record-router';
 import { claudeTranscriptExists, claudeTranscriptPath } from './transcript';
 
 /** A running turn: its state, its deltas and the permission requests it holds, with their input. */
-interface ClaudeTurnSlot
-  extends EngineRequestTurn<ClaudePermissionDecision, ClaudePendingPermissionDetail> {
-  readonly state: ClaudeTurnState;
-  settled: boolean;
-}
+type ClaudeTurnSlot = ClaudeRoutedTurn<
+  ClaudePermissionDecision,
+  ClaudePendingPermissionDetail
+>;
 
 const INTERRUPTED: ClaudePermissionDecision = {
   behavior: 'deny',
@@ -61,31 +59,18 @@ const LOST: ClaudePermissionDecision = {
 function claudeTurnHandle(
   turn: ClaudeTurnSlot,
   send: (line: string) => void,
-  ensureAlive: () => void,
+  liveness: SessionLiveness,
 ): AgentEngineTurn {
   return {
     deltas: turn.channel,
-    async interrupt() {
-      if (turn.settled) return;
-      try {
-        ensureAlive();
-      } catch {
-        return;
-      }
-      turn.state.interruptRequested = true;
-      drainEngineRequests(turn, () => INTERRUPTED);
-      send(JSON.stringify(claudeInterrupt(randomUUID())));
-    },
+    interrupt: () =>
+      interruptEngineTurn(turn, liveness, {
+        refusal: () => INTERRUPTED,
+        tell: () => send(JSON.stringify(claudeInterrupt(randomUUID()))),
+      }),
     async respond(interactionId, rawReply) {
-      ensureAlive();
-      const waiting = turn.pending.get(interactionId);
-      if (waiting === undefined) {
-        throw new TypeError(`Unknown interaction ${interactionId} for this turn`);
-      }
-      answerEngineRequest(
-        turn,
-        interactionId,
-        resolveClaudePermissionReply(waiting.detail, rawReply),
+      respondToEngineRequest(turn, liveness, interactionId, (detail) =>
+        resolveClaudePermissionReply(detail, rawReply),
       );
     },
   };
@@ -95,47 +80,31 @@ function startClaudeReadingLoop(state: {
   readonly engine: EngineProcess;
   readonly profileId: string;
   readonly limits: Map<string, PlanLimits>;
-  readonly isStopped: () => boolean;
-  readonly getDead: () => Error | undefined;
+  readonly liveness: SessionLiveness;
   readonly getTurn: () => ClaudeTurnSlot | undefined;
   readonly clearTurn: (turn: ClaudeTurnSlot | undefined) => void;
   readonly onExit: (error: unknown) => void;
 }): Promise<void> {
-  const { engine, profileId, limits } = state;
+  const { engine, profileId, limits, liveness } = state;
+  // A lost or stopped CLI reads nothing: nothing is written to it.
+  const send = (record: unknown) => {
+    if (liveness.isAlive()) engine.send(JSON.stringify(record));
+  };
   // One reader for the life of the process: records between turns
   // (limits, the session's own) are applied, a turn's go to its channel.
   return (async () => {
     try {
       for await (const line of engine.lines) {
-        if (state.isStopped()) continue;
-        const turn = state.getTurn();
-        const verdict = classifyClaudeRecord(
-          JSON.parse(line),
-          turn?.state ?? newClaudeTurnState('between-turns'),
-        );
-        switch (verdict.kind) {
-          case 'limits':
-            limits.set(
-              profileId,
-              mergeRateLimitEvent({
-                previous: limits.get(profileId),
-                windows: claudePlanWindows(verdict.info),
-                now: new Date(),
-              }),
-            );
-            break;
-          case 'deltas':
-            for (const delta of verdict.deltas) offerTurnDelta(turn?.channel, delta);
-            break;
-          case 'request': {
-            const { delta, input, toolName, suppressSessionRule } = verdict;
-            // A lost or stopped CLI reads nothing: the answer a drain gives it is not written.
-            const answer = (decision: ClaudePermissionDecision) => {
-              if (!state.isStopped() && state.getDead() === undefined)
-                engine.send(
-                  JSON.stringify(claudePermissionResponse(delta.interactionId, decision)),
-                );
-            };
+        if (!liveness.isAlive()) continue;
+        routeClaudeRecord(JSON.parse(line), {
+          turn: state.getTurn(),
+          profileId,
+          limits,
+          ended: () => ENDED,
+          clearTurn: state.clearTurn,
+          onRequest(turn, { delta, input, toolName, suppressSessionRule }) {
+            const answer = (decision: ClaudePermissionDecision) =>
+              send(claudePermissionResponse(delta.interactionId, decision));
             // Between turns nobody can be asked; the CLI is not left waiting either way.
             if (turn === undefined)
               answer({ behavior: 'deny', message: 'No turn is running to ask' });
@@ -148,27 +117,9 @@ function startClaudeReadingLoop(state: {
                 refusal: INTERRUPTED,
                 resolve: answer,
               });
-            break;
-          }
-          case 'unhandled':
-            offerTurnDelta(turn?.channel, verdict.delta);
-            if (verdict.refuse !== undefined && !state.isStopped())
-              engine.send(
-                JSON.stringify(
-                  claudeControlError(verdict.refuse.requestId, verdict.refuse.message),
-                ),
-              );
-            break;
-          case 'end':
-            if (turn !== undefined) turn.settled = true;
-            endEngineTurn(turn, () => ENDED, verdict.deltas);
-            state.clearTurn(turn);
-            break;
-          case 'event':
-          case 'session':
-          case 'ignore':
-            break;
-        }
+          },
+          onRefuse: (refuse) => send(claudeControlError(refuse.requestId, refuse.message)),
+        });
       }
       state.onExit(
         new Error(
@@ -218,6 +169,7 @@ export async function openClaudeSession(
     permissionMode: string;
     ambient: Readonly<Record<string, string | undefined>>;
     limits: Map<string, PlanLimits>;
+    onObserverError?: ObserverErrorHandler;
   },
   input: {
     profile: ExecutorProfileConfig;
@@ -237,7 +189,7 @@ export async function openClaudeSession(
     input.nativeThreadId !== undefined && (await claudeTranscriptExists(transcript));
   const linked = sessionAbort(input.signal);
   let engine: EngineProcess;
-  emitStartupPhase(input.onStartupPhase, 'spawning');
+  emitStartupPhase(input.onStartupPhase, 'spawning', config.onObserverError);
   try {
     linked.signal.throwIfAborted();
     engine = spawnEngineProcess({
@@ -271,25 +223,20 @@ export async function openClaudeSession(
     throw error;
   }
   let current: ClaudeTurnSlot | undefined;
-  let dead: Error | undefined;
-  let closing = false;
-  const isStopped = () => closing || input.signal?.aborted === true || linked.signal.aborted;
-  const ensureAlive = () => {
-    if (closing) throw new Error('The Claude CLI session is closed');
-    if (dead !== undefined) throw dead;
-    if (input.signal?.aborted) throw abortReason(input.signal);
-    if (linked.signal.aborted) throw abortReason(linked.signal);
-  };
+  const liveness = sessionLiveness({
+    closedMessage: 'The Claude CLI session is closed',
+    caller: input.signal,
+    linked: linked.signal,
+  });
   const settleTurn = (reason: unknown) => {
     const turn = current;
     current = undefined;
-    if (turn !== undefined) turn.settled = true;
     loseEngineTurn(turn, () => LOST, reason);
   };
   linked.signal.addEventListener(
     'abort',
     () => {
-      if (closing || dead !== undefined) return;
+      if (liveness.closing || liveness.lost !== undefined) return;
       settleTurn(abortReason(linked.signal));
     },
     { once: true },
@@ -298,23 +245,21 @@ export async function openClaudeSession(
     engine,
     profileId: profile.profileId,
     limits,
-    isStopped,
-    getDead: () => dead,
+    liveness,
     getTurn: () => current,
     clearTurn: (turn) => {
       if (current === turn) current = undefined;
     },
     onExit: (error) => {
-      if (closing) {
-        settleTurn(new Error('The Claude CLI session is closed'));
-        return;
-      }
-      if (input.signal?.aborted) {
-        settleTurn(abortReason(input.signal));
+      // A session already closing or aborted by its caller ended for that reason, not this one.
+      const stop =
+        liveness.closing || liveness.abortedByCaller ? liveness.stopped() : undefined;
+      if (stop !== undefined) {
+        settleTurn(stop.reason);
         return;
       }
       const failed = error instanceof Error ? error : new Error(String(error));
-      dead = failed;
+      liveness.markLost(failed);
       settleTurn(failed);
       // The session is over: nothing follows the caller's signal any more.
       linked.abort();
@@ -329,7 +274,7 @@ export async function openClaudeSession(
     imageOptions: config,
     signal: linked.signal,
     check() {
-      ensureAlive();
+      liveness.ensureAlive();
       if (current !== undefined)
         throw new Error('A turn is already running in this Claude session');
     },
@@ -354,19 +299,16 @@ export async function openClaudeSession(
       try {
         engine.send(serialized);
       } catch (error) {
-        turn.settled = true;
         if (current === turn) current = undefined;
         throw error;
       }
-      return claudeTurnHandle(turn, (line) => engine.send(line), ensureAlive);
+      return claudeTurnHandle(turn, (line) => engine.send(line), liveness);
     },
   });
   const close = createClaudeSessionClose({
     engine,
     reading,
-    markClosing: () => {
-      closing = true;
-    },
+    markClosing: () => liveness.markClosing(),
     settleTurn,
     abortLinked: () => linked.abort(),
     releaseLinked: () => linked.release(),

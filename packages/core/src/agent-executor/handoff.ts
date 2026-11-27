@@ -162,6 +162,7 @@ function resolveCandidateEntries(
 function computeEffectiveTokenCap(budget: ContextHandoffInput['budget']): number {
   if (budget.contextWindowTokens === undefined) return budget.maxTokens;
   const window = budget.contextWindowTokens;
+  // An omitted `usedTokens` is the caller's statement of a new thread (see the schema).
   const used = budget.usedTokens ?? 0;
   const defaultReserve = Math.min(
     Math.max(16_000, Math.ceil(window / 4)),

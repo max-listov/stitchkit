@@ -108,10 +108,16 @@ export type ErrorFactoryArguments<TDefinition extends ErrorDefinition> = TDefini
       ]
   : [options?: { message?: string; details?: never; hint?: string }];
 
-/** Typed constructor for one declared domain error code. */
-export type ErrorFactory<TCode extends string, TDefinition extends ErrorDefinition> = (
+/**
+ * Typed constructor for one declared domain error code. It also carries its `code` and
+ * `definition`, so a contract operation can name it among the codes it refuses with (`refuses`).
+ */
+export type ErrorFactory<TCode extends string, TDefinition extends ErrorDefinition> = ((
   ...args: ErrorFactoryArguments<TDefinition>
-) => DefinedAppError<TCode, TDefinition>;
+) => DefinedAppError<TCode, TDefinition>) & {
+  readonly code: TCode;
+  readonly definition: Readonly<TDefinition>;
+};
 
 export type ErrorFactories<TDefinitions extends ErrorDefinitions> = {
   readonly [TCode in keyof TDefinitions]: ErrorFactory<TCode & string, TDefinitions[TCode]>;
@@ -233,7 +239,7 @@ export function defineErrors<
     ErrorFactories<TDefinitions>
   >(definitions, (code, definition) => {
     const name = String(code);
-    return (options: RuntimeErrorOptions = {}) => {
+    const factory = (options: RuntimeErrorOptions = {}) => {
       // Per-call text wins; then the declared default; `AppError` falls back to
       // the code itself, which is the pre-`message` behaviour.
       const message = options.message ?? definition.message;
@@ -257,6 +263,7 @@ export function defineErrors<
         retryable: definition.retryable,
       });
     };
+    return Object.freeze(Object.assign(factory, { code: name, definition }));
   });
   Object.freeze(errors);
 

@@ -224,9 +224,8 @@ export interface GuideHome {
 export type GuideMap = Record<string, GuideHome | typeof UPGRADING>;
 
 /**
- * Guide → its home. Every guide page lands in exactly one slice, so nothing is
- * duplicated across slices; `checkGuideMap` refuses a page that lands nowhere
- * and a target that is not a published entrypoint.
+ * Guide → its home. Every guide page lands in exactly one slice, so nothing is duplicated across
+ * slices; `checkGuideMap` refuses a page that lands nowhere or targets an unpublished entrypoint.
  */
 export const GUIDE_SLICES: GuideMap = {
   'getting-started.md': { primary: '.' },
@@ -276,6 +275,7 @@ export const GUIDE_SLICES: GuideMap = {
       './agent-executor/claude-sdk',
       './agent-executor/codex',
       './agent-executor/testing',
+      './agent-executor/testing/claude-sdk',
       './agent-runtime/sqlite/bun',
       './agent-runtime/sqlite/node',
       './agent-runtime/sandbox',

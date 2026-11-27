@@ -268,10 +268,12 @@ describe('Claude CLI turn respond, interrupt, and teardown liveness', () => {
       // and late rate_limit_event emitted after SIGTERM never updates driver planLimits.
       writeFileSync(join(root, 'release-exit'), '1');
       await waitForProcessGone(pid);
-      await Bun.sleep(20);
       expect(await captureRejection(turn.respond('req-act-1', { kind: 'approve' }))).toBe(
         reason,
       );
+      // close() waits for the driver's reader, so every line the child wrote before it exited —
+      // the late rate_limit_event among them — has been read by now.
+      await session.close();
       expect((await driver.status(cliProfile(root))).planLimits).toBeUndefined();
       const stdin = readJsonLines(join(root, 'stdin.jsonl'));
       expect(
@@ -280,7 +282,6 @@ describe('Claude CLI turn respond, interrupt, and teardown liveness', () => {
       expect(
         stdin.filter((line) => Reflect.get(Object(line), 'type') === 'control_request'),
       ).toEqual([]);
-      await session.close();
     }));
 
   test('calling interrupt() on a settled turn does not interrupt a subsequent active turn', () =>
@@ -393,8 +394,17 @@ describe('Claude SDK turn respond, interrupt, and teardown liveness', () => {
       const events: ClaudeRuntimeEvent[] = [];
       const asked = Promise.withResolvers<void>();
       const releaseTail = Promise.withResolvers<void>();
+      const tailRead = Promise.withResolvers<void>();
       const query: ClaudeSdkQuery = ({ prompt, options }) => {
         async function* run(): AsyncGenerator<unknown> {
+          try {
+            yield* tail();
+          } finally {
+            // The driver pulled the late record and let go of the query.
+            tailRead.resolve();
+          }
+        }
+        async function* tail(): AsyncGenerator<unknown> {
           for await (const _message of prompt) {
             const pending = options?.canUseTool?.(
               'Bash',
@@ -446,7 +456,7 @@ describe('Claude SDK turn respond, interrupt, and teardown liveness', () => {
 
       await session.close();
       releaseTail.resolve();
-      await Bun.sleep(20);
+      await tailRead.promise;
       assertNotTypeError(
         await captureRejection(turn.respond(interactionId, { kind: 'approve' })),
         /closed/i,
@@ -502,6 +512,7 @@ describe('Claude SDK turn respond, interrupt, and teardown liveness', () => {
         { once: true },
       );
 
+      const answered = Promise.withResolvers<void>();
       const query: ClaudeSdkQuery = ({ prompt, options }) => {
         capturedCanUseTool = options?.canUseTool;
         async function* run(): AsyncGenerator<unknown> {
@@ -512,6 +523,7 @@ describe('Claude SDK turn respond, interrupt, and teardown liveness', () => {
               { signal: new AbortController().signal, toolUseID: 'tu-a', requestId: 'r-a' },
             );
             if (answer !== undefined && answer !== null) answers.push(answer);
+            answered.resolve();
             yield {
               type: 'result',
               subtype: 'success',
@@ -556,8 +568,9 @@ describe('Claude SDK turn respond, interrupt, and teardown liveness', () => {
       expect(await captureRejection(session.setModel('claude-opus'))).toBe(reason);
       await turn.interrupt();
       expect(interruptCalls).toBe(0);
-      await Bun.sleep(10);
-      expect(answers.every((entry) => entry.behavior !== 'allow')).toBe(true);
+      // The query was answered: the one answer it got for the held permission is the denial.
+      await answered.promise;
+      expect(answers.map((entry) => entry.behavior)).toEqual(['deny']);
       await session.close();
 
       // 1. Sync abort inside onStartupPhase('spawning') prevents config.query() from spawning.
@@ -591,32 +604,34 @@ describe('Claude SDK turn respond, interrupt, and teardown liveness', () => {
       await phaseSession.close();
 
       // 2. Real microtask handoff race (`ensureQuery` `.then()` after `launchSingleSdkQuery` returns synchronously):
-      // abort and close right after calling setModel() before the `.then()` microtask assigns `running`.
+      // abort and close from inside the query factory — the query exists, `running` is not assigned yet.
       for (const mode of ['abort', 'close'] as const) {
         let closedCount = 0;
         let setModelCalls = 0;
         const raceAc = new AbortController();
-        const raceSession = await createClaudeSdkDriver({
+        const handoffReason = new Error(`handoff-${mode}`);
+        let raceSession: Awaited<ReturnType<ReturnType<typeof createClaudeSdkDriver>['open']>>;
+        raceSession = await createClaudeSdkDriver({
           sdkVersion: '0.3.330',
           ambient: ambientIn(root),
-          query: () => ({
-            [Symbol.asyncIterator]: () => ({
-              next: () => new Promise<never>(() => undefined),
-            }),
-            interrupt: async () => undefined,
-            close: () => {
-              closedCount += 1;
-            },
-            setModel: async () => {
-              setModelCalls += 1;
-            },
-          }),
+          query: () => {
+            if (mode === 'abort') raceAc.abort(handoffReason);
+            else void raceSession.close();
+            return {
+              [Symbol.asyncIterator]: () => ({
+                next: () => new Promise<never>(() => undefined),
+              }),
+              interrupt: async () => undefined,
+              close: () => {
+                closedCount += 1;
+              },
+              setModel: async () => {
+                setModelCalls += 1;
+              },
+            };
+          },
         }).open({ profile: sdkProfile(root), cwd: root, signal: raceAc.signal });
-        // Launches query synchronously up to `return handle`; `.then()` handoff sits in microtask queue.
         const modelPromise = captureRejection(raceSession.setModel('claude-opus'));
-        const handoffReason = new Error(`handoff-${mode}`);
-        if (mode === 'abort') raceAc.abort(handoffReason);
-        else void raceSession.close();
         const err = await modelPromise;
         if (mode === 'abort') expect(err).toBe(handoffReason);
         else assertNotTypeError(err, /closed/i);
@@ -632,9 +647,11 @@ describe('Claude SDK turn respond, interrupt, and teardown liveness', () => {
       const replayStarted = Promise.withResolvers<void>();
       const replayGate = Promise.withResolvers<void>();
       const replayAc = new AbortController();
+      const firstQueryExited = Promise.withResolvers<void>();
       const replaySession = await createClaudeSdkDriver({
         sdkVersion: '0.3.330',
         ambient: ambientIn(root),
+        onQueryExit: () => firstQueryExited.resolve(),
         query: () => {
           replayQueryIndex += 1;
           const idx = replayQueryIndex;
@@ -663,7 +680,7 @@ describe('Claude SDK turn respond, interrupt, and teardown liveness', () => {
       }).open({ profile: sdkProfile(root), cwd: root, signal: replayAc.signal });
       await replaySession.applyFlagSettings({ effortLevel: 'high' });
       crashFirst.resolve();
-      await Bun.sleep(10);
+      await firstQueryExited.promise;
       const replayTurnErr = captureRejection(replaySession.startTurn(textTurn('t-replay')));
       await replayStarted.promise;
       const replayReason = new Error('abort-during-flag-replay');

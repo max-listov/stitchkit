@@ -75,8 +75,11 @@ test.each(['ok', 'close', 'delete', 'close-delete', 'invalid-delete', 'unsupport
     }),
 );
 
+// A close bound of 1.5 s: the default 5 s would outlast the test runner's own timeout.
+const CLEANUP_BOUND_MS = 1_500;
+
 test.each(['hang-close', 'hang-delete'] as const)(
-  'ACP capability probe preserves timeout reason without AggregateError when %s exceeds timeoutMs',
+  'ACP capability probe still cleans up after its timeout when %s, and leads with the timeout reason',
   (mode) =>
     inScratch(`acp-timeout-${mode}`, async (root) => {
       const store = join(root, 'sessions.json');
@@ -86,6 +89,7 @@ test.each(['hang-close', 'hang-delete'] as const)(
         executable: process.execPath,
         args: [CLEANUP_PEER, root, mode],
         ambient: ambientIn(root),
+        requestTimeoutMs: CLEANUP_BOUND_MS,
       });
       const error: unknown = await driver
         .probeCapabilities({
@@ -94,28 +98,63 @@ test.each(['hang-close', 'hang-delete'] as const)(
           timeoutMs: 500,
         })
         .catch((cause: unknown) => cause);
-      expect(error).toBeInstanceOf(Error);
-      expect(error).not.toBeInstanceOf(AggregateError);
-      expect(error instanceof Error ? error.message : String(error)).toBe(
+      // The hung operation failed on its own bound: the timeout leads, that failure follows.
+      expect(error).toBeInstanceOf(AggregateError);
+      const failure = error instanceof AggregateError ? error : undefined;
+      expect(failure?.cause).toBeInstanceOf(Error);
+      expect(failure?.errors[0] instanceof Error ? failure.errors[0].message : '').toBe(
         'ACP capability probe timed out after 500 ms',
       );
-      const cleanup = readCalls(root).slice(2);
-      expect(cleanup).toEqual(
-        mode === 'hang-close'
-          ? [['session/close', 'probe-id']]
-          : [
-              ['session/close', 'probe-id'],
-              ['session/delete', 'probe-id'],
-            ],
+      expect(String(failure?.errors[1])).toContain(
+        mode === 'hang-close' ? 'session/close failed' : 'session/delete failed',
       );
+      // Delete ran after the timeout too: before the fix the probe stopped at the deadline.
+      expect(readCalls(root).slice(2)).toEqual([
+        ['session/close', 'probe-id'],
+        ['session/delete', 'probe-id'],
+      ]);
+      if (mode === 'hang-close')
+        expect(JSON.parse(readFileSync(store, 'utf8'))).toEqual(['user-id']);
       const pid = Number(readFileSync(join(root, 'pid'), 'utf8'));
       expect(await probeLiveness(process.pid)).toBe('alive');
       expect(await probeLiveness(pid)).toBe('gone');
     }),
 );
 
+test('ACP capability probe aborted while session/close is in flight finishes cleanup and rejects with the caller reason', () =>
+  inScratch('acp-abort-slow-close', async (root) => {
+    const store = join(root, 'sessions.json');
+    writeFileSync(store, JSON.stringify(['user-id']));
+    trackPidFile(join(root, 'pid'));
+    const driver = createAcpDriver({
+      executable: process.execPath,
+      args: [CLEANUP_PEER, root, 'slow-close'],
+      ambient: ambientIn(root),
+    });
+    const controller = new AbortController();
+    const reason = new Error('caller-cancelled');
+    const pending = driver.probeCapabilities({
+      profile: { engine: 'acp', profileId: 'probe', home: root },
+      cwd: root,
+      signal: controller.signal,
+    });
+    await waitForMethodCall(root, 'session/close');
+    controller.abort(reason);
+    writeFileSync(join(root, 'release-close'), '1');
+    const error: unknown = await pending.catch((cause: unknown) => cause);
+    expect(error).toBe(reason);
+    expect(readCalls(root).slice(2)).toEqual([
+      ['session/close', 'probe-id'],
+      ['session/delete', 'probe-id'],
+    ]);
+    // The probe session is gone from the provider; the user's session stays.
+    expect(JSON.parse(readFileSync(store, 'utf8'))).toEqual(['user-id']);
+    const pid = Number(readFileSync(join(root, 'pid'), 'utf8'));
+    expect(await probeLiveness(pid)).toBe('gone');
+  }));
+
 test.each(['hang-close', 'hang-delete', 'invalid-hang-close'] as const)(
-  'ACP capability probe preserves caller AbortSignal reason during %s without AggregateError',
+  'ACP capability probe aborted during %s still attempts every cleanup and leads with the caller reason',
   (mode) =>
     inScratch(`acp-abort-${mode}`, async (root) => {
       const store = join(root, 'sessions.json');
@@ -125,6 +164,7 @@ test.each(['hang-close', 'hang-delete', 'invalid-hang-close'] as const)(
         executable: process.execPath,
         args: [CLEANUP_PEER, root, mode],
         ambient: ambientIn(root),
+        requestTimeoutMs: CLEANUP_BOUND_MS,
       });
       const controller = new AbortController();
       const reason = new Error(`caller-cancelled-${mode}`);
@@ -139,16 +179,14 @@ test.each(['hang-close', 'hang-delete', 'invalid-hang-close'] as const)(
       );
       controller.abort(reason);
       const error: unknown = await pending.catch((cause: unknown) => cause);
-      expect(error).toBe(reason);
-      expect(error).not.toBeInstanceOf(AggregateError);
-      expect(readCalls(root).slice(2)).toEqual(
-        mode === 'hang-delete'
-          ? [
-              ['session/close', 'probe-id'],
-              ['session/delete', 'probe-id'],
-            ]
-          : [['session/close', 'probe-id']],
-      );
+      expect(error).toBeInstanceOf(AggregateError);
+      const failure = error instanceof AggregateError ? error : undefined;
+      expect(failure?.cause).toBe(reason);
+      expect(failure?.errors[0]).toBe(reason);
+      expect(readCalls(root).slice(2)).toEqual([
+        ['session/close', 'probe-id'],
+        ['session/delete', 'probe-id'],
+      ]);
       const pid = Number(readFileSync(join(root, 'pid'), 'utf8'));
       expect(await probeLiveness(process.pid)).toBe('alive');
       expect(await probeLiveness(pid)).toBe('gone');
@@ -164,7 +202,8 @@ test('ACP capability probe still runs session/delete when local requestTimeoutMs
       executable: process.execPath,
       args: [CLEANUP_PEER, root, 'hang-close'],
       ambient: ambientIn(root),
-      requestTimeoutMs: 150,
+      // The bound covers initialize and session/new too: 150 ms timed initialize out on a loaded host.
+      requestTimeoutMs: CLEANUP_BOUND_MS,
     });
     const error: unknown = await driver
       .probeCapabilities({

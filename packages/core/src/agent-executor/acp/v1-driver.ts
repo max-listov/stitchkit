@@ -52,7 +52,9 @@ export interface AcpDriver extends AgentEngineDriver {
   }): Promise<AcpSessionSummary[]>;
   /**
    * Run a non-inference capability probe (`initialize`, ephemeral `session/new`, `configOptions`,
-   * `commands`, `models`) with guaranteed `session/close` + `session/delete` cleanup.
+   * `commands`, `models`). Once `session/new` answered, `session/close` and `session/delete` are
+   * each attempted once — after a timeout or a caller abort too, under their own bound — and an
+   * aborted probe rejects with its reason, joined by any cleanup that failed.
    */
   probeCapabilities(input: AcpProbeCapabilitiesInput): Promise<AcpCapabilitiesProbe>;
 }

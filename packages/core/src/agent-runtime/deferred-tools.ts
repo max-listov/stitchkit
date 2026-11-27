@@ -48,10 +48,15 @@ function resolveSurface<CONTEXT>(
 /** How the surface advertises every input: the one projection its manifest and its mount use. */
 type SurfaceProjection = Pick<
   DeferredAgentToolSurfaceConfig<unknown>,
-  'extend' | 'flattenUnionInput' | 'inputRecursionDepth'
+  'extend' | 'flattenUnionInput' | 'inputRecursionDepth' | 'inputNestingDepth'
 >;
 
-const PROJECTION_KEYS = ['extend', 'flattenUnionInput', 'inputRecursionDepth'] as const;
+const PROJECTION_KEYS = [
+  'extend',
+  'flattenUnionInput',
+  'inputRecursionDepth',
+  'inputNestingDepth',
+] as const;
 
 function surfaceProjection<CONTEXT>(
   config: DeferredAgentToolSurfaceConfig<CONTEXT>,
@@ -63,6 +68,9 @@ function surfaceProjection<CONTEXT>(
     }),
     ...(config.inputRecursionDepth !== undefined && {
       inputRecursionDepth: config.inputRecursionDepth,
+    }),
+    ...(config.inputNestingDepth !== undefined && {
+      inputNestingDepth: config.inputNestingDepth,
     }),
   };
 }

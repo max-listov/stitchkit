@@ -28,13 +28,27 @@ const RULE = 'options refused by assertTimerMs where they are taken';
 
 /** File → how many timer calls it makes, and why each delay stays inside the timer range. */
 const timerCalls: Record<string, { calls: number; delays: string }> = {
+  'agent-executor/claude-sdk/session.ts': {
+    calls: 1,
+    delays:
+      'constant ENGINE_EXIT_WAIT_MS (10 s) for owned Claude Code processes to exit on close',
+  },
   'agent-executor/codex/connect.ts': {
     calls: 1,
     delays: 'constant poll backoff (15–50 ms) while waiting for unix-listen socket',
   },
+  'agent-executor/codex/thread-open.ts': {
+    calls: 1,
+    delays:
+      'constant ABANDONED_TURN_MS (5 s) for the reply of a turn/start abandoned by abort',
+  },
   'agent-executor/codex/unix-socket.ts': {
     calls: 1,
     delays: 'constant CLOSE_GRACE_MS (250 ms) after sending WebSocket Close frame',
+  },
+  'agent-executor/testing/conformance-support.ts': {
+    calls: 1,
+    delays: 'constant CONFORMANCE_WAIT_MS (10 s) bounding each lifecycle check',
   },
   'agent-executor/testing/conformance.ts': { calls: 1, delays: 'a constant poll' },
   'agent-executor/json-rpc-peer.ts': {
@@ -180,6 +194,11 @@ const timerCalls: Record<string, { calls: number; delays: string }> = {
   'service-host/launchd.ts': { calls: 3, delays: 'a domain range of at most 300 000 ms' },
   'service-host/systemd-inspect.ts': { calls: 1, delays: 'a signature' },
   'service-host/systemd.ts': { calls: 2, delays: 'a domain range of at most 300 000 ms' },
+  'service-host/work/launch.ts': {
+    calls: 2,
+    delays:
+      'constant SCOPE_ENTRY_POLL_MS (10 ms) poll step inside the SCOPE_ENTRY_TIMEOUT_MS deadline',
+  },
   'sync/server-store-check.ts': { calls: 1, delays: 'constant' },
   'telegram/screens/runtime.ts': { calls: 1, delays: `expiresInMs: ${RULE}` },
   'telegram/transport-connect.ts': {

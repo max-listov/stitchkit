@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { createFakeClaudeSdkQuery } from '../../src/entrypoints/agent-executor/testing';
+import { createFakeClaudeSdkQuery } from '../../src/entrypoints/agent-executor/testing/claude-sdk';
 
 const message: SDKUserMessage = {
   type: 'user',

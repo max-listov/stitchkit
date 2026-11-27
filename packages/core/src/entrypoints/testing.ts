@@ -61,8 +61,6 @@ export {
 export {
   assertSurfaceManifestSnapshot,
   buildSurfaceManifest,
-  type IncompatibleSchemaPolicy,
-  type McpSchemaValidationConfig,
   SURFACE_MANIFEST_VERSION,
   type SurfaceAgentProjection,
   type SurfaceManifest,
@@ -72,6 +70,8 @@ export {
   type SurfaceManifestOperation,
   type SurfaceManifestOperationMcp,
   SurfaceManifestOperationMcpSchema,
+  type SurfaceManifestOperationRefusal,
+  SurfaceManifestOperationRefusalSchema,
   SurfaceManifestOperationSchema,
   type SurfaceManifestOperationToolView,
   SurfaceManifestOperationToolViewSchema,
@@ -89,3 +89,7 @@ export {
   type SurfaceToolDefinition,
   type SurfaceToolExtension,
 } from '../testing/surface-manifest';
+export type {
+  IncompatibleSchemaPolicy,
+  McpSchemaValidationConfig,
+} from '../tools/internal/mcp-projection';

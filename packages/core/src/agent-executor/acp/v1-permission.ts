@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { answerEngineRequest, type EngineRequestTurn } from '../engine-requests';
+import {
+  type EngineRequestTurn,
+  type EngineTurnLiveness,
+  respondToEngineRequest,
+} from '../engine-requests';
 import { type InteractionReply, InteractionReplySchema } from '../executor-contract';
 import type { JsonRpcValue } from '../json-rpc-peer';
 import { nonEmptyString, safeJsonValue } from '../session-primitives';
@@ -137,27 +141,27 @@ export function buildAcpPermissionAnswer(
 /** Answer one held permission request owned by the active turn (`turn.respond`). */
 export function answerActiveAcpTurnRequest(
   turn: EngineRequestTurn<JsonRpcValue, AcpPermissionDetail>,
+  liveness: Pick<EngineTurnLiveness, 'ensureAlive'>,
   interactionId: string,
   rawReply: InteractionReply['reply'],
 ): void {
-  const waiting = turn.pending.get(interactionId);
-  if (waiting === undefined) {
-    throw new TypeError(`Unknown interaction ${interactionId} for this turn`);
-  }
-  const answer = buildAcpPermissionAnswer(waiting.detail, rawReply);
-  answerEngineRequest(turn, interactionId, answer);
+  respondToEngineRequest(turn, liveness, interactionId, (detail) =>
+    buildAcpPermissionAnswer(detail, rawReply),
+  );
 }
 
 /** Answer one pending permission request on the active turn or post-settle external map. */
 export function answerAcpSessionRequest(input: {
+  liveness: Pick<EngineTurnLiveness, 'ensureAlive'>;
   turn: EngineRequestTurn<JsonRpcValue, AcpPermissionDetail> | undefined;
   externalPending: Map<string, PendingExternalAcpRequest>;
   expectedEntry?: PendingExternalAcpRequest;
   interactionId: string;
   reply: InteractionReply['reply'];
 }): void {
+  input.liveness.ensureAlive();
   if (input.turn?.pending.has(input.interactionId)) {
-    answerActiveAcpTurnRequest(input.turn, input.interactionId, input.reply);
+    answerActiveAcpTurnRequest(input.turn, input.liveness, input.interactionId, input.reply);
     return;
   }
   const external = input.externalPending.get(input.interactionId);

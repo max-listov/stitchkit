@@ -25,7 +25,7 @@ import {
   createCodexDriver,
 } from '../../src/agent-executor/codex/driver';
 import { createCodexHandlers } from '../../src/agent-executor/codex/handlers';
-import { codexPlanWindows } from '../../src/agent-executor/codex/limits';
+import { CodexLimitBook, codexPlanWindows } from '../../src/agent-executor/codex/limits';
 import {
   answerCodexSessionRequest,
   buildCodexRequestAnswer,
@@ -54,6 +54,7 @@ import {
   drainApproving,
   FAKE_CODEX,
   inScratch,
+  promiseJobsRan,
   readJsonLines,
   trackedPidFile,
   writeScenario,
@@ -748,7 +749,6 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       trackProcess(abortSession.providerPid);
       try {
         abortCtl.abort(new Error('caller cancelled unix-listen session'));
-        await Bun.sleep(50);
         await expect(abortSession.readConfig()).rejects.toThrow();
       } finally {
         await abortSession.close();
@@ -1343,14 +1343,8 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
         });
 
         const deltas = await drain(turn);
-        // The >32-window rate-limit merge overflow emitted an unhandled error delta instead of crashing the session!
-        expect(deltas).toContainEqual(
-          expect.objectContaining({
-            type: 'error',
-            kind: 'unhandled',
-            raw: { source: 'codex', type: 'account/rateLimits/updated' },
-          }),
-        );
+        // Pushes past 32 windows truncate like a read: no merge failure reaches the turn's stream.
+        expect(deltas.filter((delta) => delta.type === 'error')).toEqual([]);
         expect(deltas.at(-1)).toMatchObject({ type: 'turn-end', outcome: 'completed' });
 
         // forkThread does NOT mutate current session's nativeThreadId
@@ -2190,8 +2184,8 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       });
       try {
         openAc.abort(new Error('caller cancelled session'));
-        await Bun.sleep(30);
       } finally {
+        // close() waits for the reader, which is where a disconnect would be told.
         await abortSession.close();
       }
       const ctrlAc = new AbortController();
@@ -2212,7 +2206,6 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       });
       try {
         ctrlAc.abort(new Error('caller cancelled control'));
-        await Bun.sleep(30);
       } finally {
         await abortCtrl.close();
       }
@@ -2319,7 +2312,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
     }));
 
   test('Codex handlers enforce -32601 order, external pending cap 256, serverRequest/resolved cleanup, turn/completed ordering, observer error isolation, and humanCommand guard', async () => {
-    const limits = new Map();
+    const limits = new CodexLimitBook();
     const externalPending = new Map<string, PendingExternalCodexRequest>();
     let activeTurn: CodexTurnSlot | undefined;
     const notifications: Array<{
@@ -2333,10 +2326,11 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
 
     // 1. Without onServerRequest, known request outside turn throws -32601 BEFORE parsing params.
     const noObserverHandlers = createCodexHandlers({
+      sharedWithOtherClients: true,
       profileId: 'p',
       limits,
       externalPending: new Map(),
-      ensureAlive: () => undefined,
+      liveness: { ensureAlive: () => undefined, isAlive: () => true },
       getTurn: () => undefined,
       clearTurn: () => undefined,
     });
@@ -2361,10 +2355,11 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
     // 2. With onServerRequest configured, test unknown method (-32601), observer error isolation,
     //    serverRequest/resolved on unanswered external request, respond(), cap 256, and turn/completed order.
     const handlers = createCodexHandlers({
+      sharedWithOtherClients: true,
       profileId: 'p',
       limits,
       externalPending,
-      ensureAlive: () => undefined,
+      liveness: { ensureAlive: () => undefined, isAlive: () => true },
       getTurn: () => activeTurn,
       clearTurn: () => {
         activeTurn = undefined;
@@ -2436,7 +2431,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
           asyncSettled = true;
         },
       );
-    await Bun.sleep(10);
+    await promiseJobsRan();
     expect(externalPending.has('req-async-boom')).toBe(false);
     expect(syncSettled).toBe(false);
     expect(asyncSettled).toBe(false);
@@ -2473,6 +2468,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
     ]);
     expect(() =>
       answerCodexSessionRequest({
+        liveness: { ensureAlive: () => undefined },
         turn: undefined,
         externalPending,
         interactionId: 'req-ext-resolve',
@@ -2487,6 +2483,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       'req-ext-ans',
     );
     answerCodexSessionRequest({
+      liveness: { ensureAlive: () => undefined },
       turn: undefined,
       externalPending,
       interactionId: 'req-ext-ans',
@@ -2528,6 +2525,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       state: { turnId: 'local-t-1', interruptRequested: false },
       channel: createTurnDeltaChannel(),
       pending: new Map(),
+      settled: false,
     };
     handlers.onNotification('turn/completed', { turn: { id: 'ct-1', status: 'completed' } });
     expect(activeTurn).toBeUndefined();
@@ -2874,10 +2872,11 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
         deltaKind: string;
       }> = [];
       const extHandlers = createCodexHandlers({
+        sharedWithOtherClients: true,
         profileId: 'ext-pe',
-        limits: new Map(),
+        limits: new CodexLimitBook(),
         externalPending,
-        ensureAlive: () => undefined,
+        liveness: { ensureAlive: () => undefined, isAlive: () => true },
         getTurn: () => undefined,
         clearTurn: () => undefined,
         onServerRequest: (ev) => {
@@ -2902,6 +2901,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       );
       expect(() =>
         answerCodexSessionRequest({
+          liveness: { ensureAlive: () => undefined },
           turn: undefined,
           externalPending,
           interactionId: 'ext-perm-1',
@@ -2910,6 +2910,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       ).toThrow(TypeError);
       expect(externalPending.has('ext-perm-1')).toBe(true);
       answerCodexSessionRequest({
+        liveness: { ensureAlive: () => undefined },
         turn: undefined,
         externalPending,
         interactionId: 'ext-perm-1',
@@ -2933,6 +2934,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
         'ext-elicit-1',
       );
       answerCodexSessionRequest({
+        liveness: { ensureAlive: () => undefined },
         turn: undefined,
         externalPending,
         interactionId: 'ext-elicit-1',
@@ -2994,7 +2996,11 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
             ],
           }),
         ).toBeUndefined();
-        expect(await session.unsubscribeThread()).toEqual({ status: 'unsubscribed' });
+        // The session's own thread leaves only through close(); another thread is one raw RPC.
+        await expect(session.unsubscribeThread()).rejects.toBeInstanceOf(TypeError);
+        expect(await session.unsubscribeThread({ threadId: 'other-thread' })).toEqual({
+          status: 'unsubscribed',
+        });
         expect(
           await session.listThreads({
             cursor: 'c1',
@@ -3074,7 +3080,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
             ],
           },
         },
-        { method: 'thread/unsubscribe', params: { threadId: 'fake-thread' } },
+        { method: 'thread/unsubscribe', params: { threadId: 'other-thread' } },
         expect.objectContaining({
           method: 'thread/list',
           params: expect.objectContaining({
@@ -3740,7 +3746,8 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
               threadId: 'other-thread',
               turnId: 'native-turn-77',
             });
-            await Bun.sleep(25);
+            // The interrupt was answered: the server had read, in order, everything written
+            // before it — an answer drained by mistake included.
             expect(existsSync(join(home, 'responses.jsonl'))).toBe(false);
             // Interrupting our own active nativeTurnId drains active-appr-1 and completes turn as interrupted.
             await session.interruptTurn({ turnId: turn.nativeTurnId });
@@ -4153,12 +4160,14 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
         state: { turnId: 'local-int', interruptRequested: true },
         channel: createTurnDeltaChannel(),
         pending: new Map(),
+        settled: false,
       };
       const unitHandlers = createCodexHandlers({
+        sharedWithOtherClients: true,
         profileId: 'p-unit',
-        limits: new Map(),
+        limits: new CodexLimitBook(),
         externalPending: new Map(),
-        ensureAlive: () => undefined,
+        liveness: { ensureAlive: () => undefined, isAlive: () => true },
         getTurn: () => currentTurn,
         clearTurn: () => {
           currentTurn = undefined;
@@ -4187,15 +4196,17 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
         state: { turnId: 'local-async-obs', interruptRequested: false },
         channel: createTurnDeltaChannel(),
         pending: new Map(),
+        settled: false,
       };
       const activeAsyncPromise = unitHandlers.onRequest(
         'item/commandExecution/requestApproval',
         { itemId: 'c-async-obs', command: 'echo ok' },
         101,
       );
-      await Bun.sleep(10);
+      await promiseJobsRan();
       expect(currentTurn.pending.has('101')).toBe(true);
       answerCodexSessionRequest({
+        liveness: { ensureAlive: () => undefined },
         turn: currentTurn,
         externalPending: new Map(),
         interactionId: '101',

@@ -1,13 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import type { StepDurabilityLedger } from '../../durability/contract';
+import { isDeepStrictEqual } from 'node:util';
 import { createLocalStepDurability } from '../../durability/engine';
-import type { AgentStoreEventEnvelope } from '../../durability/events';
 import { dispatchTurn } from '../dispatch';
-import type { AgentEngineDriver, AgentEngineSession, AgentEngineTurn } from '../engine';
+import type { AgentEngineDriver, AgentEngineSession } from '../engine';
 import { ExecutorDriverCapabilitiesSchema } from '../hello';
 import type { ExecutorProfileConfig } from '../profile';
 import { projectExecutorDeltas } from '../projection';
 import type { ExecutorDelta } from '../vocabulary';
+import { checkAbortAndTeardown } from './conformance-lifecycle';
+import {
+  collectTurn,
+  conformanceFailure,
+  isConformanceFailure,
+  memoryLedger,
+  rejects,
+  startTextTurn,
+} from './conformance-support';
 import type { FakeEngineScenario } from './fake-engine';
 
 /** One dialect's scripted engine turns, each named for the behaviour it proves. */
@@ -45,19 +53,6 @@ export interface AgentEngineConformanceConfig {
   }>;
 }
 
-function fail(name: string, message: string): never {
-  throw new Error(`Agent engine conformance: ${name}: ${message}`);
-}
-
-async function collect(turn: AgentEngineTurn, act?: (delta: ExecutorDelta) => Promise<void>) {
-  const deltas: ExecutorDelta[] = [];
-  for await (const delta of turn.deltas) {
-    deltas.push(delta);
-    await act?.(delta);
-  }
-  return deltas;
-}
-
 /** Whether `check` comes true within `timeoutMs`: an engine records an answer after it arrives. */
 async function eventually(check: () => Promise<boolean>, timeoutMs = 5_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -66,38 +61,6 @@ async function eventually(check: () => Promise<boolean>, timeoutMs = 5_000): Pro
     if (Date.now() >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-}
-
-async function rejects(promise: Promise<unknown>): Promise<boolean> {
-  return promise.then(
-    () => false,
-    () => true,
-  );
-}
-
-function ledger(): StepDurabilityLedger {
-  const rows: AgentStoreEventEnvelope[] = [];
-  return {
-    appendEvent: async (event) => {
-      const row: AgentStoreEventEnvelope = {
-        schemaVersion: 1,
-        eventId: randomUUID(),
-        conversationId: event.conversationId,
-        seq: rows.length + 1,
-        kind: event.kind,
-        occurredAt: new Date().toISOString(),
-        payload: event.payload,
-      };
-      rows.push(row);
-      return row;
-    },
-    readEvents: async (input) => ({
-      items: rows.filter(
-        (row) =>
-          row.conversationId === input.conversationId && row.seq >= (input.fromSeq ?? 1),
-      ),
-    }),
-  };
 }
 
 type ConformanceHarness = Awaited<ReturnType<AgentEngineConformanceConfig['open']>>;
@@ -115,22 +78,13 @@ function conformanceTurn(config: AgentEngineConformanceConfig): ConformanceTurn 
     try {
       await check(session, harness);
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith('Agent engine conformance'))
-        throw error;
-      fail(name, error instanceof Error ? error.message : String(error));
+      if (isConformanceFailure(error)) throw error;
+      conformanceFailure(name, error instanceof Error ? error.message : String(error));
     } finally {
       await session.close();
       await harness.cleanup();
     }
   };
-}
-
-function start(session: AgentEngineSession, clientId: string = randomUUID()) {
-  return session.startTurn({
-    turnId: randomUUID(),
-    clientId,
-    input: [{ type: 'text', text: 'hello' }],
-  });
 }
 
 /**
@@ -144,8 +98,13 @@ function start(session: AgentEngineSession, clientId: string = randomUUID()) {
  * one held when the engine dies is left for the consumer to answer; an
  * engine that ends without a
  * result, writes an invalid line or dies is a failed turn, never a hang; an
- * unknown record is carried as `unhandled`; and a dispatch cut between its
- * intent and its acceptance is settled by reconcile and never sent twice.
+ * unknown record is carried as `unhandled`; a dispatch cut between its
+ * intent and its acceptance is settled by reconcile and never sent twice; and
+ * the session's life is honoured ({@link checkAbortAndTeardown}): an aborted
+ * `open` refuses with the caller's reason, an abort or a `close()` in a turn
+ * fails its stream and refuses `respond` and `startTurn`, `interrupt` after
+ * the end is a no-op, `close()` twice is one close. Capabilities are checked
+ * first: what the driver declares is what `info()` reports.
  */
 export async function runAgentEngineConformance(
   config: AgentEngineConformanceConfig,
@@ -164,6 +123,7 @@ export async function runAgentEngineConformance(
   ]) {
     await check(turn, config.scenarios);
   }
+  await checkAbortAndTeardown(config);
 }
 
 /** A conformance check: the scenarios it plays and what each must show. */
@@ -172,60 +132,75 @@ type ConformanceCheck = (
   scenarios: AgentEngineDialectScenarios,
 ) => Promise<void>;
 
-/** Declared capabilities match the schema, reconcile mode, and ACP enforcement boundary. */
+/**
+ * What the driver declares and what `info()` reports are one fact: equal, or both absent. Declared
+ * capabilities match the schema and the ACP enforcement boundary; a `client-id` driver has
+ * `findInput` whether or not it declares capabilities.
+ */
 const checkCapabilities: ConformanceCheck = async (turn, scenarios) => {
   await turn('capabilities', scenarios.text('cap-check'), async (_session, harness) => {
     const { driver } = harness;
-    if (driver.capabilities === undefined) return;
-    const parsed = ExecutorDriverCapabilitiesSchema.safeParse(driver.capabilities);
-    if (!parsed.success) {
-      fail(
-        'capabilities',
-        `driver.capabilities failed schema validation: ${parsed.error.message}`,
-      );
-    }
     if (driver.reconcile === 'client-id' && driver.findInput === undefined) {
-      fail('capabilities', 'a client-id driver must provide findInput');
+      conformanceFailure('capabilities', 'a client-id driver must provide findInput');
     }
-    if (driver.engine === 'acp') {
-      if (parsed.data.runtimePolicyEnforcement !== 'client-boundary') {
-        fail(
-          'capabilities',
-          'ACP driver must declare runtimePolicyEnforcement: client-boundary',
-        );
-      }
-      if (
-        'approvalEnforcement' in driver &&
-        driver.approvalEnforcement !== 'agent-initiated'
-      ) {
-        fail('capabilities', 'ACP driver approvalEnforcement must remain agent-initiated');
-      }
+    if (driver.capabilities !== undefined) checkDeclaredCapabilities(driver);
+    const reported = (await driver.info()).capabilities;
+    if (!isDeepStrictEqual(reported, driver.capabilities)) {
+      conformanceFailure(
+        'capabilities',
+        `info().capabilities is ${JSON.stringify(reported)}, driver.capabilities is ${JSON.stringify(driver.capabilities)}`,
+      );
     }
   });
 };
+
+function checkDeclaredCapabilities(driver: AgentEngineDriver): void {
+  const parsed = ExecutorDriverCapabilitiesSchema.safeParse(driver.capabilities);
+  if (!parsed.success) {
+    conformanceFailure(
+      'capabilities',
+      `driver.capabilities failed schema validation: ${parsed.error.message}`,
+    );
+  }
+  if (driver.engine !== 'acp') return;
+  if (parsed.data.runtimePolicyEnforcement !== 'client-boundary') {
+    conformanceFailure(
+      'capabilities',
+      'ACP driver must declare runtimePolicyEnforcement: client-boundary',
+    );
+  }
+  if ('approvalEnforcement' in driver && driver.approvalEnforcement !== 'agent-initiated') {
+    conformanceFailure(
+      'capabilities',
+      'ACP driver approvalEnforcement must remain agent-initiated',
+    );
+  }
+}
 
 /** A text turn folds into its text and ends; a client-id driver finds the input it sent and no other. */
 const checkText: ConformanceCheck = async (turn, scenarios) => {
   await turn('text', scenarios.text('hello back'), async (session, harness) => {
     const clientId = randomUUID();
-    const deltas = await collect(await start(session, clientId));
+    const deltas = await collectTurn(await startTextTurn(session, clientId));
     const parts = projectExecutorDeltas(deltas);
     if (JSON.stringify(parts) !== JSON.stringify([{ type: 'text', text: 'hello back' }])) {
-      fail('text', `folded into ${JSON.stringify(parts)}`);
+      conformanceFailure('text', `folded into ${JSON.stringify(parts)}`);
     }
     if (deltas.at(-1)?.type !== 'turn-end')
-      fail('text', 'the last delta is not the end of the turn');
+      conformanceFailure('text', 'the last delta is not the end of the turn');
     if (harness.driver.reconcile === 'client-id') {
       const find = harness.driver.findInput;
-      if (find === undefined) fail('text', 'a client-id driver has no findInput');
+      if (find === undefined)
+        conformanceFailure('text', 'a client-id driver has no findInput');
       const at = {
         profile: harness.profile,
         cwd: harness.cwd,
         nativeThreadId: session.nativeThreadId,
       };
-      if (!(await find({ ...at, clientId }))) fail('text', 'the sent input is not found');
+      if (!(await find({ ...at, clientId })))
+        conformanceFailure('text', 'the sent input is not found');
       if (await find({ ...at, clientId: randomUUID() }))
-        fail('text', 'an input never sent is found');
+        conformanceFailure('text', 'an input never sent is found');
     }
   });
 };
@@ -233,25 +208,26 @@ const checkText: ConformanceCheck = async (turn, scenarios) => {
 /** An approval answered goes through; an answer to an unknown request or an empty deny is refused. */
 const checkApproval: ConformanceCheck = async (turn, scenarios) => {
   await turn('approval', scenarios.approval(), async (session) => {
-    const running = await start(session);
-    const deltas = await collect(running, async (delta) => {
+    const running = await startTextTurn(session);
+    const deltas = await collectTurn(running, async (delta) => {
       if (delta.type !== 'request') return;
       if (!(await rejects(running.respond('no-such-request', { kind: 'approve' })))) {
-        fail('approval', 'an answer to an unknown request was accepted');
+        conformanceFailure('approval', 'an answer to an unknown request was accepted');
       }
       if (
         !(await rejects(running.respond(delta.interactionId, { kind: 'deny', message: '' })))
       ) {
-        fail('approval', 'a deny without a message was accepted');
+        conformanceFailure('approval', 'a deny without a message was accepted');
       }
       await running.respond(delta.interactionId, { kind: 'approve' });
     });
     for (const type of ['tool-call', 'request', 'request-resolved', 'tool-result'] as const) {
-      if (!deltas.some((delta) => delta.type === type)) fail('approval', `no ${type} delta`);
+      if (!deltas.some((delta) => delta.type === type))
+        conformanceFailure('approval', `no ${type} delta`);
     }
     const result = deltas.find((delta) => delta.type === 'tool-result');
     if (result?.type === 'tool-result' && result.toolName === 'unknown') {
-      fail('approval', 'the tool result lost the name of its call');
+      conformanceFailure('approval', 'the tool result lost the name of its call');
     }
   });
 };
@@ -263,13 +239,13 @@ const checkFailures: ConformanceCheck = async (turn, scenarios) => {
     [429, 'rateLimited'],
   ] as const) {
     await turn(`failure ${status}`, scenarios.failure(status), async (session) => {
-      const deltas = await collect(await start(session));
+      const deltas = await collectTurn(await startTextTurn(session));
       const error = deltas.find((delta) => delta.type === 'error');
       if (error?.type !== 'error' || error.kind !== kind)
-        fail(`failure ${status}`, `no ${kind} error`);
+        conformanceFailure(`failure ${status}`, `no ${kind} error`);
       const end = deltas.find((delta) => delta.type === 'turn-end');
       if (end?.type !== 'turn-end' || end.outcome !== 'failed')
-        fail(`failure ${status}`, 'the turn did not fail');
+        conformanceFailure(`failure ${status}`, 'the turn did not fail');
     });
   }
 };
@@ -282,8 +258,8 @@ const checkBrokenEngines: ConformanceCheck = async (turn, scenarios) => {
     ['a dying engine', scenarios.crash()],
   ] as const) {
     await turn(name, scenario, async (session) => {
-      if (!(await rejects(collect(await start(session)))))
-        fail(name, 'the turn ended as if it had completed');
+      if (!(await rejects(collectTurn(await startTextTurn(session)))))
+        conformanceFailure(name, 'the turn ended as if it had completed');
     });
   }
 };
@@ -291,10 +267,10 @@ const checkBrokenEngines: ConformanceCheck = async (turn, scenarios) => {
 /** A record the driver does not know is carried as an `unhandled` error, not dropped. */
 const checkUnknownRecord: ConformanceCheck = async (turn, scenarios) => {
   await turn('unknown record', scenarios.unknownRecord(), async (session) => {
-    const deltas = await collect(await start(session));
+    const deltas = await collectTurn(await startTextTurn(session));
     const error = deltas.find((delta) => delta.type === 'error');
     if (error?.type !== 'error' || error.kind !== 'unhandled')
-      fail('unknown record', 'no unhandled delta');
+      conformanceFailure('unknown record', 'no unhandled delta');
   });
 };
 
@@ -304,14 +280,14 @@ const checkUnknownRecord: ConformanceCheck = async (turn, scenarios) => {
  */
 const checkDispatchAtMostOnce: ConformanceCheck = async (turn, scenarios) => {
   await turn('dispatch at most once', scenarios.text('once'), async (session, harness) => {
-    const store = ledger();
+    const store = memoryLedger();
     const turnId = randomUUID();
     const dying: AgentEngineSession = {
       nativeThreadId: session.nativeThreadId,
       close: () => session.close(),
       async startTurn(input) {
         const running = await session.startTurn(input);
-        await collect(running);
+        await collectTurn(running);
         throw new Error('the executor died after sending');
       },
     };
@@ -330,14 +306,18 @@ const checkDispatchAtMostOnce: ConformanceCheck = async (turn, scenarios) => {
         input: [{ type: 'text', text: 'hello' }],
       });
     if (!(await rejects(attempt(dying))))
-      fail('dispatch at most once', 'the cut dispatch did not fail');
+      conformanceFailure('dispatch at most once', 'the cut dispatch did not fail');
     const second = await attempt(session);
     const expected =
       harness.driver.reconcile === 'client-id' ? 'delivered' : 'unknown_after_restart';
     if (second.phase !== expected)
-      fail('dispatch at most once', `settled as ${second.phase}, expected ${expected}`);
+      conformanceFailure(
+        'dispatch at most once',
+        `settled as ${second.phase}, expected ${expected}`,
+      );
     const inputs = await harness.inputs(session.nativeThreadId);
-    if (inputs !== 1) fail('dispatch at most once', `the engine took ${inputs} inputs`);
+    if (inputs !== 1)
+      conformanceFailure('dispatch at most once', `the engine took ${inputs} inputs`);
   });
 };
 
@@ -351,28 +331,29 @@ const checkHeldRequests: ConformanceCheck = async (turn, scenarios) => {
     'request held at the end',
     scenarios.requestAtTurnEnd(),
     async (session, harness) => {
-      const running = await start(session);
-      const deltas = await collect(running);
+      const running = await startTextTurn(session);
+      const deltas = await collectTurn(running);
       const asked = deltas.find((delta) => delta.type === 'request');
-      if (asked?.type !== 'request') fail('request held at the end', 'no request was emitted');
+      if (asked?.type !== 'request')
+        conformanceFailure('request held at the end', 'no request was emitted');
       const resolved = deltas.findIndex(
         (delta) =>
           delta.type === 'request-resolved' && delta.interactionId === asked.interactionId,
       );
       const end = deltas.findIndex((delta) => delta.type === 'turn-end');
       if (resolved === -1 || end === -1 || resolved > end)
-        fail(
+        conformanceFailure(
           'request held at the end',
           'the request the turn still held was not closed with request-resolved before its end',
         );
       if (!(await rejects(running.respond(asked.interactionId, { kind: 'approve' }))))
-        fail(
+        conformanceFailure(
           'request held at the end',
           'an answer to a request of an ended turn was accepted',
         );
       // An engine waits on its request; closing it on the stream alone would leave it waiting.
       if (!(await eventually(() => harness.answered(asked))))
-        fail('request held at the end', 'the engine was never answered');
+        conformanceFailure('request held at the end', 'the engine was never answered');
     },
   );
 
@@ -380,18 +361,22 @@ const checkHeldRequests: ConformanceCheck = async (turn, scenarios) => {
     'request held by a lost engine',
     scenarios.requestThenCrash(),
     async (session) => {
-      const running = await start(session);
+      const running = await startTextTurn(session);
       let asked: string | undefined;
       const lost = await rejects(
-        collect(running, async (delta) => {
+        collectTurn(running, async (delta) => {
           if (delta.type === 'request') asked ??= delta.interactionId;
         }),
       );
       if (!lost)
-        fail('request held by a lost engine', 'the turn ended as if it had completed');
-      if (asked === undefined) fail('request held by a lost engine', 'no request was emitted');
+        conformanceFailure(
+          'request held by a lost engine',
+          'the turn ended as if it had completed',
+        );
+      if (asked === undefined)
+        conformanceFailure('request held by a lost engine', 'no request was emitted');
       if (!(await rejects(running.respond(asked, { kind: 'approve' }))))
-        fail(
+        conformanceFailure(
           'request held by a lost engine',
           'an answer to a request the lost engine held was accepted',
         );
@@ -402,9 +387,9 @@ const checkHeldRequests: ConformanceCheck = async (turn, scenarios) => {
 /** An interrupt ends the turn `interrupted`, answers what it held, and refuses what follows it. */
 const checkInterrupts: ConformanceCheck = async (turn, scenarios) => {
   await turn('interrupt', scenarios.interruptible(), async (session) => {
-    const running = await start(session);
+    const running = await startTextTurn(session);
     let asked = false;
-    const deltas = await collect(running, async (delta) => {
+    const deltas = await collectTurn(running, async (delta) => {
       if (!asked && delta.type === 'text') {
         asked = true;
         await running.interrupt();
@@ -412,7 +397,7 @@ const checkInterrupts: ConformanceCheck = async (turn, scenarios) => {
     });
     const end = deltas.find((delta) => delta.type === 'turn-end');
     if (end?.type !== 'turn-end' || end.outcome !== 'interrupted') {
-      fail(
+      conformanceFailure(
         'interrupt',
         `a turn asked to stop ended ${end?.type === 'turn-end' ? end.outcome : 'without an end'}`,
       );
@@ -423,28 +408,28 @@ const checkInterrupts: ConformanceCheck = async (turn, scenarios) => {
     'interrupt during approval',
     scenarios.interruptDuringApproval(),
     async (session) => {
-      const running = await start(session);
+      const running = await startTextTurn(session);
       let asked: string | undefined;
-      const deltas = await collect(running, async (delta) => {
+      const deltas = await collectTurn(running, async (delta) => {
         if (asked === undefined && delta.type === 'request') {
           asked = delta.interactionId;
           await running.interrupt();
         }
       });
       if (asked === undefined)
-        fail('interrupt during approval', 'no approval request was emitted');
+        conformanceFailure('interrupt during approval', 'no approval request was emitted');
       if (
         !deltas.some(
           (delta) => delta.type === 'request-resolved' && delta.interactionId === asked,
         )
       )
-        fail(
+        conformanceFailure(
           'interrupt during approval',
           'the request the interrupt answered was never closed with request-resolved',
         );
       const end = deltas.find((delta) => delta.type === 'turn-end');
       if (end?.type !== 'turn-end' || end.outcome !== 'interrupted') {
-        fail(
+        conformanceFailure(
           'interrupt during approval',
           `a turn interrupted during approval ended ${end?.type === 'turn-end' ? end.outcome : 'without an end'}`,
         );
@@ -454,14 +439,14 @@ const checkInterrupts: ConformanceCheck = async (turn, scenarios) => {
 
   // Nobody is left to answer a request that follows the interrupt: the driver refuses it itself.
   await turn('request after interrupt', scenarios.requestAfterInterrupt(), async (session) => {
-    const running = await start(session);
+    const running = await startTextTurn(session);
     let interrupted = false;
-    const deltas = await collect(running, async (delta) => {
+    const deltas = await collectTurn(running, async (delta) => {
       if (!interrupted && delta.type === 'text') {
         interrupted = true;
         await running.interrupt();
       } else if (interrupted && delta.type === 'request') {
-        fail(
+        conformanceFailure(
           'request after interrupt',
           'a request sent after the interrupt was offered to a consumer who already stopped the turn',
         );
@@ -469,7 +454,7 @@ const checkInterrupts: ConformanceCheck = async (turn, scenarios) => {
     });
     const end = deltas.find((delta) => delta.type === 'turn-end');
     if (end?.type !== 'turn-end' || end.outcome !== 'interrupted') {
-      fail(
+      conformanceFailure(
         'request after interrupt',
         `the turn ended ${end?.type === 'turn-end' ? end.outcome : 'without an end'}`,
       );

@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { agentExecutorPeerCases } from './optional-peer-matrix-agent-executor.mjs';
 
 const FIXTURE_PEERS = {
   minimal: [],
@@ -594,28 +595,7 @@ console.log('handler browser: ok');`,
     declarationPeers: ['@openrouter/ai-sdk-provider', 'ai'],
     execute: true,
   },
-  {
-    id: 'agent-executor',
-    subpath: './agent-executor',
-    fixture: 'minimal',
-    installedPeers: FIXTURE_PEERS.minimal,
-    target: 'node',
-    source: featureSource('stitchkit/agent-executor', 'projectExecutorDeltas'),
-    runtimePeers: [],
-    declarationPeers: [],
-    execute: true,
-  },
-  {
-    id: 'agent-executor-claude',
-    subpath: './agent-executor/claude',
-    fixture: 'minimal',
-    installedPeers: FIXTURE_PEERS.minimal,
-    target: 'node',
-    source: featureSource('stitchkit/agent-executor/claude', 'createClaudeCliDriver'),
-    runtimePeers: [],
-    declarationPeers: [],
-    execute: true,
-  },
+  ...agentExecutorPeerCases({ featureSource, minimalPeers: FIXTURE_PEERS.minimal }),
   {
     id: 'spend',
     subpath: './spend',
@@ -636,52 +616,6 @@ console.log('handler browser: ok');`,
     source: featureSource('stitchkit/spend/testing', 'assertSpendCoverage'),
     runtimePeers: [],
     declarationPeers: [],
-    execute: true,
-  },
-  {
-    id: 'agent-executor-acp',
-    subpath: './agent-executor/acp',
-    fixture: 'minimal',
-    installedPeers: FIXTURE_PEERS.minimal,
-    target: 'node',
-    source: featureSource('stitchkit/agent-executor/acp', 'createAcpDriver'),
-    runtimePeers: [],
-    declarationPeers: [],
-    execute: true,
-  },
-  {
-    // The leaf takes the SDK's `query` from the application: it runs without
-    // the SDK installed, and only its declarations name the SDK's types.
-    id: 'agent-executor-claude-sdk',
-    subpath: './agent-executor/claude-sdk',
-    fixture: 'minimal',
-    installedPeers: FIXTURE_PEERS.minimal,
-    target: 'node',
-    source: featureSource('stitchkit/agent-executor/claude-sdk', 'createClaudeSdkDriver'),
-    runtimePeers: [],
-    declarationPeers: ['@anthropic-ai/claude-agent-sdk'],
-    execute: true,
-  },
-  {
-    id: 'agent-executor-codex',
-    subpath: './agent-executor/codex',
-    fixture: 'minimal',
-    installedPeers: FIXTURE_PEERS.minimal,
-    target: 'node',
-    source: featureSource('stitchkit/agent-executor/codex', 'createCodexDriver'),
-    runtimePeers: [],
-    declarationPeers: [],
-    execute: true,
-  },
-  {
-    id: 'agent-executor-testing',
-    subpath: './agent-executor/testing',
-    fixture: 'minimal',
-    installedPeers: FIXTURE_PEERS.minimal,
-    target: 'node',
-    source: featureSource('stitchkit/agent-executor/testing', 'runAgentEngineConformance'),
-    runtimePeers: [],
-    declarationPeers: ['@anthropic-ai/claude-agent-sdk'],
     execute: true,
   },
   {
@@ -921,12 +855,12 @@ console.log('sync server store: ok');`,
     execute: true,
   },
   {
-    id: 'process-owner-loss-bootstrap',
-    subpath: './process/owner-loss',
+    id: 'process-bootstrap',
+    subpath: './process/bootstrap',
     fixture: 'minimal',
     installedPeers: FIXTURE_PEERS.minimal,
     target: 'bun',
-    source: featureSource('stitchkit/process/owner-loss', 'bootstrapNativeCommandOwnerLoss'),
+    source: featureSource('stitchkit/process/bootstrap', 'bootstrapPackageProcess'),
     runtimePeers: [],
     declarationPeers: [],
     execute: true,
@@ -971,6 +905,22 @@ if (!src.includes('posix_spawn') || parseCodesignDetails('').authorities.length 
   throw new Error('service-host/macos execution failed');
 }
 console.log('service-host/macos: ok');`,
+    runtimePeers: [],
+    declarationPeers: [],
+    execute: true,
+  },
+  {
+    id: 'service-host-work',
+    subpath: './service-host/work',
+    fixture: 'minimal',
+    installedPeers: FIXTURE_PEERS.minimal,
+    target: 'node',
+    source: `import { WorkOwnerSchema, readWorkOrigin, workUnitName } from 'stitchkit/service-host/work';
+const owner = WorkOwnerSchema.parse({ launcher: 'demo', id: 'run-1', label: 'Demo', project: null, agent: null, parent: null });
+if (workUnitName(owner) !== 'demo-run-1.scope' || readWorkOrigin({}) !== null) {
+  throw new Error('service-host/work execution failed');
+}
+console.log('service-host/work: ok');`,
     runtimePeers: [],
     declarationPeers: [],
     execute: true,

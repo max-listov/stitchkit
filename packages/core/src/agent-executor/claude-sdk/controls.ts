@@ -145,7 +145,7 @@ export function createClaudeSdkControls(host: ClaudeSdkControlHost): LiveMethods
       try {
         raw = await guarded(fn.call(query, opts));
       } catch (error) {
-        if (!host.isClosed() && !host.signal.aborted) {
+        if (!host.isClosed()) {
           host.recordPlanLimitsFailure(error);
         }
         throw error;

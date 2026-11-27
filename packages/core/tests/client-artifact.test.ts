@@ -4,7 +4,8 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildClientArtifact, ForbiddenModuleError } from '../src/files/client-artifact';
+import { buildClientArtifact } from '../src/files/client-artifact';
+import { ForbiddenModuleError } from '../src/files/client-build';
 
 let project: string;
 
@@ -33,17 +34,11 @@ afterAll(async () => {
 });
 
 describe('a client built into one self-contained file', () => {
-  test('one call gives the file, its hash and an archive that installs and imports', async () => {
+  test('one call gives the self-contained file and its hash', async () => {
     const artifact = await buildClientArtifact({
       entry: join(project, 'src/client.ts'),
       outFile: join(project, 'dist/api-client.js'),
       forbiddenModules: ['src/terminal/', 'ink'],
-      package: {
-        name: '@example/api-client',
-        version: '1.2.3',
-        outDir: join(project, 'dist'),
-        exports: ['createApiClient', 'CLIENT_VERSION'],
-      },
     });
     const bytes = await readFile(artifact.file);
     const digest = createHash('sha256').update(bytes).digest('hex');
@@ -56,25 +51,14 @@ describe('a client built into one self-contained file', () => {
     // The file is importable on its own, from where it lies.
     const loaded = await import(artifact.file);
     expect(loaded.createApiClient().lookup('main')).toBe('record main');
-
-    expect(artifact.package?.tarball).toBe(join(project, 'dist/example-api-client-1.2.3.tgz'));
-    const tarball = await readFile(artifact.package?.tarball ?? '');
-    expect(artifact.package?.sha256).toBe(createHash('sha256').update(tarball).digest('hex'));
-  }, 120_000);
-
-  test('an export the installed archive lacks fails the build', async () => {
-    await expect(
-      buildClientArtifact({
-        entry: join(project, 'src/client.ts'),
-        outFile: join(project, 'dist/checked.js'),
-        package: {
-          name: 'api-client',
-          version: '1.0.0',
-          outDir: join(project, 'dist'),
-          exports: ['createApiClient', 'doesNotExist'],
-        },
-      }),
-    ).rejects.toThrow('missing exports: doesNotExist');
+    // The file and its hash are the whole result: an npm archive is `buildClientPackage`.
+    expect(Object.keys(artifact).sort()).toEqual([
+      'bytes',
+      'file',
+      'modules',
+      'sha256',
+      'sha256File',
+    ]);
   }, 120_000);
 
   test('a forbidden module in the graph is refused by name and leaves no file', async () => {
@@ -143,22 +127,28 @@ describe('a client built into one self-contained file', () => {
     ).resolves.toMatchObject({ file: options.outFile });
   }, 120_000);
 
-  test('an archive that fails its proof leaves no file behind', async () => {
-    const outFile = join(project, 'dist/unproven.js');
-    await expect(
-      buildClientArtifact({
-        entry: join(project, 'src/client.ts'),
-        outFile,
-        package: {
-          name: 'api-client',
-          version: '1.0.0',
-          outDir: join(project, 'dist'),
-          exports: ['nope'],
-        },
-      }),
-    ).rejects.toThrow('missing exports: nope');
-    expect(existsSync(outFile)).toBe(false);
-    expect(existsSync(`${outFile}.sha256`)).toBe(false);
+  test('a platform module left outside the file is refused by the name that imports it', async () => {
+    // A platform module is never bundled, so no module path exists to match: only the import names it.
+    await writeFile(
+      join(project, 'src/spawning-client.ts'),
+      "import { spawn } from 'node:child_process';\nexport const createApiClient = () => typeof spawn;\n",
+    );
+    const options = {
+      entry: join(project, 'src/spawning-client.ts'),
+      outFile: join(project, 'dist/spawning.js'),
+    };
+    // The control: the same entry builds when nothing is forbidden, or another module is.
+    await buildClientArtifact({ ...options, forbiddenModules: ['node:fs'] });
+    expect(existsSync(options.outFile)).toBe(true);
+    const refusal = await buildClientArtifact({
+      ...options,
+      forbiddenModules: ['node:child_process'],
+    }).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(ForbiddenModuleError);
+    if (!(refusal instanceof ForbiddenModuleError)) return;
+    expect(refusal.module).toBe('node:child_process');
+    expect(refusal.importedBy).toEndWith('src/spawning-client.ts');
+    expect(existsSync(options.outFile)).toBe(false);
   }, 120_000);
 
   test('runtime selects what the file may import from its platform', async () => {
@@ -178,13 +168,13 @@ describe('a client built into one self-contained file', () => {
     );
   }, 120_000);
 
-  test('executable, timeoutMs and signal bound the build tool', async () => {
+  test('executables, timeoutMs and signal bound the build tool', async () => {
     const options = {
       entry: join(project, 'src/client.ts'),
       outFile: join(project, 'dist/bounded.js'),
     };
     await expect(
-      buildClientArtifact({ ...options, executable: join(project, 'no-such-bun') }),
+      buildClientArtifact({ ...options, executables: { bun: join(project, 'no-such-bun') } }),
     ).rejects.toThrow();
     // A stand-in tool that never finishes: the deadline and the caller end it.
     const slow = join(project, 'slow-bun');
@@ -192,12 +182,16 @@ describe('a client built into one self-contained file', () => {
     await chmod(slow, 0o755);
     const startedAt = performance.now();
     await expect(
-      buildClientArtifact({ ...options, executable: slow, timeoutMs: 200 }),
+      buildClientArtifact({ ...options, executables: { bun: slow }, timeoutMs: 200 }),
     ).rejects.toMatchObject({ code: 'COMMAND_LIMIT', reason: 'deadline' });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 200);
     await expect(
-      buildClientArtifact({ ...options, executable: slow, signal: controller.signal }),
+      buildClientArtifact({
+        ...options,
+        executables: { bun: slow },
+        signal: controller.signal,
+      }),
     ).rejects.toThrow();
     expect(performance.now() - startedAt).toBeLessThan(10_000);
     expect(existsSync(options.outFile)).toBe(false);

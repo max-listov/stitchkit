@@ -274,20 +274,21 @@ exit status, deadlines, cancellation and `onLeaderSettled` retain the requested 
 
 An unbundled application already launches the package's own guard module. A single-file bundle
 whose application entry also owns argv routing must load the narrow bootstrap before its dispatcher
-and skip dispatch when it claims the private guard invocation. This is especially relevant when the
+and skip dispatch when it claims a private package invocation. This is especially relevant when the
 full command runner stays behind a dynamic import:
 
 ```ts
-import { bootstrapNativeCommandOwnerLoss } from 'stitchkit/process/owner-loss'
+import { bootstrapPackageProcess } from 'stitchkit/process/bootstrap'
 
-if (!bootstrapNativeCommandOwnerLoss()) {
+if (!bootstrapPackageProcess()) {
   await dispatch(process.argv.slice(2)) // may lazy-import `stitchkit/process`
 }
 ```
 
-The bootstrap carries the package-owned guard into the bundle. It returns `false` for application
-argv and `true` only for the private child started by `runNativeCommand`, so the application does
-not read a guard flag or filename. The built file is self-contained; no installed `node_modules`
+The bootstrap carries the package-owned invocations into the bundle: the owner-loss guard, and the
+process root of [work launched in its own boundary](#work-in-its-own-boundary). It returns `false`
+for application argv and `true` only for a private invocation the package serves, so the
+application does not read a flag or filename. The built file is self-contained; no installed `node_modules`
 is needed beside it.
 
 ### Stopping a command: the `stop` policy
@@ -381,6 +382,126 @@ A command in the caller's group (`group: 'caller'`) has no group of its own: `de
 refused there and nothing is stopped after its leader exits. A command whose group this package did not create (a structural
 launcher supplied by a host) has no group to stop, and `descendants` has nothing to act on there.
 
+
+## Work in its own boundary
+
+A machine that runs many launchers ends up with one service holding a hundred processes and no
+answer to "who started this one". `stitchkit/service-host/work` launches a command in a boundary
+of its own and declares who owns it:
+
+```ts
+import { inheritedWork, launchWork } from 'stitchkit/service-host/work'
+
+const launch = await launchWork({
+  owner: {
+    launcher: 'session-host', // your launcher's own name
+    id: session.id,           // unique among your live work on this machine
+    label: session.title,
+    project: session.project, // or null
+    agent: session.agent,     // { harness, model, address } or null
+    parent: await inheritedWork(), // the work this process itself runs in, or null
+  },
+  placement: { kind: 'transient-scope', manager: 'system', slice: 'caller' },
+  command: { executable, args, env, stdio: 'inherit', signal: shutdown.signal },
+})
+
+launch.unit   // { manager: 'system', name: 'session-host-<id>.scope' }
+launch.root   // { pid, instance } — the process the work started as
+await launch.stop() // ends the whole boundary
+```
+
+The owner record is yours to keep and to serve to whoever asks; the package gives its schema
+(`WorkOwnerSchema`), the launch and the check. Every field of the record is answered: `project`,
+`agent` and `parent` take `null` as a declared "none", and a missing field is refused.
+
+### The variable names, the boundary proves
+
+The launched command and everything it starts inherit one variable, `STITCHKIT_WORK_ORIGIN`: a
+small JSON value with the work's reference (`launcher`, `id`) and its boundary. A process that
+leaves the boundary keeps the variable, and anyone can set it, so it is only a claim.
+`checkWorkMembership({ pid, boundary })` asks the boundary itself:
+
+| answer | meaning |
+|---|---|
+| `{ state: 'member', via }` | the process is in the boundary; `via` names the evidence (`cgroup`, `root`, `process-group`, `ancestry`) |
+| `{ state: 'outside', observed }` | it is not, with the control group or the group and parent chain that was seen instead |
+| `{ state: 'gone' }` | there is no such process |
+| `{ state: 'unavailable', reason, cause }` | the boundary could not be asked; never read this as `outside` |
+
+`readWorkOrigin()` parses the variable of the current process (`null` when absent; a value that
+does not parse throws `WorkLaunchError` with reason `origin-unreadable`). `inheritedWork()` returns
+the reference only when the current process is proven to be inside the boundary the variable
+names — that is what a nested launcher declares as `parent`.
+
+To find the owner of an arbitrary process on Linux, read its control group, take the `*.scope`
+component and compare it with `workUnitName(record)` of each launcher's records. The unit name is
+`<launcher>-<id>.scope`; it is computed one way and never parsed back, because two different
+owners can spell the same name.
+
+### Placement
+
+Placement is always written out; a host that cannot make the boundary you asked for throws
+`WorkLaunchError` with a `reason`, and nothing is started as a plain child instead.
+
+| placement | boundary | holds |
+|---|---|---|
+| `{ kind: 'transient-scope', manager, slice, limits? }` | a transient systemd scope (Linux, systemd 254 or newer, cgroup v2) | every descendant, including one that called `setsid` |
+| `{ kind: 'process-root' }` | a recorded root process (Linux and macOS) | the root, the process group it leads, and processes whose parent chain reaches the live root |
+
+For a scope:
+
+- `manager` is `'system'` or `'user'`. The user manager is reached through `XDG_RUNTIME_DIR`, or
+  through `/run/user/<uid>` when that directory is the caller's own; otherwise the launch refuses
+  with `user-manager-unreachable`.
+- `slice: 'caller'` keeps the caller's own slice, and so the resource limits that slice carries; a
+  caller with no slice under that manager is refused with `slice-unresolvable`. Any other value
+  names a slice in full (`'build.slice'`).
+- `limits` become properties of the unit: `memoryMaxMb`, `memorySwapMaxMb`, `cpuQuotaPercent`,
+  `cpuWeight` and `runtimeMaxSeconds`.
+- The command's arguments arrive as written. `systemd-run` would otherwise expand `${VAR}` and `$$`
+  in them, so the scope is started with `--expand-environment=no`, an option systemd has since
+  version 254; an older systemd is refused with `systemd-too-old`.
+- A launcher id that is still running refuses a second launch with `unit-exists`. The name is free
+  again once the scope has emptied and the manager has collected it.
+- A scope is not part of its launcher's service: restarting the launcher's service leaves its
+  scopes running. Stop them with `launch.stop()` — or `systemctl stop <unit>` — when they must not
+  outlive it.
+
+`probeWorkBoundary(placement)` answers `{ state: 'available' }` or `{ state: 'unavailable',
+reason, cause }` without launching anything.
+
+A process root has one stated limit: a descendant that left the group with `setsid` **and** lost
+its parent is `outside`. A scope would still hold it. Use a process root where there is no
+transient scope — macOS, or a Linux host without systemd — and name it yourself: the package never
+substitutes one boundary for the other. The root is a package-owned entry that measures its own
+process instance, writes it into the variable and replaces itself with your command through
+`process.execve`, so the root pid is your command's pid; the runtime must provide `process.execve`.
+A single-file bundle carries that entry through
+[`bootstrapPackageProcess()`](#commands).
+
+### When another program does the spawning
+
+A terminal multiplexer, a remote shell or another supervisor starts the command itself. Hand it
+the wrapped command instead:
+
+```ts
+import { workCommand } from 'stitchkit/service-host/work'
+
+const placed = await workCommand({ owner, placement, executable, args, env })
+// placed.executable, placed.args, placed.env — run exactly these
+```
+
+`env` is written out (`{}` for none): the result extends it with `STITCHKIT_WORK_ORIGIN`, and for
+the user manager with `XDG_RUNTIME_DIR`. A bare executable name is found on the `PATH` the command
+is given.
+
+### What the launch's own signal stops
+
+`command` takes the options of `runNativeCommand` except `group`, `ownerLoss` and
+`onLeaderStarted`. Its `signal`, `timeoutMs` and `stop` policy act on the root's process group, as
+they do for any command; `launch.stop()` ends the whole boundary — for a scope, through the
+manager, which also ends processes that left the group. `launch.result` settles like
+`runNativeCommand`.
 
 ## A contract operation in a process of its own
 
@@ -807,8 +928,7 @@ The plugin does not parse consumer JS or establish a second runtime native imple
 
 A package that owns a server usually ships a typed client for it, and the client's consumers
 must not inherit the server's dependencies. `buildClientArtifact` (`stitchkit/files/packaging`)
-bundles one entry module into a single file, publishes its SHA-256 beside it and can prove an
-npm archive of it:
+bundles one entry module into a single file and publishes its SHA-256 beside it:
 
 ```ts
 import { buildClientArtifact } from 'stitchkit/files/packaging'
@@ -817,30 +937,142 @@ const artifact = await buildClientArtifact({
   entry: 'src/api-client.ts',
   outFile: 'dist/api-client.js',              // + dist/api-client.js.sha256
   forbiddenModules: ['chalk', '@acme/terminal-ui', 'src/terminal/', /providers\//],
-  package: {
-    name: '@acme/api-client', version: '1.4.0', outDir: 'dist',
-    exports: ['createApiClient'],
-  },
 })
-// artifact.file, artifact.sha256, artifact.bytes, artifact.modules, artifact.package.tarball
+// artifact.file, artifact.sha256, artifact.bytes, artifact.modules
 ```
 
 - **`forbiddenModules`** refuses a bundle whose module graph reaches a listed module with a
   `ForbiddenModuleError` naming the module and what imports it. A bare or scoped name
-  (`'chalk'`, `'@scope/pkg'`) is a package: it is matched by the specifier that imports it, so a
-  linked or workspace package is caught wherever it really lives, and by its installed path. A
-  string with a slash matches a fragment of the project's own source path; a `RegExp` is tested
-  against each module's absolute path. Nothing is left at `outFile` when the build is refused.
-- **`package`** packs the file as an npm archive, installs it into an empty directory, imports
-  it by name and checks every name in `exports`. A client that still reaches for the building
-  package's `node_modules` fails there, before it reaches a consumer; a failed proof removes the
-  file and its hash again.
+  (`'chalk'`, `'@scope/pkg'`, `'node:child_process'`) is a package or a platform module: it is
+  matched by the specifier that imports it, so a linked or workspace package is caught wherever
+  it really lives and a platform module is caught although it is never bundled, and by its
+  installed path. A string with a slash matches a fragment of the project's own source path; a
+  `RegExp` is tested against each bundled module's absolute path. Nothing is left at `outFile`
+  when the build is refused.
 - **`runtime`** is the platform the file is built for — `node` by default, which Bun also runs,
   or `bun` or `browser`; a module the platform does not have fails the build.
 
-The build, the pack and the verification each run Bun as a bounded command: `timeoutMs`
-(default 120 s) is the deadline of each step, `signal` cancels, and `executable` names the Bun
-binary when it is not `bun` on `PATH`.
+The build runs Bun as a bounded command: `timeoutMs` (default 120 s) is its deadline, `signal`
+cancels, and `executables.bun` names the Bun binary when it is not `bun` on `PATH`.
+
+The file is for a consumer that copies it. A client published to a registry — with types,
+several entries and peers the consumer already has — is the next section.
+
+## A typed client as an npm package
+
+`buildClientPackage` (`stitchkit/files/packaging`) builds a typed client into an npm archive and
+returns it only after the archive was installed and used the way a consumer uses it:
+
+```ts
+import { buildClientPackage } from 'stitchkit/files/packaging'
+
+const client = await buildClientPackage({
+  name: '@acme/api-client',
+  version: '1.4.0',
+  entries: { '.': 'src/client/index.ts', './monitoring': 'src/client/monitoring.ts' },
+  tsconfig: 'tsconfig.json',
+  peerDependencies: { stitchkit: '^0.133.0', zod: '^4.6.0' },
+  outDir: 'dist',                              // dist/acme-api-client-1.4.0.tgz
+})
+// client.tarball, client.sha256, client.files, client.exports, client.sharedExports, client.proof
+```
+
+Publishing the archive, and its provenance, stay with your release.
+
+### One module graph for every entry
+
+All `entries` are built in one pass, so a module two of them import is emitted once, as a shared
+chunk. A schema or an error class exported from `.` and from `./monitoring` is then one object:
+`===` and `instanceof` hold across the entries, in Node and in Bun. Two separate builds of the
+same entries give two copies, and both comparisons are false.
+
+The proof checks it on the installed package: every name more than one subpath exports must be
+the same value in all of them, and `client.sharedExports` lists the names proven. A name two
+entries export as different values on purpose goes into `proof.distinctExports`; any other is
+refused as `shared-export-split`, with the names in `details.names`.
+
+### Peers and dependencies stay outside
+
+Each package in `peerDependencies` and `dependencies` is left out of the output and written to
+the archive's `package.json` under the same key. Both must be installed where the client is
+built: the proof installs them from there, and refuses with `peer-range` when an installed
+version is outside the range you declared.
+
+- An import that reaches into a peer's directory by path — a workspace neighbour imported as
+  `../../packages/kit/index.js` — would bundle it all the same, and is refused as
+  `bundled-peer`. Import the package by its name.
+- `forbiddenModules` takes the rules of `buildClientArtifact` and also reads imports left
+  outside: `'stitchkit/server'` refuses a client that imports that subpath of a peer, while
+  `stitchkit/contract` stays allowed.
+
+### Declarations for Bundler and NodeNext
+
+Declarations are emitted with `tsconfig`, for the entries and what they import — nothing else of
+the project is typechecked or shipped. The tsconfig's directory is the root: every entry lies
+under it, and `dist/` in the archive mirrors it. A `typescript` package must be installed in the
+project; the build runs its compiler with the runtime that runs the build (Bun or Node), and
+writes a temporary `.client-package-*.tsconfig.json` beside your tsconfig for the length of the
+emit.
+
+The compiler leaves relative specifiers in a declaration as the source wrote them, and a
+consumer under `moduleResolution: NodeNext` cannot resolve an extensionless one. The build
+rewrites every relative specifier to the `.js` file it stands for, whether the source wrote
+`'./schema'` or `'./schema.ts'`. What a consumer could not resolve is refused:
+
+| `reason` | The declaration names | What to do |
+|---|---|---|
+| `declaration-unresolved` | a relative module with no declaration in the package — a hand-written `.d.ts` beside the sources, or a `/// <reference path>` | move the types into a `.ts` module |
+| `declaration-dependency` | a package that is neither a peer nor a dependency — including a tsconfig path alias such as `@/schema` | declare the package, or keep its types out of the public surface; import own modules relatively |
+
+### What the proof runs
+
+The archive is installed into an empty directory beside its peers. There the build:
+
+1. compares every installed file with the one it built;
+2. imports every subpath by the package name — in Node and Bun for `runtime: 'node'` (the
+   default), in Bun for `'bun'` and `'browser'` — and checks `proof.exports` and shared names;
+3. typechecks a strict consumer (`strict`, `skipLibCheck: false`) that re-exports every subpath,
+   under `moduleResolution: bundler` and under `NodeNext`.
+
+```ts
+proof: {
+  typecheck: ['src/client/consumer-proof.ts'],   // your own consumer source, both resolutions
+  exports: { '.': ['createApiClient'], './monitoring': ['readSessions'] },
+  types: ['@types/node'],                        // type packages the declarations need
+}
+```
+
+A `proof.typecheck` file imports the package by name and nothing relative. Give it a negative
+assertion — a `// @ts-expect-error` over a value the types must reject — so a type that silently
+became `any` fails the proof. The consumer typecheck loads the `ES2023` and `DOM` libraries and
+only the type packages in `proof.types`, installed from the project.
+
+Peers are installed from the project's own `node_modules`; what they depend on in turn comes
+from the package manager's cache or registry.
+
+### Refusals
+
+A refusal is a `ClientPackageError`: switch on `reason`, read `details`. A forbidden module is a
+`ForbiddenModuleError`, as for the file. No archive is left in `outDir` after either.
+
+| `reason` | When | `details` |
+|---|---|---|
+| `build` | the bundler failed | `output` |
+| `declarations` | the compiler reported an error in the client's graph | `output` |
+| `declaration-unresolved`, `declaration-dependency` | see above | `file`, `specifier`, `package` |
+| `bundled-peer` | code of a peer or dependency is in the package | `package`, `module` |
+| `manifest-owned-field` | `manifest` sets a field the build writes | `field` |
+| `install` | a peer is not installed for the build, or packing, installing or importing the archive failed | `package` or `output`, `runtime` |
+| `peer-range` | an installed peer or dependency is outside its declared range | `package`, `range`, `installed` |
+| `missing-export` | a subpath lacks a name from `proof.exports` | `subpath`, `names`, `runtime` |
+| `shared-export-split` | several subpaths export one name as different values | `names`, `runtime` |
+| `typecheck` | the strict consumer did not typecheck | `resolution`, `output` |
+
+`manifest` adds descriptive `package.json` fields (`description`, `license`, `repository`, …);
+`name`, `version`, `type`, `exports`, `files` and the dependency maps come from the build and are
+refused there. `files` maps a path inside the package to a source file, for a README or a
+licence. Each tool runs as a bounded command under `timeoutMs` (default 120 s per step) and
+`signal`; `executables` names `bun`, `node` or `tsc` when the default is not the one to use.
 
 ## Qualification boundaries
 

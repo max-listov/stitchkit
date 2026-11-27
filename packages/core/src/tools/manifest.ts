@@ -20,6 +20,8 @@ export interface ToolManifestConfig
   flattenUnionInput?: boolean;
   /** Advertise inputs with no `$ref`, recursion unrolled this many levels — as the live mount. */
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
 }
 
 export interface ToolCatalogEntry extends ToolManifestEntry {
@@ -45,6 +47,7 @@ export function describeToolCatalog(config: ToolCatalogConfig): ToolCatalogEntry
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
+    inputNestingDepth: config.inputNestingDepth,
   }).map((projected) => {
     const schemaBytes = utf8Length(projected.presentationSchema);
     const description =
@@ -87,6 +90,7 @@ export function buildToolManifest(config: ToolManifestConfig): ToolManifestEntry
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
+    inputNestingDepth: config.inputNestingDepth,
   }).map((projected) => ({
     name: projected.name,
     description:

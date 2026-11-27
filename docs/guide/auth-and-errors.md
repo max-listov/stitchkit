@@ -580,7 +580,7 @@ core never models them (ADR 0002). But stitchkit itself emits a set of its own:
 `WAIT_TIMEOUT`,
 `WAIT_FAILED`, `CLI_COMMAND_UNAVAILABLE`, `CLI_PRESENTATION_FAILED`, `DOWNLOAD_NOT_FOUND`, `VIEW_HTTP_ERROR`,
 `CONNECTION_TIMEOUT`, `CONNECTION_RESPONSE_TOO_LARGE`,
-`CONNECTION_REQUEST_FAILED`, `UPSTREAM_TOOL_ERROR`, `MCP_STRUCTURED_CONTENT_MISSING`,
+`CONNECTION_REQUEST_FAILED`, `HTTP_ERROR`, `UPSTREAM_TOOL_ERROR`, `MCP_STRUCTURED_CONTENT_MISSING`,
 `OPERATION_NOT_SUCCEEDED`, `OPERATION_BUSY`, `OPERATION_RESPONSE_TOO_LARGE`,
 `OPERATION_PROCESS_FAILED`, `STREAM_ITEM_INVALID`, `STREAM_FRAME_TOO_LARGE`,
 `STREAM_TERMINAL_MISSING`, `STREAM_LIFETIME_EXCEEDED`,
@@ -724,6 +724,54 @@ HTTP renders the complete code/status/message/details/hint. Tool transports keep
 their established model-facing projection (code/details/hint, without HTTP
 status), while `invokeOrThrow` recovers the exact normalized `AppError`. The
 codes and schemas remain application-owned; Stitchkit stays domain-free.
+
+### The codes an operation refuses with
+
+An endpoint names the domain codes it can refuse with in `refuses`, by listing the
+factories `defineErrors` returned. Every factory carries its `code` and
+`definition`, so the list is the declaration — no second string list to drift:
+
+```ts
+const { errors } = defineErrors({
+  NOT_IDLE: { status: 409, message: 'Session is busy' },
+  MIN_AWAKE: { status: 409, details: z.object({ profile: z.string(), minimum: z.number().int() }) },
+  PROFILE_UNAVAILABLE: { status: 503 },
+})
+
+export const sessions = defineContract({ prefix: 'session' }, {
+  sleep: {
+    method: 'POST', path: '/sleep', desc: 'Put a session to sleep',
+    input: z.object({ id: z.string() }),
+    output: z.object({ ok: z.boolean() }),
+    refuses: [errors.NOT_IDLE, errors.MIN_AWAKE],
+  },
+})
+```
+
+One declaration, three readers:
+
+- **The server holds the handler to it.** An `AppError` whose code the operation
+  did not declare — and that is no framework code (`NOT_FOUND`, `FORBIDDEN`, …) —
+  leaves as `INTERNAL_SERVER_ERROR` (500) with the message `Operation session.sleep
+  failed with a code it does not declare`, on HTTP, MCP, the agent surface, the CLI
+  and mid-stream alike, exactly as an output that breaks its schema does. The
+  original error stays on `cause`, so `onError` and the logs still see it; the
+  caller does not. An `implementRemote` proxy is held to the same list even when its
+  origin is not. A failure that is no `AppError` keeps its usual handling, and an
+  operation without `refuses` runs unchanged.
+- **The typed client reads it.** [`client.sleep.refusal(error)`](client.md#read-a-refusal-the-operation-declared)
+  narrows `code` to the declared codes plus the framework and client codes, and
+  types `details` by the code's schema.
+- **The descriptor carries it** for a reader without types: `MethodDef.refuses`
+  (code, status, retryability, message, details schema), `x-stitchkit-refusals`
+  with one response per declared status in OpenAPI, `refusals` in the surface
+  manifest, and the contract fingerprint. Each changes only for an operation that
+  declares `refuses`.
+
+`defineContract` refuses an entry that is not a factory from `defineErrors` (a bare
+code string) and a code listed twice, naming the endpoint and the index.
+Declaring is opt-in per operation: start with the operations whose callers branch
+on a code. → ADR 0330
 
 ## `createErrorHook`
 

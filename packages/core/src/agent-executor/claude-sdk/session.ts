@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
-import { abortReason } from '../../internal/abort-race';
+import { abortReason, raceAbort } from '../../internal/abort-race';
 import { newClaudeTurnState } from '../claude/classify';
 import { claudeUserContent } from '../claude/protocol';
 import { claudeTranscriptExists, claudeTranscriptPath } from '../claude/transcript';
@@ -10,7 +10,12 @@ import type { PlanLimits } from '../hello';
 import { imageTurnStarter } from '../image-input';
 import { planLimitsReadFailed } from '../plan-limits';
 import { engineEnvironment, engineProfile } from '../profile';
-import { createTurnDeltaChannel, sessionAbort } from '../session-primitives';
+import {
+  createTurnDeltaChannel,
+  type SessionLiveness,
+  sessionAbort,
+  sessionLiveness,
+} from '../session-primitives';
 import { type ClaudeSdkFlagSettings, createClaudeSdkControls } from './controls';
 import type { ClaudeSdkDriverConfig, ClaudeSdkOpenInput, ClaudeSdkSession } from './driver';
 import {
@@ -23,10 +28,25 @@ import {
 import { createSdkQueryManager } from './query-manager';
 import { hasDelegationVerification, validateClaudeSdkOpenInput } from './query-options';
 
+/** How many times a turn re-launches a query that exited while the turn was being bound to it. */
+const MAX_QUERY_RELAUNCHES = 3;
+
 type Uuid = `${string}-${string}-${string}-${string}-${string}`;
 /** The SDK keys a user message by a UUID; a client id of another form is refused, not coerced. */
 function isUuid(value: string): value is Uuid {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+/** How long `close()` waits for spawned Claude Code processes: the SDK's grace, then the group stop. */
+const ENGINE_EXIT_WAIT_MS = 10_000;
+
+async function waitForEngineExits(exits: ReadonlySet<Promise<void>>): Promise<void> {
+  if (exits.size === 0) return;
+  await raceAbort(Promise.all(exits), AbortSignal.timeout(ENGINE_EXIT_WAIT_MS)).catch(() => {
+    throw new Error(
+      `Claude Code did not exit within ${ENGINE_EXIT_WAIT_MS} ms of closing the SDK session`,
+    );
+  });
 }
 
 /** Build the `startTurn` dispatcher for one Claude SDK session, enforcing single-turn concurrency. */
@@ -34,13 +54,14 @@ function createSdkStartTurn(input: {
   config: ClaudeSdkDriverConfig;
   sessionId: string;
   signal: AbortSignal;
-  ensureAlive: () => void;
+  liveness: SessionLiveness;
   getTurn: () => SdkTurnSlot | undefined;
   setTurn: (turn: SdkTurnSlot | undefined) => void;
   isStarting: () => boolean;
   setStarting: (value: boolean) => void;
   markResumable: () => void;
   ensureQuery: (startLoopImmediately: boolean) => Promise<RunningQueryHandle>;
+  isRunning: (handle: RunningQueryHandle) => boolean;
 }) {
   return imageTurnStarter<Parameters<AgentEngineSession['startTurn']>[0], AgentEngineTurn>({
     driverLabel: 'The Agent SDK driver',
@@ -48,7 +69,7 @@ function createSdkStartTurn(input: {
     imageOptions: input.config,
     signal: input.signal,
     check(turnInput) {
-      input.ensureAlive();
+      input.liveness.ensureAlive();
       if (input.getTurn() !== undefined || input.isStarting())
         throw new Error('A turn is already running in this Claude session');
       if (!isUuid(turnInput.clientId))
@@ -64,10 +85,17 @@ function createSdkStartTurn(input: {
         // Defer loop start until `current` is bound so a query calling `canUseTool` on its first
         // step always sees the active turn.
         active = await input.ensureQuery(false);
+        // An idle query can exit while this await is pending; its handle then reads no input.
+        // Bind the turn only to the query that is running now.
+        for (let attempt = 1; !input.isRunning(active); attempt += 1) {
+          if (attempt > MAX_QUERY_RELAUNCHES)
+            throw new Error('The Claude SDK query kept exiting before the turn could start');
+          active = await input.ensureQuery(false);
+        }
       } finally {
         input.setStarting(false);
       }
-      input.ensureAlive();
+      input.liveness.ensureAlive();
       if (input.getTurn() !== undefined)
         throw new Error('A turn is already running in this Claude session');
       const turn: SdkTurnSlot = {
@@ -87,9 +115,8 @@ function createSdkStartTurn(input: {
         });
         input.markResumable();
         active.startLoop();
-        return sdkTurnHandle(turn, active.query, input.ensureAlive);
+        return sdkTurnHandle(turn, active.query, input.liveness);
       } catch (error) {
-        turn.settled = true;
         if (input.getTurn() === turn) input.setTurn(undefined);
         throw error;
       }
@@ -133,42 +160,34 @@ export async function openClaudeSdkSession(
   const env = engineEnvironment(profile, ambient);
   const sessionId = input.nativeThreadId ?? randomUUID();
   const transcript = claudeTranscriptPath({ home: profile.home, cwd: input.cwd, sessionId });
-  const transcriptExists =
-    input.nativeThreadId !== undefined && (await claudeTranscriptExists(transcript));
-  let resume = transcriptExists || input.resumeSessionAt !== undefined;
   let pendingResumeSessionAt = input.resumeSessionAt;
   let pendingResumeDropsTurn = input.resumeDropsTurn;
   let current: SdkTurnSlot | undefined;
   let startingTurn = false;
   let opened = false;
-  let closing = false;
-  let closed = false;
-  let closeReason: unknown;
   let providerPid: number | undefined;
   let activeModel = config.model;
   let activePermissionMode: NonNullable<Options['permissionMode']> =
     config.permissionMode ?? 'default';
   let flagSettingsOverlay: ClaudeSdkFlagSettings | undefined;
   let running: RunningQueryHandle | undefined;
+  const engineExits = new Set<Promise<void>>();
   let inFlightClose: (() => void) | undefined;
 
   const linked = sessionAbort(input.signal);
-  const isClosed = () =>
-    closing || closed || input.signal?.aborted === true || linked.signal.aborted;
-  const ensureSessionAlive = () => {
-    if (closing) throw new Error('The Claude SDK session is closed');
-    if (input.signal?.aborted) throw abortReason(input.signal);
-    if (linked.signal.aborted) throw abortReason(linked.signal);
-    if (closed) throw closeReason ?? new Error('The Claude SDK session is closed');
-  };
+  const liveness = sessionLiveness({
+    closedMessage: 'The Claude SDK session is closed',
+    caller: input.signal,
+    linked: linked.signal,
+  });
+  const isClosed = () => !liveness.isAlive();
+  const ensureSessionAlive = () => liveness.ensureAlive();
   const shutdown = (reason: unknown) => {
-    if (closed) return;
-    closed = true;
-    closeReason = reason;
+    if (liveness.lost !== undefined) return;
+    liveness.markLost(reason);
     providerPid = undefined;
     const turn = current;
     current = undefined;
-    if (turn !== undefined) turn.settled = true;
     loseEngineTurn(turn, stoppedPermission('The session was closed'), reason);
     const pendingClose = inFlightClose;
     inFlightClose = undefined;
@@ -186,6 +205,7 @@ export async function openClaudeSdkSession(
     ...(config.onPermissionRequest !== undefined && {
       onPermissionRequest: config.onPermissionRequest,
     }),
+    ...(config.onObserverError !== undefined && { onObserverError: config.onObserverError }),
   });
   const ensureQuery = createSdkQueryManager({
     config,
@@ -200,8 +220,11 @@ export async function openClaudeSdkSession(
     isOpened: () => opened,
     isClosed,
     ensureAlive: ensureSessionAlive,
-    getResume: () => ({
-      resume,
+    // Like the CLI, resume only a conversation Claude Code has written: a first query that died
+    // before its transcript leaves nothing to resume, and resuming it would fail every later one.
+    getResume: async () => ({
+      resume:
+        pendingResumeSessionAt !== undefined || (await claudeTranscriptExists(transcript)),
       ...(pendingResumeSessionAt !== undefined && { resumeSessionAt: pendingResumeSessionAt }),
       ...(pendingResumeDropsTurn !== undefined && { resumeDropsTurn: pendingResumeDropsTurn }),
     }),
@@ -224,6 +247,10 @@ export async function openClaudeSdkSession(
     onPidExit: (exitedPid) => {
       if (providerPid === exitedPid) providerPid = undefined;
     },
+    trackExit: (exited) => {
+      engineExits.add(exited);
+      void exited.then(() => engineExits.delete(exited));
+    },
   });
 
   if (hasDelegationVerification(config.verifyDelegation)) {
@@ -241,7 +268,7 @@ export async function openClaudeSdkSession(
     config,
     sessionId,
     signal: linked.signal,
-    ensureAlive: ensureSessionAlive,
+    liveness,
     getTurn: () => current,
     setTurn: (turn) => {
       current = turn;
@@ -251,11 +278,11 @@ export async function openClaudeSdkSession(
       startingTurn = value;
     },
     markResumable: () => {
-      resume = true;
       pendingResumeSessionAt = undefined;
       pendingResumeDropsTurn = undefined;
     },
     ensureQuery,
+    isRunning: (handle) => running === handle,
   });
 
   const controls = createClaudeSdkControls({
@@ -288,10 +315,13 @@ export async function openClaudeSdkSession(
     startTurn,
     ...controls,
     async close() {
-      closing = true;
+      liveness.markClosing();
       shutdown(new Error('The Claude SDK session is closed'));
       linked.abort();
       linked.release();
+      // Stop and wait, like every engine: a process this driver spawned is gone when close
+      // resolves. One the SDK spawned itself gives no handle to wait on.
+      await waitForEngineExits(engineExits);
     },
   };
 }

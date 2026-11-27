@@ -20,6 +20,7 @@ function serviceOperations(services: readonly ServiceDef[]): FingerprintedOperat
         input: method.inputSchema,
         output: method.outputSchema,
         item: method.stream?.item,
+        refuses: method.refuses,
       });
     }
   }

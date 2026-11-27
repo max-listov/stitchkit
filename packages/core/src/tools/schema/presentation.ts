@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { assertInputRecursionDepth } from '../../contract/define-validation';
+import {
+  assertInputNestingDepth,
+  assertInputRecursionDepth,
+} from '../../contract/define-validation';
 import { isRecord } from '../../internal/typed';
 import { withDraft2020Keywords } from '../../json-schema/dialect';
 import { toJsonSchema } from '../../json-schema/json-schema';
@@ -9,6 +12,7 @@ import {
   type ToolPresentationSchema,
 } from './flatten';
 import { inlineSchemaReferences } from './inline-references';
+import { limitInputNesting } from './nesting-limit';
 
 export interface ToolPresentationConfig {
   paramsSchema?: z.ZodType;
@@ -21,6 +25,13 @@ export interface ToolPresentationConfig {
    * document keeps its `definitions` and references.
    */
   inputRecursionDepth?: number;
+  /**
+   * The most levels the provider accepts in one input document; a node whose next step crosses it
+   * becomes an open node. Absent: no limit. → `limitInputNesting`.
+   */
+  inputNestingDepth?: number;
+  /** Receives each property path the nesting limit opened, for the typed-property check. */
+  onInputNestingOpened?: (path: string) => void;
   unrepresentable?: 'throw' | 'any';
   /** A tool view's input defaults — what the model is told it gets by omitting a key. */
   defaults?: Readonly<Record<string, unknown>>;
@@ -215,6 +226,7 @@ export function buildToolPresentationSchema(
   config: ToolPresentationConfig,
 ): ToolPresentationSchema {
   assertInputRecursionDepth('inputRecursionDepth', config.inputRecursionDepth);
+  assertInputNestingDepth('inputNestingDepth', config.inputNestingDepth);
   const steps: ProjectionSteps = {
     unrepresentable: config.unrepresentable ?? 'any',
     flatten: config.flattenUnionInput ?? false,
@@ -253,6 +265,13 @@ export function buildToolPresentationSchema(
   }
 
   if (config.defaults) presentation = withToolDefaults(presentation, config.defaults);
+  // Last: the limit applies to the document as the provider receives it.
+  if (config.inputNestingDepth !== undefined)
+    presentation = limitInputNesting(
+      presentation,
+      config.inputNestingDepth,
+      config.onInputNestingOpened,
+    );
 
   if (presentation.$schema === undefined) {
     presentation = {

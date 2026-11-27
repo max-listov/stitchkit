@@ -44,6 +44,8 @@ export interface AgentMountConfig {
    * A tool's `tool.inputRecursionDepth` wins. Absent: references stay.
    */
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
   /** Global error hint injected into every failed tool result. */
   errorHint?: ErrorHintFn;
   /** Framework-managed pathless operations mounted beside contract tools. */
@@ -94,6 +96,7 @@ export function mountAgent(
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
+    inputNestingDepth: config.inputNestingDepth,
   })) {
     const { mountable } = entry;
     const inputSchema = jsonSchema(mountable.presentationSchema, {

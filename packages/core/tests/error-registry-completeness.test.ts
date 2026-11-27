@@ -1,7 +1,11 @@
 import { expect, test } from 'bun:test';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isStitchErrorCode, STITCH_ERROR_STATUS } from '../src/entrypoints/contract';
+import {
+  CLIENT_ERROR_CODES,
+  isStitchErrorCode,
+  STITCH_ERROR_STATUS,
+} from '../src/entrypoints/contract';
 
 /**
  * The registry is only "one source of truth" if it is COMPLETE.
@@ -23,9 +27,13 @@ test('every code the framework throws is in the registry', async () => {
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith('.ts')) continue;
     const source = await readFile(join(entry.parentPath, entry.name), 'utf8');
-    for (const match of source.matchAll(/new AppError\(\s*'([A-Z][A-Z0-9_]*)'/g)) {
-      const code = match[1];
-      if (code) thrown.add(code);
+    // Every code literal of the first argument — a ternary picks between two codes, and the
+    // second one reached the wire unregistered while only the first literal was read.
+    for (const call of source.matchAll(/new AppError\(([^,{)]*)/g)) {
+      for (const match of (call[1] ?? '').matchAll(/'([A-Z][A-Z0-9_]*)'/g)) {
+        const code = match[1];
+        if (code) thrown.add(code);
+      }
     }
     // A SUBCLASS of AppError names its code through `super(...)`, which the
     // pattern above cannot see — and that is exactly how two admission codes
@@ -42,6 +50,37 @@ test('every code the framework throws is in the registry', async () => {
   expect(thrown.size).toBeGreaterThan(10);
   const missing = [...thrown].filter((code) => !isStitchErrorCode(code)).sort();
   expect(missing).toEqual([]);
+});
+
+/**
+ * The typed client raises its own `ApiError`s. `refusal(error)` reads a code as "any call can end
+ * with it" only when it is registered or in `CLIENT_ERROR_CODES`; a client code missing from both
+ * would read as no refusal at all on every operation.
+ */
+test('every code the client raises is registered or a declared client code', async () => {
+  const root = join(import.meta.dir, '../src');
+  const raised = new Set<string>();
+  const entries = await readdir(root, { recursive: true, withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.ts')) continue;
+    const source = await readFile(join(entry.parentPath, entry.name), 'utf8');
+    for (const call of source.matchAll(/new ApiError\(([^,{)]*)/g)) {
+      for (const match of (call[1] ?? '').matchAll(/'([A-Z][A-Z0-9_]*)'/g)) {
+        const code = match[1];
+        if (code) raised.add(code);
+      }
+    }
+  }
+  expect(raised.size).toBeGreaterThan(5);
+  const clientCodes = new Set<string>(CLIENT_ERROR_CODES);
+  const missing = [...raised].filter(
+    (code) => !isStitchErrorCode(code) && !clientCodes.has(code),
+  );
+  expect(missing.sort()).toEqual([]);
+  // Each client code is one the client really raises, and none duplicates a registered code.
+  expect(
+    [...clientCodes].filter((code) => !raised.has(code) || isStitchErrorCode(code)),
+  ).toEqual([]);
 });
 
 test('every registered code has a plausible HTTP status', () => {

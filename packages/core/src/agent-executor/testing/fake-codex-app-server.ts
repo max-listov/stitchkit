@@ -87,7 +87,11 @@ export interface FakeCodexAppServer {
   ): Promise<JsonRpcValue>;
   /** Push an arbitrary UTF-8 WebSocket text frame to the active client (for malformed JSON or oversize-frame tests). */
   sendRaw(text: string): void;
-  /** Drop all active client sockets without stopping the listening server (for `onDisconnect` and reconnect tests). */
+  /**
+   * Drop all active client sockets without stopping the listening server (for `onDisconnect` and
+   * reconnect tests). A server `error` after startup does the same and makes every later send
+   * throw with that error as `cause`.
+   */
   disconnect(): void;
   /** Stop the server, drop active sockets, and remove the bound socket file (idempotent). */
   close(): Promise<void>;
@@ -352,9 +356,20 @@ export async function createFakeCodexAppServer(
   let closePromise: Promise<void> | undefined;
 
   const server = createServer((socket) => attachClientSocket(state, socket));
+  let failed: Error | undefined;
+  let startupFailed: ((error: Error) => void) | undefined;
   const listening = new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
+    startupFailed = reject;
     server.once('listening', resolve);
+  });
+  // One listener for the server's whole life: an `error` event nobody listens to is thrown.
+  server.on('error', (error) => {
+    if (startupFailed !== undefined) {
+      startupFailed(error);
+      return;
+    }
+    failed ??= error;
+    for (const socket of [...state.activeSockets]) socket.destroy();
   });
   try {
     bindUnixSocket({ path: config.socketPath, mode: 0o600 }, (boundPath) =>
@@ -366,10 +381,17 @@ export async function createFakeCodexAppServer(
     throw error;
   }
   await listening;
+  startupFailed = undefined;
   const boundStats = lstatSync(config.socketPath);
   const boundInode: UnixSocketInode = { dev: boundStats.dev, ino: boundStats.ino };
 
   const requireActiveClient = (caller: string): Socket => {
+    if (failed !== undefined) {
+      throw new Error(
+        `[stitchkit] FakeCodexAppServer.${caller}: the server failed: ${failed.message}`,
+        { cause: failed },
+      );
+    }
     if (state.latestClient === undefined || state.latestClient.destroyed) {
       throw new Error(`[stitchkit] FakeCodexAppServer.${caller}: no client is connected`);
     }

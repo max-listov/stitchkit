@@ -43,6 +43,7 @@ const onError = createErrorHook({
     CONNECTION_TIMEOUT: 'timeout',
     CONNECTION_RESPONSE_TOO_LARGE: 'too_large',
     CONNECTION_REQUEST_FAILED: 'upstream',
+    HTTP_ERROR: 'upstream',
     UPSTREAM_TOOL_ERROR: 'upstream',
     MCP_STRUCTURED_CONTENT_MISSING: 'upstream',
     REQUEST_ABORTED: 'cancelled',

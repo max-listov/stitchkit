@@ -282,10 +282,12 @@
   },
   "stitchkit/agent-executor/testing": {
     "AgentEngineDialectScenarios": ["replayDialectScenarios"],
-    "FakeClaudeSdkQueryHarness": ["createFakeClaudeSdkQuery"],
     "FakeCodexAppServer": ["createFakeCodexAppServer"],
     "ReplayExecutorDriver": ["createReplayExecutorDriver"],
     "ReplayGate": ["createReplayGate"]
+  },
+  "stitchkit/agent-executor/testing/claude-sdk": {
+    "FakeClaudeSdkQueryHarness": ["createFakeClaudeSdkQuery"]
   },
   "stitchkit/agent-runtime/postgres": {
     "PostgresAgentRuntimeStore": ["createPostgresAgentRuntimeStore"]
@@ -351,6 +353,7 @@
   },
   "stitchkit/files/packaging": {
     "ClientArtifact": ["buildClientArtifact"],
+    "ClientPackage": ["buildClientPackage"],
     "NativeArtifactLoader": ["inspectNativeArtifact"],
     "NativePackagingEmbeddedResult": ["createNativePackaging"],
     "NativePackagingResult": ["createNativePackaging"]
@@ -403,6 +406,12 @@
     "ResponsibleProcessInspection": ["inspectResponsibleProcess"],
     "SubtreeResponsibilityVerification": ["verifyProcessSubtreeResponsibility"],
     "VerifiedBundleSignature": ["verifySignedBundle"]
+  },
+  "stitchkit/service-host/work": {
+    "WorkBoundaryAvailability": ["probeWorkBoundary"],
+    "WorkCommand": ["workCommand"],
+    "WorkLaunch": ["launchWork"],
+    "WorkMembership": ["checkWorkMembership"]
   },
   "stitchkit/telegram": {
     "TelegramBroadcastReport": ["runTelegramBroadcast"],

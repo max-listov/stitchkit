@@ -3,7 +3,7 @@ title: "ADR 0316: The agent executor is drivers and a contract, not a daemon"
 description: "Adds stitchkit/agent-executor: Stitchkit owns engine drivers over stitchkit/process, the Zod schemas of the executor ↔ server contract and its pure reducers; the application owns the executor process, its reconnects, restarts, autostart, keychain and login. Deltas extend the neutral agent-parts blocks; leases are on threads with a fence; an unknown outcome is never resent."
 type: decision
 status: accepted
-amendedBy: ["0329"]
+amendedBy: ["0329", "0334"]
 created: 2026-11-24
 updated: 2026-11-26
 ---
@@ -22,7 +22,7 @@ Applications drive coding agents — Claude Code, Codex, ACP agents — as exter
 2. **One vocabulary.** The blocks of a message (text, reasoning, tool call and result, approval) move to the neutral part `agent-parts`, which the runtime and the executor both import and neither owns. A delta is such a block `.extend`ed with `turnId`, `itemId` and `raw { source, type }`, plus `request`, `request-resolved`, `usage`, the context gauge `context-usage`, `turn-end`, `error { kind }` and `window { reset }`. Folding deltas into message parts is one mechanical function. The executor and the runtime never import each other (I15).
 3. **Leases are on threads.** A thread's history lives in one engine profile on one machine, so a thread is pinned to `executorId + profileId`; its fence counts grants, and a second instance gets it only after release or proven death. TTLs run on the server's monotonic clock; renew every `ttl/3`. The server keeps turn receipts for each thread's last `retainedTurns` turns (default 64, at most 1024), so its state is bounded by threads, not by history. A turn carries the ordinal the server offered it under, and a thread remembers the highest ordinal it let go: a report of a turn at or below it — its first report included — is answered `not-retained`, never applied again, and a hello resuming it learns the same.
 4. **A turn's phases are named, and an unknown is final.** `leased → dispatching → delivered → completed | interrupted | failed | unknown`, `unknown_after_restart`, and the server's own `cancelled`. Dispatch runs through `LocalStepDurability.effect` with the driver's `reconcile`: `client-id` engines are asked for the id the executor chose; `none` engines leave an interrupted dispatch `unknown_after_restart`. Never repeated: input after `dispatching`, a steer, an answer to a permission request, an interrupt whose outcome is unknown, a "continue" after a limit.
-5. **No new transport.** The operations (`hello`, `claim`, `renew`, `release`, `report`) are a `defineContract`; offers, interrupts and replies travel the realtime contract (ADR 0220).
+5. **No new transport.** The operations (`hello`, `claim`, `renew`, `release`, `report`) are a `defineContract`; offers, interrupts and replies travel the realtime contract (ADR 0220). (amended by ADR 0334: every object of the contract is strict, so a key one release adds is refused by an older reader — the server is upgraded first, and it writes an added reply key only to an executor whose `hello` declares the capability for it.)
 
 ## Failure modes
 

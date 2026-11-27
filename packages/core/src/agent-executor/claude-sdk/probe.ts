@@ -192,7 +192,7 @@ export async function probeClaudeSdkCapabilities(
       } finally {
         deadlineSignal.removeEventListener('abort', onDeadlineAbort);
         if (!probeAbort.signal.aborted) probeAbort.abort();
-        closeQuerySafely(query);
+        closeQuerySafely(query, config.onObserverError);
       }
     },
   );

@@ -5,7 +5,13 @@ import type { AgentEngineSession } from '../engine';
 import type { InteractionReply } from '../executor-contract';
 import { DEFAULT_MAX_IMAGE_BYTES } from '../image-input';
 import type { ExecutorProfileConfig } from '../profile';
-import { invokeSafely, sessionAbort, stopConnection } from '../session-primitives';
+import {
+  invokeObserver,
+  type SessionLiveness,
+  sessionAbort,
+  sessionLiveness,
+  stopConnection,
+} from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
 import {
   type AcpDriverConfig,
@@ -23,6 +29,7 @@ import {
 } from './v1-permission';
 import {
   type AcpConfigOption,
+  type AcpInitializeResult,
   AcpMcpServerSchema,
   AcpNewSessionResultSchema,
   AcpSessionStateSchema,
@@ -69,6 +76,12 @@ export interface AcpSession extends AgentEngineSession {
   readonly providerPid: number | undefined;
   /** Always `'agent-initiated'`: whether a tool pauses for host approval is decided by the agent. */
   readonly approvalEnforcement: AcpApprovalEnforcement;
+  /**
+   * What this session's agent process answered to `initialize`, as `probeCapabilities` returns it:
+   * `agentCapabilities.promptCapabilities` says what the agent itself declares (images, audio),
+   * where `driver.capabilities` says what the driver can send.
+   */
+  readonly initialized: AcpInitializeResult;
   /** The agent's settings as last reported: on open, on a change, and on `config_option_update`. */
   readonly configOptions: readonly AcpConfigOption[];
   /** The title the agent gave the session, once it did. */
@@ -81,7 +94,10 @@ export interface AcpSession extends AgentEngineSession {
   respond(interactionId: string, reply: InteractionReply['reply']): Promise<void>;
   /**
    * Steer the currently running turn with an additional `session/prompt` generation when
-   * `steerMode` is `'prompt'`. Throws `TypeError` when `steerMode` is `'none'` (default).
+   * `steerMode` is `'prompt'`. Throws `TypeError` when `steerMode` is `'none'` (default). It
+   * resolves once the prompt is sent: an agent that refuses it while an earlier prompt runs is told
+   * on the turn as a non-terminal `error` delta (`itemId` `steer-refused:<generation>`), and the
+   * turn stays with that earlier prompt.
    */
   steerTurn(input: AcpSteerTurnInput): Promise<{ readonly turnId: string }>;
 }
@@ -89,8 +105,6 @@ export interface AcpSession extends AgentEngineSession {
 interface AcpSessionState {
   current: AcpTurnSlot | undefined;
   opened: boolean;
-  closing: boolean;
-  dead: Error | undefined;
   livePid: number | undefined;
   pidNotified: boolean;
   configOptions: readonly AcpConfigOption[];
@@ -103,27 +117,22 @@ function createAcpSessionClose(input: {
   readonly config: AcpDriverConfig;
   readonly connected: Awaited<ReturnType<typeof connectAcp>>;
   readonly sessionId: string;
-  readonly callerSignal: AbortSignal | undefined;
+  readonly liveness: SessionLiveness;
   readonly linked: ReturnType<typeof sessionAbort>;
   readonly externalPending: Map<string, PendingExternalAcpRequest>;
   readonly state: AcpSessionState;
   readonly stop: (primary?: { error: unknown }) => Promise<void>;
 }): () => Promise<void> {
-  const { state, callerSignal, linked, externalPending } = input;
+  const { state, liveness, linked, externalPending } = input;
   let closePromise: Promise<void> | undefined;
   return () => {
     if (closePromise !== undefined) return closePromise;
     closePromise = (async () => {
-      const aborted = callerSignal?.aborted === true || linked.signal.aborted;
-      const alreadyTerminated = state.dead !== undefined || aborted;
+      const terminated = liveness.terminated();
+      const alreadyTerminated = terminated !== undefined;
       const closeReason =
-        state.dead ??
-        (callerSignal?.aborted
-          ? abortReason(callerSignal)
-          : linked.signal.aborted
-            ? abortReason(linked.signal)
-            : new Error('The ACP session is closing'));
-      state.closing = true;
+        terminated === undefined ? new Error('The ACP session is closing') : terminated.reason;
+      liveness.markClosing();
       const turn = state.current;
       state.current = undefined;
       settleAcpTurn(turn, closeReason, !alreadyTerminated);
@@ -200,24 +209,14 @@ function buildAcpSession(input: {
   readonly config: AcpDriverConfig;
   readonly connected: Awaited<ReturnType<typeof connectAcp>>;
   readonly sessionId: string;
-  readonly callerSignal: AbortSignal | undefined;
+  readonly liveness: SessionLiveness;
   readonly linked: ReturnType<typeof sessionAbort>;
   readonly externalPending: Map<string, PendingExternalAcpRequest>;
   readonly state: AcpSessionState;
-  readonly ensureAlive: () => void;
   readonly stop: (primary?: { error: unknown }) => Promise<void>;
 }): AcpSession {
-  const {
-    config,
-    connected,
-    sessionId,
-    callerSignal,
-    linked,
-    externalPending,
-    state,
-    ensureAlive,
-    stop,
-  } = input;
+  const { config, connected, sessionId, liveness, linked, externalPending, state, stop } =
+    input;
   const { peer, initialized } = connected;
   const limits = {
     images: initialized.agentCapabilities?.promptCapabilities?.image === true,
@@ -229,7 +228,7 @@ function buildAcpSession(input: {
     peer,
     sessionId,
     limits,
-    ensureAlive,
+    liveness,
     getTurn: () => state.current,
     setTurn: (turn) => {
       state.current = turn;
@@ -239,25 +238,21 @@ function buildAcpSession(input: {
     config,
     connected,
     sessionId,
-    callerSignal,
+    liveness,
     linked,
     externalPending,
     state,
     stop,
   });
-  ensureAlive();
+  liveness.ensureAlive();
   state.opened = true;
   return {
     nativeThreadId: sessionId,
     get providerPid() {
-      return state.closing ||
-        state.dead !== undefined ||
-        callerSignal?.aborted === true ||
-        linked.signal.aborted
-        ? undefined
-        : state.livePid;
+      return liveness.isAlive() ? state.livePid : undefined;
     },
     approvalEnforcement: 'agent-initiated',
+    initialized,
     get configOptions() {
       return state.configOptions;
     },
@@ -268,7 +263,7 @@ function buildAcpSession(input: {
       return state.commands;
     },
     async setConfigOption(configId, value) {
-      ensureAlive();
+      liveness.ensureAlive();
       state.configOptions = await setAcpConfigOption(
         peer,
         sessionId,
@@ -280,8 +275,13 @@ function buildAcpSession(input: {
       return state.configOptions;
     },
     async respond(interactionId, reply) {
-      ensureAlive();
-      answerAcpSessionRequest({ turn: state.current, externalPending, interactionId, reply });
+      answerAcpSessionRequest({
+        liveness,
+        turn: state.current,
+        externalPending,
+        interactionId,
+        reply,
+      });
     },
     ...turnControls,
     close,
@@ -301,8 +301,6 @@ export async function openAcpSession(
   const state: AcpSessionState = {
     current: undefined,
     opened: false,
-    closing: false,
-    dead: undefined,
     livePid: undefined,
     pidNotified: false,
     configOptions: [],
@@ -311,33 +309,26 @@ export async function openAcpSession(
     commands: [],
   };
   let connected: Awaited<ReturnType<typeof connectAcp>>;
-  const ensureAlive = () => {
-    if (state.closing) throw new Error('The ACP session is closing');
-    if (state.dead !== undefined) throw state.dead;
-    if (input.signal?.aborted) throw abortReason(input.signal);
-    if (linked.signal.aborted) throw abortReason(linked.signal);
-  };
+  const liveness = sessionLiveness({
+    closedMessage: 'The ACP session is closing',
+    caller: input.signal,
+    linked: linked.signal,
+  });
   const recordPid = (pid: number | undefined) => {
-    if (
-      pid === undefined ||
-      state.closing ||
-      state.dead !== undefined ||
-      input.signal?.aborted === true ||
-      linked.signal.aborted
-    ) {
-      return;
-    }
+    if (pid === undefined || !liveness.isAlive()) return;
     state.livePid = pid;
     if (!state.pidNotified && config.onProviderPid !== undefined) {
       state.pidNotified = true;
-      invokeSafely(() => config.onProviderPid?.(pid));
+      invokeObserver(config.onObserverError, 'onProviderPid', () =>
+        config.onProviderPid?.(pid),
+      );
     }
   };
   try {
     connected = await connectAcp(config, input.profile, input.cwd, linked.signal, {
       ...createAcpHandlers({
         externalPending,
-        ensureAlive,
+        liveness,
         isOpened: () => state.opened,
         getTurn: () => state.current,
         onSessionMeta(meta) {
@@ -358,10 +349,14 @@ export async function openAcpSession(
         ...(config.permissionRequestDelivery !== undefined && {
           permissionRequestDelivery: config.permissionRequestDelivery,
         }),
+        ...(config.onObserverError !== undefined && {
+          onObserverError: config.onObserverError,
+        }),
+        closingGracefully: () => liveness.closingGracefully,
         onEnd(error) {
-          const abortedByCaller = input.signal?.aborted === true;
-          const shouldNotify = state.opened && !state.closing && !abortedByCaller;
-          if (!state.closing && !abortedByCaller) state.dead = error;
+          const { abortedByCaller } = liveness;
+          const shouldNotify = state.opened && !liveness.closing && !abortedByCaller;
+          if (!liveness.closing && !abortedByCaller) liveness.markLost(error);
           state.livePid = undefined;
           const turn = state.current;
           state.current = undefined;
@@ -373,19 +368,16 @@ export async function openAcpSession(
           );
           // The session is over: nothing follows the caller's signal any more.
           linked.abort();
-          if (shouldNotify) invokeSafely(() => config.onDisconnect?.(error));
+          if (shouldNotify)
+            invokeObserver(config.onObserverError, 'onDisconnect', () =>
+              config.onDisconnect?.(error),
+            );
         },
       }),
       onProviderPid: recordPid,
       ...(input.onStartupPhase !== undefined && { onStartupPhase: input.onStartupPhase }),
     });
-    if (
-      state.livePid === undefined &&
-      !state.closing &&
-      state.dead === undefined &&
-      input.signal?.aborted !== true &&
-      !linked.signal.aborted
-    ) {
+    if (state.livePid === undefined && liveness.isAlive()) {
       recordPid((await connected.engine.pidReady) ?? connected.engine.pid);
     }
   } catch (error) {
@@ -394,9 +386,8 @@ export async function openAcpSession(
   }
   const { peer, initialized } = connected;
   const stop = async (primary?: { error: unknown }) => {
-    const terminated =
-      state.dead !== undefined || input.signal?.aborted === true || linked.signal.aborted;
-    state.closing = true;
+    const terminated = liveness.terminated() !== undefined;
+    liveness.markClosing();
     state.livePid = undefined;
     if (terminated) externalPending.clear();
     else drainExternalAcpPending(externalPending);
@@ -440,11 +431,10 @@ export async function openAcpSession(
       config,
       connected,
       sessionId,
-      callerSignal: input.signal,
+      liveness,
       linked,
       externalPending,
       state,
-      ensureAlive,
       stop,
     });
   } catch (error) {

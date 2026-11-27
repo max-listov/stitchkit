@@ -1,10 +1,9 @@
 import type { AcpSession } from '../acp/v1-session';
-import type { ClaudeSdkSession } from '../claude-sdk/driver';
+import { codexDriverCapabilities, codexSharedServerCapabilities } from '../codex/capabilities';
 import type { CodexControlClient, CodexControlConnection } from '../codex/control-client';
 import type { CodexSession, CodexTurn } from '../codex/session-types';
 import type { CodexSharedServer } from '../codex/shared-server';
 import type { AgentEngineTurn } from '../engine';
-import type { ExecutorDriverCapabilities } from '../hello';
 import type { ExecutorDelta } from '../vocabulary';
 import { makeCodexThreadFixture } from './fixtures';
 
@@ -34,32 +33,22 @@ export interface StubCodexTurnOverrides extends StubAgentEngineTurnOverrides {
 
 const DEFAULT_CODEX_USER_AGENT = 'codex/0.171.0';
 
-const DEFAULT_SHARED_SERVER_CAPABILITIES: ExecutorDriverCapabilities = {
-  runtimePolicyEnforcement: 'native',
-  sessionApproval: true,
-  interruptOnDeny: true,
-  updatedToolInput: false,
-  structuredInput: true,
-  steer: true,
-  fork: true,
-  revert: true,
-  compact: true,
-  injectItems: true,
-  backgroundWorkOutlivesTurn: false,
-  multiThreadPerProcess: true,
-  images: false,
-  planLimits: 'pull',
-};
+/** What `createCodexDriver()` without `resolveFile` declares on its shared server. */
+const DEFAULT_SHARED_SERVER_CAPABILITIES = codexSharedServerCapabilities(
+  codexDriverCapabilities({ images: false }),
+);
 
-function unexpected(stubName: string, methodName: string): () => Promise<never> {
+/** A method the test did not override: calling it fails with the stub and method named. */
+export function unexpected(stubName: string, methodName: string): () => Promise<never> {
   return async () => {
     throw new Error(`Unexpected call to ${stubName}.${methodName}()`);
   };
 }
 
-const noopClose = async (): Promise<void> => undefined;
+export const noopClose = async (): Promise<void> => undefined;
 
-function pickOptional<T>(
+/** `value` when the test named `key` at all — an explicit `undefined` included — else `fallback`. */
+export function pickOptional<T>(
   overrides: object | undefined,
   key: string,
   value: T | undefined,
@@ -249,40 +238,6 @@ export function createStubCodexTurn(overrides?: StubCodexTurnOverrides): CodexTu
   };
 }
 
-/** Create a fail-loud {@link ClaudeSdkSession} stub with a safe no-op `close()` default. */
-export function createStubClaudeSdkSession(
-  overrides?: StubOverrides<ClaudeSdkSession>,
-): ClaudeSdkSession {
-  const stubName = 'StubClaudeSdkSession';
-  return {
-    nativeThreadId: overrides?.nativeThreadId ?? 'stub-session-1',
-    providerPid: pickOptional(overrides, 'providerPid', overrides?.providerPid, undefined),
-    startTurn: overrides?.startTurn ?? unexpected(stubName, 'startTurn'),
-    setModel: overrides?.setModel ?? unexpected(stubName, 'setModel'),
-    setPermissionMode:
-      overrides?.setPermissionMode ?? unexpected(stubName, 'setPermissionMode'),
-    applyFlagSettings:
-      overrides?.applyFlagSettings ?? unexpected(stubName, 'applyFlagSettings'),
-    initializationResult:
-      overrides?.initializationResult ?? unexpected(stubName, 'initializationResult'),
-    supportedModels: overrides?.supportedModels ?? unexpected(stubName, 'supportedModels'),
-    supportedCommands:
-      overrides?.supportedCommands ?? unexpected(stubName, 'supportedCommands'),
-    accountInfo: overrides?.accountInfo ?? unexpected(stubName, 'accountInfo'),
-    getContextUsage: overrides?.getContextUsage ?? unexpected(stubName, 'getContextUsage'),
-    readUsage: overrides?.readUsage ?? unexpected(stubName, 'readUsage'),
-    mcpServerStatus: overrides?.mcpServerStatus ?? unexpected(stubName, 'mcpServerStatus'),
-    setMcpServers: overrides?.setMcpServers ?? unexpected(stubName, 'setMcpServers'),
-    toggleMcpServer: overrides?.toggleMcpServer ?? unexpected(stubName, 'toggleMcpServer'),
-    reconnectMcpServer:
-      overrides?.reconnectMcpServer ?? unexpected(stubName, 'reconnectMcpServer'),
-    stopTask: overrides?.stopTask ?? unexpected(stubName, 'stopTask'),
-    backgroundTasks: overrides?.backgroundTasks ?? unexpected(stubName, 'backgroundTasks'),
-    rewindFiles: overrides?.rewindFiles ?? unexpected(stubName, 'rewindFiles'),
-    close: overrides?.close ?? noopClose,
-  };
-}
-
 /** Create a fail-loud {@link AcpSession} stub with a safe no-op `close()` default. */
 export function createStubAcpSession(overrides?: StubOverrides<AcpSession>): AcpSession {
   const stubName = 'StubAcpSession';
@@ -290,6 +245,7 @@ export function createStubAcpSession(overrides?: StubOverrides<AcpSession>): Acp
     nativeThreadId: overrides?.nativeThreadId ?? 'stub-acp-1',
     providerPid: pickOptional(overrides, 'providerPid', overrides?.providerPid, undefined),
     approvalEnforcement: overrides?.approvalEnforcement ?? 'agent-initiated',
+    initialized: overrides?.initialized ?? { protocolVersion: 1 },
     configOptions: overrides?.configOptions ?? [],
     title: pickOptional(overrides, 'title', overrides?.title, undefined),
     commands: overrides?.commands ?? [],

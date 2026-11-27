@@ -4,7 +4,7 @@ import type { ContractDef, EndpointDef } from '../contract/define';
 import { AppError } from '../contract/errors';
 import type { RuntimeContext } from '../contract/runtime-context';
 import { callRuntimeHandler, typedEntries } from '../internal/typed';
-import { contractMethodFields } from './contract-method';
+import { contractMethodFields, withDeclaredRefusals } from './contract-method';
 import type {
   EndpointHandlerContext,
   Handlers,
@@ -259,16 +259,20 @@ export function bindContract(
     methods[String(key)] = {
       ...contractMethodFields(contract, String(key), endpoint),
       multipartReceivers: streamingHandler?.receivers,
-      handler: streamingHandler
-        ? (ctx: RuntimeContext) => streamingHandler.execute(ctx, ctx.files ?? {})
-        : (ctx: RuntimeContext) => {
-            if (!regularHandler) {
-              throw new Error(
-                `[stitchkit] implement: missing handler for "${contract.meta.prefix}.${String(key)}"`,
-              );
-            }
-            return callRuntimeHandler(regularHandler, ctx);
-          },
+      handler: withDeclaredRefusals(
+        endpoint,
+        `${contract.meta.prefix}.${String(key)}`,
+        streamingHandler
+          ? (ctx: RuntimeContext) => streamingHandler.execute(ctx, ctx.files ?? {})
+          : (ctx: RuntimeContext) => {
+              if (!regularHandler) {
+                throw new Error(
+                  `[stitchkit] implement: missing handler for "${contract.meta.prefix}.${String(key)}"`,
+                );
+              }
+              return callRuntimeHandler(regularHandler, ctx);
+            },
+      ),
     };
   }
 

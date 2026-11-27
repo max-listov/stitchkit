@@ -3,25 +3,11 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { type ExecutorEngine, ExecutorEngineSchema, type ExecutorProfile } from './hello';
 
-/** Pattern matched by every environment variable name accepted in {@link ExecutorProfileConfigSchema}. */
-export const EXECUTOR_ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
-
 /**
- * Filter an environment record down to entries whose keys match {@link EXECUTOR_ENV_KEY_PATTERN}
- * and whose values are defined strings, preserving empty strings without trimming.
+ * Pattern matched by every environment variable name accepted in {@link ExecutorProfileConfigSchema}.
+ * A name outside it is refused by the schema — the one rule, on every path a profile takes.
  */
-export function sanitizeProfileEnv(
-  env: Readonly<Record<string, string | undefined>> | undefined,
-): Record<string, string> {
-  const sanitized: Record<string, string> = {};
-  if (env === undefined) return sanitized;
-  for (const [key, value] of Object.entries(env)) {
-    if (typeof value === 'string' && EXECUTOR_ENV_KEY_PATTERN.test(key)) {
-      sanitized[key] = value;
-    }
-  }
-  return sanitized;
-}
+export const EXECUTOR_ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 
 /**
  * A profile as the executor's machine configures it: an account's own engine

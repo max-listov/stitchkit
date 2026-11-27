@@ -12,7 +12,7 @@ import {
   createClaudeCliDriver,
 } from '../../src/entrypoints/agent-executor/claude';
 import { createClaudeSdkDriver } from '../../src/entrypoints/agent-executor/claude-sdk';
-import { createFakeClaudeSdkQuery } from '../../src/entrypoints/agent-executor/testing';
+import { createFakeClaudeSdkQuery } from '../../src/entrypoints/agent-executor/testing/claude-sdk';
 import { ambientIn, inScratch, trackedPidFile } from '../support/engine-driver-harness';
 import { reapAfterEachTest } from '../support/process-reaper';
 

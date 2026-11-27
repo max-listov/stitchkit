@@ -1,5 +1,8 @@
 import { assertTimerMs } from '../internal/deadline';
-import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import {
+  assertPositiveSafeInteger,
+  isPositiveSafeInteger,
+} from '../internal/positive-integer';
 import { isUnsafeKey } from '../internal/safe-json';
 import type { EndpointDef } from './define';
 import type { EndpointToolOptions } from './tool-options';
@@ -121,6 +124,7 @@ const TOOL_OPTION_KEYS = {
   annotations: true,
   mcp: true,
   inputRecursionDepth: true,
+  inputNestingDepth: true,
 } as const satisfies Record<keyof EndpointToolOptions, true>;
 
 export function assertNoUngroupedToolOptions(
@@ -152,11 +156,29 @@ export function assertNoUngroupedToolOptions(
 /** Refuse a recursion depth that cannot be honoured, naming the option where it was declared. */
 export function assertInputRecursionDepth(where: string, depth: unknown): void {
   if (depth === undefined) return;
-  if (typeof depth !== 'number' || !Number.isSafeInteger(depth) || depth < 1) {
+  if (!isPositiveSafeInteger(depth)) {
     throw new Error(
       `${where} must be a positive integer — the number of levels each recursive input definition is written out (got ${String(depth)})`,
     );
   }
+}
+
+export function assertInputNestingDepth(where: string, depth: unknown): void {
+  if (depth === undefined) return;
+  if (!isPositiveSafeInteger(depth)) {
+    throw new Error(
+      `${where} must be a positive integer — the most levels a provider accepts in one input document (got ${String(depth)})`,
+    );
+  }
+}
+
+/** The two input-document depths a tool may declare, each a positive integer. */
+export function assertToolDepthOptions(
+  where: string,
+  tool: { readonly inputRecursionDepth?: unknown; readonly inputNestingDepth?: unknown },
+): void {
+  assertInputRecursionDepth(`${where}.inputRecursionDepth`, tool.inputRecursionDepth);
+  assertInputNestingDepth(`${where}.inputNestingDepth`, tool.inputNestingDepth);
 }
 
 /** An endpoint that never reaches a tool transport has no tool options to set. */

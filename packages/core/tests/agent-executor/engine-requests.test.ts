@@ -254,6 +254,7 @@ describe('an answer the engine could not take', () => {
       state: { turnId: 't', interruptRequested: false },
       channel: createTurnDeltaChannel(),
       pending: new Map(),
+      settled: false,
     };
     let writable = false;
     const written: string[] = [];

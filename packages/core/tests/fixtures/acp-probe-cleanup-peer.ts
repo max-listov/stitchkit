@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -35,6 +35,15 @@ for await (const line of createInterface({ input: process.stdin })) {
       break;
     case 'session/close':
       if (mode === 'hang-close' || mode === 'invalid-hang-close') break;
+      if (mode === 'slow-close') {
+        // Answers once the test released it: an abort can land while close is in flight.
+        const poll = setInterval(() => {
+          if (!existsSync(join(root, 'release-close'))) return;
+          clearInterval(poll);
+          result({});
+        }, 10);
+        break;
+      }
       if (mode.includes('close')) refuse();
       else result({});
       break;

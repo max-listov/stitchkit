@@ -43,6 +43,7 @@ export function collectCliStreams(
             paramsSchema: method.paramsSchema,
             inputSchema: method.inputSchema,
             inputRecursionDepth: method.inputRecursionDepth,
+            inputNestingDepth: method.inputNestingDepth,
             unrepresentable: 'any',
           }),
           shouldExtend: false,

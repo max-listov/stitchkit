@@ -114,6 +114,97 @@ export function sessionAbort(caller: AbortSignal | undefined): SessionAbort {
   return { signal: link.signal, abort: () => own.abort(), release: link.release };
 }
 
+/** Why a session can no longer be used. */
+export interface SessionStop {
+  readonly reason: unknown;
+}
+
+/**
+ * Whether a session can still be used, and why not. Every driver asks this one owner; none
+ * keeps its own `closing`/`dead` flags or its own order of checks.
+ */
+export interface SessionLiveness {
+  /** `close()` began: from here the session refuses with its closed message. */
+  markClosing(): void;
+  /** The engine, or the thread, was lost with `reason`. The first loss is the one kept. */
+  markLost(reason: unknown): void;
+  /** Whether `close()` began. */
+  readonly closing: boolean;
+  /** The loss `markLost` recorded, when there was one. */
+  readonly lost: SessionStop | undefined;
+  /** Whether the caller's own signal aborted, as opposed to the session ending by itself. */
+  readonly abortedByCaller: boolean;
+  /** `close()` began and the engine still reads: what arrives now can still be answered. */
+  readonly closingGracefully: boolean;
+  /**
+   * Why the engine no longer reads this session, whether or not `close()` began: the recorded
+   * loss, then the owner it lives in (`within`), then the caller's abort, then the session's own
+   * abort. `undefined` while a closing session still talks to its engine.
+   */
+  terminated(): SessionStop | undefined;
+  /**
+   * Why the session stopped, or `undefined` while it is alive: closing first, then what
+   * `terminated()` names. One order for every driver.
+   */
+  stopped(): SessionStop | undefined;
+  /** Throw the reason `stopped()` names; return while the session is alive. */
+  ensureAlive(): void;
+  /** `stopped() === undefined`: what a reader loop, a handler or an observer guard asks. */
+  isAlive(): boolean;
+}
+
+/**
+ * The liveness of one session over the signals {@link sessionAbort} linked: `caller` is the
+ * signal the caller gave, `linked` the session's own. `within` is the liveness of an owner the
+ * session cannot outlive — the shared server a thread runs on.
+ */
+export function sessionLiveness(input: {
+  /** What `ensureAlive()` throws once `close()` began. */
+  readonly closedMessage: string;
+  readonly caller: AbortSignal | undefined;
+  readonly linked: AbortSignal;
+  readonly within?: Pick<SessionLiveness, 'stopped'> | undefined;
+}): SessionLiveness {
+  let closed: SessionStop | undefined;
+  let lost: SessionStop | undefined;
+  const terminated = (): SessionStop | undefined => {
+    if (lost !== undefined) return lost;
+    const owner = input.within?.stopped();
+    if (owner !== undefined) return owner;
+    if (input.caller?.aborted) return { reason: abortReason(input.caller) };
+    if (input.linked.aborted) return { reason: abortReason(input.linked) };
+    return undefined;
+  };
+  const stopped = (): SessionStop | undefined => closed ?? terminated();
+  return {
+    markClosing() {
+      closed ??= { reason: new Error(input.closedMessage) };
+    },
+    markLost(reason) {
+      lost ??= { reason };
+    },
+    get closing() {
+      return closed !== undefined;
+    },
+    get lost() {
+      return lost;
+    },
+    get abortedByCaller() {
+      return input.caller?.aborted === true;
+    },
+    get closingGracefully() {
+      return closed !== undefined && terminated() === undefined;
+    },
+    terminated,
+    stopped,
+    ensureAlive() {
+      const stop = stopped();
+      if (stop !== undefined) throw stop.reason;
+    },
+    isAlive: () => stopped() === undefined,
+  };
+}
+
 /** Run a short-lived engine CLI command (`--version`, auth status) with the profile's allowlisted env. */
 export function runEngineCli(input: {
   executable: string;
@@ -212,20 +303,56 @@ export function safeJsonValue(value: unknown): z.infer<ReturnType<typeof z.json>
   return z.json().parse(snapshot.value);
 }
 
-/** Invoke a callback or cleanup hook while containing both synchronous throws and async rejections. */
-export function invokeSafely(invoke: () => unknown): void {
+/**
+ * Receives a failure the driver contained so it could keep reading its engine. `hook` names what
+ * failed: the option of the host callback that threw or rejected (`'onNotification'`,
+ * `'onDisconnect'`), or a step of the driver's own (`'driver:notification'`, `'query.close'`).
+ */
+export type ObserverErrorHandler = (error: unknown, hook: string) => void;
+
+/** Hand a contained failure to `onObserverError`; the handler's own failure is dropped. */
+export function reportObserverError(
+  onObserverError: ObserverErrorHandler | undefined,
+  hook: string,
+  error: unknown,
+): void {
+  if (onObserverError === undefined) return;
+  try {
+    const reported: unknown = onObserverError(error, hook);
+    if (isThenable(reported)) void Promise.resolve(reported).catch(() => undefined);
+  } catch {
+    // The reporter is the last place a contained failure can go: its own failure has none.
+  }
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'then' in value &&
+    typeof value.then === 'function'
+  );
+}
+
+/**
+ * Invoke a host callback or cleanup step so that neither a synchronous throw nor an async
+ * rejection reaches the reader loop or masks a primary error; the failure goes to
+ * `onObserverError` with the name of what failed. Without a handler it is contained and dropped.
+ */
+export function invokeObserver(
+  onObserverError: ObserverErrorHandler | undefined,
+  hook: string,
+  invoke: () => unknown,
+): void {
   try {
     const result = invoke();
-    if (
-      typeof result === 'object' &&
-      result !== null &&
-      'then' in result &&
-      typeof result.then === 'function'
-    ) {
-      void Promise.resolve(result).catch(() => undefined);
+    if (isThenable(result)) {
+      void Promise.resolve(result).catch((error: unknown) =>
+        reportObserverError(onObserverError, hook, error),
+      );
     }
-  } catch {
-    // Observer and teardown callback failures must not crash reader loops or mask primary errors.
+  } catch (error) {
+    reportObserverError(onObserverError, hook, error);
   }
 }
 
@@ -233,10 +360,11 @@ export function invokeSafely(invoke: () => unknown): void {
 export function emitStartupPhase(
   callback: ((phase: ExecutorStartupPhase) => void) | undefined,
   phase: ExecutorStartupPhase,
+  onObserverError?: ObserverErrorHandler,
 ): void {
   if (callback === undefined) return;
   const parsed = ExecutorStartupPhaseSchema.parse(phase);
-  invokeSafely(() => callback(parsed));
+  invokeObserver(onObserverError, 'onStartupPhase', () => callback(parsed));
 }
 
 /**

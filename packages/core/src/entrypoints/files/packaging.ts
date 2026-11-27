@@ -2,9 +2,15 @@ export {
   buildClientArtifact,
   type ClientArtifact,
   type ClientArtifactOptions,
-  type ForbiddenModule,
-  ForbiddenModuleError,
 } from '../../files/client-artifact';
+export { type ForbiddenModule, ForbiddenModuleError } from '../../files/client-build';
+export { buildClientPackage } from '../../files/client-package';
+export {
+  type ClientPackage,
+  ClientPackageError,
+  type ClientPackageManifest,
+  type ClientPackageOptions,
+} from '../../files/client-package-contract';
 export { inspectNativeArtifact, type NativeArtifactLoader } from '../../files/native-artifact';
 export type {
   NativePackagingAsset,

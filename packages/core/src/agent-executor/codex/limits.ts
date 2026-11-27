@@ -199,14 +199,29 @@ function nameBucketWindows(
   });
 }
 
-function parseCodexRateLimitsInternal(reported: unknown): {
+/** The buckets a parse saw, before naming: what a later sparse update merges into. */
+interface CodexLimitSources {
+  readonly windows: readonly BucketWindow[];
+  readonly labels: ReadonlyMap<string, string>;
+  readonly plan: string | undefined;
+}
+
+function parseCodexRateLimitsInternal(
+  reported: unknown,
+  base?: CodexLimitSources,
+): {
   readonly windows: PlanWindow[];
   readonly plan: string | undefined;
+  readonly sources: CodexLimitSources;
 } {
-  if (!isRecord(reported)) return { windows: [], plan: undefined };
-  const windows: BucketWindow[] = [];
-  const bucketLabels = new Map<string, string>();
+  const windows: BucketWindow[] = [...(base?.windows ?? [])];
+  const bucketLabels = new Map<string, string>(base?.labels ?? []);
   let plan: string | undefined;
+  const finish = () => {
+    const sources = { windows, labels: bucketLabels, plan: plan ?? base?.plan };
+    return { windows: nameBucketWindows(windows, bucketLabels), plan: sources.plan, sources };
+  };
+  if (!isRecord(reported)) return finish();
   function readBucket(raw: unknown, fallbackId: string): string {
     const parsed = SnapshotSchema.safeParse(raw);
     if (!parsed.success) return fallbackId;
@@ -236,7 +251,60 @@ function parseCodexRateLimitsInternal(reported: unknown): {
       if (key !== accountId) readBucket(byId[key], nonEmptyString(key)?.trim() ?? 'limit');
     }
   }
-  return { windows: nameBucketWindows(windows, bucketLabels), plan };
+  return finish();
+}
+
+function limitsOf(
+  parsed: ReturnType<typeof parseCodexRateLimitsInternal>,
+  now: Date,
+  previous?: PlanLimits,
+): PlanLimits {
+  return PlanLimitsSchema.parse({
+    answer: parsed.windows.length > 0 ? 'known' : (previous?.answer ?? 'unpublished'),
+    windows: parsed.windows.toSorted((a, b) => a.name.localeCompare(b.name)),
+    observedAt: now.toISOString(),
+    ...(parsed.plan !== undefined && { plan: parsed.plan }),
+  });
+}
+
+/**
+ * The Codex plan limits a driver knows per profile, and the buckets behind them. A full
+ * `account/rateLimits/read` replaces both; an `account/rateLimits/updated` notification — which
+ * may be sparse (a window without its duration) — merges into the known buckets per bucket and
+ * slot, inheriting the fields it omits, and the windows are named only after the merge. Two
+ * events about one quota therefore stay one window, and the window cap truncates instead of
+ * refusing the update.
+ */
+export class CodexLimitBook {
+  readonly #entries = new Map<
+    string,
+    { readonly limits: PlanLimits; readonly sources: CodexLimitSources }
+  >();
+
+  get(profileId: string): PlanLimits | undefined {
+    return this.#entries.get(profileId)?.limits;
+  }
+
+  delete(profileId: string): void {
+    this.#entries.delete(profileId);
+  }
+
+  /** A complete read: what it reports is all that is known. */
+  replace(profileId: string, reported: unknown, now: Date): PlanLimits {
+    const parsed = parseCodexRateLimitsInternal(reported);
+    const limits = limitsOf(parsed, now);
+    this.#entries.set(profileId, { limits, sources: parsed.sources });
+    return limits;
+  }
+
+  /** A pushed update: merged into the known buckets, per bucket and slot. */
+  update(profileId: string, reported: unknown, now: Date): PlanLimits {
+    const previous = this.#entries.get(profileId);
+    const parsed = parseCodexRateLimitsInternal(reported, previous?.sources);
+    const limits = limitsOf(parsed, now, previous?.limits);
+    this.#entries.set(profileId, { limits, sources: parsed.sources });
+    return limits;
+  }
 }
 
 /**

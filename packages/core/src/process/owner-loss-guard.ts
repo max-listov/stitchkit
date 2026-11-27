@@ -200,15 +200,8 @@ function startOwnerLossGuardEntry(): void {
   guardInvocation = true;
 }
 
-/**
- * Bootstrap the private owner-loss service before an application's own argv dispatcher.
- *
- * Call this once before routing argv in a single-file application that lazy-imports
- * `stitchkit/process`. `false` means the application owns this invocation and may dispatch it;
- * `true` means the package guard owns it and the application must skip its dispatcher. The guard's
- * child and control channel keep the process alive for exactly their own lifetime.
- */
-export function bootstrapNativeCommandOwnerLoss(): boolean {
+/** Whether this process was started as the private owner-loss guard and now serves that job. */
+export function ownerLossGuardStarted(): boolean {
   return guardInvocation;
 }
 

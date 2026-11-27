@@ -5,32 +5,26 @@ import type {
   PermissionUpdate,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import {
-  type ClaudeTurnState,
-  classifyClaudeRecord,
-  newClaudeTurnState,
-} from '../claude/classify';
 import type { ClaudeRuntimeEvent } from '../claude/events';
-import { claudePlanWindows } from '../claude/limits';
 import {
   type ClaudePendingPermissionDetail,
   resolveClaudePermissionReply,
 } from '../claude/protocol';
+import { type ClaudeRoutedTurn, routeClaudeRecord } from '../claude/record-router';
 import type { AgentEngineTurn } from '../engine';
 import {
   answerEngineRequest,
-  drainEngineRequests,
-  type EngineRequestTurn,
-  endEngineTurn,
+  type EngineTurnLiveness,
   holdEngineRequest,
+  interruptEngineTurn,
+  respondToEngineRequest,
 } from '../engine-requests';
 import type { PlanLimits } from '../hello';
 import { JsonRpcRecordSchema, type JsonRpcValue } from '../json-rpc-peer';
-import { mergeRateLimitEvent } from '../plan-limits';
 import {
-  invokeSafely,
+  invokeObserver,
   nonEmptyString,
-  offerTurnDelta,
+  type ObserverErrorHandler,
   safeJsonValue,
 } from '../session-primitives';
 import type { ClaudeSdkRun } from './driver';
@@ -79,15 +73,10 @@ export interface ClaudeSdkPermissionRequestMeta {
 }
 
 /** A running turn: its state, its deltas and the `canUseTool` calls it holds, with their input. */
-export interface SdkTurnSlot
-  extends EngineRequestTurn<
-    PermissionResult,
-    ClaudePendingPermissionDetail<Record<string, unknown>>
-  > {
-  readonly state: ClaudeTurnState;
-  settled: boolean;
-  lost?: { readonly error: unknown };
-}
+export type SdkTurnSlot = ClaudeRoutedTurn<
+  PermissionResult,
+  ClaudePendingPermissionDetail<Record<string, unknown>>
+>;
 
 /** One active Agent SDK query handle managed by a session. */
 export interface RunningQueryHandle {
@@ -107,8 +96,11 @@ export const stoppedPermission = (message: string) => (): PermissionResult => ({
 });
 
 /** Invoke `query.close?.()` while containing synchronous throws and async rejections. */
-export function closeQuerySafely(query: ClaudeSdkRun | undefined): void {
-  invokeSafely(() => query?.close?.());
+export function closeQuerySafely(
+  query: ClaudeSdkRun | undefined,
+  onObserverError?: ObserverErrorHandler,
+): void {
+  invokeObserver(onObserverError, 'query.close', () => query?.close?.());
 }
 
 /** The prompt a query reads: user messages pushed one at a time, ended on close. */
@@ -132,6 +124,8 @@ export function pushablePrompt() {
   return {
     prompt: prompt(),
     send(message: SDKUserMessage) {
+      // A message queued after the end is read by no one: refuse it instead of losing it.
+      if (ended) throw new Error('The Claude SDK query no longer reads input');
       queue.push(message);
       wake?.();
     },
@@ -147,6 +141,7 @@ export function createSdkCanUseTool(state: {
   getTurn: () => SdkTurnSlot | undefined;
   isClosed: () => boolean;
   onPermissionRequest?: (meta: ClaudeSdkPermissionRequestMeta) => void;
+  onObserverError?: ObserverErrorHandler;
 }): CanUseTool {
   return (toolName, toolInput, options) =>
     new Promise<PermissionResult>((resolve) => {
@@ -234,7 +229,9 @@ export function createSdkCanUseTool(state: {
               matchedAskRule: { ...options.matchedAskRule },
             }),
           };
-          invokeSafely(() => state.onPermissionRequest?.(meta));
+          invokeObserver(state.onObserverError, 'onPermissionRequest', () =>
+            state.onPermissionRequest?.(meta),
+          );
         }
       }
     });
@@ -244,35 +241,20 @@ export function createSdkCanUseTool(state: {
 export function sdkTurnHandle(
   turn: SdkTurnSlot,
   query: ClaudeSdkRun,
-  ensureAlive: () => void,
+  liveness: EngineTurnLiveness,
 ): AgentEngineTurn {
   return {
     deltas: turn.channel,
-    async interrupt() {
-      if (turn.settled) return;
-      try {
-        ensureAlive();
-      } catch {
-        return;
-      }
-      turn.state.interruptRequested = true;
-      drainEngineRequests(turn, stoppedPermission('The turn was interrupted'));
-      await query.interrupt();
-    },
+    interrupt: () =>
+      interruptEngineTurn(turn, liveness, {
+        refusal: stoppedPermission('The turn was interrupted'),
+        tell: () => query.interrupt(),
+      }),
     async respond(interactionId, rawReply) {
-      ensureAlive();
-      if (turn.lost !== undefined) {
-        throw turn.lost.error instanceof Error
-          ? turn.lost.error
-          : new Error(String(turn.lost.error));
-      }
-      const waiting = turn.pending.get(interactionId);
-      if (waiting === undefined) {
-        throw new TypeError(`Unknown interaction ${interactionId} for this turn`);
-      }
-      const decision = resolveClaudePermissionReply(waiting.detail, rawReply);
-      if (decision.behavior === 'allow') {
-        answerEngineRequest(turn, interactionId, {
+      respondToEngineRequest(turn, liveness, interactionId, (detail): PermissionResult => {
+        const decision = resolveClaudePermissionReply(detail, rawReply);
+        if (decision.behavior !== 'allow') return decision;
+        return {
           behavior: 'allow',
           updatedInput: decision.input,
           ...(decision.updatedPermissions !== undefined && {
@@ -283,10 +265,8 @@ export function sdkTurnHandle(
               destination: rule.destination,
             })),
           }),
-        });
-        return;
-      }
-      answerEngineRequest(turn, interactionId, decision);
+        };
+      });
     },
   };
 }
@@ -301,6 +281,7 @@ export function runSdkQueryLoop(input: {
   clearTurn: () => void;
   onEvent?: (event: ClaudeRuntimeEvent) => void;
   onTurnUsage?: (usage: ClaudeSdkTurnUsage) => void;
+  onObserverError?: ObserverErrorHandler;
   onExit: (handle: RunningQueryHandle, error: unknown) => void;
 }): void {
   const turnUsageTracker = createClaudeSdkTurnUsageTracker();
@@ -309,45 +290,34 @@ export function runSdkQueryLoop(input: {
     try {
       for await (const record of input.handle.query) {
         if (input.isClosed()) break;
-        const turn = input.getTurn();
-        const verdict = classifyClaudeRecord(
-          record,
-          turn?.state ?? newClaudeTurnState('between-turns'),
-        );
-        if (verdict.kind === 'session') {
-          if (verdict.model !== undefined) sessionModel = verdict.model;
-        } else if (verdict.kind === 'limits') {
-          input.limits.set(
-            input.profileId,
-            mergeRateLimitEvent({
-              previous: input.limits.get(input.profileId),
-              windows: claudePlanWindows(verdict.info),
-              now: new Date(),
-            }),
-          );
-        } else if (verdict.kind === 'event') {
-          if (input.onEvent !== undefined) {
-            invokeSafely(() => input.onEvent?.(verdict.event));
-          }
-        } else if (verdict.kind === 'deltas') {
-          for (const delta of verdict.deltas) offerTurnDelta(turn?.channel, delta);
-        } else if (verdict.kind === 'end') {
-          const usageDelta = verdict.deltas.find((delta) => delta.type === 'usage');
-          const primaryModel = turn?.state.primaryModel ?? sessionModel;
-          const summary = turnUsageTracker.recordTurn({
-            turnId: turn?.state.turnId ?? 'between-turns',
-            ...(primaryModel !== undefined && { primaryModel }),
-            ...(usageDelta?.type === 'usage' && { usageDelta }),
-          });
-          if (turn !== undefined && input.onTurnUsage !== undefined) {
-            invokeSafely(() => input.onTurnUsage?.(summary));
-          }
-          if (turn !== undefined) turn.settled = true;
-          endEngineTurn(turn, stoppedPermission('The turn ended'), verdict.deltas);
-          input.clearTurn();
-        } else if (verdict.kind === 'unhandled') {
-          offerTurnDelta(turn?.channel, verdict.delta);
-        }
+        routeClaudeRecord(record, {
+          turn: input.getTurn(),
+          profileId: input.profileId,
+          limits: input.limits,
+          ended: stoppedPermission('The turn ended'),
+          clearTurn: input.clearTurn,
+          onSession(session) {
+            if (session.model !== undefined) sessionModel = session.model;
+          },
+          onEvent(event) {
+            if (input.onEvent !== undefined)
+              invokeObserver(input.onObserverError, 'onEvent', () => input.onEvent?.(event));
+          },
+          onEnd(turn, end) {
+            const usageDelta = end.deltas.find((delta) => delta.type === 'usage');
+            const primaryModel = turn?.state.primaryModel ?? sessionModel;
+            const summary = turnUsageTracker.recordTurn({
+              turnId: turn?.state.turnId ?? 'between-turns',
+              ...(primaryModel !== undefined && { primaryModel }),
+              ...(usageDelta?.type === 'usage' && { usageDelta }),
+            });
+            if (turn !== undefined && input.onTurnUsage !== undefined) {
+              invokeObserver(input.onObserverError, 'onTurnUsage', () =>
+                input.onTurnUsage?.(summary),
+              );
+            }
+          },
+        });
       }
       if (input.isClosed()) {
         input.handle.close();

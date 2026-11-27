@@ -40,6 +40,8 @@ export {
 export {
   AppError,
   badRequest,
+  CLIENT_ERROR_CODES,
+  type ClientErrorCode,
   conflict,
   type ErrorEnvelope,
   forbidden,
@@ -95,6 +97,12 @@ export {
   OperationEffectSchema,
   requireContractOperationEffects,
 } from '../contract/operation-effect';
+export type {
+  DeclaredRefusal,
+  DescribedRefusal,
+  OperationRefusal,
+  RefusalDeclaration,
+} from '../contract/operation-refusals';
 export {
   decodeCursor,
   encodeCursor,
@@ -123,6 +131,7 @@ export type {
   EndpointUiMeta,
   McpInputRequiredCall,
   McpInputRequiredResolver,
+  OperationToolOption,
 } from '../contract/tool-options';
 export {
   type DeclaredToolView,

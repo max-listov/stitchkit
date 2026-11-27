@@ -6,7 +6,6 @@ export {
 export {
   createStubAcpSession,
   createStubAgentEngineTurn,
-  createStubClaudeSdkSession,
   createStubCodexControlClient,
   createStubCodexControlConnection,
   createStubCodexSession,
@@ -17,14 +16,6 @@ export {
   type StubOverrides,
 } from '../../agent-executor/testing/consumer-stubs';
 export { runFakeClaudeEngine } from '../../agent-executor/testing/fake-claude-engine';
-export {
-  createFakeClaudeSdkQuery,
-  type FakeClaudeSdkQueryConfig,
-  type FakeClaudeSdkQueryHarness,
-  type FakeClaudeSdkRecordedCall,
-  type FakeClaudeSdkRunController,
-  type FakeClaudeSdkScriptedTurn,
-} from '../../agent-executor/testing/fake-claude-sdk-query';
 export {
   createFakeCodexAppServer,
   type FakeCodexAppServer,

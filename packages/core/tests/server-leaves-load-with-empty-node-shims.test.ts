@@ -37,7 +37,14 @@ function withEmptyNodeModules(code: string): string {
 }
 
 describe('server leaves load where node built-ins are empty modules', () => {
-  for (const leaf of ['server', 'process', 'files', 'service-host', 'service-host/macos']) {
+  for (const leaf of [
+    'server',
+    'process',
+    'files',
+    'service-host',
+    'service-host/macos',
+    'service-host/work',
+  ]) {
     test(`every export of stitchkit/${leaf} loads without calling Node`, async () => {
       const root = mkdtempSync(join(tmpdir(), 'stitchkit-empty-node-'));
       try {

@@ -19,9 +19,22 @@ import type { CodexResumeThreadParams } from './thread-open';
  * `nativeThreadId`. `startThreadTurn` stays unbound so callers always supply `threadId` explicitly
  * rather than confusing it with slot-managed {@link CodexSession.startTurn}.
  */
+/**
+ * A thread this driver opened leaves the server only through its session's `close()`: a raw
+ * `thread/unsubscribe` would detach it behind the slot that counts it and the turn it runs.
+ */
+export function refuseOwnedUnsubscribe(threadId: string): Promise<never> {
+  return Promise.reject(
+    new TypeError(
+      `[stitchkit] Codex thread ${threadId} is open in this driver; close its session instead of unsubscribing it`,
+    ),
+  );
+}
+
 export function bindCodexSessionThreadControls(
   controlClient: CodexControlClient,
   threadId: string,
+  ownsThread: (id: string) => boolean = (id) => id === threadId,
 ) {
   return {
     readThread(
@@ -112,12 +125,9 @@ export function bindCodexSessionThreadControls(
       params?: { readonly threadId?: string | undefined },
       options?: CodexRpcCallOptions,
     ) {
-      return controlClient.unsubscribeThread(
-        {
-          threadId: params?.threadId ?? threadId,
-        },
-        options,
-      );
+      const target = params?.threadId ?? threadId;
+      if (ownsThread(target)) return refuseOwnedUnsubscribe(target);
+      return controlClient.unsubscribeThread({ threadId: target }, options);
     },
     archiveThread(
       params?: { readonly threadId?: string | undefined },

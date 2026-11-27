@@ -62,6 +62,12 @@ export interface ClaudeCliDriverConfig {
   maxImageBytes?: number | undefined;
   /** The executor's own environment, read for the allowlist. Default `process.env`. */
   ambient?: Readonly<Record<string, string | undefined>> | undefined;
+  /**
+   * Receives every failure of a host callback the driver contained: `hook` is the option that
+   * threw or rejected (`'onStartupPhase'`). Without this option such failures are contained and
+   * dropped; a handler that itself throws is ignored.
+   */
+  onObserverError?: ((error: unknown, hook: string) => void) | undefined;
 }
 
 /**
@@ -177,6 +183,9 @@ export function createClaudeCliDriver(
           limits,
           ...(config.resolveFile !== undefined && { resolveFile: config.resolveFile }),
           ...(config.maxImageBytes !== undefined && { maxImageBytes: config.maxImageBytes }),
+          ...(config.onObserverError !== undefined && {
+            onObserverError: config.onObserverError,
+          }),
         },
         input,
       ),

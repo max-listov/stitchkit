@@ -1,8 +1,8 @@
 /** The Agent SDK leaf against a scripted `query`, through the conformance kit, on Claude's scenarios. */
 import { expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { forkSession, query } from '@anthropic-ai/claude-agent-sdk';
 import { claudeFakeScenarios } from '../../src/agent-executor/claude/scenarios';
 import { claudeTranscriptPath } from '../../src/agent-executor/claude/transcript';
@@ -156,76 +156,80 @@ test('an interrupt denies a permission the SDK still waits on', async () => {
   }
 });
 
-test('a query that breaks fails its turn, and the next turn opens a new query that resumes the session', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'stitchkit-claude-sdk-reopen-'));
-  try {
-    const opened: { resume?: string; sessionId?: string }[] = [];
-    const driver = createClaudeSdkDriver({
-      sdkVersion: '0.3.330',
-      ambient: { PATH: process.env.PATH, HOME: root },
-      query: ({ prompt, options }) => {
-        opened.push({
-          ...(options?.resume !== undefined && { resume: options.resume }),
-          ...(options?.sessionId !== undefined && { sessionId: options.sessionId }),
-        });
-        const first = opened.length === 1;
-        async function* run(): AsyncGenerator<unknown> {
-          for await (const message of prompt) {
-            if (first) throw new Error('Claude Code process exited with code 137');
-            yield {
-              type: 'assistant',
-              session_id: 's',
-              message: {
-                id: 'm',
-                role: 'assistant',
-                content: [{ type: 'text', text: 'back' }],
-              },
-            };
-            yield {
-              type: 'result',
-              subtype: 'success',
-              is_error: false,
-              session_id: 's',
-              result: 'back',
-              uuid: message.uuid,
-            };
+for (const persisted of [true, false])
+  test(`a query that breaks fails its turn, and the next turn ${persisted ? 'resumes the session it wrote' : 'starts afresh when it wrote nothing'}`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'stitchkit-claude-sdk-reopen-'));
+    try {
+      const home = join(root, 'home');
+      const opened: { resume?: string; sessionId?: string }[] = [];
+      const driver = createClaudeSdkDriver({
+        sdkVersion: '0.3.330',
+        ambient: { PATH: process.env.PATH, HOME: root },
+        query: ({ prompt, options }) => {
+          opened.push({
+            ...(options?.resume !== undefined && { resume: options.resume }),
+            ...(options?.sessionId !== undefined && { sessionId: options.sessionId }),
+          });
+          const first = opened.length === 1;
+          async function* run(): AsyncGenerator<unknown> {
+            for await (const message of prompt) {
+              if (first) {
+                // Claude Code persists the user message before it works on it — or dies first.
+                const sessionId = options?.sessionId ?? '';
+                if (persisted) {
+                  const transcript = claudeTranscriptPath({ home, cwd: root, sessionId });
+                  await mkdir(dirname(transcript), { recursive: true });
+                  await writeFile(transcript, `${JSON.stringify({ type: 'user' })}\n`);
+                }
+                throw new Error('Claude Code process exited with code 137');
+              }
+              yield {
+                type: 'result',
+                subtype: 'success',
+                is_error: false,
+                session_id: 's',
+                result: 'back',
+                uuid: message.uuid,
+              };
+            }
           }
-        }
-        const records = run();
-        return { [Symbol.asyncIterator]: () => records, interrupt: async () => undefined };
-      },
-    });
-    const session = await driver.open({
-      profile: { profileId: 'p', engine: 'claude-sdk', home: join(root, 'home') },
-      cwd: root,
-    });
-    const broken = await session.startTurn({
-      turnId: 't1',
-      clientId: crypto.randomUUID(),
-      input: [{ type: 'text', text: 'one' }],
-    });
-    await expect(
-      (async () => {
-        for await (const _ of broken.deltas) {
-          // Drained until the break.
-        }
-      })(),
-    ).rejects.toThrow('code 137');
-    const next = await session.startTurn({
-      turnId: 't2',
-      clientId: crypto.randomUUID(),
-      input: [{ type: 'text', text: 'two' }],
-    });
-    const ends: string[] = [];
-    for await (const delta of next.deltas)
-      if (delta.type === 'turn-end') ends.push(delta.outcome);
-    await session.close();
-    expect(ends).toEqual(['completed']);
-    expect(opened).toEqual([
-      { sessionId: session.nativeThreadId },
-      { resume: session.nativeThreadId },
-    ]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+          const records = run();
+          return { [Symbol.asyncIterator]: () => records, interrupt: async () => undefined };
+        },
+      });
+      const session = await driver.open({
+        profile: { profileId: 'p', engine: 'claude-sdk', home },
+        cwd: root,
+      });
+      const broken = await session.startTurn({
+        turnId: 't1',
+        clientId: crypto.randomUUID(),
+        input: [{ type: 'text', text: 'one' }],
+      });
+      await expect(
+        (async () => {
+          for await (const _ of broken.deltas) {
+            // Drained until the break.
+          }
+        })(),
+      ).rejects.toThrow('code 137');
+      const next = await session.startTurn({
+        turnId: 't2',
+        clientId: crypto.randomUUID(),
+        input: [{ type: 'text', text: 'two' }],
+      });
+      const ends: string[] = [];
+      for await (const delta of next.deltas)
+        if (delta.type === 'turn-end') ends.push(delta.outcome);
+      await session.close();
+      expect(ends).toEqual(['completed']);
+      // Resuming a conversation Claude Code never wrote fails every later query ("No conversation
+      // found"), so the second query resumes only when the transcript exists.
+      expect(opened).toEqual([
+        { sessionId: session.nativeThreadId },
+        persisted ? { resume: session.nativeThreadId } : { sessionId: session.nativeThreadId },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });

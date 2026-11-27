@@ -3,6 +3,7 @@ import { resolveRouteParamsSchema } from '../internal/route-pattern';
 import { canonicalDigest } from '../internal/stable-digest';
 import { isRecord, typedEntries } from '../internal/typed';
 import type { ContractDef, EndpointDef, HttpMethod } from './define';
+import { type DescribedRefusal, describeRefusals } from './operation-refusals';
 
 /**
  * The identity of a set of contract operations: one digest over all of them,
@@ -30,6 +31,8 @@ export interface FingerprintedOperation {
   output?: z.ZodType;
   /** The item schema of a streaming response. */
   item?: z.ZodType;
+  /** The codes it declared it refuses with; an operation without them digests as before. */
+  refuses?: readonly DescribedRefusal[];
 }
 
 /** Annotations that describe a schema to a reader and change nothing a value must satisfy. */
@@ -64,10 +67,21 @@ function schemaIdentity(schema: z.ZodType | undefined, io: 'input' | 'output'): 
   return constraintsOf(z.toJSONSchema(schema, { io, unrepresentable: 'any', cycles: 'ref' }));
 }
 
+/** The refusals as a set: a code's status and details shape, in code order. */
+function refusalIdentity(refuses: readonly DescribedRefusal[]): unknown {
+  return [...refuses]
+    .sort((left, right) => (left.code < right.code ? -1 : left.code > right.code ? 1 : 0))
+    .map((refusal) => ({
+      code: refusal.code,
+      status: refusal.status,
+      details: schemaIdentity(refusal.details, 'output'),
+    }));
+}
+
 /**
  * Digest a set of operations. Order-independent, synchronous, identical in
  * every runtime and on both ends of a connection: the digest is a function of
- * the names, routes and JSON Schemas alone.
+ * the names, routes, JSON Schemas and declared refusals alone.
  *
  * What it covers is the shape of the values: a field's description or the
  * order of an object's fields does not move it. What it does not cover: the
@@ -96,6 +110,7 @@ export function fingerprintOperations(
       input: schemaIdentity(operation.input, 'input'),
       output: schemaIdentity(operation.output, 'output'),
       item: schemaIdentity(operation.item, 'output'),
+      ...(operation.refuses && { refuses: refusalIdentity(operation.refuses) }),
     });
   }
   return { fingerprint: canonicalDigest(digests), operations: digests };
@@ -133,6 +148,7 @@ function contractOperations(
       input: endpoint.input,
       output: endpoint.output,
       item: 'stream' in endpoint ? endpoint.stream?.item : undefined,
+      refuses: describeRefusals(endpoint.refuses),
     });
   }
   return operations;

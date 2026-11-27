@@ -194,7 +194,11 @@ export interface CodexSession extends AgentEngineSession, CodexControlClient {
     },
     options?: CodexRpcCallOptions,
   ): Promise<void>;
-  /** Unsubscribe this connection (`thread/unsubscribe`); defaults `threadId` to `nativeThreadId`. */
+  /**
+   * Unsubscribe this connection from a thread the driver did not open (`thread/unsubscribe`). Rejects
+   * with `TypeError` for this session's own thread (the default) and for any thread open on the same
+   * shared server: detach those with `close()`.
+   */
   unsubscribeThread(
     params?: { readonly threadId?: string | undefined },
     options?: CodexRpcCallOptions,

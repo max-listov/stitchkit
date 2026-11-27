@@ -177,15 +177,33 @@ export interface ClaudeSdkDriverConfig {
   extraArgs?: Options['extraArgs'] | undefined;
   /** Callback receiving UTF-8 `stderr` chunks from the spawned Claude Code process. */
   stderr?: Options['stderr'] | undefined;
-  /** Custom process spawner forwarded to the SDK; wrapped to observe `providerPid` when present. */
+  /**
+   * Custom process spawner forwarded to the SDK; wrapped to observe `providerPid` when present.
+   * The host owns what it spawns: `session.close()` asks such a process to stop but does not
+   * wait for it.
+   */
   spawnClaudeCodeProcess?: Options['spawnClaudeCodeProcess'] | undefined;
-  /** Invoked with the child process PID whenever a query spawns through a spawner exposing `pid`. */
+  /**
+   * Invoked with the engine's PID whenever a query spawns it. Without `spawnClaudeCodeProcess` the
+   * driver spawns Claude Code itself through `stitchkit/process` — no shell, its own process group,
+   * terminated if the executor dies — and the PID is that group's leader, reported once the start
+   * is confirmed; `session.close()` then waits until the process is gone. A callback that throws
+   * stops the engine. With `spawnClaudeCodeProcess` it receives the `pid` that spawner exposes.
+   */
   onProviderPid?: ((pid: number) => void) | undefined;
   /**
    * Invoked when an established query exits unexpectedly before `session.close()` or caller signal
    * abort (including idle exits between turns).
    */
   onQueryExit?: ((error: unknown, context: ClaudeSdkQueryExitContext) => void) | undefined;
+  /**
+   * Receives every failure of a host callback the driver contained to keep reading its query:
+   * `hook` is the option that threw or rejected (`'onPermissionRequest'`, `'onEvent'`,
+   * `'onTurnUsage'`, `'onQueryExit'`, `'onStartupPhase'`, `'onProviderPid'` when the driver spawns
+   * the engine itself), or `'query.close'` for the SDK query's own `close()`. Without this option
+   * such failures are contained and dropped; a handler that itself throws is ignored.
+   */
+  onObserverError?: ((error: unknown, hook: string) => void) | undefined;
   /** Fail-closed startup verification run at `open()` and on every query restart. */
   verifyDelegation?: ClaudeSdkDelegationCheck | undefined;
   /** Read the bytes behind a `file` part's `reference`; without it a file part is refused. */

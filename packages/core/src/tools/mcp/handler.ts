@@ -122,6 +122,7 @@ function prepareStaticSurface<TAuth>(
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
+    inputNestingDepth: config.inputNestingDepth,
     schemaValidation: config.schemaValidation,
     multiRound: {
       stateConfigured: config.multiRound !== undefined,

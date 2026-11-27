@@ -75,6 +75,8 @@ export interface CollectToolsConfig {
    * recursive definition unrolled this many levels. Absent: references stay.
    */
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
   /**
    * Throw on a tool name no provider will accept. Default: true — every mount
    * wants it. The read-only listers pass `false`: `listToolNames` is the
@@ -117,6 +119,7 @@ export function collectTools(
     extend,
     flattenUnionInput = false,
     inputRecursionDepth,
+    inputNestingDepth,
     assertNames = true,
   } = config;
   const tools: MountableTool[] = [];
@@ -127,6 +130,7 @@ export function collectTools(
       extend,
       flattenUnionInput,
       inputRecursionDepth,
+      inputNestingDepth,
       assertNames,
       assertUniqueNames: false,
     },

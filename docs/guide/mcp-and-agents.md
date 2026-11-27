@@ -187,6 +187,7 @@ await mcp.close()
 | `coerceJsonArgs` | coerce JSON-stringified object/array arguments (default `true`) |
 | `flattenUnionInput` | advertise discriminated unions as one object (default `false`) |
 | `inputRecursionDepth` | advertise inputs with no `$ref`, recursion unrolled this many levels (default: references stay) |
+| `inputNestingDepth` | keep every advertised input within this many nesting levels, as a provider counts them (default: no limit) |
 | `errorHint` | add a project-owned hint to failed tool results |
 | `onOutputStrip` | observe output keys removed by contract validation |
 | `protectedResource` | RFC 9728 metadata used by HTTP `401` responses |
@@ -728,8 +729,8 @@ createStdioMcpServer({
 ```
 
 - **Opt-in only.** Omitting `discovery` keeps the default full `tools/list` surface untouched. In `'lazy'` mode `initialTools` is required (pass `[]` to hide every contract tool initially).
-- **Session-isolated reveal.** Every contract tool outside `initialTools` starts disabled on that `McpServer` instance. Calling `tool_search` ranks hidden tools by name and description (exact/phrase matches first, then deduplicated word matches), enables up to `maxResults` matches on that session's `McpServer`, and emits a single `notifications/tools/list_changed` when at least one new tool is revealed. Enabling tools in one session never mutates another session or the shared prepared surface.
-- **Identical access & catalog stamp.** `tool_search` and every revealed tool enforce the exact same `access` policy (`gate` / `inspect` / `open`), hooks, and `stitchkit/catalog` `_meta` stamp (which fingerprints the full underlying contract and runtime tool catalog, excluding synthetic `tool_search`). Unknown names in `initialTools`, `searchToolName` collisions with real tools, and out-of-range `maxResults` throw synchronously at mount time.
+- **Session-isolated reveal.** Every contract tool outside `initialTools` starts disabled on that `McpServer` instance. Calling `tool_search` ranks the still-hidden tools by name and description (exact/phrase matches first, then deduplicated word matches), enables up to `maxResults` of them on that session's `McpServer` — tools already enabled never take a slot, so repeating a search reaches the matches past the first `maxResults`; they are listed after the new ones with `newlyEnabled: false` — and emits a single `notifications/tools/list_changed` when at least one new tool is revealed. Enabling tools in one session never mutates another session or the shared prepared surface.
+- **Identical access, no catalog stamp.** `tool_search` and every revealed tool enforce the exact same `access` policy (`gate` / `inspect` / `open`) and hooks. A surface with discovery sends no `stitchkit/catalog` stamp: each session lists its own subset, which no digest of the whole surface describes, so a connection's catalog store lists afresh instead of keeping one session's view. Unknown names in `initialTools`, `searchToolName` collisions with real tools, and out-of-range `maxResults` throw synchronously at mount time.
 - **Stateful mounts only.** `createMcpHandler` creates a fresh stateless `McpServer` per HTTP request and therefore refuses `discovery` synchronously with `TypeError`; use `discovery` on stateful mounts (`createStdioMcpServer`, `buildMcpServer`, `mountMcp`).
 
 ### MCP schema validation profile
@@ -901,6 +902,34 @@ formula: { method: 'POST', path: '/formula', input, tool: { name: 'formula_creat
 The depth is a number, not a size: a provider may limit nesting from above, and a
 model forced to call the tool may need more levels from below. Measure the cost
 with `describeToolCatalog({ …, maxSchemaBytes })`. → [ADR 0319](../decisions/0319-a-tool-input-can-be-advertised-without-references.md).
+
+### A provider's nesting limit — `inputNestingDepth`
+
+Some providers refuse the whole tool set when one input document is nested deeper than a fixed
+number of levels. `inputNestingDepth` keeps every advertised input within such a limit, counting
+as such a provider counts: a level per step `properties → property` or `items`; `anyOf`, `oneOf`,
+`allOf` and `additionalProperties` cost nothing; a property named `items` or `properties` costs two.
+
+```ts
+const projection = { flattenUnionInput: true, inputRecursionDepth: 1, inputNestingDepth: 10 } as const
+mountAgent(services, { access, runtimeTools, ...projection })
+
+// one tool may say its own, as with inputRecursionDepth
+put: { method: 'POST', path: '/put', input, tool: { name: 'lesson_put', inputNestingDepth: 10 } }
+```
+
+- A document at or under the limit is unchanged. Deeper, the node whose next step would cross the
+  limit becomes an open node `{}` (its `description` kept), as deep as the limit allows: the rest
+  of the structure stays visible to the model.
+- The open node accepts every value — the document widens, it never narrows — and the handler still
+  parses the contract's own schema. An array whose `items` would cross the limit is opened itself,
+  so no array is left without `items`.
+- The limit applies last, to the document as it is advertised: after `inputRecursionDepth` writes
+  references out (so it also bounds the unrolled recursion), `flattenUnionInput` and tool defaults.
+  With references kept, a `$ref` counts as a leaf.
+- `schemaValidation.requireTypedProperties` accepts the open nodes: the limit declared them.
+- `tool.inputNestingDepth` wins over the surface's value, as `tool.inputRecursionDepth` does; runtime
+  tools and the deferred tool surface take the surface's value.
 
 ## `mountMcp`
 

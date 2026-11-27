@@ -8,6 +8,7 @@ import {
   type EngineConnection,
   emitStartupPhase,
   nonEmptyString,
+  type ObserverErrorHandler,
   stopConnection,
 } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
@@ -46,6 +47,13 @@ export type CodexTransportConfig =
       readonly expectedOwnerUid?: number | undefined;
     };
 
+/** Whether other clients can reach the same app-server: any Unix-socket transport, where a TUI may attach. */
+export function codexTransportShared(config: {
+  readonly transport?: CodexTransportConfig | undefined;
+}): boolean {
+  return config.transport !== undefined && config.transport.kind !== 'stdio';
+}
+
 /** Connection inputs needed to spawn or dial a Codex app-server. */
 export interface CodexConnectConfig {
   readonly executable: string;
@@ -55,6 +63,7 @@ export interface CodexConnectConfig {
   readonly ambient: Readonly<Record<string, string | undefined>>;
   readonly version: string;
   readonly maxFrameBytes?: number | undefined;
+  readonly onObserverError?: ObserverErrorHandler | undefined;
 }
 
 /** Active JSON-RPC connection to a Codex app-server (stdio or Unix socket). */
@@ -254,7 +263,7 @@ async function connectCodexStdio(
     peer.close(error);
     if (ready) onEnd(error);
   };
-  emitStartupPhase(onStartupPhase, 'spawning');
+  emitStartupPhase(onStartupPhase, 'spawning', config.onObserverError);
   const engine = spawnEngineProcess({
     executable: config.executable,
     args: [...config.prefix, 'app-server', ...extraArgs],
@@ -274,7 +283,7 @@ async function connectCodexStdio(
     }
   })();
   try {
-    emitStartupPhase(onStartupPhase, 'initializing');
+    emitStartupPhase(onStartupPhase, 'initializing', config.onObserverError);
     const userAgent = await initializeCodexPeer(peer, config.version);
     const providerPid = (await engine.pidReady) ?? engine.pid;
     if (endedError !== undefined) throw endedError;
@@ -351,7 +360,7 @@ export async function connectCodex(
   if (transport.kind === 'unix-listen') {
     assertCodexUnixListenTargetAvailable(transport.socketPath, 'createCodexDriver');
     const env = engineEnvironment(profile, config.ambient);
-    emitStartupPhase(onStartupPhase, 'spawning');
+    emitStartupPhase(onStartupPhase, 'spawning', config.onObserverError);
     spawnedEngine = spawnEngineProcess({
       executable: config.executable,
       args: [
@@ -413,7 +422,7 @@ export async function connectCodex(
   const reading = activeWs.closed;
   try {
     if (endedError !== undefined) throw endedError;
-    emitStartupPhase(onStartupPhase, 'initializing');
+    emitStartupPhase(onStartupPhase, 'initializing', config.onObserverError);
     const userAgent = await initializeCodexPeer(peer, config.version);
     if (endedError !== undefined) throw endedError;
     const providerPid =

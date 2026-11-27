@@ -15,6 +15,175 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** callers of `stitchkit/agent-executor/codex` that call `unsubscribeThread` on a thread their own driver opened. [Migration](docs/guide/upgrading.md#codex-owned-thread-unsubscribe)
+
+**Who must act:** tests that import `createFakeClaudeSdkQuery`, `createStubClaudeSdkSession` or a `FakeClaudeSdk*` type from `stitchkit/agent-executor/testing`. [Migration](docs/guide/upgrading.md#executor-testing-claude-sdk-subpath)
+
+**Who must act:** callers of `sanitizeProfileEnv` from `stitchkit/agent-executor`. [Migration](docs/guide/upgrading.md#executor-profile-env-sanitizer)
+
+**Who must act:** builds that call `buildClientArtifact` (`stitchkit/files/packaging`) with `package` or `executable`. [Migration](docs/guide/upgrading.md#client-artifact-package-option)
+
+**Who must act:** single-file applications that import `stitchkit/process/owner-loss`. [Migration](docs/guide/upgrading.md#process-bootstrap-rename)
+
+**Who must act:** tests that run `runAgentEngineConformance` (`stitchkit/agent-executor/testing`) on a driver written outside this package. [Migration](docs/guide/upgrading.md#executor-conformance-lifecycle)
+
+- `stitchkit/agent-executor/codex` — `CodexSession.unsubscribeThread` and `CodexSharedServer.unsubscribeThread` now reject with `TypeError` for a thread the driver itself opened (the session's own thread, or any thread open on the same shared server). The raw `thread/unsubscribe` detached such a thread behind the driver: the shared server kept counting its slot toward `maxThreads`, and an active turn never received `turn/completed`, so its stream hung and `startTurn` kept refusing. A thread the driver does not own is still one `thread/unsubscribe` call.
+
+  ```ts
+  // before
+  await session.unsubscribeThread();
+  // after
+  await session.close();
+  ```
+
+  **Affects:** `stitchkit/agent-executor/codex` CodexSession(unsubscribeThread), CodexSharedServer(unsubscribeThread)
+
+- `stitchkit/agent-executor/testing` — the fake Claude SDK query and the Claude SDK session stub moved to the new evolving entrypoint `stitchkit/agent-executor/testing/claude-sdk`: `createFakeClaudeSdkQuery`, `createStubClaudeSdkSession`, `FakeClaudeSdkQueryConfig`, `FakeClaudeSdkQueryHarness`, `FakeClaudeSdkRecordedCall`, `FakeClaudeSdkRunController` and `FakeClaudeSdkScriptedTurn`. They are typed by `@anthropic-ai/claude-agent-sdk`, and since 0.131.0 their presence made the declarations of the whole testing entrypoint name that optional peer: a Codex or ACP driver's tests that imported `runAgentEngineConformance` without the SDK installed failed to typecheck (`TS2307`) with `skipLibCheck: false`. `stitchkit/agent-executor/testing` now declares no optional peer; `StubOverrides` stays there.
+
+  ```ts
+  // before
+  import { createFakeClaudeSdkQuery, createStubClaudeSdkSession } from 'stitchkit/agent-executor/testing';
+  // after
+  import { createFakeClaudeSdkQuery, createStubClaudeSdkSession } from 'stitchkit/agent-executor/testing/claude-sdk';
+  ```
+
+  **Affects:** `stitchkit/agent-executor/testing` createFakeClaudeSdkQuery, createStubClaudeSdkSession, FakeClaudeSdkQueryConfig, FakeClaudeSdkQueryHarness, FakeClaudeSdkRecordedCall, FakeClaudeSdkRunController, FakeClaudeSdkScriptedTurn
+
+- `stitchkit/agent-executor` — `sanitizeProfileEnv` is removed. It silently dropped a profile variable whose name `ExecutorProfileConfigSchema` refuses — two answers to one fact — and nothing in the package called it. A name outside `EXECUTOR_ENV_KEY_PATTERN` is refused on every path a profile takes: the schema, `engineEnvironment`, `helloProfile` and every driver's `open()`.
+
+  ```ts
+  // before
+  const env = sanitizeProfileEnv(untrusted);
+  // after: decide what an invalid name means in the application, then let the schema hold the rule
+  const env = Object.fromEntries(
+    Object.entries(untrusted).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[1] === 'string' && EXECUTOR_ENV_KEY_PATTERN.test(entry[0]),
+    ),
+  );
+  ```
+
+  **Affects:** `stitchkit/agent-executor` sanitizeProfileEnv
+
+- `stitchkit/files/packaging` — `buildClientArtifact` builds the self-contained file and nothing else: the `package` option and the `ClientArtifact.package` result are removed, and `executable` becomes `executables: { bun }`. The archive it packed bundled the client's peers and carried no declarations; an npm archive of a client is now made one way, by the new `buildClientPackage` (see Added), which needs a `tsconfig` and takes `entries` by subpath. → ADR 0331
+
+  ```ts
+  // before
+  await buildClientArtifact({
+    entry: 'src/api-client.ts', outFile: 'dist/api-client.js', executable: '/opt/bun/bin/bun',
+    package: { name: '@acme/api-client', version: '1.4.0', outDir: 'dist', exports: ['createApiClient'] },
+  });
+  // after
+  await buildClientPackage({
+    name: '@acme/api-client', version: '1.4.0', outDir: 'dist',
+    entries: { '.': 'src/api-client.ts' }, tsconfig: 'tsconfig.json',
+    proof: { exports: { '.': ['createApiClient'] } }, executables: { bun: '/opt/bun/bin/bun' },
+  });
+  ```
+
+  **Affects:** `stitchkit/files/packaging` buildClientArtifact(package, executable), ClientArtifactOptions(package, executable), ClientArtifact(package)
+
+- `stitchkit/process/bootstrap` — replaces the removed `stitchkit/process/owner-loss`, and `bootstrapNativeCommandOwnerLoss()` is `bootstrapPackageProcess()`. A single-file application starts itself again for two package-owned jobs — the owner-loss guard of `runNativeCommand`, and now the recorded process root of work launched through `stitchkit/service-host/work` — and one bootstrap carries both, so a name that says "owner loss" no longer describes what the call does. The old subpath and the old name are removed without an alias; the return value means the same (`true`: the package owns this invocation, skip your dispatcher). → ADR 0332
+
+  ```ts
+  // before
+  import { bootstrapNativeCommandOwnerLoss } from 'stitchkit/process/owner-loss';
+  if (!bootstrapNativeCommandOwnerLoss()) await main();
+  // after
+  import { bootstrapPackageProcess } from 'stitchkit/process/bootstrap';
+  if (!bootstrapPackageProcess()) await main();
+  ```
+
+  **Affects:** `stitchkit/process/owner-loss` *
+
+- `stitchkit/agent-executor/testing` — `runAgentEngineConformance` now also proves a session's life, and a driver that passed it before can fail it. After its earlier checks it runs five more on fresh sessions: `open` given an aborted signal, and `open` whose signal aborts from `onStartupPhase`, must reject with the signal's reason; an abort while a turn holds a request must fail the turn's stream with that reason, and `respond` and `startTurn` must then reject with it; `interrupt()` after the turn's end, after an abort and after `close()` must resolve; `close()` while a turn holds a request must fail that turn's stream, resolve when called twice at once and once more, and leave `onStartupPhase` silent. Each wait is bounded at 10 s, so a driver that hangs fails with `Agent engine conformance: <check>: … did not settle within 10000 ms` — under a test timeout shorter than that the runner's own timeout comes first. The capabilities check no longer skips a driver that declares none: `info().capabilities` must equal `driver.capabilities`, both absent or the same, and a `client-id` driver must have `findInput` either way. The kit proved a turn's content and nothing about abort or teardown, which is how one driver's fix for `respond` after `close()` reached the others three releases late and the replay driver ignored the caller's signal (ADR 0333).
+
+  ```ts
+  // before: passed the kit although an aborted turn never settled
+  async open(input) {
+    return openSession(input.profile, input.cwd);
+  }
+  // after: the session follows the caller's signal, as the kit now asks
+  async open(input) {
+    input.signal?.throwIfAborted();
+    const session = await openSession(input.profile, input.cwd);
+    input.signal?.addEventListener('abort', () => session.fail(input.signal?.reason), { once: true });
+    return session;
+  }
+  ```
+
+  **Affects:** `stitchkit/agent-executor/testing` runAgentEngineConformance(behaviour)
+
+### Added
+
+- `stitchkit/agent-executor/claude`, `stitchkit/agent-executor/claude-sdk`, `stitchkit/agent-executor/codex`, `stitchkit/agent-executor/acp` — `onObserverError(error, hook)` on every driver's configuration. A host callback that throws or rejects was contained, so the driver could keep reading its engine, and then dropped without a trace: a bug in `onServerRequest` left a request unanswered and nothing said why. The failure now reaches `onObserverError` with the name of the option that failed — `onStartupPhase`, `onDisconnect`, `onNotification`, `onServerRequest` (Codex), `onUpdate`, `onPermissionRequest`, `transformUpdate`, `onProviderPid` (ACP), `onPermissionRequest`, `onEvent`, `onTurnUsage`, `onQueryExit`, `onProviderPid`, `query.close` (Claude SDK) — or `driver:notification` for a failure inside a Codex shared server's own handling of one notification. A `JsonRpcError` an observer throws to refuse a request outside a turn is its answer and is not reported. Without the option nothing changes; a handler that itself throws is ignored.
+
+- `stitchkit/agent-executor` — the version skew between an executor and its server has a written rule (ADR 0334) and a contract test. Every object of the contract is strict, so a key one release adds is refused by an older reader: the server is upgraded first, and it writes an added reply key (`scope`, `updatedInput`, `interrupt`) only to an executor whose `hello` declares the capability for it. The API reference lists what each release added to the wire, by direction; the test restores the JSON Schema of every message as releases 0.129.0, 0.130.1 and 0.132.3 declared it and fails when today's wire differs from that list.
+
+- `stitchkit/service-host/work` — a new evolving entrypoint that launches work in a boundary of its own and declares who owns it, so a monitor can name the launcher, project and agent behind any process instead of one service holding a hundred of them. `launchWork({ owner, placement, command })` runs a command through the native-command owner inside a transient systemd scope (`placement: { kind: 'transient-scope', manager, slice, limits? }`; Linux, cgroup v2) or under a recorded process root (`{ kind: 'process-root' }`; Linux and macOS) and returns `{ origin, unit, root: { pid, instance }, result, stop() }`; `workCommand` returns the same placement as argv and environment for another spawner, such as a terminal multiplexer. `WorkOwnerSchema` is the owner record — launcher, id, label, and `project`, `agent` and `parent` as a value or an explicit `null`. The launched command and its descendants inherit one variable, `STITCHKIT_WORK_ORIGIN`, which only names the boundary: `checkWorkMembership({ pid, boundary })` asks the boundary and answers `member`, `outside`, `gone` or `unavailable` with a reason, and `inheritedWork()` returns the inherited reference only for a process proven to be inside. A scope is started with `--expand-environment=no`, so a command's `$` arguments arrive as written; that option exists since systemd 254, and an older systemd is refused with `WorkLaunchError` reason `systemd-too-old` instead of a boundary that rewrites its command. No boundary is ever substituted for another: an unavailable one refuses by name (`probeWorkBoundary` asks without launching). `slice: 'caller'` keeps the caller's own slice and its limits; `limits` (`memoryMaxMb`, `memorySwapMaxMb`, `cpuQuotaPercent`, `cpuWeight`, `runtimeMaxSeconds`) become unit properties. → ADR 0332
+
+- `stitchkit/files/packaging` — `buildClientPackage` builds a typed client into an npm archive and returns it only once proven. Every entry (`entries: { '.': …, './monitoring': … }`) is built in one pass over one module graph, so a schema or error class two entries export is one object across them in Node and Bun; `peerDependencies` and `dependencies` stay outside the output and go into the manifest. Declarations are emitted with the project `tsconfig` for the entries' graph only and every relative specifier is rewritten to its `.js` file, so they resolve under `moduleResolution: bundler` and `NodeNext`; a declaration that names a module the package does not declare, or a package that is neither a peer nor a dependency, is refused. The archive is then installed into an empty directory beside its peers: every subpath is imported by name, shared exports are compared, installed versions are checked against the declared ranges, and a strict consumer (`skipLibCheck: false`, plus your own `proof.typecheck` sources) is typechecked under both resolutions. A refusal is a `ClientPackageError` with a closed `reason` and `details`, or a `ForbiddenModuleError`; no archive is left behind. The entrypoint's surface ceiling rises 15 → 20 for `buildClientPackage`, `ClientPackage`, `ClientPackageOptions`, `ClientPackageManifest` and `ClientPackageError`. [Guide](docs/guide/native-io.md#a-typed-client-as-an-npm-package) → ADR 0331
+
+- `stitchkit/tools`, `stitchkit/tools/mcp`, `stitchkit/tools/agent`, `stitchkit/contract`, `stitchkit/agent-runtime`, `stitchkit/testing` — `inputNestingDepth` keeps every advertised tool input within a provider's nesting limit (some providers refuse the whole tool set when one input is nested deeper than ten levels). It counts as such a provider counts — a level per `properties → property` or `items` step, free branches, two levels for a property named `items` or `properties` — and opens the node whose next step would cross the limit as `{}`, as deep as the limit allows, keeping its `description`; the handler still validates with the contract's schema, and `requireTypedProperties` accepts the opened paths. It is set where `inputRecursionDepth` is — the surface (`mountMcp`, `createMcpHandler`, `buildMcpServer`, `mountAgent`, `buildToolManifest`, `createDeferredAgentToolSurface`, `buildSurfaceManifest`) or one tool (`tool.inputNestingDepth`, winning over the surface) — and applies last, so it also bounds unrolled recursion. Absent, nothing changes. `OperationToolOption` (`stitchkit/contract`) names the `tool` options an operation's identity carries, `inputNestingDepth` among them.
+
+- `stitchkit/agent-executor/acp` — `AcpDriver.probeCapabilities({ eachModel: true })` also reads every model's own options: in its ephemeral session, still without inference and before closing and deleting it, the probe selects each value of the `model` option and returns the options the agent answered as `optionsByModel` — for agents that describe `thought_level` only for the active model. An open `AcpSession` now carries `initialized`, its agent's `initialize` answer, so the owner of a live session reads the image input the agent declared (`agentCapabilities.promptCapabilities`) instead of the driver's own ability.
+
+- `stitchkit/contract`, `stitchkit`, `stitchkit/server`, `stitchkit/testing` — a contract operation declares the codes it refuses with: `refuses: [errors.NOT_IDLE, errors.MIN_AWAKE]` lists the factories `defineErrors` returns, which now carry their `code` and `definition`. The server holds the handler to it — an `AppError` with a code neither declared nor the framework's leaves as `INTERNAL_SERVER_ERROR` (500) on HTTP, MCP, the agent surface, the CLI and mid-stream, the original kept on `cause` for `onError`; `implementRemote` applies the same check. Every typed client method gains `refusal(error)`, which narrows `code` to the declared codes plus the framework codes and the new `CLIENT_ERROR_CODES`, with `details` typed by the code's schema, and returns `undefined` for anything else. `MethodDef.refuses`, OpenAPI `x-stitchkit-refusals` (with a response per declared status), an optional `refusals` entry in the surface manifest and the contract fingerprint carry the declaration; each is unchanged for an operation without `refuses`. New types: `RefusalDeclaration`, `DescribedRefusal`, `OperationRefusal`, `DeclaredRefusal`, `ClientErrorCode`, `SurfaceManifestOperationRefusal`. → ADR 0330
+
+### Fixed
+
+- `stitchkit/agent-executor/acp` — a request the agent sends while `close()` waits for its `session/close` (up to 5 s) is now refused instead of left without an answer: `session/request_permission` with the `cancelled` outcome, any other method with `-32601`. Before, the agent waited on a request nobody would answer for the rest of that window. After a caller abort or a lost connection nothing is written, as before.
+  **Affects:** `stitchkit/agent-executor/acp` createAcpDriver(open), AcpSession(close)
+- `stitchkit/agent-executor/codex` — a server request that reaches a session, a control connection or a shared server while its owner closes it is answered as stopped (an unknown method with `-32601`) when only this driver talks to the app-server, instead of left unanswered until the process is gone. On a Unix-socket transport, where a TUI may still answer, and after an abort or a lost connection, it stays unanswered as before.
+  **Affects:** `stitchkit/agent-executor/codex` createCodexDriver(open, connectControl, openSharedServer), CodexSession(close), CodexControlConnection(close), CodexSharedServer(close)
+- `stitchkit/agent-executor/codex` — an external server request a session, a control connection or a shared server still holds when its owner closes it is now answered as stopped before the app-server is stopped, when only this driver talks to that process (stdio). Before, `close()` forgot such a request without an answer. After an abort or a lost connection nothing is written, and on a Unix-socket transport the request is left for the TUI, as before.
+  **Affects:** `stitchkit/agent-executor/codex` createCodexDriver(open, connectControl, openSharedServer), CodexSession(close), CodexControlConnection(close), CodexSharedServer(close)
+- `stitchkit/agent-executor/testing` — the replay driver no longer drops a throwing `onStartupPhase` without a trace: `ReplayExecutorDriverConfig.onObserverError(error, hook)` receives it with `'onStartupPhase'`, as the real drivers' option does, and `open()` still succeeds.
+  **Affects:** `stitchkit/agent-executor/testing` createReplayExecutorDriver(open), ReplayExecutorDriverConfig(onObserverError)
+- `stitchkit/agent-executor/testing` — `createReplayGate` reads a label the same way on every call: labels were trimmed when the gate was created, but `release`, `waitForReached`, `hasReached` and `beforeEmit` looked up the string as given, so `release(' a ')` for the label `a` answered `false` and released nothing. `createStubCodexSharedServer` takes its default `capabilities` from the Codex driver's own declaration instead of a second hand-kept copy. `createFakeCodexAppServer` keeps one `error` listener for the server's whole life: a server error after startup drops the connected clients, rejects their pending `sendRequest` calls and makes later sends throw with it as `cause`, where a second such error used to be an unhandled `error` event.
+  **Affects:** `stitchkit/agent-executor/testing` createReplayGate, createStubCodexSharedServer, createFakeCodexAppServer
+- `stitchkit/agent-runtime` — recorded now, changed in 0.130.0: a deferred tool search whose `query` is only whitespace selects nothing (`NO_MATCH`). Until 0.129.0 the blank needle matched every name, so such a query selected the head of the whole catalog. An empty string was and is refused by the search input's schema.
+  **Affects:** `stitchkit/agent-runtime` behaviour
+- `stitchkit/files/packaging` — `forbiddenModules` of `buildClientArtifact` now refuses a module the bundler leaves outside the file too. A platform module such as `'node:child_process'` is never bundled, so it had no module path to match and the import that names it was not read: a client forbidden from spawning processes built without a refusal. The rule now matches the specifier of an external import, and `ForbiddenModuleError.module` carries that specifier.
+  **Affects:** `stitchkit/files/packaging` buildClientArtifact(forbiddenModules), ForbiddenModuleError
+- `stitchkit/agent-executor/codex` — closing or aborting a thread of a shared server (`openSharedServer`) now interrupts the turn that server still runs for it (once, bounded, also when the `turn/start` reply has not arrived yet: the native id comes from that reply or from an event already received), answers every server request the thread still holds — including approvals received before the `turn/start` reply and external requests — with its stopped answer instead of leaving it unanswered on a process that keeps serving sibling threads, and refuses the thread's late traffic until `thread/unsubscribe` settles instead of delivering it to `onNotification` / `onServerRequest` as an external turn. A turn whose `turn/start` reply cannot be read, whose pre-start events overflow, or whose start times out locally is interrupted while the connection lives instead of running on unobserved.
+  **Affects:** `stitchkit/agent-executor/codex` createCodexDriver(openSharedServer), CodexSharedServer(openThread), CodexSession(close, startTurn)
+- `stitchkit/agent-executor/codex` — a `thread/closed` notification for a thread the driver owns now ends it: the active turn fails with `Codex closed thread <id>`, a shared server frees the thread's slot, and the session refuses further turns, instead of the turn's stream waiting forever for a `turn/completed` the unloaded thread never sends.
+  **Affects:** `stitchkit/agent-executor/codex` createCodexDriver(open, openSharedServer), CodexSession(startTurn), CodexSharedServer(activeThreadCount)
+- `stitchkit/agent-executor/codex` — `account/rateLimits/updated` pushes now merge into the known quota per bucket and slot, inheriting the duration and reset time a sparse push omits, and name the windows only after the merge. A push without `windowDurationMins` updates the window it belongs to instead of adding a `<bucket>:primary` duplicate beside a window that then never updates, and pushes past 32 windows truncate like a read instead of failing the merge and writing an `unhandled` error into the running turn. `CodexDriver.status()` returns that merged quota when a read fails.
+  **Affects:** `stitchkit/agent-executor/codex` createCodexDriver(status, open, connectControl, openSharedServer)
+- `stitchkit/agent-executor/codex` — more events before a `turn/start` reply than the turn queue holds now fail only that turn on a single session too, instead of ending the session through its reader; the queue's byte limit counts UTF-8 bytes. A second concurrent `CodexSharedServer.close()` waits for the same process stop as the first. A server request held before its thread registered on a shared server is released by its `serverRequest/resolved` instead of occupying the external-request limit until new requests are refused. On a stdio app-server only this driver talks to, an `onServerRequest` observer that throws anything but a `JsonRpcError` now answers the request with a refusal that carries no host text, instead of leaving the engine's turn waiting; on a Unix-socket transport, where a TUI may still answer, the request stays open as before.
+  **Affects:** `stitchkit/agent-executor/codex` createCodexDriver(open, connectControl, openSharedServer), CodexSharedServer(close), CodexServerRequestEvent
+- `stitchkit/agent-executor/claude-sdk` — a turn started while the session's idle query exits now runs on a freshly launched query instead of being sent to the exited one, whose input nobody reads: the turn no longer hangs without a delta or an error, and the session no longer refuses every later turn as already running. A message sent to a query that has stopped reading input is refused instead of queued.
+  **Affects:** `stitchkit/agent-executor/claude-sdk` createClaudeSdkDriver(open), ClaudeSdkSession(startTurn)
+- `stitchkit/agent-executor/acp` — with `steerMode: 'prompt'`, an agent that refuses the steer's `session/prompt` while an earlier prompt of the turn runs (or that ended it as the refusal arrived) no longer fails the whole turn and frees the session while that prompt still runs: the refusal is told as a non-terminal `error` delta with `itemId` `steer-refused:<generation>`, the turn stays with the earlier prompt and ends with its result, and `startTurn` stays refused until then.
+  **Affects:** `stitchkit/agent-executor/acp` createAcpDriver(open), AcpSession(steerTurn, startTurn)
+- `stitchkit/agent-executor/claude-sdk` — the Claude Code process the driver spawns itself (with `onProviderPid` and no `spawnClaudeCodeProcess`) now goes through `stitchkit/process`, like the CLI and ACP engines: no shell, the declared environment only, its own process group, and that group terminated if the executor dies. `session.close()` now waits until that process is gone, as the `AgentEngineSession.close` contract states, instead of returning while it may still write the transcript. `providerPid` is that group's leader, reported once the start is confirmed; an `onProviderPid` that throws stops the engine. A process from a host's own `spawnClaudeCodeProcess` is asked to stop, not waited for.
+  **Affects:** `stitchkit/agent-executor/claude-sdk` createClaudeSdkDriver(open), ClaudeSdkSession(close, providerPid), ClaudeSdkDriverConfig(onProviderPid, spawnClaudeCodeProcess, stderr)
+- `stitchkit/agent-executor/acp` — `AcpDriver.probeCapabilities` now cleans up the session it created after a timeout or a caller abort too: once `session/new` answered, `session/close` and `session/delete` each run under their own bound on a process kept alive for them, then the agent is stopped. Before, an abort or timeout after `session/new` skipped both and left the temporary session with the agent, against the method's documented guarantee. The probe still rejects with the caller's reason or its timeout; a cleanup that also failed joins it in an `AggregateError` led by that reason.
+  **Affects:** `stitchkit/agent-executor/acp` createAcpDriver(probeCapabilities)
+- `stitchkit/agent-executor/testing` — the replay driver now honours the caller's `AbortSignal` given to `open()`: an abort fails the running turn with the caller's reason, including one waiting on an `expectReply` step whose stream used to hang forever, and `respond` and `startTurn` reject with that reason without consuming the next transcript — as the real drivers do.
+  **Affects:** `stitchkit/agent-executor/testing` createReplayExecutorDriver(open)
+- `stitchkit/tools/mcp` — lazy discovery: `tool_search` now gives its `maxResults` enable slots to tools still hidden, so repeating a search reaches the matches past the first `maxResults` instead of re-listing tools already enabled (those are still listed, after the new ones, with `newlyEnabled: false`). A surface with `discovery` now sends no catalog stamp on listings or results and announces no served catalog, because each session lists its own subset; before, it stamped the whole surface, so a connection's catalog store could never match a listing.
+  **Affects:** `stitchkit/tools/mcp` mountMcp(discovery), buildMcpServer(discovery), createStdioMcpServer(discovery)
+- `stitchkit/agent-executor/claude-sdk` — whether a query resumes the session is now decided, at every query launch, by the transcript on disk, as the CLI driver decides `--resume`. Before, the first message sent marked the session resumable, so when that first query died before Claude Code wrote the transcript, every later query resumed a conversation that did not exist and failed. The transcript is read when a query launches rather than in `open()`.
+  **Affects:** `stitchkit/agent-executor/claude-sdk` createClaudeSdkDriver(open), ClaudeSdkSession(startTurn)
+- `stitchkit/contract` — `HTTP_ERROR`, the code a remote service's error without its own envelope is projected to (`stitchkit/tools` remote services), is now registered in `STITCH_ERROR_STATUS` (default status 502; the projection keeps the upstream status), so `isStitchErrorCode()` knows it and `StitchErrorCode` includes it. The registry completeness test missed it because it read only the first code literal of `new AppError(...)`.
+  **Affects:** `stitchkit/contract` STITCH_ERROR_STATUS, StitchErrorCode, isStitchErrorCode
+- `stitchkit/agent-executor/claude`, `stitchkit/agent-executor/claude-sdk`, `stitchkit/agent-executor/codex`, `stitchkit/agent-executor/acp`, `stitchkit/agent-executor/testing` — every driver now asks one owner whether its session can still be used and guards `interrupt()` and `respond()` in one place, so the rules of a stopped session are the same everywhere. `turn.respond()` on a turn whose stream failed while its session lives rejects with that failure on every driver, where only the Agent SDK leaf did and the others answered `TypeError: Unknown interaction`. `interrupt()` answers the requests the turn holds before it tells the engine, in every driver: over ACP the `cancelled` outcomes are now written before `session/cancel`, not after it. The replay driver refuses an `open` whose signal aborts from `onStartupPhase`, and its `interrupt()` is a no-op once the turn ended or the session stopped.
+  **Affects:** `stitchkit/agent-executor` AgentEngineTurn(respond, interrupt); `stitchkit/agent-executor/acp` createAcpDriver(open), AcpSession(startTurn, respond); `stitchkit/agent-executor/codex` createCodexDriver(open, openSharedServer), CodexTurn(respond); `stitchkit/agent-executor/claude` createClaudeCliDriver(open); `stitchkit/agent-executor/testing` createReplayExecutorDriver(open)
+- `stitchkit/agent-executor/acp` — a `stdoutLineFilter` that throws now fails the connection with `The ACP stdoutLineFilter threw: <message>` and the thrown value as `cause`, instead of the host's error surfacing as if the agent had failed. The connection still fails closed: the filter decides whether a line is protocol, and a filter that threw decided nothing.
+  **Affects:** `stitchkit/agent-executor/acp` createAcpDriver(open, probeCapabilities), AcpDriverConfig(stdoutLineFilter)
+
+### Documentation
+
+- The 0.130.0 migration `executor-status-delta` named the `status` delta as the only wire change. 0.130.0 also added `capabilities` to every engine a `hello` announces, `threadDisposition`, five usage figures, and `scope`, `updatedInput` and `interrupt` on an interaction reply, and every object of the contract is strict: an executor upgraded before its server had its handshake refused. The migration now lists every key by direction and states the order of upgrade.
+- The 0.130.0 entry and its migration described `phase` of a `status` delta as `'spawning' | 'initializing' | 'verifying'`. `ExecutorStartupPhaseSchema` has always been an open label of 1–64 trimmed characters; those three are what the drivers emit. Both texts now say so, and the schema is unchanged.
+- The 0.132.0 migration `saved-sync-cursor-zero` and the sync guide now say that `beginFullSync` resets the saved cursor to `null`, not to `0`.
+- `ContextHandoffBudgetSchema` documents that an omitted `usedTokens` counts as `0` — the caller's statement that the receiving thread is new.
+
 ## [0.132.3] - 2026-11-27
 
 ### Fixed
@@ -122,7 +291,7 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 **Who must act:** every caller of `stitchkit/agent-executor` that switches exhaustively on `ExecutorDelta['type']` or forwards `status` deltas to a `0.129.0` server ([migration](docs/guide/upgrading.md#executor-status-delta)).
 
-- `stitchkit/agent-executor` — widened `ExecutorDeltaSchema` / `ExecutorDelta` with `ExecutorStatusDeltaSchema` (`{ type: 'status', phase: 'spawning' | 'initializing' | 'verifying', ... }`) so executor startup lifecycle progress can be observed in-band alongside `onStartupPhase` callbacks. Exhaustive `switch (delta.type)` consumers must handle `case 'status':` (ignored by `projectExecutorDeltas`).
+- `stitchkit/agent-executor` — widened `ExecutorDeltaSchema` / `ExecutorDelta` with `ExecutorStatusDeltaSchema` (`{ type: 'status', phase, ... }`, where `phase` is an open label of 1–64 trimmed characters and the drivers emit `spawning`, `initializing` and `verifying`) so executor startup lifecycle progress can be observed in-band alongside `onStartupPhase` callbacks. Exhaustive `switch (delta.type)` consumers must handle `case 'status':` (ignored by `projectExecutorDeltas`).
   `switch (delta.type) { … case 'window': break; }` → `switch (delta.type) { … case 'status': case 'window': break; }`.
   **Affects:** `stitchkit/agent-executor` ExecutorDeltaSchema, ExecutorDelta, ExecutorStatusDeltaSchema, projectExecutorDeltas
 

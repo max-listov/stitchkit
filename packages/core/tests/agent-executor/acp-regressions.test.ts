@@ -2241,6 +2241,8 @@ describe('ACP protocol compatibility, probes, post-settle events, usage, steerin
         args: [script],
         ambient: ambientIn(root),
         onProviderPid: (pid) => observedPids.push(pid),
+        // A timed-out probe still cleans up under this bound; the default 5 s outlasts the test.
+        requestTimeoutMs: 1_500,
       });
 
       // 1. config_option_update survives empty session.configOptions: [].
@@ -2258,7 +2260,7 @@ describe('ACP protocol compatibility, probes, post-settle events, usage, steerin
       await driver.sessions({ profile: baseProfile, cwd: root });
       expect(observedPids).toEqual([]);
 
-      // 3. Timeout expiring during cleanupProbeSession (session/close hangs) rejects probeCapabilities.
+      // 3. Timeout expiring during cleanup (session/close hangs) rejects probeCapabilities once cleanup ran out its bound.
       await expect(
         driver.probeCapabilities({
           profile: acpProfile(root, 'edge-hang-close', { EDGE_MODE: 'hang-close' }),

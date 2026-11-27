@@ -19,6 +19,8 @@ const NOT_A_SYSTEM_ERROR_CODE: Readonly<Record<string, string>> = {
     "stitchkit's own TELEGRAM_NOT_DISPATCHED marker, recognised across realms and wrappers",
   'agent-runtime/postgres-transactions.ts': 'the Prisma error code (P2010, P2034) of a cause',
   'realtime/rejected-frame.ts': 'the code field of an issue inside a rejected realtime frame',
+  'contract/operation-refusals.ts':
+    'the code a defineErrors factory carries, read to check a refuses entry is a declaration',
 };
 
 const OWNER = 'internal/errno.ts';

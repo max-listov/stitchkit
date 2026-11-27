@@ -4,8 +4,8 @@
  * and empty tool ids.
  */
 import { beforeAll, describe, expect, test } from 'bun:test';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import {
   type AccountInfo,
@@ -46,6 +46,7 @@ import {
   drain,
   drainApproving,
   inScratch,
+  promiseJobsRan,
 } from '../support/engine-driver-harness';
 import { reapAfterEachTest, trackProcess } from '../support/process-reaper';
 
@@ -53,6 +54,13 @@ reapAfterEachTest();
 
 function sdkDriver(root: string, query: ClaudeSdkQuery) {
   return createClaudeSdkDriver({ sdkVersion: '0.3.330', ambient: ambientIn(root), query });
+}
+
+/** What Claude Code leaves on disk once it took a prompt: the session's transcript. */
+function writeSdkTranscript(root: string, sessionId: string): void {
+  const path = claudeTranscriptPath({ home: join(root, 'home'), cwd: root, sessionId });
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ type: 'user' })}\n`);
 }
 
 function sdkProfile(root: string) {
@@ -112,20 +120,22 @@ describe('Claude SDK open', () => {
       ).rejects.toThrow('nope');
     }));
 
-  test('an abort while the transcript is checked rejects open before a query starts', () =>
+  test('an abort right after open ends the session before a query starts', () =>
     inScratch('sdk-abort-open', async (root) => {
       const aborted = new AbortController();
       const driver = sdkDriver(root, () => {
-        throw new Error('query must not start on an aborted open');
+        throw new Error('query must not start on an aborted session');
       });
-      const opening = driver.open({
+      const session = await driver.open({
         profile: sdkProfile(root),
         cwd: root,
         nativeThreadId: 'existing-session',
         signal: aborted.signal,
       });
-      aborted.abort(new Error('aborted-during-transcript-check'));
-      await expect(opening).rejects.toThrow('aborted-during-transcript-check');
+      aborted.abort(new Error('aborted-after-open'));
+      // The transcript is read when a query launches; an aborted session never gets that far.
+      await expect(session.startTurn(textTurn('t'))).rejects.toThrow('aborted-after-open');
+      await session.close();
     }));
 });
 
@@ -234,14 +244,14 @@ describe('Claude SDK turns', () => {
               void permission?.then((value) => {
                 outcome = value;
               });
-              await Bun.sleep(5);
+              await promiseJobsRan();
             },
           }),
         );
         const session = await driver.open({ profile: sdkProfile(root), cwd: root });
         try {
           deltas = await drain(await session.startTurn(textTurn('t-end-drain')));
-          await Bun.sleep(10);
+          await promiseJobsRan();
           // Read before close(): the turn end itself must have drained it.
           listeners = counted.listeners();
         } finally {
@@ -295,7 +305,7 @@ describe('Claude SDK turns', () => {
                 outcome = value;
               });
             // Let the permission register, then crash the query.
-            await Bun.sleep(5);
+            await promiseJobsRan();
             throw new Error('query crashed mid-permission');
           }
           const records = run();
@@ -313,7 +323,7 @@ describe('Claude SDK turns', () => {
           failure = await drain(await session.startTurn(textTurn('t-crash'))).catch(
             (error: unknown) => error,
           );
-          await Bun.sleep(15);
+          await promiseJobsRan();
           listeners = counted.listeners();
         } finally {
           await session.close();
@@ -548,11 +558,12 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       expect(session.providerPid).toBeUndefined();
     }));
 
-  test('default spawner for onProviderPid drains streaming UTF-8 stderr, records real child pid, clears it on exit, and kills child if onProviderPid throws', () =>
+  test('default spawner for onProviderPid drains streaming UTF-8 stderr, records the engine group leader pid, clears it on exit, and kills child if onProviderPid throws', () =>
     inScratch('sdk-default-spawn-pid', async (root) => {
       const capturedStderr: string[] = [];
       const capturedPids: number[] = [];
       let observedPidWhileAlive: number | undefined;
+      let opened: { readonly providerPid: number | undefined } | undefined;
       const driver = createClaudeSdkDriver({
         sdkVersion: '0.3.330',
         ambient: ambientIn(root),
@@ -560,6 +571,8 @@ describe('Claude SDK host options, delegation verification, providerPid and live
         onProviderPid: (pid) => {
           trackProcess(pid);
           capturedPids.push(pid);
+          // The leader is known once its owner-loss guard confirms the start, while it runs.
+          observedPidWhileAlive = opened?.providerPid;
         },
         query: ({ prompt, options }) => {
           const child = options?.spawnClaudeCodeProcess?.({
@@ -584,9 +597,9 @@ describe('Claude SDK host options, delegation verification, providerPid and live
         },
       });
       const session = await driver.open({ profile: sdkProfile(root), cwd: root });
+      opened = session;
       try {
         const turn = await session.startTurn(textTurn('t-default-spawn'));
-        observedPidWhileAlive = session.providerPid;
         await drain(turn);
         expect(capturedPids).toHaveLength(1);
         expect(observedPidWhileAlive).toBe(capturedPids[0]);
@@ -837,7 +850,11 @@ describe('Claude SDK host options, delegation verification, providerPid and live
           openedOptions.push(options);
           async function* run(): AsyncGenerator<unknown> {
             for await (const message of prompt) {
-              if (n === 1) throw new Error('first query crashed');
+              if (n === 1) {
+                // Claude Code persisted the prompt before it crashed: the next query resumes it.
+                writeSdkTranscript(root, options?.sessionId ?? '');
+                throw new Error('first query crashed');
+              }
               yield success(message.uuid);
             }
           }
@@ -1026,7 +1043,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
         await idleSession.supportedModels();
         expect(idleSession.providerPid).toBe(700_001);
         crashFirstIdle();
-        await Bun.sleep(15);
+        await promiseJobsRan();
         // Idle exit cleared providerPid and running handle without needing startTurn.
         expect(idleSession.providerPid).toBeUndefined();
         const deltas = await drain(
@@ -1040,6 +1057,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       }
 
       // Hung live control RPC aborts cleanly when session.close() runs.
+      const modelsAsked = Promise.withResolvers<void>();
       const hungDriver = createClaudeSdkDriver({
         sdkVersion: '0.3.330',
         ambient: ambientIn(root),
@@ -1051,13 +1069,16 @@ describe('Claude SDK host options, delegation verification, providerPid and live
           return {
             [Symbol.asyncIterator]: () => records,
             interrupt: async () => undefined,
-            supportedModels: () => new Promise<ModelInfo[]>(() => undefined),
+            supportedModels: () => {
+              modelsAsked.resolve();
+              return new Promise<ModelInfo[]>(() => undefined);
+            },
           };
         },
       });
       const hungSession = await hungDriver.open({ profile: sdkProfile(root), cwd: root });
       const pendingControl = hungSession.supportedModels();
-      await Bun.sleep(5);
+      await modelsAsked.promise;
       await hungSession.close();
       await expect(pendingControl).rejects.toThrow();
     }));
@@ -1065,6 +1086,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
   test('readUsage actively pulls plan limits, preserves passive cache on unsupported/unpublished, and handles RPC failure and abort', () =>
     inScratch('sdk-read-usage', async (root) => {
       const seenOpts: unknown[] = [];
+      const usageAsked = Promise.withResolvers<void>();
       let usageMode:
         | 'unsupported'
         | 'no-plan-limit'
@@ -1107,7 +1129,10 @@ describe('Claude SDK host options, delegation verification, providerPid and live
             ...base,
             usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async (opts) => {
               seenOpts.push(opts);
-              if (usageMode === 'hang') return new Promise(() => undefined);
+              if (usageMode === 'hang') {
+                usageAsked.resolve();
+                return new Promise(() => undefined);
+              }
               if (usageMode === 'fail') throw new Error('usage endpoint 503');
               if (usageMode === 'fail-empty') throw new Error('');
               if (usageMode === 'fail-huge') throw new Error('E'.repeat(5000));
@@ -1231,7 +1256,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
         // Hung readUsage unblocks cleanly on session.close() WITHOUT recording a failure into status cache.
         usageMode = 'hang';
         const pending = sKnown.readUsage();
-        await Bun.sleep(5);
+        await usageAsked.promise;
         await sKnown.close();
         await expect(pending).rejects.toThrow();
         expect((await driver.status(profile)).planLimits?.error).toBeUndefined();
@@ -1466,7 +1491,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
         // 1. Idle crash between turns fires onQueryExit({ duringTurn: false }) after query.close() and state reset.
         await session.supportedModels();
         triggerIdleExit?.();
-        await Bun.sleep(20);
+        await promiseJobsRan();
         expect(exits).toEqual([
           {
             message: 'No conversation found',
@@ -1482,7 +1507,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
         throwSyncInExit = true;
         await session.supportedModels();
         triggerIdleExit?.();
-        await Bun.sleep(20);
+        await promiseJobsRan();
         throwSyncInExit = false;
         expect(exits[1]).toEqual({
           message: 'The Agent SDK query ended while idle',
@@ -1497,7 +1522,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
         await expect(drain(await session.startTurn(textTurn('t-mid')))).rejects.toThrow(
           /mid-turn crash/,
         );
-        await Bun.sleep(20);
+        await promiseJobsRan();
         expect(exits[2]).toEqual({
           message: 'mid-turn crash',
           duringTurn: true,
@@ -1511,7 +1536,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
         await expect(drain(await session.startTurn(textTurn('t-mid-eof')))).rejects.toThrow(
           /The Agent SDK query ended during the turn/,
         );
-        await Bun.sleep(20);
+        await promiseJobsRan();
         expect(exits[3]).toEqual({
           message: 'The Agent SDK query ended during the turn',
           duringTurn: true,
@@ -1526,7 +1551,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       } finally {
         await session.close();
       }
-      await Bun.sleep(20);
+      await promiseJobsRan();
       expect(exits).toHaveLength(4);
       expect(attempt).toBe(5);
 
@@ -1541,7 +1566,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       try {
         await sAbort.supportedModels();
         callerAbort.abort(new Error('caller cancelled'));
-        await Bun.sleep(20);
+        await promiseJobsRan();
       } finally {
         await sAbort.close();
       }
@@ -1578,7 +1603,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       await expect(
         failOpenDriver.open({ profile: sdkProfile(root), cwd: root }),
       ).rejects.toThrow(/hooks_applied/);
-      await Bun.sleep(20);
+      await promiseJobsRan();
       expect(failOpenExits).toEqual([]);
     }));
 
@@ -1841,6 +1866,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       }
 
       // Hung stopTask/setMcpServers/backgroundTasks abort cleanly on session.close().
+      const stopAsked = Promise.withResolvers<void>();
       const hungSession = await sdkDriver(root, () => {
         async function* run(): AsyncGenerator<unknown> {
           await new Promise<never>(() => undefined);
@@ -1849,11 +1875,14 @@ describe('Claude SDK host options, delegation verification, providerPid and live
         return {
           [Symbol.asyncIterator]: () => records,
           interrupt: async () => undefined,
-          stopTask: () => new Promise<void>(() => undefined),
+          stopTask: () => {
+            stopAsked.resolve();
+            return new Promise<void>(() => undefined);
+          },
         };
       }).open({ profile: sdkProfile(root), cwd: root });
       const hungStop = hungSession.stopTask('task-hung');
-      await Bun.sleep(5);
+      await stopAsked.promise;
       await hungSession.close();
       await expect(hungStop).rejects.toThrow();
     }));
@@ -2324,6 +2353,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       let promptCompletedOnAbort = false;
       let mode: 'full' | 'init-only' | 'no-usage-rpc' | 'fail' | 'hang' | 'missing-rpcs' =
         'full';
+      let hungInit = Promise.withResolvers<void>();
 
       const driver = createClaudeSdkDriver({
         sdkVersion: '0.3.330',
@@ -2352,8 +2382,10 @@ describe('Claude SDK host options, delegation verification, providerPid and live
           if (mode === 'hang') {
             return {
               ...base,
-              initializationResult: () =>
-                new Promise<SDKControlInitializeResponse>(() => undefined),
+              initializationResult: () => {
+                hungInit.resolve();
+                return new Promise<SDKControlInitializeResponse>(() => undefined);
+              },
             };
           }
           if (mode === 'fail') {
@@ -2413,7 +2445,7 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       const profile = sdkProfile(root);
       // 1. Default probe without includeUsage: isolated options, never-yielding prompt, closed in finally.
       const res1 = await driver.probeCapabilities({ profile, cwd: root });
-      await Bun.sleep(5);
+      await promiseJobsRan();
       expect(yieldedAnyPrompt).toBe(false);
       expect(promptCompletedOnAbort).toBe(true);
       expect(closeCalls).toBe(1);
@@ -2471,12 +2503,13 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       expect(closeCalls).toBe(5);
 
       const caller = countedSignal();
+      hungInit = Promise.withResolvers<void>();
       const pendingProbe = driver.probeCapabilities({
         profile,
         cwd: root,
         signal: caller.signal,
       });
-      await Bun.sleep(5);
+      await hungInit.promise;
       caller.abort(new Error('probe-cancelled'));
       await expect(pendingProbe).rejects.toThrow(/probe-cancelled/);
       expect(closeCalls).toBe(6);
@@ -2552,6 +2585,8 @@ describe('Claude SDK host options, delegation verification, providerPid and live
       expect(openedOptions).toEqual([]);
 
       // Valid truncating resume forwards both options on the first query, then clears on restart.
+      // The resumed conversation exists on disk, as it must for Claude Code to resume it.
+      writeSdkTranscript(root, 'sess-truncate-1');
       const session = await driver.open({
         profile,
         cwd: root,

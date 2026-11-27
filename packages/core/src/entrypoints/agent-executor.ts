@@ -112,7 +112,6 @@ export {
   engineEnvironment,
   helloProfile,
   ownCredentials,
-  sanitizeProfileEnv,
 } from '../agent-executor/profile';
 export { projectExecutorDeltas } from '../agent-executor/projection';
 export { canAdvanceTurnPhase, isTerminalTurnPhase } from '../agent-executor/turn-phases';

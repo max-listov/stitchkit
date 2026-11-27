@@ -22,7 +22,6 @@ import {
   EXECUTOR_ENV_KEY_PATTERN,
   engineEnvironment,
   helloProfile,
-  sanitizeProfileEnv,
 } from '../../src/agent-executor/profile';
 import { isTerminalTurnPhase } from '../../src/agent-executor/turn-phases';
 import {
@@ -534,26 +533,11 @@ describe('plan limits', () => {
       }),
     ).toEqual([{ name: 'limit:primary', usedPercent: 10, resetsAt: '2026-12-01T00:00:00Z' }]);
 
-    // 6. JsonRpcValueSchema / JsonRpcRecordSchema & EXECUTOR_ENV_KEY_PATTERN / sanitizeProfileEnv.
+    // 6. JsonRpcValueSchema / JsonRpcRecordSchema & EXECUTOR_ENV_KEY_PATTERN.
     expect(JsonRpcValueSchema.safeParse({ a: [1, 'x', null, true] }).success).toBe(true);
     expect(JsonRpcRecordSchema.safeParse({ ok: 1 }).success).toBe(true);
     expect(JsonRpcRecordSchema.safeParse([1, 2]).success).toBe(false);
     expect(EXECUTOR_ENV_KEY_PATTERN.test('MY_VAR_1')).toBe(true);
     expect(EXECUTOR_ENV_KEY_PATTERN.test('1BAD')).toBe(false);
-    expect(
-      sanitizeProfileEnv({
-        GOOD_VAR: 'ok',
-        EMPTY_VAR: '',
-        'BAD-KEY': 'drop',
-        lowercase: 'drop',
-        '1BAD': 'drop',
-        OMITTED_VAR: undefined,
-        ANTHROPIC_API_KEY: 'kept-profile-cred',
-      }),
-    ).toEqual({
-      GOOD_VAR: 'ok',
-      EMPTY_VAR: '',
-      ANTHROPIC_API_KEY: 'kept-profile-cred',
-    });
   });
 });

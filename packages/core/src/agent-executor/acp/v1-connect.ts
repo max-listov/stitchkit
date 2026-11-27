@@ -7,7 +7,7 @@ import { createJsonRpcPeer, type JsonRpcPeer, type JsonRpcValue } from '../json-
 import { type ExecutorProfileConfig, engineEnvironment } from '../profile';
 import {
   emitStartupPhase,
-  invokeSafely,
+  invokeObserver,
   safeJsonValue,
   stopConnection,
 } from '../session-primitives';
@@ -85,7 +85,9 @@ export interface AcpDriverConfig {
   sessionMeta?: AcpSessionMetaInput | undefined;
   /**
    * Optional filter invoked on every stdout line before JSON-RPC parsing; returning `false`
-   * skips non-protocol lines (such as OAuth prompts) instead of failing the connection.
+   * skips non-protocol lines (such as OAuth prompts) instead of failing the connection. A filter
+   * that throws decided nothing about the line, so the connection fails closed with an error that
+   * names the filter and carries what it threw as `cause`.
    */
   stdoutLineFilter?: ((line: string) => boolean) | undefined;
   /**
@@ -133,6 +135,15 @@ export interface AcpDriverConfig {
   onProviderPid?: ((pid: number) => void) | undefined;
   /** Optional callback invoked when an opened session drops unexpectedly before `close()` or caller abort. */
   onDisconnect?: ((error: Error) => void) | undefined;
+  /**
+   * Receives every failure of a host callback the driver contained to keep reading its agent:
+   * `hook` is the option that threw or rejected (`'onUpdate'`, `'onPermissionRequest'`,
+   * `'transformUpdate'`, `'onProviderPid'`, `'onDisconnect'`, `'onStartupPhase'`). A
+   * `JsonRpcError` thrown by `onPermissionRequest` for a request outside a turn is that
+   * observer's refusal and is not reported. Without this option such failures are contained and
+   * dropped; a handler that itself throws is ignored.
+   */
+  onObserverError?: ((error: unknown, hook: string) => void) | undefined;
   /**
    * Optional hook started before `session/prompt` and consulted after it settles so hidden API
    * errors masked as `end_turn` can fail the turn with an error kind and `threadDisposition`.
@@ -243,6 +254,26 @@ export type AcpHandlers = {
   onProviderPid?: (pid: number) => void;
 };
 
+/**
+ * Ask the host's filter whether a stdout line is protocol. The filter decides, so its failure
+ * cannot be contained without guessing the decision: it is rethrown named, and the reader that
+ * called fails the connection with it like any other line it could not read.
+ */
+function keepsStdoutLine(
+  filter: ((line: string) => boolean) | undefined,
+  line: string,
+): boolean {
+  if (filter === undefined) return true;
+  try {
+    return filter(line);
+  } catch (error) {
+    throw new Error(
+      `The ACP stdoutLineFilter threw: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 /** Spawn the agent and perform the ACP v1 handshake; ACP v2 (`"info" in raw`) or version < 1 is refused. */
 export async function connectAcp(
   config: AcpDriverConfig,
@@ -261,7 +292,7 @@ export async function connectAcp(
     ...(handlers.onRequest && { onRequest: handlers.onRequest }),
     ...(handlers.onNotification && { onNotification: handlers.onNotification }),
   });
-  emitStartupPhase(handlers.onStartupPhase, 'spawning');
+  emitStartupPhase(handlers.onStartupPhase, 'spawning', config.onObserverError);
   const engine = spawnEngineProcess({
     executable: config.executable,
     args: [...(config.args ?? [])],
@@ -272,15 +303,16 @@ export async function connectAcp(
   });
   if (handlers.onProviderPid !== undefined && engine.pidReady !== undefined) {
     void engine.pidReady.then((pid) => {
-      if (pid !== undefined) invokeSafely(() => handlers.onProviderPid?.(pid));
+      if (pid !== undefined)
+        invokeObserver(config.onObserverError, 'onProviderPid', () =>
+          handlers.onProviderPid?.(pid),
+        );
     });
   }
   const reading = (async () => {
     try {
       for await (const line of engine.lines) {
-        if (config.stdoutLineFilter !== undefined && !config.stdoutLineFilter(line)) {
-          continue;
-        }
+        if (!keepsStdoutLine(config.stdoutLineFilter, line)) continue;
         peer.receive(line);
       }
       const ended = new Error(
@@ -304,7 +336,7 @@ export async function connectAcp(
     }
   })();
   try {
-    emitStartupPhase(handlers.onStartupPhase, 'initializing');
+    emitStartupPhase(handlers.onStartupPhase, 'initializing', config.onObserverError);
     const clientInfo =
       config.clientInfo !== undefined
         ? AcpClientInfoSchema.parse(config.clientInfo)

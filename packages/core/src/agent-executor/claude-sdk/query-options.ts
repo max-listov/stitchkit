@@ -1,10 +1,9 @@
-import { spawn } from 'node:child_process';
-import { StringDecoder } from 'node:string_decoder';
-import type { Options, SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
 import { abortReason, raceAbort } from '../../internal/abort-race';
 import { assertTimerMs, withSignalDeadline } from '../../internal/deadline';
 import { isPositiveSafeInteger } from '../../internal/positive-integer';
 import { validateImageOptions } from '../image-input';
+import { reportObserverError } from '../session-primitives';
 import type { ClaudeSdkFlagSettings } from './controls';
 import type {
   ClaudeSdkDelegationCheck,
@@ -12,6 +11,7 @@ import type {
   ClaudeSdkOpenInput,
   ClaudeSdkRun,
 } from './driver';
+import { spawnOwnedClaudeCode } from './engine-spawn';
 
 const DEFAULT_DELEGATION_TIMEOUT_MS = 30_000;
 const FLAG_SETTINGS_REPLAY_TIMEOUT_MS = 30_000;
@@ -89,57 +89,48 @@ export function readPositivePid(spawned: unknown): number | undefined {
 }
 
 /**
- * Default process spawner used only when `onProviderPid` is configured without a custom
- * `spawnClaudeCodeProcess`. Drains `stderr` continuously with a streaming UTF-8 decoder so
- * the OS pipe cannot stall the child or split multi-byte characters, never runs a shell,
- * and forwards only the SDK's allowlisted environment and graceful signal.
+ * Wrap or create `spawnClaudeCodeProcess` when either custom spawning or PID observation is
+ * requested. The driver's own spawner goes through `stitchkit/process` (`spawnOwnedClaudeCode`),
+ * and its process's exit is handed to `trackExit` so `close()` can wait for it; a host's own
+ * spawner owns its processes, and `close()` only asks them to stop.
  */
-function createDefaultSpawner(
-  stderrCallback: Options['stderr'],
-): (opts: SpawnOptions) => SpawnedProcess {
-  return (opts) => {
-    const child = spawn(opts.command, opts.args, {
-      cwd: opts.cwd,
-      env: opts.env,
-      signal: opts.signal,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
-      windowsHide: true,
-    });
-    if (child.stderr !== null) {
-      const decoder = new StringDecoder('utf8');
-      const emit = (text: string) => {
-        if (text.length === 0 || stderrCallback === undefined) return;
-        try {
-          stderrCallback(text);
-        } catch {
-          // A failing diagnostics callback must not crash the stderr drain loop.
-        }
-      };
-      child.stderr.on('error', () => undefined);
-      child.stderr.on('data', (chunk: Buffer | string) => {
-        emit(typeof chunk === 'string' ? chunk : decoder.write(chunk));
-      });
-      child.stderr.on('end', () => {
-        emit(decoder.end());
-      });
-    }
-    return child;
-  };
-}
-
-/** Wrap or create `spawnClaudeCodeProcess` when either custom spawning or PID observation is requested. */
 function buildSpawnHook(
   config: ClaudeSdkDriverConfig,
   recordPid: (pid: number | undefined) => void,
   onPidExit: (pid: number) => void,
+  trackExit: (exited: Promise<void>) => void,
 ): Options['spawnClaudeCodeProcess'] | undefined {
-  if (config.spawnClaudeCodeProcess === undefined && config.onProviderPid === undefined) {
-    return undefined;
+  const custom = config.spawnClaudeCodeProcess;
+  if (custom === undefined && config.onProviderPid === undefined) return undefined;
+  if (custom === undefined) {
+    return (spawnOpts) => {
+      let leader: number | undefined;
+      const owned: { process?: SpawnedProcess } = {};
+      const spawned = spawnOwnedClaudeCode(spawnOpts, {
+        onStderr: config.stderr,
+        onLeader: (pid) => {
+          leader = pid;
+          recordPid(pid);
+          try {
+            config.onProviderPid?.(pid);
+          } catch (error) {
+            reportObserverError(config.onObserverError, 'onProviderPid', error);
+            // The engine never runs past a refused PID observation: stop it, the query ends.
+            recordPid(undefined);
+            owned.process?.kill('SIGTERM');
+          }
+        },
+      });
+      owned.process = spawned.process;
+      void spawned.exited.then(() => {
+        if (leader !== undefined) onPidExit(leader);
+      });
+      trackExit(spawned.exited);
+      return spawned.process;
+    };
   }
-  const baseSpawner = config.spawnClaudeCodeProcess ?? createDefaultSpawner(config.stderr);
   return (spawnOpts) => {
-    const proc = baseSpawner(spawnOpts);
+    const proc = custom(spawnOpts);
     const pid = readPositivePid(proc);
     recordPid(pid);
     if (pid !== undefined && typeof proc.once === 'function') {
@@ -176,9 +167,10 @@ export function buildClaudeSdkQueryOptions(input: {
   activePermissionMode: NonNullable<Options['permissionMode']>;
   recordPid: (pid: number | undefined) => void;
   onPidExit: (pid: number) => void;
+  trackExit: (exited: Promise<void>) => void;
 }): Options {
   const { config } = input;
-  const spawnHook = buildSpawnHook(config, input.recordPid, input.onPidExit);
+  const spawnHook = buildSpawnHook(config, input.recordPid, input.onPidExit, input.trackExit);
   return {
     cwd: input.cwd,
     env: input.env,

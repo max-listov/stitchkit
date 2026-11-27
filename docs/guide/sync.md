@@ -131,7 +131,7 @@ import { createSyncSession } from 'stitchkit/sync';
 const session = createSyncSession({
   isConnected: () => socket.connected,
   readCursor: () => db.cursor(),          // null starts a snapshot; a saved version, including 0, starts the feed
-  beginFullSync: () => db.resetCursor(),  // keeps the projection; nothing is deleted yet
+  beginFullSync: () => db.resetCursor(),  // resets the saved cursor to null, never to 0; keeps the projection
   send: (request) => socket.emit('sync_request', toWire(request)),
   apply: (page, context) => db.applyPage(page, context), // { current, snapshot }: see above
   saveCursor: (version) => db.saveCursor(version),
@@ -170,7 +170,10 @@ page the cursor is the version it began at, and the feed catches up from there.
 
 A cursor older than the feed the server keeps is refused with `stale_cursor` (`SYNC_STALE_CURSOR`,
 passed to `handleError`): the session begins a full snapshot at once, without a pause. Inside a
-snapshot the same refusal starts it over after a pause. `beginFullSync` keeps the outbox, and after
+snapshot the same refusal starts it over after a pause. `beginFullSync` resets the saved cursor to
+`null` — the value `readCursor` returns for a replica that holds no completed snapshot. A reset to `0`
+is a saved version: a session restarted before the snapshot's first page was saved would read the feed
+after version zero instead of starting the snapshot again. `beginFullSync` keeps the outbox, and after
 the last page of any full snapshot — asked for, forced by the server or after `stale_cursor` —
 `rebasePending` merges pending local changes onto what it brought, before its cursor is saved; a
 refusal there is `rebase_failed` and the session retries. Ids come from `crypto.randomUUID`, falling back to

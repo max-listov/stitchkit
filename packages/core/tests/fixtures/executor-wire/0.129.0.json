@@ -1,0 +1,1695 @@
+{
+  "executor→server": {
+    "hello": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "type": "number",
+          "const": 1
+        },
+        "instance": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "executorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "engines": {
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "engine": {
+                "type": "string",
+                "enum": ["claude-cli", "claude-sdk", "codex", "acp"]
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "reconcile": {
+                "type": "string",
+                "enum": ["client-id", "none"]
+              },
+              "models": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "answer": {
+                        "type": "string",
+                        "const": "listed"
+                      },
+                      "ids": {
+                        "maxItems": 1024,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      }
+                    },
+                    "required": ["answer", "ids"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "answer": {
+                        "type": "string",
+                        "const": "not-asked"
+                      }
+                    },
+                    "required": ["answer"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "answer": {
+                        "type": "string",
+                        "const": "failed"
+                      },
+                      "error": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      }
+                    },
+                    "required": ["answer", "error"],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": ["engine", "version", "reconcile", "models"],
+            "additionalProperties": false
+          }
+        },
+        "profiles": {
+          "maxItems": 256,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "profileId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "engine": {
+                "type": "string",
+                "enum": ["claude-cli", "claude-sdk", "codex", "acp"]
+              },
+              "accountLabel": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "login": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string",
+                    "enum": ["signed-in", "signed-out", "expired", "unknown"]
+                  }
+                },
+                "required": ["state"],
+                "additionalProperties": false
+              },
+              "effectiveCredential": {
+                "type": "string",
+                "enum": ["subscription", "api-key", "none", "unknown"]
+              },
+              "ownCredentials": {
+                "maxItems": 64,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "planLimits": {
+                "type": "object",
+                "properties": {
+                  "answer": {
+                    "type": "string",
+                    "enum": ["known", "no-plan-limit", "unpublished"]
+                  },
+                  "windows": {
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "usedPercent": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "resetsAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        "windowDurationMins": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": ["name", "usedPercent"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "observedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "error": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "required": ["answer", "windows", "observedAt"],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "profileId",
+              "engine",
+              "login",
+              "effectiveCredential",
+              "ownCredentials"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "resumable": {
+          "maxItems": 4096,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "turnId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "threadId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "turnOrdinal": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "fence": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "executorSeq": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["turnId", "threadId", "turnOrdinal", "fence", "executorSeq"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["protocol", "instance", "executorId", "engines", "profiles", "resumable"],
+      "additionalProperties": false
+    },
+    "claim": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "executorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "instance": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": ["threadId", "executorId", "instance", "profileId"],
+      "additionalProperties": false
+    },
+    "renew": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "instance": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "fence": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["threadId", "instance", "fence"],
+      "additionalProperties": false
+    },
+    "report": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "turnOrdinal": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "instance": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "fence": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "executorSeq": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "leased",
+            "dispatching",
+            "delivered",
+            "completed",
+            "interrupted",
+            "failed",
+            "unknown",
+            "unknown_after_restart"
+          ]
+        },
+        "deltas": {
+          "maxItems": 512,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "text"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["type", "text", "turnId", "itemId", "raw"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "reasoning"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "object",
+                    "properties": {
+                      "schemaVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "data": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "$ref": "#/$defs/__schema0"
+                        }
+                      }
+                    },
+                    "required": ["schemaVersion", "provider", "data"]
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["type", "text", "turnId", "itemId", "raw"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "tool-call"
+                  },
+                  "callId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "toolName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "input": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "provider": {
+                    "type": "object",
+                    "properties": {
+                      "schemaVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "data": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "$ref": "#/$defs/__schema0"
+                        }
+                      }
+                    },
+                    "required": ["schemaVersion", "provider", "data"]
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["type", "callId", "toolName", "input", "turnId", "itemId", "raw"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "tool-result"
+                  },
+                  "callId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "toolName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": ["success", "error", "interrupted"]
+                  },
+                  "output": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "type",
+                  "callId",
+                  "toolName",
+                  "outcome",
+                  "turnId",
+                  "itemId",
+                  "raw"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "request"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  },
+                  "interactionId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": ["approval", "input"]
+                  },
+                  "callId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "toolName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "input": {
+                    "$ref": "#/$defs/__schema3"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  }
+                },
+                "required": ["type", "turnId", "itemId", "raw", "interactionId", "kind"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "request-resolved"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  },
+                  "interactionId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["type", "turnId", "itemId", "raw", "interactionId"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "usage"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  },
+                  "inputTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "outputTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "cachedInputTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "costUsd": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": ["type", "turnId", "itemId", "raw"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "context-usage"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  },
+                  "usedTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "windowTokens": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["type", "turnId", "itemId", "raw", "usedTokens", "windowTokens"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "turn-end"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": ["completed", "interrupted", "failed"]
+                  }
+                },
+                "required": ["type", "turnId", "itemId", "raw", "outcome"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "error"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "authRequired",
+                      "rateLimited",
+                      "restartRecommended",
+                      "staleTurn",
+                      "unhandled"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["type", "turnId", "itemId", "raw", "kind", "message"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "window"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "itemId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "raw": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["source", "type"],
+                    "additionalProperties": false
+                  },
+                  "reset": {
+                    "type": "string",
+                    "enum": ["initial", "gap", "generation", "context"]
+                  }
+                },
+                "required": ["type", "turnId", "itemId", "raw", "reset"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "failure": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "authRequired",
+                "rateLimited",
+                "engineCrashed",
+                "protocol",
+                "timeout",
+                "staleTurn"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "required": ["kind", "message"],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "turnId",
+        "threadId",
+        "turnOrdinal",
+        "instance",
+        "fence",
+        "executorSeq",
+        "phase",
+        "deltas"
+      ],
+      "additionalProperties": false,
+      "$defs": {
+        "__schema0": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          ]
+        },
+        "__schema1": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema1"
+              }
+            }
+          ]
+        },
+        "__schema2": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema2"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema2"
+              }
+            }
+          ]
+        },
+        "__schema3": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema3"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "server→executor": {
+    "helloAck": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "type": "number",
+          "const": 1
+        },
+        "resumable": {
+          "maxItems": 4096,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "outcome": {
+                    "type": "string",
+                    "const": "acked"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "ackedSeq": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["outcome", "turnId", "ackedSeq"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "outcome": {
+                    "type": "string",
+                    "const": "not-retained"
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "required": ["outcome", "turnId"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": ["protocol", "resumable"],
+      "additionalProperties": false
+    },
+    "lease": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "fence": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "ttlMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": ["threadId", "fence", "ttlMs"],
+      "additionalProperties": false
+    },
+    "reportAck": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "applied"
+            },
+            "ackedSeq": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": ["outcome", "ackedSeq"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "duplicate"
+            },
+            "ackedSeq": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": ["outcome", "ackedSeq"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "not-retained"
+            }
+          },
+          "required": ["outcome"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "offer": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "turnOrdinal": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "fence": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "input": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "text"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["type", "text"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "reasoning"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "object",
+                    "properties": {
+                      "schemaVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "data": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "$ref": "#/$defs/__schema0"
+                        }
+                      }
+                    },
+                    "required": ["schemaVersion", "provider", "data"]
+                  }
+                },
+                "required": ["type", "text"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "file"
+                  },
+                  "mediaType": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reference": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "filename": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["type", "mediaType", "reference"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "source"
+                  },
+                  "sourceId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": ["type", "sourceId"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "tool-call"
+                  },
+                  "callId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "toolName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "input": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "provider": {
+                    "type": "object",
+                    "properties": {
+                      "schemaVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "data": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "$ref": "#/$defs/__schema0"
+                        }
+                      }
+                    },
+                    "required": ["schemaVersion", "provider", "data"]
+                  }
+                },
+                "required": ["type", "callId", "toolName", "input"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "tool-result"
+                  },
+                  "callId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "toolName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": ["success", "error", "interrupted"]
+                  },
+                  "output": {
+                    "$ref": "#/$defs/__schema2"
+                  }
+                },
+                "required": ["type", "callId", "toolName", "outcome"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "tool-approval-request"
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "callId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "isAutomatic": {
+                    "type": "boolean"
+                  },
+                  "signature": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["type", "approvalId", "callId"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "tool-approval-response"
+                  },
+                  "approvalId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "approved": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["type", "approvalId", "approved"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "provider"
+                  },
+                  "envelope": {
+                    "type": "object",
+                    "properties": {
+                      "schemaVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "data": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "$ref": "#/$defs/__schema0"
+                        }
+                      }
+                    },
+                    "required": ["schemaVersion", "provider", "data"]
+                  }
+                },
+                "required": ["type", "envelope"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "control"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": ["run-interrupted", "stale-run"]
+                  }
+                },
+                "required": ["type", "reason"]
+              }
+            ]
+          }
+        },
+        "inputDigest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nativeThreadId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["turnId", "threadId", "turnOrdinal", "fence", "input", "inputDigest"],
+      "additionalProperties": false,
+      "$defs": {
+        "__schema0": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          ]
+        },
+        "__schema1": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema1"
+              }
+            }
+          ]
+        },
+        "__schema2": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema2"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema2"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "interrupt": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": ["turnId", "threadId"],
+      "additionalProperties": false
+    },
+    "reply": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "interactionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reply": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "approve"
+                }
+              },
+              "required": ["kind"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "deny"
+                },
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": ["kind", "message"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "input"
+                },
+                "value": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "required": ["kind", "value"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["turnId", "interactionId", "reply"],
+      "additionalProperties": false,
+      "$defs": {
+        "__schema0": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

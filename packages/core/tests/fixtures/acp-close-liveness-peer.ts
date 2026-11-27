@@ -149,6 +149,11 @@ for await (const line of rl) {
         availableCommands: [{ name: 'mutated-cmd' }],
       });
       sendPermission('late-perm-during-close', 'LateDuringClose');
+      write({
+        id: 'late-read-during-close',
+        method: 'fs/read_text_file',
+        params: { sessionId: 's-1', path: '/etc/hostname' },
+      });
       writeFileSync(join(root, 'close-received'), '1');
       waitForRelease('release-close', () => {
         if (pendingPromptId !== undefined) {

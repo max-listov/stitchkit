@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,9 +17,18 @@ const ownerFixture = fileURLToPath(new URL('./native-owner-loss-owner.mjs', impo
 const targetFixture = fileURLToPath(
   new URL('./native-owner-loss-target.mjs', import.meta.url),
 );
+// A guarded start is three cold Node processes in series (owner, guard, target), and the lane
+// runs this proof beside other native proofs: its latency belongs to the host, not to the
+// property under proof. The bound matches the owner's own command deadline, past which the
+// target is stopped anyway. Cleanup after the owner's SIGKILL is the guarantee under proof and
+// keeps its own short bound.
+const START_BUDGET_MS = 30_000;
+const CLEANUP_BUDGET_MS = 5_000;
+const OUTPUT_TAIL_BYTES = 4096;
 const root = mkdtempSync(join(tmpdir(), 'packed-owner-loss-'));
 const groups = new Set();
 const pids = new Set();
+const startTimings = [];
 
 function alive(pid) {
   try {
@@ -23,14 +39,59 @@ function alive(pid) {
   }
 }
 
-async function waitFor(read, what) {
-  const deadline = Date.now() + 5000;
+function listed(directory) {
+  try {
+    return readdirSync(directory).sort().join(', ') || 'empty';
+  } catch (error) {
+    return `unreadable (${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
+function ownerState(owner) {
+  const exit =
+    owner.exit === undefined
+      ? `alive=${alive(owner.pid)}`
+      : `exited code=${owner.exit.code} signal=${owner.exit.signal}`;
+  const output = owner.output.trim();
+  return `owner ${owner.pid} ${exit}; owner output: ${output === '' ? 'none' : output}`;
+}
+
+/**
+ * Wait for a fixture fact. A start wait fails at once when its owner exits first, and every
+ * failure names the elapsed time, the phase directory and the owner's exit and output.
+ */
+async function waitFor(read, what, { budgetMs, owner, directory }) {
+  const started = Date.now();
+  const deadline = started + budgetMs;
   for (;;) {
     const value = read();
-    if (value !== undefined && value !== false) return value;
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
+    if (value !== undefined && value !== false) return { value, ms: Date.now() - started };
+    const context = () =>
+      [
+        `after ${Date.now() - started} ms`,
+        ...(directory === undefined ? [] : [`files: ${listed(directory)}`]),
+        ...(owner === undefined ? [] : [ownerState(owner)]),
+      ].join('; ');
+    if (owner?.exit !== undefined)
+      throw new Error(`Owner exited before ${what} (${context()})`);
+    if (Date.now() > deadline)
+      throw new Error(`Timed out waiting for ${what} within ${budgetMs} ms (${context()})`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+async function started(read, what, owner, directory) {
+  const { value, ms } = await waitFor(read, what, {
+    budgetMs: START_BUDGET_MS,
+    owner,
+    directory,
+  });
+  startTimings.push(`${what} ${ms} ms`);
+  return value;
+}
+
+async function cleaned(read, what, directory) {
+  await waitFor(read, what, { budgetMs: CLEANUP_BUDGET_MS, directory });
 }
 
 function numberFile(directory, name) {
@@ -41,16 +102,29 @@ function numberFile(directory, name) {
 }
 
 function startOwner(directory, mode, phase) {
-  const owner = spawn(
+  const child = spawn(
     process.execPath,
     [ownerFixture, mode, phase, directory, targetFixture],
     {
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
-  if (owner.pid === undefined) throw new Error('owner started without a pid');
-  pids.add(owner.pid);
-  return owner.pid;
+  if (child.pid === undefined) throw new Error('owner started without a pid');
+  pids.add(child.pid);
+  const owner = { pid: child.pid, exit: undefined, output: '' };
+  const keep = (chunk) => {
+    owner.output = (owner.output + chunk).slice(-OUTPUT_TAIL_BYTES);
+  };
+  child.stdout.setEncoding('utf8').on('data', keep);
+  child.stderr.setEncoding('utf8').on('data', keep);
+  child.once('exit', (code, signal) => {
+    owner.exit = { code, signal };
+  });
+  child.once('error', (error) => {
+    keep(`spawn error: ${error.message}`);
+    owner.exit = { code: null, signal: null };
+  });
+  return owner;
 }
 
 function kill(target) {
@@ -64,30 +138,45 @@ function kill(target) {
 try {
   const negative = join(root, 'negative');
   mkdirSync(negative);
-  const unguardedOwner = startOwner(negative, 'unguarded', 'after-initialize');
-  await waitFor(() => existsSync(join(negative, 'initialized')), 'negative initialization');
-  const unguardedLeader = await waitFor(
+  const unguarded = startOwner(negative, 'unguarded', 'after-initialize');
+  await started(
+    () => existsSync(join(negative, 'initialized')),
+    'negative initialization',
+    unguarded,
+    negative,
+  );
+  const unguardedLeader = await started(
     () => numberFile(negative, 'leader.pid'),
     'negative leader',
+    unguarded,
+    negative,
   );
-  const unguardedTarget = await waitFor(
+  const unguardedTarget = await started(
     () => numberFile(negative, 'target.pid'),
     'negative target',
+    unguarded,
+    negative,
   );
-  const unguardedMember = await waitFor(
+  const unguardedMember = await started(
     () => numberFile(negative, 'member.pid'),
     'negative descendant',
+    unguarded,
+    negative,
   );
   assert.equal(unguardedLeader, unguardedTarget);
   groups.add(unguardedLeader);
   pids.add(unguardedTarget);
   pids.add(unguardedMember);
-  kill(unguardedOwner);
-  await waitFor(() => !alive(unguardedOwner), 'negative owner death');
+  kill(unguarded.pid);
+  await cleaned(() => !alive(unguarded.pid), 'negative owner death', negative);
   assert.equal(alive(unguardedTarget), true);
   assert.equal(alive(unguardedMember), true);
   kill(-unguardedLeader);
-  await waitFor(() => !alive(unguardedTarget) && !alive(unguardedMember), 'negative cleanup');
+  await cleaned(
+    () => !alive(unguardedTarget) && !alive(unguardedMember),
+    'negative cleanup',
+    negative,
+  );
 
   const neighbor = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
     detached: true,
@@ -100,22 +189,40 @@ try {
     const directory = join(root, phase);
     mkdirSync(directory);
     const owner = startOwner(directory, 'guarded', phase);
-    const leader = await waitFor(() => numberFile(directory, 'leader.pid'), `${phase} leader`);
-    const target = await waitFor(() => numberFile(directory, 'target.pid'), `${phase} target`);
-    const member = await waitFor(() => numberFile(directory, 'member.pid'), `${phase} member`);
+    const leader = await started(
+      () => numberFile(directory, 'leader.pid'),
+      `${phase} leader`,
+      owner,
+      directory,
+    );
+    const target = await started(
+      () => numberFile(directory, 'target.pid'),
+      `${phase} target`,
+      owner,
+      directory,
+    );
+    const member = await started(
+      () => numberFile(directory, 'member.pid'),
+      `${phase} member`,
+      owner,
+      directory,
+    );
     assert.notEqual(leader, target);
     groups.add(leader);
     pids.add(target);
     pids.add(member);
     if (phase !== 'before-listen')
-      await waitFor(
+      await started(
         () => existsSync(join(directory, phase === 'hanging-rpc' ? 'rpc' : 'initialized')),
         `${phase} phase`,
+        owner,
+        directory,
       );
-    kill(owner);
-    await waitFor(
+    kill(owner.pid);
+    await cleaned(
       () => !alive(leader) && !alive(target) && !alive(member),
       `${phase} complete group cleanup`,
+      directory,
     );
     assert.equal(alive(neighbor.pid), true);
   }
@@ -200,6 +307,7 @@ try {
     (error) => error instanceof NativeCommandError && error.code === 'COMMAND_UNAVAILABLE',
   );
 
+  console.log(`packed native owner loss start latency: ${startTimings.join(', ')}`);
   console.log('packed native owner loss: ok');
 } finally {
   for (const group of groups) kill(-group);

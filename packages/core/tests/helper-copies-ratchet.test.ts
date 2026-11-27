@@ -52,7 +52,7 @@ const INLINE_INTEGER_COPIES: Record<string, number> = {
   'application/sqlite-migrations.ts': 2,
   'browser/chunked-upload.ts': 2,
   'browser/client-executors.ts': 1,
-  'contract/define-validation.ts': 2,
+  'contract/define-validation.ts': 1,
   'files/chunk-spool.ts': 3,
   'internal/channel.ts': 1,
   'primitives/deadline.ts': 2,

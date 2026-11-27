@@ -63,6 +63,8 @@ export interface McpMountConfig {
    * `tool.inputRecursionDepth` wins. Absent: references stay.
    */
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
   /** Global error hint injected into every failed tool result. */
   errorHint?: ErrorHintFn;
   /** Report output keys the contract schema removed — → ADR 0037. */
@@ -91,6 +93,7 @@ export function validateMcpSchemas(config: ValidateMcpSchemasConfig): void {
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
+    inputNestingDepth: config.inputNestingDepth,
     schemaValidation: config,
     logger: config.logger,
   });
@@ -110,6 +113,7 @@ export function mountMcp(
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
+    inputNestingDepth: config.inputNestingDepth,
     schemaValidation: config.schemaValidation,
     logger: config.logger,
   });
@@ -134,6 +138,9 @@ export function mountPreparedMcp(
           config.reservedToolNames,
         )
       : undefined;
+  // Under discovery each session lists a different subset, so no listing equals the digest of the
+  // whole surface: like a surface with raw tools, it claims no catalog stamp (ADR 0293).
+  const catalog = validatedDiscovery === undefined ? config.catalog : undefined;
   const runTool = createToolRunner({
     source: 'mcp',
     toolSurface: true,
@@ -160,7 +167,7 @@ export function mountPreparedMcp(
         runTool,
         formatResult: (result, mode, toolName) =>
           formatMcpResult(result, mode, toolName, config.errorHint),
-        catalog: config.catalog,
+        catalog,
         multiRoundRuntime: config.multiRoundRuntime,
         hooks: config.hooks,
         lifecycle,
@@ -178,7 +185,7 @@ export function mountPreparedMcp(
       lifecycle,
       hooks: config.hooks,
       context: config.context,
-      catalog: config.catalog,
+      catalog,
       coerceJsonArgs: config.coerceJsonArgs,
       errorHint: config.errorHint,
       onOutputStrip: config.onOutputStrip,
@@ -249,6 +256,8 @@ export interface McpServerSharedConfig<TAuth> {
    * `tool.inputRecursionDepth` wins. Absent: references stay.
    */
   inputRecursionDepth?: number;
+  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
+  inputNestingDepth?: number;
   /** Global error hint injected into every failed tool result. */
   errorHint?: ErrorHintFn;
   /** Report output keys the contract schema removed — → ADR 0037. */
@@ -331,6 +340,7 @@ export function buildMcpServer(config: unknown, auth?: unknown): McpServer {
     extend: config.extend,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
+    inputNestingDepth: config.inputNestingDepth,
     schemaValidation: config.schemaValidation,
     logger: config.logger,
     multiRound: {
@@ -390,9 +400,9 @@ export function buildMcpServerFromPrepared<TAuth>(
   const server = new McpServer(config.serverInfo, serverOptions);
   const context = config.context?.(auth);
   const catalog = mcpCatalogStamp(prepared);
-  // Raw SDK registrations are outside the stamp, so a surface carrying them never claims to
-  // know its whole catalog.
-  if (!config.rawTools) servedCatalogs.set(server, catalog);
+  // Raw SDK registrations are outside the stamp, and discovery lists a subset per session: such a
+  // surface never claims to know its whole catalog.
+  if (!config.rawTools && config.discovery === undefined) servedCatalogs.set(server, catalog);
   mountPreparedMcp(server, prepared.contractTools, {
     catalog,
     context,
@@ -404,6 +414,7 @@ export function buildMcpServerFromPrepared<TAuth>(
     coerceJsonArgs: config.coerceJsonArgs,
     flattenUnionInput: config.flattenUnionInput,
     inputRecursionDepth: config.inputRecursionDepth,
+    inputNestingDepth: config.inputNestingDepth,
     errorHint: config.errorHint,
     onOutputStrip: config.onOutputStrip,
     discovery: config.discovery,

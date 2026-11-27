@@ -185,6 +185,10 @@
       "types": "./dist/entrypoints/agent-executor/testing.d.ts",
       "import": "./dist/entrypoints/agent-executor/testing.js"
     },
+    "./agent-executor/testing/claude-sdk": {
+      "types": "./dist/entrypoints/agent-executor/testing/claude-sdk.d.ts",
+      "import": "./dist/entrypoints/agent-executor/testing/claude-sdk.js"
+    },
     "./agent-runtime/postgres": {
       "types": "./dist/entrypoints/agent-runtime/postgres.d.ts",
       "import": "./dist/entrypoints/agent-runtime/postgres.js"
@@ -244,6 +248,10 @@
     "./service-host/macos": {
       "types": "./dist/entrypoints/service-host/macos.d.ts",
       "import": "./dist/entrypoints/service-host/macos.js"
+    },
+    "./service-host/work": {
+      "types": "./dist/entrypoints/service-host/work.d.ts",
+      "import": "./dist/entrypoints/service-host/work.js"
     },
     "./telegram": {
       "types": "./dist/entrypoints/telegram.d.ts",
@@ -337,9 +345,9 @@
       "types": "./dist/entrypoints/process.d.ts",
       "import": "./dist/entrypoints/process.js"
     },
-    "./process/owner-loss": {
-      "types": "./dist/entrypoints/process/owner-loss.d.ts",
-      "import": "./dist/entrypoints/process/owner-loss.js"
+    "./process/bootstrap": {
+      "types": "./dist/entrypoints/process/bootstrap.d.ts",
+      "import": "./dist/entrypoints/process/bootstrap.js"
     },
     "./files/packaging": {
       "types": "./dist/entrypoints/files/packaging.d.ts",

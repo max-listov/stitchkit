@@ -4,6 +4,7 @@ description: "An opt-in per-command guard binds a detached native group to its c
 type: decision
 status: accepted
 amends: ["0243"]
+amendedBy: ["0332"]
 created: 2026-10-09
 updated: 2026-10-09
 ---
@@ -52,6 +53,8 @@ to retain kernel ownership continuously rather than infer it after a gap.
    `bootstrapNativeCommandOwnerLoss()` tells the application only whether the guard owns this
    invocation; the private flag, filename and protocol stay inside the package. The full
    `stitchkit/process` entry may remain behind the application's ordinary dynamic dispatch.
+   (amended by ADR 0332: the entry is `stitchkit/process/bootstrap` and the call is
+   `bootstrapPackageProcess()`; it also carries the recorded process root of launched work.)
 
 The guard is a finite implementation detail of one command call. It has no durable state, restart
 policy, discovery endpoint or shared daemon, so durable jobs and application supervision remain in

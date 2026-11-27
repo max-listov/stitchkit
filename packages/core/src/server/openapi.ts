@@ -12,6 +12,7 @@
  */
 
 import type { MultipartDescriptor } from '../contract/client-types';
+import type { DescribedRefusal } from '../contract/operation-refusals';
 import { DEFAULT_CONTRACT_STREAM_FRAME_BYTES } from '../contract/stream';
 import { inputIsQuery } from '../internal/http-input';
 import { jsonResponse } from '../internal/json-response';
@@ -133,6 +134,25 @@ function errorResponses(guarded: boolean): Record<string, unknown> {
     responses['403'] = errorResponse('Forbidden');
   }
   return responses;
+}
+
+/**
+ * The declared refusals (`refuses`, ADR 0330): each code with its status, retryability and details
+ * schema, and one error response per declared status that no other response already documents.
+ */
+function declaredRefusals(
+  refuses: readonly DescribedRefusal[],
+  responses: Record<string, unknown>,
+): Record<string, unknown>[] {
+  for (const status of new Set(refuses.map((refusal) => String(refusal.status))))
+    if (!(status in responses)) responses[status] = errorResponse('Declared refusal');
+  return refuses.map((refusal) => ({
+    code: refusal.code,
+    status: refusal.status,
+    retryable: refusal.retryable,
+    ...(refusal.message !== undefined && { message: refusal.message }),
+    ...(refusal.details !== undefined && { details: safeJson(refusal.details, 'output') }),
+  }));
 }
 
 /**
@@ -311,6 +331,9 @@ export function generateOpenApiDocument(config: OpenApiConfig): OpenApiDocument 
         'x-stitchkit-has-input': Boolean(method.inputSchema),
         'x-stitchkit-has-output': Boolean(method.outputSchema || method.stream),
         ...(method.stream && { 'x-stitchkit-stream': true }),
+        ...(method.refuses && {
+          'x-stitchkit-refusals': declaredRefusals(method.refuses, responses),
+        }),
         ...(parameters.length > 0 && { parameters }),
         ...(requirement && { security: requirement }),
         responses,

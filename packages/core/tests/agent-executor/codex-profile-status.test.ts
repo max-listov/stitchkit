@@ -34,6 +34,63 @@ test('Codex status distinguishes login states on stdout and stderr without expos
     }
   }));
 
+test('Codex merges a sparse quota push into the window it updates instead of adding a duplicate', () =>
+  inScratch('sparse-limits', async (root) => {
+    const dir = join(root, 's');
+    mkdirSync(dir, { mode: 0o700 });
+    const cli = join(root, 'login.ts');
+    writeFileSync(cli, "process.stderr.write('Logged in using ChatGPT\\n');");
+    let snapshot: Record<string, unknown> = {
+      rateLimits: {
+        primary: { usedPercent: 13, windowDurationMins: 300 },
+        secondary: { usedPercent: 30, windowDurationMins: 10080 },
+      },
+    };
+    const server = await createFakeCodexAppServer({
+      socketPath: join(dir, 'a.sock'),
+      handlers: { 'account/rateLimits/read': () => snapshot },
+    });
+    let pushes = 0;
+    const pushed = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const driver = createCodexDriver({
+      executable: process.execPath,
+      prefixArgs: [cli],
+      ambient: ambientIn(root),
+      transport: { kind: 'unix-connect', socketPath: server.socketPath },
+      onNotification(event) {
+        if (event.method === 'account/rateLimits/updated') pushed[pushes++]?.resolve();
+      },
+    });
+    const profile = { engine: 'codex' as const, profileId: 'p', home: root };
+    try {
+      await driver.status(profile);
+      const control = await driver.connectControl({ profile, cwd: root });
+      try {
+        // The protocol allows a window without its duration: it is the same five-hour quota.
+        server.sendNotification('account/rateLimits/updated', {
+          rateLimits: { primary: { usedPercent: 60, windowDurationMins: null } },
+        });
+        await pushed[0]?.promise;
+        server.sendNotification('account/rateLimits/updated', {
+          rateLimits: { secondary: { usedPercent: 31 } },
+        });
+        await pushed[1]?.promise;
+      } finally {
+        await control.close();
+      }
+      snapshot = { error: { code: -32603, message: 'quota unavailable' } };
+      const merged = (await driver.status(profile)).planLimits;
+      expect(
+        merged?.windows.map((w) => [w.name, w.usedPercent, w.windowDurationMins]),
+      ).toEqual([
+        ['limit:10080m', 31, 10080],
+        ['limit:300m', 60, 300],
+      ]);
+    } finally {
+      await server.close();
+    }
+  }));
+
 test('Codex status replaces complete quota snapshots, merges pushes, and preserves the last observation on pull failure', () =>
   inScratch('limits', async (root) => {
     const dir = join(root, 's');

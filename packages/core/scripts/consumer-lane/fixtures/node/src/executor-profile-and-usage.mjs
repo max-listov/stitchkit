@@ -7,7 +7,7 @@ import {
   claudeUsagePlanLimits as sdkUsage,
 } from 'stitchkit/agent-executor/claude-sdk';
 import { codexPlanLimits } from 'stitchkit/agent-executor/codex';
-import { createFakeClaudeSdkQuery } from 'stitchkit/agent-executor/testing';
+import { createFakeClaudeSdkQuery } from 'stitchkit/agent-executor/testing/claude-sdk';
 
 const account = {
   limitId: 'codex',

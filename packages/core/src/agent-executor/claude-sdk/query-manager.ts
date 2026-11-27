@@ -1,7 +1,11 @@
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { loseEngineTurn } from '../engine-requests';
 import type { PlanLimits } from '../hello';
-import { emitStartupPhase, invokeSafely } from '../session-primitives';
+import {
+  emitStartupPhase,
+  invokeObserver,
+  type ObserverErrorHandler,
+} from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
 import type { ClaudeSdkFlagSettings } from './controls';
 import type { ClaudeSdkDriverConfig, ClaudeSdkQueryExitContext, ClaudeSdkRun } from './driver';
@@ -43,11 +47,12 @@ async function launchSingleSdkQuery(input: {
   setInFlightClose: (fn: (() => void) | undefined) => void;
   recordPid: (pid: number | undefined) => void;
   onPidExit: (pid: number) => void;
+  trackExit: (exited: Promise<void>) => void;
   onStartupPhase?: (phase: ExecutorStartupPhase) => void;
   onExit: (handle: RunningQueryHandle, error: unknown) => void;
 }): Promise<RunningQueryHandle> {
   input.ensureAlive();
-  emitStartupPhase(input.onStartupPhase, 'spawning');
+  emitStartupPhase(input.onStartupPhase, 'spawning', input.config.onObserverError);
   input.ensureAlive();
   const pushed = pushablePrompt();
   let query: ClaudeSdkRun;
@@ -71,6 +76,7 @@ async function launchSingleSdkQuery(input: {
         activePermissionMode: input.activePermissionMode,
         recordPid: input.recordPid,
         onPidExit: input.onPidExit,
+        trackExit: input.trackExit,
       }),
     });
   } catch (error) {
@@ -84,7 +90,7 @@ async function launchSingleSdkQuery(input: {
     if (closedOnce) return;
     closedOnce = true;
     pushed.end();
-    closeQuerySafely(query);
+    closeQuerySafely(query, input.config.onObserverError);
   };
   const handle: RunningQueryHandle = {
     query,
@@ -103,6 +109,9 @@ async function launchSingleSdkQuery(input: {
         ...(input.config.onTurnUsage !== undefined && {
           onTurnUsage: input.config.onTurnUsage,
         }),
+        ...(input.config.onObserverError !== undefined && {
+          onObserverError: input.config.onObserverError,
+        }),
         onExit: input.onExit,
       });
     },
@@ -111,7 +120,7 @@ async function launchSingleSdkQuery(input: {
   input.setInFlightClose(closeHandle);
   try {
     if (hasDelegationVerification(input.config.verifyDelegation)) {
-      emitStartupPhase(input.onStartupPhase, 'verifying');
+      emitStartupPhase(input.onStartupPhase, 'verifying', input.config.onObserverError);
       await verifyClaudeSdkDelegation(query, input.config.verifyDelegation, input.signal);
     }
     if (input.flagSettingsOverlay !== undefined) {
@@ -131,9 +140,10 @@ function notifyQueryExit(
   callback: ClaudeSdkDriverConfig['onQueryExit'],
   error: unknown,
   context: ClaudeSdkQueryExitContext,
+  onObserverError: ObserverErrorHandler | undefined,
 ): void {
   if (callback === undefined) return;
-  invokeSafely(() => callback(error, context));
+  invokeObserver(onObserverError, 'onQueryExit', () => callback(error, context));
 }
 
 /** Own query startup, ownership handoff, and unexpected query exit for one Claude SDK session. */
@@ -150,11 +160,12 @@ export function createSdkQueryManager(state: {
   readonly isOpened: () => boolean;
   readonly isClosed: () => boolean;
   readonly ensureAlive: () => void;
-  readonly getResume: () => {
+  /** Read at every launch: whether to resume is a fact on disk, not a memory of having sent. */
+  readonly getResume: () => Promise<{
     readonly resume: boolean;
     readonly resumeSessionAt?: Options['resumeSessionAt'];
     readonly resumeDropsTurn?: Options['resumeDropsTurn'];
-  };
+  }>;
   readonly getLiveConfig: () => {
     readonly activeModel: string | undefined;
     readonly activePermissionMode: NonNullable<Options['permissionMode']>;
@@ -168,6 +179,7 @@ export function createSdkQueryManager(state: {
   readonly setInFlightClose: (fn: (() => void) | undefined) => void;
   readonly recordPid: (pid: number | undefined) => void;
   readonly onPidExit: (pid: number) => void;
+  readonly trackExit: (exited: Promise<void>) => void;
 }): (startLoopImmediately: boolean) => Promise<RunningQueryHandle> {
   let opening: Promise<RunningQueryHandle> | undefined;
   const onExit = (exited: RunningQueryHandle, error: unknown) => {
@@ -180,17 +192,15 @@ export function createSdkQueryManager(state: {
       state.clearTurn();
       state.recordPid(undefined);
     }
-    if (turn !== undefined) {
-      turn.settled = true;
-      turn.lost = { error };
-    }
     loseEngineTurn(turn, stoppedPermission('The Claude SDK query ended'), error);
     exited.close();
     if (shouldNotify) {
-      notifyQueryExit(state.config.onQueryExit, error, {
-        duringTurn,
-        nativeThreadId: state.sessionId,
-      });
+      notifyQueryExit(
+        state.config.onQueryExit,
+        error,
+        { duringTurn, nativeThreadId: state.sessionId },
+        state.config.onObserverError,
+      );
     }
   };
   return async (startLoopImmediately: boolean): Promise<RunningQueryHandle> => {
@@ -201,37 +211,43 @@ export function createSdkQueryManager(state: {
       return active;
     }
     if (opening === undefined) {
-      const resumeState = state.getResume();
       const liveConfig = state.getLiveConfig();
-      const promise = launchSingleSdkQuery({
-        config: state.config,
-        cwd: state.cwd,
-        env: { ...state.env },
-        profileId: state.profileId,
-        limits: state.limits,
-        sessionId: state.sessionId,
-        resume: resumeState.resume,
-        ...(resumeState.resumeSessionAt !== undefined && {
-          resumeSessionAt: resumeState.resumeSessionAt,
-        }),
-        ...(resumeState.resumeDropsTurn !== undefined && {
-          resumeDropsTurn: resumeState.resumeDropsTurn,
-        }),
-        activeModel: liveConfig.activeModel,
-        activePermissionMode: liveConfig.activePermissionMode,
-        flagSettingsOverlay: liveConfig.flagSettingsOverlay,
-        signal: state.signal,
-        canUseTool: state.canUseTool,
-        isClosed: state.isClosed,
-        ensureAlive: state.ensureAlive,
-        getTurn: state.getTurn,
-        clearTurn: state.clearTurn,
-        setInFlightClose: state.setInFlightClose,
-        recordPid: state.recordPid,
-        onPidExit: state.onPidExit,
-        ...(state.onStartupPhase !== undefined && { onStartupPhase: state.onStartupPhase }),
-        onExit,
-      })
+      const promise = state
+        .getResume()
+        .then((resumeState) =>
+          launchSingleSdkQuery({
+            config: state.config,
+            cwd: state.cwd,
+            env: { ...state.env },
+            profileId: state.profileId,
+            limits: state.limits,
+            sessionId: state.sessionId,
+            resume: resumeState.resume,
+            ...(resumeState.resumeSessionAt !== undefined && {
+              resumeSessionAt: resumeState.resumeSessionAt,
+            }),
+            ...(resumeState.resumeDropsTurn !== undefined && {
+              resumeDropsTurn: resumeState.resumeDropsTurn,
+            }),
+            activeModel: liveConfig.activeModel,
+            activePermissionMode: liveConfig.activePermissionMode,
+            flagSettingsOverlay: liveConfig.flagSettingsOverlay,
+            signal: state.signal,
+            canUseTool: state.canUseTool,
+            isClosed: state.isClosed,
+            ensureAlive: state.ensureAlive,
+            getTurn: state.getTurn,
+            clearTurn: state.clearTurn,
+            setInFlightClose: state.setInFlightClose,
+            recordPid: state.recordPid,
+            onPidExit: state.onPidExit,
+            trackExit: state.trackExit,
+            ...(state.onStartupPhase !== undefined && {
+              onStartupPhase: state.onStartupPhase,
+            }),
+            onExit,
+          }),
+        )
         .then((handle) => {
           if (state.isClosed()) {
             if (state.getInFlightClose() === handle.close) state.setInFlightClose(undefined);

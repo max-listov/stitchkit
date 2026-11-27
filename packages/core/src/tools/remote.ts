@@ -7,7 +7,7 @@ import type { ContractDef, EndpointDef } from '../contract/define';
 import { AppError, STITCH_ERROR_STATUS } from '../contract/errors';
 import type { RuntimeContext } from '../contract/runtime-context';
 import { isAsyncIterable, isRecord } from '../internal/typed';
-import { contractMethodFields } from '../server/contract-method';
+import { contractMethodFields, withDeclaredRefusals } from '../server/contract-method';
 import type { MethodDef, ServiceDef } from '../server/types';
 
 /** A contract's typed client, viewed as a flat string-keyed call map. */
@@ -126,47 +126,52 @@ export function implementRemote<T extends Record<string, EndpointDef>>(
       // origin. A proxied tool therefore asks nothing — the origin's own MCP
       // surface is where its questions are asked.
       mcp: undefined,
-      handler: async (ctx: RuntimeContext) => {
-        // A raw endpoint proxies like any other: `createClient` asks for
-        // `responseType: 'response'`, so the remote `Response` — bytes, status
-        // and headers — is forwarded verbatim. Request headers are NOT relayed,
-        // so a `Range` on the proxy is not seen by the origin and the full body
-        // comes back. → ADR 0038.
-        const call = client[key];
-        if (!call) {
-          throw new Error(`implementRemote: endpoint "${key}" is not exposed over HTTP`);
-        }
-        const args = toArgs(ctx);
-        try {
-          refuseCancelled(ctx.signal);
-          // Inside the try: a throwing transform hook (which may itself call
-          // the remote API, e.g. to upload a referenced file) gets the same
-          // error conversion as the forwarded call.
-          const finalArgs = options?.transformArgs
-            ? await options.transformArgs(key, args)
-            : args;
-          refuseCancelled(ctx.signal);
-          const requestOptions = { signal: ctx.signal };
-          const answer = await (endpointHasArguments(endpoint)
-            ? call.withOptions(finalArgs, requestOptions)
-            : call.withOptions(requestOptions));
-          // A stream is forwarded as a stream: the remote items are this
-          // handler's source, read under the same contract descriptor by
-          // whichever surface carries the proxy.
-          return 'stream' in endpoint && isAsyncIterable(answer)
-            ? forwardedStream(answer)
-            : answer;
-        } catch (err) {
-          // The typed client throws `ApiError` on a non-2xx remote response.
-          // Translate it to the framework `AppError` so the real code / status /
-          // hint survive — otherwise `normalizeError` flattens every remote
-          // failure to `INTERNAL_SERVER_ERROR` (and logs a misleading "unhandled
-          // error"). A remote 400 stays a clean `VALIDATION_ERROR`, a 403 a
-          // `FORBIDDEN`, and so on, across every transport that mounts the proxy.
-          if (ApiError.is(err)) throw projectRemoteError(err);
-          throw err;
-        }
-      },
+      // The proxy is held to the contract's declared refusals as the origin is. → ADR 0330
+      handler: withDeclaredRefusals(
+        endpoint,
+        `${contract.meta.prefix}.${key}`,
+        async (ctx: RuntimeContext) => {
+          // A raw endpoint proxies like any other: `createClient` asks for
+          // `responseType: 'response'`, so the remote `Response` — bytes, status
+          // and headers — is forwarded verbatim. Request headers are NOT relayed,
+          // so a `Range` on the proxy is not seen by the origin and the full body
+          // comes back. → ADR 0038.
+          const call = client[key];
+          if (!call) {
+            throw new Error(`implementRemote: endpoint "${key}" is not exposed over HTTP`);
+          }
+          const args = toArgs(ctx);
+          try {
+            refuseCancelled(ctx.signal);
+            // Inside the try: a throwing transform hook (which may itself call
+            // the remote API, e.g. to upload a referenced file) gets the same
+            // error conversion as the forwarded call.
+            const finalArgs = options?.transformArgs
+              ? await options.transformArgs(key, args)
+              : args;
+            refuseCancelled(ctx.signal);
+            const requestOptions = { signal: ctx.signal };
+            const answer = await (endpointHasArguments(endpoint)
+              ? call.withOptions(finalArgs, requestOptions)
+              : call.withOptions(requestOptions));
+            // A stream is forwarded as a stream: the remote items are this
+            // handler's source, read under the same contract descriptor by
+            // whichever surface carries the proxy.
+            return 'stream' in endpoint && isAsyncIterable(answer)
+              ? forwardedStream(answer)
+              : answer;
+          } catch (err) {
+            // The typed client throws `ApiError` on a non-2xx remote response.
+            // Translate it to the framework `AppError` so the real code / status /
+            // hint survive — otherwise `normalizeError` flattens every remote
+            // failure to `INTERNAL_SERVER_ERROR` (and logs a misleading "unhandled
+            // error"). A remote 400 stays a clean `VALIDATION_ERROR`, a 403 a
+            // `FORBIDDEN`, and so on, across every transport that mounts the proxy.
+            if (ApiError.is(err)) throw projectRemoteError(err);
+            throw err;
+          }
+        },
+      ),
     };
   }
 

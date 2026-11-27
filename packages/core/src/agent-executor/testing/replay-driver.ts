@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { abortReason } from '../../internal/abort-race';
 import type { AgentEngineDriver, AgentEngineSession, AgentEngineTurn } from '../engine';
-import { answerEngineRequest, drainEngineRequests, loseEngineTurn } from '../engine-requests';
+import {
+  interruptEngineTurn,
+  loseEngineTurn,
+  respondToEngineRequest,
+} from '../engine-requests';
 import { type InteractionReply, InteractionReplySchema } from '../executor-contract';
 import {
   type ExecutorDriverCapabilities,
@@ -10,7 +15,12 @@ import {
   type PlanLimits,
 } from '../hello';
 import { engineProfile } from '../profile';
-import { createTurnDeltaChannel, emitStartupPhase, sessionAbort } from '../session-primitives';
+import {
+  createTurnDeltaChannel,
+  emitStartupPhase,
+  sessionAbort,
+  sessionLiveness,
+} from '../session-primitives';
 import type { ReplayGate } from './replay-gate';
 import { type ReplayTurnSlot, runReplayTurnScript } from './replay-runner';
 import {
@@ -49,6 +59,12 @@ export interface ReplayExecutorDriverConfig {
   readonly models?: readonly string[] | undefined;
   /** When `true`, `session.close()` fails if any configured turns or required steps were not consumed. */
   readonly assertCompleteOnClose?: boolean | undefined;
+  /**
+   * Receives a failure of a host callback the driver contained, as the real drivers do: `hook`
+   * is the option that threw or rejected (`'onStartupPhase'`). Without it the failure is
+   * contained and dropped.
+   */
+  readonly onObserverError?: ((error: unknown, hook: string) => void) | undefined;
 }
 
 /** In-process deterministic replay driver adding inspection and completeness assertions. */
@@ -184,16 +200,39 @@ export function createReplayExecutorDriver(
     async open(openInput): Promise<AgentEngineSession> {
       const profile = engineProfile(engine, openInput.profile);
       const linked = sessionAbort(openInput.signal);
-      emitStartupPhase(openInput.onStartupPhase, 'initializing');
+      emitStartupPhase(openInput.onStartupPhase, 'initializing', config.onObserverError);
       const nativeThreadId = openInput.nativeThreadId ?? `replay-thread-${randomUUID()}`;
-      let closed = false;
+      const liveness = sessionLiveness({
+        closedMessage: 'The replay session is closed',
+        caller: openInput.signal,
+        linked: linked.signal,
+      });
+      // An abort while the startup observer ran refuses the open, as a spawn would.
+      try {
+        liveness.ensureAlive();
+      } catch (error) {
+        linked.release();
+        throw error;
+      }
       let activeTurn: ReplayTurnSlot | undefined;
       let activeTurnPromise: Promise<void> | undefined;
+      // The caller's abort ends the session as close() does, with the caller's reason — as the
+      // real drivers fail their turn with it.
+      linked.signal.addEventListener(
+        'abort',
+        () => {
+          if (liveness.closing) return;
+          const running = activeTurn;
+          activeTurn = undefined;
+          loseEngineTurn(running, () => DENY_CLOSED, abortReason(linked.signal));
+        },
+        { once: true },
+      );
 
       return {
         nativeThreadId,
         async startTurn(turnInput): Promise<AgentEngineTurn> {
-          if (closed) throw new Error('The replay session is closed');
+          liveness.ensureAlive();
           if (activeTurn !== undefined) {
             throw new Error('A turn is already running in this replay session');
           }
@@ -214,6 +253,7 @@ export function createReplayExecutorDriver(
             state: { turnId: turnInput.turnId, interruptRequested: false },
             channel: createTurnDeltaChannel(),
             pending: new Map(),
+            settled: false,
             interruptWaiters: [],
             replyPromises: new Map(),
             hostAnswered: new Set(),
@@ -241,26 +281,27 @@ export function createReplayExecutorDriver(
 
           return {
             deltas: turn.channel,
-            async interrupt() {
-              turn.state.interruptRequested = true;
-              drainEngineRequests(turn, () => DENY_INTERRUPTED);
-              for (const wake of turn.interruptWaiters.splice(0)) wake();
-            },
+            interrupt: () =>
+              interruptEngineTurn(turn, liveness, {
+                refusal: () => DENY_INTERRUPTED,
+                tell() {
+                  for (const wake of turn.interruptWaiters.splice(0)) wake();
+                },
+              }),
             async respond(interactionId, rawReply) {
-              if (!turn.pending.has(interactionId)) {
-                throw new TypeError(`Unknown interaction ${interactionId} for this turn`);
-              }
-              const parsed = InteractionReplySchema.shape.reply.safeParse(rawReply);
-              if (!parsed.success) {
-                throw new TypeError(`Invalid interaction reply: ${parsed.error.message}`);
-              }
-              turn.hostAnswered.add(interactionId);
-              answerEngineRequest(turn, interactionId, parsed.data);
+              respondToEngineRequest(turn, liveness, interactionId, () => {
+                const parsed = InteractionReplySchema.shape.reply.safeParse(rawReply);
+                if (!parsed.success) {
+                  throw new TypeError(`Invalid interaction reply: ${parsed.error.message}`);
+                }
+                turn.hostAnswered.add(interactionId);
+                return parsed.data;
+              });
             },
           };
         },
         async close() {
-          closed = true;
+          liveness.markClosing();
           const running = activeTurn;
           const pendingRun = activeTurnPromise;
           activeTurn = undefined;

@@ -66,8 +66,22 @@ export const ContextHandoffBudgetSchema = z.strictObject({
   maxTokens: z.int().positive().max(HANDOFF_LIMITS.maxTokens),
   maxBytes: z.int().positive().max(HANDOFF_LIMITS.maxBytes),
   maxOmittedIds: z.int().nonnegative().max(HANDOFF_LIMITS.maxOmittedIds).optional(),
+  /**
+   * The receiving thread's context window. When set, the token ceiling is the smaller of
+   * `maxTokens` and `contextWindowTokens - usedTokens - workReserveTokens`.
+   */
   contextWindowTokens: z.int().positive().max(HANDOFF_LIMITS.contextWindowTokens).optional(),
+  /**
+   * Tokens the receiving thread's context already holds. Omitted, it is counted as `0` — the
+   * caller's statement that the thread is new, not a measurement: the builder reads no thread.
+   * A caller that does not know the fill of a thread in use omits `contextWindowTokens` as well,
+   * so `maxTokens` alone bounds the handoff.
+   */
   usedTokens: z.int().nonnegative().max(HANDOFF_LIMITS.contextWindowTokens).optional(),
+  /**
+   * Tokens kept free for the receiving thread's own work. Default: a quarter of the window, at
+   * least 16 000, at most half the window.
+   */
   workReserveTokens: z.int().nonnegative().max(HANDOFF_LIMITS.contextWindowTokens).optional(),
 });
 

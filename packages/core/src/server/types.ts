@@ -9,8 +9,9 @@ import type {
   Transport,
 } from '../contract/define';
 import type { OperationEffect } from '../contract/operation-effect';
+import type { DescribedRefusal } from '../contract/operation-refusals';
 import type { HandlerContext, RuntimeContext } from '../contract/runtime-context';
-import type { EndpointToolOptions } from '../contract/tool-options';
+import type { EndpointToolOptions, OperationToolOption } from '../contract/tool-options';
 import type { EndpointToolView } from '../contract/tool-view';
 import type { StitchLogger } from '../internal/logger';
 import type { PathParams } from '../internal/route-pattern';
@@ -205,19 +206,16 @@ export interface StreamingMultipartImplementation {
 }
 
 /**
- * Stable identity shared by HTTP contract endpoints and pathless native tool
- * operations. Tool lifecycle/audit consume this shape; only `MethodDef` adds an
- * HTTP route path and executable contract schemas. The tool options it carries
- * are the endpoint's `tool` group, declared once in `EndpointToolOptions`.
+ * Stable identity shared by HTTP contract endpoints and pathless native tool operations: what
+ * tool lifecycle/audit read. `MethodDef` adds the HTTP route path and executable contract schemas;
+ * the tool options are the endpoint's `tool` group (`EndpointToolOptions`).
  */
-export interface OperationIdentity
-  extends Pick<EndpointToolOptions, 'ui' | 'annotations' | 'mcp' | 'inputRecursionDepth'> {
+export interface OperationIdentity extends Pick<EndpointToolOptions, OperationToolOption> {
   method: HttpMethod;
   desc: string;
   /**
-   * Owning contract's prefix — the "service" half of a stable `(service, action)`
-   * identity for hooks / audit / observability. Populated by `implement` /
-   * `implementRemote`; not derivable from `path`. → ADR 0022.
+   * Owning contract's prefix — the "service" half of a stable `(service, action)` identity for
+   * hooks / audit / observability, set by `implement` / `implementRemote`. → ADR 0022.
    */
   serviceName: string;
   /**
@@ -230,6 +228,8 @@ export interface OperationIdentity
   scope?: string;
   /** Closed side-effect classification (`'read'` or `'write'`) declared on the operation. */
   effect?: OperationEffect;
+  /** The codes the operation declared it refuses with, resolved (`EndpointDef.refuses`). → ADR 0330 */
+  refuses?: readonly DescribedRefusal[];
   /**
    * Opaque app-defined metadata from `EndpointDef.meta` — the core gives it no
    * meaning. Read it in lifecycle hooks (`endpoint.meta?.X`) or on tool mounts;

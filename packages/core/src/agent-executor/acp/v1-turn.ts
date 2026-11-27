@@ -2,13 +2,20 @@ import { z } from 'zod';
 import type { AgentMessagePart } from '../../agent-parts/parts';
 import type { AgentEngineTurn } from '../engine';
 import {
-  drainEngineRequests,
+  abandonEngineTurn,
   type EngineRequestTurn,
+  type EngineTurnLiveness,
   endEngineTurn,
+  interruptEngineTurn,
   loseEngineTurn,
 } from '../engine-requests';
+import { guardedTurnStarter } from '../image-input';
 import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
-import { createTurnDeltaChannel } from '../session-primitives';
+import {
+  createTurnDeltaChannel,
+  offerTurnDelta,
+  type SessionLiveness,
+} from '../session-primitives';
 import {
   type ExecutorDelta,
   ExecutorErrorKindSchema,
@@ -52,8 +59,10 @@ export interface AcpTurnSlot extends EngineRequestTurn<JsonRpcValue, AcpPermissi
   promptGeneration: number;
   /** Normalized token counters summed across all prompt generations of this turn. */
   accumulatedUsage: ExecutorTokenUsage | undefined;
-  /** True once `turn-end` or channel failure has settled this turn. */
-  settled: boolean;
+  /** Generations whose `session/prompt` the agent has not answered yet. */
+  readonly openGenerations: Set<number>;
+  /** Endings of prompts a newer steer superseded, kept until that steer is accepted or refused. */
+  readonly supersededResults: Map<number, () => void>;
 }
 
 export function newAcpTurn(turnId: string): AcpTurnSlot {
@@ -66,26 +75,41 @@ export function newAcpTurn(turnId: string): AcpTurnSlot {
     promptGeneration: 1,
     accumulatedUsage: undefined,
     settled: false,
+    openGenerations: new Set(),
+    supersededResults: new Map(),
   };
 }
 
 /**
- * Mark a turn settled and fail its delta stream. When `sendCancelled` is `true`, pending
- * permission requests are drained with `ACP_CANCELLED`; when `false`, they are dropped silently.
+ * Fail a turn's delta stream. When `sendCancelled` is `true`, pending permission requests are
+ * drained with `ACP_CANCELLED`; when `false`, the agent no longer reads and they are dropped.
  */
 export function settleAcpTurn(
   turn: AcpTurnSlot | undefined,
   reason: unknown,
   sendCancelled: boolean,
 ): void {
-  if (turn === undefined) return;
-  turn.settled = true;
-  if (sendCancelled) {
-    loseEngineTurn(turn, () => ACP_CANCELLED, reason);
-    return;
-  }
-  turn.pending.clear();
-  turn.channel.fail(reason);
+  if (sendCancelled) loseEngineTurn(turn, () => ACP_CANCELLED, reason);
+  else abandonEngineTurn(turn, reason);
+}
+
+/** Hand a refused steer's turn back to `previous` and tell the refusal as a non-terminal error. */
+function refusedSteer(
+  turn: AcpTurnSlot,
+  error: unknown,
+  generation: number,
+  previous: number,
+): void {
+  const kind = classifyAcpRpcRefusal(error) ?? 'unhandled';
+  turn.promptGeneration = previous;
+  offerTurnDelta(turn.channel, {
+    type: 'error',
+    turnId: turn.state.turnId,
+    itemId: `steer-refused:${generation}`,
+    raw: { source: 'acp', type: 'session/prompt' },
+    kind,
+    message: `The ACP agent refused the steer prompt: ${error instanceof Error ? error.message : String(error)}`,
+  });
 }
 
 /**
@@ -100,18 +124,130 @@ export function runAcpPrompt(input: {
   prompt: readonly JsonRpcValue[];
   turn: AcpTurnSlot;
   generation: number;
-  ensureAlive: () => void;
+  liveness: SessionLiveness;
   usageInputIncludesCachedRead?: boolean;
   checkOutcome?: AcpCheckPromptOutcome;
   done: () => void;
 }): void {
-  const { peer, sessionId, prompt, turn, generation, ensureAlive, checkOutcome, done } = input;
+  const { peer, sessionId, prompt, turn, generation, liveness, checkOutcome, done } = input;
+  const settle = async (parsed: AcpPromptResult): Promise<void> => {
+    const rawOverride =
+      !turn.state.interruptRequested && checkOutcome !== undefined
+        ? await checkOutcome(parsed)
+        : undefined;
+    if (turn.settled || generation !== turn.promptGeneration) return;
+    liveness.ensureAlive();
+    const override =
+      rawOverride !== undefined
+        ? AcpPromptOutcomeOverrideSchema.parse(rawOverride)
+        : undefined;
+    const outcome =
+      override !== undefined
+        ? 'failed'
+        : acpOutcome(parsed.stopReason, turn.state.interruptRequested);
+    const raw = { source: 'acp', type: `session/prompt/${parsed.stopReason}` };
+    const last: ExecutorDelta[] = [];
+    if (turn.accumulatedUsage !== undefined) {
+      last.push({
+        type: 'usage',
+        turnId: turn.state.turnId,
+        itemId: 'usage',
+        raw,
+        ...turn.accumulatedUsage,
+      });
+    }
+    if (override !== undefined) {
+      last.push({
+        type: 'error',
+        turnId: turn.state.turnId,
+        itemId: 'failure',
+        raw,
+        kind: override.errorKind,
+        message: override.message,
+      });
+    } else if (outcome === 'failed') {
+      last.push({
+        type: 'error',
+        turnId: turn.state.turnId,
+        itemId: 'failure',
+        raw,
+        kind: 'restartRecommended',
+        message: `The ACP agent stopped: ${parsed.stopReason}`,
+      });
+    }
+    last.push({
+      type: 'turn-end',
+      turnId: turn.state.turnId,
+      itemId: 'end',
+      raw,
+      outcome,
+      ...(override?.threadDisposition !== undefined && {
+        threadDisposition: override.threadDisposition,
+      }),
+    });
+    // A permission the agent still waits on is answered before the turn's end is told.
+    endEngineTurn(turn, () => ACP_CANCELLED, last);
+    done();
+  };
+  const fail = (error: unknown): void => {
+    turn.openGenerations.delete(generation);
+    if (turn.settled || generation !== turn.promptGeneration) return;
+    // ACP has no acknowledgement of a prompt: an error while an earlier prompt of this turn is
+    // still running — or ended while superseded — is the agent refusing the steer, not the turn
+    // failing. The turn goes back to the newest earlier prompt, and the refusal is told without
+    // ending it; an earlier prompt that already ended settles the turn now.
+    const earlier = [...turn.openGenerations, ...turn.supersededResults.keys()].filter(
+      (other) => other < generation,
+    );
+    if (earlier.length > 0) {
+      const previous = Math.max(...earlier);
+      refusedSteer(turn, error, generation, previous);
+      const ended = turn.supersededResults.get(previous);
+      turn.supersededResults.delete(previous);
+      ended?.();
+      return;
+    }
+    // A session that stopped fails the turn for its own reason, and its agent reads no answer.
+    const stop = liveness.stopped();
+    if (stop !== undefined) {
+      abandonEngineTurn(turn, stop.reason);
+      done();
+      return;
+    }
+    const failure = error;
+    const kind = classifyAcpRpcRefusal(failure);
+    if (kind !== undefined && failure instanceof Error) {
+      const raw = { source: 'acp', type: 'session/prompt' };
+      endEngineTurn(turn, () => ACP_CANCELLED, [
+        {
+          type: 'error',
+          turnId: turn.state.turnId,
+          itemId: 'failure',
+          raw,
+          kind,
+          message: failure.message,
+        },
+        {
+          type: 'turn-end',
+          turnId: turn.state.turnId,
+          itemId: 'end',
+          raw,
+          outcome: 'failed',
+        },
+      ]);
+    } else {
+      loseEngineTurn(turn, () => ACP_CANCELLED, failure);
+    }
+    done();
+  };
+  turn.openGenerations.add(generation);
   // `session/prompt` stays open for the entire turn (streaming updates, tools, human approvals).
   void peer
     .request('session/prompt', { sessionId, prompt: [...prompt] }, { timeoutMs: null })
     .then(async (result) => {
+      turn.openGenerations.delete(generation);
       if (turn.settled) return;
-      ensureAlive();
+      liveness.ensureAlive();
       const parsed = AcpPromptResultSchema.parse(result);
       if (parsed.usage !== undefined && parsed.usage !== null) {
         turn.accumulatedUsage = addAcpTokenUsage(
@@ -123,108 +259,16 @@ export function runAcpPrompt(input: {
           }),
         );
       }
-      // A newer steer generation now owns the turn: keep the channel open until the final prompt settles.
-      if (generation !== turn.promptGeneration) return;
-      const rawOverride =
-        !turn.state.interruptRequested && checkOutcome !== undefined
-          ? await checkOutcome(parsed)
-          : undefined;
-      if (turn.settled || generation !== turn.promptGeneration) return;
-      ensureAlive();
-      const override =
-        rawOverride !== undefined
-          ? AcpPromptOutcomeOverrideSchema.parse(rawOverride)
-          : undefined;
-      const outcome =
-        override !== undefined
-          ? 'failed'
-          : acpOutcome(parsed.stopReason, turn.state.interruptRequested);
-      const raw = { source: 'acp', type: `session/prompt/${parsed.stopReason}` };
-      const last: ExecutorDelta[] = [];
-      if (turn.accumulatedUsage !== undefined) {
-        last.push({
-          type: 'usage',
-          turnId: turn.state.turnId,
-          itemId: 'usage',
-          raw,
-          ...turn.accumulatedUsage,
+      if (generation !== turn.promptGeneration) {
+        // A newer steer owns the turn; this ending is kept in case the agent refuses that steer.
+        turn.supersededResults.set(generation, () => {
+          settle(parsed).catch(fail);
         });
-      }
-      if (override !== undefined) {
-        last.push({
-          type: 'error',
-          turnId: turn.state.turnId,
-          itemId: 'failure',
-          raw,
-          kind: override.errorKind,
-          message: override.message,
-        });
-      } else if (outcome === 'failed') {
-        last.push({
-          type: 'error',
-          turnId: turn.state.turnId,
-          itemId: 'failure',
-          raw,
-          kind: 'restartRecommended',
-          message: `The ACP agent stopped: ${parsed.stopReason}`,
-        });
-      }
-      last.push({
-        type: 'turn-end',
-        turnId: turn.state.turnId,
-        itemId: 'end',
-        raw,
-        outcome,
-        ...(override?.threadDisposition !== undefined && {
-          threadDisposition: override.threadDisposition,
-        }),
-      });
-      turn.settled = true;
-      // A permission the agent still waits on is answered before the turn's end is told.
-      endEngineTurn(turn, () => ACP_CANCELLED, last);
-      done();
-    })
-    .catch((error: unknown) => {
-      if (turn.settled || generation !== turn.promptGeneration) return;
-      turn.settled = true;
-      let failure: unknown = error;
-      let alive = true;
-      try {
-        ensureAlive();
-      } catch (aliveError) {
-        alive = false;
-        failure = aliveError;
-      }
-      if (!alive) {
-        settleAcpTurn(turn, failure, false);
-        done();
         return;
       }
-      const kind = classifyAcpRpcRefusal(failure);
-      if (kind !== undefined && failure instanceof Error) {
-        const raw = { source: 'acp', type: 'session/prompt' };
-        endEngineTurn(turn, () => ACP_CANCELLED, [
-          {
-            type: 'error',
-            turnId: turn.state.turnId,
-            itemId: 'failure',
-            raw,
-            kind,
-            message: failure.message,
-          },
-          {
-            type: 'turn-end',
-            turnId: turn.state.turnId,
-            itemId: 'end',
-            raw,
-            outcome: 'failed',
-          },
-        ]);
-      } else {
-        loseEngineTurn(turn, () => ACP_CANCELLED, failure);
-      }
-      done();
-    });
+      await settle(parsed);
+    })
+    .catch(fail);
 }
 
 /** The turn as the executor steers it: interrupt with `session/cancel`, answer permission requests. */
@@ -232,25 +276,18 @@ export function acpTurnHandle(
   peer: JsonRpcPeer,
   sessionId: string,
   turn: AcpTurnSlot,
-  ensureAlive: () => void,
+  liveness: EngineTurnLiveness,
 ): AgentEngineTurn {
   return {
     deltas: turn.channel,
-    async interrupt() {
-      if (turn.settled) return;
-      try {
-        ensureAlive();
-      } catch {
-        return;
-      }
-      turn.state.interruptRequested = true;
-      peer.notify('session/cancel', { sessionId });
-      // A permission request the agent is still waiting on would hold the cancel back.
-      drainEngineRequests(turn, () => ACP_CANCELLED);
-    },
+    // A permission request the agent still waits on would hold the cancel back: it is answered first.
+    interrupt: () =>
+      interruptEngineTurn(turn, liveness, {
+        refusal: () => ACP_CANCELLED,
+        tell: () => peer.notify('session/cancel', { sessionId }),
+      }),
     async respond(interactionId, rawReply) {
-      ensureAlive();
-      answerActiveAcpTurnRequest(turn, interactionId, rawReply);
+      answerActiveAcpTurnRequest(turn, liveness, interactionId, rawReply);
     },
   };
 }
@@ -261,42 +298,41 @@ export function createAcpTurnControls(input: {
   peer: JsonRpcPeer;
   sessionId: string;
   limits: AcpPromptLimits;
-  ensureAlive(): void;
+  liveness: SessionLiveness;
   getTurn(): AcpTurnSlot | undefined;
   setTurn(turn: AcpTurnSlot | undefined): void;
 }) {
-  let turnOpening = false;
   let steering = false;
   const releaseTurn = (turn: AcpTurnSlot) => {
     if (input.getTurn() === turn) input.setTurn(undefined);
   };
-  return {
-    async startTurn(turnInput: {
+  const { liveness } = input;
+  const startTurn = guardedTurnStarter({
+    busyMessage: 'A turn is already running in this ACP session',
+    check() {
+      liveness.ensureAlive();
+      if (input.getTurn() !== undefined) {
+        throw new Error('A turn is already running in this ACP session');
+      }
+    },
+    async inline(turnInput: {
       turnId: string;
       clientId: string;
       input: readonly AgentMessagePart[];
-    }): Promise<AgentEngineTurn> {
-      input.ensureAlive();
-      if (input.getTurn() !== undefined || turnOpening) {
-        throw new Error('A turn is already running in this ACP session');
-      }
-      turnOpening = true;
-      let prompt: readonly { type: string; [key: string]: string }[];
-      let checkOutcome: AcpCheckPromptOutcome | undefined;
-      try {
-        prompt = await acpPromptBlocks(turnInput.input, input.limits);
-        input.ensureAlive();
-        if (input.config.watchPromptOutcome !== undefined) {
-          checkOutcome = await input.config.watchPromptOutcome({
-            sessionId: input.sessionId,
-            turnId: turnInput.turnId,
-            generation: 1,
-          });
-        }
-      } finally {
-        turnOpening = false;
-      }
-      input.ensureAlive();
+    }) {
+      const prompt = await acpPromptBlocks(turnInput.input, input.limits);
+      liveness.ensureAlive();
+      const checkOutcome: AcpCheckPromptOutcome | undefined =
+        input.config.watchPromptOutcome !== undefined
+          ? await input.config.watchPromptOutcome({
+              sessionId: input.sessionId,
+              turnId: turnInput.turnId,
+              generation: 1,
+            })
+          : undefined;
+      return { prompt, checkOutcome };
+    },
+    dispatch(turnInput, { prompt, checkOutcome }): AgentEngineTurn {
       const turn = newAcpTurn(turnInput.turnId);
       input.setTurn(turn);
       runAcpPrompt({
@@ -305,15 +341,18 @@ export function createAcpTurnControls(input: {
         prompt,
         turn,
         generation: 1,
-        ensureAlive: input.ensureAlive,
+        liveness,
         ...(input.config.usageInputIncludesCachedRead !== undefined && {
           usageInputIncludesCachedRead: input.config.usageInputIncludesCachedRead,
         }),
         ...(checkOutcome !== undefined && { checkOutcome }),
         done: () => releaseTurn(turn),
       });
-      return acpTurnHandle(input.peer, input.sessionId, turn, input.ensureAlive);
+      return acpTurnHandle(input.peer, input.sessionId, turn, liveness);
     },
+  });
+  return {
+    startTurn,
     async steerTurn(steerInput: {
       readonly input: readonly AgentMessagePart[];
     }): Promise<{ readonly turnId: string }> {
@@ -322,7 +361,7 @@ export function createAcpTurnControls(input: {
           'The ACP driver does not support steering unless steerMode is "prompt"',
         );
       }
-      input.ensureAlive();
+      liveness.ensureAlive();
       const turn = input.getTurn();
       if (turn === undefined || turn.settled) {
         throw new Error('Cannot steer turn: no ACP turn is currently running');
@@ -339,7 +378,7 @@ export function createAcpTurnControls(input: {
       let nextGeneration: number;
       try {
         prompt = await acpPromptBlocks(steerInput.input, input.limits);
-        input.ensureAlive();
+        liveness.ensureAlive();
         if (input.getTurn() !== turn || turn.settled || turn.state.interruptRequested) {
           throw new Error(
             'Cannot steer turn: the active ACP turn ended before steering was sent',
@@ -353,7 +392,7 @@ export function createAcpTurnControls(input: {
             generation: nextGeneration,
           });
         }
-        input.ensureAlive();
+        liveness.ensureAlive();
         if (input.getTurn() !== turn || turn.settled || turn.state.interruptRequested) {
           throw new Error(
             'Cannot steer turn: the active ACP turn ended before steering was sent',
@@ -371,7 +410,7 @@ export function createAcpTurnControls(input: {
         prompt,
         turn,
         generation: nextGeneration,
-        ensureAlive: input.ensureAlive,
+        liveness,
         ...(input.config.usageInputIncludesCachedRead !== undefined && {
           usageInputIncludesCachedRead: input.config.usageInputIncludesCachedRead,
         }),

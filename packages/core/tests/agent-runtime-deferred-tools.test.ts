@@ -604,6 +604,17 @@ describe('a search marked inactive_call', () => {
     expect(empty).toMatchObject({ status: 'NO_MATCH', selected: [] });
   });
 
+  test('a query of whitespace alone names nothing, so it selects nothing rather than the whole catalog', async () => {
+    const blank = await receiptFor({ query: '   ' });
+    const blankAfterInactiveCall = await receiptFor({
+      query: ' \t ',
+      reason: 'inactive_call',
+    });
+
+    expect(blank).toMatchObject({ status: 'NO_MATCH', selected: [] });
+    expect(blankAfterInactiveCall).toMatchObject({ status: 'NO_MATCH', selected: [] });
+  });
+
   test('the model is told the mark is not its own to set', () => {
     const reason = placeholderDeferredSearch('tool_search').input.shape.reason;
 

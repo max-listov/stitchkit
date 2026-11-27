@@ -111,6 +111,15 @@ export async function untilRecorded(
   }
 }
 
+/**
+ * Resolves on the next macrotask. Code that schedules nothing but promise continuations — a
+ * JSON-RPC peer fed by `receive`, a handler, an observer released by a promise — has run every one
+ * of them by then, so an absence asserted after it is final and needs no fixed sleep.
+ */
+export function promiseJobsRan(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 /** A signal whose listeners are counted, so a test sees that every one added was removed. */
 export function countedSignal(): {
   signal: AbortSignal;

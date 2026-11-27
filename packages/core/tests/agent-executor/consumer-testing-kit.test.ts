@@ -20,11 +20,9 @@ import {
   parseCodexNotification,
 } from '../../src/entrypoints/agent-executor/codex';
 import {
-  createFakeClaudeSdkQuery,
   createFakeCodexAppServer,
   createStubAcpSession,
   createStubAgentEngineTurn,
-  createStubClaudeSdkSession,
   createStubCodexControlClient,
   createStubCodexControlConnection,
   createStubCodexSession,
@@ -34,6 +32,10 @@ import {
   makeCodexThreadFixture,
   makeExecutorDelta,
 } from '../../src/entrypoints/agent-executor/testing';
+import {
+  createFakeClaudeSdkQuery,
+  createStubClaudeSdkSession,
+} from '../../src/entrypoints/agent-executor/testing/claude-sdk';
 import { ambientIn, drain, inScratch } from '../support/engine-driver-harness';
 import { reapAfterEachTest } from '../support/process-reaper';
 
@@ -703,11 +705,9 @@ describe('agent-executor consumer testing kit', () => {
         CodexSharedServerOpenInput,
       } from './entrypoints/agent-executor/codex';
       import {
-        createFakeClaudeSdkQuery,
         createFakeCodexAppServer,
         createStubAcpSession,
         createStubAgentEngineTurn,
-        createStubClaudeSdkSession,
         createStubCodexControlClient,
         createStubCodexControlConnection,
         createStubCodexSession,
@@ -718,6 +718,10 @@ describe('agent-executor consumer testing kit', () => {
         makeExecutorDelta,
         type ReplayExecutorDriverConfig,
       } from './entrypoints/agent-executor/testing';
+      import {
+        createFakeClaudeSdkQuery,
+        createStubClaudeSdkSession,
+      } from './entrypoints/agent-executor/testing/claude-sdk';
 
       export const sdkQueryCheck: ClaudeSdkQuery = realSdkQuery;
       export const profileCheck: ExecutorProfileConfig = {

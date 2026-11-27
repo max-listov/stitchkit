@@ -1,10 +1,11 @@
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
-import type { ExecutorDriverCapabilities, PlanLimits } from '../hello';
+import type { PlanLimits } from '../hello';
 import { validateImageOptions } from '../image-input';
 import type { JsonRpcValue } from '../json-rpc-peer';
 import { planLimitsReadFailed } from '../plan-limits';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
 import { runEngineCli, withEphemeralConnection } from '../session-primitives';
+import { codexDriverCapabilities } from './capabilities';
 import {
   type CodexTransportConfig,
   connectCodex,
@@ -12,7 +13,7 @@ import {
 } from './connect';
 import { type CodexControlClient, createCodexControlClient } from './control-client';
 import type { CodexNotificationEvent, CodexServerRequestEvent } from './handlers';
-import { codexPlanLimits } from './limits';
+import { CodexLimitBook } from './limits';
 import { findCodexTurnByClientId } from './pagination';
 import type { CodexApprovalPolicy, CodexSandboxMode, CodexThreadContext } from './protocol';
 import { openCodexControlConnection, openCodexSession } from './session';
@@ -112,6 +113,16 @@ export interface CodexDriverConfig {
    * unexpectedly before `close()` or caller signal abort (including idle socket disconnects).
    */
   onDisconnect?: ((error: Error) => void) | undefined;
+  /**
+   * Receives every failure of a host callback the driver contained to keep reading its engine:
+   * `hook` is the option that threw or rejected (`'onNotification'`, `'onServerRequest'`,
+   * `'onDisconnect'`, `'onStartupPhase'`), or `'driver:notification'` for a failure inside a
+   * shared server's own handling of one notification. A `JsonRpcError` thrown by
+   * `onServerRequest` for a request outside `startTurn()` is that observer's refusal and is not
+   * reported. Without this option such
+   * failures are contained and dropped; a handler that itself throws is ignored.
+   */
+  onObserverError?: ((error: unknown, hook: string) => void) | undefined;
   /** Maximum incoming JSON-RPC frame/line size in bytes (WebSocket default 16 MiB, stdio default 8 MiB). */
   maxFrameBytes?: number | undefined;
   /** Read the bytes behind a `file` part's `reference`; without it a file part is refused. */
@@ -148,7 +159,7 @@ function buildCodexSessionConfig(input: {
   readonly executable: string;
   readonly prefix: readonly string[];
   readonly ambient: Readonly<Record<string, string | undefined>>;
-  readonly limits: Map<string, PlanLimits>;
+  readonly limits: CodexLimitBook;
   readonly version: string;
   readonly maxFrameBytes?: number;
   readonly forceStdioForListen?: boolean;
@@ -188,6 +199,7 @@ function buildCodexSessionConfig(input: {
       }),
     ...(!input.ephemeralProbe &&
       config.onDisconnect !== undefined && { onDisconnect: config.onDisconnect }),
+    ...(config.onObserverError !== undefined && { onObserverError: config.onObserverError }),
     ambient: input.ambient,
     limits: input.limits,
     version: input.version,
@@ -210,24 +222,9 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
   const executable = config.executable ?? 'codex';
   const prefix = config.prefixArgs ?? [];
   const ambient = config.ambient ?? process.env;
-  const limits = new Map<string, PlanLimits>();
+  const limits = new CodexLimitBook();
   let version = 'unknown';
-  const capabilities: ExecutorDriverCapabilities = {
-    runtimePolicyEnforcement: 'native',
-    sessionApproval: true,
-    interruptOnDeny: true,
-    updatedToolInput: false,
-    structuredInput: true,
-    steer: true,
-    fork: true,
-    revert: true,
-    compact: true,
-    injectItems: true,
-    backgroundWorkOutlivesTurn: false,
-    multiThreadPerProcess: false,
-    images: config.resolveFile !== undefined,
-    planLimits: 'pull',
-  };
+  const capabilities = codexDriverCapabilities({ images: config.resolveFile !== undefined });
 
   const session = (options?: {
     readonly maxFrameBytes?: number;
@@ -322,12 +319,7 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
           const answer = await ask(parsed, process.cwd(), (peer) =>
             peer.request('account/rateLimits/read'),
           );
-          const snapshot = codexPlanLimits(answer);
-          planLimits = {
-            ...snapshot,
-            windows: snapshot.windows.toSorted((a, b) => a.name.localeCompare(b.name)),
-          };
-          limits.set(parsed.profileId, planLimits);
+          planLimits = limits.replace(parsed.profileId, answer, new Date());
         } catch (error) {
           planLimits = planLimitsReadFailed({
             previous: limits.get(parsed.profileId),

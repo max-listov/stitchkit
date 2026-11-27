@@ -7,6 +7,7 @@
 import { createHash } from 'node:crypto';
 import type { ZodType } from 'zod';
 import type { HttpMethod } from '../contract/define';
+import type { DescribedRefusal } from '../contract/operation-refusals';
 import type { EndpointMcpPolicy } from '../contract/tool-options';
 import type { EndpointToolView } from '../contract/tool-view';
 import { compareCodeUnits, serializeCanonicalJson } from '../internal/canonical-json';
@@ -17,6 +18,7 @@ import { staticInputRounds } from '../tools/mcp/round-policy';
 import type {
   SurfaceManifestOperation,
   SurfaceManifestOperationMcp,
+  SurfaceManifestOperationRefusal,
   SurfaceManifestOperationToolView,
   SurfaceManifestTool,
 } from './surface-manifest';
@@ -83,6 +85,7 @@ export interface OperationSource {
   ui?: unknown;
   mcp?: EndpointMcpPolicy;
   toolView?: EndpointToolView;
+  refuses?: readonly DescribedRefusal[];
   rawBody?: true;
   safelistedBody?: true;
   rawResponse?: true;
@@ -112,8 +115,20 @@ export function operationFrom(
     },
     mcp: mcpRoundsOf(source),
     ...toolViewEntry(source),
+    ...(source.refuses && { refusals: refusalsOf(source.refuses) }),
     http: [],
   };
+}
+
+/** The declared refusals in code order, as the snapshot and the fingerprint both read them. */
+function refusalsOf(refuses: readonly DescribedRefusal[]): SurfaceManifestOperationRefusal[] {
+  return refuses
+    .map((refusal) => ({
+      code: refusal.code,
+      status: refusal.status,
+      details: schemaDigest(refusal.details, 'output'),
+    }))
+    .sort((left, right) => compareCodeUnits(left.code, right.code));
 }
 
 /**
@@ -183,6 +198,7 @@ export function operationFingerprint(source: OperationSource): string {
     ui: source.ui ?? null,
     mcp,
     toolView: toolViewOf(source),
+    refusals: source.refuses ? refusalsOf(source.refuses) : null,
     rawBody: source.rawBody ?? false,
     safelistedBody: source.safelistedBody ?? false,
     rawResponse: source.rawResponse ?? false,

@@ -118,6 +118,11 @@ export const ENTRYPOINTS = [
     browser: false,
   },
   {
+    subpath: './agent-executor/testing/claude-sdk',
+    source: 'src/entrypoints/agent-executor/testing/claude-sdk.ts',
+    browser: false,
+  },
+  {
     subpath: './agent-runtime/postgres',
     source: 'src/entrypoints/agent-runtime/postgres.ts',
     browser: false,
@@ -156,8 +161,8 @@ export const ENTRYPOINTS = [
   { subpath: './testing', source: 'src/entrypoints/testing.ts', browser: false },
   { subpath: './process', source: 'src/entrypoints/process.ts', browser: false },
   {
-    subpath: './process/owner-loss',
-    source: 'src/entrypoints/process/owner-loss.ts',
+    subpath: './process/bootstrap',
+    source: 'src/entrypoints/process/bootstrap.ts',
     browser: false,
   },
   {
@@ -176,6 +181,11 @@ export const ENTRYPOINTS = [
   {
     subpath: './service-host/macos',
     source: 'src/entrypoints/service-host/macos.ts',
+    browser: false,
+  },
+  {
+    subpath: './service-host/work',
+    source: 'src/entrypoints/service-host/work.ts',
     browser: false,
   },
   { subpath: './telegram', source: 'src/entrypoints/telegram.ts', browser: false },

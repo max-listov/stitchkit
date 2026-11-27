@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { CodexLimitBook } from '../../src/agent-executor/codex/limits';
 import { claudeUsagePlanLimits as cliUsage } from '../../src/entrypoints/agent-executor/claude';
 import { claudeUsagePlanLimits as sdkUsage } from '../../src/entrypoints/agent-executor/claude-sdk';
 import { codexPlanLimits, codexPlanWindows } from '../../src/entrypoints/agent-executor/codex';
@@ -469,4 +470,35 @@ test('both Claude usage entrypoints retain measured model windows and scope only
       expect(new Set(windows.map((window) => window.name)).size).toBe(4);
     }
   }
+});
+
+test('Codex quota pushes past the window cap truncate instead of refusing the update', () => {
+  const book = new CodexLimitBook();
+  const now = new Date('2026-11-27T12:00:00Z');
+  const buckets = (from: number, count: number) =>
+    Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [
+        `b${String(from + index).padStart(2, '0')}`,
+        {
+          limitId: `b${String(from + index).padStart(2, '0')}`,
+          primary: { usedPercent: 1, windowDurationMins: 300 },
+          secondary: { usedPercent: 2, windowDurationMins: 10_080 },
+        },
+      ]),
+    );
+  book.replace('p', { rateLimits: account, rateLimitsByLimitId: buckets(0, 15) }, now);
+  // Before the fix, merging these by name past 32 windows threw `too_big` and lost the update.
+  const pushed = book.update('p', { rateLimitsByLimitId: buckets(15, 10) }, now);
+  expect(pushed.windows.length).toBeLessThanOrEqual(32);
+  expect(pushed.windows.find((window) => window.name === 'codex:10080m')?.usedPercent).toBe(
+    91,
+  );
+  // A second push for a known bucket updates its windows, it adds none.
+  const again = book.update(
+    'p',
+    { rateLimits: { limitId: 'codex', primary: { usedPercent: 92 } } },
+    now,
+  );
+  expect(again.windows.length).toBe(pushed.windows.length);
+  expect(again.windows.find((window) => window.name === 'codex:10080m')?.usedPercent).toBe(92);
 });

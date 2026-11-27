@@ -330,7 +330,7 @@ function undocumentedExports(
 const FULLY_DOCUMENTED = [
   'stitchkit/cli/publish',
   'stitchkit/process',
-  'stitchkit/process/owner-loss',
+  'stitchkit/process/bootstrap',
   'stitchkit/files/packaging',
   'stitchkit/tools/mcp',
   'stitchkit/handler',
@@ -343,10 +343,12 @@ const FULLY_DOCUMENTED = [
   'stitchkit/agent-executor/claude-sdk',
   'stitchkit/agent-executor/codex',
   'stitchkit/agent-executor/testing',
+  'stitchkit/agent-executor/testing/claude-sdk',
   'stitchkit/spend',
   'stitchkit/spend/testing',
   'stitchkit/service-host',
   'stitchkit/service-host/macos',
+  'stitchkit/service-host/work',
   'stitchkit/sync',
   'stitchkit/sync/postgres',
 ];

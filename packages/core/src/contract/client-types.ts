@@ -4,6 +4,7 @@
 import type { ZodType, z } from 'zod';
 import type { PathParams } from '../internal/route-pattern';
 import type { EndpointDef, Transport } from './define';
+import type { OperationRefusal } from './operation-refusals';
 
 // ─── Type Inference (for createClient) ──────────────────
 
@@ -122,12 +123,19 @@ export interface ClientRequestOptions {
   onUploadProgress?: (progress: UploadProgress) => void;
 }
 
-type ClientEndpointWithArgs<Args, Output> = {
+/**
+ * `refusal(error)` reads a call's rejection as one of the refusals the operation declared (or one
+ * the framework and the client raise on any call), its `code` narrowed and its `details` typed by
+ * that code; `undefined` for anything else. → ADR 0330
+ */
+type ReadsRefusal<Refusal> = { refusal(error: unknown): Refusal | undefined };
+
+type ClientEndpointWithArgs<Args, Output, Refusal> = ReadsRefusal<Refusal> & {
   (args: Args): Promise<Output>;
   withOptions(args: Args, options: ClientRequestOptions): Promise<Output>;
 };
 
-type ClientEndpointWithoutArgs<Output> = {
+type ClientEndpointWithoutArgs<Output, Refusal> = ReadsRefusal<Refusal> & {
   (): Promise<Output>;
   withOptions(options: ClientRequestOptions): Promise<Output>;
 };
@@ -159,8 +167,8 @@ type EndpointOutput<E> = E extends { rawResponse: true }
       : undefined;
 
 export type EndpointFn<E> = [keyof EndpointArgs<E>] extends [never]
-  ? ClientEndpointWithoutArgs<EndpointOutput<E>>
-  : ClientEndpointWithArgs<EndpointArgs<E>, EndpointOutput<E>>;
+  ? ClientEndpointWithoutArgs<EndpointOutput<E>, OperationRefusal<E>>
+  : ClientEndpointWithArgs<EndpointArgs<E>, EndpointOutput<E>, OperationRefusal<E>>;
 
 export type TypedClient<C extends Record<string, EndpointDef>> = {
   [K in keyof C]: EndpointFn<C[K]>;
@@ -216,8 +224,8 @@ type ArgsWith<E, Extra, Bound extends PropertyKey> = WithoutBound<
 export type ScopedEndpointFn<E, Extra, Bound extends PropertyKey = never> = [
   keyof ArgsWith<E, Extra, Bound>,
 ] extends [never]
-  ? ClientEndpointWithoutArgs<EndpointOutput<E>>
-  : ClientEndpointWithArgs<ArgsWith<E, Extra, Bound>, EndpointOutput<E>>;
+  ? ClientEndpointWithoutArgs<EndpointOutput<E>, OperationRefusal<E>>
+  : ClientEndpointWithArgs<ArgsWith<E, Extra, Bound>, EndpointOutput<E>, OperationRefusal<E>>;
 
 export type ScopedHttpClient<
   C extends Record<string, EndpointDef>,

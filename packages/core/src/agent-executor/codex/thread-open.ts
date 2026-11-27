@@ -1,12 +1,17 @@
-import { drainEngineRequests } from '../engine-requests';
-import type { PlanLimits } from '../hello';
+import { raceAbort } from '../../internal/abort-race';
+import {
+  type EngineTurnLiveness,
+  interruptEngineTurn,
+  refuseEngineTurnRequests,
+} from '../engine-requests';
 import { type DriverImageOptions, guardedTurnStarter } from '../image-input';
 import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
 import { createTurnDeltaChannel } from '../session-primitives';
 import type { CodexConnectConfig } from './connect';
 import type { CodexControlClient } from './control-client';
-import { CodexStartingTurn, discardStartingTurn } from './event-routing';
+import { CodexStartingTurn, codexTurnIdOf, discardStartingTurn } from './event-routing';
 import type { CodexNotificationEvent, CodexServerRequestEvent } from './handlers';
+import type { CodexLimitBook } from './limits';
 import {
   CodexStartedTurnSchema,
   type CodexThreadContext,
@@ -74,7 +79,7 @@ export interface CodexSessionConfig extends DriverImageOptions, CodexConnectConf
   readonly onServerRequest?: ((event: CodexServerRequestEvent) => void) | undefined;
   readonly serverRequestDelivery?: 'external-only' | 'all' | undefined;
   readonly onDisconnect?: ((error: Error) => void) | undefined;
-  readonly limits: Map<string, PlanLimits>;
+  readonly limits: CodexLimitBook;
 }
 
 /** Mark and drain a local driver-started turn when `turn/interrupt` targets its exact `codexTurnId`. */
@@ -83,8 +88,44 @@ export function interruptLocalCodexTurn(
   turnId: string,
 ): void {
   if (turn === undefined || turn.codexTurnId !== turnId) return;
-  turn.state.interruptRequested = true;
-  drainEngineRequests(turn, codexStopped);
+  refuseEngineTurnRequests(turn, codexStopped);
+}
+
+/** How long stopping an abandoned turn waits for its turn id and for the interrupt answer. */
+const ABANDONED_TURN_MS = 5_000;
+
+/**
+ * Interrupt a turn the server may run while this driver no longer follows it. The native id is the
+ * `turn/start` reply's, or the one a buffered event named before that reply; a reply still on its
+ * way is awaited at most {@link ABANDONED_TURN_MS}. Best effort and once per turn. The ids are read
+ * when this is called, so call it before the pre-start buffer is discarded.
+ */
+export function interruptAbandonedCodexTurn(
+  peer: JsonRpcPeer,
+  threadId: string,
+  turn: CodexTurnSlot | undefined,
+): Promise<void> {
+  if (turn === undefined || turn.abandoned === true) return Promise.resolve();
+  turn.abandoned = true;
+  const known = turn.codexTurnId ?? turn.starting?.observedTurnId;
+  const reply = turn.startReply;
+  const named: Promise<string | undefined> =
+    known !== undefined || reply === undefined
+      ? Promise.resolve(known)
+      : raceAbort(reply, AbortSignal.timeout(ABANDONED_TURN_MS)).then(
+          codexTurnIdOf,
+          () => undefined,
+        );
+  return named
+    .then(async (turnId) => {
+      if (turnId === undefined) return;
+      await peer.request(
+        'turn/interrupt',
+        { threadId, turnId },
+        { timeoutMs: ABANDONED_TURN_MS },
+      );
+    })
+    .catch(() => undefined);
 }
 
 /** Validate and normalize JSON-RPC params for `thread/resume` (defaults `excludeTurns` to `true`). */
@@ -112,14 +153,15 @@ export function createCodexStartTurn(input: {
   threadId: string;
   activeModelProvider: string | undefined;
   signal: AbortSignal;
-  ensureAlive(): void;
+  /** The liveness of the session or thread the turns run in; `signal` is the one it reads. */
+  liveness: EngineTurnLiveness;
   getTurn(): CodexTurnSlot | undefined;
   setTurn(turn: CodexTurnSlot | undefined): void;
 }): (turnInput: CodexTurnInput) => Promise<CodexTurn> {
   return guardedTurnStarter({
     busyMessage: 'A turn is already running in this Codex thread',
     check: (turnInput: CodexTurnInput) => {
-      input.ensureAlive();
+      input.liveness.ensureAlive();
       if (input.getTurn() !== undefined) {
         throw new Error('A turn is already running in this Codex thread');
       }
@@ -150,26 +192,21 @@ export function createCodexStartTurn(input: {
         state: { turnId: turnInput.turnId, interruptRequested: false },
         channel: createTurnDeltaChannel(),
         pending: new Map(),
+        settled: false,
       };
-      const isAlive = () => {
-        if (input.signal.aborted) return false;
-        try {
-          input.ensureAlive();
-          return true;
-        } catch {
-          return false;
-        }
-      };
+      const isAlive = () => input.liveness.isAlive();
       input.setTurn(turn);
+      // The request outlives a local abort: a reply that still arrives names the turn to interrupt.
+      const reply = input.peer.request('turn/start', turnParams);
+      turn.startReply = reply;
+      void reply.catch(() => undefined);
       let nativeTurnId: string;
       try {
-        const started = await input.peer.request('turn/start', turnParams, {
-          signal: input.signal,
-        });
+        const started = await raceAbort(reply, input.signal);
         if (!isAlive() || input.getTurn() !== turn) {
           if (input.getTurn() === turn) input.setTurn(undefined);
           discardStartingTurn(turn);
-          input.ensureAlive();
+          input.liveness.ensureAlive();
           throw new Error('The Codex session is closed');
         }
         nativeTurnId = parseCodexResponse('turn/start', CodexStartedTurnSchema, started).turn
@@ -182,6 +219,10 @@ export function createCodexStartTurn(input: {
         }
       } catch (error) {
         if (input.getTurn() === turn) input.setTurn(undefined);
+        // A live connection whose turn failed locally (a reply it cannot read, an overflowing
+        // pre-start buffer, a local timeout) still runs that turn: stop it. A closing thread is
+        // stopped by its own close.
+        if (isAlive()) void interruptAbandonedCodexTurn(input.peer, input.threadId, turn);
         if (turn.starting !== undefined) {
           const pending = turn.starting;
           try {
@@ -196,22 +237,17 @@ export function createCodexStartTurn(input: {
       return {
         nativeTurnId,
         deltas: turn.channel,
-        async interrupt() {
-          if (input.getTurn() !== turn) return;
-          try {
-            input.ensureAlive();
-          } catch {
-            return;
-          }
-          interruptLocalCodexTurn(turn, nativeTurnId);
-          await input.peer.request('turn/interrupt', {
-            threadId: input.threadId,
-            turnId: nativeTurnId,
-          });
-        },
+        interrupt: () =>
+          interruptEngineTurn(turn, input.liveness, {
+            refusal: codexStopped,
+            tell: () =>
+              input.peer.request('turn/interrupt', {
+                threadId: input.threadId,
+                turnId: nativeTurnId,
+              }),
+          }),
         async respond(interactionId, rawReply) {
-          input.ensureAlive();
-          answerActiveCodexTurnRequest(turn, interactionId, rawReply);
+          answerActiveCodexTurnRequest(turn, input.liveness, interactionId, rawReply);
         },
       };
     },

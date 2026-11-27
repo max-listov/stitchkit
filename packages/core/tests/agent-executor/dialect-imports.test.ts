@@ -41,3 +41,29 @@ test('the walk does find claude/transcript.ts from the Claude CLI entrypoint (po
     ),
   ).toBe(true);
 });
+
+const CLAUDE_AGENT_SDK = /from\s+'@anthropic-ai\/claude-agent-sdk'/;
+
+/** The reached files that name the Claude Agent SDK, type-only imports included. */
+function sdkImporters(entry: string): string[] {
+  return [...reachedFrom(entry)].filter((file) =>
+    CLAUDE_AGENT_SDK.test(readFileSync(file, 'utf8')),
+  );
+}
+
+test.each([
+  'entrypoints/agent-executor.ts',
+  'entrypoints/agent-executor/testing.ts',
+  'entrypoints/agent-executor/codex.ts',
+  'entrypoints/agent-executor/acp.ts',
+  'entrypoints/agent-executor/claude.ts',
+])('%s names no Claude Agent SDK type, so its declarations need no optional peer', (entry) => {
+  expect(reachedFrom(entry).size).toBeGreaterThan(5);
+  expect(sdkImporters(entry)).toEqual([]);
+});
+
+test('the Claude SDK testing subpath holds the fake query and the session stub typed by the SDK (positive control)', () => {
+  const importers = sdkImporters('entrypoints/agent-executor/testing/claude-sdk.ts');
+  expect(importers).toContain(resolve(SRC, 'agent-executor/testing/fake-claude-sdk-query.ts'));
+  expect(importers).toContain(resolve(SRC, 'agent-executor/claude-sdk/driver.ts'));
+});

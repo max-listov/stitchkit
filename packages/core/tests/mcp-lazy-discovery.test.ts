@@ -10,7 +10,7 @@ import {
   mountMcp,
   readMcpCatalogStamp,
 } from '../src/entrypoints/tools/mcp';
-import { buildMcpServerFromPrepared } from '../src/tools/mcp/mount';
+import { buildMcpServerFromPrepared, servedMcpCatalog } from '../src/tools/mcp/mount';
 import { prepareMcpServerSurface } from '../src/tools/mcp/prepare';
 import { defineRuntimeTool } from '../src/tools/runtime-tool';
 
@@ -95,7 +95,7 @@ async function connectClient(server: McpServer): Promise<{
 }
 
 describe('opt-in lazy MCP tool discovery', () => {
-  test('hides non-initial tools at startup, reveals matched tools with list_changed, and preserves hooks and catalog stamp', async () => {
+  test('hides non-initial tools at startup, reveals matched tools with list_changed, preserves hooks, and claims no catalog stamp', async () => {
     const server = new McpServer({ name: 'lazy-test', version: '1.0.0' });
     const calledHooks: string[] = [];
     mountMcp(server, makeServices(), {
@@ -143,11 +143,12 @@ describe('opt-in lazy MCP tool discovery', () => {
       ],
       totalHiddenRemaining: 2,
     });
-    const searchStamp = readMcpCatalogStamp(found._meta);
-    expect(searchStamp).toEqual({ digest: expect.any(String), tools: 4 });
+    // Each session lists its own subset, which no digest of the whole surface describes (ADR 0293).
+    expect(readMcpCatalogStamp(found._meta)).toBeNull();
+    expect(initial.tools.map((t) => readMcpCatalogStamp(t._meta))).toEqual([null, null]);
     expect(listChangedCount()).toBe(1);
 
-    // Revealed tool appears in tools/list and executes with full Zod validation, hooks, and matching stamp.
+    // Revealed tool appears in tools/list and executes with full Zod validation and hooks, unstamped.
     const afterList = await client.listTools();
     expect(afterList.tools.map((t) => t.name).sort()).toEqual([
       'discover_tools',
@@ -155,14 +156,14 @@ describe('opt-in lazy MCP tool discovery', () => {
       'invoices_list',
     ]);
     const invoicesMeta = afterList.tools.find((t) => t.name === 'invoices_list')?._meta;
-    expect(readMcpCatalogStamp(invoicesMeta)).toEqual(searchStamp);
+    expect(readMcpCatalogStamp(invoicesMeta)).toBeNull();
     const revealedCall = await client.callTool({
       name: 'invoices_list',
       arguments: { customerId: 'acme' },
     });
     expect(revealedCall.isError).not.toBe(true);
     expect(revealedCall.structuredContent).toEqual({ items: ['inv-acme'] });
-    expect(readMcpCatalogStamp(revealedCall._meta)).toEqual(searchStamp);
+    expect(readMcpCatalogStamp(revealedCall._meta)).toBeNull();
     expect(calledHooks).toContain('discover_tools');
     expect(calledHooks).toContain('invoices_list');
 
@@ -204,6 +205,56 @@ describe('opt-in lazy MCP tool discovery', () => {
     await client.close();
   });
 
+  test('a repeated search reaches the matches past the first maxResults instead of re-listing enabled ones', async () => {
+    const tool = (name: string, desc: string) => ({
+      method: 'GET' as const,
+      path: `/${name}`,
+      desc,
+      output: z.object({ ok: z.boolean() }),
+      tool: { name },
+    });
+    const service = implement(
+      defineContract(
+        { prefix: 'inv' },
+        {
+          a: tool('invoice_a', 'invoice tool alpha'),
+          b: tool('invoice_b', 'invoice tool beta'),
+          c: tool('invoice_c', 'invoice tool gamma'),
+        },
+      ),
+      { a: () => ({ ok: true }), b: () => ({ ok: true }), c: () => ({ ok: true }) },
+    );
+    const server = new McpServer({ name: 'lazy-repeat', version: '1.0.0' });
+    mountMcp(server, [service], {
+      access: { open: 'local-operator' },
+      discovery: { mode: 'lazy', initialTools: [], maxResults: 2 },
+    });
+    const { client } = await connectClient(server);
+    const first = await client.callTool({
+      name: 'tool_search',
+      arguments: { query: 'invoice' },
+    });
+    expect(first.structuredContent).toMatchObject({
+      enabledTools: ['invoice_a', 'invoice_b'],
+      totalHiddenRemaining: 1,
+    });
+    // Before the fix the enabled tools kept the two slots and invoice_c stayed out of reach.
+    const second = await client.callTool({
+      name: 'tool_search',
+      arguments: { query: 'invoice' },
+    });
+    expect(second.structuredContent).toEqual({
+      query: 'invoice',
+      enabledTools: ['invoice_c'],
+      matches: [
+        { name: 'invoice_c', description: 'invoice tool gamma', newlyEnabled: true },
+        { name: 'invoice_a', description: 'invoice tool alpha', newlyEnabled: false },
+        { name: 'invoice_b', description: 'invoice tool beta', newlyEnabled: false },
+      ],
+      totalHiddenRemaining: 0,
+    });
+  });
+
   test('batching multiple revealed tools sends exactly one list_changed notification and default eager mount is unchanged', async () => {
     const eagerServer = buildMcpServer({
       serverInfo: { name: 'eager-default', version: '1.0.0' },
@@ -225,6 +276,10 @@ describe('opt-in lazy MCP tool discovery', () => {
       access: { open: 'local-operator' },
       discovery: { mode: 'lazy', initialTools: ['health_ping'], maxResults: 5 },
     });
+    // A server built with discovery announces no served catalog, so a connection's catalog store
+    // never keys a listing that is only one session's subset; the eager server still does.
+    expect(servedMcpCatalog(eagerServer)).toEqual({ digest: expect.any(String), tools: 4 });
+    expect(servedMcpCatalog(lazyServer)).toBeUndefined();
     const lazy = await connectClient(lazyServer);
     const result = await lazy.client.callTool({
       name: 'tool_search',
