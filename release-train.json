@@ -3,11 +3,7 @@
   "releases": [
     {
       "target": "core",
-      "version": "0.132.0"
-    },
-    {
-      "target": "tui",
-      "version": "0.5.5"
+      "version": "0.132.1"
     }
   ]
 }

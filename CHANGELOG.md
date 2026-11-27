@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.132.1] - 2026-11-27
+
 ### Fixed
 
 - `stitchkit/agent-executor/codex` — discard buffered pre-`turn/start` frames when a session or shared-server thread closes, disconnects, or aborts, and reject `CodexServerRequestEvent.respond` / `CodexTurn.respond` once the connection is no longer alive.
