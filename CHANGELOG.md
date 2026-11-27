@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.131.0] - 2026-11-27
+
 ### ⚠️ Breaking changes
 
 **Who must act:** every caller of `stitchkit/agent-executor/codex` that treats `CodexControlClient` / `CodexSession` RPC replies as raw `JsonRpcValue`, reads `CodexThreadContext.sandbox` as a plain string or `approvalPolicy` as raw `JsonRpcValue`, or passes untyped `JsonRpcValue` to `CodexTurnInput.sandboxPolicy` ([migration](docs/guide/upgrading.md#codex-typed-control-dtos)); every caller of `stitchkit/agent-executor/claude-sdk` that assumes `ClaudeSdkSession.setPermissionMode` resolves to `void`, mutates `ClaudeSdkPermissionRequestMeta.input` in place, or pins `@anthropic-ai/claude-agent-sdk` below `0.3.332` ([migration](docs/guide/upgrading.md#claude-sdk-03332-and-typed-permission-controls)); and every caller of `planLimitsDue` from `stitchkit/agent-executor` that expected clean `no-plan-limit` or `unpublished` answers to become due after `maxAgeMs` ([migration](docs/guide/upgrading.md#plan-limits-due-clean-answers)).

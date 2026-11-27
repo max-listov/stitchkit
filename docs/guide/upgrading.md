@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: agent-executor-typed-contracts
+## Released migration: 0.131.0
 
 ### codex-typed-control-dtos
 
