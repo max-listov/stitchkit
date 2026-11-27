@@ -49,7 +49,7 @@ export interface CodexServerRequestEvent {
   readonly duringActiveTurn: boolean;
   /** Normalized executor `request` delta preserving approval, permissions, question, or elicitation metadata. */
   readonly delta: Extract<ExecutorDelta, { type: 'request' }>;
-  /** Answer this server request once; throws `TypeError` if already resolved or invalid. */
+  /** Answer this server request once; rejects if the connection is no longer alive, or throws `TypeError` if already resolved or invalid. */
   respond(reply: InteractionReply['reply']): Promise<void>;
 }
 
@@ -240,7 +240,8 @@ function handleCodexRequest(
     if (
       state.serverRequestDelivery === 'all' &&
       state.onServerRequest !== undefined &&
-      turn.pending.has(interactionId)
+      turn.pending.has(interactionId) &&
+      isHandlersAlive(state)
     ) {
       const observer = state.onServerRequest;
       invokeSafely(() =>
@@ -302,6 +303,7 @@ function handleCodexRequest(
     const onObserverError = (error: unknown) => {
       if (state.externalPending.get(interactionId) !== entry) return;
       state.externalPending.delete(interactionId);
+      if (!isHandlersAlive(state)) return;
       // Forward only explicit JsonRpcError refusals; isolate arbitrary host exceptions so a local
       // observer crash never leaks internal error strings or kills an active external TUI prompt.
       if (error instanceof JsonRpcError) reject(error);
@@ -325,13 +327,24 @@ function handleCodexRequest(
           });
         },
       });
-      if (
+      const thenable =
         typeof outcome === 'object' &&
         outcome !== null &&
         'then' in outcome &&
-        typeof outcome.then === 'function'
-      ) {
-        void Promise.resolve(outcome).catch(onObserverError);
+        typeof outcome.then === 'function';
+      if (!isHandlersAlive(state)) {
+        if (state.externalPending.get(interactionId) === entry) {
+          state.externalPending.delete(interactionId);
+        }
+        if (thenable) void Promise.resolve(outcome).catch(() => undefined);
+        return;
+      }
+      if (thenable) {
+        void Promise.resolve(outcome).then(() => {
+          if (!isHandlersAlive(state) && state.externalPending.get(interactionId) === entry) {
+            state.externalPending.delete(interactionId);
+          }
+        }, onObserverError);
       }
     } catch (error) {
       onObserverError(error);

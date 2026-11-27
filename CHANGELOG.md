@@ -15,6 +15,13 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/agent-executor/claude` and `stitchkit/agent-executor/claude-sdk` — reject `AgentEngineTurn.respond` with the session close, disconnect, query-exit, or caller `AbortSignal` error instead of writing to transport or throwing `TypeError`, ignore `AgentEngineTurn.interrupt` once a turn has settled or its session has torn down, stop processing late records after close/abort, and preserve the caller's abort reason across pre-open signal listeners and query startup races.
+  **Affects:** `stitchkit/agent-executor/claude` createClaudeCliDriver(open); `stitchkit/agent-executor/claude-sdk` createClaudeSdkDriver(open), ClaudeSdkSession; `stitchkit/agent-executor` AgentEngineTurn
+- `stitchkit/agent-executor/codex` and `stitchkit/agent-executor/acp` — suppress post-abort `JsonRpcError` replies and unhandled rejections from Codex `onServerRequest` observers before `onDisconnect`, ignore `CodexTurn.interrupt` once a turn settles or its connection tears down, skip dead active-turn observer dispatch, and preserve caller `AbortSignal` reasons across pre-open signal listeners and teardown (including Codex shared servers/threads and ACP sessions).
+  **Affects:** `stitchkit/agent-executor/codex` createCodexDriver(open, connectControl, openSharedServer), CodexServerRequestEvent, CodexTurn; `stitchkit/agent-executor/acp` createAcpDriver(open), AcpSession
+
 ## [0.132.2] - 2026-11-27
 
 ### Fixed

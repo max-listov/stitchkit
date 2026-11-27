@@ -103,22 +103,26 @@ function createAcpSessionClose(input: {
   readonly config: AcpDriverConfig;
   readonly connected: Awaited<ReturnType<typeof connectAcp>>;
   readonly sessionId: string;
+  readonly callerSignal: AbortSignal | undefined;
   readonly linked: ReturnType<typeof sessionAbort>;
   readonly externalPending: Map<string, PendingExternalAcpRequest>;
   readonly state: AcpSessionState;
   readonly stop: (primary?: { error: unknown }) => Promise<void>;
 }): () => Promise<void> {
-  const { state, linked, externalPending } = input;
+  const { state, callerSignal, linked, externalPending } = input;
   let closePromise: Promise<void> | undefined;
   return () => {
     if (closePromise !== undefined) return closePromise;
     closePromise = (async () => {
-      const alreadyTerminated = state.dead !== undefined || linked.signal.aborted;
+      const aborted = callerSignal?.aborted === true || linked.signal.aborted;
+      const alreadyTerminated = state.dead !== undefined || aborted;
       const closeReason =
         state.dead ??
-        (linked.signal.aborted
-          ? abortReason(linked.signal)
-          : new Error('The ACP session is closing'));
+        (callerSignal?.aborted
+          ? abortReason(callerSignal)
+          : linked.signal.aborted
+            ? abortReason(linked.signal)
+            : new Error('The ACP session is closing'));
       state.closing = true;
       const turn = state.current;
       state.current = undefined;
@@ -196,14 +200,24 @@ function buildAcpSession(input: {
   readonly config: AcpDriverConfig;
   readonly connected: Awaited<ReturnType<typeof connectAcp>>;
   readonly sessionId: string;
+  readonly callerSignal: AbortSignal | undefined;
   readonly linked: ReturnType<typeof sessionAbort>;
   readonly externalPending: Map<string, PendingExternalAcpRequest>;
   readonly state: AcpSessionState;
   readonly ensureAlive: () => void;
   readonly stop: (primary?: { error: unknown }) => Promise<void>;
 }): AcpSession {
-  const { config, connected, sessionId, linked, externalPending, state, ensureAlive, stop } =
-    input;
+  const {
+    config,
+    connected,
+    sessionId,
+    callerSignal,
+    linked,
+    externalPending,
+    state,
+    ensureAlive,
+    stop,
+  } = input;
   const { peer, initialized } = connected;
   const limits = {
     images: initialized.agentCapabilities?.promptCapabilities?.image === true,
@@ -225,6 +239,7 @@ function buildAcpSession(input: {
     config,
     connected,
     sessionId,
+    callerSignal,
     linked,
     externalPending,
     state,
@@ -235,7 +250,10 @@ function buildAcpSession(input: {
   return {
     nativeThreadId: sessionId,
     get providerPid() {
-      return state.closing || state.dead !== undefined || linked.signal.aborted
+      return state.closing ||
+        state.dead !== undefined ||
+        callerSignal?.aborted === true ||
+        linked.signal.aborted
         ? undefined
         : state.livePid;
     },
@@ -296,6 +314,7 @@ export async function openAcpSession(
   const ensureAlive = () => {
     if (state.closing) throw new Error('The ACP session is closing');
     if (state.dead !== undefined) throw state.dead;
+    if (input.signal?.aborted) throw abortReason(input.signal);
     if (linked.signal.aborted) throw abortReason(linked.signal);
   };
   const recordPid = (pid: number | undefined) => {
@@ -303,6 +322,7 @@ export async function openAcpSession(
       pid === undefined ||
       state.closing ||
       state.dead !== undefined ||
+      input.signal?.aborted === true ||
       linked.signal.aborted
     ) {
       return;
@@ -348,7 +368,7 @@ export async function openAcpSession(
           externalPending.clear();
           settleAcpTurn(
             turn,
-            abortedByCaller ? abortReason(linked.signal) : error,
+            abortedByCaller && input.signal !== undefined ? abortReason(input.signal) : error,
             !abortedByCaller,
           );
           // The session is over: nothing follows the caller's signal any more.
@@ -363,6 +383,7 @@ export async function openAcpSession(
       state.livePid === undefined &&
       !state.closing &&
       state.dead === undefined &&
+      input.signal?.aborted !== true &&
       !linked.signal.aborted
     ) {
       recordPid((await connected.engine.pidReady) ?? connected.engine.pid);
@@ -373,7 +394,8 @@ export async function openAcpSession(
   }
   const { peer, initialized } = connected;
   const stop = async (primary?: { error: unknown }) => {
-    const terminated = state.dead !== undefined || linked.signal.aborted;
+    const terminated =
+      state.dead !== undefined || input.signal?.aborted === true || linked.signal.aborted;
     state.closing = true;
     state.livePid = undefined;
     if (terminated) externalPending.clear();
@@ -418,6 +440,7 @@ export async function openAcpSession(
       config,
       connected,
       sessionId,
+      callerSignal: input.signal,
       linked,
       externalPending,
       state,

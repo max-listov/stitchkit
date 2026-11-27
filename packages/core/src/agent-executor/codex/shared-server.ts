@@ -85,6 +85,7 @@ export async function openCodexSharedServer(
   const ensureServerAlive = () => {
     if (serverClosing) throw new Error('The Codex shared server is closed');
     if (serverDead !== undefined) throw serverDead;
+    if (input.signal?.aborted) throw abortReason(input.signal);
     if (linked.signal.aborted) throw abortReason(linked.signal);
   };
   const globalHandlers = createCodexHandlers({
@@ -101,16 +102,15 @@ export async function openCodexSharedServer(
     }),
   });
 
-  const failAllThreads = (error: Error) => {
+  const failAllThreads = (reason: unknown) => {
     for (const slot of [...threads.values()]) {
-      slot.closed = true;
-      slot.dead = error;
+      slot.dead = slot.dead ?? { reason };
       const turn = slot.current;
       slot.current = undefined;
       discardStartingTurn(turn);
       slot.externalPending.clear();
-      loseEngineTurn(turn, codexStopped, error);
-      slot.abortThread();
+      loseEngineTurn(turn, codexStopped, reason);
+      slot.abortThread(reason);
       slot.releaseThreadSignal();
     }
     threads.clear();
@@ -145,10 +145,13 @@ export async function openCodexSharedServer(
         },
       },
       (error) => {
-        const shouldNotify = opened && !serverClosing && input.signal?.aborted !== true;
-        serverDead = error;
+        const abortedByCaller = input.signal?.aborted === true;
+        const shouldNotify = opened && !serverClosing && !abortedByCaller;
+        if (!serverClosing && !abortedByCaller) serverDead = error;
         globalExternalPending.clear();
-        failAllThreads(error);
+        failAllThreads(
+          abortedByCaller && input.signal !== undefined ? abortReason(input.signal) : error,
+        );
         linked.abort();
         if (shouldNotify) invokeSafely(() => config.onDisconnect?.(error));
       },

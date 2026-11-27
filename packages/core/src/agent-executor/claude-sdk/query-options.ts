@@ -6,7 +6,12 @@ import { assertTimerMs, withSignalDeadline } from '../../internal/deadline';
 import { isPositiveSafeInteger } from '../../internal/positive-integer';
 import { validateImageOptions } from '../image-input';
 import type { ClaudeSdkFlagSettings } from './controls';
-import type { ClaudeSdkDelegationCheck, ClaudeSdkDriverConfig, ClaudeSdkRun } from './driver';
+import type {
+  ClaudeSdkDelegationCheck,
+  ClaudeSdkDriverConfig,
+  ClaudeSdkOpenInput,
+  ClaudeSdkRun,
+} from './driver';
 
 const DEFAULT_DELEGATION_TIMEOUT_MS = 30_000;
 const FLAG_SETTINGS_REPLAY_TIMEOUT_MS = 30_000;
@@ -25,6 +30,47 @@ export function validateClaudeSdkConfig(config: ClaudeSdkDriverConfig): void {
   }
   if (config.verifyDelegation?.timeoutMs !== undefined) {
     assertTimerMs('verifyDelegation.timeoutMs', config.verifyDelegation.timeoutMs);
+  }
+}
+
+/** Validate `open()` resume options before opening a Claude SDK session. */
+export function validateClaudeSdkOpenInput(input: ClaudeSdkOpenInput): void {
+  const hasNativeThreadId =
+    typeof input.nativeThreadId === 'string' && input.nativeThreadId.trim().length > 0;
+  if (input.resumeSessionAt !== undefined) {
+    if (
+      typeof input.resumeSessionAt !== 'string' ||
+      input.resumeSessionAt.trim().length === 0
+    ) {
+      throw new TypeError(
+        'Claude SDK open() requires a non-empty resumeSessionAt UUID when provided',
+      );
+    }
+    if (!hasNativeThreadId) {
+      throw new TypeError(
+        'Claude SDK open() requires nativeThreadId when resumeSessionAt is provided',
+      );
+    }
+  }
+  if (input.resumeDropsTurn !== undefined) {
+    if (
+      typeof input.resumeDropsTurn !== 'string' ||
+      input.resumeDropsTurn.trim().length === 0
+    ) {
+      throw new TypeError(
+        'Claude SDK open() requires a non-empty resumeDropsTurn prompt UUID when provided',
+      );
+    }
+    if (!hasNativeThreadId) {
+      throw new TypeError(
+        'Claude SDK open() requires nativeThreadId when resumeDropsTurn is provided',
+      );
+    }
+    if (input.resumeSessionAt === undefined) {
+      throw new TypeError(
+        'Claude SDK open() requires resumeSessionAt when resumeDropsTurn is provided',
+      );
+    }
   }
 }
 

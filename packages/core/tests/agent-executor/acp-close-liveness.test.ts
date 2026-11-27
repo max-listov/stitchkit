@@ -299,6 +299,23 @@ describe('ACP close, disconnect, and abort liveness', () => {
         const heldReady = Promise.withResolvers<AcpPermissionRequestEvent>();
         const controller = new AbortController();
         const reason = new Error(`caller-aborted-${mode}`);
+        let liveSession:
+          | Awaited<ReturnType<ReturnType<typeof createAcpDriver>['open']>>
+          | undefined;
+        let liveEvent: AcpPermissionRequestEvent | undefined;
+        let syncPidDuringAbort: number | undefined = -1;
+        let syncRespondErr: Promise<unknown> | undefined;
+        // Registered BEFORE open() so it fires before linkAbortSignals forwarder.
+        controller.signal.addEventListener(
+          'abort',
+          () => {
+            if (liveSession !== undefined && liveEvent !== undefined) {
+              syncPidDuringAbort = liveSession.providerPid;
+              syncRespondErr = captureRejection(liveEvent.respond({ kind: 'approve' }));
+            }
+          },
+          { once: true },
+        );
         const driver = createAcpDriver({
           executable: process.execPath,
           args: [PEER, root, mode],
@@ -317,6 +334,7 @@ describe('ACP close, disconnect, and abort liveness', () => {
           cwd: root,
           signal: controller.signal,
         });
+        liveSession = session;
         const turn = await session.startTurn(TURN_INPUT);
         const turnFailure =
           mode === 'abort-active' ? captureRejection(drain(turn)) : undefined;
@@ -327,11 +345,14 @@ describe('ACP close, disconnect, and abort liveness', () => {
           });
         }
         const heldEvent = await heldReady.promise;
+        liveEvent = heldEvent;
         const pid = session.providerPid;
         expect(pid).toBeGreaterThan(0);
 
         // Abort synchronously while child traps SIGTERM and peer is still open.
         controller.abort(reason);
+        expect(syncPidDuringAbort).toBeUndefined();
+        expect(await syncRespondErr).toBe(reason);
         expect(session.providerPid).toBeUndefined();
         expect(await captureRejection(heldEvent.respond({ kind: 'approve' }))).toBe(reason);
         expect(

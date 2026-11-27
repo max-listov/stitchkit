@@ -3,10 +3,11 @@
  * and refusing `event.respond()` / `turn.respond()` once a Codex connection or thread is closed.
  */
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { CodexStartingTurn } from '../../src/agent-executor/codex/event-routing';
 import { createCodexHandlers } from '../../src/agent-executor/codex/handlers';
+import type { PendingExternalCodexRequest } from '../../src/agent-executor/codex/request-answers';
 import { createJsonRpcPeer, JsonRpcError } from '../../src/agent-executor/json-rpc-peer';
 import { TURN_QUEUE } from '../../src/agent-executor/session-primitives';
 import { projectExecutorDeltas } from '../../src/entrypoints/agent-executor';
@@ -19,12 +20,14 @@ import {
   createFakeCodexAppServer,
   makeCodexThreadFixture,
 } from '../../src/entrypoints/agent-executor/testing';
+import { probeLiveness } from '../../src/internal/process-identity';
 import { ambientIn, inScratch } from '../support/engine-driver-harness';
 import { reapAfterEachTest, trackPidFile } from '../support/process-reaper';
 
 reapAfterEachTest();
 
 const FAKE_SHARED_CODEX = resolve(import.meta.dir, '../fixtures/fake-codex-shared-server.ts');
+const STDIO_ABORT_PEER = resolve(import.meta.dir, '../fixtures/codex-stdio-abort-peer.ts');
 
 type ReplyRecord =
   | { outcome: 'resolved'; value: unknown }
@@ -490,5 +493,391 @@ describe('Codex pre-turn-start teardown and dead-connection respond guards', () 
       ).toThrow(/turn queue limit/);
       expect(() => starting.flush()).not.toThrow();
       expect(order).toEqual(['first']);
+    }));
+
+  test('unit: onObserverError and post-observer cleanup suppress post-abort JsonRpcError replies and unhandled rejections', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const sent: string[] = [];
+      let alive = true;
+      const externalPending = new Map<string, PendingExternalCodexRequest>();
+      const releaseAsyncReject = Promise.withResolvers<void>();
+      const releaseAsyncClean = Promise.withResolvers<void>();
+      const handlers = createCodexHandlers({
+        profileId: 'p-obs',
+        limits: new Map(),
+        externalPending,
+        getTurn: () => undefined,
+        clearTurn: () => undefined,
+        ensureAlive: () => {
+          if (!alive) throw new Error('aborted');
+        },
+        onServerRequest: (event) => {
+          if (event.interactionId === 'live-rpc-err') {
+            return (async () => {
+              throw new JsonRpcError(-32001, 'live-denied');
+            })();
+          }
+          if (event.interactionId === 'async-after-abort-err') {
+            return (async () => {
+              await releaseAsyncReject.promise;
+              throw new JsonRpcError(-32002, 'must-not-send');
+            })();
+          }
+          if (event.interactionId === 'async-sync-abort-err') {
+            return (async () => {
+              alive = false;
+              throw new JsonRpcError(-32003, 'sync-abort-async-err');
+            })();
+          }
+          if (event.interactionId === 'sync-abort-err') {
+            alive = false;
+            throw new JsonRpcError(-32004, 'sync-abort-err');
+          }
+          if (event.interactionId === 'sync-abort-clean') {
+            alive = false;
+            return;
+          }
+          if (event.interactionId === 'async-after-abort-clean') {
+            return (async () => {
+              await releaseAsyncClean.promise;
+            })();
+          }
+        },
+      });
+      const peer = createJsonRpcPeer({
+        header: 'omitted',
+        requestTimeoutMs: 5_000,
+        send: (line) => sent.push(line),
+        onNotification: handlers.onNotification,
+        onRequest: handlers.onRequest,
+      });
+      const sendReq = (id: string) =>
+        peer.receive(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id,
+            method: 'item/commandExecution/requestApproval',
+            params: approvalParams('t', 'u', `item-${id}`, 'echo x'),
+          }),
+        );
+
+      // 1. Positive control: live JsonRpcError IS forwarded to peer.
+      sendReq('live-rpc-err');
+      await Bun.sleep(20);
+      expect(sent).toHaveLength(1);
+      expect(JSON.parse(sent[0] ?? '{}')).toMatchObject({
+        id: 'live-rpc-err',
+        error: { code: -32001, message: 'live-denied' },
+      });
+      expect(externalPending.size).toBe(0);
+      sent.length = 0;
+
+      // 2. Async observer awaits -> abort happens before onDisconnect -> observer throws JsonRpcError.
+      sendReq('async-after-abort-err');
+      expect(externalPending.has('async-after-abort-err')).toBe(true);
+      alive = false;
+      releaseAsyncReject.resolve();
+      await Bun.sleep(20);
+      expect(sent).toEqual([]);
+      expect(externalPending.size).toBe(0);
+
+      // 3. Async observer synchronously sets alive=false and throws JsonRpcError (no unhandled rejection).
+      alive = true;
+      sendReq('async-sync-abort-err');
+      await Bun.sleep(20);
+      expect(sent).toEqual([]);
+      expect(externalPending.size).toBe(0);
+
+      // 4. Sync observer sets alive=false and throws JsonRpcError.
+      alive = true;
+      sendReq('sync-abort-err');
+      await Bun.sleep(20);
+      expect(sent).toEqual([]);
+      expect(externalPending.size).toBe(0);
+
+      // 5. Sync observer sets alive=false and returns cleanly.
+      alive = true;
+      sendReq('sync-abort-clean');
+      await Bun.sleep(20);
+      expect(sent).toEqual([]);
+      expect(externalPending.size).toBe(0);
+
+      // 6. Async observer awaits -> external abort -> resolves cleanly.
+      alive = true;
+      sendReq('async-after-abort-clean');
+      expect(externalPending.has('async-after-abort-clean')).toBe(true);
+      alive = false;
+      releaseAsyncClean.resolve();
+      await Bun.sleep(20);
+      expect(sent).toEqual([]);
+      expect(externalPending.size).toBe(0);
+
+      peer.close(new Error('done'));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  test('stdio session: pre-open sync abort listener and post-exit event.respond() preserve exact caller reason without unhandled rejections', () =>
+    inScratch('codex-stdio-abort-observer', async (root) => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        // 1. Positive control on real stdio peer: live JsonRpcError reaches responses.jsonl.
+        const liveRoot = join(root, 'live');
+        mkdirSync(liveRoot, { recursive: true });
+        trackPidFile(join(liveRoot, 'pid'));
+        const liveSession = await createCodexDriver({
+          executable: process.execPath,
+          prefixArgs: [STDIO_ABORT_PEER, liveRoot, 'live-positive'],
+          ambient: ambientIn(liveRoot),
+          onServerRequest: async () => {
+            throw new JsonRpcError(-32005, 'live-wire-error');
+          },
+        }).open({ profile: profileFor(liveRoot, 'stdio-live'), cwd: liveRoot });
+        await waitUntil(() => existsSync(join(liveRoot, 'responses.jsonl')), 'live response');
+        const liveLines = readFileSync(join(liveRoot, 'responses.jsonl'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line));
+        expect(liveLines).toContainEqual(
+          expect.objectContaining({
+            id: 'ext-abort-1',
+            error: expect.objectContaining({ code: -32005, message: 'live-wire-error' }),
+          }),
+        );
+        await liveSession.close();
+
+        // 2. Abort window on real stdio peer: child stays alive on SIGTERM until release-exit.
+        const abortRoot = join(root, 'abort');
+        mkdirSync(abortRoot, { recursive: true });
+        trackPidFile(join(abortRoot, 'pid'));
+        const controller = new AbortController();
+        const reqArrived = Promise.withResolvers<CodexServerRequestEvent>();
+        const releaseObserver = Promise.withResolvers<void>();
+        let heldEvent: CodexServerRequestEvent | undefined;
+        let syncAbortRespondErr: Promise<unknown> | undefined;
+        // Registered BEFORE open() so it fires before linkAbortSignals forwarder.
+        controller.signal.addEventListener(
+          'abort',
+          () => {
+            if (heldEvent !== undefined) {
+              syncAbortRespondErr = captureError(heldEvent.respond({ kind: 'approve' }));
+            }
+          },
+          { once: true },
+        );
+
+        const session = await createCodexDriver({
+          executable: process.execPath,
+          prefixArgs: [STDIO_ABORT_PEER, abortRoot, 'abort-observer'],
+          ambient: ambientIn(abortRoot),
+          onServerRequest: async (event) => {
+            heldEvent = event;
+            reqArrived.resolve(event);
+            await releaseObserver.promise;
+            throw new JsonRpcError(-32006, 'post-abort-must-not-reach-wire');
+          },
+        }).open({
+          profile: profileFor(abortRoot, 'stdio-abort'),
+          cwd: abortRoot,
+          signal: controller.signal,
+        });
+        const pid = Number(readFileSync(join(abortRoot, 'pid'), 'utf8').trim());
+        const event = await reqArrived.promise;
+
+        const reason = new Error('codex-stdio-caller-aborted');
+        controller.abort(reason);
+        // Pre-open sync listener rejected with exact caller reason.
+        expect(await syncAbortRespondErr).toBe(reason);
+        // Child received SIGTERM and is STILL ALIVE (before onDisconnect).
+        await waitUntil(() => existsSync(join(abortRoot, 'sigterm-received')), 'sigterm');
+        releaseObserver.resolve();
+        await Bun.sleep(40);
+        writeFileSync(join(abortRoot, 'release-exit'), '1');
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline && (await probeLiveness(pid)) !== 'gone') {
+          await Bun.sleep(10);
+        }
+        expect(await probeLiveness(pid)).toBe('gone');
+        await Bun.sleep(20);
+        expect(existsSync(join(abortRoot, 'responses.jsonl'))).toBe(false);
+        // Post-exit event.respond() preserves exact caller abort reason (not generic exit error).
+        expect(await captureError(event.respond({ kind: 'approve' }))).toBe(reason);
+        expect(unhandled).toEqual([]);
+        await session.close();
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    }));
+
+  test('shared server and control connection: live stdio pipe suppresses post-abort onServerRequest JsonRpcError and CodexTurn.interrupt(), and preserves thread/server/control abort reasons', () =>
+    inScratch('codex-shared-and-control-abort', async (root) => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        // 1. Shared server over live stdio: aborting Thread A leaves the server pipe OPEN, so
+        //    only codex/handlers.ts:306 prevents async onServerRequest JsonRpcError from hitting wire,
+        //    and only codex/thread-open.ts prevents CodexTurn.interrupt() from sending turn/interrupt.
+        const sharedRoot = join(root, 'shared');
+        mkdirSync(sharedRoot, { recursive: true });
+        trackPidFile(join(sharedRoot, 'pid'));
+        const serverAc = new AbortController();
+        const threadAc = new AbortController();
+        const extReqArrived = Promise.withResolvers<CodexServerRequestEvent>();
+        const releaseExtObserver = Promise.withResolvers<void>();
+        let extEvent: CodexServerRequestEvent | undefined;
+        let syncThreadRespondErr: Promise<unknown> | undefined;
+        // Registered BEFORE openThread() to verify pre-open FIFO listener ordering.
+        threadAc.signal.addEventListener(
+          'abort',
+          () => {
+            if (extEvent !== undefined) {
+              syncThreadRespondErr = captureError(extEvent.respond({ kind: 'approve' }));
+            }
+          },
+          { once: true },
+        );
+
+        const server = await createCodexDriver({
+          executable: process.execPath,
+          prefixArgs: [STDIO_ABORT_PEER, sharedRoot, 'shared-thread-abort'],
+          ambient: ambientIn(sharedRoot),
+          onServerRequest: async (event) => {
+            if (event.interactionId === 'shared-ext-1') {
+              extEvent = event;
+              extReqArrived.resolve(event);
+              await releaseExtObserver.promise;
+              throw new JsonRpcError(-32007, 'shared-thread-post-abort-must-not-send');
+            }
+          },
+        }).openSharedServer({
+          profile: profileFor(sharedRoot, 'shared-abort'),
+          cwd: sharedRoot,
+          signal: serverAc.signal,
+        });
+        const threadA = await server.openThread({ cwd: sharedRoot, signal: threadAc.signal });
+        const threadB = await server.openThread({ cwd: sharedRoot });
+        const arrivedExt = await extReqArrived.promise;
+
+        // Start active turn on Thread A holding an active approval request (`shared-act-1`).
+        const turnA = await threadA.startTurn(startInput('t-shared-a', 'go'));
+        const iterA = turnA.deltas[Symbol.asyncIterator]();
+        const firstA = await iterA.next();
+        expect(firstA.value?.type).toBe('request');
+        const turnAFailure = captureError(
+          (async () => {
+            for (;;) {
+              const next = await iterA.next();
+              if (next.done) break;
+            }
+          })(),
+        );
+
+        const threadReason = new Error('shared-thread-A-aborted');
+        threadAc.abort(threadReason);
+        // Pre-open sync listener AND post-abort respond() all preserve exact `threadReason` (not generic closed).
+        expect(await syncThreadRespondErr).toBe(threadReason);
+        expect(await turnAFailure).toBe(threadReason);
+        expect(await captureError(arrivedExt.respond({ kind: 'approve' }))).toBe(threadReason);
+        expect(await captureError(turnA.respond('shared-act-1', { kind: 'approve' }))).toBe(
+          threadReason,
+        );
+        expect(await captureError(threadA.respond('shared-ext-1', { kind: 'approve' }))).toBe(
+          threadReason,
+        );
+        // Release async observer while server stdio pipe is STILL LIVE -> zero JsonRpcError written!
+        releaseExtObserver.resolve();
+        // Calling turnA.interrupt() after thread abort must be a no-op (zero turn/interrupt sent).
+        await turnA.interrupt();
+        await Bun.sleep(40);
+
+        // Sibling Thread B proves the shared server stdio pipe is genuinely still open and functional.
+        const turnB = await threadB.startTurn(startInput('t-shared-b', 'still-alive'));
+        const deltasB = [];
+        for await (const delta of turnB.deltas) deltasB.push(delta);
+        expect(projectExecutorDeltas(deltasB)).toEqual([{ type: 'text', text: 'sibling-ok' }]);
+        // Calling interrupt() on a settled turnB must be a no-op (zero turn/interrupt sent).
+        await turnB.interrupt();
+
+        // Check live wire logs: zero JSON-RPC error/cancel responses for shared-ext-1, zero turn/interrupt calls.
+        const responses = existsSync(join(sharedRoot, 'responses.jsonl'))
+          ? readFileSync(join(sharedRoot, 'responses.jsonl'), 'utf8')
+              .trim()
+              .split('\n')
+              .map((line) => JSON.parse(line))
+          : [];
+        expect(
+          responses.filter((r) => Reflect.get(Object(r), 'id') === 'shared-ext-1'),
+        ).toEqual([]);
+        const calls = readFileSync(join(sharedRoot, 'calls.jsonl'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line));
+        expect(calls.filter((c) => Array.isArray(c) && c[0] === 'turn/interrupt')).toEqual([]);
+
+        // Now abort the shared server itself -> Thread B preserves exact `serverReason` (not generic AbortError/closed).
+        const serverReason = new Error('shared-server-aborted');
+        serverAc.abort(serverReason);
+        expect(await captureError(threadB.respond('any', { kind: 'approve' }))).toBe(
+          serverReason,
+        );
+        expect(await captureError(threadB.startTurn(startInput('t-after-srv', 'no')))).toBe(
+          serverReason,
+        );
+        await server.close();
+
+        // 2. connectControl({ signal }): pre-open sync listener + post-abort preserve exact `controlReason`.
+        const ctlRoot = join(root, 'ctl');
+        mkdirSync(ctlRoot, { recursive: true });
+        trackPidFile(join(ctlRoot, 'pid'));
+        const ctlAc = new AbortController();
+        const ctlEventReady = Promise.withResolvers<CodexServerRequestEvent>();
+        let ctlEvent: CodexServerRequestEvent | undefined;
+        let syncCtlErr: Promise<unknown> | undefined;
+        ctlAc.signal.addEventListener(
+          'abort',
+          () => {
+            if (ctlEvent !== undefined) {
+              syncCtlErr = captureError(ctlEvent.respond({ kind: 'approve' }));
+            }
+          },
+          { once: true },
+        );
+        const control = await createCodexDriver({
+          executable: process.execPath,
+          prefixArgs: [STDIO_ABORT_PEER, ctlRoot, 'control-abort'],
+          ambient: ambientIn(ctlRoot),
+          onServerRequest: (event) => {
+            ctlEvent = event;
+            ctlEventReady.resolve(event);
+          },
+        }).connectControl({
+          profile: profileFor(ctlRoot, 'ctl-abort'),
+          cwd: ctlRoot,
+          signal: ctlAc.signal,
+        });
+        const readyCtlEvent = await ctlEventReady.promise;
+        const controlReason = new Error('codex-control-aborted');
+        ctlAc.abort(controlReason);
+        expect(await syncCtlErr).toBe(controlReason);
+        expect(await captureError(readyCtlEvent.respond({ kind: 'approve' }))).toBe(
+          controlReason,
+        );
+        expect(await captureError(control.respond('ctl-abort-1', { kind: 'approve' }))).toBe(
+          controlReason,
+        );
+        await control.close();
+
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
     }));
 });

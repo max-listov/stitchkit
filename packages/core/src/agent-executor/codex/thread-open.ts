@@ -197,6 +197,12 @@ export function createCodexStartTurn(input: {
         nativeTurnId,
         deltas: turn.channel,
         async interrupt() {
+          if (input.getTurn() !== turn) return;
+          try {
+            input.ensureAlive();
+          } catch {
+            return;
+          }
           interruptLocalCodexTurn(turn, nativeTurnId);
           await input.peer.request('turn/interrupt', {
             threadId: input.threadId,

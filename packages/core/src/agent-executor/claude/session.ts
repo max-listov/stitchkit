@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { abortReason } from '../../internal/abort-race';
 import type { AgentEngineSession, AgentEngineTurn } from '../engine';
 import { ENGINE_LINE_BYTES, type EngineProcess, spawnEngineProcess } from '../engine-process';
 import {
@@ -44,6 +45,7 @@ import { claudeTranscriptExists, claudeTranscriptPath } from './transcript';
 interface ClaudeTurnSlot
   extends EngineRequestTurn<ClaudePermissionDecision, ClaudePendingPermissionDetail> {
   readonly state: ClaudeTurnState;
+  settled: boolean;
 }
 
 const INTERRUPTED: ClaudePermissionDecision = {
@@ -59,15 +61,23 @@ const LOST: ClaudePermissionDecision = {
 function claudeTurnHandle(
   turn: ClaudeTurnSlot,
   send: (line: string) => void,
+  ensureAlive: () => void,
 ): AgentEngineTurn {
   return {
     deltas: turn.channel,
     async interrupt() {
+      if (turn.settled) return;
+      try {
+        ensureAlive();
+      } catch {
+        return;
+      }
       turn.state.interruptRequested = true;
       drainEngineRequests(turn, () => INTERRUPTED);
       send(JSON.stringify(claudeInterrupt(randomUUID())));
     },
     async respond(interactionId, rawReply) {
+      ensureAlive();
       const waiting = turn.pending.get(interactionId);
       if (waiting === undefined) {
         throw new TypeError(`Unknown interaction ${interactionId} for this turn`);
@@ -78,6 +88,120 @@ function claudeTurnHandle(
         resolveClaudePermissionReply(waiting.detail, rawReply),
       );
     },
+  };
+}
+
+function startClaudeReadingLoop(state: {
+  readonly engine: EngineProcess;
+  readonly profileId: string;
+  readonly limits: Map<string, PlanLimits>;
+  readonly isStopped: () => boolean;
+  readonly getDead: () => Error | undefined;
+  readonly getTurn: () => ClaudeTurnSlot | undefined;
+  readonly clearTurn: (turn: ClaudeTurnSlot | undefined) => void;
+  readonly onExit: (error: unknown) => void;
+}): Promise<void> {
+  const { engine, profileId, limits } = state;
+  // One reader for the life of the process: records between turns
+  // (limits, the session's own) are applied, a turn's go to its channel.
+  return (async () => {
+    try {
+      for await (const line of engine.lines) {
+        if (state.isStopped()) continue;
+        const turn = state.getTurn();
+        const verdict = classifyClaudeRecord(
+          JSON.parse(line),
+          turn?.state ?? newClaudeTurnState('between-turns'),
+        );
+        switch (verdict.kind) {
+          case 'limits':
+            limits.set(
+              profileId,
+              mergeRateLimitEvent({
+                previous: limits.get(profileId),
+                windows: claudePlanWindows(verdict.info),
+                now: new Date(),
+              }),
+            );
+            break;
+          case 'deltas':
+            for (const delta of verdict.deltas) offerTurnDelta(turn?.channel, delta);
+            break;
+          case 'request': {
+            const { delta, input, toolName, suppressSessionRule } = verdict;
+            // A lost or stopped CLI reads nothing: the answer a drain gives it is not written.
+            const answer = (decision: ClaudePermissionDecision) => {
+              if (!state.isStopped() && state.getDead() === undefined)
+                engine.send(
+                  JSON.stringify(claudePermissionResponse(delta.interactionId, decision)),
+                );
+            };
+            // Between turns nobody can be asked; the CLI is not left waiting either way.
+            if (turn === undefined)
+              answer({ behavior: 'deny', message: 'No turn is running to ask' });
+            else
+              holdEngineRequest(turn, {
+                interactionId: delta.interactionId,
+                detail: { input, toolName, suppressSessionRule },
+                answeredBy: { source: 'claude', type: 'control_response' },
+                delta: () => delta,
+                refusal: INTERRUPTED,
+                resolve: answer,
+              });
+            break;
+          }
+          case 'unhandled':
+            offerTurnDelta(turn?.channel, verdict.delta);
+            if (verdict.refuse !== undefined && !state.isStopped())
+              engine.send(
+                JSON.stringify(
+                  claudeControlError(verdict.refuse.requestId, verdict.refuse.message),
+                ),
+              );
+            break;
+          case 'end':
+            if (turn !== undefined) turn.settled = true;
+            endEngineTurn(turn, () => ENDED, verdict.deltas);
+            state.clearTurn(turn);
+            break;
+          case 'event':
+          case 'session':
+          case 'ignore':
+            break;
+        }
+      }
+      state.onExit(
+        new Error(
+          `The Claude CLI exited during the turn: ${engine.stderrTail().slice(-2000)}`,
+        ),
+      );
+    } catch (error) {
+      state.onExit(error);
+      await engine.stop().catch(() => undefined);
+    }
+  })();
+}
+
+function createClaudeSessionClose(state: {
+  readonly engine: EngineProcess;
+  readonly reading: Promise<void>;
+  readonly markClosing: () => void;
+  readonly settleTurn: (reason: unknown) => void;
+  readonly abortLinked: () => void;
+  readonly releaseLinked: () => void;
+}): () => Promise<void> {
+  let closePromise: Promise<void> | undefined;
+  return () => {
+    if (closePromise !== undefined) return closePromise;
+    state.markClosing();
+    state.settleTurn(new Error('The Claude CLI session is closed'));
+    state.abortLinked();
+    closePromise = stopConnection({ engine: state.engine, reading: state.reading }).finally(
+      () => {
+        state.releaseLinked();
+      },
+    );
+    return closePromise;
   };
 }
 
@@ -115,6 +239,7 @@ export async function openClaudeSession(
   let engine: EngineProcess;
   emitStartupPhase(input.onStartupPhase, 'spawning');
   try {
+    linked.signal.throwIfAborted();
     engine = spawnEngineProcess({
       executable,
       args: [
@@ -147,91 +272,54 @@ export async function openClaudeSession(
   }
   let current: ClaudeTurnSlot | undefined;
   let dead: Error | undefined;
-  const fail = (error: unknown) => {
-    const failed = error instanceof Error ? error : new Error(String(error));
-    dead = failed;
+  let closing = false;
+  const isStopped = () => closing || input.signal?.aborted === true || linked.signal.aborted;
+  const ensureAlive = () => {
+    if (closing) throw new Error('The Claude CLI session is closed');
+    if (dead !== undefined) throw dead;
+    if (input.signal?.aborted) throw abortReason(input.signal);
+    if (linked.signal.aborted) throw abortReason(linked.signal);
+  };
+  const settleTurn = (reason: unknown) => {
     const turn = current;
     current = undefined;
-    loseEngineTurn(turn, () => LOST, failed);
-    // The session is over: nothing follows the caller's signal any more.
-    linked.abort();
+    if (turn !== undefined) turn.settled = true;
+    loseEngineTurn(turn, () => LOST, reason);
   };
-  // One reader for the life of the process: records between turns
-  // (limits, the session's own) are applied, a turn's go to its channel.
-  const reading = (async () => {
-    try {
-      for await (const line of engine.lines) {
-        const turn = current;
-        const verdict = classifyClaudeRecord(
-          JSON.parse(line),
-          turn?.state ?? newClaudeTurnState('between-turns'),
-        );
-        switch (verdict.kind) {
-          case 'limits':
-            limits.set(
-              profile.profileId,
-              mergeRateLimitEvent({
-                previous: limits.get(profile.profileId),
-                windows: claudePlanWindows(verdict.info),
-                now: new Date(),
-              }),
-            );
-            break;
-          case 'deltas':
-            for (const delta of verdict.deltas) offerTurnDelta(turn?.channel, delta);
-            break;
-          case 'request': {
-            const { delta, input, toolName, suppressSessionRule } = verdict;
-            // A lost CLI reads nothing: the answer a drain gives it is not written.
-            const answer = (decision: ClaudePermissionDecision) => {
-              if (dead === undefined)
-                engine.send(
-                  JSON.stringify(claudePermissionResponse(delta.interactionId, decision)),
-                );
-            };
-            // Between turns nobody can be asked; the CLI is not left waiting either way.
-            if (turn === undefined)
-              answer({ behavior: 'deny', message: 'No turn is running to ask' });
-            else
-              holdEngineRequest(turn, {
-                interactionId: delta.interactionId,
-                detail: { input, toolName, suppressSessionRule },
-                answeredBy: { source: 'claude', type: 'control_response' },
-                delta: () => delta,
-                refusal: INTERRUPTED,
-                resolve: answer,
-              });
-            break;
-          }
-          case 'unhandled':
-            offerTurnDelta(turn?.channel, verdict.delta);
-            if (verdict.refuse !== undefined)
-              engine.send(
-                JSON.stringify(
-                  claudeControlError(verdict.refuse.requestId, verdict.refuse.message),
-                ),
-              );
-            break;
-          case 'end':
-            endEngineTurn(turn, () => ENDED, verdict.deltas);
-            current = undefined;
-            break;
-          case 'event':
-          case 'session':
-          case 'ignore':
-            break;
-        }
+  linked.signal.addEventListener(
+    'abort',
+    () => {
+      if (closing || dead !== undefined) return;
+      settleTurn(abortReason(linked.signal));
+    },
+    { once: true },
+  );
+  const reading = startClaudeReadingLoop({
+    engine,
+    profileId: profile.profileId,
+    limits,
+    isStopped,
+    getDead: () => dead,
+    getTurn: () => current,
+    clearTurn: (turn) => {
+      if (current === turn) current = undefined;
+    },
+    onExit: (error) => {
+      if (closing) {
+        settleTurn(new Error('The Claude CLI session is closed'));
+        return;
       }
-      fail(
-        new Error(
-          `The Claude CLI exited during the turn: ${engine.stderrTail().slice(-2000)}`,
-        ),
-      );
-    } catch (error) {
-      fail(error);
-      await engine.stop().catch(() => undefined);
-    }
-  })();
+      if (input.signal?.aborted) {
+        settleTurn(abortReason(input.signal));
+        return;
+      }
+      const failed = error instanceof Error ? error : new Error(String(error));
+      dead = failed;
+      settleTurn(failed);
+      // The session is over: nothing follows the caller's signal any more.
+      linked.abort();
+    },
+  });
   const startTurn = imageTurnStarter<
     Parameters<AgentEngineSession['startTurn']>[0],
     AgentEngineTurn
@@ -241,7 +329,7 @@ export async function openClaudeSession(
     imageOptions: config,
     signal: linked.signal,
     check() {
-      if (dead !== undefined) throw dead;
+      ensureAlive();
       if (current !== undefined)
         throw new Error('A turn is already running in this Claude session');
     },
@@ -260,23 +348,32 @@ export async function openClaudeSession(
         state: newClaudeTurnState(turnInput.turnId),
         channel: createTurnDeltaChannel(),
         pending: new Map(),
+        settled: false,
       };
       current = turn;
       try {
         engine.send(serialized);
       } catch (error) {
+        turn.settled = true;
         if (current === turn) current = undefined;
         throw error;
       }
-      return claudeTurnHandle(turn, (line) => engine.send(line));
+      return claudeTurnHandle(turn, (line) => engine.send(line), ensureAlive);
     },
+  });
+  const close = createClaudeSessionClose({
+    engine,
+    reading,
+    markClosing: () => {
+      closing = true;
+    },
+    settleTurn,
+    abortLinked: () => linked.abort(),
+    releaseLinked: () => linked.release(),
   });
   return {
     nativeThreadId: sessionId,
     startTurn,
-    async close() {
-      linked.abort();
-      await stopConnection({ engine, reading });
-    },
+    close,
   };
 }

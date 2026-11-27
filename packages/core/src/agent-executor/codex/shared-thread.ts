@@ -1,8 +1,8 @@
-import { abortReason, raceAbort } from '../../internal/abort-race';
+import { abortReason, linkAbortSignals, raceAbort } from '../../internal/abort-race';
 import { loseEngineTurn } from '../engine-requests';
 import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
 import type { ExecutorProfileConfig } from '../profile';
-import { emitStartupPhase, sessionAbort } from '../session-primitives';
+import { emitStartupPhase } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
 import { createCodexControlClient } from './control-client';
 import { discardStartingTurn } from './event-routing';
@@ -54,8 +54,8 @@ export interface SharedThreadSlot {
   readonly handlers: ReturnType<typeof createCodexHandlers>;
   readonly ensureAlive: () => void;
   closed: boolean;
-  dead: Error | undefined;
-  readonly abortThread: () => void;
+  dead: { readonly reason: unknown } | undefined;
+  readonly abortThread: (reason?: unknown) => void;
   readonly releaseThreadSignal: () => void;
 }
 
@@ -93,7 +93,11 @@ function buildSharedThreadSession(params: {
   readonly slot: SharedThreadSlot;
   readonly threadContext: CodexThreadContext;
   readonly activeModelProvider: string | undefined;
-  readonly threadAbort: ReturnType<typeof sessionAbort>;
+  readonly threadAbort: {
+    readonly signal: AbortSignal;
+    abort(reason?: unknown): void;
+    release(): void;
+  };
 }): CodexSession {
   const { state, slot, threadContext, activeModelProvider, threadAbort } = params;
   const { threadId, ensureAlive: ensureThreadAlive } = slot;
@@ -128,6 +132,10 @@ function buildSharedThreadSession(params: {
   const closeThread = async () => {
     if (slot.closed) return;
     slot.closed = true;
+    if (slot.dead !== undefined) {
+      slot.releaseThreadSignal();
+      return;
+    }
     const turn = slot.current;
     slot.current = undefined;
     discardStartingTurn(turn);
@@ -145,15 +153,14 @@ function buildSharedThreadSession(params: {
   threadAbort.signal.addEventListener(
     'abort',
     () => {
-      if (slot.closed) return;
-      slot.closed = true;
+      if (slot.closed || slot.dead !== undefined) return;
       const reason = abortReason(threadAbort.signal);
-      slot.dead = slot.dead ?? (reason instanceof Error ? reason : new Error(String(reason)));
+      slot.dead = { reason };
       const turn = slot.current;
       slot.current = undefined;
       discardStartingTurn(turn);
       slot.externalPending.clear();
-      loseEngineTurn(turn, codexStopped, slot.dead);
+      loseEngineTurn(turn, codexStopped, reason);
       state.threads.delete(threadId);
       slot.releaseThreadSignal();
       void bestEffortUnsubscribe(state, threadId);
@@ -203,15 +210,24 @@ export async function openSharedCodexThread(
       `[stitchkit] CodexSharedServer.openThread: active thread limit (${state.maxThreads}) reached`,
     );
   }
-  const threadAbort = sessionAbort(threadInput.signal);
-  const onServerAbort = () => threadAbort.abort();
-  state.serverSignal.addEventListener('abort', onServerAbort, { once: true });
+  if (threadInput.signal?.aborted) throw abortReason(threadInput.signal);
+  if (state.serverSignal.aborted) throw abortReason(state.serverSignal);
+  const ownThreadAbort = new AbortController();
+  const threadLink = linkAbortSignals(
+    threadInput.signal,
+    state.serverSignal,
+    ownThreadAbort.signal,
+  );
   let signalReleased = false;
   const releaseThreadSignal = () => {
     if (signalReleased) return;
     signalReleased = true;
-    state.serverSignal.removeEventListener('abort', onServerAbort);
-    threadAbort.release();
+    threadLink.release();
+  };
+  const threadAbort = {
+    signal: threadLink.signal,
+    abort: (reason?: unknown) => ownThreadAbort.abort(reason),
+    release: releaseThreadSignal,
   };
 
   state.openingThreads += 1;
@@ -224,6 +240,7 @@ export async function openSharedCodexThread(
     imageOptions: state.config,
     signal: threadAbort.signal,
     ensureAlive: () => {
+      if (threadInput.signal?.aborted) throw abortReason(threadInput.signal);
       threadAbort.signal.throwIfAborted();
       state.ensureServerAlive();
     },
@@ -281,8 +298,9 @@ export async function openSharedCodexThread(
     const externalPending = new Map<string, PendingExternalCodexRequest>();
     const ensureAlive = () => {
       if (slot.closed) throw new Error('The Codex session is closed');
-      if (slot.dead !== undefined) throw slot.dead;
+      if (slot.dead !== undefined) throw slot.dead.reason;
       state.ensureServerAlive();
+      if (threadInput.signal?.aborted) throw abortReason(threadInput.signal);
       if (threadAbort.signal.aborted) throw abortReason(threadAbort.signal);
     };
     const slot: SharedThreadSlot = {
@@ -292,7 +310,7 @@ export async function openSharedCodexThread(
       ensureAlive,
       closed: false,
       dead: undefined,
-      abortThread: () => threadAbort.abort(),
+      abortThread: (reason) => threadAbort.abort(reason),
       releaseThreadSignal,
       handlers: createCodexHandlers({
         profileId: state.profile.profileId,
@@ -333,7 +351,7 @@ export async function openSharedCodexThread(
     }
     state.ensureServerAlive();
     threadAbort.signal.throwIfAborted();
-    if (slot.dead !== undefined) throw slot.dead;
+    if (slot.dead !== undefined) throw slot.dead.reason;
 
     const activeModelProvider =
       threadContext.modelProvider ??

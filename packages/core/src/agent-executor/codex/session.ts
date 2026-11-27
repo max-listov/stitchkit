@@ -64,6 +64,7 @@ export async function openCodexSession(
   const ensureAlive = () => {
     if (closing) throw new Error('The Codex session is closed');
     if (dead !== undefined) throw dead;
+    if (input.signal?.aborted) throw abortReason(input.signal);
     if (linked.signal.aborted) throw abortReason(linked.signal);
   };
   let connected: Awaited<ReturnType<typeof connectCodex>>;
@@ -91,14 +92,19 @@ export async function openCodexSession(
         }),
       }),
       (error) => {
-        const shouldNotify = opened && !closing && input.signal?.aborted !== true;
-        dead = error;
+        const abortedByCaller = input.signal?.aborted === true;
+        const shouldNotify = opened && !closing && !abortedByCaller;
+        if (!closing && !abortedByCaller) dead = error;
         const turn = current;
         current = undefined;
         discardStartingTurn(turn);
         // Never send `cancel` for external TUI requests when our observer disconnects.
         externalPending.clear();
-        loseEngineTurn(turn, codexStopped, error);
+        loseEngineTurn(
+          turn,
+          codexStopped,
+          abortedByCaller && input.signal !== undefined ? abortReason(input.signal) : error,
+        );
         linked.abort();
         if (shouldNotify) invokeSafely(() => config.onDisconnect?.(error));
       },
@@ -242,6 +248,7 @@ export async function openCodexControlConnection(
   const ensureAlive = () => {
     if (closing) throw new Error('The Codex control connection is closed');
     if (dead !== undefined) throw dead;
+    if (input.signal?.aborted) throw abortReason(input.signal);
     if (linked.signal.aborted) throw abortReason(linked.signal);
   };
   let connected: Awaited<ReturnType<typeof connectCodex>>;
@@ -267,8 +274,9 @@ export async function openCodexControlConnection(
         }),
       }),
       (error) => {
-        const shouldNotify = opened && !closing && input.signal?.aborted !== true;
-        dead = error;
+        const abortedByCaller = input.signal?.aborted === true;
+        const shouldNotify = opened && !closing && !abortedByCaller;
+        if (!closing && !abortedByCaller) dead = error;
         externalPending.clear();
         linked.abort();
         if (shouldNotify) invokeSafely(() => config.onDisconnect?.(error));

@@ -85,6 +85,8 @@ export interface SdkTurnSlot
     ClaudePendingPermissionDetail<Record<string, unknown>>
   > {
   readonly state: ClaudeTurnState;
+  settled: boolean;
+  lost?: { readonly error: unknown };
 }
 
 /** One active Agent SDK query handle managed by a session. */
@@ -198,6 +200,11 @@ export function createSdkCanUseTool(state: {
         resolve: finish,
       });
       if (turn.pending.has(interactionId)) {
+        if (state.isClosed()) {
+          turn.pending.delete(interactionId);
+          finish({ behavior: 'deny', message: 'The session was closed', interrupt: true });
+          return;
+        }
         options.signal.addEventListener('abort', onToolAbort, { once: true });
         if (state.onPermissionRequest !== undefined) {
           const meta: ClaudeSdkPermissionRequestMeta = {
@@ -234,15 +241,31 @@ export function createSdkCanUseTool(state: {
 }
 
 /** The turn as the executor steers it: interrupt through the query, answer permissions. */
-export function sdkTurnHandle(turn: SdkTurnSlot, query: ClaudeSdkRun): AgentEngineTurn {
+export function sdkTurnHandle(
+  turn: SdkTurnSlot,
+  query: ClaudeSdkRun,
+  ensureAlive: () => void,
+): AgentEngineTurn {
   return {
     deltas: turn.channel,
     async interrupt() {
+      if (turn.settled) return;
+      try {
+        ensureAlive();
+      } catch {
+        return;
+      }
       turn.state.interruptRequested = true;
       drainEngineRequests(turn, stoppedPermission('The turn was interrupted'));
       await query.interrupt();
     },
     async respond(interactionId, rawReply) {
+      ensureAlive();
+      if (turn.lost !== undefined) {
+        throw turn.lost.error instanceof Error
+          ? turn.lost.error
+          : new Error(String(turn.lost.error));
+      }
       const waiting = turn.pending.get(interactionId);
       if (waiting === undefined) {
         throw new TypeError(`Unknown interaction ${interactionId} for this turn`);
@@ -273,6 +296,7 @@ export function runSdkQueryLoop(input: {
   handle: RunningQueryHandle;
   profileId: string;
   limits: Map<string, PlanLimits>;
+  isClosed: () => boolean;
   getTurn: () => SdkTurnSlot | undefined;
   clearTurn: () => void;
   onEvent?: (event: ClaudeRuntimeEvent) => void;
@@ -284,6 +308,7 @@ export function runSdkQueryLoop(input: {
   void (async () => {
     try {
       for await (const record of input.handle.query) {
+        if (input.isClosed()) break;
         const turn = input.getTurn();
         const verdict = classifyClaudeRecord(
           record,
@@ -317,11 +342,16 @@ export function runSdkQueryLoop(input: {
           if (turn !== undefined && input.onTurnUsage !== undefined) {
             invokeSafely(() => input.onTurnUsage?.(summary));
           }
+          if (turn !== undefined) turn.settled = true;
           endEngineTurn(turn, stoppedPermission('The turn ended'), verdict.deltas);
           input.clearTurn();
         } else if (verdict.kind === 'unhandled') {
           offerTurnDelta(turn?.channel, verdict.delta);
         }
+      }
+      if (input.isClosed()) {
+        input.handle.close();
+        return;
       }
       throw new Error(
         input.getTurn() !== undefined
@@ -329,6 +359,10 @@ export function runSdkQueryLoop(input: {
           : 'The Agent SDK query ended while idle',
       );
     } catch (error) {
+      if (input.isClosed()) {
+        input.handle.close();
+        return;
+      }
       input.onExit(input.handle, error);
     }
   })();

@@ -35,6 +35,7 @@ type LiveMethods = Omit<
 export interface ClaudeSdkControlHost {
   readonly signal: AbortSignal;
   isClosed(): boolean;
+  ensureAlive(): void;
   ensureQuery(): Promise<{ readonly query: ClaudeSdkRun }>;
   setActiveModel(model: string | undefined): void;
   setActivePermissionMode(mode: NonNullable<Options['permissionMode']>): void;
@@ -81,13 +82,17 @@ function requireMethod<K extends keyof ClaudeSdkRun>(
 
 /** Create the live-session control and inspection methods exposed on {@link ClaudeSdkSession}. */
 export function createClaudeSdkControls(host: ClaudeSdkControlHost): LiveMethods {
+  const guarded = <T>(promise: Promise<T>): Promise<T> =>
+    raceAbort(promise, host.signal).catch((error: unknown) => {
+      host.ensureAlive();
+      throw error;
+    });
   const activeQuery = async (): Promise<ClaudeSdkRun> => {
-    if (host.isClosed()) throw new Error('The Claude SDK session is closed');
-    const active = await raceAbort(host.ensureQuery(), host.signal);
-    if (host.isClosed()) throw new Error('The Claude SDK session is closed');
+    host.ensureAlive();
+    const active = await guarded(host.ensureQuery());
+    host.ensureAlive();
     return active.query;
   };
-  const guarded = <T>(promise: Promise<T>): Promise<T> => raceAbort(promise, host.signal);
 
   return {
     async setModel(model) {
@@ -145,7 +150,7 @@ export function createClaudeSdkControls(host: ClaudeSdkControlHost): LiveMethods
         }
         throw error;
       }
-      if (host.isClosed()) throw new Error('The Claude SDK session is closed');
+      host.ensureAlive();
       return normalizeClaudeSdkUsageRead(raw, host.recordPlanLimits);
     },
     async mcpServerStatus() {
