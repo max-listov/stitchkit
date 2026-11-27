@@ -57,11 +57,21 @@ interface CodexHandlersState {
   profileId: string;
   limits: Map<string, PlanLimits>;
   externalPending: Map<string, PendingExternalCodexRequest>;
+  ensureAlive: () => void;
   getTurn: () => CodexTurnSlot | undefined;
   clearTurn: () => void;
   onNotification?: (event: CodexNotificationEvent) => void;
   onServerRequest?: (event: CodexServerRequestEvent) => void;
   serverRequestDelivery?: 'external-only' | 'all';
+}
+
+function isHandlersAlive(state: CodexHandlersState): boolean {
+  try {
+    state.ensureAlive();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function emitCodexNotification(
@@ -242,6 +252,7 @@ function handleCodexRequest(
           duringActiveTurn: true,
           delta,
           async respond(reply) {
+            state.ensureAlive();
             answerActiveCodexTurnRequest(turn, interactionId, reply);
           },
         }),
@@ -304,6 +315,7 @@ function handleCodexRequest(
         duringActiveTurn: false,
         delta,
         async respond(reply) {
+          state.ensureAlive();
           answerCodexSessionRequest({
             turn: undefined,
             externalPending: state.externalPending,
@@ -329,19 +341,30 @@ function handleCodexRequest(
 
 /** Create JSON-RPC notification and server-request handlers for a Codex session or control link. */
 export function createCodexHandlers(state: CodexHandlersState) {
+  const dropClosedRequest = (): Promise<JsonRpcValue> =>
+    new Promise<JsonRpcValue>(() => undefined);
   return {
     onNotification(method: string, params: JsonRpcValue | undefined) {
+      if (!isHandlersAlive(state)) return;
       const starting = codexEventTurn(state.getTurn(), params)?.starting;
-      const deliver = () => handleCodexNotification(state, method, params);
-      if (starting === undefined) deliver();
+      const deliver = () => {
+        if (!isHandlersAlive(state)) return;
+        handleCodexNotification(state, method, params);
+      };
+      if (starting === undefined || !starting.isBuffering) deliver();
       else starting.defer(params, deliver);
     },
     onRequest(method: string, params: JsonRpcValue | undefined, id: string | number) {
+      if (!isHandlersAlive(state)) return dropClosedRequest();
       const starting = codexEventTurn(state.getTurn(), params)?.starting;
-      const deliver = () => handleCodexRequest(state, method, params, id);
-      if (starting === undefined) return deliver();
+      const deliver = () =>
+        isHandlersAlive(state)
+          ? handleCodexRequest(state, method, params, id)
+          : dropClosedRequest();
+      if (starting === undefined || !starting.isBuffering) return deliver();
       return new Promise<JsonRpcValue>((resolve, reject) => {
         starting.defer(params, () => {
+          if (!isHandlersAlive(state)) return;
           try {
             resolve(deliver());
           } catch (error) {

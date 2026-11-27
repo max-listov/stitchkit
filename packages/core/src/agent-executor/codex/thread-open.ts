@@ -5,7 +5,7 @@ import type { JsonRpcPeer, JsonRpcValue } from '../json-rpc-peer';
 import { createTurnDeltaChannel } from '../session-primitives';
 import type { CodexConnectConfig } from './connect';
 import type { CodexControlClient } from './control-client';
-import { CodexStartingTurn } from './event-routing';
+import { CodexStartingTurn, discardStartingTurn } from './event-routing';
 import type { CodexNotificationEvent, CodexServerRequestEvent } from './handlers';
 import {
   CodexStartedTurnSchema,
@@ -151,20 +151,45 @@ export function createCodexStartTurn(input: {
         channel: createTurnDeltaChannel(),
         pending: new Map(),
       };
+      const isAlive = () => {
+        if (input.signal.aborted) return false;
+        try {
+          input.ensureAlive();
+          return true;
+        } catch {
+          return false;
+        }
+      };
       input.setTurn(turn);
       let nativeTurnId: string;
       try {
-        const started = await input.peer.request('turn/start', turnParams);
+        const started = await input.peer.request('turn/start', turnParams, {
+          signal: input.signal,
+        });
+        if (!isAlive() || input.getTurn() !== turn) {
+          if (input.getTurn() === turn) input.setTurn(undefined);
+          discardStartingTurn(turn);
+          input.ensureAlive();
+          throw new Error('The Codex session is closed');
+        }
         nativeTurnId = parseCodexResponse('turn/start', CodexStartedTurnSchema, started).turn
           .id;
         turn.codexTurnId = nativeTurnId;
-        delete turn.starting;
-        starting.flush();
+        try {
+          starting.flush(isAlive);
+        } finally {
+          if (turn.starting === starting) delete turn.starting;
+        }
       } catch (error) {
         if (input.getTurn() === turn) input.setTurn(undefined);
         if (turn.starting !== undefined) {
-          delete turn.starting;
-          starting.flush();
+          const pending = turn.starting;
+          try {
+            if (isAlive()) pending.flush(isAlive);
+            else pending.discard();
+          } finally {
+            if (turn.starting === pending) delete turn.starting;
+          }
         }
         throw error;
       }
@@ -179,6 +204,7 @@ export function createCodexStartTurn(input: {
           });
         },
         async respond(interactionId, rawReply) {
+          input.ensureAlive();
           answerActiveCodexTurnRequest(turn, interactionId, rawReply);
         },
       };

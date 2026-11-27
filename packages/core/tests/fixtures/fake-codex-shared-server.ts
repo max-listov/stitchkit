@@ -111,6 +111,35 @@ function handleLine(line: string): void {
       const turnId = `turn-${nextTurnSeq}`;
       const inputItems = Array.isArray(msg.params?.input) ? msg.params.input : [];
       const firstText = String(inputItems[0]?.text ?? '');
+      if (firstText.includes('HOLD_START_EARLY')) {
+        nextReqId += 1;
+        const reqId = nextReqId;
+        send({
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId,
+            turnId,
+            itemId: `msg-early-${turnId}`,
+            delta: `${threadId}:early-held`,
+          },
+        });
+        send({
+          id: reqId,
+          method: 'item/commandExecution/requestApproval',
+          params: {
+            threadId,
+            turnId,
+            itemId: `cmd-early-${turnId}`,
+            command: `echo ${threadId}`,
+          },
+        });
+        writeFileSync(join(home, `hold-started-${threadId}.txt`), String(reqId));
+        const replyDelayMs = firstText.includes('LATE_SUCCESS') ? 120 : 10_000;
+        setTimeout(() => {
+          send({ id: msg.id, result: { turn: { id: turnId } } });
+        }, replyDelayMs);
+        return;
+      }
       if (firstText.includes('EARLY_BEFORE_REPLY')) {
         if (prevTurnId !== undefined) {
           send({

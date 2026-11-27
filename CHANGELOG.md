@@ -15,6 +15,15 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/agent-executor/codex` — discard buffered pre-`turn/start` frames when a session or shared-server thread closes, disconnects, or aborts, and reject `CodexServerRequestEvent.respond` / `CodexTurn.respond` once the connection is no longer alive.
+  **Affects:** `stitchkit/agent-executor/codex` createCodexDriver(open, connectControl, openSharedServer), CodexServerRequestEvent, CodexTurn
+- `stitchkit/agent-executor/codex` — preserve bucket `label`, `resetsAt`, and partially reported window durations when `rateLimitsByLimitId` merges over a sibling `rateLimits` view of the same bucket.
+  **Affects:** `stitchkit/agent-executor/codex` codexPlanLimits, codexPlanWindows, createCodexDriver
+- `stitchkit/agent-executor/acp` — stop probe cleanup immediately when `timeoutMs` or `AbortSignal` fires during `session/close` or `session/delete`, rejecting with the original timeout or abort reason instead of a duplicate cleanup `AggregateError`.
+  **Affects:** `stitchkit/agent-executor/acp` createAcpDriver(probeCapabilities)
+
 ## [0.132.0] - 2026-11-27
 
 ### ⚠️ Breaking changes

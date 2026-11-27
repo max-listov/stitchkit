@@ -117,6 +117,327 @@ test('Codex reconciles the legacy account view before naming same-duration slots
   ).toEqual([{ name: 'codex:300m', usedPercent: 40, windowDurationMins: 300 }]);
 });
 
+test('Codex preserves bucket label, resetsAt, and partial durations in both directions without collapsing distinct windows', () => {
+  const resets = '2026-12-01T00:00:00.000Z';
+  const newerResets = '2026-12-08T00:00:00.000Z';
+
+  // Missing or null label/resetsAt in rateLimitsByLimitId.codex keeps values from rateLimits,
+  // including when usedPercent updates to 0 and across a sibling secondary slot.
+  for (const mapped of [
+    {
+      limitId: 'codex',
+      primary: { usedPercent: 0, windowDurationMins: 10_080 },
+      secondary: { usedPercent: 12, windowDurationMins: 300 },
+    },
+    {
+      limitId: 'codex',
+      limitName: null,
+      primary: { usedPercent: 0, windowDurationMins: 10_080, resetsAt: null },
+      secondary: { usedPercent: 12, windowDurationMins: 300 },
+    },
+  ]) {
+    expect(
+      codexPlanLimits({
+        rateLimits: {
+          limitId: 'codex',
+          limitName: 'Codex Account',
+          planType: 'pro',
+          primary: { usedPercent: 91, windowDurationMins: 10_080, resetsAt: resets },
+        },
+        rateLimitsByLimitId: { codex: mapped },
+      }),
+    ).toMatchObject({
+      answer: 'known',
+      plan: 'pro',
+      windows: [
+        {
+          name: 'codex:10080m',
+          usedPercent: 0,
+          windowDurationMins: 10_080,
+          resetsAt: resets,
+          label: 'Codex Account',
+        },
+        {
+          name: 'codex:300m',
+          usedPercent: 12,
+          windowDurationMins: 300,
+          label: 'Codex Account',
+        },
+      ],
+    });
+  }
+
+  // Explicit label/resetsAt in rateLimitsByLimitId.codex updates the whole bucket cleanly
+  // (no split-brain label across sibling slots), and also applies when rateLimits carried label only.
+  expect(
+    codexPlanWindows({
+      rateLimits: {
+        limitId: 'codex',
+        limitName: 'Old Label',
+        primary: { usedPercent: 50, windowDurationMins: 10_080, resetsAt: resets },
+        secondary: { usedPercent: 20, windowDurationMins: 300 },
+      },
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: 'codex',
+          limitName: 'New Label',
+          primary: { usedPercent: 55, windowDurationMins: 10_080, resetsAt: newerResets },
+        },
+      },
+    }),
+  ).toEqual([
+    {
+      name: 'codex:10080m',
+      usedPercent: 55,
+      windowDurationMins: 10_080,
+      resetsAt: newerResets,
+      label: 'New Label',
+    },
+    {
+      name: 'codex:300m',
+      usedPercent: 20,
+      windowDurationMins: 300,
+      label: 'New Label',
+    },
+  ]);
+
+  expect(
+    codexPlanWindows({
+      rateLimits: { limitId: 'codex', limitName: 'Header Only', primary: null },
+      rateLimitsByLimitId: {
+        codex: { primary: { usedPercent: 15, windowDurationMins: 300 } },
+      },
+    }),
+  ).toEqual([
+    { name: 'codex:300m', usedPercent: 15, windowDurationMins: 300, label: 'Header Only' },
+  ]);
+
+  // Partial windowDurationMins in either order reconciles into one window without duplicates.
+  for (const [firstView, secondView] of [
+    [
+      { primary: { usedPercent: 50, windowDurationMins: 300, resetsAt: resets } },
+      { primary: { usedPercent: 60 } },
+    ],
+    [
+      { primary: { usedPercent: 50, resetsAt: resets } },
+      { primary: { usedPercent: 60, windowDurationMins: 300 } },
+    ],
+  ]) {
+    expect(
+      codexPlanWindows({
+        rateLimits: { limitId: 'codex', ...firstView },
+        rateLimitsByLimitId: { codex: secondView },
+      }),
+    ).toEqual([
+      { name: 'codex:300m', usedPercent: 60, windowDurationMins: 300, resetsAt: resets },
+    ]);
+  }
+
+  // Same-duration pair with omitted duration in one view preserves both slots in either order.
+  const fullPair = {
+    primary: { usedPercent: 40, windowDurationMins: 300 },
+    secondary: { usedPercent: 10, windowDurationMins: 300 },
+  };
+  const partialPair = { primary: { usedPercent: 40 }, secondary: { usedPercent: 10 } };
+  for (const [firstView, secondView] of [
+    [fullPair, partialPair],
+    [partialPair, fullPair],
+  ]) {
+    expect(
+      codexPlanWindows({
+        rateLimits: { limitId: 'codex', ...firstView },
+        rateLimitsByLimitId: { codex: secondView },
+      }),
+    ).toEqual([
+      { name: 'codex:300m:primary', usedPercent: 40, windowDurationMins: 300 },
+      { name: 'codex:300m:secondary', usedPercent: 10, windowDurationMins: 300 },
+    ]);
+  }
+
+  // Negative anti-collapse controls: unknown duration never crosses slots, and two distinct known
+  // durations in the same slot stay distinct.
+  expect(
+    codexPlanWindows({
+      rateLimits: { limitId: 'codex', primary: { usedPercent: 40 } },
+      rateLimitsByLimitId: {
+        codex: { secondary: { usedPercent: 10, windowDurationMins: 10_080 } },
+      },
+    }),
+  ).toEqual([
+    { name: 'codex:primary', usedPercent: 40 },
+    { name: 'codex:10080m', usedPercent: 10, windowDurationMins: 10_080 },
+  ]);
+
+  expect(
+    codexPlanWindows({
+      rateLimits: {
+        limitId: 'codex',
+        primary: { usedPercent: 40 },
+        secondary: { usedPercent: 10, windowDurationMins: 300 },
+      },
+      rateLimitsByLimitId: {
+        codex: { primary: { usedPercent: 45, windowDurationMins: 300 } },
+      },
+    }),
+  ).toEqual([
+    { name: 'codex:300m:primary', usedPercent: 45, windowDurationMins: 300 },
+    { name: 'codex:300m:secondary', usedPercent: 10, windowDurationMins: 300 },
+  ]);
+
+  expect(
+    codexPlanWindows({
+      rateLimits: {
+        limitId: 'codex',
+        primary: { usedPercent: 40, windowDurationMins: 10_080 },
+      },
+      rateLimitsByLimitId: {
+        codex: { primary: { usedPercent: 15, windowDurationMins: 300 } },
+      },
+    }),
+  ).toEqual([
+    { name: 'codex:10080m', usedPercent: 40, windowDurationMins: 10_080 },
+    { name: 'codex:300m', usedPercent: 15, windowDurationMins: 300 },
+  ]);
+});
+
+test('Codex never collapses sibling slots when inheriting partial duration, whitespace labels, zero resetsAt, or ambiguous partials', () => {
+  const resets = '2026-12-01T00:00:00.000Z';
+
+  // Whitespace limitName and resetsAt: 0 in a duplicate view keep previously measured metadata,
+  // and slot swap preserves resetsAt on the moved window.
+  expect(
+    codexPlanWindows({
+      rateLimits: {
+        limitId: 'codex',
+        limitName: 'Codex Account',
+        primary: { usedPercent: 40, windowDurationMins: 300, resetsAt: resets },
+      },
+      rateLimitsByLimitId: {
+        codex: {
+          limitName: '   ',
+          secondary: { usedPercent: 45, windowDurationMins: 300, resetsAt: 0 },
+        },
+      },
+    }),
+  ).toEqual([
+    {
+      name: 'codex:300m',
+      usedPercent: 45,
+      windowDurationMins: 300,
+      resetsAt: resets,
+      label: 'Codex Account',
+    },
+  ]);
+
+  // Partial primary inheriting 300m must not be overwritten by secondary(300m) in the same snapshot,
+  // and conversely primary(300m) must not steal secondary's window when secondary omits duration.
+  expect(
+    codexPlanWindows({
+      rateLimits: {
+        limitId: 'codex',
+        primary: { usedPercent: 40, windowDurationMins: 300, resetsAt: resets },
+      },
+      rateLimitsByLimitId: {
+        codex: {
+          primary: { usedPercent: 45 },
+          secondary: { usedPercent: 10, windowDurationMins: 300 },
+        },
+      },
+    }),
+  ).toEqual([
+    {
+      name: 'codex:300m:primary',
+      usedPercent: 45,
+      windowDurationMins: 300,
+      resetsAt: resets,
+    },
+    { name: 'codex:300m:secondary', usedPercent: 10, windowDurationMins: 300 },
+  ]);
+
+  expect(
+    codexPlanWindows({
+      rateLimits: {
+        limitId: 'codex',
+        secondary: { usedPercent: 10, windowDurationMins: 300, resetsAt: resets },
+      },
+      rateLimitsByLimitId: {
+        codex: {
+          primary: { usedPercent: 45, windowDurationMins: 300 },
+          secondary: { usedPercent: 15 },
+        },
+      },
+    }),
+  ).toEqual([
+    {
+      name: 'codex:300m:secondary',
+      usedPercent: 15,
+      windowDurationMins: 300,
+      resetsAt: resets,
+    },
+    { name: 'codex:300m:primary', usedPercent: 45, windowDurationMins: 300 },
+  ]);
+
+  // Distinct existing secondary(10080m) stays intact when partial primary inherits 300m alongside new secondary(300m).
+  expect(
+    codexPlanWindows({
+      rateLimits: {
+        limitId: 'codex',
+        primary: { usedPercent: 40, windowDurationMins: 300 },
+        secondary: { usedPercent: 20, windowDurationMins: 10_080 },
+      },
+      rateLimitsByLimitId: {
+        codex: {
+          primary: { usedPercent: 45 },
+          secondary: { usedPercent: 10, windowDurationMins: 300 },
+        },
+      },
+    }),
+  ).toEqual([
+    { name: 'codex:300m:primary', usedPercent: 45, windowDurationMins: 300 },
+    { name: 'codex:10080m', usedPercent: 20, windowDurationMins: 10_080 },
+    { name: 'codex:300m:secondary', usedPercent: 10, windowDurationMins: 300 },
+  ]);
+
+  // Same-duration pair with only one slot omitting duration in the second view updates both slots cleanly.
+  for (const mapped of [
+    { primary: { usedPercent: 45 }, secondary: { usedPercent: 12, windowDurationMins: 300 } },
+    { primary: { usedPercent: 45, windowDurationMins: 300 }, secondary: { usedPercent: 12 } },
+  ]) {
+    expect(
+      codexPlanWindows({
+        rateLimits: {
+          limitId: 'codex',
+          primary: { usedPercent: 40, windowDurationMins: 300 },
+          secondary: { usedPercent: 10, windowDurationMins: 300 },
+        },
+        rateLimitsByLimitId: { codex: mapped },
+      }),
+    ).toEqual([
+      { name: 'codex:300m:primary', usedPercent: 45, windowDurationMins: 300 },
+      { name: 'codex:300m:secondary', usedPercent: 12, windowDurationMins: 300 },
+    ]);
+  }
+
+  // Ambiguous partial (two existing windows in the same slot with different known durations) appends
+  // a fallback slot window instead of overwriting either known-duration window.
+  expect(
+    codexPlanWindows({
+      rateLimits: {
+        limitId: 'codex',
+        primary: { usedPercent: 40, windowDurationMins: 10_080 },
+      },
+      rateLimitsByLimitId: {
+        codex: { limitId: 'codex', primary: { usedPercent: 15, windowDurationMins: 300 } },
+        extra: { limitId: 'codex', primary: { usedPercent: 25 } },
+      },
+    }),
+  ).toEqual([
+    { name: 'codex:10080m', usedPercent: 40, windowDurationMins: 10_080 },
+    { name: 'codex:300m', usedPercent: 15, windowDurationMins: 300 },
+    { name: 'codex:primary', usedPercent: 25 },
+  ]);
+});
+
 test('both Claude usage entrypoints retain measured model windows and scope only named models', () => {
   const buckets = {
     five_hour: { utilization: 10 },

@@ -13,6 +13,7 @@ import {
   type CodexControlConnection,
   createCodexControlClient,
 } from './control-client';
+import { discardStartingTurn } from './event-routing';
 import { createCodexHandlers } from './handlers';
 import {
   CodexStartedThreadSchema,
@@ -60,6 +61,11 @@ export async function openCodexSession(
   let dead: Error | undefined;
   let opened = false;
   let closing = false;
+  const ensureAlive = () => {
+    if (closing) throw new Error('The Codex session is closed');
+    if (dead !== undefined) throw dead;
+    if (linked.signal.aborted) throw abortReason(linked.signal);
+  };
   let connected: Awaited<ReturnType<typeof connectCodex>>;
   try {
     connected = await connectCodex(
@@ -71,6 +77,7 @@ export async function openCodexSession(
         profileId: profile.profileId,
         limits: config.limits,
         externalPending,
+        ensureAlive,
         getTurn: () => current,
         clearTurn: () => {
           current = undefined;
@@ -88,6 +95,7 @@ export async function openCodexSession(
         dead = error;
         const turn = current;
         current = undefined;
+        discardStartingTurn(turn);
         // Never send `cancel` for external TUI requests when our observer disconnects.
         externalPending.clear();
         loseEngineTurn(turn, codexStopped, error);
@@ -101,12 +109,9 @@ export async function openCodexSession(
     throw error;
   }
   const { peer, providerPid, userAgent } = connected;
-  const ensureAlive = () => {
-    if (closing) throw new Error('The Codex session is closed');
-    if (dead !== undefined) throw dead;
-  };
   const stop = async (primary?: { error: unknown }) => {
     closing = true;
+    discardStartingTurn(current);
     externalPending.clear();
     try {
       await stopConnection(connected, primary);
@@ -234,6 +239,11 @@ export async function openCodexControlConnection(
   let dead: Error | undefined;
   let opened = false;
   let closing = false;
+  const ensureAlive = () => {
+    if (closing) throw new Error('The Codex control connection is closed');
+    if (dead !== undefined) throw dead;
+    if (linked.signal.aborted) throw abortReason(linked.signal);
+  };
   let connected: Awaited<ReturnType<typeof connectCodex>>;
   try {
     connected = await connectCodex(
@@ -245,6 +255,7 @@ export async function openCodexControlConnection(
         profileId: profile.profileId,
         limits: config.limits,
         externalPending,
+        ensureAlive,
         getTurn: () => undefined,
         clearTurn: () => undefined,
         ...(config.onNotification !== undefined && { onNotification: config.onNotification }),
@@ -280,10 +291,6 @@ export async function openCodexControlConnection(
     }
     throw reason;
   }
-  const ensureAlive = () => {
-    if (closing) throw new Error('The Codex control connection is closed');
-    if (dead !== undefined) throw dead;
-  };
   const controlClient = createCodexControlClient({
     peer: connected.peer,
     imageOptions: config,

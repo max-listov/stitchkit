@@ -5,6 +5,7 @@ import type { ExecutorProfileConfig } from '../profile';
 import { emitStartupPhase, sessionAbort } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
 import { createCodexControlClient } from './control-client';
+import { discardStartingTurn } from './event-routing';
 import { createCodexHandlers } from './handlers';
 import {
   CodexStartedThreadSchema,
@@ -51,6 +52,7 @@ export interface SharedThreadSlot {
   current: CodexTurnSlot | undefined;
   readonly externalPending: Map<string, PendingExternalCodexRequest>;
   readonly handlers: ReturnType<typeof createCodexHandlers>;
+  readonly ensureAlive: () => void;
   closed: boolean;
   dead: Error | undefined;
   readonly abortThread: () => void;
@@ -94,12 +96,7 @@ function buildSharedThreadSession(params: {
   readonly threadAbort: ReturnType<typeof sessionAbort>;
 }): CodexSession {
   const { state, slot, threadContext, activeModelProvider, threadAbort } = params;
-  const { threadId } = slot;
-  const ensureThreadAlive = () => {
-    if (slot.closed) throw new Error('The Codex session is closed');
-    if (slot.dead !== undefined) throw slot.dead;
-    state.ensureServerAlive();
-  };
+  const { threadId, ensureAlive: ensureThreadAlive } = slot;
   const threadControlClient = createCodexControlClient({
     peer: state.peer,
     imageOptions: state.config,
@@ -133,13 +130,14 @@ function buildSharedThreadSession(params: {
     slot.closed = true;
     const turn = slot.current;
     slot.current = undefined;
+    discardStartingTurn(turn);
     slot.externalPending.clear();
     loseEngineTurn(turn, codexStopped, new Error('The Codex session closed'));
     state.threads.delete(threadId);
+    threadAbort.abort();
     try {
       await bestEffortUnsubscribe(state, threadId);
     } finally {
-      threadAbort.abort();
       slot.releaseThreadSignal();
     }
   };
@@ -153,6 +151,7 @@ function buildSharedThreadSession(params: {
       slot.dead = slot.dead ?? (reason instanceof Error ? reason : new Error(String(reason)));
       const turn = slot.current;
       slot.current = undefined;
+      discardStartingTurn(turn);
       slot.externalPending.clear();
       loseEngineTurn(turn, codexStopped, slot.dead);
       state.threads.delete(threadId);
@@ -280,10 +279,17 @@ export async function openSharedCodexThread(
     }
 
     const externalPending = new Map<string, PendingExternalCodexRequest>();
+    const ensureAlive = () => {
+      if (slot.closed) throw new Error('The Codex session is closed');
+      if (slot.dead !== undefined) throw slot.dead;
+      state.ensureServerAlive();
+      if (threadAbort.signal.aborted) throw abortReason(threadAbort.signal);
+    };
     const slot: SharedThreadSlot = {
       threadId,
       current: undefined,
       externalPending,
+      ensureAlive,
       closed: false,
       dead: undefined,
       abortThread: () => threadAbort.abort(),
@@ -292,6 +298,7 @@ export async function openSharedCodexThread(
         profileId: state.profile.profileId,
         limits: state.config.limits,
         externalPending,
+        ensureAlive,
         getTurn: () => slot.current,
         clearTurn: () => {
           slot.current = undefined;
@@ -342,6 +349,11 @@ export async function openSharedCodexThread(
     });
   } catch (error) {
     if (registeredThreadId !== undefined) {
+      const failedSlot = state.threads.get(registeredThreadId);
+      if (failedSlot !== undefined) {
+        failedSlot.closed = true;
+        failedSlot.externalPending.clear();
+      }
       state.threads.delete(registeredThreadId);
       await bestEffortUnsubscribe(state, registeredThreadId);
     }

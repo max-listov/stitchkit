@@ -27,8 +27,15 @@ export class CodexStartingTurn {
   private readonly waiting: Array<() => void> = [];
   private bytes = 0;
   private failure?: Error;
+  private discarded = false;
+  private flushing = false;
+
+  get isBuffering(): boolean {
+    return !this.discarded && !this.flushing;
+  }
 
   defer(params: JsonRpcValue | undefined, deliver: () => void): void {
+    if (!this.isBuffering) return;
     if (this.failure !== undefined) throw this.failure;
     this.bytes += JSON.stringify(params ?? null).length;
     if (this.waiting.length >= TURN_QUEUE.maxItems || this.bytes > TURN_QUEUE.maxBytes) {
@@ -38,10 +45,39 @@ export class CodexStartingTurn {
     this.waiting.push(deliver);
   }
 
-  flush(): void {
-    for (const deliver of this.waiting.splice(0)) deliver();
-    if (this.failure !== undefined) throw this.failure;
+  /** Drop buffered pre-start events without delivery when a session closes or disconnects. */
+  discard(): void {
+    this.discarded = true;
+    this.waiting.length = 0;
+    this.bytes = 0;
+    this.failure = undefined;
   }
+
+  flush(shouldContinue?: () => boolean): void {
+    this.flushing = true;
+    try {
+      for (const deliver of this.waiting.splice(0)) {
+        if (this.discarded || shouldContinue?.() === false) {
+          this.discard();
+          return;
+        }
+        deliver();
+      }
+      if (!this.discarded && shouldContinue?.() !== false && this.failure !== undefined) {
+        throw this.failure;
+      }
+    } finally {
+      this.flushing = false;
+    }
+  }
+}
+
+/** Detach and discard any pre-start buffer on `turn` without invoking observers. */
+export function discardStartingTurn(turn: CodexTurnSlot | undefined): void {
+  if (turn?.starting === undefined) return;
+  const starting = turn.starting;
+  delete turn.starting;
+  starting.discard();
 }
 
 export function codexEventTurn(

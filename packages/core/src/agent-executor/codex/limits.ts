@@ -78,42 +78,103 @@ function resolveWindowFields(raw: unknown):
   return { usedPercent, mins, resetsAt };
 }
 
-type BucketWindow = NonNullable<ReturnType<typeof resolveWindowFields>> & {
+type ResolvedWindow = NonNullable<ReturnType<typeof resolveWindowFields>>;
+
+type BucketWindow = ResolvedWindow & {
   readonly bucket: string;
   readonly slot: 'primary' | 'secondary';
-  readonly label: string | undefined;
 };
 
-function mergeBucket(windows: BucketWindow[], bucket: string, snapshot: ParsedSnapshot): void {
-  const label = clampPlanName(
-    snapshot.limitName ?? snapshot.limit_name,
-    MAX_WINDOW_NAME_CHARS,
+function findMatchingWindowIndex(
+  windows: readonly BucketWindow[],
+  bucket: string,
+  slot: 'primary' | 'secondary',
+  mins: number | undefined,
+  other: ResolvedWindow | undefined,
+  excludeIndex: number,
+): number {
+  const exact = windows.findIndex(
+    (w, i) => i !== excludeIndex && w.bucket === bucket && w.slot === slot && w.mins === mins,
   );
+  if (exact >= 0) return exact;
+  let partialIndex = -1;
+  let partialCount = 0;
+  for (let i = 0; i < windows.length; i += 1) {
+    if (i === excludeIndex) continue;
+    const candidate = windows[i];
+    if (
+      candidate !== undefined &&
+      candidate.bucket === bucket &&
+      candidate.slot === slot &&
+      (candidate.mins === undefined || mins === undefined)
+    ) {
+      partialIndex = i;
+      partialCount += 1;
+    }
+  }
+  if (partialCount === 1) return partialIndex;
+  // A duration can move between slots, but never steal a window reserved for the sibling slot
+  // in the same snapshot, and an unknown duration never crosses slots.
+  if (mins !== undefined) {
+    const otherSlot = slot === 'primary' ? 'secondary' : 'primary';
+    return windows.findIndex(
+      (w, i) =>
+        i !== excludeIndex &&
+        w.bucket === bucket &&
+        w.mins === mins &&
+        !(
+          other !== undefined &&
+          w.slot === otherSlot &&
+          (other.mins === undefined || other.mins === w.mins)
+        ),
+    );
+  }
+  return -1;
+}
+
+function mergeBucket(windows: BucketWindow[], bucket: string, snapshot: ParsedSnapshot): void {
   const primary = resolveWindowFields(snapshot.primary);
   const secondary = resolveWindowFields(snapshot.secondary);
-  const sharedDuration = primary?.mins !== undefined && primary.mins === secondary?.mins;
   const slots = { primary, secondary };
+  let claimedIndex = -1;
   for (const slot of ['primary', 'secondary'] as const) {
     const measurement = slots[slot];
     if (!measurement) continue;
-    const sameDuration = (w: BucketWindow) =>
-      w.bucket === bucket && w.mins === measurement.mins;
-    let previous = windows.findIndex((w) => sameDuration(w) && w.slot === slot);
-    // A duration can move between slots. Only two equally long windows in the same snapshot
-    // need the slot to distinguish them; an unknown duration always keeps its slot.
-    if (previous < 0 && measurement.mins !== undefined && !sharedDuration) {
-      previous = windows.findIndex(sameDuration);
+    const other = slots[slot === 'primary' ? 'secondary' : 'primary'];
+    const previous = findMatchingWindowIndex(
+      windows,
+      bucket,
+      slot,
+      measurement.mins,
+      other,
+      claimedIndex,
+    );
+    const existing = previous >= 0 ? windows[previous] : undefined;
+    const window: BucketWindow = {
+      usedPercent: measurement.usedPercent,
+      mins: measurement.mins ?? existing?.mins,
+      resetsAt: measurement.resetsAt ?? existing?.resetsAt,
+      bucket,
+      slot,
+    };
+    if (previous >= 0) {
+      windows[previous] = window;
+      claimedIndex = previous;
+    } else if (windows.length < MAX_PLAN_WINDOWS) {
+      claimedIndex = windows.length;
+      windows.push(window);
     }
-    const window = { ...measurement, bucket, slot, label };
-    if (previous >= 0) windows[previous] = window;
-    else if (windows.length < MAX_PLAN_WINDOWS) windows.push(window);
   }
 }
 
-function nameBucketWindows(windows: BucketWindow[]): PlanWindow[] {
+function nameBucketWindows(
+  windows: BucketWindow[],
+  bucketLabels: ReadonlyMap<string, string>,
+): PlanWindow[] {
   const seen = new Set<string>();
   return windows.map((window) => {
-    const { bucket, slot, usedPercent, mins, resetsAt, label } = window;
+    const { bucket, slot, usedPercent, mins, resetsAt } = window;
+    const label = bucketLabels.get(bucket);
     const sharedDuration =
       mins !== undefined &&
       windows.some(
@@ -144,6 +205,7 @@ function parseCodexRateLimitsInternal(reported: unknown): {
 } {
   if (!isRecord(reported)) return { windows: [], plan: undefined };
   const windows: BucketWindow[] = [];
+  const bucketLabels = new Map<string, string>();
   let plan: string | undefined;
   function readBucket(raw: unknown, fallbackId: string): string {
     const parsed = SnapshotSchema.safeParse(raw);
@@ -151,6 +213,11 @@ function parseCodexRateLimitsInternal(reported: unknown): {
     const snapshot = parsed.data;
     plan ??= clampPlanName(snapshot.planType ?? snapshot.plan_type, MAX_WINDOW_NAME_CHARS);
     const id = nonEmptyString(snapshot.limitId ?? snapshot.limit_id)?.trim() ?? fallbackId;
+    const label = clampPlanName(
+      snapshot.limitName ?? snapshot.limit_name,
+      MAX_WINDOW_NAME_CHARS,
+    );
+    if (label !== undefined) bucketLabels.set(id, label);
     mergeBucket(windows, id, snapshot);
     return id;
   }
@@ -169,7 +236,7 @@ function parseCodexRateLimitsInternal(reported: unknown): {
       if (key !== accountId) readBucket(byId[key], nonEmptyString(key)?.trim() ?? 'limit');
     }
   }
-  return { windows: nameBucketWindows(windows), plan };
+  return { windows: nameBucketWindows(windows, bucketLabels), plan };
 }
 
 /**

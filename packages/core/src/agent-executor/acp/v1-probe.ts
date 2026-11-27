@@ -1,3 +1,4 @@
+import { abortReason } from '../../internal/abort-race';
 import { assertTimerMs, withSignalDeadline } from '../../internal/deadline';
 import { JSON_RPC_METHOD_NOT_FOUND, JsonRpcError } from '../json-rpc-peer';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
@@ -69,11 +70,13 @@ async function readProbeSession(
     },
     { signal },
   );
+  if (signal?.aborted) throw abortReason(signal);
   // A provider may already have persisted the ID even if another field is malformed.
   const { sessionId } = ProbeSessionId.parse(reply);
   const parsed = AcpNewSessionResultSchema.safeParse(reply);
   const failures: Error[] = parsed.success ? [] : [parsed.error];
   const timeoutMs = closeRequestTimeoutMs(config);
+  const cleanupOptions = { timeoutMs, ...(signal !== undefined && { signal }) };
   const recordFailure = (method: string, cause: unknown) =>
     failures.push(
       new Error(
@@ -85,8 +88,9 @@ async function readProbeSession(
     );
   if (acpCan(connection, 'close')) {
     try {
-      await connection.peer.request('session/close', { sessionId }, { timeoutMs });
+      await connection.peer.request('session/close', { sessionId }, cleanupOptions);
     } catch (cause) {
+      if (signal?.aborted) throw abortReason(signal);
       // Some agents advertise close but implement only delete. Its reply decides cleanup.
       const canFallBack =
         cause instanceof JsonRpcError &&
@@ -95,13 +99,16 @@ async function readProbeSession(
       if (!canFallBack) recordFailure('session/close', cause);
     }
   }
+  if (signal?.aborted) throw abortReason(signal);
   if (acpCan(connection, 'delete')) {
     try {
-      await connection.peer.request('session/delete', { sessionId }, { timeoutMs });
+      await connection.peer.request('session/delete', { sessionId }, cleanupOptions);
     } catch (cause) {
+      if (signal?.aborted) throw abortReason(signal);
       recordFailure('session/delete', cause);
     }
   }
+  if (signal?.aborted) throw abortReason(signal);
   if (failures.length > 1) {
     throw new AggregateError(failures, failures.map((error) => error.message).join('; '), {
       cause: failures[0],

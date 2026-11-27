@@ -30,14 +30,16 @@ for await (const line of createInterface({ input: process.stdin })) {
       writeFileSync(store, JSON.stringify([...sessions, 'probe-id']));
       result({
         sessionId: 'probe-id',
-        configOptions: mode === 'invalid-delete' ? 'invalid' : [],
+        configOptions: mode.startsWith('invalid-') ? 'invalid' : [],
       });
       break;
     case 'session/close':
+      if (mode === 'hang-close' || mode === 'invalid-hang-close') break;
       if (mode.includes('close')) refuse();
       else result({});
       break;
     case 'session/delete':
+      if (mode === 'hang-delete') break;
       if (mode.includes('delete')) refuse();
       else {
         writeFileSync(

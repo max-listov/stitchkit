@@ -1,3 +1,4 @@
+import { abortReason } from '../../internal/abort-race';
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
 import { loseEngineTurn } from '../engine-requests';
 import type { ExecutorDriverCapabilities } from '../hello';
@@ -6,7 +7,7 @@ import { invokeSafely, sessionAbort, stopConnection } from '../session-primitive
 import type { ExecutorStartupPhase } from '../vocabulary';
 import { connectCodex } from './connect';
 import { type CodexControlClient, createCodexControlClient } from './control-client';
-import { codexThreadIdOf } from './event-routing';
+import { codexThreadIdOf, discardStartingTurn } from './event-routing';
 import { createCodexHandlers } from './handlers';
 import { codexStopped, type PendingExternalCodexRequest } from './request-answers';
 import type { CodexSession } from './session-types';
@@ -81,10 +82,16 @@ export async function openCodexSharedServer(
   let serverClosing = false;
   let opened = false;
 
+  const ensureServerAlive = () => {
+    if (serverClosing) throw new Error('The Codex shared server is closed');
+    if (serverDead !== undefined) throw serverDead;
+    if (linked.signal.aborted) throw abortReason(linked.signal);
+  };
   const globalHandlers = createCodexHandlers({
     profileId: profile.profileId,
     limits: config.limits,
     externalPending: globalExternalPending,
+    ensureAlive: ensureServerAlive,
     getTurn: () => undefined,
     clearTurn: () => undefined,
     ...(config.onNotification !== undefined && { onNotification: config.onNotification }),
@@ -100,6 +107,7 @@ export async function openCodexSharedServer(
       slot.dead = error;
       const turn = slot.current;
       slot.current = undefined;
+      discardStartingTurn(turn);
       slot.externalPending.clear();
       loseEngineTurn(turn, codexStopped, error);
       slot.abortThread();
@@ -152,10 +160,6 @@ export async function openCodexSharedServer(
   }
 
   const { peer, providerPid, userAgent } = connected;
-  const ensureServerAlive = () => {
-    if (serverClosing) throw new Error('The Codex shared server is closed');
-    if (serverDead !== undefined) throw serverDead;
-  };
   const onBeforeInterruptTurn = (targetThreadId: string, turnId: string) => {
     interruptLocalCodexTurn(threads.get(targetThreadId)?.current, turnId);
   };

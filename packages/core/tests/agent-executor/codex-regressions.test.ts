@@ -2336,6 +2336,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       profileId: 'p',
       limits,
       externalPending: new Map(),
+      ensureAlive: () => undefined,
       getTurn: () => undefined,
       clearTurn: () => undefined,
     });
@@ -2363,6 +2364,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
       profileId: 'p',
       limits,
       externalPending,
+      ensureAlive: () => undefined,
       getTurn: () => activeTurn,
       clearTurn: () => {
         activeTurn = undefined;
@@ -2875,6 +2877,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
         profileId: 'ext-pe',
         limits: new Map(),
         externalPending,
+        ensureAlive: () => undefined,
         getTurn: () => undefined,
         clearTurn: () => undefined,
         onServerRequest: (ev) => {
@@ -4155,6 +4158,7 @@ describe('Codex Unix socket transport, policy, and live session controls', () =>
         profileId: 'p-unit',
         limits: new Map(),
         externalPending: new Map(),
+        ensureAlive: () => undefined,
         getTurn: () => currentTurn,
         clearTurn: () => {
           currentTurn = undefined;
