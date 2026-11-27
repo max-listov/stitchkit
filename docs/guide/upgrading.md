@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Upcoming migration: 0.132.0
+## Released migration: 0.132.0
 
 ### saved-sync-cursor-zero
 

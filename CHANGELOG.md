@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.132.0] - 2026-11-27
+
 ### ⚠️ Breaking changes
 
 **Who must act:** callers that return `0` from `SyncSessionPorts.readCursor` before their first full snapshot. [Migration](docs/guide/upgrading.md#saved-sync-cursor-zero)
