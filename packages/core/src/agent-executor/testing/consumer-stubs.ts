@@ -241,6 +241,12 @@ export function createStubCodexTurn(overrides?: StubCodexTurnOverrides): CodexTu
 /** Create a fail-loud {@link AcpSession} stub with a safe no-op `close()` default. */
 export function createStubAcpSession(overrides?: StubOverrides<AcpSession>): AcpSession {
   const stubName = 'StubAcpSession';
+  const sessionMeta = pickOptional(
+    overrides,
+    'sessionMeta',
+    overrides?.sessionMeta,
+    undefined,
+  );
   return {
     nativeThreadId: overrides?.nativeThreadId ?? 'stub-acp-1',
     providerPid: pickOptional(overrides, 'providerPid', overrides?.providerPid, undefined),
@@ -249,6 +255,7 @@ export function createStubAcpSession(overrides?: StubOverrides<AcpSession>): Acp
     configOptions: overrides?.configOptions ?? [],
     title: pickOptional(overrides, 'title', overrides?.title, undefined),
     commands: overrides?.commands ?? [],
+    ...(sessionMeta !== undefined && { sessionMeta }),
     startTurn: overrides?.startTurn ?? unexpected(stubName, 'startTurn'),
     setConfigOption: overrides?.setConfigOption ?? unexpected(stubName, 'setConfigOption'),
     respond: overrides?.respond ?? unexpected(stubName, 'respond'),

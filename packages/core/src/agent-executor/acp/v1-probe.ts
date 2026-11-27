@@ -1,6 +1,6 @@
 import { abortReason, linkAbortSignals } from '../../internal/abort-race';
 import { assertTimerMs, withSignalDeadline } from '../../internal/deadline';
-import { JSON_RPC_METHOD_NOT_FOUND, JsonRpcError } from '../json-rpc-peer';
+import { JSON_RPC_METHOD_NOT_FOUND, JsonRpcError, type JsonRpcValue } from '../json-rpc-peer';
 import { type ExecutorProfileConfig, engineProfile } from '../profile';
 import { stopConnection } from '../session-primitives';
 import type { ExecutorStartupPhase } from '../vocabulary';
@@ -11,6 +11,7 @@ import {
   assertAcpDriverOptions,
   closeRequestTimeoutMs,
   connectAcp,
+  extractAcpSessionMeta,
   resolveAcpSessionMeta,
 } from './v1-connect';
 import { normalizeTransformedUpdates } from './v1-handlers';
@@ -58,6 +59,8 @@ export interface AcpCapabilitiesProbe {
   readonly models: readonly string[];
   /** With `eachModel`: the options the agent reported with each model value selected. */
   readonly optionsByModel?: Readonly<Record<string, readonly AcpConfigOption[]>>;
+  /** Optional `_meta` object returned by the agent in its `session/new` response. */
+  readonly sessionMeta?: Readonly<Record<string, JsonRpcValue>>;
 }
 
 const ProbeSessionId = AcpNewSessionResultSchema.pick({ sessionId: true });
@@ -292,12 +295,14 @@ export async function probeAcpCapabilities(
         );
         deadlineSignal.throwIfAborted();
         const models = extractProbeModels(configOptions, session.models?.availableModels);
+        const sessionMeta = extractAcpSessionMeta(session._meta);
         result = {
           initialized: connection.initialized,
           configOptions,
           commands,
           models,
           ...(session.inspected !== undefined && { optionsByModel: session.inspected }),
+          ...(sessionMeta !== undefined && { sessionMeta }),
         };
       } catch (error) {
         await stopConnection(connection, { error });

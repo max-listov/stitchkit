@@ -4,6 +4,7 @@ import { abortReason } from '../../internal/abort-race';
 import type { AgentEngineSession } from '../engine';
 import type { InteractionReply } from '../executor-contract';
 import { DEFAULT_MAX_IMAGE_BYTES } from '../image-input';
+import type { JsonRpcValue } from '../json-rpc-peer';
 import type { ExecutorProfileConfig } from '../profile';
 import {
   invokeObserver,
@@ -19,6 +20,7 @@ import {
   assertAcpDriverOptions,
   closeRequestTimeoutMs,
   connectAcp,
+  extractAcpSessionMeta,
   resolveAcpSessionMeta,
 } from './v1-connect';
 import { createAcpHandlers } from './v1-handlers';
@@ -88,6 +90,8 @@ export interface AcpSession extends AgentEngineSession {
   readonly title: string | undefined;
   /** The slash commands the agent offers, by name. */
   readonly commands: readonly string[];
+  /** Optional `_meta` object returned by the agent in its `session/new`, `session/resume`, or `session/load` response. */
+  readonly sessionMeta?: Readonly<Record<string, JsonRpcValue>>;
   /** Change one setting; the agent answers with every option, which may have narrowed. */
   setConfigOption(configId: string, value: string): Promise<readonly AcpConfigOption[]>;
   /** Answer a pending permission request from either the active turn or a post-settle `onPermissionRequest` event. */
@@ -164,6 +168,7 @@ async function openOrReopenAcpSession(input: {
   readonly sessionId: string;
   readonly configOptions: readonly AcpConfigOption[] | null | undefined;
   readonly models: z.infer<typeof AcpSessionStateSchema>['models'];
+  readonly sessionMeta: Readonly<Record<string, JsonRpcValue>> | undefined;
 }> {
   const { connected, cwd, nativeThreadId, mcpServers, meta, signal } = input;
   if (nativeThreadId === undefined) {
@@ -182,6 +187,7 @@ async function openOrReopenAcpSession(input: {
       sessionId: created.sessionId,
       configOptions: created.configOptions,
       models: created.models,
+      sessionMeta: extractAcpSessionMeta(created._meta),
     };
   }
   // `resume` reopens without replaying the history; `load` replays it.
@@ -202,6 +208,7 @@ async function openOrReopenAcpSession(input: {
     sessionId: nativeThreadId,
     configOptions: reopened.configOptions,
     models: reopened.models,
+    sessionMeta: extractAcpSessionMeta(reopened._meta),
   };
 }
 
@@ -209,14 +216,24 @@ function buildAcpSession(input: {
   readonly config: AcpDriverConfig;
   readonly connected: Awaited<ReturnType<typeof connectAcp>>;
   readonly sessionId: string;
+  readonly sessionMeta: Readonly<Record<string, JsonRpcValue>> | undefined;
   readonly liveness: SessionLiveness;
   readonly linked: ReturnType<typeof sessionAbort>;
   readonly externalPending: Map<string, PendingExternalAcpRequest>;
   readonly state: AcpSessionState;
   readonly stop: (primary?: { error: unknown }) => Promise<void>;
 }): AcpSession {
-  const { config, connected, sessionId, liveness, linked, externalPending, state, stop } =
-    input;
+  const {
+    config,
+    connected,
+    sessionId,
+    sessionMeta,
+    liveness,
+    linked,
+    externalPending,
+    state,
+    stop,
+  } = input;
   const { peer, initialized } = connected;
   const limits = {
     images: initialized.agentCapabilities?.promptCapabilities?.image === true,
@@ -262,6 +279,7 @@ function buildAcpSession(input: {
     get commands() {
       return state.commands;
     },
+    ...(sessionMeta !== undefined && { sessionMeta }),
     async setConfigOption(configId, value) {
       liveness.ensureAlive();
       state.configOptions = await setAcpConfigOption(
@@ -431,6 +449,7 @@ export async function openAcpSession(
       config,
       connected,
       sessionId,
+      sessionMeta: openedSession.sessionMeta,
       liveness,
       linked,
       externalPending,

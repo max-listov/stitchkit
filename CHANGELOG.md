@@ -15,6 +15,10 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Added
+
+- `stitchkit/agent-executor/acp` — `AcpCapabilitiesProbe` and `AcpSession` now carry an optional `sessionMeta?: Readonly<Record<string, JsonRpcValue>>` field preserving the plain JSON-object `_meta` returned by `session/new` (in `probeCapabilities` and `open`), `session/resume`, and `session/load`. Absent or non-object `_meta` values are ignored without failing parsing, omitting `sessionMeta`.
+
 ## [0.133.1] - 2026-11-27
 
 ### Added

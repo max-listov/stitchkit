@@ -189,6 +189,7 @@ export const AcpSessionStateSchema = z.looseObject({
     })
     .nullish(),
   configOptions: z.array(AcpConfigOptionSchema).nullish(),
+  _meta: z.unknown().optional(),
 });
 
 export const AcpNewSessionResultSchema = AcpSessionStateSchema.extend({

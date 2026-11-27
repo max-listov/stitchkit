@@ -1,9 +1,13 @@
-import { z } from 'zod';
 import { assertTimerMs } from '../../internal/deadline';
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
 import { NativeCommandError } from '../../process/contract';
 import { spawnEngineProcess } from '../engine-process';
-import { createJsonRpcPeer, type JsonRpcPeer, type JsonRpcValue } from '../json-rpc-peer';
+import {
+  createJsonRpcPeer,
+  type JsonRpcPeer,
+  JsonRpcRecordSchema,
+  type JsonRpcValue,
+} from '../json-rpc-peer';
 import { type ExecutorProfileConfig, engineEnvironment } from '../profile';
 import {
   emitStartupPhase,
@@ -34,7 +38,6 @@ import {
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const CLOSE_REQUEST_TIMEOUT_MS = 5_000;
 const MAX_PASSIVE_VERSION_LENGTH = 256;
-const SessionMetaRecordSchema = z.record(z.string(), z.json());
 
 /** How `info()` and `status()` probe the ACP agent. */
 export type AcpProbeMode = 'ephemeral-session' | 'initialize-only' | 'passive';
@@ -182,7 +185,7 @@ function validateSessionMetaObject(meta: unknown): Record<string, JsonRpcValue> 
   if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) {
     throw new TypeError('sessionMeta must be a plain JSON object');
   }
-  return SessionMetaRecordSchema.parse(safeJsonValue(meta));
+  return JsonRpcRecordSchema.parse(safeJsonValue(meta));
 }
 
 /** Resolve and validate optional `_meta` for `session/new`, `session/resume`, or `session/load`. */
@@ -194,6 +197,17 @@ export function resolveAcpSessionMeta(
   const resolved = typeof sessionMeta === 'function' ? sessionMeta(initialized) : sessionMeta;
   if (resolved === undefined) return undefined;
   return validateSessionMetaObject(resolved);
+}
+
+/** Extract an inbound plain-object `_meta` from an ACP session response, ignoring absent or non-object values. */
+export function extractAcpSessionMeta(
+  raw: unknown,
+): Readonly<Record<string, JsonRpcValue>> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const proto: unknown = Object.getPrototypeOf(raw);
+  if (proto !== Object.prototype && proto !== null) return undefined;
+  const parsed = JsonRpcRecordSchema.safeParse(raw);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /** Refuse invalid options before any agent is spawned. */

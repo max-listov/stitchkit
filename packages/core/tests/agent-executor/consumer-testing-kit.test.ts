@@ -374,9 +374,19 @@ describe('agent-executor consumer testing kit', () => {
       /ClaudeSdkSession\.supportedModels/,
     );
 
-    const acpSess = createStubAcpSession({ providerPid: undefined, title: undefined });
+    const acpSess = createStubAcpSession({
+      providerPid: undefined,
+      title: undefined,
+      sessionMeta: undefined,
+    });
     expect(acpSess.providerPid).toBeUndefined();
     expect(acpSess.title).toBeUndefined();
+    expect(acpSess.sessionMeta).toBeUndefined();
+    expect('sessionMeta' in acpSess).toBe(false);
+    const acpSessWithMeta = createStubAcpSession({
+      sessionMeta: { provider: { tier: { name: 'Ultra' } } },
+    });
+    expect(acpSessWithMeta.sessionMeta).toEqual({ provider: { tier: { name: 'Ultra' } } });
     await expect(acpSess.close()).resolves.toBeUndefined();
     await expect(
       Promise.resolve().then(() => acpSess.setConfigOption('model', 'm')),
@@ -829,6 +839,7 @@ describe('agent-executor consumer testing kit', () => {
       export const stubAcp = createStubAcpSession({
         providerPid: undefined,
         title: undefined,
+        sessionMeta: undefined,
       });
       export const deltaFix = makeExecutorDelta({
         type: 'text',
