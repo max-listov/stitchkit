@@ -452,7 +452,10 @@ For a scope:
 
 - `manager` is `'system'` or `'user'`. The user manager is reached through `XDG_RUNTIME_DIR`, or
   through `/run/user/<uid>` when that directory is the caller's own; otherwise the launch refuses
-  with `user-manager-unreachable`.
+  with `user-manager-unreachable`. The system manager takes scopes from root only: a non-root
+  caller is refused with `manager-unauthorized` before anything starts, because the system
+  manager may let it start a unit and then deny stopping it (polkit asks for interactive
+  authentication), which would leave work its launcher cannot end. Such a caller uses `'user'`.
 - `slice: 'caller'` keeps the caller's own slice, and so the resource limits that slice carries; a
   caller with no slice under that manager is refused with `slice-unresolvable`. Any other value
   names a slice in full (`'build.slice'`).

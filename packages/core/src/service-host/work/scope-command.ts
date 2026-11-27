@@ -117,6 +117,20 @@ export function parseSystemdVersion(stdout: string): number | null {
 }
 
 /**
+ * Refuses a transient scope on the system manager for a caller that is not root. A non-root
+ * caller may be allowed to start a unit there and still be denied stopping it (polkit asks for
+ * interactive authentication), which would leave work running that its launcher cannot end;
+ * such a caller places its work on its own `user` manager.
+ */
+export function assertManagerAuthorized(host: WorkHost, manager: 'system' | 'user'): void {
+  if (manager === 'system' && host.uid !== 0)
+    throw new WorkLaunchError(
+      'manager-unauthorized',
+      `The system manager takes transient scopes from root only (uid ${String(host.uid)}); place the work on manager 'user'`,
+    );
+}
+
+/**
  * Refuses a host whose `systemd-run` is absent or older than {@link MIN_SYSTEMD_VERSION}; the
  * version is asked of `systemd-run` itself, never assumed.
  */

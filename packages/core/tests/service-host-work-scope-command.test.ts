@@ -28,8 +28,9 @@ const owner = {
 };
 const SERVICE_CGROUP = '0::/work.slice/work-agents.slice/agent-host.service\n';
 
+/** A launcher running as root, as the system manager requires; a user-manager case sets `uid`. */
 function scopeHost(overrides: Parameters<typeof createFakeWorkHost>[0] = {}) {
-  const fake = createFakeWorkHost(overrides);
+  const fake = createFakeWorkHost({ uid: 0, ...overrides });
   fake.state.files.set('/proc/self/cgroup', SERVICE_CGROUP);
   return fake;
 }
@@ -162,7 +163,7 @@ describe('service-host/work scope command', () => {
   });
 
   test('the user manager is reached through the runtime directory the caller owns', async () => {
-    const declared = scopeHost({ env: { XDG_RUNTIME_DIR: '/run/user/1000' } });
+    const declared = scopeHost({ uid: 1000, env: { XDG_RUNTIME_DIR: '/run/user/1000' } });
     declared.state.files.set(
       '/proc/self/cgroup',
       '0::/user.slice/user-1000.slice/user@1000.service/app.slice/term.scope\n',
@@ -175,7 +176,7 @@ describe('service-host/work scope command', () => {
     expect(command.args).toContain('--slice=app.slice');
     expect(command.env.XDG_RUNTIME_DIR).toBe('/run/user/1000');
 
-    const derived = scopeHost();
+    const derived = scopeHost({ uid: 1000 });
     derived.state.directories.set('/run/user/1000', 1000);
     const viaDirectory = await placed(
       { kind: 'transient-scope', manager: 'user', slice: 'build.slice' },
@@ -190,9 +191,9 @@ describe('service-host/work scope command', () => {
     expect(system.args[0]).toBe('--scope');
     expect(system.env.XDG_RUNTIME_DIR).toBeUndefined();
 
-    const foreign = scopeHost();
+    const foreign = scopeHost({ uid: 1000 });
     foreign.state.directories.set('/run/user/1000', 0);
-    for (const host of [foreign.host, scopeHost().host])
+    for (const host of [foreign.host, scopeHost({ uid: 1000 }).host])
       expect(
         await reasonOf(
           placed({ kind: 'transient-scope', manager: 'user', slice: 'build.slice' }, host),
@@ -360,8 +361,30 @@ describe('service-host/work scope command', () => {
     }
   });
 
+  test('the system manager refuses a non-root caller before anything is spawned, the user manager does not', async () => {
+    const caller = scopeHost({ uid: 1000, env: { XDG_RUNTIME_DIR: '/run/user/1000' } });
+    const system = {
+      kind: 'transient-scope',
+      manager: 'system',
+      slice: 'build.slice',
+    } as const;
+    expect(await reasonOf(placed(system, caller.host))).toBe('manager-unauthorized');
+    const probe = await probeWorkBoundaryWith(caller.host, system);
+    expect(probe.state === 'unavailable' && probe.reason).toBe('manager-unauthorized');
+    expect(
+      caller.state.commands.some(
+        (c) => c.executable === '/usr/bin/systemd-run' && !c.args.includes('--version'),
+      ),
+    ).toBe(false);
+    // Negative control: the same caller on its own manager, and root on the system manager.
+    expect(
+      (await placed({ ...system, manager: 'user' }, caller.host)).args.slice(0, 2),
+    ).toEqual(['--user', '--scope']);
+    expect((await placed(system, scopeHost().host)).args[0]).toBe('--scope');
+  });
+
   test("manager 'user' and 'system' address different managers in every command", async () => {
-    const fake = scopeHost({ env: { XDG_RUNTIME_DIR: '/run/user/1000' } });
+    const fake = scopeHost({ uid: 1000, env: { XDG_RUNTIME_DIR: '/run/user/1000' } });
     await probeWorkBoundaryWith(fake.host, {
       kind: 'transient-scope',
       manager: 'user',

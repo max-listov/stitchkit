@@ -87,6 +87,7 @@ describe('service-host/work transient scope on a real systemd', () => {
         'systemd-unavailable',
         'systemd-too-old',
         'manager-unreachable',
+        'manager-unauthorized',
         'user-manager-unreachable',
         'slice-unresolvable',
       ]).toContain(answer.reason);

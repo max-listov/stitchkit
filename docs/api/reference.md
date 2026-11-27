@@ -2570,7 +2570,7 @@ Work launched in its own boundary with a declared owner. Guide: [Work in its own
 | `WorkAgentSchema` / `WorkAgent` | schema / type | `{ harness, model, address }` of the agent that asked for the work |
 | `WorkPlacement` / `WorkScopePlacement` / `WorkScopeLimits` | type | `{ kind: 'transient-scope', manager: 'system' \| 'user', slice: 'caller' \| '<name>.slice', limits? }` or `{ kind: 'process-root' }`; limits `memoryMaxMb`, `memorySwapMaxMb`, `cpuQuotaPercent`, `cpuWeight`, `runtimeMaxSeconds` become unit properties |
 | `workUnitName` | function | `<launcher>-<id>.scope` for a `WorkRef`; one way only |
-| `WorkLaunchError` / `WorkLaunchErrorReason` | class / type | `reason` is `origin-unreadable`, `platform-unsupported`, `systemd-unavailable`, `systemd-too-old` (older than 254), `manager-unreachable`, `user-manager-unreachable`, `slice-unresolvable`, `unit-exists`, `scope-refused`, `root-unobservable`, `root-unobserved`, `membership-unavailable` or `stop-failed`; `cause` holds what the host answered |
+| `WorkLaunchError` / `WorkLaunchErrorReason` | class / type | `reason` is `origin-unreadable`, `platform-unsupported`, `systemd-unavailable`, `systemd-too-old` (older than 254), `manager-unreachable`, `manager-unauthorized` (the system manager for a non-root caller), `user-manager-unreachable`, `slice-unresolvable`, `unit-exists`, `scope-refused`, `root-unobservable`, `root-unobserved`, `membership-unavailable` or `stop-failed`; `cause` holds what the host answered |
 
 
 ## `stitchkit/telegram`

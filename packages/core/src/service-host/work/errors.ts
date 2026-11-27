@@ -6,6 +6,7 @@ const WorkLaunchErrorReasonSchema = z.enum([
   'systemd-unavailable',
   'systemd-too-old',
   'manager-unreachable',
+  'manager-unauthorized',
   'user-manager-unreachable',
   'slice-unresolvable',
   'unit-exists',

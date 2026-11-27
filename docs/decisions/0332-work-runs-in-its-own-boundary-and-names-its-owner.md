@@ -49,7 +49,9 @@ Measurements on a Linux host with systemd 259 and cgroup v2 decided the shape:
    `{ kind: 'process-root' }`. A host that cannot make the asked boundary refuses with a named
    reason; nothing is ever started as a plain child instead. `slice: 'caller'` keeps the caller's
    own slice — and with it the limits that slice carries — and is refused when the caller has
-   none under that manager.
+   none under that manager. The system manager takes scopes from root only: a non-root caller may
+   be allowed to start a unit there and denied stopping it, so it is refused with
+   `manager-unauthorized` before anything starts and uses its own `user` manager.
 4. **A scope is made by the host's manager with the arguments passed as written.** The line is
    `systemd-run [--user] --scope --quiet --collect --expand-environment=no --unit=<launcher>-<id>.scope
    --description=<label> --slice=<slice> [--property=…] -- <command>`. A systemd older than 254

@@ -7,6 +7,7 @@ import { encodeWorkOrigin, WORK_ORIGIN_ENV, workOriginPrefix } from './origin';
 import { WorkOwnerSchema, type WorkRef } from './owner';
 import { WorkPlacementSchema } from './placement';
 import {
+  assertManagerAuthorized,
   assertSystemdRunVersion,
   managerEnv,
   resolveCallerSlice,
@@ -64,6 +65,7 @@ export async function workCommandWith(
     return { executable: root, args: rootArgs, env: { ...env }, work, unit: null };
   }
   await assertSystemdRunVersion(host);
+  assertManagerAuthorized(host, placement.manager);
   const unit = workUnitName(work);
   const slice =
     placement.slice === 'caller'

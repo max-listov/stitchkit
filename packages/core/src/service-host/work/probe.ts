@@ -3,6 +3,7 @@ import { WorkLaunchError, type WorkLaunchErrorReason } from './errors';
 import { createDefaultWorkHost, type WorkHost } from './host';
 import { type WorkPlacement, WorkPlacementSchema } from './placement';
 import {
+  assertManagerAuthorized,
   assertSystemdRunVersion,
   classifyManagerFailure,
   managerEnv,
@@ -74,6 +75,7 @@ export async function probeWorkBoundaryWith(
       return { state: 'available' };
     }
     await assertSystemdRunVersion(host);
+    assertManagerAuthorized(host, placement.manager);
     await assertManagerReachable(host, placement.manager);
     if (placement.slice === 'caller') await resolveCallerSlice(host, placement.manager);
     return { state: 'available' };
