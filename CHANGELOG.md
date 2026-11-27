@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.132.3] - 2026-11-27
+
 ### Fixed
 
 - `stitchkit/agent-executor/claude` and `stitchkit/agent-executor/claude-sdk` — reject `AgentEngineTurn.respond` with the session close, disconnect, query-exit, or caller `AbortSignal` error instead of writing to transport or throwing `TypeError`, ignore `AgentEngineTurn.interrupt` once a turn has settled or its session has torn down, stop processing late records after close/abort, and preserve the caller's abort reason across pre-open signal listeners and query startup races.
