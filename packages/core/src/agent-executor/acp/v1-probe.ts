@@ -22,6 +22,7 @@ import {
   AcpUpdateNotificationSchema,
   acpOptionValues,
 } from './v1-protocol';
+import { mergeInitialAcpConfigOptions } from './v1-session-options';
 
 const DEFAULT_PROBE_TIMEOUT_MS = 30_000;
 
@@ -207,13 +208,11 @@ export async function probeAcpCapabilities(
       let result: AcpCapabilitiesProbe;
       try {
         const session = await readProbeSession(config, connection, input.cwd, deadlineSignal);
-        if (
-          session.configOptions != null &&
-          (!sawConfigOptionUpdate ||
-            (configOptions.length === 0 && session.configOptions.length > 0))
-        ) {
-          configOptions = session.configOptions;
-        }
+        configOptions = mergeInitialAcpConfigOptions(
+          configOptions,
+          session.configOptions,
+          sawConfigOptionUpdate,
+        );
         deadlineSignal.throwIfAborted();
         const models = extractProbeModels(configOptions, session.models?.availableModels);
         result = {

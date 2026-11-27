@@ -23,6 +23,16 @@ export interface PendingExternalAcpRequest {
   resolve(answer: JsonRpcValue): void;
 }
 
+/** Resolve and remove every pending external permission request with `ACP_CANCELLED`. */
+export function drainExternalAcpPending(
+  externalPending: Map<string, PendingExternalAcpRequest>,
+): void {
+  for (const [interactionId, pending] of [...externalPending]) {
+    externalPending.delete(interactionId);
+    pending.resolve(ACP_CANCELLED);
+  }
+}
+
 function isPlainJsonRecord(
   value: JsonRpcValue | undefined,
 ): value is Record<string, JsonRpcValue> {

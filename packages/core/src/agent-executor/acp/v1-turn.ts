@@ -70,6 +70,25 @@ export function newAcpTurn(turnId: string): AcpTurnSlot {
 }
 
 /**
+ * Mark a turn settled and fail its delta stream. When `sendCancelled` is `true`, pending
+ * permission requests are drained with `ACP_CANCELLED`; when `false`, they are dropped silently.
+ */
+export function settleAcpTurn(
+  turn: AcpTurnSlot | undefined,
+  reason: unknown,
+  sendCancelled: boolean,
+): void {
+  if (turn === undefined) return;
+  turn.settled = true;
+  if (sendCancelled) {
+    loseEngineTurn(turn, () => ACP_CANCELLED, reason);
+    return;
+  }
+  turn.pending.clear();
+  turn.channel.fail(reason);
+}
+
+/**
  * Send one `session/prompt` generation and settle the turn once the latest generation completes:
  * accumulated usage, optional `watchPromptOutcome` override (`errorKind`, `threadDisposition`),
  * failure by kind, and `turn-end`. Earlier steered prompt generations fold their usage into the
@@ -81,16 +100,18 @@ export function runAcpPrompt(input: {
   prompt: readonly JsonRpcValue[];
   turn: AcpTurnSlot;
   generation: number;
+  ensureAlive: () => void;
   usageInputIncludesCachedRead?: boolean;
   checkOutcome?: AcpCheckPromptOutcome;
   done: () => void;
 }): void {
-  const { peer, sessionId, prompt, turn, generation, checkOutcome, done } = input;
+  const { peer, sessionId, prompt, turn, generation, ensureAlive, checkOutcome, done } = input;
   // `session/prompt` stays open for the entire turn (streaming updates, tools, human approvals).
   void peer
     .request('session/prompt', { sessionId, prompt: [...prompt] }, { timeoutMs: null })
     .then(async (result) => {
       if (turn.settled) return;
+      ensureAlive();
       const parsed = AcpPromptResultSchema.parse(result);
       if (parsed.usage !== undefined && parsed.usage !== null) {
         turn.accumulatedUsage = addAcpTokenUsage(
@@ -109,6 +130,7 @@ export function runAcpPrompt(input: {
           ? await checkOutcome(parsed)
           : undefined;
       if (turn.settled || generation !== turn.promptGeneration) return;
+      ensureAlive();
       const override =
         rawOverride !== undefined
           ? AcpPromptOutcomeOverrideSchema.parse(rawOverride)
@@ -165,8 +187,21 @@ export function runAcpPrompt(input: {
     .catch((error: unknown) => {
       if (turn.settled || generation !== turn.promptGeneration) return;
       turn.settled = true;
-      const kind = classifyAcpRpcRefusal(error);
-      if (kind !== undefined && error instanceof Error) {
+      let failure: unknown = error;
+      let alive = true;
+      try {
+        ensureAlive();
+      } catch (aliveError) {
+        alive = false;
+        failure = aliveError;
+      }
+      if (!alive) {
+        settleAcpTurn(turn, failure, false);
+        done();
+        return;
+      }
+      const kind = classifyAcpRpcRefusal(failure);
+      if (kind !== undefined && failure instanceof Error) {
         const raw = { source: 'acp', type: 'session/prompt' };
         endEngineTurn(turn, () => ACP_CANCELLED, [
           {
@@ -175,7 +210,7 @@ export function runAcpPrompt(input: {
             itemId: 'failure',
             raw,
             kind,
-            message: error.message,
+            message: failure.message,
           },
           {
             type: 'turn-end',
@@ -186,7 +221,7 @@ export function runAcpPrompt(input: {
           },
         ]);
       } else {
-        loseEngineTurn(turn, () => ACP_CANCELLED, error);
+        loseEngineTurn(turn, () => ACP_CANCELLED, failure);
       }
       done();
     });
@@ -197,16 +232,24 @@ export function acpTurnHandle(
   peer: JsonRpcPeer,
   sessionId: string,
   turn: AcpTurnSlot,
+  ensureAlive: () => void,
 ): AgentEngineTurn {
   return {
     deltas: turn.channel,
     async interrupt() {
+      if (turn.settled) return;
+      try {
+        ensureAlive();
+      } catch {
+        return;
+      }
       turn.state.interruptRequested = true;
       peer.notify('session/cancel', { sessionId });
       // A permission request the agent is still waiting on would hold the cancel back.
       drainEngineRequests(turn, () => ACP_CANCELLED);
     },
     async respond(interactionId, rawReply) {
+      ensureAlive();
       answerActiveAcpTurnRequest(turn, interactionId, rawReply);
     },
   };
@@ -242,6 +285,7 @@ export function createAcpTurnControls(input: {
       let checkOutcome: AcpCheckPromptOutcome | undefined;
       try {
         prompt = await acpPromptBlocks(turnInput.input, input.limits);
+        input.ensureAlive();
         if (input.config.watchPromptOutcome !== undefined) {
           checkOutcome = await input.config.watchPromptOutcome({
             sessionId: input.sessionId,
@@ -261,13 +305,14 @@ export function createAcpTurnControls(input: {
         prompt,
         turn,
         generation: 1,
+        ensureAlive: input.ensureAlive,
         ...(input.config.usageInputIncludesCachedRead !== undefined && {
           usageInputIncludesCachedRead: input.config.usageInputIncludesCachedRead,
         }),
         ...(checkOutcome !== undefined && { checkOutcome }),
         done: () => releaseTurn(turn),
       });
-      return acpTurnHandle(input.peer, input.sessionId, turn);
+      return acpTurnHandle(input.peer, input.sessionId, turn, input.ensureAlive);
     },
     async steerTurn(steerInput: {
       readonly input: readonly AgentMessagePart[];
@@ -326,6 +371,7 @@ export function createAcpTurnControls(input: {
         prompt,
         turn,
         generation: nextGeneration,
+        ensureAlive: input.ensureAlive,
         ...(input.config.usageInputIncludesCachedRead !== undefined && {
           usageInputIncludesCachedRead: input.config.usageInputIncludesCachedRead,
         }),

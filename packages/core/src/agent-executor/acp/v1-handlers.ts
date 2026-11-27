@@ -53,12 +53,13 @@ export interface AcpPermissionRequestEvent {
   readonly duringActiveTurn: boolean;
   /** Normalized executor `request` delta preserving tool input and option metadata. */
   readonly delta: Extract<ExecutorDelta, { type: 'request' }>;
-  /** Answer this permission request once; throws `TypeError` if invalid or already resolved. */
+  /** Answer this permission request once; rejects if the session is no longer alive, or throws `TypeError` if invalid or already resolved. */
   respond(reply: InteractionReply['reply']): Promise<void>;
 }
 
 interface AcpHandlersState {
   externalPending: Map<string, PendingExternalAcpRequest>;
+  ensureAlive: () => void;
   isOpened: () => boolean;
   getTurn: () => AcpTurnSlot | undefined;
   onSessionMeta: (meta: {
@@ -71,6 +72,15 @@ interface AcpHandlersState {
   onPermissionRequest?: (event: AcpPermissionRequestEvent) => Promise<void> | void;
   permissionRequestDelivery?: 'external-only' | 'all';
   onEnd: (error: Error) => void;
+}
+
+function isHandlersAlive(state: AcpHandlersState): boolean {
+  try {
+    state.ensureAlive();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function normalizeTransformedUpdates(
@@ -126,6 +136,7 @@ function handleAcpNotification(
   try {
     updates = normalizeTransformedUpdates(parsed.data.update, state.transformUpdate);
   } catch (error) {
+    if (!isHandlersAlive(state)) return;
     if (turn !== undefined) {
       turn.chunk += 1;
       offerTurnDelta(turn.channel, {
@@ -141,6 +152,7 @@ function handleAcpNotification(
   }
   const opened = state.isOpened();
   for (const update of updates) {
+    if (!isHandlersAlive(state)) return;
     state.onSessionMeta({
       ...(update.configOptions !== undefined && { configOptions: update.configOptions }),
       ...(update.sessionUpdate === 'session_info_update' &&
@@ -218,7 +230,8 @@ function handleAcpRequest(
     if (
       state.permissionRequestDelivery === 'all' &&
       state.onPermissionRequest !== undefined &&
-      turn.pending.has(interactionId)
+      turn.pending.has(interactionId) &&
+      isHandlersAlive(state)
     ) {
       const observer = state.onPermissionRequest;
       invokeSafely(() =>
@@ -229,6 +242,7 @@ function handleAcpRequest(
           duringActiveTurn: true,
           delta,
           async respond(reply) {
+            state.ensureAlive();
             answerActiveAcpTurnRequest(turn, interactionId, reply);
           },
         }),
@@ -271,6 +285,7 @@ function handleAcpRequest(
     const onObserverError = (error: unknown) => {
       if (state.externalPending.get(interactionId) !== entry) return;
       state.externalPending.delete(interactionId);
+      if (!isHandlersAlive(state)) return;
       // Forward explicit JsonRpcError refusals; isolate arbitrary host exceptions as a clean
       // cancellation so internal host errors never leak and the stdio agent is never left hanging.
       if (error instanceof JsonRpcError) reject(error);
@@ -284,6 +299,7 @@ function handleAcpRequest(
         duringActiveTurn: false,
         delta,
         async respond(reply) {
+          state.ensureAlive();
           answerAcpSessionRequest({
             turn: undefined,
             externalPending: state.externalPending,
@@ -293,13 +309,24 @@ function handleAcpRequest(
           });
         },
       });
-      if (
+      const thenable =
         typeof outcome === 'object' &&
         outcome !== null &&
         'then' in outcome &&
-        typeof outcome.then === 'function'
-      ) {
-        void Promise.resolve(outcome).catch(onObserverError);
+        typeof outcome.then === 'function';
+      if (!isHandlersAlive(state)) {
+        if (state.externalPending.get(interactionId) === entry) {
+          state.externalPending.delete(interactionId);
+        }
+        if (thenable) void Promise.resolve(outcome).catch(() => undefined);
+        return;
+      }
+      if (thenable) {
+        void Promise.resolve(outcome).then(() => {
+          if (!isHandlersAlive(state) && state.externalPending.get(interactionId) === entry) {
+            state.externalPending.delete(interactionId);
+          }
+        }, onObserverError);
       }
     } catch (error) {
       onObserverError(error);
@@ -313,11 +340,17 @@ export function createAcpHandlers(state: AcpHandlersState) {
     chunk: 0,
     track: { segment: 0, toolNames: new Map() },
   };
+  const dropClosedRequest = (): Promise<JsonRpcValue> =>
+    new Promise<JsonRpcValue>(() => undefined);
   return {
-    onNotification: (method: string, params: JsonRpcValue | undefined) =>
-      handleAcpNotification(state, externalState, method, params),
-    onRequest: (method: string, params: JsonRpcValue | undefined, id: string | number) =>
-      handleAcpRequest(state, method, params, id),
+    onNotification: (method: string, params: JsonRpcValue | undefined) => {
+      if (!isHandlersAlive(state)) return;
+      handleAcpNotification(state, externalState, method, params);
+    },
+    onRequest: (method: string, params: JsonRpcValue | undefined, id: string | number) => {
+      if (!isHandlersAlive(state)) return dropClosedRequest();
+      return handleAcpRequest(state, method, params, id);
+    },
     onEnd: state.onEnd,
   };
 }

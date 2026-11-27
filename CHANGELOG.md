@@ -15,6 +15,11 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### Fixed
+
+- `stitchkit/agent-executor/acp` — reject `AcpPermissionRequestEvent.respond` and `AgentEngineTurn.respond` once an ACP session is closing, disconnected, or aborted, ignore `AgentEngineTurn.interrupt` after teardown, stop delivering `onUpdate` / `onPermissionRequest` during `session/close` and after `AbortSignal` cancellation, deduplicate concurrent `close()` calls, and fail active turns with the closing or abort reason instead of settling late responses.
+  **Affects:** `stitchkit/agent-executor/acp` createAcpDriver(open), AcpSession, AcpPermissionRequestEvent, AcpUpdateEvent; `stitchkit/agent-executor` AgentEngineTurn
+
 ## [0.132.1] - 2026-11-27
 
 ### Fixed
