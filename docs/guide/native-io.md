@@ -1027,13 +1027,45 @@ rewrites every relative specifier to the `.js` file it stands for, whether the s
 | `declaration-unresolved` | a relative module with no declaration in the package — a hand-written `.d.ts` beside the sources, or a `/// <reference path>` | move the types into a `.ts` module |
 | `declaration-dependency` | a package that is neither a peer nor a dependency — including a tsconfig path alias such as `@/schema` | declare the package, or keep its types out of the public surface; import own modules relatively |
 
+### Files imported by subpath, and modules built from other contents
+
+`exportedFiles` puts files a consumer imports by name into `exports`, beside the entries:
+`'./package.json'` is the archive's own manifest — a consumer reads the client's version from it —
+and any other names a path in `files`:
+
+```ts
+files: { 'native-stream.json': 'config/native-stream.json' },
+exportedFiles: ['./package.json', './native-stream.json'],
+// consumer: import pkg from '@acme/api-client/package.json' with { type: 'json' }
+```
+
+The proof resolves each by the package name to its packed file in every runtime it imports the
+entries in, imports a `.json` file as JSON (`client.exports` lists its `default`), and the strict
+consumer imports it with `with { type: 'json' }` under both resolutions. A file that is in `files`
+but not in `exportedFiles` is packed and not importable by name.
+
+`replaceModules` builds a module from contents you give instead of its file. The key is a path,
+resolved like an entry; the contents are in that file's own format (`.json`, `.ts`, `.tsx`, `.js`,
+`.jsx`), and every import that reaches the file gets them. A client that imports the project's
+`package.json` for its version otherwise ships the whole manifest, `scripts` and
+`devDependencies` included:
+
+```ts
+replaceModules: { 'package.json': JSON.stringify({ version }) },
+```
+
+A replacement no bundled module imports is refused as `replacement-unused`: it would say the
+package was built from something it was not. Declarations are still emitted from the files
+themselves, so a replacement keeps the shape the types describe.
+
 ### What the proof runs
 
 The archive is installed into an empty directory beside its peers. There the build:
 
 1. compares every installed file with the one it built;
 2. imports every subpath by the package name — in Node and Bun for `runtime: 'node'` (the
-   default), in Bun for `'bun'` and `'browser'` — and checks `proof.exports` and shared names;
+   default), in Bun for `'bun'` and `'browser'` — and checks `proof.exports` and shared names,
+   and resolves every exported file;
 3. typechecks a strict consumer (`strict`, `skipLibCheck: false`) that re-exports every subpath,
    under `moduleResolution: bundler` and under `NodeNext`.
 
@@ -1061,13 +1093,14 @@ A refusal is a `ClientPackageError`: switch on `reason`, read `details`. A forbi
 | `reason` | When | `details` |
 |---|---|---|
 | `build` | the bundler failed | `output` |
+| `replacement-unused` | a module in `replaceModules` is imported by no bundled module | `module` |
 | `declarations` | the compiler reported an error in the client's graph | `output` |
 | `declaration-unresolved`, `declaration-dependency` | see above | `file`, `specifier`, `package` |
 | `bundled-peer` | code of a peer or dependency is in the package | `package`, `module` |
 | `manifest-owned-field` | `manifest` sets a field the build writes | `field` |
 | `install` | a peer is not installed for the build, or packing, installing or importing the archive failed | `package` or `output`, `runtime` |
 | `peer-range` | an installed peer or dependency is outside its declared range | `package`, `range`, `installed` |
-| `missing-export` | a subpath lacks a name from `proof.exports` | `subpath`, `names`, `runtime` |
+| `missing-export` | a subpath lacks a name from `proof.exports`, or an exported file does not resolve to its packed path | `subpath`, `names`, `runtime` |
 | `shared-export-split` | several subpaths export one name as different values | `names`, `runtime` |
 | `typecheck` | the strict consumer did not typecheck | `resolution`, `output` |
 

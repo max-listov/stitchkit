@@ -1697,6 +1697,12 @@
     "files": {
       "test": "manifest fields and extra files are packed, and a field the package owns is refused"
     },
+    "exportedFiles": {
+      "test": "./package.json and a data file are imported by name in Node and Bun and typecheck under both resolutions"
+    },
+    "replaceModules": {
+      "test": "a replaced project manifest ships one field, and the unreplaced one ships its scripts"
+    },
     "proof": {
       "test": "an export that differs between entries is refused by name"
     },

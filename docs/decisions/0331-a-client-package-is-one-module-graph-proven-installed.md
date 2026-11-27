@@ -3,6 +3,7 @@ title: "ADR 0331: A client package is one module graph, declared for both resolu
 description: "`buildClientPackage` builds every entry of a typed client in one pass with its peers outside, rewrites the emitted declarations with one tokenizer so they resolve under Bundler and NodeNext, and returns the archive only after it was installed into an empty directory and used there; `buildClientArtifact` stays the one self-contained file and no longer packs an archive."
 type: decision
 status: accepted
+amendedBy: ["0335"]
 created: 2026-11-27
 updated: 2026-11-27
 ---
@@ -43,7 +44,9 @@ Four things were missing, and each was measured before this decision:
    `buildClientArtifact` loses `package`: an archive of a client is made one way, and the old way
    bundled the peers. Its `executable` becomes `executables: { bun }`, the name its sibling uses.
 2. **One build over all entries.** Every entry goes to one `bun build --splitting` with each peer
-   and dependency `--external`; a module two entries import is emitted once, as a shared chunk.
+   and dependency `--external` (amended by ADR 0335: the build is `Bun.build` with the same
+   options, from a script run by the same `bun`, so a module can be replaced); a module two entries
+   import is emitted once, as a shared chunk.
    The build runs through the bounded command runner, so the function works from Node and Bun.
 3. **The module graph is checked beyond the output.** `forbiddenModules` reads external imports
    too: a rule naming `pkg/server` refuses the import whether or not the code is bundled. A

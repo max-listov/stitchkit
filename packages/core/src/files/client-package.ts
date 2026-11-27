@@ -18,16 +18,16 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import {
   type ClientBuildGraph,
   type ClientBuildStep,
   type ClientToolCommand,
-  readClientBuildGraph,
   refuseForbiddenModules,
   runClientTool,
 } from './client-build';
 import { emitClientDeclarations, normalizeClientDeclarations } from './client-declarations';
+import { bundleClientPackage, REPLACEMENT_LOADERS } from './client-package-bundle';
 import {
   CLIENT_PACKAGE_OWNED_FIELDS,
   type ClientPackage,
@@ -55,6 +55,10 @@ interface ClientPackagePlan {
   manifest: Readonly<Record<string, unknown>>;
   /** Path inside the package → absolute source file. */
   files: ReadonlyMap<string, string>;
+  /** Exported subpath → the packed file it names, `./`-relative. */
+  exportedFiles: ReadonlyMap<string, string>;
+  /** Absolute path of a replaced module → its contents. */
+  replacements: ReadonlyMap<string, string>;
   tarball: string;
 }
 
@@ -126,6 +130,8 @@ function plan(options: ClientPackageOptions): ClientPackagePlan {
     external: [...peers, ...dependencies],
     manifest,
     files,
+    exportedFiles: planExportedFiles(options, entries, files),
+    replacements: planReplacements(options),
     tarball: join(
       resolve(options.outDir),
       `${options.name.replace(/^@/, '').replaceAll('/', '-')}-${options.version}.tgz`,
@@ -133,42 +139,43 @@ function plan(options: ClientPackageOptions): ClientPackagePlan {
   };
 }
 
-/** Build every entry in one pass, so a module two of them import is emitted once. */
-async function bundle(
+/** Each exported file subpath → the packed file it names; a subpath is one thing. */
+function planExportedFiles(
   options: ClientPackageOptions,
-  planned: ClientPackagePlan,
-  step: ClientBuildStep,
-  bun: string,
-  work: string,
-): Promise<ClientBuildGraph> {
-  const metafile = join(work, 'meta.json');
-  const built = await runClientTool(
-    step,
-    bun,
-    [
-      'build',
-      ...planned.entries.values(),
-      `--root=${planned.root}`,
-      `--outdir=${join(work, 'package', 'dist')}`,
-      `--target=${options.runtime ?? 'node'}`,
-      '--format=esm',
-      '--splitting',
-      ...planned.external.map((name) => `--external=${name}`),
-      '--entry-naming=[dir]/[name].[ext]',
-      '--chunk-naming=chunks/[name]-[hash].[ext]',
-      `--tsconfig-override=${planned.tsconfig}`,
-      `--metafile=${metafile}`,
-    ],
-    planned.root,
-  );
-  if (!built.ok) {
-    throw new ClientPackageError(
-      'build',
-      `Client package build failed (exit ${built.exit}): ${built.output}`,
-      { output: built.output },
-    );
+  entries: ReadonlyMap<string, string>,
+  files: ReadonlyMap<string, string>,
+): Map<string, string> {
+  const exported = new Map<string, string>();
+  for (const subpath of options.exportedFiles ?? []) {
+    const path = normalize(subpath.slice(2)).replaceAll('\\', '/');
+    if (!subpath.startsWith('./') || (path !== 'package.json' && !files.has(path))) {
+      throw new TypeError(
+        `Client package exported file ${JSON.stringify(subpath)} is neither "./package.json" nor "./" and a path in files`,
+      );
+    }
+    if (entries.has(subpath) || exported.has(subpath)) {
+      throw new TypeError(
+        `Client package subpath ${JSON.stringify(subpath)} is exported twice`,
+      );
+    }
+    exported.set(subpath, `./${path}`);
   }
-  return readClientBuildGraph(metafile, planned.root);
+  return exported;
+}
+
+/** Each replaced module, by its absolute path → its contents. */
+function planReplacements(options: ClientPackageOptions): Map<string, string> {
+  const replacements = new Map<string, string>();
+  for (const [module, contents] of Object.entries(options.replaceModules ?? {})) {
+    const path = resolve(module);
+    if (!existsSync(path) || REPLACEMENT_LOADERS[extname(path)] === undefined) {
+      throw new TypeError(
+        `Client package replaces ${module}, which is not an existing ${Object.keys(REPLACEMENT_LOADERS).join(', ')} file`,
+      );
+    }
+    replacements.set(path, contents);
+  }
+  return replacements;
 }
 
 /**
@@ -200,7 +207,7 @@ async function stage(
   graph: ClientBuildGraph,
   staged: string,
 ): Promise<void> {
-  const exported: Record<string, { types: string; import: string }> = {};
+  const exported: Record<string, { types: string; import: string } | string> = {};
   for (const [subpath, entry] of planned.entries) {
     const output = graph.entryOutputs.get(entry);
     const types = output?.replace(/\.js$/, '.d.ts');
@@ -217,6 +224,7 @@ async function stage(
     }
     exported[subpath] = { types: `./dist/${types}`, import: `./dist/${output}` };
   }
+  for (const [subpath, path] of planned.exportedFiles) exported[subpath] = path;
   for (const [target, source] of planned.files) {
     await mkdir(dirname(join(staged, target)), { recursive: true });
     await copyFile(source, join(staged, target));
@@ -286,7 +294,18 @@ export async function buildClientPackage(
             ),
           ];
     const staged = join(work, 'package');
-    const graph = await bundle(options, planned, step, bun, work);
+    const graph = await bundleClientPackage({
+      step,
+      bun,
+      root: planned.root,
+      tsconfig: planned.tsconfig,
+      entries: [...planned.entries.values()],
+      external: planned.external,
+      runtime: options.runtime ?? 'node',
+      replacements: planned.replacements,
+      work,
+      outdir: join(staged, 'dist'),
+    });
     refuseForbiddenModules(graph, options.forbiddenModules ?? []);
     await refuseBundledExternals(graph, externals);
 
@@ -328,6 +347,7 @@ export async function buildClientPackage(
       tarball: planned.tarball,
       externals,
       root: planned.root,
+      exportedFiles: planned.exportedFiles,
     });
     const archive = await readFile(planned.tarball);
     return {

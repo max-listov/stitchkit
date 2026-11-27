@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="https://raw.githubusercontent.com/max-listov/stitchkit/master/assets/avatar.png" alt="Stitchkit — a blue ball of yarn with a golden needle" width="128" height="128" />
+</p>
+
+<p align="center">
   <strong>Contract-first backend framework for Bun and Node.</strong><br/>
   Define your API once — get an HTTP API, MCP tools, AI-agent tools, a CLI and a typed client.
 </p>

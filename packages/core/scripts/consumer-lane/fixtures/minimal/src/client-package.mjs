@@ -25,15 +25,21 @@ const work = mkdtempSync(join(tmpdir(), 'stitchkit-client-package-proof-'));
 
 try {
   const consumerProof = join(work, 'consumer-proof.ts');
+  const profile = join(work, 'stream-profile.json');
+  writeFileSync(profile, `${JSON.stringify({ maxFrameBytes: 65536 })}\n`);
   writeFileSync(
     consumerProof,
     "import { type Session, sessions } from '@example/sessions-client';\n" +
       "import { isBusy } from '@example/sessions-client/monitoring';\n" +
+      "import pkg from '@example/sessions-client/package.json' with { type: 'json' };\n" +
+      "import stream from '@example/sessions-client/stream-profile.json' with { type: 'json' };\n" +
+      'const revision: string = pkg.version;\n' +
+      'const frameBytes: number = stream.maxFrameBytes;\n' +
       'const path: string = sessions.endpoints.list.path;\n' +
       "const busy: boolean = isBusy({ id: 'a', state: 'busy' });\n" +
       '// @ts-expect-error state is a closed enum: an unresolved declaration would make it `any`\n' +
       "const bad: Session = { id: 'a', state: 'nope' };\n" +
-      'export { bad, busy, path };\n',
+      'export { bad, busy, frameBytes, path, revision };\n',
   );
   const options = {
     name: '@example/sessions-client',
@@ -42,6 +48,9 @@ try {
     tsconfig: join(fixture, 'tsconfig.json'),
     peerDependencies: { stitchkit: `^${framework}`, zod: '^4.0.0' },
     outDir: join(work, 'out'),
+    files: { 'stream-profile.json': profile },
+    // The archive's own manifest and a data file, imported by name like the entries.
+    exportedFiles: ['./package.json', './stream-profile.json'],
     proof: {
       typecheck: [consumerProof],
       exports: { '.': ['sessions'], './monitoring': ['isBusy'] },
@@ -54,6 +63,8 @@ try {
   assert.deepEqual(built.sharedExports, ['SessionError', 'SessionSchema', 'sessions']);
   assert.deepEqual(built.proof.runtimes, ['node', 'bun']);
   assert.deepEqual(built.proof.resolutions, ['bundler', 'NodeNext']);
+  assert.deepEqual(built.proof.exportedFiles, ['./package.json', './stream-profile.json']);
+  assert.deepEqual(built.exports['./package.json'], ['default']);
   assert.equal(built.proof.externals.stitchkit, framework);
   // Nothing of the framework or of zod is in the package: three modules of the client itself.
   assert.deepEqual(

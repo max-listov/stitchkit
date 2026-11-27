@@ -82,17 +82,38 @@ const IdentityReportSchema = z.object({
   exports: z.record(z.string(), z.array(z.string())),
   shared: z.array(z.string()),
   split: z.array(z.string()),
+  /** Exported files that did not resolve to their packed path. */
+  unresolved: z.array(z.string()),
 });
 
-/** Imports every subpath by the package name and compares what several of them export. */
-function identityScript(name: string, subpaths: readonly string[]): string {
-  return `const name = ${JSON.stringify(name)};
+/**
+ * Imports every entry subpath by the package name and compares what several of
+ * them export; resolves every exported file by the package name to its packed
+ * path, and imports a `.json` one as JSON.
+ */
+function identityScript(
+  name: string,
+  subpaths: readonly string[],
+  files: Readonly<Record<string, string>>,
+): string {
+  return `import { fileURLToPath } from 'node:url';
+const name = ${JSON.stringify(name)};
 const subpaths = ${JSON.stringify(subpaths)};
+const files = ${JSON.stringify(files)};
 const namespaces = {};
 for (const subpath of subpaths) {
   namespaces[subpath] = await import(subpath === '.' ? name : name + subpath.slice(1));
 }
 const exported = {};
+const unresolved = [];
+for (const [subpath, path] of Object.entries(files)) {
+  const specifier = name + subpath.slice(1);
+  const resolved = fileURLToPath(import.meta.resolve(specifier)).replaceAll('\\\\', '/');
+  if (!resolved.endsWith('/node_modules/' + name + path.slice(1))) unresolved.push(subpath);
+  else if (path.endsWith('.json')) {
+    exported[subpath] = Object.keys(await import(specifier, { with: { type: 'json' } })).sort();
+  }
+}
 const owners = new Map();
 for (const subpath of subpaths) {
   exported[subpath] = Object.keys(namespaces[subpath]).sort();
@@ -105,7 +126,9 @@ for (const [key, list] of owners) {
   const first = namespaces[list[0]][key];
   (list.every((subpath) => Object.is(namespaces[subpath][key], first)) ? shared : split).push(key);
 }
-process.stdout.write(JSON.stringify({ exports: exported, shared: shared.sort(), split: split.sort() }));
+process.stdout.write(
+  JSON.stringify({ exports: exported, shared: shared.sort(), split: split.sort(), unresolved }),
+);
 `;
 }
 
@@ -133,6 +156,8 @@ export interface ClientPackageProofInput {
   externals: ReadonlyMap<string, ExternalPackage>;
   /** The project directory type packages are resolved from. */
   root: string;
+  /** Exported file subpath → the packed file it names, `./`-relative. */
+  exportedFiles: ReadonlyMap<string, string>;
 }
 
 type ProvenPackage = Pick<ClientPackage, 'files' | 'exports' | 'sharedExports' | 'proof'>;
@@ -280,7 +305,10 @@ async function proveIdentity(
 > {
   const { options, consumer } = input;
   const subpaths = Object.keys(options.entries);
-  await writeFile(join(consumer, 'identity.mjs'), identityScript(options.name, subpaths));
+  await writeFile(
+    join(consumer, 'identity.mjs'),
+    identityScript(options.name, subpaths, Object.fromEntries(input.exportedFiles)),
+  );
   const runtimes: ('node' | 'bun')[] =
     (options.runtime ?? 'node') === 'node' ? ['node', 'bun'] : ['bun'];
   const distinct = new Set(options.proof?.distinctExports ?? []);
@@ -293,6 +321,14 @@ async function proveIdentity(
       { runtime },
     );
     const report = IdentityReportSchema.parse(safeJsonParse(ran.stdout));
+    const [unresolved] = report.unresolved;
+    if (unresolved !== undefined) {
+      throw new ClientPackageError(
+        'missing-export',
+        `Client package subpath "${unresolved}" does not resolve to its packed file in ${runtime}`,
+        { subpath: unresolved, runtime },
+      );
+    }
     for (const [subpath, required] of Object.entries(options.proof?.exports ?? {})) {
       const names = required.filter((name) => !report.exports[subpath]?.includes(name));
       if (names.length === 0) continue;
@@ -324,6 +360,7 @@ const RESOLUTIONS = [
 async function proveTypes(input: ClientPackageProofInput): Promise<string> {
   const { options, consumer } = input;
   const sources = ['exports.ts'];
+  const json = [...input.exportedFiles].filter(([, path]) => path.endsWith('.json'));
   await writeFile(
     join(consumer, 'exports.ts'),
     Object.keys(options.entries)
@@ -331,6 +368,12 @@ async function proveTypes(input: ClientPackageProofInput): Promise<string> {
         const specifier = subpath === '.' ? options.name : options.name + subpath.slice(1);
         return `export * as E${index} from ${JSON.stringify(specifier)};\n`;
       })
+      .concat(
+        json.map(([subpath], index) => {
+          const specifier = JSON.stringify(options.name + subpath.slice(1));
+          return `import J${index} from ${specifier} with { type: 'json' };\nexport { J${index} };\n`;
+        }),
+      )
       .join(''),
   );
   await mkdir(join(consumer, 'typecheck'));
@@ -360,6 +403,7 @@ async function proveTypes(input: ClientPackageProofInput): Promise<string> {
           moduleResolution: resolution,
           lib: ['ES2023', 'DOM'],
           types: (options.proof?.types ?? []).map((name) => name.replace(/^@types\//, '')),
+          ...(json.length > 0 ? { resolveJsonModule: true } : {}),
         },
         files: sources,
       }),
@@ -391,6 +435,7 @@ export async function proveClientPackage(
       resolutions: RESOLUTIONS.map(({ resolution }) => resolution),
       typescript,
       externals,
+      exportedFiles: [...input.exportedFiles.keys()],
     },
   };
 }

@@ -12,6 +12,10 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### Changed
+
+- The starter's mascot and favicon (`public/mascot-stitch.png`, `public/favicon/mascot-stitch.png`) are the new Stitchkit avatar: a felt ball of blue yarn with a golden needle, on a transparent background, 256 and 64 px instead of a 2048 px image drawn at 32 px.
+
 ## [0.8.2] - 2026-11-26
 
 ### Changed

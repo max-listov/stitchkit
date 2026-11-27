@@ -91,6 +91,24 @@ export interface ClientPackageOptions {
   manifest?: ClientPackageManifest;
   /** Extra files of the package: path inside the package → source file. */
   files?: Readonly<Record<string, string>>;
+  /**
+   * Files a consumer imports by subpath, written to `exports` beside the
+   * entries: `'./package.json'` is the archive's own manifest, any other names
+   * a path in `files` (`'./native-stream.json'` for `files['native-stream.json']`).
+   * The proof resolves each by the package name in every runtime, imports a
+   * `.json` file with `with { type: 'json' }` and typechecks that import.
+   */
+  exportedFiles?: readonly `./${string}`[];
+  /**
+   * Modules the bundle takes as other contents: source file → the contents it
+   * is built from instead, in that file's own format (`.json`, `.ts`, `.tsx`,
+   * `.js`, `.jsx`). A key is resolved like an entry and replaces every import
+   * that reaches that file, so `{ 'package.json': JSON.stringify({ version }) }`
+   * ships one field of the project manifest instead of its scripts. A
+   * replacement no bundled module imports is refused. Declarations are still
+   * emitted from the files themselves.
+   */
+  replaceModules?: Readonly<Record<string, string>>;
   /** What the installed archive must additionally satisfy. */
   proof?: {
     /**
@@ -131,7 +149,7 @@ export interface ClientPackage {
   files: readonly { path: string; sha256: string; bytes: number }[];
   /** Absolute path of every source module bundled into the package. */
   modules: readonly string[];
-  /** Per subpath: the names the installed package exports at runtime. */
+  /** Per subpath: the names the installed package exports at runtime; a `.json` file exports `default`. */
   exports: Readonly<Record<string, readonly string[]>>;
   /** Names more than one subpath exports, each proven to be one value across them. */
   sharedExports: readonly string[];
@@ -144,6 +162,8 @@ export interface ClientPackage {
     typescript: string;
     /** Each peer and dependency the proof installed → its version. */
     externals: Readonly<Record<string, string>>;
+    /** Each of `exportedFiles`, resolved by the package name to the packed file in every runtime. */
+    exportedFiles: readonly string[];
   };
 }
 
@@ -151,6 +171,8 @@ export interface ClientPackage {
 export const ClientPackageRefusalSchema = z.enum([
   /** The bundler failed. */
   'build',
+  /** A module in `replaceModules` is imported by no bundled module. */
+  'replacement-unused',
   /** The compiler reported an error while emitting declarations. */
   'declarations',
   /** A declaration names a relative module that has no declaration in the package. */
