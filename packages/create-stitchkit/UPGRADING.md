@@ -61,9 +61,11 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
-## Unreleased migration: native-agent-runtime
+## Released migration: 0.9.0
 
-**Required for `--template agent` projects.** Adopt these edits together with upgrading `stitchkit` to `0.134.0` and `stitchkit-tui` to `0.5.7` (see [`docs/guide/upgrading.md`](../../docs/guide/upgrading.md) for the framework changes).
+### native-agent-runtime
+
+**With stitchkit 0.134.0.** Required for `--template agent` projects adopting `stitchkit@0.134.0` and `stitchkit-tui@0.5.7` (see [`docs/guide/upgrading.md`](../../docs/guide/upgrading.md) for the framework changes).
 
 1. Remove `"ai"` and `"@openrouter/ai-sdk-provider"` from `package.json` unless another part of your project uses the AI SDK directly.
 2. In `src/runtime.ts`:

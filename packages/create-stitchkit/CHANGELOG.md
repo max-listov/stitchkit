@@ -12,6 +12,8 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-28
+
 ### ⚠️ Breaking changes
 
 **Who must act:** every project scaffolded from an earlier `create-stitchkit --template agent` release that upgrades to `stitchkit@^0.134.0` and still wires `AgentLanguageModelProvider`, `model: provider.create(...)`, `mountAgent` from `stitchkit/tools/agent`, or `ai` / `@openrouter/ai-sdk-provider` in `src/runtime.ts` and `tests/runtime.test.ts` ([migration](./UPGRADING.md#native-agent-runtime)).
