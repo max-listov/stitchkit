@@ -1,8 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
-  type AgentLanguageModelProvider,
   type AgentModelCatalog,
+  type AgentModelDriverFactory,
   type AgentModelSelectionStore,
   createAgentObservability,
   defineAgentProtocol,
@@ -14,7 +14,7 @@ import {
 } from 'stitchkit/agent-runtime/harness';
 import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter';
 import { createBunSqliteAgentRuntimeStore } from 'stitchkit/agent-runtime/sqlite/bun';
-import { mountAgent } from 'stitchkit/tools/agent';
+import { mountAgentTools } from 'stitchkit/tools';
 import type { AgentTuiDiagnostics } from 'stitchkit-tui';
 import { z } from 'zod';
 import type { AgentConfig } from './config';
@@ -45,7 +45,7 @@ export async function createStarterHarness(
   options: {
     catalog: AgentModelCatalog;
     selections: AgentModelSelectionStore;
-    provider?: AgentLanguageModelProvider;
+    provider?: AgentModelDriverFactory;
     diagnostics: AgentTuiDiagnostics;
   },
 ) {
@@ -94,8 +94,7 @@ export async function createStarterHarness(
         if (!entry) throw new Error('The selected model is stale or unavailable');
         return {
           descriptor: entry.descriptor,
-          model: provider.create(entry.descriptor.modelId),
-          ...(provider.normalizeUsage && { normalizeUsage: provider.normalizeUsage }),
+          driver: provider.create(entry.descriptor.modelId),
         };
       },
     },
@@ -108,7 +107,7 @@ export async function createStarterHarness(
       providerOverhead: { provenance: 'unavailable' },
     }),
     tools: (context) =>
-      mountAgent([], {
+      mountAgentTools({
         runtimeTools: [...codingTools, ...resources.runtimeTools],
         access: { gate: context.toolFenceLifecycle },
       }),

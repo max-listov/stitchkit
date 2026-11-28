@@ -2,12 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import {
   AgentModelCatalogSchema,
   createMemoryAgentModelSelectionStore,
 } from 'stitchkit/agent-runtime';
+import { createScriptedModelDriver } from 'stitchkit/agent-runtime/testing';
 import { createStarterHarness } from '../src/runtime';
 
 const roots: string[] = [];
@@ -24,20 +23,20 @@ describe('Agent starter runtime', () => {
     await mkdir(path.join(workspace, 'skills'));
     await writeFile(path.join(workspace, 'instructions/AGENTS.md'), 'Answer directly.\n');
     const usage = {
-      inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-      outputTokens: { total: 1, text: 1, reasoning: undefined },
+      inputTokens: { value: 1, provenance: 'provider-reported' as const },
+      outputTokens: { value: 1, provenance: 'provider-reported' as const },
     };
-    const model = new MockLanguageModelV4({
-      doStream: {
-        stream: simulateReadableStream({
-          chunks: [
-            { type: 'text-start', id: 'answer' },
-            { type: 'text-delta', id: 'answer', delta: 'Ready to build.' },
-            { type: 'text-end', id: 'answer' },
-            { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-          ],
-        }),
-      },
+    const driver = createScriptedModelDriver({
+      provider: 'fixture',
+      modelId: 'fixture/model',
+      steps: [
+        [
+          { type: 'text-start', id: 'answer' },
+          { type: 'text-delta', id: 'answer', delta: 'Ready to build.' },
+          { type: 'text-end', id: 'answer' },
+          { type: 'finish', finishReason: 'stop', usage },
+        ],
+      ],
     });
     const config = { apiKey: 'fixture' };
     const descriptor = {
@@ -59,7 +58,7 @@ describe('Agent starter runtime', () => {
       modelId: 'fixture/model',
       selectedAt: '2026-08-30T00:00:00.000Z',
     });
-    const provider = { create: () => model };
+    const provider = { create: () => driver };
     const diagnostics = { write: () => undefined };
     const first = await createStarterHarness(config, workspace, {
       catalog,

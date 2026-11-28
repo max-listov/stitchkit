@@ -12,6 +12,13 @@ step is overwritten by the next release.
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** every project scaffolded from an earlier `create-stitchkit --template agent` release that upgrades to `stitchkit@^0.134.0` and still wires `AgentLanguageModelProvider`, `model: provider.create(...)`, `mountAgent` from `stitchkit/tools/agent`, or `ai` / `@openrouter/ai-sdk-provider` in `src/runtime.ts` and `tests/runtime.test.ts` ([migration](./UPGRADING.md#native-agent-runtime)).
+
+- Migrated `templates/agent` to the peer-free native agent runtime (`stitchkit@^0.134.0` and `stitchkit-tui@^0.5.7`), removing `ai` and `@openrouter/ai-sdk-provider` from the generated agent template and replacing `AgentLanguageModelProvider` / `model: provider.create(...)` / `mountAgent` / `MockLanguageModelV4` with `AgentModelDriverFactory` / `driver: provider.create(...)` / `mountAgentTools` from `stitchkit/tools` / `createScriptedModelDriver` from `stitchkit/agent-runtime/testing`. Before: `model: provider.create(entry.descriptor.modelId)` and `mountAgent([], { runtimeTools, access })`. After: `driver: provider.create(entry.descriptor.modelId)` and `mountAgentTools({ runtimeTools, access })`. Existing agent-template projects adopt it by [`UPGRADING.md`](./UPGRADING.md#native-agent-runtime).
+- Updated the starter catalog to `stitchkit@^0.134.0` and the agent template catalog to `stitchkit-tui@^0.5.7`.
+
 ### Changed
 
 - The starter's mascot and favicon (`public/mascot-stitch.png`, `public/favicon/mascot-stitch.png`) are the new Stitchkit avatar: a felt ball of blue yarn with a golden needle, on a transparent background, 256 and 64 px instead of a 2048 px image drawn at 32 px.

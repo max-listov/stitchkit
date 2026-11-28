@@ -61,6 +61,18 @@ the first scaffolder release with a migration channel of its own.
 
 ---
 
+## Unreleased migration: native-agent-runtime
+
+**Required for `--template agent` projects.** Adopt these edits together with upgrading `stitchkit` to `0.134.0` and `stitchkit-tui` to `0.5.7` (see [`docs/guide/upgrading.md`](../../docs/guide/upgrading.md) for the framework changes).
+
+1. Remove `"ai"` and `"@openrouter/ai-sdk-provider"` from `package.json` unless another part of your project uses the AI SDK directly.
+2. In `src/runtime.ts`:
+   - Replace `AgentLanguageModelProvider` with `AgentModelDriverFactory` from `stitchkit/agent-runtime`.
+   - In `models.resolve`, return `{ descriptor: entry.descriptor, driver: provider.create(entry.descriptor.modelId) }` instead of `model` / `normalizeUsage`.
+   - Replace `import { mountAgent } from 'stitchkit/tools/agent'` and `mountAgent([], { ... })` with `import { mountAgentTools } from 'stitchkit/tools'` and `mountAgentTools({ ... })`.
+3. In `tests/runtime.test.ts`, replace `MockLanguageModelV4` / `simulateReadableStream` from `ai` with `createScriptedModelDriver` from `stitchkit/agent-runtime/testing`.
+4. Update the root `package.json` catalog to `"stitchkit": "^0.134.0"` (and `"stitchkit-tui": "^0.5.7"` in agent-template projects), run `bun install`, and verify with `bun run check` and `bun run test`.
+
 ## Released migration: 0.8.0
 
 ### single-root-version

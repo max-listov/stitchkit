@@ -1,6 +1,0 @@
-{
-  "coreVersion": "0.134.0",
-  "outcome": "deferred",
-  "reason": "The agent starter template targeting ^0.130.0 still uses the AI SDK model resolver (model: LanguageModel) for published stitchkit 0.130.x, while 0.134.0 moves AgentResolvedModel to native driver: AgentModelDriver and peer-free openRouterProvider/createScriptedModelDriver. After 0.134.0 is published on npm, Train 2 updates the starter catalog to ^0.134.0, migrates templates/agent to the native driver, removes this record, and ships create-stitchkit@0.9.0.",
-  "followUp": "create-stitchkit@0.9.0"
-}
