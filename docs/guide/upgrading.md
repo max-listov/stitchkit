@@ -1,6 +1,6 @@
 # Upgrading stitchkit
 
-## Unreleased migration: agent-runtime-native-model-port
+## Released migration: 0.134.0
 
 ### agent-runtime-native-model-port
 

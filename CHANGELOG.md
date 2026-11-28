@@ -15,6 +15,8 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+## [0.134.0] - 2026-11-28
+
 ### ⚠️ Breaking changes
 
 **Who must act:** applications using `stitchkit/agent-runtime` or `stitchkit/agent-runtime/harness` with AI SDK `LanguageModel`, `ToolSet`, `ModelMessage`, or `LanguageModelUsage` types. [Migration](docs/guide/upgrading.md#agent-runtime-native-model-port)
