@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import { generateText, type LanguageModel } from 'ai';
 import { z } from 'zod';
 import { linkAbortSignals } from '../internal/abort-race';
-import { type InvocationAttemptWriter, wrapInvocationModel } from './invocation-attempt';
+import { type InvocationAttemptWriter, wrapInvocationDriver } from './invocation-attempt';
 import { createInvocationPayloads, invocationHash } from './invocation-payload';
 import {
   InvocationReadInputSchema,
@@ -19,8 +18,11 @@ import {
   type ModelInvocationTrace,
   ModelInvocationTraceSchema,
 } from './invocation-schema';
+import { consumeStandaloneDriverStream } from './invocation-stream';
 import type { AgentModelRegistry, AgentResolvedModel } from './models';
-import { hasProviderOrigin } from './provider-origin';
+import type { AgentModelDriver } from './models-driver';
+import { AgentProviderStreamCutError } from './provider-failure';
+import { hasProviderOrigin, markProviderOrigin } from './provider-origin';
 import type { AgentRun } from './schemas';
 import {
   type PurgeInvocationPayloadsInput,
@@ -59,7 +61,7 @@ export interface ModelInvocationConfig {
 }
 
 export interface AgentInvocationScope {
-  wrap(model: AgentResolvedModel, step: number, override?: LanguageModel): LanguageModel;
+  wrap(model: AgentResolvedModel, step: number, override?: AgentModelDriver): AgentModelDriver;
   finish(status: 'succeeded' | 'failed' | 'cancelled'): Promise<void>;
 }
 
@@ -125,6 +127,68 @@ function withReceipt<T extends object>(
   return receiptError === undefined ? result : { ...result, receiptError };
 }
 
+/** Stream one plain completion attempt through the audited model driver port. */
+async function collectCompletionText(
+  driver: AgentModelDriver,
+  writer: InvocationAttemptWriter,
+  step: number,
+  input: CompletionInvocationInput,
+  abortSignal: AbortSignal,
+): Promise<string> {
+  const attemptAbort = new AbortController();
+  const link = linkAbortSignals(abortSignal, attemptAbort.signal);
+  try {
+    const stream = await driver.stream(
+      {
+        instructions: [],
+        messages: [{ role: 'user', content: input.prompt }],
+        tools: [],
+        settings: {
+          ...(input.settings?.maxOutputTokens !== undefined && {
+            maxOutputTokens: input.settings.maxOutputTokens,
+          }),
+          ...(input.settings?.temperature !== undefined && {
+            temperature: input.settings.temperature,
+          }),
+          ...(input.settings?.topP !== undefined && {
+            topP: input.settings.topP,
+          }),
+          ...(input.settings?.seed !== undefined && {
+            seed: input.settings.seed,
+          }),
+        },
+        correlation: {
+          conversationId: writer.identity.conversationId,
+          invocationId: writer.identity.invocationId,
+          attemptId: randomUUID(),
+          step,
+        },
+      },
+      link.signal,
+    );
+    const consumed = await consumeStandaloneDriverStream({
+      modelStream: stream,
+      abortAttempt: () => attemptAbort.abort(new Error('Completion released provider stream')),
+      onCleanupFailure: (error) => {
+        writer.receiptErrors.push(error);
+      },
+    });
+    if (!consumed.finishPart) {
+      throw markProviderOrigin(
+        new AgentProviderStreamCutError('Provider stream ended without a finish event', {
+          provider: driver.provider,
+        }),
+      );
+    }
+    if (consumed.finishPart.finishReason === 'error') {
+      throw markProviderOrigin(new Error('Provider returned an error finish reason'));
+    }
+    return consumed.stepText;
+  } finally {
+    link.release();
+  }
+}
+
 /** Each model in order until one answers; only a provider failure moves on. */
 async function generateWithFallback(
   models: ModelInvocationConfig['models'],
@@ -136,14 +200,8 @@ async function generateWithFallback(
     abortSignal.throwIfAborted();
     const selected = models.resolve(key);
     try {
-      const result = await generateText({
-        model: wrapInvocationModel(writer, selected, step),
-        prompt: input.prompt,
-        ...input.settings,
-        maxRetries: 0,
-        abortSignal,
-      });
-      return result.text;
+      const driver = wrapInvocationDriver(writer, selected, step);
+      return await collectCompletionText(driver, writer, step, input, abortSignal);
     } catch (error) {
       if (!hasProviderOrigin(error) || abortSignal.aborted || step === input.models.length - 1)
         throw error;
@@ -353,7 +411,7 @@ export function createModelInvocationLedger(
       });
       return {
         wrap: (selected, step, override) =>
-          wrapInvocationModel(writer, selected, step, override),
+          wrapInvocationDriver(writer, selected, step, override),
         finish: (status) => finishInvocation(writer, status),
       };
     },

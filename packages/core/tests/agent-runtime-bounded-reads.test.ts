@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   type AgentRuntimeStore,
@@ -7,6 +6,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
 
 /**
  * Counts every read, so a claim about which one the runtime uses is a number
@@ -47,7 +47,11 @@ const runtimeOver = (
           contextWindow: 1_000,
           capabilities: [],
         },
-        model: new MockLanguageModelV4(),
+        driver: createScriptedModelDriver({
+          provider: 'test',
+          modelId: 'test-model',
+          steps: [],
+        }),
       }),
     },
     prompt: () => {

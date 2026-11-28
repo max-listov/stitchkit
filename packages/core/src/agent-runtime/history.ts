@@ -1,24 +1,49 @@
-import { type FilePart, type ModelMessage, modelMessageSchema } from 'ai';
-import { modelMessageWithApprovalSignature } from '../internal/ai-sdk-typed';
+import type {
+  AgentModelFileData,
+  AgentModelMessage,
+  AgentToolModelOutput,
+} from '../agent-parts/model';
+import type { AgentToolSet } from '../tools/agent-tools';
 import {
   advanceToolChronology,
   canProjectToolChronology,
   createToolChronology,
 } from './history-chronology';
-import type { AgentMessage, AgentMessagePart, AgentProviderEnvelope } from './schemas';
+import {
+  type HistoryPartType,
+  projectAssistantMessages,
+  projectUserMessage,
+  textContent,
+} from './run-history-parts';
+import type { AgentMessage, AgentMessagePart } from './schemas';
 import {
   type AgentHistoryEvidencePolicy,
   isAssistantHistoryEvidence,
 } from './terminal-status';
-
-type PartType = AgentMessagePart['type'];
 
 export interface AgentHistoryProjectionOptions {
   evidencePolicy?: AgentHistoryEvidencePolicy;
   resolveFile?(
     part: Extract<AgentMessagePart, { type: 'file' }>,
     message: AgentMessage,
-  ): FilePart['data'] | Promise<FilePart['data']>;
+  ): AgentModelFileData | Promise<AgentModelFileData>;
+  /**
+   * Mounted tools whose `toModelOutput` projects persisted successful `tool-result`
+   * parts back into structured/multimodal `AgentToolModelOutput` on later turns.
+   */
+  tools?: AgentToolSet;
+  /**
+   * Optional per-result override projecting a persisted `tool-result` part into a
+   * model-facing `AgentToolModelOutput`. Return `undefined` to fall through to `tools`
+   * or the default JSON projection.
+   */
+  resolveToolModelOutput?(input: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly input: unknown;
+    readonly output: unknown;
+    readonly outcome: 'success' | 'error' | 'interrupted';
+  }): AgentToolModelOutput | undefined | Promise<AgentToolModelOutput | undefined>;
   /**
    * What to send when a file part has no resolver. Default `omit`.
    *
@@ -77,46 +102,24 @@ export interface AgentHistoryProjectionDecision {
    * disappearing this way is what kept an interrupted answer looking complete
    * for a release.
    */
-  omittedParts?: readonly PartType[];
+  omittedParts?: readonly HistoryPartType[];
 }
 
 export interface AgentHistoryProjectionResult {
-  messages: readonly ModelMessage[];
+  messages: readonly AgentModelMessage[];
   decisions: readonly AgentHistoryProjectionDecision[];
   /**
    * System and summary content, in order, for the provider's **instructions**
    * channel — never for `messages`.
-   *
-   * `ai` refuses a system-role entry inside `messages` outright: *"System
-   * messages are not allowed in the prompt or messages fields. Use the
-   * instructions option instead."* This projection used to put them there, so a
-   * conversation that had ever been compacted failed **every** subsequent run
-   * with `provider_failure`, and the `system-note` form of an interrupted turn
-   * did the same. Both shipped, and the whole suite stayed green because the
-   * tests asserted the projection's *shape* and never handed it to a provider.
    */
   system: readonly string[];
 }
 
-function providerOptions(envelope: AgentProviderEnvelope | undefined) {
-  if (!envelope) return undefined;
-  return envelope.provider === 'ai-sdk'
-    ? envelope.data
-    : { [envelope.provider]: envelope.data };
-}
-
-function textContent(parts: readonly AgentMessagePart[]): string {
-  return parts
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n');
-}
-
 function unrepresented(
   parts: readonly AgentMessagePart[],
-  rendered: ReadonlySet<PartType>,
-): readonly PartType[] {
-  const missing = new Set<PartType>();
+  rendered: ReadonlySet<HistoryPartType>,
+): readonly HistoryPartType[] {
+  const missing = new Set<HistoryPartType>();
   for (const part of parts) {
     if (!rendered.has(part.type)) missing.add(part.type);
   }
@@ -127,7 +130,7 @@ function decide(
   message: AgentMessage,
   action: AgentHistoryProjectionDecision['action'],
   reason: AgentHistoryProjectionDecision['reason'],
-  rendered?: ReadonlySet<PartType>,
+  rendered?: ReadonlySet<HistoryPartType>,
 ): AgentHistoryProjectionDecision {
   if (action === 'omitted' || !rendered) return { messageId: message.id, action, reason };
   const omittedParts = unrepresented(message.parts, rendered);
@@ -139,159 +142,11 @@ function decide(
   };
 }
 
-/**
- * What an interrupted turn says about itself.
- *
- * Driven by the message *status*, not by the presence of a `control` part: the
- * abort path that does not throw commits an interrupted assistant without one,
- * so a marker conditioned on the part would be missing from exactly the runs a
- * newer input ended.
- */
-const INTERRUPTION_NOTE = '[interrupted: this turn was cut off before it finished]';
-const FAILURE_NOTE =
-  '[failed: partial evidence from a run that did not complete successfully]';
-
-async function userMessage(
-  message: AgentMessage,
-  options: AgentHistoryProjectionOptions,
-): Promise<{ message?: ModelMessage; rendered: Set<PartType> }> {
-  const rendered = new Set<PartType>();
-  const text = textContent(message.parts);
-  const content: unknown[] = [];
-  if (text) {
-    content.push({ type: 'text', text });
-    rendered.add('text');
-  }
-  for (const part of message.parts) {
-    if (part.type !== 'file') continue;
-    if (options.resolveFile) {
-      content.push({
-        type: 'file',
-        data: await options.resolveFile(part, message),
-        mediaType: part.mediaType,
-        ...(part.filename && { filename: part.filename }),
-      });
-      rendered.add('file');
-      continue;
-    }
-    const fallback = options.unresolvedFile ?? 'omit';
-    if (fallback === 'error') {
-      // Thrown into the application's own process, so it names the reference:
-      // inward we owe the operator everything. The provider never sees it.
-      throw new Error(`No history file resolver configured for ${part.reference}`);
-    }
-    if (fallback === 'text') {
-      // `part.reference` is an address in the application's storage — an object
-      // key or a path. It identifies our infrastructure, and this string is
-      // sent upstream, so the placeholder describes the attachment instead.
-      const described = part.filename ?? part.mediaType;
-      content.push({
-        type: 'text',
-        text: described ? `[attachment: ${described}]` : '[attachment]',
-      });
-      rendered.add('file');
-    }
-  }
-  if (content.length === 0) return { rendered };
-  return { message: modelMessageSchema.parse({ role: 'user', content }), rendered };
-}
-
-function assistantMessages(
-  message: AgentMessage,
-  marker: 'interrupted' | 'failed' | undefined,
-): { messages: ModelMessage[]; rendered: Set<PartType> } {
-  const rendered = new Set<PartType>();
-  const messages: ModelMessage[] = [];
-  let role: 'assistant' | 'tool' | undefined;
-  let content: unknown[] = [];
-  const flush = (): void => {
-    if (!role || content.length === 0) return;
-    messages.push(modelMessageWithApprovalSignature({ role, content }));
-    content = [];
-  };
-  const append = (nextRole: 'assistant' | 'tool', part: unknown): void => {
-    if (role !== nextRole) {
-      flush();
-      role = nextRole;
-    }
-    content.push(part);
-  };
-  for (const part of message.parts) {
-    if (part.type === 'text') {
-      append('assistant', { type: 'text', text: part.text });
-      rendered.add('text');
-    }
-    if (part.type === 'reasoning') {
-      append('assistant', {
-        type: 'reasoning',
-        text: part.text,
-        ...(part.provider && { providerOptions: providerOptions(part.provider) }),
-      });
-      rendered.add('reasoning');
-    }
-    if (part.type === 'tool-call') {
-      append('assistant', {
-        type: 'tool-call',
-        toolCallId: part.callId,
-        toolName: part.toolName,
-        input: part.input,
-        ...(part.provider && { providerOptions: providerOptions(part.provider) }),
-      });
-      rendered.add('tool-call');
-    }
-    if (part.type === 'tool-result') {
-      const output =
-        part.outcome === 'success'
-          ? { type: 'json', value: part.output ?? null }
-          : { type: 'error-json', value: part.output ?? { message: part.outcome } };
-      append('tool', {
-        type: 'tool-result',
-        toolCallId: part.callId,
-        toolName: part.toolName,
-        output,
-      });
-      rendered.add('tool-result');
-    }
-    if (part.type === 'tool-approval-request') {
-      append('assistant', {
-        type: 'tool-approval-request',
-        approvalId: part.approvalId,
-        toolCallId: part.callId,
-        ...(part.isAutomatic !== undefined && { isAutomatic: part.isAutomatic }),
-        ...(part.signature && { signature: part.signature }),
-      });
-      rendered.add('tool-approval-request');
-    }
-    if (part.type === 'tool-approval-response') {
-      append('tool', {
-        type: 'tool-approval-response',
-        approvalId: part.approvalId,
-        approved: part.approved,
-        ...(part.reason && { reason: part.reason }),
-      });
-      rendered.add('tool-approval-response');
-    }
-  }
-  // An opted-in failure is evidence even when the provider produced no content.
-  // Its marker must survive projection before a summarizer replaces the raw turn.
-  if (marker === 'failed' || (marker && (messages.length > 0 || content.length > 0))) {
-    append('assistant', {
-      type: 'text',
-      text: marker === 'interrupted' ? INTERRUPTION_NOTE : FAILURE_NOTE,
-    });
-    // The note stands for the marker, so a `control` part is now represented
-    // rather than silently dropped.
-    rendered.add('control');
-  }
-  flush();
-  return { messages, rendered };
-}
-
 function interruptedSystemNote(message: AgentMessage): {
   text?: string;
-  rendered: Set<PartType>;
+  rendered: Set<HistoryPartType>;
 } {
-  const rendered = new Set<PartType>();
+  const rendered = new Set<HistoryPartType>();
   const text = textContent(message.parts);
   if (!text) return { rendered };
   rendered.add('text');
@@ -304,17 +159,19 @@ export async function projectAgentHistoryDetailed(
   messages: readonly AgentMessage[],
   options: AgentHistoryProjectionOptions = {},
 ): Promise<AgentHistoryProjectionResult> {
-  const projected: ModelMessage[] = [];
+  const projected: AgentModelMessage[] = [];
   const system: string[] = [];
   const decisions: AgentHistoryProjectionDecision[] = [];
   const interruptedRule = options.interruptedAssistant ?? 'assistant-marked';
   let observedUser = false;
   let chronology = createToolChronology();
+  let callInputsById = new Map<string, unknown>();
   let conversationId: string | undefined;
   for (const message of messages) {
     if (message.conversationId !== conversationId) {
       conversationId = message.conversationId;
       chronology = createToolChronology();
+      callInputsById = new Map();
       observedUser = false;
     }
     // One home for "may this record still be spoken to the model", asked here,
@@ -342,7 +199,7 @@ export async function projectAgentHistoryDetailed(
       continue;
     }
     if (message.role === 'user') {
-      const user = await userMessage(message, options);
+      const user = await projectUserMessage(message, options);
       // An intervening user message is not an approval cancellation. Keep any
       // unresolved request; only a settled turn can release its call identities.
       if (chronology.pending === 0) chronology = createToolChronology();
@@ -359,7 +216,9 @@ export async function projectAgentHistoryDetailed(
       const content = textContent(message.parts);
       if (content) {
         system.push(content);
-        decisions.push(decide(message, 'projected', 'projected', new Set<PartType>(['text'])));
+        decisions.push(
+          decide(message, 'projected', 'projected', new Set<HistoryPartType>(['text'])),
+        );
       } else {
         decisions.push(decide(message, 'omitted', 'empty'));
       }
@@ -398,9 +257,11 @@ export async function projectAgentHistoryDetailed(
       decisions.push(decide(message, 'omitted', 'incomplete-tool-turn'));
       continue;
     }
-    const assistant = assistantMessages(
+    const assistant = await projectAssistantMessages(
       message,
       interrupted ? 'interrupted' : message.status === 'failed' ? 'failed' : undefined,
+      options,
+      callInputsById,
     );
     chronology = nextChronology;
     projected.push(...assistant.messages);
@@ -413,10 +274,10 @@ export async function projectAgentHistoryDetailed(
   return { messages: projected, decisions, system };
 }
 
-/** Project canonical engine records into provider-valid AI SDK messages. */
+/** Project canonical engine records into provider-valid model messages. */
 export async function projectAgentHistory(
   messages: readonly AgentMessage[],
   options: AgentHistoryProjectionOptions = {},
-): Promise<ModelMessage[]> {
+): Promise<AgentModelMessage[]> {
   return [...(await projectAgentHistoryDetailed(messages, options)).messages];
 }

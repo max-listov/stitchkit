@@ -1,5 +1,5 @@
-import type { ToolSet } from 'ai';
 import { z } from 'zod';
+import type { AgentToolSet } from '../tools/agent-tools';
 import type { AgentRuntimeEvent } from './events';
 import { AgentModelDescriptorSchema, type AgentResolvedModel } from './models';
 import type { AgentPromptBudget, AgentTokenCount } from './prompt';
@@ -73,7 +73,7 @@ export interface HeadlessAgentModelResolver<CONTEXT> {
   }): AgentResolvedModel | Promise<AgentResolvedModel>;
 }
 
-export interface HeadlessAgentHarnessConfig<CONTEXT, TOOLS extends ToolSet>
+export interface HeadlessAgentHarnessConfig<CONTEXT, TOOLS extends AgentToolSet = AgentToolSet>
   extends Omit<AgentRuntimeConfig<CONTEXT, TOOLS>, 'models' | 'prompt' | 'tools'> {
   models: HeadlessAgentModelResolver<CONTEXT>;
   resources: {

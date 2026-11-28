@@ -1,10 +1,12 @@
-import type { ToolSet } from 'ai';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { isToolExecutionControlError } from '../tools/execute';
 import { AgentContextOverflowError } from './context-refusal';
 import { InvocationReceiptError } from './invocation-failure';
-import { hasProviderOrigin, isOwnInputRefusal } from './provider-origin';
+import { hasProviderOrigin } from './provider-origin';
+import { AgentToolApprovalError } from './run-approval';
 import type { RunExecution } from './run-execution-state';
 import { AgentStepBarrierError } from './run-step-barriers';
+import { flushHeldStepText } from './run-stream-parts';
 import { abortTerminalReason } from './runtime-internals';
 import { AgentMessagePartSchema, type AgentTerminalReason } from './schemas';
 import { AgentRuntimeConflictError } from './terminal-commit';
@@ -21,7 +23,7 @@ export function failureThisRuntimeOwns(error: unknown): AgentTerminalReason | un
   if (error instanceof AgentContextOverflowError) return 'context_overflow';
   if (error instanceof AgentRuntimeConflictError) return 'storage_conflict';
   if (error instanceof AgentStepBarrierError) return 'policy_stop';
-  if (isOwnInputRefusal(error)) return 'runtime_failure';
+  if (error instanceof AgentToolApprovalError) return 'runtime_failure';
   return undefined;
 }
 
@@ -49,13 +51,12 @@ function withLaterFailure(primary: unknown, later: unknown, what: string): unkno
  * guarded: a store that fails them is the likely reason to be here, and what
  * they would have added is not worth the run's terminal.
  */
-export async function classifyRunFailure<CONTEXT, TOOLS extends ToolSet>(
+export async function classifyRunFailure<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
   error: unknown,
 ): Promise<void> {
   const { config, runtimeEpoch } = execution.dependencies;
   const { state, operationLifecycle, executionSignal } = execution;
-  operationLifecycle.failStepCheckpoints(error);
   const cleanupFailure = state.providerStreamCleanupFailure;
   state.internalCause =
     cleanupFailure === undefined
@@ -97,6 +98,12 @@ export async function classifyRunFailure<CONTEXT, TOOLS extends ToolSet>(
     state.terminalReason = executionSignal.aborted
       ? abortTerminalReason(executionSignal)
       : 'interrupted';
+    if (
+      state.terminalReason === 'interrupted' &&
+      config.loop?.stepBarriers?.stepTextOnInterrupt === 'flush'
+    ) {
+      await flushHeldStepText(execution, true).catch(() => undefined);
+    }
     state.parts.push(
       AgentMessagePartSchema.parse({
         type: 'control',

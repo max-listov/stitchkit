@@ -3,8 +3,9 @@ title: "ADR 0098: Agent conversations have one optional application runtime"
 description: Stitchkit owns an opt-in process-local agent execution protocol while applications retain domain, transport and distributed-system ownership.
 type: decision
 status: accepted
+amendedBy: ["0336"]
 created: 2026-08-22
-updated: 2026-08-22
+updated: 2026-11-28
 ---
 
 # ADR 0098 — Agent conversations have one optional application runtime
@@ -35,8 +36,8 @@ The runtime owns:
 - one aggregate `AgentRuntimeStore` transaction boundary for message, run and
   compaction mutations;
 - prompt/context budgeting and CAS-safe compaction mechanics;
-- language-model registry mechanics and isolated provider adapters;
-- a stream-first multi-step loop and stable application events;
+- language-model registry mechanics and isolated provider adapters (amended by ADR 0336: the registry resolves peer-free `AgentModelDriver` factories, with the AI SDK isolated to `stitchkit/agent-runtime/ai-sdk` and OpenRouter implemented as a native leaf driver);
+- a stream-first multi-step loop and stable application events (amended by ADR 0336: the runtime owns the step loop, tool scheduling and approval verification directly over `AgentModelDriver`, without delegating step execution to `streamText`);
 - explicit process-local keyed coordination and managed-tool fencing;
 - run observability and deterministic conformance probes.
 

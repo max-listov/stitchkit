@@ -166,7 +166,7 @@ AI-agent tools, a CLI and a typed client. What it is and is not: [`docs/PRINCIPL
 
 **Bun ≥ 1.4** — runtime, HTTP server, test runner; **Node ≥ 22.3** via `stitchkit/node` (ADR 0013). **Zod** —
 validation; **`ky`** — HTTP client, the only runtime dependency. Optional peers: `@modelcontextprotocol/server`,
-`@modelcontextprotocol/ext-apps`, `ai`, `@openrouter/ai-sdk-provider`, `srvx`, `socket.io` / `socket.io-client`
+`@modelcontextprotocol/ext-apps`, `ai`, `srvx`, `socket.io` / `socket.io-client`
 / `@socket.io/bun-engine`, `@tanstack/react-query`, `react-query-kit`, `grammy`, `@opentelemetry/api`, `web-vitals`,
 `@anthropic-ai/claude-agent-sdk`.
 

@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { placeFixtureSupport } from './fixture-support/place.mjs';
+import { runBunInstall } from './install.mjs';
 import {
   declarationProofArguments,
   declarationProofVariants,
@@ -50,7 +51,7 @@ export async function runPackedProof({ artifact, proofId }) {
     const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'));
     delete tsconfig.compilerOptions.paths;
     writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`);
-    run('bun', ['install', '--no-save', '--ignore-scripts'], consumer);
+    runBunInstall(consumer, ['install', '--no-save', '--ignore-scripts']);
 
     let succeeded = 0;
     await runInstalledConsumerProofs({

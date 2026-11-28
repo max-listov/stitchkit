@@ -10,27 +10,74 @@ import { serializeCanonicalJson } from '../internal/canonical-json';
 import { InvocationPayloadSchema } from './schemas-invocation-payload';
 import type { AgentRuntimeStore } from './store';
 
-/** Serialize SDK payloads at the typed external boundary, retaining binary bytes privately. */
-export function invocationJson(value: unknown) {
-  // An error's cause chain may lead back to itself; each error is written once.
-  const errors = new WeakSet<Error>();
-  return z.json().parse(
-    JSON.parse(
-      JSON.stringify(value, (_key, item: unknown) => {
-        if (item instanceof Uint8Array)
-          return { base64: Buffer.from(item).toString('base64') };
-        if (item instanceof ArrayBuffer)
-          return { base64: Buffer.from(item).toString('base64') };
-        if (item instanceof Error) {
-          if (errors.has(item)) return { name: item.name, message: item.message };
-          errors.add(item);
-          return { name: item.name, message: item.message, cause: item.cause };
-        }
-        return item;
-      }),
-    ),
-  );
+export type InvocationJsonValue = z.infer<ReturnType<typeof z.json>>;
+
+function walkInvocationJson(
+  value: unknown,
+  ancestors: WeakSet<object>,
+  errors: WeakSet<Error>,
+): InvocationJsonValue {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean' || typeof value === 'string') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value !== 'object') return null;
+
+  if (value instanceof Uint8Array) {
+    return { base64: Buffer.from(value).toString('base64') };
+  }
+  if (value instanceof ArrayBuffer) {
+    return { base64: Buffer.from(value).toString('base64') };
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (value instanceof URL) {
+    return value.toString();
+  }
+  if (value instanceof Error) {
+    if (errors.has(value)) return { name: value.name, message: value.message };
+    errors.add(value);
+    const out: Record<string, InvocationJsonValue> = {
+      name: value.name,
+      message: value.message,
+    };
+    if (value.cause !== undefined) {
+      out.cause = walkInvocationJson(value.cause, ancestors, errors);
+    }
+    return out;
+  }
+  if (ancestors.has(value)) return '[Circular]';
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) => walkInvocationJson(item, ancestors, errors));
+    }
+    const toJson = Reflect.get(value, 'toJSON');
+    if (typeof toJson === 'function') {
+      const converted: unknown = Reflect.apply(toJson, value, []);
+      if (converted !== value) {
+        return walkInvocationJson(converted, ancestors, errors);
+      }
+    }
+    const out: Record<string, InvocationJsonValue> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry === undefined || typeof entry === 'function' || typeof entry === 'symbol') {
+        continue;
+      }
+      out[key] = walkInvocationJson(entry, ancestors, errors);
+    }
+    return out;
+  } finally {
+    ancestors.delete(value);
+  }
 }
+
+/** Serialize SDK payloads at the typed external boundary, retaining binary bytes privately. */
+export function invocationJson(value: unknown): InvocationJsonValue {
+  return walkInvocationJson(value, new WeakSet<object>(), new WeakSet<Error>());
+}
+
 export function invocationHash(value: unknown): string {
   return createHash('sha256')
     .update(serializeCanonicalJson(invocationJson(value)))
@@ -57,6 +104,13 @@ export class InvocationPayloadTooLargeError extends RangeError {
   }
 }
 
+export interface InvocationPayloadIdentity {
+  conversationId: string;
+  invocationId: string;
+  operationId: string;
+  runId?: string;
+}
+
 export function createInvocationPayloads(
   store: AgentRuntimeStore,
   key: Uint8Array,
@@ -65,54 +119,56 @@ export function createInvocationPayloads(
   if (key.byteLength !== 32)
     throw new TypeError('Invocation payload key must contain 32 bytes');
   const encryptionKey = Uint8Array.from(key);
+
+  const writeSerialized = async (
+    identity: InvocationPayloadIdentity,
+    data: Uint8Array,
+    sha256: string,
+  ) => {
+    if (data.byteLength > maxBytes) {
+      throw new InvocationPayloadTooLargeError(data.byteLength, maxBytes, sha256);
+    }
+    const artifactId = randomUUID();
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', encryptionKey, iv);
+    cipher.setAAD(
+      Buffer.from(
+        JSON.stringify([identity.conversationId, identity.invocationId, artifactId]),
+      ),
+    );
+    const ciphertext = Buffer.concat([cipher.update(data), cipher.final()]);
+    const { conversationId } = identity;
+    if (!store.appendEventOnce)
+      throw new TypeError('Invocation payloads require atomic store.appendEventOnce');
+    // Keyed by the artifact, so a read finds it by identity instead of by
+    // scanning the conversation's log.
+    await store.appendEventOnce(
+      {
+        conversationId,
+        kind: 'provider/payload',
+        payload: {
+          ...identity,
+          artifactId,
+          sha256,
+          bytes: data.byteLength,
+          iv: iv.toString('base64'),
+          tag: cipher.getAuthTag().toString('base64'),
+          ciphertext: ciphertext.toString('base64'),
+        },
+      },
+      artifactId,
+    );
+    return { artifactId, sha256 };
+  };
+
   return {
     /** The largest serialized payload one artifact may hold. */
     maxBytes,
-    async write(
-      identity: {
-        conversationId: string;
-        invocationId: string;
-        operationId: string;
-        runId?: string;
-      },
-      value: unknown,
-    ) {
+    writeSerialized,
+    async write(identity: InvocationPayloadIdentity, value: unknown) {
       const data = Buffer.from(serializeCanonicalJson(invocationJson(value)));
       const sha256 = createHash('sha256').update(data).digest('hex');
-      if (data.byteLength > maxBytes) {
-        throw new InvocationPayloadTooLargeError(data.byteLength, maxBytes, sha256);
-      }
-      const artifactId = randomUUID();
-      const iv = randomBytes(12);
-      const cipher = createCipheriv('aes-256-gcm', encryptionKey, iv);
-      cipher.setAAD(
-        Buffer.from(
-          JSON.stringify([identity.conversationId, identity.invocationId, artifactId]),
-        ),
-      );
-      const ciphertext = Buffer.concat([cipher.update(data), cipher.final()]);
-      const { conversationId } = identity;
-      if (!store.appendEventOnce)
-        throw new TypeError('Invocation payloads require atomic store.appendEventOnce');
-      // Keyed by the artifact, so a read finds it by identity instead of by
-      // scanning the conversation's log.
-      await store.appendEventOnce(
-        {
-          conversationId,
-          kind: 'provider/payload',
-          payload: {
-            ...identity,
-            artifactId,
-            sha256,
-            bytes: data.byteLength,
-            iv: iv.toString('base64'),
-            tag: cipher.getAuthTag().toString('base64'),
-            ciphertext: ciphertext.toString('base64'),
-          },
-        },
-        artifactId,
-      );
-      return { artifactId, sha256 };
+      return writeSerialized(identity, data, sha256);
     },
     decrypt(conversationId: string, value: unknown) {
       const payload = InvocationPayloadSchema.parse(value);

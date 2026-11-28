@@ -1,7 +1,7 @@
-import type { ToolSet } from 'ai';
 import { z } from 'zod';
 import type { ServiceDef } from '../server/types';
 import type { ToolAccess } from '../tools/access';
+import type { AgentToolSet } from '../tools/agent-tools';
 import type { ErrorHintFn, ToolCallHooks } from '../tools/execute-hooks';
 import type { ToolExtend } from '../tools/mount';
 import type { DeferredAgentRuntimeToolDefinition } from '../tools/runtime-tool-declaration';
@@ -139,7 +139,7 @@ export interface DeferredAgentToolController<CONTEXT> {
   mount(
     runContext: AgentRuntimeRunContext<CONTEXT>,
     config: DeferredAgentToolMountConfig,
-  ): ToolSet;
+  ): AgentToolSet;
   prepareStep(
     applicationPrepareStep?: AgentRuntimePrepareStep<CONTEXT>,
   ): AgentRuntimePrepareStep<CONTEXT>;

@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
-import type { Instructions, ModelMessage, SystemModelMessage, ToolSet } from 'ai';
+import {
+  type AgentInstructions,
+  type AgentModelMessage,
+  type AgentModelSystemMessage,
+  normalizeAgentInstructions,
+} from '../agent-parts/model';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { projectAgentHistoryDetailed } from './history';
 import type { AgentRuntimeConfig } from './runtime';
 import {
@@ -82,7 +88,7 @@ export function seededInstructionMessage(input: {
 }
 
 /** The rendered state slots, which every provider request carries as system content. */
-export async function loadDurableSystem<CONTEXT, TOOLS extends ToolSet>(
+export async function loadDurableSystem<CONTEXT, TOOLS extends AgentToolSet>(
   config: AgentRuntimeConfig<CONTEXT, TOOLS>,
   conversationId: string,
 ): Promise<readonly string[]> {
@@ -99,24 +105,22 @@ export async function loadDurableSystem<CONTEXT, TOOLS extends ToolSet>(
 
 /** The history projection of one run, and the system content it carries out of it. */
 export interface RunHistoryProjection {
-  projectHistory(source: AgentSnapshot): Promise<ModelMessage[]>;
-  /**
-   * The same projection, for messages that are not the conversation.
-   *
-   * Separate from `projectHistory` because that one publishes into
-   * `carriedSystem`, and running it over a single user message would
-   * replace the conversation's carried system content with an empty list.
-   */
-  projectInputs(source: readonly AgentMessage[]): Promise<ModelMessage[]>;
-  withCarriedSystem(instructions: Instructions): Instructions;
+  projectHistory(source: AgentSnapshot): Promise<AgentModelMessage[]>;
+  projectInputs(source: readonly AgentMessage[]): Promise<AgentModelMessage[]>;
+  withCarriedSystem(instructions: AgentInstructions): AgentInstructions;
 }
 
-function detailedProjection<CONTEXT, TOOLS extends ToolSet>(
+function detailedProjection<CONTEXT, TOOLS extends AgentToolSet>(
   config: AgentRuntimeConfig<CONTEXT, TOOLS>,
   source: readonly AgentMessage[],
+  tools: TOOLS,
 ) {
   return projectAgentHistoryDetailed(source, {
+    tools,
     ...(config.history?.resolveFile && { resolveFile: config.history.resolveFile }),
+    ...(config.history?.resolveToolModelOutput && {
+      resolveToolModelOutput: config.history.resolveToolModelOutput,
+    }),
     ...(config.history?.unresolvedFile && {
       unresolvedFile: config.history.unresolvedFile,
     }),
@@ -129,21 +133,19 @@ function detailedProjection<CONTEXT, TOOLS extends ToolSet>(
   });
 }
 
-export function createRunHistoryProjection<CONTEXT, TOOLS extends ToolSet>(input: {
+export function createRunHistoryProjection<CONTEXT, TOOLS extends AgentToolSet>(input: {
   config: AgentRuntimeConfig<CONTEXT, TOOLS>;
   /** Read at projection time: the run's input ids are the ones it holds then. */
   currentRun(): AgentRun;
   durableSystem: readonly string[];
+  tools: TOOLS;
 }): RunHistoryProjection {
-  const { config, durableSystem } = input;
-  // Carried out of the projection so the provider's instructions channel
-  // gets it. `ai` refuses a system-role entry inside `messages`, so a
-  // compacted conversation used to fail every run after the compaction.
+  const { config, durableSystem, tools } = input;
   let carriedSystem: readonly string[] = durableSystem;
   return {
     async projectHistory(source) {
-      if (config.history?.project) return config.history.project(source.messages);
-      const detailed = await detailedProjection(config, source.messages);
+      if (config.history?.project) return config.history.project(source.messages, { tools });
+      const detailed = await detailedProjection(config, source.messages, tools);
       const run = input.currentRun();
       for (const decision of detailed.decisions) {
         if (
@@ -153,8 +155,6 @@ export function createRunHistoryProjection<CONTEXT, TOOLS extends ToolSet>(input
             (message) => message.id === decision.messageId && message.role === 'tool',
           )
         ) {
-          // Omitting old partial evidence is allowed. Silently discarding the
-          // active approval decision would turn an invalid command into a new model turn.
           throw new Error(
             `Invalid approval continuation ${decision.messageId}: ${decision.reason}`,
           );
@@ -164,24 +164,17 @@ export function createRunHistoryProjection<CONTEXT, TOOLS extends ToolSet>(input
       return [...detailed.messages];
     },
     async projectInputs(source) {
-      if (config.history?.project) return config.history.project(source);
-      const detailed = await detailedProjection(config, source);
+      if (config.history?.project) return config.history.project(source, { tools });
+      const detailed = await detailedProjection(config, source, tools);
       return [...detailed.messages];
     },
-    // `Instructions` is `string | SystemModelMessage | SystemModelMessage[]`,
-    // so the composed prompt is normalised before the carried entries join it.
     withCarriedSystem(instructions) {
       if (carriedSystem.length === 0) return instructions;
-      const composed: SystemModelMessage[] =
-        typeof instructions === 'string'
-          ? [{ role: 'system', content: instructions }]
-          : Array.isArray(instructions)
-            ? instructions
-            : [instructions];
-      return [
-        ...composed,
-        ...carriedSystem.map((content): SystemModelMessage => ({ role: 'system', content })),
-      ];
+      const composed = normalizeAgentInstructions(instructions);
+      const extra = carriedSystem
+        .filter((content) => content.length > 0)
+        .map((content): AgentModelSystemMessage => ({ role: 'system', content }));
+      return [...composed, ...extra];
     },
   };
 }

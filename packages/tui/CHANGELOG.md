@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `stitchkit-tui` removed its unused `ai` dependency now that `stitchkit/agent-runtime` is peer-free.
+
 ## [0.5.6] - 2026-11-27
 
 ### Changed

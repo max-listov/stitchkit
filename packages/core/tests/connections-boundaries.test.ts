@@ -1,12 +1,15 @@
 import { afterEach, expect, test } from 'bun:test';
-import type { ToolSet } from 'ai';
+import {
+  type AgentMountConfig,
+  type AgentToolSet,
+  mountAgentTools,
+} from '../src/entrypoints/tools';
 import {
   ConnectionAuthorizationRequiredError,
   ConnectionUrlError,
   defineOpenApiConnection,
   mountConnections,
 } from '../src/entrypoints/tools/connections';
-import { type AgentMountConfig, mountAgent } from '../src/tools/agent';
 import { AgentToolError } from '../src/tools/agent-tool-error';
 import {
   ConnectionResponseTooLargeError,
@@ -29,16 +32,16 @@ async function call(
   definitions: readonly RuntimeToolDefinition[],
   config: Omit<AgentMountConfig, 'access'> & { access?: AgentMountConfig['access'] } = {},
 ) {
-  const tools = mountAgent([], {
+  const tools = mountAgentTools([], {
     ...config,
     access: config.access ?? { open: 'local-operator' },
     runtimeTools: definitions,
   });
   const name = Object.keys(tools)[0];
   if (!name) throw new Error('No tool');
-  return executable(tools, name)({}, { toolCallId: 'test', messages: [], context: undefined });
+  return executable(tools, name)({}, { toolCallId: 'test', messages: [] });
 }
-function executable(tools: ToolSet, name: string) {
+function executable(tools: AgentToolSet, name: string) {
   const execute = tools[name]?.execute;
   if (!execute) throw new Error('No execute');
   return execute;

@@ -1,4 +1,6 @@
+import { statSync } from 'node:fs';
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
+import { assertEngineWrapCommand, type EngineProcessWrapCommand } from '../engine-process';
 import type { PlanLimits } from '../hello';
 import { validateImageOptions } from '../image-input';
 import type { JsonRpcValue } from '../json-rpc-peer';
@@ -131,11 +133,22 @@ export interface CodexDriverConfig {
   maxImageBytes?: number | undefined;
   /** Environment variables inherited by the spawned Codex CLI process. */
   ambient?: Readonly<Record<string, string | undefined>> | undefined;
+  /** Optional command wrapper invoked before spawning Codex (for example an OS process sandbox). */
+  wrapCommand?: EngineProcessWrapCommand | undefined;
+}
+
+function existingDirectory(path: string): string | undefined {
+  try {
+    return statSync(path).isDirectory() ? path : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function validateCodexDriverOptions(config: CodexDriverConfig): void {
   validateImageOptions(config);
   assertPositiveSafeInteger('maxFrameBytes', config.maxFrameBytes);
+  assertEngineWrapCommand(config.wrapCommand, 'createCodexDriver');
   validateCodexTransportAndArgs(config);
   validateCodexPolicyOverrides(config, 'createCodexDriver');
   if (
@@ -201,6 +214,7 @@ function buildCodexSessionConfig(input: {
       config.onDisconnect !== undefined && { onDisconnect: config.onDisconnect }),
     ...(config.onObserverError !== undefined && { onObserverError: config.onObserverError }),
     ambient: input.ambient,
+    ...(config.wrapCommand !== undefined && { wrapCommand: config.wrapCommand }),
     limits: input.limits,
     version: input.version,
     ...(config.resolveFile !== undefined && { resolveFile: config.resolveFile }),
@@ -241,8 +255,16 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
       ...options,
     });
 
-  const cli = (profile: ExecutorProfileConfig, args: string[]) =>
-    runEngineCli({ executable, prefix, args, profile, ambient });
+  const cli = (profile: ExecutorProfileConfig, args: string[], cwd?: string) =>
+    runEngineCli({
+      executable,
+      prefix,
+      args,
+      profile,
+      ambient,
+      ...(cwd !== undefined && { cwd }),
+      ...(config.wrapCommand !== undefined && { wrapCommand: config.wrapCommand }),
+    });
 
   /**
    * Open an ephemeral app-server connection for one-shot probes (`status`, `findInput`).
@@ -280,7 +302,8 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
         engine: 'codex' as const,
         home: ambient.HOME ?? '/',
       };
-      const result = await cli(probe, ['--version']);
+      const probeCwd = existingDirectory(probe.home) ?? process.cwd();
+      const result = await cli(probe, ['--version'], probeCwd);
       const out = result.exitCode === 0 ? new TextDecoder().decode(result.stdout).trim() : '';
       version = out.split(/\s+/).at(-1) || 'unknown';
       return {
@@ -293,7 +316,8 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
     },
     async status(profile) {
       const parsed = engineProfile('codex', profile);
-      const loginResult = await cli(parsed, ['login', 'status']);
+      const probeCwd = existingDirectory(parsed.home) ?? process.cwd();
+      const loginResult = await cli(parsed, ['login', 'status'], probeCwd);
       const decoder = new TextDecoder();
       // Real `codex login status` writes its status line to stderr; check both streams.
       const text =
@@ -316,7 +340,7 @@ export function createCodexDriver(config: CodexDriverConfig = {}): CodexDriver {
       let planLimits: PlanLimits | undefined;
       if (credential === 'subscription') {
         try {
-          const answer = await ask(parsed, process.cwd(), (peer) =>
+          const answer = await ask(parsed, probeCwd, (peer) =>
             peer.request('account/rateLimits/read'),
           );
           planLimits = limits.replace(parsed.profileId, answer, new Date());

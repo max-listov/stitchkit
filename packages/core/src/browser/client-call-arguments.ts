@@ -5,6 +5,7 @@
  */
 import type { ClientRequestOptions } from '../contract/client-types';
 import type { EndpointDef } from '../contract/define';
+import { assertTimerMs } from '../internal/deadline';
 import { isRecord } from '../internal/typed';
 
 /**
@@ -55,11 +56,25 @@ export function readClientRequestOptions(
   value: unknown,
 ): ClientRequestOptions {
   if (!isRecord(value)) throw new TypeError('Client request options must be an object');
-  const { signal, onUploadProgress } = value;
+  const { signal, timeout, propagateDeadline, onUploadProgress } = value;
   if (signal !== undefined && !isAbortSignal(signal)) {
     throw new TypeError('Client request signal must be an AbortSignal');
   }
-  if (onUploadProgress === undefined) return signal === undefined ? {} : { signal };
+  if (timeout !== undefined) {
+    if (typeof timeout !== 'number') {
+      throw new TypeError('Client request timeout must be a number');
+    }
+    assertTimerMs('HTTP request timeout', timeout);
+  }
+  if (propagateDeadline !== undefined && typeof propagateDeadline !== 'boolean') {
+    throw new TypeError('Client request propagateDeadline must be a boolean');
+  }
+  const base: ClientRequestOptions = {
+    ...(signal !== undefined && { signal }),
+    ...(typeof timeout === 'number' && { timeout }),
+    ...(propagateDeadline !== undefined && { propagateDeadline }),
+  };
+  if (onUploadProgress === undefined) return base;
   if (typeof onUploadProgress !== 'function') {
     throw new TypeError('Client request onUploadProgress must be a function');
   }
@@ -71,7 +86,7 @@ export function readClientRequestOptions(
     );
   }
   return {
-    ...(signal !== undefined && { signal }),
+    ...base,
     onUploadProgress: (progress) => {
       onUploadProgress(progress);
     },

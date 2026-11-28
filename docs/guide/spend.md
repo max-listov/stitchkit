@@ -18,7 +18,8 @@ fails a project's tests when a call goes around the gateway.
 ## The gateway
 
 ```ts
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { completeText, modelInvocationSpendAttribution } from 'stitchkit/agent-runtime';
+import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter';
 import {
   createSpendGateway,
   openAiCompatibleUsage,
@@ -39,11 +40,14 @@ const gateway = createSpendGateway({
   context: modelInvocationSpendAttribution, // from stitchkit/agent-runtime
 });
 
-// The gateway adds the real key; the SDK only needs a placeholder to start.
-const openrouter = createOpenRouter({ apiKey: 'set-by-gateway', fetch: gateway.fetchFor('openrouter') });
+// The gateway adds the real key; the driver only needs a placeholder to start.
+const openrouter = openRouterProvider({
+  apiKey: 'set-by-gateway',
+  fetch: gateway.fetchFor('openrouter'),
+});
 
 await runWithSpendAttribution({ purpose: 'title', scope: spaceId, labels: { env } }, () =>
-  generateText({ model: openrouter('openai/gpt-5-mini'), prompt }),
+  completeText({ driver: openrouter.create('openai/gpt-5-mini'), prompt }),
 );
 ```
 
@@ -132,8 +136,9 @@ test('every model call goes through the spend gateway', async () => {
     root: 'src',
     policy: {
       modules: [
-        { module: 'ai', symbols: ['streamText', 'generateText', 'generateObject', 'streamObject'] },
-        { module: '@openrouter/ai-sdk-provider' },
+        { module: 'stitchkit/agent-runtime/openrouter', symbols: ['openRouterProvider'] },
+        { module: 'stitchkit/agent-runtime/openai', symbols: ['openAiProvider'] },
+        { module: 'stitchkit/agent-runtime/anthropic', symbols: ['anthropicProvider'] },
       ],
       envKeys: ['OPENROUTER_API_KEY'],
       hosts: ['openrouter.ai'],

@@ -1,13 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
-import { generateText, tool } from 'ai';
 import { z } from 'zod';
+import { resolveOpenRouterWirePolicy } from '../src/agent-runtime/openrouter-options';
 import {
-  buildOpenRouterChatSettings,
-  rewriteOpenRouterBodyFetch,
-  withOpenRouterLooseTools,
-} from '../src/agent-runtime/openrouter-options';
-import {
+  completeText,
   createMemoryAgentRuntimeStore,
   createModelInvocationLedger,
   defineModelRegistry,
@@ -29,6 +25,7 @@ import {
   openRouterSpendProvider,
 } from '../src/entrypoints/agent-runtime/openrouter';
 import { createSpendGateway, runWithSpendAttribution } from '../src/entrypoints/spend';
+import { defineAgentTool } from '../src/entrypoints/tools';
 import { memorySpendLedger } from './support/spend-ledger';
 
 const completion = (extra: Record<string, unknown> = {}) =>
@@ -57,9 +54,9 @@ function capturing() {
 }
 
 describe('the request policy', () => {
-  test('becomes OpenRouter chat settings: routing, price ceiling, reasoning, session, usage', () => {
+  test('becomes OpenRouter chat settings: routing, price ceiling, reasoning, session, usage', async () => {
     expect(
-      buildOpenRouterChatSettings({
+      resolveOpenRouterWirePolicy({
         provider: {
           order: ['a'],
           allowFallbacks: false,
@@ -72,7 +69,6 @@ describe('the request policy', () => {
         looseTools: true,
       }),
     ).toEqual({
-      usage: { include: true },
       provider: {
         order: ['a'],
         allow_fallbacks: false,
@@ -82,13 +78,25 @@ describe('the request policy', () => {
         max_price: { prompt: 2, completion: 8, request: 0.01 },
       },
       reasoning: { effort: 'high', exclude: true },
-      structuredOutputs: { strict: false },
+      looseTools: true,
     });
     expect(
-      buildOpenRouterChatSettings({ sessionId: 's-1', reasoning: { effort: 'max' } }),
+      resolveOpenRouterWirePolicy({ sessionId: 's-1', reasoning: { effort: 'max' } }),
     ).toEqual({
+      reasoning: { effort: 'max' },
+      sessionId: 's-1',
+      looseTools: false,
+    });
+    const { bodies, fetcher } = capturing();
+    const provider = openRouterProvider(
+      { apiKey: 'k', fetch: fetcher },
+      { defaultPolicy: { sessionId: 's-1', reasoning: { effort: 'max' } } },
+    );
+    await completeText({ driver: provider.create('author/model'), prompt: 'hi' });
+    expect(bodies[0]).toMatchObject({
       usage: { include: true },
-      extraBody: { reasoning: { effort: 'max' }, session_id: 's-1' },
+      reasoning: { effort: 'max' },
+      session_id: 's-1',
     });
   });
 
@@ -111,11 +119,14 @@ describe('the request policy', () => {
           id === 'author/model' ? { sessionId: 'thread-1', looseTools: true } : undefined,
       },
     );
-    await generateText({
-      model: provider.create('author/model'),
+    await completeText({
+      driver: provider.create('author/model'),
       prompt: 'hi',
       tools: {
-        lookup: tool({ inputSchema: z.object({ q: z.string() }), execute: async () => 'x' }),
+        lookup: defineAgentTool({
+          input: z.object({ q: z.string() }),
+          execute: async () => 'x',
+        }),
       },
     });
     expect(bodies[0]).toMatchObject({
@@ -126,26 +137,43 @@ describe('the request policy', () => {
   });
 
   test('the loose-tools fetch rewrites a Request body as well as an init body, and leaves other bodies alone', async () => {
-    const seen: string[] = [];
-    const inner = Object.assign(
-      async (input: RequestInfo | URL, init?: RequestInit) => {
-        seen.push(input instanceof Request ? await input.text() : String(init?.body));
-        return new Response('{}');
+    const { bodies, fetcher } = capturing();
+    const loose = openRouterProvider(
+      { apiKey: 'k', fetch: fetcher },
+      { defaultPolicy: { looseTools: true } },
+    );
+    await completeText({
+      driver: loose.create('author/model'),
+      prompt: 'hi',
+      tools: {
+        looseTool: defineAgentTool({ input: z.object({}), execute: async () => 'x' }),
+        strictTool: defineAgentTool({
+          input: z.object({}),
+          strict: true,
+          execute: async () => 'x',
+        }),
       },
-      { preconnect: () => undefined },
-    );
-    const loose = rewriteOpenRouterBodyFetch(inner, withOpenRouterLooseTools);
-    const body = JSON.stringify({ tools: [{ type: 'function', function: { name: 'f' } }] });
-    await loose(
-      new Request('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', body }),
-    );
-    await loose('https://openrouter.ai/api/v1/chat/completions', { method: 'POST', body });
-    await loose('https://openrouter.ai/x', { method: 'POST', body: 'not json' });
-    expect(seen.slice(0, 2).map((text) => JSON.parse(text).tools[0].function.strict)).toEqual([
-      false,
-      false,
-    ]);
-    expect(seen[2]).toBe('not json');
+    });
+    const plain = openRouterProvider({ apiKey: 'k', fetch: fetcher });
+    await completeText({
+      driver: plain.create('author/model'),
+      prompt: 'hi',
+      tools: {
+        defaultTool: defineAgentTool({ input: z.object({}), execute: async () => 'x' }),
+      },
+    });
+    expect(bodies[0]).toMatchObject({
+      tools: [
+        { type: 'function', function: { name: 'looseTool', strict: false } },
+        { type: 'function', function: { name: 'strictTool', strict: true } },
+      ],
+    });
+    const plainTools = z
+      .array(
+        z.object({ function: z.object({ name: z.string(), strict: z.boolean().optional() }) }),
+      )
+      .parse(bodies[1]?.tools);
+    expect(plainTools[0]?.function.strict).toBeUndefined();
   });
 });
 
@@ -525,13 +553,13 @@ describe('options of the provider and the snapshot', () => {
     // @ts-expect-error -- one name: `looseTools` is the request policy's, not the provider's.
     openRouterProvider({ apiKey: 'k' }, { looseTools: true });
     const policy = capturing();
-    await generateText({
-      model: openRouterProvider(
+    await completeText({
+      driver: openRouterProvider(
         { apiKey: 'k', fetch: policy.fetcher },
         { defaultPolicy: { looseTools: true } },
       ).create('author/model'),
       prompt: 'hi',
-      tools: { lookup: tool({ inputSchema: z.object({}), execute: async () => 'x' }) },
+      tools: { lookup: defineAgentTool({ input: z.object({}), execute: async () => 'x' }) },
     });
     expect(policy.bodies[0]).toMatchObject({ tools: [{ function: { strict: false } }] });
   });
@@ -542,7 +570,7 @@ describe('options of the provider and the snapshot', () => {
       { apiKey: 'k', fetch: fetcher },
       { defaultPolicy: { provider: { zdr: true } }, resolvePolicy: () => undefined },
     );
-    await generateText({ model: provider.create('author/model'), prompt: 'hi' });
+    await completeText({ driver: provider.create('author/model'), prompt: 'hi' });
     expect(bodies[0]).toMatchObject({ provider: { zdr: true } });
   });
 
@@ -596,13 +624,12 @@ describe('options of the provider and the snapshot', () => {
 describe('review findings', () => {
   test('every routing field reaches the settings, and max effort keeps exclude', () => {
     expect(
-      buildOpenRouterChatSettings({
+      resolveOpenRouterWirePolicy({
         provider: { only: ['a'], ignore: ['b'], sort: 'latency', quantizations: ['fp8'] },
         maxPrice: { imageUsd: 0.1 },
         reasoning: { effort: 'max', exclude: true },
       }),
     ).toEqual({
-      usage: { include: true },
       provider: {
         only: ['a'],
         ignore: ['b'],
@@ -610,7 +637,8 @@ describe('review findings', () => {
         quantizations: ['fp8'],
         max_price: { image: 0.1 },
       },
-      extraBody: { reasoning: { effort: 'max', exclude: true } },
+      reasoning: { effort: 'max', exclude: true },
+      looseTools: false,
     });
   });
 
@@ -626,10 +654,10 @@ describe('review findings', () => {
       { apiKey: 'k', fetch: fetcher },
       { resolvePolicy: (id) => (id === 'author/model' ? { looseTools: true } : undefined) },
     );
-    await generateText({
-      model: provider.create('author/model'),
+    await completeText({
+      driver: provider.create('author/model'),
       prompt: 'hi',
-      tools: { lookup: tool({ inputSchema: z.object({}), execute: async () => 'x' }) },
+      tools: { lookup: defineAgentTool({ input: z.object({}), execute: async () => 'x' }) },
     });
     expect(bodies[0]).toMatchObject({ tools: [{ function: { strict: false } }] });
   });

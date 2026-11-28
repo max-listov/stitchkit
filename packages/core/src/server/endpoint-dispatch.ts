@@ -5,7 +5,14 @@
  * path with the context bound so far.
  */
 
-import { badRequest } from '../contract/errors';
+import { AppError, badRequest } from '../contract/errors';
+import { abortError } from '../internal/abort-error';
+import { linkAbortSignals } from '../internal/abort-race';
+import {
+  createRemainingTimeoutReader,
+  DEADLINE_BUDGET_HEADER,
+  resolveServerDeadlineBudget,
+} from '../internal/deadline-budget';
 import { MalformedQueryError } from '../internal/request';
 import { getRequestContext } from '../observability/context';
 import { buildBaseContext, parsePathParamsInto, parseRequestPayloadInto } from './context';
@@ -35,8 +42,40 @@ export async function dispatchEndpoint<TServer>(
     activeContext.action = method.key;
   }
 
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  let deadlineLink: { readonly signal: AbortSignal; release(): void } | undefined;
+  let deadlineOwnedByStream = false;
+  const releaseDeadline = (): void => {
+    if (deadlineTimer !== undefined) {
+      clearTimeout(deadlineTimer);
+      deadlineTimer = undefined;
+    }
+    deadlineLink?.release();
+    deadlineLink = undefined;
+  };
+
   let multipartLifecycle: Awaited<ReturnType<typeof parseRequestPayloadInto>>;
   try {
+    const budget = resolveServerDeadlineBudget({
+      headerValue: req.headers.get(DEADLINE_BUDGET_HEADER),
+      endpointTimeoutMs: method.timeout,
+    });
+    if (budget.kind === 'bounded') {
+      const deadlineAt = performance.now() + budget.budgetMs;
+      const deadlineController = new AbortController();
+      deadlineTimer = setTimeout(() => {
+        deadlineController.abort(abortError('Request deadline exceeded', 'TimeoutError'));
+      }, budget.budgetMs);
+      deadlineTimer.unref?.();
+      deadlineLink = linkAbortSignals(req.signal, deadlineController.signal);
+      ctx.signal = deadlineLink.signal;
+      ctx.remainingTimeoutMs = createRemainingTimeoutReader(deadlineAt);
+    } else if (budget.kind === 'expired') {
+      ctx.remainingTimeoutMs = () => 0;
+    } else {
+      ctx.remainingTimeoutMs = () => undefined;
+    }
+
     parsePathParamsInto(ctx, method);
 
     if (hooks?.authorize) {
@@ -44,6 +83,13 @@ export async function dispatchEndpoint<TServer>(
     }
     if (groupHooks?.authorize) {
       await groupHooks.authorize(ctx, method);
+    }
+
+    if (budget.kind === 'expired') {
+      throw new AppError('REQUEST_TIMEOUT', {
+        status: 408,
+        message: 'Request deadline budget exhausted',
+      });
     }
 
     try {
@@ -74,27 +120,35 @@ export async function dispatchEndpoint<TServer>(
 
     const streamAbort = method.stream ? new AbortController() : undefined;
     if (streamAbort) {
-      if (req.signal.aborted) streamAbort.abort(req.signal.reason);
+      const signal = ctx.signal ?? req.signal;
+      if (signal.aborted) streamAbort.abort(signal.reason);
       else {
-        req.signal.addEventListener('abort', () => streamAbort.abort(req.signal.reason), {
+        signal.addEventListener('abort', () => streamAbort.abort(signal.reason), {
           once: true,
         });
       }
+      streamAbort.signal.addEventListener('abort', releaseDeadline, { once: true });
       ctx.signal = streamAbort.signal;
     }
 
     const result = await method.handler(ctx);
     // Awaited here, not returned: a throw while shaping the response belongs
     // to this endpoint's error path, with its context, group and rollback.
-    return await endpointResponse(state, request, {
+    const response = await endpointResponse(state, request, {
       ctx,
       match,
       result,
       responseMetadata,
       streamAbort,
     });
+    if (streamAbort && !streamAbort.signal.aborted) {
+      deadlineOwnedByStream = true;
+    }
+    return response;
   } catch (err) {
     await multipartLifecycle?.rollback();
     return request.respondError(err, ctx, method, groupHooks);
+  } finally {
+    if (!deadlineOwnedByStream) releaseDeadline();
   }
 }

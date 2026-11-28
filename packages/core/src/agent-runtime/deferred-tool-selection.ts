@@ -1,4 +1,4 @@
-import type { ModelMessage } from 'ai';
+import type { AgentModelMessage } from '../agent-parts/model';
 import { rankToolsByQuery } from '../tools/internal/rank-tools';
 import {
   type DeferredAgentToolManifestEntry,
@@ -65,7 +65,7 @@ export function ranked(
   return rankToolsByQuery(query, manifest).map((entry) => entry.name);
 }
 export function latestSelection(
-  messages: readonly ModelMessage[],
+  messages: readonly AgentModelMessage[],
   searchName: string,
   runId: string,
   surface: DeferredResolvedSurface,

@@ -1,10 +1,10 @@
 import type { z } from 'zod';
+import type { AgentToolModelOutput } from '../../agent-parts/model';
 import { assertTimerMs } from '../../internal/deadline';
 import { assertNoLegacyTransports } from '../internal/expose';
 import { type ManagedNativeToolConfig, managedNativeIdentity } from '../native-definition';
 import {
   defineRuntimeTool,
-  type RuntimeAgentModelOutput,
   type RuntimeMcpPresentation,
   type RuntimeToolDefinitionWithOutput,
   type RuntimeToolPresenters,
@@ -29,7 +29,7 @@ export function defineViewFileTool(
   assertTimerMs('defineViewFileTool timeoutMs', config.timeoutMs);
   const defaults: RuntimeToolPresenters<z.output<typeof ViewFileOutputSchema>> = {
     mcp: (output): RuntimeMcpPresentation => ({ content: output.content }),
-    agent: (output): RuntimeAgentModelOutput => ({
+    agent: (output): AgentToolModelOutput => ({
       type: 'content',
       value: output.content.map((part) => {
         if (part.type === 'text') return part;

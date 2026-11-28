@@ -6,6 +6,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import {
   type AgentHarnessProfileEvent,
   createHeadlessAgentHarness,
@@ -47,7 +48,7 @@ describe('executable headless agent harness example', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       resources: {

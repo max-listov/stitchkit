@@ -1,3 +1,36 @@
+export {
+  type AgentCacheControl,
+  AgentCacheControlSchema,
+  type AgentGeneratedFile,
+  type AgentGeneratedFileData,
+  type AgentInstructions,
+  type AgentModelAssistantContentPart,
+  AgentModelAssistantContentPartSchema,
+  type AgentModelAssistantMessage,
+  AgentModelAssistantMessageSchema,
+  type AgentModelFileData,
+  AgentModelFileDataSchema,
+  type AgentModelJsonValue,
+  type AgentModelMessage,
+  AgentModelMessageSchema,
+  type AgentModelProviderOptions,
+  AgentModelProviderOptionsSchema,
+  type AgentModelProviderOptionValue,
+  type AgentModelResponseFormat,
+  AgentModelResponseFormatSchema,
+  type AgentModelSystemMessage,
+  AgentModelSystemMessageSchema,
+  type AgentModelToolContentPart,
+  AgentModelToolContentPartSchema,
+  type AgentModelToolMessage,
+  AgentModelToolMessageSchema,
+  type AgentModelUserContentPart,
+  AgentModelUserContentPartSchema,
+  type AgentModelUserMessage,
+  AgentModelUserMessageSchema,
+  type AgentToolModelContentPart,
+  AgentToolModelOutputSchema,
+} from '../agent-parts/model';
 export type { AgentToolDefinition, AgentToolDescriptor } from '../agent-runtime/agent-tool';
 export {
   type AgentConversationBranchPlan,
@@ -47,6 +80,7 @@ export type {
 export {
   type AgentCompactionContext,
   type AgentCompactionResult,
+  type AgentCompactionSummaryOutput,
   type CompactableHistory,
   type SelectCompactableHistoryOptions,
   type StructuredCompactionConfig,
@@ -55,15 +89,7 @@ export {
 } from '../agent-runtime/compaction';
 export type { AgentCompanionHost, AgentCompanionScope } from '../agent-runtime/companion-host';
 export { AgentContextOverflowError } from '../agent-runtime/context-refusal';
-export {
-  type AgentConversationMessagePage,
-  AgentConversationMessagePageSchema,
-  type AgentConversationPage,
-  AgentConversationPageSchema,
-  type AgentConversationReader,
-  type AgentConversationSummary,
-  AgentConversationSummarySchema,
-} from '../agent-runtime/conversations';
+export * from '../agent-runtime/conversations';
 export {
   type AgentCoordinatedRun,
   type AgentInputPolicy,
@@ -160,7 +186,6 @@ export {
   createAgentToolFenceLifecycle,
 } from '../agent-runtime/managed-tools';
 export {
-  type AgentLanguageModelProvider,
   type AgentModelCapability,
   AgentModelCapabilitySchema,
   type AgentModelCatalog,
@@ -194,6 +219,8 @@ export {
   searchAgentModelCatalog,
   validateAgentModelSnapshot,
 } from '../agent-runtime/models';
+export * from '../agent-runtime/models-driver';
+export * from '../agent-runtime/models-driver-step';
 export {
   type AgentObservability,
   type AgentRunEvent,
@@ -240,15 +267,21 @@ export {
   type AgentProtocol,
   type AgentProtocolConfig,
   type AgentTerminalAcceptance,
+  type AgentTerminalAcceptanceDecision,
   type AgentTerminalAcceptanceInput,
+  carriedToolWork,
   defineAgentProtocol,
   hasAgentTerminalOutput,
 } from '../agent-runtime/protocol';
 export {
+  AgentProviderError,
+  type AgentProviderErrorDetails,
   type AgentProviderFailure,
   type AgentProviderFailureReason,
   AgentProviderStreamCutError,
+  type AgentProviderStreamCutErrorOptions,
   classifyProviderFailure,
+  isAgentProviderError,
   isToolResultFailure,
 } from '../agent-runtime/provider-failure';
 export {
@@ -264,6 +297,15 @@ export {
   recordAgentRetryDecision,
 } from '../agent-runtime/retry-policy';
 export {
+  AgentInvalidToolApprovalSignatureError,
+  AgentToolApprovalError,
+  type AgentToolApprovalErrorReason,
+  AgentToolCallNotFoundForApprovalError,
+} from '../agent-runtime/run-approval';
+export * from '../agent-runtime/run-complete';
+export * from '../agent-runtime/run-complete-types';
+export { composeModelDrivers, wrapModelDriver } from '../agent-runtime/run-driver-compose';
+export {
   AgentStepBarrierError,
   type AgentStepBarriers,
   type AgentToolCallDependencies,
@@ -275,6 +317,10 @@ export {
   AgentStepSpendPhaseSchema,
   AgentStepSpendSchema,
 } from '../agent-runtime/run-step-spend';
+export {
+  AgentInvalidToolInputError,
+  AgentUnknownToolError,
+} from '../agent-runtime/run-tool-errors';
 export {
   type AgentContextUsage,
   type AgentRuntime,
@@ -434,17 +480,5 @@ export {
   StepResultNotSerializableError,
   type StepRunOptions,
 } from '../durability/engine';
-export {
-  AgentRecordIdSchema,
-  type AgentStoreEventEnvelope,
-  AgentStoreEventEnvelopeSchema,
-  type AgentStoreEventKind,
-  AgentStoreEventKindSchema,
-  type AgentStoreEventPage,
-  AgentStoreEventPageSchema,
-  type AppendAgentStoreEvent,
-  AppendAgentStoreEventSchema,
-  type ReadAgentStoreEvents,
-  ReadAgentStoreEventsSchema,
-} from '../durability/events';
+export * from '../durability/events';
 export type { DeferredAgentRuntimeToolDefinition } from '../tools/runtime-tool-declaration';

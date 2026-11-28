@@ -36,6 +36,7 @@ without repeating transport configuration.
 | `suppressUnauthorizedFor` | `[]` | exact contract-derived operation matchers whose expected 401 does not emit `unauthorized` |
 | `parseError` | built-in | map an error body to `{ code, message, details, hint }` |
 | `trace` | `false` | emit a W3C `traceparent` header on every request |
+| `propagateDeadline` | `false` (`true` when per-call `timeout` is set) | emit relative `x-stitchkit-timeout-ms` remaining budget header on outbound requests |
 | `unix` | — | dial a unix domain socket instead of TCP (Bun only, see below) |
 
 `headers` as a function is the hook for runtime tokens — a bearer token or any
@@ -365,6 +366,27 @@ For an endpoint without contract arguments, pass only the options object:
 ```ts
 await api.health.withOptions({ signal: controller.signal })
 ```
+
+### Deadline budget propagation
+
+To avoid wasted work after a caller gives up, the client can send its remaining monotonic budget as
+a relative integer millisecond header (`x-stitchkit-timeout-ms`, `DEADLINE_BUDGET_HEADER`):
+
+```ts
+const http = createHttpClient({ baseUrl: '/api', propagateDeadline: true })
+// In createClient, an endpoint's declared `timeout` and per-call `timeout` both propagate
+// automatically unless `propagateDeadline: false` is passed:
+await api.reports.generate.withOptions({ id }, { timeout: 5_000 })
+await api.reports.generate.withOptions({ id }, { timeout: 5_000, propagateDeadline: false })
+```
+
+In `createClient`, deadline propagation is enabled automatically whenever either the endpoint
+declares `timeout` in its contract or the call passes a per-call `timeout` (override with
+`propagateDeadline: false`). Each transport retry recomputes the remaining budget before sending
+instead of replaying the original full timeout. When an explicit `x-stitchkit-timeout-ms` header is
+already set on the request, the client preserves it. On the server, `createHandler` /
+`createServer` clamps that budget against the endpoint's declared `timeout` and exposes
+`ctx.remainingTimeoutMs?.(reserveMs?)` (see [HTTP server](./server.md#inbound-deadline-budgets)).
 
 ### Upload progress
 

@@ -1,40 +1,35 @@
 import { expect, test } from 'bun:test';
-import { simulateReadableStream, tool } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  type AgentModelDriver,
   type AgentRuntimeEvent,
+  type AgentUsage,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
+import { defineAgentTool } from '../src/entrypoints/tools';
+
+const usage: AgentUsage = {
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
+};
 
 test('a backward wall-clock jump cannot fail operation telemetry or the run', async () => {
   const events: AgentRuntimeEvent[] = [];
   let instant = Date.UTC(2026, 8, 7, 15, 0, 0);
-  const model = new MockLanguageModelV4({
-    doStream: async () => ({
-      stream: simulateReadableStream({
-        chunks: [
-          { type: 'text-start', id: 'text-1' },
-          { type: 'text-delta', id: 'text-1', delta: 'answer' },
-          { type: 'text-end', id: 'text-1' },
-          {
-            type: 'finish',
-            finishReason: { unified: 'stop', raw: undefined },
-            usage: {
-              inputTokens: {
-                total: 1,
-                noCache: 1,
-                cacheRead: undefined,
-                cacheWrite: undefined,
-              },
-              outputTokens: { total: 1, text: 1, reasoning: undefined },
-            },
-          },
-        ],
-      }),
-    }),
+  const driver = createScriptedModelDriver({
+    provider: 'test',
+    modelId: 'test-model',
+    steps: [
+      [
+        { type: 'text-start', id: 'text-1' },
+        { type: 'text-delta', id: 'text-1', delta: 'answer' },
+        { type: 'text-end', id: 'text-1' },
+        { type: 'finish', finishReason: 'stop', usage },
+      ],
+    ],
   });
   const runtime = createAgentRuntime({
     protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
@@ -47,7 +42,7 @@ test('a backward wall-clock jump cannot fail operation telemetry or the run', as
           contextWindow: 1_000,
           capabilities: [],
         },
-        model,
+        driver,
       }),
     },
     prompt: () => ({
@@ -91,101 +86,44 @@ test('non-empty streaming tool arguments are first output before the complete ca
   const releaseCall = Promise.withResolvers<void>();
   const firstOutput = Promise.withResolvers<void>();
   let call = 0;
-  let stage = 0;
-  const model = new MockLanguageModelV4({
-    doStream: async () => {
+  const driver: AgentModelDriver = {
+    provider: 'test',
+    modelId: 'test-model',
+    async stream() {
       call += 1;
       if (call > 1) {
         return {
-          stream: simulateReadableStream({
-            chunks: [
-              { type: 'text-start', id: 'text-2' },
-              { type: 'text-delta', id: 'text-2', delta: 'done' },
-              { type: 'text-end', id: 'text-2' },
-              {
-                type: 'finish',
-                finishReason: { unified: 'stop', raw: undefined },
-                usage: {
-                  inputTokens: {
-                    total: 1,
-                    noCache: 1,
-                    cacheRead: undefined,
-                    cacheWrite: undefined,
-                  },
-                  outputTokens: { total: 1, text: 1, reasoning: undefined },
-                },
-              },
-            ],
-          }),
+          parts: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: 'text-start', id: 'text-2' };
+              yield { type: 'text-delta', id: 'text-2', delta: 'done' };
+              yield { type: 'text-end', id: 'text-2' };
+              yield { type: 'finish', finishReason: 'stop', usage };
+            },
+          },
         };
       }
       return {
-        stream: new ReadableStream({
-          async pull(controller) {
-            if (stage === 0) {
-              stage = 1;
-              controller.enqueue({ type: 'stream-start', warnings: [] });
-              return;
-            }
-            if (stage === 1) {
-              stage = 2;
-              controller.enqueue({
-                type: 'tool-input-start',
-                id: 'tool-1',
-                toolName: 'lookup',
-              });
-              return;
-            }
-            if (stage === 2) {
-              await releaseArgument.promise;
-              stage = 3;
-              controller.enqueue({ type: 'tool-input-delta', id: 'tool-1', delta: '{"q":' });
-              return;
-            }
-            if (stage === 3) {
-              await releaseCall.promise;
-              stage = 4;
-              controller.enqueue({
-                type: 'tool-input-delta',
-                id: 'tool-1',
-                delta: '"value"}',
-              });
-              return;
-            }
-            if (stage === 4) {
-              stage = 5;
-              controller.enqueue({ type: 'tool-input-end', id: 'tool-1' });
-              return;
-            }
-            if (stage === 5) {
-              stage = 6;
-              controller.enqueue({
-                type: 'tool-call',
-                toolCallId: 'tool-1',
-                toolName: 'lookup',
-                input: '{"q":"value"}',
-              });
-              return;
-            }
-            controller.enqueue({
-              type: 'finish',
-              finishReason: { unified: 'tool-calls', raw: undefined },
-              usage: {
-                inputTokens: {
-                  total: 1,
-                  noCache: 1,
-                  cacheRead: undefined,
-                  cacheWrite: undefined,
-                },
-                outputTokens: { total: 1, text: 1, reasoning: undefined },
-              },
-            });
-            controller.close();
+        parts: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: 'tool-input-start', toolCallId: 'tool-1', toolName: 'lookup' };
+            await releaseArgument.promise;
+            yield { type: 'tool-input-delta', toolCallId: 'tool-1', delta: '{"q":' };
+            await releaseCall.promise;
+            yield { type: 'tool-input-delta', toolCallId: 'tool-1', delta: '"value"}' };
+            yield { type: 'tool-input-end', toolCallId: 'tool-1' };
+            yield {
+              type: 'tool-call',
+              toolCallId: 'tool-1',
+              toolName: 'lookup',
+              input: '{"q":"value"}',
+            };
+            yield { type: 'finish', finishReason: 'tool-calls', usage };
           },
-        }),
+        },
       };
     },
-  });
+  };
   const runtime = createAgentRuntime({
     protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
     store: createMemoryAgentRuntimeStore(),
@@ -197,7 +135,7 @@ test('non-empty streaming tool arguments are first output before the complete ca
           contextWindow: 1_000,
           capabilities: [],
         },
-        model,
+        driver,
       }),
     },
     prompt: () => ({
@@ -207,8 +145,8 @@ test('non-empty streaming tool arguments are first output before the complete ca
       contextDecision: 'unavailable',
     }),
     tools: () => ({
-      lookup: tool({
-        inputSchema: z.object({ q: z.string() }),
+      lookup: defineAgentTool({
+        input: z.object({ q: z.string() }),
         execute: ({ q }) => ({ q }),
       }),
     }),

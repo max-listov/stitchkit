@@ -1,7 +1,12 @@
 import { assertTimerMs } from '../../internal/deadline';
 import { assertPositiveSafeInteger } from '../../internal/positive-integer';
 import { NativeCommandError } from '../../process/contract';
-import { spawnEngineProcess } from '../engine-process';
+import {
+  assertEngineWrapCommand,
+  type EngineProcessWrapCommand,
+  resolveWrappedEngineCommand,
+  spawnEngineProcess,
+} from '../engine-process';
 import {
   createJsonRpcPeer,
   type JsonRpcPeer,
@@ -167,6 +172,8 @@ export interface AcpDriverConfig {
   maxFrameBytes?: number | undefined;
   /** Environment variables inherited by the spawned ACP agent process. */
   ambient?: Readonly<Record<string, string | undefined>> | undefined;
+  /** Optional command wrapper invoked before spawning the ACP process (for example an OS process sandbox). */
+  wrapCommand?: EngineProcessWrapCommand | undefined;
   /** How long one request (`initialize`, `session/new`) may take. Default 60 s. */
   requestTimeoutMs?: number | undefined;
 }
@@ -215,6 +222,7 @@ export function assertAcpDriverOptions(config: AcpDriverConfig): void {
   assertTimerMs('requestTimeoutMs', config.requestTimeoutMs);
   assertPositiveSafeInteger('maxFrameBytes', config.maxFrameBytes);
   assertPositiveSafeInteger('maxImageBytes', config.maxImageBytes);
+  assertEngineWrapCommand(config.wrapCommand, 'createAcpDriver');
   if (
     config.probeMode !== undefined &&
     config.probeMode !== 'ephemeral-session' &&
@@ -299,6 +307,17 @@ export async function connectAcp(
   assertAcpDriverOptions(config);
   // Everything that can refuse runs before the spawn: nothing after it leaves the agent running.
   const env = engineEnvironment(profile, config.ambient ?? process.env);
+  const command = await resolveWrappedEngineCommand(
+    {
+      executable: config.executable,
+      args: [...(config.args ?? [])],
+      cwd,
+      env,
+    },
+    config.wrapCommand,
+    'createAcpDriver',
+    signal,
+  );
   const peer: JsonRpcPeer = createJsonRpcPeer({
     header: 'jsonrpc-2.0',
     requestTimeoutMs: config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
@@ -308,10 +327,10 @@ export async function connectAcp(
   });
   emitStartupPhase(handlers.onStartupPhase, 'spawning', config.onObserverError);
   const engine = spawnEngineProcess({
-    executable: config.executable,
-    args: [...(config.args ?? [])],
-    cwd,
-    env,
+    executable: command.executable,
+    args: command.args,
+    cwd: command.cwd,
+    env: command.env,
     signal,
     ...(config.maxFrameBytes !== undefined && { maxLineBytes: config.maxFrameBytes }),
   });

@@ -1,4 +1,4 @@
-import type { ToolSet } from 'ai';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { beginAgentInvocation } from './invocations';
 import { acquireRun, beginRunExecution, type RunAcquisition } from './run-acquisition';
 import type { RunExecutionInput, RunExecutorDependencies } from './run-execution-state';
@@ -26,7 +26,7 @@ import type { AgentRuntimeResult } from './runtime-result';
  * ownership the run is closed from outside, after it the terminal is committed,
  * and a store that never answers either rejects with `AgentRunUnsettledError`.
  */
-export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
+export function createRunExecutor<CONTEXT, TOOLS extends AgentToolSet>(
   dependencies: RunExecutorDependencies<CONTEXT, TOOLS>,
 ) {
   /**
@@ -48,9 +48,9 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
     const { execution } = acquisition;
     const runId = execution.state.run.id;
     executing.add(runId);
-    let result: AgentRuntimeResult;
-    // The outer `finally` frees the run's place and its link to the caller's
-    // signal on every path, a failure of the failure handling included.
+    let result: AgentRuntimeResult | undefined;
+    // The outer `finally` frees the run's place, releases the caller's signal
+    // link, and closes any started invocation ledger scope on every path.
     try {
       try {
         await beginRunExecution(execution);
@@ -81,17 +81,25 @@ export function createRunExecutor<CONTEXT, TOOLS extends ToolSet>(
         execution.idleDeadline.dispose();
       }
       result = await commitRunTerminal(execution);
+      return result;
     } finally {
       executing.delete(runId);
       execution.idleDeadline.release();
+      if (execution.invocation) {
+        const reason = result?.reason ?? execution.state.terminalReason;
+        const cancelled = ['interrupted', 'cancelled', 'timeout', 'shutdown'].includes(reason);
+        const status: 'succeeded' | 'cancelled' | 'failed' =
+          result !== undefined && reason === 'success'
+            ? 'succeeded'
+            : cancelled
+              ? 'cancelled'
+              : 'failed';
+        if (result === undefined) {
+          await execution.invocation.finish(status).catch(() => undefined);
+        } else {
+          await execution.invocation.finish(status);
+        }
+      }
     }
-    await execution.invocation?.finish(
-      result.reason === 'success'
-        ? 'succeeded'
-        : ['interrupted', 'cancelled', 'timeout', 'shutdown'].includes(result.reason)
-          ? 'cancelled'
-          : 'failed',
-    );
-    return result;
   };
 }

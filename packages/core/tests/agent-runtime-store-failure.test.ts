@@ -10,6 +10,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 
 const CONVERSATION = 'store-failure';
 
@@ -47,7 +48,7 @@ function runtimeOver(store: AgentRuntimeStore, events: AgentRuntimeEvent[] = [])
           contextWindow: 1_000,
           capabilities: [],
         },
-        model: answer('done'),
+        driver: fromAiSdkModel(answer('done')),
       }),
     },
     prompt: () => ({
@@ -259,7 +260,7 @@ describe('a store failure outside the turn leaves no active run behind', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       prompt: () => ({

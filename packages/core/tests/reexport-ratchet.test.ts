@@ -27,9 +27,8 @@ const REEXPORTS: Readonly<
   'agent-runtime/events.ts': { statements: 1, reason: SPLIT },
   'agent-runtime/harness.ts': { statements: 3, reason: SPLIT },
   'agent-runtime/openrouter.ts': {
-    statements: 2,
-    reason:
-      'the provider settings type of the optional peer and the catalog fetch, beside the factory that takes them',
+    statements: 1,
+    reason: 'the catalog fetch type beside the factory that takes it',
   },
   'agent-runtime/schemas.ts': { statements: 6, reason: SPLIT },
   'agent-runtime/sqlite-bun.ts': { statements: 3, reason: DRIVER },
@@ -114,5 +113,5 @@ test('re-exports outside the entrypoints only shrink, and each module that keeps
   );
   expect(counted).toEqual(expected);
   const total = Object.values(counted).reduce((sum, statements) => sum + statements, 0);
-  expect(total).toBe(82);
+  expect(total).toBe(81);
 });

@@ -47,6 +47,13 @@ export { type CacheOptions, cacheHeaders, createCache } from '../server/cache';
 export { withContractIdentity } from '../server/contract-identity';
 export { createHandler } from '../server/create';
 export {
+  bindDevicePresence,
+  type DevicePresenceAccountResolver,
+  type DevicePresenceServer,
+  type DevicePresenceServerOptions,
+  type DevicePresenceServerSnapshot,
+} from '../server/device-presence';
+export {
   createErrorHook,
   type ErrorHookBase,
   type ErrorHookConfig,

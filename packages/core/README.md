@@ -100,11 +100,14 @@ import { createGoogleOidcClient } from 'stitchkit/google'
 ```
 
 The root `stitchkit` entrypoint is browser-safe. Server, tool, optional managed
-application, AI-SDK-backed agent-runtime and peer-free remote-proxy code live
+application, peer-free agent-runtime and peer-free remote-proxy code live
 behind `stitchkit/server`, `stitchkit/tools`, `stitchkit/application`,
 `stitchkit/agent-runtime` and `stitchkit/remote` respectively. Optional provider
 adapters are isolated further; importing `stitchkit/application` never resolves
-grammY or OpenTelemetry. Browser code that shares agent records imports
+grammY or OpenTelemetry, and `stitchkit/agent-runtime` ships peer-free native
+drivers behind `stitchkit/agent-runtime/openrouter`, `stitchkit/agent-runtime/openai`
+and `stitchkit/agent-runtime/anthropic` while keeping the optional AI SDK adapter
+isolated behind `stitchkit/agent-runtime/ai-sdk`. Browser code that shares agent records imports
 `stitchkit/agent-runtime/browser`; it contains the canonical schemas and event
 cursor but no execution, persistence or sink graph.
 Durable embedded storage is isolated behind
@@ -289,9 +292,10 @@ const result = await generateText({ model, tools, prompt: 'Create a user named M
 ```
 
 For applications that want Stitchkit to own durable message/run transitions,
-stream checkpoints, interruption and managed-tool fencing, use the optional
-[`stitchkit/agent-runtime`](docs/guide/agent-runtime.md). `mountAgent` remains
-the smaller application-owned-loop path.
+stream checkpoints, interruption and managed-tool fencing without external AI SDK
+dependencies, use the peer-free [`stitchkit/agent-runtime`](docs/guide/agent-runtime.md)
+with `mountAgentTools` from `stitchkit/tools`. `mountAgent` (`stitchkit/tools/agent`)
+remains the optional AI SDK adapter for application-owned loops.
 
 ### 7. WebSocket (Socket.IO)
 
@@ -363,8 +367,8 @@ import { parseSSE } from 'stitchkit'           // client: Response → AsyncGene
 | **Contract** | `defineContract()` — single source of truth for your API |
 | **HTTP Server** | `createServer()` / `createHandler()` — Bun.serve, validation, hooks, raw routes |
 | **MCP Tools** | `createMcpHandler()` / `mountMcp()` — MCP tools from contracts |
-| **Agent Tools** | `mountAgent()` — Vercel AI SDK tools from contracts |
-| **Agent Runtime** | `createAgentRuntime()` — optional durable history, stream loop, coordination and fencing |
+| **Agent Tools** | `mountAgentTools()` / `mountAgent()` — peer-free agent tools and optional AI SDK tools from contracts |
+| **Agent Runtime** | `createAgentRuntime()` — peer-free durable history, stream loop, native providers, coordination and fencing |
 | **Application Kernel** | `createApplication()` plus optional bounded local diagnostics — process-local resources, readiness, schedules and bounded shutdown |
 | **Typed Client** | `createClient()` / `createClients()` — typed fetch from contracts |
 | **Cursor Pagination** | `createCursorQuery()` — `react-query-kit` infinite query from a contract method |
@@ -453,12 +457,11 @@ peer — an install pulls in only what the project actually uses.
 | `@modelcontextprotocol/server` | peer, optional | MCP server surfaces in `stitchkit/tools/mcp` and `stitchkit/tools/toolkit`; SDK v2, protocol `2026-07-28`. |
 | `@modelcontextprotocol/client` | development dependency, optional | Only consumers that run MCP client integration tests or build an MCP host. |
 | `@modelcontextprotocol/ext-apps` | peer, optional | Only MCP Apps (`ui://` resources and UI metadata). |
-| `ai` | peer, optional | agent tools in `stitchkit/tools/agent` and `stitchkit/tools/toolkit`, and the optional server-only `stitchkit/agent-runtime`. |
-| Headless harness | optional surface | `stitchkit/agent-runtime/harness`; uses the same optional `ai` peer and canonical runtime. |
+| `ai` | peer, optional | Only the AI SDK adapters in `stitchkit/tools/agent`, `stitchkit/tools/toolkit` and `stitchkit/agent-runtime/ai-sdk`. Neutral `stitchkit/tools` and `stitchkit/agent-runtime` never resolve it. |
+| Agent runtime & native providers | optional peer-free surfaces | `stitchkit/agent-runtime`, `stitchkit/agent-runtime/harness`, `stitchkit/agent-runtime/openrouter`, `stitchkit/agent-runtime/openai` and `stitchkit/agent-runtime/anthropic`; native `fetch`/SSE drivers with zero optional peers. |
 | Agent coding tools | optional surface | `stitchkit/agent-runtime/coding-tools`; peer-free, host-authorized direct file and shell tools. |
-| Agent runtime testing | optional test surface | `stitchkit/agent-runtime/testing`; peer-free local fault server, replay and race fixtures. |
+| Agent runtime testing | optional test surface | `stitchkit/agent-runtime/testing`; peer-free scripted model drivers, local fault server, replay and race fixtures. |
 | `stitchkit-tui` | separate optional package | Renderer-neutral `./core` state, `./widgets` for terminal applications, plus a Bun/OpenTUI terminal controller, commands, model/session pickers and authenticated local attachment over a caller-composed harness. |
-| `@openrouter/ai-sdk-provider` | peer, optional | Only `stitchkit/agent-runtime/openrouter`; neutral runtime imports do not resolve it. |
 | `@anthropic-ai/claude-agent-sdk` | peer, optional | Only `stitchkit/agent-executor/claude-sdk`; the application supplies `query` and its own SDK version. |
 | SQLite | runtime built-in, optional | `bun:sqlite` through `stitchkit/agent-runtime/sqlite/bun`, or `node:sqlite` on Node ≥ 22.5 through the Node leaf. |
 | Postgres | the application's own client | `stitchkit/agent-runtime/postgres` takes a `transaction` and a `query` function (Bun SQL, Prisma, `pg`); it imports no client. |

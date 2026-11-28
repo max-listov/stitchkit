@@ -1,4 +1,75 @@
 import { assertTimerMs } from '../internal/deadline';
+import type {
+  AgentModelDriver,
+  AgentModelRequest,
+  AgentModelStream,
+  AgentModelStreamPart,
+} from './models-driver';
+
+/** One scripted turn for `createScriptedModelDriver`: static parts, a throw, or a factory. */
+export type ScriptedModelStep =
+  | readonly AgentModelStreamPart[]
+  | { readonly throw: unknown }
+  | ((
+      request: AgentModelRequest,
+      signal: AbortSignal,
+    ) => AgentModelStream | Promise<AgentModelStream>);
+
+export interface ScriptedModelDriverOptions {
+  readonly provider?: string;
+  readonly modelId?: string;
+  readonly steps: readonly ScriptedModelStep[];
+  readonly onRequest?: (request: AgentModelRequest, stepIndex: number) => void | Promise<void>;
+}
+
+export interface ScriptedModelDriver extends AgentModelDriver {
+  readonly requests: readonly AgentModelRequest[];
+}
+
+/**
+ * Deterministic peer-free `AgentModelDriver` for tests: replays scripted stream parts,
+ * records every `AgentModelRequest`, and supports per-step errors or custom async streams.
+ * → ADR 0336.
+ */
+export function createScriptedModelDriver(
+  options: ScriptedModelDriverOptions,
+): ScriptedModelDriver {
+  const requests: AgentModelRequest[] = [];
+  let index = 0;
+  return {
+    provider: options.provider ?? 'scripted',
+    modelId: options.modelId ?? 'scripted-model',
+    requests,
+    async stream(request, signal) {
+      const stepIndex = index;
+      index += 1;
+      requests.push(request);
+      await options.onRequest?.(request, stepIndex);
+      const step = options.steps[stepIndex];
+      if (step === undefined) {
+        throw new Error(`ScriptedModelDriver exhausted at step ${stepIndex}`);
+      }
+      if (typeof step === 'function') {
+        return step(request, signal);
+      }
+      if ('throw' in step) {
+        throw step.throw;
+      }
+      const list = step;
+      return {
+        parts: {
+          async *[Symbol.asyncIterator]() {
+            for (const part of list) {
+              signal.throwIfAborted();
+              yield part;
+            }
+          },
+        },
+      };
+    },
+  };
+}
+
 export interface AgentRaceBarrier {
   reached: Promise<void>;
   wait(): Promise<void>;

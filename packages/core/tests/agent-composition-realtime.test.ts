@@ -1,6 +1,4 @@
 import { expect, test } from 'bun:test';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { bindRealtimeClient } from '../src/browser/realtime-client';
 import { createSocketIOClient } from '../src/browser/socket-io';
@@ -149,37 +147,32 @@ function streamingHarness(deltas: number, gate: Promise<void>) {
           contextWindow: 8_000,
           capabilities: [],
         },
-        model: new MockLanguageModelV4({
-          doStream: async () => {
+        driver: {
+          provider: 'fixture',
+          modelId: 'streaming',
+          async stream() {
             await gate;
             return {
-              stream: simulateReadableStream({
-                chunks: [
-                  { type: 'text-start', id: 'answer' },
-                  ...Array.from({ length: deltas }, () => ({
-                    type: 'text-delta' as const,
-                    id: 'answer',
-                    delta: 'x',
-                  })),
-                  { type: 'text-end', id: 'answer' },
-                  {
+              parts: {
+                async *[Symbol.asyncIterator]() {
+                  yield { type: 'text-start', id: 'answer' };
+                  for (let index = 0; index < deltas; index += 1) {
+                    yield { type: 'text-delta', id: 'answer', delta: 'x' };
+                  }
+                  yield { type: 'text-end', id: 'answer' };
+                  yield {
                     type: 'finish',
-                    finishReason: { unified: 'stop', raw: undefined },
+                    finishReason: 'stop',
                     usage: {
-                      inputTokens: {
-                        total: 1,
-                        noCache: 1,
-                        cacheRead: undefined,
-                        cacheWrite: undefined,
-                      },
-                      outputTokens: { total: 1, text: 1, reasoning: undefined },
+                      inputTokens: { value: 1, provenance: 'provider-reported' },
+                      outputTokens: { value: 1, provenance: 'provider-reported' },
                     },
-                  },
-                ],
-              }),
+                  };
+                },
+              },
             };
           },
-        }),
+        },
       }),
     },
   });

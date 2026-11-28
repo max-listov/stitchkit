@@ -7,11 +7,12 @@
 import { describe, expect, test } from 'bun:test';
 import { jsonSchema, tool } from 'ai';
 import { z } from 'zod';
-import { applyStepBarriers } from '../src/agent-runtime/run-step-barriers';
+import { createStepCallScheduler } from '../src/agent-runtime/run-step-barriers';
 import { createToolDependencyResolver } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkTools } from '../src/entrypoints/agent-runtime/ai-sdk';
 import { defineContract } from '../src/entrypoints/contract';
 import { implement } from '../src/entrypoints/server';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import { defineAgentTool, mountAgentTools } from '../src/entrypoints/tools';
 import {
   answer,
   approvalIds,
@@ -27,7 +28,7 @@ import {
 
 describe('step barriers beyond a plain step', () => {
   test('after-tools: a denied approval answered before the first step does not hide the reply', async () => {
-    const danger = tool({ inputSchema: noInput, execute: async () => 'did it' });
+    const danger = defineAgentTool({ input: noInput, execute: async () => 'did it' });
     const h = harness(
       [round([call('d', 'danger'), finish('tool-calls')]), answer('OK, I will not do that')],
       { danger },
@@ -50,8 +51,8 @@ describe('step barriers beyond a plain step', () => {
 
   test('a tool that streams still streams under the barriers, and runs as its own method', async () => {
     const ran: string[] = [];
-    const streaming = tool({
-      inputSchema: noInput,
+    const streaming = defineAgentTool({
+      input: noInput,
       async *execute() {
         ran.push(typeof this);
         yield 'partial';
@@ -75,7 +76,7 @@ describe('step barriers beyond a plain step', () => {
   });
 
   test('a prepareStep that trims the history to a fixed window still starts a new step', async () => {
-    const counted = tool({ inputSchema: noInput, execute: async () => 'ok' });
+    const counted = defineAgentTool({ input: noInput, execute: async () => 'ok' });
     const h = harness(
       [
         round([call('a', 'counted'), finish('tool-calls')]),
@@ -95,8 +96,9 @@ describe('step barriers beyond a plain step', () => {
 
   test('read after write holds when the write declares a context schema and the read does not', async () => {
     const order: string[] = [];
+    const aiNoInput = jsonSchema<Record<string, string>>({ type: 'object' });
     const write = tool({
-      inputSchema: noInput,
+      inputSchema: aiNoInput,
       // A schema of its own: the SDK validates it before the write runs.
       contextSchema: jsonSchema<Record<string, never>>(
         { type: 'object' },
@@ -110,7 +112,7 @@ describe('step barriers beyond a plain step', () => {
       },
     });
     const read = tool({
-      inputSchema: noInput,
+      inputSchema: aiNoInput,
       execute: async () => {
         order.push('read');
         return 'value';
@@ -125,7 +127,7 @@ describe('step barriers beyond a plain step', () => {
         ]),
         answer(),
       ],
-      { write, read },
+      await fromAiSdkTools({ write, read }),
       {
         toolDependencies: createToolDependencyResolver({
           effects: { write: 'write', read: 'read' },
@@ -141,8 +143,8 @@ describe('step barriers beyond a plain step', () => {
   test('a write waits for the earlier read of its entity, and a second write for the first', async () => {
     const order: string[] = [];
     const slow = (name: string, ms: number) =>
-      tool({
-        inputSchema: noInput,
+      defineAgentTool({
+        input: noInput,
         execute: async (input) => {
           order.push(`${name}:${idOf(input)}:start`);
           await Bun.sleep(ms);
@@ -182,8 +184,8 @@ describe('step barriers beyond a plain step', () => {
 
   test('a call past the bound is not put to approval; the next step counts afresh', async () => {
     const ran: string[] = [];
-    const danger = tool({
-      inputSchema: noInput,
+    const danger = defineAgentTool({
+      input: noInput,
       execute: async (_input, { toolCallId }) => {
         ran.push(toolCallId);
         return 'did it';
@@ -236,7 +238,7 @@ describe('step barriers beyond a plain step', () => {
         },
       },
     );
-    const tools = mountAgent(
+    const tools = mountAgentTools(
       [
         implement(notes, {
           put: async () => {
@@ -281,7 +283,7 @@ describe('step barriers beyond a plain step', () => {
   });
 
   test('a tool call and its result are each checkpointed once', async () => {
-    const plain = tool({ inputSchema: noInput, execute: async () => 'ok' });
+    const plain = defineAgentTool({ input: noInput, execute: async () => 'ok' });
     const h = harness(
       [round([call('a', 'plain'), finish('tool-calls')]), answer()],
       { plain },
@@ -301,15 +303,15 @@ describe('step barriers beyond a plain step', () => {
 
   test('toolDependencies + user-approval on a write does not deadlock a dependent read in the same step', async () => {
     const order: string[] = [];
-    const write = tool({
-      inputSchema: noInput,
+    const write = defineAgentTool({
+      input: noInput,
       execute: async () => {
         order.push('write');
         return 'written';
       },
     });
-    const read = tool({
-      inputSchema: noInput,
+    const read = defineAgentTool({
+      input: noInput,
       execute: async () => {
         order.push('read');
         return 'value';
@@ -348,16 +350,16 @@ describe('step barriers beyond a plain step', () => {
 
   test('toolDependencies + tool.needsApproval returning true settles barrier immediately without hanging', async () => {
     const order: string[] = [];
-    const write = tool({
-      inputSchema: noInput,
+    const write = defineAgentTool({
+      input: noInput,
       needsApproval: async () => true,
       execute: async () => {
         order.push('write');
         return 'written';
       },
     });
-    const read = tool({
-      inputSchema: noInput,
+    const read = defineAgentTool({
+      input: noInput,
       execute: async () => {
         order.push('read');
         return 'value';
@@ -387,8 +389,8 @@ describe('step barriers beyond a plain step', () => {
 
   test('an arrow tool returning an AsyncIterable holds the barrier for later reads, and a regular dependent read emits one tool-result', async () => {
     const order: string[] = [];
-    const w1 = tool({
-      inputSchema: noInput,
+    const w1 = defineAgentTool({
+      input: noInput,
       execute: async () => {
         order.push('w1-start');
         await Bun.sleep(20);
@@ -397,8 +399,8 @@ describe('step barriers beyond a plain step', () => {
       },
     });
     // Arrow wrapper returning an AsyncIterable: not an AsyncGeneratorFunction.
-    const w2 = tool({
-      inputSchema: noInput,
+    const w2 = defineAgentTool({
+      input: noInput,
       execute: () =>
         (async function* () {
           order.push('w2-start');
@@ -408,8 +410,8 @@ describe('step barriers beyond a plain step', () => {
           yield 'w2-done';
         })(),
     });
-    const r1 = tool({
-      inputSchema: noInput,
+    const r1 = defineAgentTool({
+      input: noInput,
       execute: async () => {
         order.push('r1');
         return 'r1-done';
@@ -462,8 +464,8 @@ describe('step barriers beyond a plain step', () => {
 
   test('a throwing arrow-AsyncIterable tool releases the barrier for later dependent calls without deadlock', async () => {
     const order: string[] = [];
-    const w1 = tool({
-      inputSchema: noInput,
+    const w1 = defineAgentTool({
+      input: noInput,
       execute: async () => {
         order.push('w1-start');
         await Bun.sleep(20);
@@ -472,8 +474,8 @@ describe('step barriers beyond a plain step', () => {
       },
     });
     // Arrow wrapper returning an AsyncIterable that throws after its first yield.
-    const w2 = tool({
-      inputSchema: noInput,
+    const w2 = defineAgentTool({
+      input: noInput,
       execute: () =>
         (async function* () {
           order.push('w2-start');
@@ -483,8 +485,8 @@ describe('step barriers beyond a plain step', () => {
           throw new Error('w2-boom');
         })(),
     });
-    const r1 = tool({
-      inputSchema: noInput,
+    const r1 = defineAgentTool({
+      input: noInput,
       execute: async () => {
         order.push('r1');
         return 'r1-done';
@@ -532,9 +534,9 @@ describe('step barriers beyond a plain step', () => {
   test('a client-side tool without execute under either toolApproval form does not deadlock a dependent call', async () => {
     for (const mode of ['map', 'function'] as const) {
       const order: string[] = [];
-      const clientWrite = tool({ inputSchema: noInput });
-      const read = tool({
-        inputSchema: noInput,
+      const clientWrite = defineAgentTool({ input: noInput });
+      const read = defineAgentTool({
+        input: noInput,
         execute: async () => {
           order.push('read');
           return 'value';
@@ -572,10 +574,13 @@ describe('step barriers beyond a plain step', () => {
   });
 
   test('toolApproval returning undefined or object approved still holds the step barrier until execute finishes', async () => {
-    for (const decision of [undefined, { type: 'approved' as const }] as const) {
+    for (const decision of [
+      'not-applicable' as const,
+      { type: 'approved' as const },
+    ] as const) {
       const order: string[] = [];
-      const write = tool({
-        inputSchema: noInput,
+      const write = defineAgentTool({
+        input: noInput,
         execute: async () => {
           order.push('write-start');
           await Bun.sleep(25);
@@ -583,8 +588,8 @@ describe('step barriers beyond a plain step', () => {
           return 'written';
         },
       });
-      const read = tool({
-        inputSchema: noInput,
+      const read = defineAgentTool({
+        input: noInput,
         execute: async () => {
           order.push('read');
           return 'value';
@@ -618,34 +623,42 @@ describe('step barriers beyond a plain step', () => {
   });
 
   test('an onInputAvailable throw after entering the ledger settles the barrier for dependent calls', async () => {
-    const write = tool({
-      inputSchema: noInput,
+    const write = defineAgentTool({
+      input: noInput,
       onInputAvailable: async () => {
         throw new Error('input rejected');
       },
       execute: async () => 'written',
     });
-    const read = tool({
-      inputSchema: noInput,
+    const read = defineAgentTool({
+      input: noInput,
       execute: async () => 'value',
     });
-    const { tools } = applyStepBarriers({ write, read }, undefined, {
+    const scheduler = createStepCallScheduler({
       toolDependencies: createToolDependencyResolver({
         effects: { write: 'write', read: 'read' },
         entityOf: (_name, input) => idOf(input),
       }),
     });
-    const messages: never[] = [];
+    const writeSlot = scheduler.enter('write', { id: 'e1' });
+    const readSlot = scheduler.enter('read', { id: 'e1' });
     await expect(
-      tools.write.onInputAvailable?.({
-        input: { id: 'e1' },
-        toolCallId: 'w',
-        messages,
-        context: {},
-      }),
+      (async () => {
+        try {
+          await write.onInputAvailable?.({
+            input: { id: 'e1' },
+            toolCallId: 'w',
+            messages: [],
+          });
+        } finally {
+          writeSlot.settle(false);
+        }
+      })(),
     ).rejects.toThrow('input rejected');
     const outcome = await Promise.race([
-      tools.read.execute?.({ id: 'e1' }, { toolCallId: 'r', messages, context: {} }),
+      readSlot
+        .waitAhead()
+        .then(() => read.execute?.({ id: 'e1' }, { toolCallId: 'r', messages: [] })),
       Bun.sleep(500).then(() => 'deadlock' as const),
     ]);
     expect(outcome).toBe('value');

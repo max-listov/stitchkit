@@ -1,8 +1,10 @@
 import { z } from 'zod';
+import { AgentCacheControlSchema } from '../agent-parts/model';
 
 /** JSON form after the ledger replaces binary content and URLs with durable evidence. */
 export const ProviderJournalOptions = {
   providerOptions: z.record(z.string(), z.record(z.string(), z.json())).optional(),
+  cacheControl: AgentCacheControlSchema.optional(),
 };
 const Options = ProviderJournalOptions;
 // Tagged file shapes must never fall through to a provider-name mapping.

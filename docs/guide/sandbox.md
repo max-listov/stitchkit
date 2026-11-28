@@ -133,3 +133,53 @@ Custom backends implement `SandboxDriver` byte I/O, `spawn` and policy enforceme
 `createSandboxSession` supplies text conversion, paths and `run` once. Paths are
 workspace-relative or canonical `/workspace/...` paths. Unsupported policies must
 be refused explicitly by the backend.
+
+## Long-lived process sandbox (`createProcessSandbox`)
+
+When isolating a long-lived streaming stdio or IPC engine process (such as Codex or an ACP agent)
+that must keep its real host workspace path and streaming pipes, use `createProcessSandbox` and
+`probeProcessSandbox`. Its `wrapCommand` method matches `AcpDriverConfig.wrapCommand` and
+`CodexDriverConfig.wrapCommand` structurally:
+
+```ts
+import { createProcessSandbox, probeProcessSandbox } from 'stitchkit/agent-runtime/sandbox';
+import { createCodexDriver } from 'stitchkit/agent-executor/codex';
+
+const probe = await probeProcessSandbox();
+if (!probe.available) throw new Error(probe.reason);
+
+const sandbox = createProcessSandbox({
+  profile: 'workspace-readonly', // or 'workspace-strict' for read-write workspace
+  workspace: '/srv/spaces/space-a',
+  writableDirs: ['/srv/profiles/codex-a'],
+  denyPaths: ['/srv/state/control/api.sock'],
+  unixSockets: [{ hostPath: '/srv/spaces/space-a/mcp.sock' }],
+  homeDir: '/srv/profiles/codex-a',
+  privateTmpDir: '/srv/tmp/space-a',
+  envAllowlist: ['PATH', 'HOME', 'TMPDIR'],
+  network: 'deny',
+});
+
+const driver = createCodexDriver({ wrapCommand: sandbox.wrapCommand });
+```
+
+- **Fail-closed availability:** `wrapCommand` probes the OS backend before its first wrap and
+  throws `SandboxError('SANDBOX_UNAVAILABLE', ...)` if `bwrap` or `sandbox-exec` is unavailable or
+  the platform is unsupported; there is no unsandboxed fallback.
+- **Symlink-safe `workspace-readonly`:** `ProcessSandboxSpecSchema` resolves symlinks via
+  `realpathSync` so none of `writableDirs`, `privateTmpDir`, or `homeDir` can overlap `workspace`
+  through a symlink.
+- **Platform read/write models differ:**
+  - **Linux (`bwrap`):** mount-namespace allowlist — only mounted system roots, `workspace`,
+    `readOnlyPaths`, `writableDirs`, `privateTmpDir`, `homeDir`, and `unixSockets` exist inside the
+    sandbox; unmounted host paths are absent, and `denyPaths` inside mounted roots (including
+    `/bin` and `/sbin`) are masked over `/dev/null` or an empty `tmpfs`. A `cwd` outside mounted
+    roots (such as `driver.info()` / `driver.status()`) falls back to `workspace`.
+  - **macOS (`sandbox-exec` Seatbelt, compiled by `buildSeatbeltProfile`):** default-deny writes
+    with default-allow reads — writes are denied globally except `privateTmpDir`, `workspace`
+    (`workspace-strict`), `homeDir`, `writableDirs`, and explicitly allowed `unixSockets` (with
+    `workspace` denied for writes in `workspace-readonly`, and explicit socket allows ordered after
+    that deny and before `denyPaths`). Reads remain permitted by default for macOS frameworks and
+    binaries except paths listed in `denyPaths`, so callers on macOS must explicitly add control
+    sockets, sibling workspaces, and host secrets to `denyPaths`. Seatbelt cannot remap Unix socket
+    paths: supplying `mountPath !== hostPath` fails closed with `SANDBOX_UNAVAILABLE`.

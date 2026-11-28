@@ -1,4 +1,4 @@
-import type { ToolSet } from 'ai';
+import type { AgentToolSet } from '../tools/agent-tools';
 import {
   type AgentSessionCloseOptions,
   type AgentSessionCloseResult,
@@ -11,7 +11,7 @@ import type { AgentRuntimeState } from './runtime-state';
 import type { AgentStoreMutationResult } from './store';
 import { AgentRuntimeConflictError } from './terminal-commit';
 
-export async function interruptAgentRun<CONTEXT, TOOLS extends ToolSet>(
+export async function interruptAgentRun<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   input: AgentRuntimeInterruptInput,
 ): Promise<AgentStoreMutationResult> {
@@ -42,7 +42,7 @@ export async function interruptAgentRun<CONTEXT, TOOLS extends ToolSet>(
   return requested;
 }
 
-export async function abandonAgentRun<CONTEXT, TOOLS extends ToolSet>(
+export async function abandonAgentRun<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   input: AgentRuntimeAbandonInput,
 ): Promise<AgentStoreMutationResult> {
@@ -75,7 +75,7 @@ export async function abandonAgentRun<CONTEXT, TOOLS extends ToolSet>(
   }
 }
 
-export async function closeAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
+export async function closeAgentRuntime<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   options: AgentSessionCloseOptions,
 ): Promise<AgentSessionCloseResult> {

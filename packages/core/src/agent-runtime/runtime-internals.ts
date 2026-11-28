@@ -1,16 +1,17 @@
-import type { LanguageModelUsage } from 'ai';
 import { z } from 'zod';
 import { linkAbortSignals } from '../internal/abort-race';
 import {
   AgentJsonObjectSchema,
-  type AgentMessagePart,
-  AgentMessagePartSchema,
   AgentProviderResponseSchema,
   type AgentRun,
   type AgentTerminalReason,
   type AgentUsage,
+  AgentUsageSchema,
 } from './schemas';
+import { statedUsage, unknownUsage } from './schemas-usage-state';
 import { AgentRuntimeConflictError } from './terminal-commit';
+
+export { statedUsage, unknownUsage };
 
 /**
  * Pure helpers shared by the runtime factory and the run executor.
@@ -36,29 +37,42 @@ export function providerEnvelope(value: unknown) {
   return { schemaVersion: 1, provider: 'ai-sdk', data: parsed.data };
 }
 
+/** Validate an untrusted optional `AgentUsage` object (used by `structuredCompaction`). */
+export function parseOptionalAgentUsage(value: unknown): AgentUsage | undefined {
+  if (value === undefined) return undefined;
+  const parsed = AgentUsageSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 /**
  * Keep only the provider facts that form the public response identity.
  *
  * The upstream provider name arrives already resolved, from the model's own
  * adapter. Reading it out of `providerMetadata` here would name one gateway's
  * key inside the neutral runtime — the boundary whose rule is that it carries
- * no vendor's model. → `AgentLanguageModelProvider.resolveResponseProvider`.
+ * no vendor's model.
  */
-export function providerResponseIdentity(id: string, provider: string | undefined) {
+export function providerResponseIdentity(
+  id: string,
+  provider: string | undefined,
+  extra?: { readonly modelId?: string; readonly timestamp?: Date | string },
+) {
+  const timestamp =
+    extra?.timestamp instanceof Date
+      ? Number.isFinite(extra.timestamp.getTime())
+        ? extra.timestamp.toISOString()
+        : undefined
+      : typeof extra?.timestamp === 'string' && extra.timestamp.length > 0
+        ? extra.timestamp
+        : undefined;
   return AgentProviderResponseSchema.parse({
     id,
     ...(typeof provider === 'string' && provider.length > 0 ? { provider } : {}),
+    ...(typeof extra?.modelId === 'string' && extra.modelId.length > 0
+      ? { modelId: extra.modelId }
+      : {}),
+    ...(timestamp !== undefined ? { timestamp } : {}),
   });
-}
-
-export function appendText(parts: AgentMessagePart[], text: string): void {
-  const previous = parts.at(-1);
-  if (previous?.type === 'text') {
-    const next = AgentMessagePartSchema.parse({ ...previous, text: previous.text + text });
-    parts.splice(parts.length - 1, 1, next);
-    return;
-  }
-  parts.push(AgentMessagePartSchema.parse({ type: 'text', text }));
 }
 
 export function abortTerminalReason(signal: AbortSignal): AgentTerminalReason {
@@ -73,8 +87,8 @@ export function abortTerminalReason(signal: AbortSignal): AgentTerminalReason {
  *
  * Assigning the latest step instead of adding it is what made an abandoned
  * multi-step run report its last step as though it were the whole run — and,
- * because the SDK's own aggregate carries no cost, made even a *successful*
- * multi-step run report one step's money beside every step's tokens.
+ * because an attempt-level token aggregate carries no cost, made even a
+ * *successful* multi-step run report one step's money beside every step's tokens.
  *
  * Provenance is per field and answers only "how did we get this number".
  * A sum this code performed is `computed`, never `provider-reported`, however
@@ -142,29 +156,19 @@ export function addUsage(total: AgentUsage | undefined, step: AgentUsage): Agent
 }
 
 /**
- * The SDK's own model-step total where it has one, our per-step sum where it does not.
+ * Merge the loop's attempt-level token total with the per-step accumulated usage.
  *
- * `totalUsage` is the SDK's sum over the steps it saw, and it covers only the
- * five token fields it knows about — a `normalizeUsage` hook that reads
- * reasoning or cache counts out of provider metadata has nowhere to put them in
- * it. Overwriting wholesale therefore made a terminal event contradict its own
- * `step-finished` events, and made the same run report those fields on an
- * aborted path and lose them on a successful one.
+ * `attemptTotal` covers the token fields summed across completed steps in one attempt,
+ * while `accumulated` preserves per-step cost and `unavailable` provenance so terminal
+ * totals never contradict `step-finished` events or synthesize `0` for fields no step
+ * reported.
  *
- * The label is `computed` either way, and deliberately so: `totalUsage` is a sum
- * the AI SDK performed over per-step provider figures, not a total any provider
- * handed us. Which loop did the adding is not a difference a caller filtering
- * for a billable figure cares about, and pretending otherwise made one run
- * report `provider-reported` on success and `computed` on abort.
- *
- * A field every step reported as `unavailable` stays `unavailable`: the
- * aggregate is summed from the SDK's normalized usage, where an adapter may
- * already have written `cached_tokens ?? 0`, so its zero is the adapter's word
- * and not the provider's. The OpenRouter adapter did exactly that, and a turn
- * whose every request said "no cache figure" ended as a confident "cache 0".
+ * The provenance label is always `computed` because the figure is summed across steps
+ * rather than reported as a single billable provider receipt, keeping success and abort
+ * paths consistent.
  */
 export function mergeModelTotals(
-  sdkTotal: AgentUsage,
+  attemptTotal: AgentUsage,
   accumulated: AgentUsage | undefined,
 ): AgentUsage {
   const pick = (
@@ -177,61 +181,23 @@ export function mergeModelTotals(
       : (ours ?? { provenance: 'unavailable' });
   };
   return {
-    inputTokens: pick(sdkTotal.inputTokens, accumulated?.inputTokens),
-    outputTokens: pick(sdkTotal.outputTokens, accumulated?.outputTokens),
-    reasoningTokens: pick(sdkTotal.reasoningTokens, accumulated?.reasoningTokens),
-    cacheReadTokens: pick(sdkTotal.cacheReadTokens, accumulated?.cacheReadTokens),
-    cacheWriteTokens: pick(sdkTotal.cacheWriteTokens, accumulated?.cacheWriteTokens),
-    // Never from the SDK: `totalUsage` carries no cost at all.
+    inputTokens: pick(attemptTotal.inputTokens, accumulated?.inputTokens),
+    outputTokens: pick(attemptTotal.outputTokens, accumulated?.outputTokens),
+    reasoningTokens: pick(attemptTotal.reasoningTokens, accumulated?.reasoningTokens),
+    cacheReadTokens: pick(attemptTotal.cacheReadTokens, accumulated?.cacheReadTokens),
+    cacheWriteTokens: pick(attemptTotal.cacheWriteTokens, accumulated?.cacheWriteTokens),
     cost: accumulated?.cost ?? { provenance: 'unavailable' },
   };
 }
 
-/**
- * Every field present, so a reader never has to tell an absent key from a
- * reported zero.
- *
- * Without this a single-step run under a provider with no `normalizeUsage` hook
- * had no `cost` key at all, while the same run with two steps had
- * `cost: { provenance: 'unavailable' }` — the absent-versus-unknown ambiguity
- * this whole change exists to remove, surviving at field level and varying with
- * the step count.
- */
-export function statedUsage(usage: AgentUsage | undefined): AgentUsage {
-  const stated = (value: AgentUsage['inputTokens'] | undefined): AgentUsage['inputTokens'] =>
-    value ?? { provenance: 'unavailable' };
-  if (!usage) return unknownUsage();
-  return {
-    inputTokens: stated(usage.inputTokens),
-    outputTokens: stated(usage.outputTokens),
-    reasoningTokens: stated(usage.reasoningTokens),
-    cacheReadTokens: stated(usage.cacheReadTokens),
-    cacheWriteTokens: stated(usage.cacheWriteTokens),
-    cost: stated(usage.cost),
-  };
-}
-
-/** Every field `unavailable` — a run that reported nothing, said out loud. */
-export function unknownUsage(): AgentUsage {
-  const nothing = { provenance: 'unavailable' } as const;
-  return {
-    inputTokens: nothing,
-    outputTokens: nothing,
-    reasoningTokens: nothing,
-    cacheReadTokens: nothing,
-    cacheWriteTokens: nothing,
-    cost: nothing,
-  };
-}
-
-export function normalizeSdkUsage(value: LanguageModelUsage): AgentUsage {
-  // A fractional or negative figure is not a token count, and this is the one
-  // place a provider's number enters the runtime. Refusing it *here* means
-  // `unavailable` — an honest "we do not know" — rather than a `ZodError`
-  // thrown out of the terminal commit, which would fail a run that had already
-  // produced its answer over a number nobody reads until the invoice arrives.
-  // The schema refuses the same value, so a driver or a consumer that
-  // fabricates one still fails loudly; only the provider path degrades.
+/** Provider-reported token counts normalized with provenance (used by drivers and adapters). */
+export function normalizeTokenUsage(value: {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly reasoningTokens?: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+}): AgentUsage {
   const reported = (tokens: number | undefined): AgentUsage['inputTokens'] =>
     tokens === undefined || !Number.isSafeInteger(tokens) || tokens < 0
       ? { provenance: 'unavailable' }
@@ -239,19 +205,23 @@ export function normalizeSdkUsage(value: LanguageModelUsage): AgentUsage {
   return {
     inputTokens: reported(value.inputTokens),
     outputTokens: reported(value.outputTokens),
-    reasoningTokens: reported(value.outputTokenDetails.reasoningTokens),
-    cacheReadTokens: reported(value.inputTokenDetails.cacheReadTokens),
-    cacheWriteTokens: reported(value.inputTokenDetails.cacheWriteTokens),
+    reasoningTokens: reported(value.reasoningTokens),
+    cacheReadTokens: reported(value.cacheReadTokens),
+    cacheWriteTokens: reported(value.cacheWriteTokens),
   };
 }
 
 /**
- * The run's signal plus an idle timer. `dispose` disarms the timer once the run stops working;
- * `release` detaches from the run's signal once its terminal is committed — until then a late
- * cancellation of the run still reads on `signal`.
+ * The run's signal plus optional idle timer and wall-clock run deadline (`maxDurationMs`).
+ * `dispose` disarms every timer once the run stops working; `release` detaches from the
+ * parent signal once its terminal is committed — until then a late cancellation still reads.
  */
-export function createIdleDeadline(parent: AbortSignal, timeoutMs: number | undefined) {
-  if (timeoutMs === undefined) {
+export function createIdleDeadline(
+  parent: AbortSignal,
+  timeoutMs: number | undefined,
+  maxDurationMs?: number | undefined,
+) {
+  if (timeoutMs === undefined && maxDurationMs === undefined) {
     const noop = (): void => undefined;
     return {
       signal: parent,
@@ -266,17 +236,27 @@ export function createIdleDeadline(parent: AbortSignal, timeoutMs: number | unde
   }
   const controller = new AbortController();
   const link = linkAbortSignals(parent, controller.signal);
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let durationTimer: ReturnType<typeof setTimeout> | undefined;
   let active = false;
   let suspended = 0;
-  const clear = (): void => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
+  if (maxDurationMs !== undefined) {
+    durationTimer = setTimeout(() => controller.abort('timeout'), maxDurationMs);
+  }
+  const clearIdle = (): void => {
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    idleTimer = undefined;
+  };
+  const clearDuration = (): void => {
+    if (durationTimer !== undefined) clearTimeout(durationTimer);
+    durationTimer = undefined;
   };
   const touch = (): void => {
-    clear();
-    if (!active || suspended > 0 || controller.signal.aborted) return;
-    timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+    clearIdle();
+    if (timeoutMs === undefined || !active || suspended > 0 || controller.signal.aborted) {
+      return;
+    }
+    idleTimer = setTimeout(() => controller.abort('timeout'), timeoutMs);
   };
   return {
     signal: link.signal,
@@ -287,11 +267,11 @@ export function createIdleDeadline(parent: AbortSignal, timeoutMs: number | unde
     },
     stop() {
       active = false;
-      clear();
+      clearIdle();
     },
     suspend() {
       suspended += 1;
-      clear();
+      clearIdle();
     },
     resume() {
       suspended = Math.max(0, suspended - 1);
@@ -299,8 +279,13 @@ export function createIdleDeadline(parent: AbortSignal, timeoutMs: number | unde
     },
     dispose() {
       active = false;
-      clear();
+      clearIdle();
+      clearDuration();
     },
-    release: link.release,
+    release() {
+      clearIdle();
+      clearDuration();
+      link.release();
+    },
   };
 }

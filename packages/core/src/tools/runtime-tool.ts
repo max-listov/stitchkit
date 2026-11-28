@@ -1,5 +1,5 @@
-import type { Tool } from 'ai';
 import type { ZodObject, ZodType, z } from 'zod';
+import type { AgentToolModelOutput } from '../agent-parts/model';
 import type { HttpMethod } from '../contract/define';
 import { type OperationEffect, OperationEffectSchema } from '../contract/operation-effect';
 import type { EndpointMcpPolicy } from '../contract/tool-options';
@@ -33,12 +33,8 @@ export type {
 } from './runtime-tool-declaration';
 export type { RuntimeMcpPresentation } from './runtime-tool-mcp';
 
-export type RuntimeAgentModelOutput = Awaited<
-  ReturnType<NonNullable<Tool<unknown, unknown>['toModelOutput']>>
->;
-
 export interface RuntimeToolPresenters<TOutput> extends RuntimeMcpToolPresenters<TOutput> {
-  agent?(output: TOutput): RuntimeAgentModelOutput | PromiseLike<RuntimeAgentModelOutput>;
+  agent?(output: TOutput): AgentToolModelOutput | PromiseLike<AgentToolModelOutput>;
 }
 
 export interface RuntimeToolFactoryConfig<TContext extends ZodObject> {
@@ -228,7 +224,7 @@ export function createRuntimeToolFactory<TContext extends ZodObject>(
 
 type AgentPresenter = (
   output: unknown,
-) => RuntimeAgentModelOutput | PromiseLike<RuntimeAgentModelOutput>;
+) => AgentToolModelOutput | PromiseLike<AgentToolModelOutput>;
 
 /**
  * A presenter was typed against its own tool's output when the tool was declared

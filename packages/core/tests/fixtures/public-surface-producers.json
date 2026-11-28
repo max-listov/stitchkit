@@ -35,10 +35,18 @@
   },
   "stitchkit/realtime": {
     "BoundRealtimeClient": ["bindRealtimeClient"],
+    "DevicePresenceClient": ["createDevicePresenceClient"],
+    "DevicePresenceContract": ["createDevicePresenceContract"],
+    "DevicePresenceRelayAdapter": ["createDevicePresenceRelayAdapter"],
     "RealtimeClient": ["createRealtimeClient"],
     "RealtimeContract": ["defineRealtimeContract"],
     "RetainedTopics": ["createRetainedTopics"],
     "SocketIOClient": ["createSocketIOClient"]
+  },
+  "stitchkit/device-relay": {
+    "DeviceRelayAgent": ["createDeviceRelayAgent"],
+    "DeviceRelayHub": ["createDeviceRelayHub"],
+    "RelayBrokerPort": ["createMemoryRelayBroker"]
   },
   "stitchkit/live": {
     "EventsDeclaration": ["defineEvents"],
@@ -58,7 +66,9 @@
     "NavZoneController": ["createNavZone"]
   },
   "stitchkit/tools": {
+    "AgentTool": ["defineAgentTool"],
     "AgentToolRegistryBuilder": ["defineToolRegistry"],
+    "AgentToolSet": ["mountAgentTools"],
     "AsyncOperationSnapshotSchema": ["createAsyncOperationSnapshotSchema"],
     "AsyncOperationSnapshotSchemaWithProgress": ["createAsyncOperationSnapshotSchema"],
     "BoundAdaptedContractAsyncOperation": ["bindContractAsyncOperation"],
@@ -159,6 +169,7 @@
     "ByteRange": ["parseByteRange"],
     "ComposedLane": ["socketIoLane", "webSocketLane"],
     "CookieDef": ["defineCookie"],
+    "DevicePresenceServer": ["bindDevicePresence"],
     "EventBus": ["createEventBus"],
     "FetchHandler": ["createHandler"],
     "JwtPayload": ["verifyJwt"],
@@ -201,6 +212,7 @@
     "AgentChildManager": ["createAgentChildManager"],
     "AgentHistoryBudgetResult": ["selectAgentHistory"],
     "AgentHistoryProjectionResult": ["projectAgentHistoryDetailed"],
+    "AgentModelDriver": ["composeModelDrivers", "wrapModelDriver"],
     "AgentModelRegistry": ["defineModelRegistry"],
     "AgentModelSelectionStore": ["createMemoryAgentModelSelectionStore"],
     "AgentObservability": ["createAgentObservability"],
@@ -226,17 +238,22 @@
       "createAgentStateTools"
     ],
     "CompactableHistory": ["selectCompactableHistory"],
+    "CompleteObjectResult": ["completeObject"],
+    "CompleteTextResult": ["completeText"],
+    "CompleteTextStream": ["streamComplete"],
     "DeferredAgentToolController": ["createDeferredAgentToolSurface"],
     "ModelInvocationLedger": ["createModelInvocationLedger"]
   },
   "stitchkit/agent-runtime/sandbox": {
+    "ProcessSandbox": ["createProcessSandbox"],
     "SandboxBackend": ["createBubblewrapSandboxBackend"],
     "SandboxSession": ["createSandboxSession"]
   },
   "stitchkit/agent-runtime/testing": {
     "AgentRaceBarrier": ["createAgentRaceBarrier"],
     "AgentRaceDriver": ["createAgentRaceDriver"],
-    "AgentRaceTrace": ["createAgentRaceTrace"]
+    "AgentRaceTrace": ["createAgentRaceTrace"],
+    "ScriptedModelDriver": ["createScriptedModelDriver"]
   },
   "stitchkit/agent-runtime/harness": {
     "AgentHarnessControlServer": ["createAgentHarnessControlServer"],
@@ -250,6 +267,7 @@
     "AgentController": ["createAgentController"],
     "AgentControlView": [
       "createAgentControlView",
+      "reduceAgentControlDelivery",
       "reduceAgentControlEvent",
       "reduceAgentControlSnapshot"
     ],
@@ -259,6 +277,7 @@
     "AgentHarnessRealtimeBinding": ["bindAgentHarnessRealtime"]
   },
   "stitchkit/agent-runtime/openrouter": {
+    "OpenRouterCatalogCache": ["createOpenRouterCatalogCache"],
     "OpenRouterRouteResolver": ["createOpenRouterRouteResolver"],
     "OpenRouterRouteStore": ["createMemoryOpenRouterRouteStore"]
   },

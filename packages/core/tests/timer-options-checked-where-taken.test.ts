@@ -29,12 +29,18 @@ import {
   createWatchHub,
 } from '../src/entrypoints/application';
 import { defineContract } from '../src/entrypoints/contract';
+import { createDeviceRelayAgent, createDeviceRelayHub } from '../src/entrypoints/device-relay';
 import { createManagedFileBoundary } from '../src/entrypoints/files';
 import { createGeoIpResolver } from '../src/entrypoints/geo';
 import { createWatchClient, type WatchTransport } from '../src/entrypoints/live';
 import { createCacheBridge } from '../src/entrypoints/react';
+import {
+  createDevicePresenceClient,
+  createDevicePresenceContract,
+  type RealtimeClientTransport,
+} from '../src/entrypoints/realtime';
 import { createReleaseWatcher } from '../src/entrypoints/release';
-import { createUnixClientTransport } from '../src/entrypoints/server';
+import { bindDevicePresence, createUnixClientTransport } from '../src/entrypoints/server';
 import {
   createTelegramUpdateIntake,
   memoryTelegramUpdateStore,
@@ -107,6 +113,20 @@ describe('an option that reached a timer unchecked is refused where it is taken'
       'HTTP client timeout',
       PAST,
     );
+    let typedSent = 0;
+    const typed = createClient(contract, {
+      baseUrl: 'http://127.0.0.1:9',
+      fetch: () => {
+        typedSent += 1;
+        return Promise.resolve(new Response('{}'));
+      },
+    });
+    await expectTimerRejection(
+      Promise.resolve().then(() => typed.ping.withOptions({ timeout: PAST })),
+      'HTTP request timeout',
+      PAST,
+    );
+    expect(typedSent).toBe(0);
   });
 
   test('stitchkit/contract: an endpoint client timeout', () => {
@@ -555,6 +575,156 @@ describe('an option that reached a timer unchecked is refused where it is taken'
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('stitchkit/device-relay: hub, fetch, stream and agent timer options are refused where taken', async () => {
+    const inertTransport: RealtimeClientTransport = {
+      connected: false,
+      on: () => () => undefined,
+      emit: () => false,
+      emitWithAck: () => new Promise(() => undefined),
+      onConnectionChange: () => () => undefined,
+    };
+    expectTimerRefusal(
+      () =>
+        createDeviceRelayHub({
+          authenticateDevice: () => null,
+          leaseTtlMs: PAST,
+        }),
+      'DeviceRelayHubConfig.leaseTtlMs',
+      PAST,
+    );
+    expectTimerRefusal(
+      () =>
+        createDeviceRelayHub({
+          authenticateDevice: () => null,
+          leaseSweepIntervalMs: PAST,
+        }),
+      'DeviceRelayHubConfig.leaseSweepIntervalMs',
+      PAST,
+    );
+    expectTimerRefusal(
+      () =>
+        createDeviceRelayHub({
+          authenticateDevice: () => null,
+          defaultRpcTimeoutMs: PAST,
+        }),
+      'DeviceRelayHubConfig.defaultRpcTimeoutMs',
+      PAST,
+    );
+    const hub = createDeviceRelayHub({ authenticateDevice: () => null });
+    try {
+      expectTimerRefusal(
+        () => hub.createRelayFetch({ accountId: 'a', deviceId: 'd', timeoutMs: PAST }),
+        'DeviceRelayFetchOptions.timeoutMs',
+        PAST,
+      );
+      await expectTimerRejection(
+        hub.openRelayStream({
+          accountId: 'a',
+          deviceId: 'd',
+          topic: 't',
+          openTimeoutMs: PAST,
+        }),
+        'DeviceRelayStreamOpenOptions.openTimeoutMs',
+        PAST,
+      );
+    } finally {
+      await hub.close();
+    }
+    expectTimerRefusal(
+      () =>
+        createDeviceRelayAgent({
+          transport: inertTransport,
+          deviceId: 'd',
+          capabilities: [],
+          leaseTtlMs: PAST,
+        }),
+      'DeviceRelayAgentConfig.leaseTtlMs',
+      PAST,
+    );
+    expectTimerRefusal(
+      () =>
+        createDeviceRelayAgent({
+          transport: inertTransport,
+          deviceId: 'd',
+          capabilities: [],
+          heartbeatIntervalMs: PAST,
+        }),
+      'DeviceRelayAgentConfig.heartbeatIntervalMs',
+      PAST,
+    );
+  });
+
+  test('stitchkit/realtime & stitchkit/server: device presence timeouts are refused where taken', async () => {
+    const contract = createDevicePresenceContract({
+      media: {
+        state: z.strictObject({ ok: z.boolean() }),
+        command: z.strictObject({ a: z.string() }),
+      },
+    });
+    const inertTransport: RealtimeClientTransport = {
+      connected: false,
+      on: () => () => undefined,
+      emit: () => false,
+      emitWithAck: () => new Promise(() => undefined),
+      onConnectionChange: () => () => undefined,
+    };
+    expectTimerRefusal(
+      () =>
+        bindDevicePresence(
+          contract,
+          {
+            io: {
+              on: () => undefined,
+              off: () => undefined,
+              emit: () => true,
+              to: () => ({ emit: () => true }),
+            },
+          } as never,
+          { accountOf: () => 'a', commandTimeoutMs: PAST },
+        ),
+      'DevicePresenceServerOptions.commandTimeoutMs',
+      PAST,
+    );
+    expectTimerRefusal(
+      () =>
+        createDevicePresenceClient(contract, {
+          transport: inertTransport,
+          device: { deviceId: 'd', name: 'D', platform: 'web' },
+          requestTimeoutMs: PAST,
+        }),
+      'DevicePresenceClientConfig.requestTimeoutMs',
+      PAST,
+    );
+    expectTimerRefusal(
+      () =>
+        createDevicePresenceClient(contract, {
+          transport: inertTransport,
+          device: { deviceId: 'd', name: 'D', platform: 'web' },
+          commandTimeoutMs: PAST,
+        }),
+      'DevicePresenceClientConfig.commandTimeoutMs',
+      PAST,
+    );
+    const client = createDevicePresenceClient(contract, {
+      transport: inertTransport,
+      device: { deviceId: 'd', name: 'D', platform: 'web' },
+    });
+    try {
+      await expectTimerRejection(
+        client.sendCommand({
+          targetDeviceId: 'other',
+          capability: 'media',
+          command: { a: 'x' },
+          timeoutMs: PAST,
+        }),
+        'DevicePresenceSendCommandInput.timeoutMs',
+        PAST,
+      );
+    } finally {
+      client.close();
     }
   });
 });

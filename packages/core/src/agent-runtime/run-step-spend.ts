@@ -1,12 +1,22 @@
-import type { LanguageModelUsage, ToolSet } from 'ai';
 import { z } from 'zod';
 import { AgentRecordIdSchema } from '../durability/events';
 import { withDeadline } from '../internal/deadline';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { ModelInvocationTraceSchema } from './invocation-schema';
 import type { AgentResolvedModel } from './models';
+import type {
+  AgentModelCostDetails,
+  AgentModelFinishReason,
+  AgentStepTimings,
+} from './models-driver';
+import {
+  AgentModelCostDetailsSchema,
+  AgentModelFinishReasonSchema,
+  AgentStepTimingsSchema,
+} from './models-driver-telemetry';
 import { type RunExecution, runUsage } from './run-execution-state';
 import type { RunProviderLedger } from './run-provider-ledger';
-import { addUsage, normalizeSdkUsage, statedUsage } from './runtime-internals';
+import { addUsage, statedUsage } from './runtime-internals';
 import { AgentProviderResponseSchema, type AgentUsage, AgentUsageSchema } from './schemas';
 
 /** Default timeout (ms) for awaiting `AgentRuntimeConfig.onStepSpend`. */
@@ -52,6 +62,11 @@ const ModelStepSpendShape = {
   model: z.string().min(1),
   provider: AgentStepSpendProviderSchema,
   response: AgentProviderResponseSchema,
+  finishReason: AgentModelFinishReasonSchema.optional(),
+  rawFinishReason: z.string().min(1).optional(),
+  toolCallCount: z.int().nonnegative().optional(),
+  costDetails: AgentModelCostDetailsSchema.optional(),
+  timings: AgentStepTimingsSchema.optional(),
 };
 
 /**
@@ -68,11 +83,20 @@ export const AgentStepSpendSchema = z.discriminatedUnion('phase', [
 /** Canonical fact delivered to `AgentRuntimeConfig.onStepSpend` and `step-finished` observability. */
 export type AgentStepSpend = z.infer<typeof AgentStepSpendSchema>;
 
-/** Narrow view of a stream `finish-step` part needed to record spend. */
+/** Narrow view of a step finish event needed to record spend. */
 export interface StepSpendFinishPart {
-  readonly response: { readonly id: string };
-  readonly usage: LanguageModelUsage;
-  readonly providerMetadata?: unknown;
+  readonly response: {
+    readonly id: string;
+    readonly modelId?: string;
+    readonly timestamp?: Date | string;
+  };
+  readonly usage: AgentUsage;
+  readonly responseProvider?: string;
+  readonly finishReason?: AgentModelFinishReason;
+  readonly rawFinishReason?: string;
+  readonly toolCallCount?: number;
+  readonly costDetails?: AgentModelCostDetails;
+  readonly timings?: AgentStepTimings;
 }
 
 /** Input to `recordStepSpend` for one model step, abandoned attempt, or compaction call. */
@@ -82,6 +106,7 @@ export type RecordStepSpendInput =
       part: StepSpendFinishPart;
       attempt: number;
       selectedModel: AgentResolvedModel;
+      model?: { readonly modelId: string; readonly provider: string };
       ledger: RunProviderLedger;
     }
   | {
@@ -89,6 +114,7 @@ export type RecordStepSpendInput =
       part: StepSpendFinishPart;
       attempt: number;
       selectedModel: AgentResolvedModel;
+      model?: { readonly modelId: string; readonly provider: string };
       ledger: RunProviderLedger;
     }
   | {
@@ -96,23 +122,6 @@ export type RecordStepSpendInput =
       usage: AgentUsage;
       attempt: number;
     };
-
-/**
- * Normalize one step's usage through the resolved model adapter when it
- * provides `normalizeUsage`, falling back to SDK usage normalization.
- */
-export function normalizeStepUsage(
-  selectedModel: AgentResolvedModel | undefined,
-  usage: LanguageModelUsage,
-  providerMetadata?: unknown,
-): AgentUsage {
-  return (
-    selectedModel?.normalizeUsage?.({
-      usage,
-      providerMetadata,
-    }) ?? normalizeSdkUsage(usage)
-  );
-}
 
 /** Why a spend hook did not finish: it threw, or it outlived `stepSpendTimeoutMs`. */
 interface StepSpendHookFailure {
@@ -157,7 +166,7 @@ async function callStepSpendHook(
  * invokes `onStepSpend` under its timeout, and emits `observe` `step-finished`
  * from the exact same fact.
  */
-export async function recordStepSpend<CONTEXT, TOOLS extends ToolSet>(
+export async function recordStepSpend<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
   input: RecordStepSpendInput,
 ): Promise<AgentStepSpend> {
@@ -177,12 +186,18 @@ export async function recordStepSpend<CONTEXT, TOOLS extends ToolSet>(
     state.nonModelUsage = addUsage(state.nonModelUsage, usage);
     spend = AgentStepSpendSchema.parse({ ...base, phase: input.phase, usage });
   } else {
-    const usage = statedUsage(
-      normalizeStepUsage(input.selectedModel, input.part.usage, input.part.providerMetadata),
-    );
+    const usage = statedUsage(input.part.usage);
     const response = await input.ledger.recordResponse({
       id: input.part.response.id,
-      providerMetadata: input.part.providerMetadata,
+      ...(input.part.response.modelId !== undefined && {
+        modelId: input.part.response.modelId,
+      }),
+      ...(input.part.response.timestamp !== undefined && {
+        timestamp: input.part.response.timestamp,
+      }),
+      ...(input.part.responseProvider !== undefined && {
+        responseProvider: input.part.responseProvider,
+      }),
       stepNumber: state.step,
       attempt: input.attempt,
       usage,
@@ -198,13 +213,23 @@ export async function recordStepSpend<CONTEXT, TOOLS extends ToolSet>(
     spend = AgentStepSpendSchema.parse({
       ...base,
       phase: input.phase,
-      model: input.selectedModel.descriptor.modelId,
+      model: input.model?.modelId ?? input.selectedModel.descriptor.modelId,
       provider: {
-        key: input.selectedModel.descriptor.provider,
+        key: input.model?.provider ?? input.selectedModel.descriptor.provider,
         ...(response.provider !== undefined && { upstream: response.provider }),
       },
       response,
       usage,
+      ...(input.part.finishReason !== undefined && { finishReason: input.part.finishReason }),
+      ...(input.part.rawFinishReason !== undefined &&
+        input.part.rawFinishReason.length > 0 && {
+          rawFinishReason: input.part.rawFinishReason,
+        }),
+      ...(input.part.toolCallCount !== undefined && {
+        toolCallCount: input.part.toolCallCount,
+      }),
+      ...(input.part.costDetails !== undefined && { costDetails: input.part.costDetails }),
+      ...(input.part.timings !== undefined && { timings: input.part.timings }),
     });
   }
   state.usage = runUsage(state);
@@ -254,6 +279,15 @@ export async function recordStepSpend<CONTEXT, TOOLS extends ToolSet>(
       modelId: spend.model,
       provider: spend.provider,
       response: spend.response,
+      ...(spend.finishReason !== undefined && { finishReason: spend.finishReason }),
+      ...(spend.rawFinishReason !== undefined && { rawFinishReason: spend.rawFinishReason }),
+      ...(spend.toolCallCount !== undefined && { toolCallCount: spend.toolCallCount }),
+      ...(spend.costDetails !== undefined && { costDetails: spend.costDetails }),
+      ...(spend.timings !== undefined && {
+        timings: spend.timings,
+        durationMs: spend.timings.stepTimeMs,
+        ...(spend.timings.ttftMs !== undefined && { ttftMs: spend.timings.ttftMs }),
+      }),
     }),
     usage: spend.usage,
     ...(spendHookError !== undefined && { spendHookError }),

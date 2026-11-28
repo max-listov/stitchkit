@@ -13,7 +13,7 @@ export interface SpendFactsReader {
 }
 
 const Count = z.int().nonnegative();
-const NonNegativeFinite = z.number().nonnegative().finite();
+const NonNegativeFinite = z.number().nonnegative();
 const NonEmptyString = z.string().min(1);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

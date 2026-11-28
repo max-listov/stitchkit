@@ -1,21 +1,26 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   type AgentModelDescriptor,
+  type AgentModelDriver,
+  type AgentModelStreamPart,
   type AgentRuntimeEvent,
   type AgentRuntimeStore,
+  type AgentUsage,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
 import { AppError } from '../src/entrypoints/contract';
-import { defineRuntimeTool, type RuntimeToolDefinition } from '../src/entrypoints/tools';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import {
+  defineRuntimeTool,
+  mountAgentTools,
+  type RuntimeToolDefinition,
+} from '../src/entrypoints/tools';
 import { sqliteScratchDir } from './support/sqlite-scratch';
 
 const roots: string[] = [];
@@ -24,9 +29,9 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-const usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 1, text: 1, reasoning: undefined },
+const usage: AgentUsage = {
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
 };
 
 const descriptor: AgentModelDescriptor = {
@@ -41,60 +46,39 @@ const protocol = defineAgentProtocol({
   inputMetadata: z.object({}),
 });
 
-function toolRound(toolName: string) {
-  return {
-    stream: simulateReadableStream({
-      chunks: [
-        {
-          type: 'tool-call' as const,
-          toolCallId: 'call-1',
-          toolName,
-          input: '{}',
-        },
-        {
-          type: 'finish' as const,
-          finishReason: { unified: 'tool-calls' as const, raw: undefined },
-          usage,
-        },
-      ],
-    }),
-  };
+function toolRound(toolName: string): readonly AgentModelStreamPart[] {
+  return [
+    { type: 'tool-call', toolCallId: 'call-1', toolName, input: '{}' },
+    { type: 'finish', finishReason: 'tool-calls', usage },
+  ];
 }
 
-function textRound() {
-  return {
-    stream: simulateReadableStream({
-      chunks: [
-        { type: 'text-start' as const, id: 'answer' },
-        { type: 'text-delta' as const, id: 'answer', delta: 'done' },
-        { type: 'text-end' as const, id: 'answer' },
-        {
-          type: 'finish' as const,
-          finishReason: { unified: 'stop' as const, raw: undefined },
-          usage,
-        },
-      ],
-    }),
-  };
+function textRound(): readonly AgentModelStreamPart[] {
+  return [
+    { type: 'text-start', id: 'answer' },
+    { type: 'text-delta', id: 'answer', delta: 'done' },
+    { type: 'text-end', id: 'answer' },
+    { type: 'finish', finishReason: 'stop', usage },
+  ];
 }
 
 function runtimeConfig(
   store: AgentRuntimeStore,
-  model: MockLanguageModelV4,
+  driver: AgentModelDriver,
   runtimeTools: readonly RuntimeToolDefinition[],
   events: AgentRuntimeEvent[] = [],
 ) {
   return {
     protocol,
     store,
-    models: { resolve: () => ({ descriptor, model }) },
+    models: { resolve: () => ({ descriptor, driver }) },
     prompt: () => ({
       instructions: 'test',
       sections: [],
       instructionTokens: { provenance: 'unavailable' as const },
       contextDecision: 'unavailable' as const,
     }),
-    tools: () => mountAgent([], { access: { open: 'local-operator' }, runtimeTools }),
+    tools: () => mountAgentTools([], { access: { open: 'local-operator' }, runtimeTools }),
     publish: (event: AgentRuntimeEvent) => void events.push(event),
     loop: { maxSteps: 2 },
   };
@@ -118,12 +102,14 @@ describe('mounted Agent tool error outcomes', () => {
         });
       },
     });
-    const model = new MockLanguageModelV4({
-      doStream: [toolRound('guarded_operation'), textRound()],
+    const driver = createScriptedModelDriver({
+      provider: 'test',
+      modelId: 'mounted-tool-errors',
+      steps: [toolRound('guarded_operation'), textRound()],
     });
     const events: AgentRuntimeEvent[] = [];
     const sqlite = createBunSqliteAgentRuntimeStore({ filename });
-    const runtime = createAgentRuntime(runtimeConfig(sqlite.store, model, [mounted], events));
+    const runtime = createAgentRuntime(runtimeConfig(sqlite.store, driver, [mounted], events));
 
     const result = await runtime.submit({
       conversationId: 'typed-error',
@@ -154,8 +140,8 @@ describe('mounted Agent tool error outcomes', () => {
         output: expected,
       }),
     );
-    expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain('CONFLICT');
-    expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain('error-text');
+    expect(JSON.stringify(driver.requests[1]?.messages)).toContain('CONFLICT');
+    expect(JSON.stringify(driver.requests[1]?.messages)).toContain('error-text');
     await runtime.close();
     await sqlite.close();
 
@@ -181,11 +167,13 @@ describe('mounted Agent tool error outcomes', () => {
       output: z.object({ error: z.string(), accepted: z.boolean() }),
       handler: () => ({ error: 'field-value', accepted: true }),
     });
-    const model = new MockLanguageModelV4({
-      doStream: [toolRound('business_result'), textRound()],
+    const driver = createScriptedModelDriver({
+      provider: 'test',
+      modelId: 'mounted-tool-errors',
+      steps: [toolRound('business_result'), textRound()],
     });
     const runtime = createAgentRuntime(
-      runtimeConfig(createMemoryAgentRuntimeStore(), model, [mounted]),
+      runtimeConfig(createMemoryAgentRuntimeStore(), driver, [mounted]),
     );
     const result = await runtime.submit({
       conversationId: 'business-error-field',

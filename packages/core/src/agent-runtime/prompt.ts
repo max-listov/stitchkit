@@ -1,5 +1,5 @@
-import type { Instructions } from 'ai';
 import { z } from 'zod';
+import type { AgentInstructions } from '../agent-parts/model';
 import { type AgentMessage, AgentProvenanceSchema } from './schemas';
 import {
   type AgentHistoryEvidencePolicy,
@@ -58,7 +58,7 @@ export interface AgentPromptBudget {
 }
 
 export interface ComposedAgentPrompt {
-  instructions: Instructions;
+  instructions: AgentInstructions;
   sections: readonly {
     name: string;
     stability: 'stable' | 'dynamic';
@@ -272,7 +272,7 @@ export interface ComposeAgentPromptOptions<CONTEXT> {
   historyTokens?: AgentTokenCount;
   oversizePolicy?: 'reject' | 'compact';
   estimateFallback?: (text: string) => AgentTokenCount | Promise<AgentTokenCount>;
-  adaptInstructions?: (text: string) => Instructions | Promise<Instructions>;
+  adaptInstructions?: (text: string) => AgentInstructions | Promise<AgentInstructions>;
 }
 
 function knownValue(value: AgentTokenCount): number | undefined {

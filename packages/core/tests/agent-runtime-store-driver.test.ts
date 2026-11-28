@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import type { AgentRuntimeStore } from '../src/entrypoints/agent-runtime';
 import {
@@ -9,7 +8,10 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
-import { runAgentStoreConformance } from '../src/entrypoints/agent-runtime/testing';
+import {
+  createScriptedModelDriver,
+  runAgentStoreConformance,
+} from '../src/entrypoints/agent-runtime/testing';
 
 describe('agent runtime store driver', () => {
   test('memory driver passes the reusable production-store contract', async () => {
@@ -37,7 +39,7 @@ describe('agent runtime store driver', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -106,7 +108,7 @@ describe('agent runtime store driver', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -179,7 +181,7 @@ describe('agent runtime store driver', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -273,7 +275,7 @@ describe('agent runtime store driver', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -340,7 +342,7 @@ describe('agent runtime store driver', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {

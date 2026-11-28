@@ -4,8 +4,12 @@ import {
   OpenRouterCatalogSnapshotSchema,
   type OpenRouterSnapshotModel,
 } from './openrouter-catalog';
+import {
+  effectiveContextLength,
+  resolveOpenRouterModelCeiling,
+} from './openrouter-catalog-query';
 
-const Usd = z.number().nonnegative().finite();
+const Usd = z.number().nonnegative();
 
 /**
  * What a model must show in the snapshot to be used. Free of roles: which model a
@@ -34,6 +38,7 @@ export const OpenRouterAdmissionReasonSchema = z.enum([
   'stale-snapshot',
   'missing-parameter',
   'missing-modality',
+  'context-unknown',
   'context-too-small',
   'price-unknown',
   'over-price',
@@ -76,32 +81,76 @@ function floatingAlias(modelId: string): string | undefined {
   return undefined;
 }
 
+function highestObservedPrice(
+  model: OpenRouterSnapshotModel,
+  side: 'prompt' | 'completion',
+): number | undefined {
+  const values: number[] = [];
+  const add = (value: number | undefined): void => {
+    if (value !== undefined) values.push(value);
+  };
+  if (side === 'prompt') {
+    add(model.promptUsdPerMillion);
+    add(model.cacheWriteUsdPerMillion);
+    add(model.cacheWrite1hUsdPerMillion);
+    for (const tier of model.pricingTiers ?? []) {
+      add(tier.promptUsdPerMillion);
+      add(tier.cacheWriteUsdPerMillion);
+      add(tier.cacheWrite1hUsdPerMillion);
+    }
+    add(model.conditionalPricingCeiling?.promptUsdPerMillion);
+    add(model.conditionalPricingCeiling?.cacheWriteUsdPerMillion);
+    add(model.conditionalPricingCeiling?.cacheWrite1hUsdPerMillion);
+  } else {
+    add(model.completionUsdPerMillion);
+    for (const tier of model.pricingTiers ?? []) add(tier.completionUsdPerMillion);
+    add(model.conditionalPricingCeiling?.completionUsdPerMillion);
+  }
+  return values.length > 0 ? Math.max(...values) : undefined;
+}
+
 /**
  * Every stated price is checked before an unstated one answers: a price the snapshot
  * shows over its limit rejects the model, whatever the other side leaves unknown.
+ * Uses the worst-case pricing ceiling across base pricing, cache writes, and conditional overrides.
  */
 function priceCheck(
   model: OpenRouterSnapshotModel,
   policy: z.output<typeof OpenRouterAdmissionPolicySchema>,
 ): OpenRouterModelAdmission | undefined {
+  const ceiling = resolveOpenRouterModelCeiling(model);
   let unknown: OpenRouterModelAdmission | undefined;
-  for (const [limit, price, side] of [
-    [policy.maxPromptUsdPerMillion, model.promptUsdPerMillion, 'prompt'],
-    [policy.maxCompletionUsdPerMillion, model.completionUsdPerMillion, 'completion'],
-  ] as const) {
+  const checks: readonly (readonly [
+    number | undefined,
+    number | undefined,
+    'prompt' | 'completion',
+  ])[] = [
+    [policy.maxPromptUsdPerMillion, ceiling.promptUsdPerMillion, 'prompt'],
+    [policy.maxCompletionUsdPerMillion, ceiling.completionUsdPerMillion, 'completion'],
+  ];
+  for (const [limit, ceilingPrice, side] of checks) {
     if (limit === undefined) continue;
-    if (price === undefined)
-      unknown ??= {
-        state: 'unverified',
-        reason: 'price-unknown',
-        detail: `the ${side} price is not stated`,
-      };
-    else if (price > limit)
+    const observed = highestObservedPrice(model, side);
+    if (observed !== undefined && observed > limit) {
       return {
         state: 'rejected',
         reason: 'over-price',
-        detail: `the ${side} price ${price} USD per million exceeds ${limit}`,
+        detail: `the ${side} price ${observed} USD per million exceeds ${limit}`,
       };
+    }
+    if (ceilingPrice === undefined) {
+      unknown ??= {
+        state: 'unverified',
+        reason: 'price-unknown',
+        detail: `the ${side} price ceiling is not stated`,
+      };
+    } else if (ceilingPrice > limit) {
+      return {
+        state: 'rejected',
+        reason: 'over-price',
+        detail: `the ${side} price ${ceilingPrice} USD per million exceeds ${limit}`,
+      };
+    }
   }
   return unknown;
 }
@@ -138,6 +187,12 @@ export function evaluateOpenRouterModelAdmission(input: {
       reason: 'floating-alias',
       detail: `${model.id} stands for ${model.aliasOf}`,
     };
+  if (model.aliasTarget)
+    return {
+      state: 'rejected',
+      reason: 'floating-alias',
+      detail: `${model.id} aliases ${model.aliasTarget.id}`,
+    };
   const missing = policy.requiredParameters.filter(
     (name) => !model.supportedParameters.includes(name),
   );
@@ -156,12 +211,21 @@ export function evaluateOpenRouterModelAdmission(input: {
       reason: 'missing-modality',
       detail: `does not accept ${modalities.join(', ')} input`,
     };
-  if (policy.minContextLength !== undefined && model.contextLength < policy.minContextLength)
-    return {
-      state: 'rejected',
-      reason: 'context-too-small',
-      detail: `context ${model.contextLength} is under ${policy.minContextLength}`,
-    };
+  if (policy.minContextLength !== undefined) {
+    const contextLength = effectiveContextLength(model);
+    if (contextLength === undefined)
+      return {
+        state: 'unverified',
+        reason: 'context-unknown',
+        detail: 'the context length is not stated',
+      };
+    if (contextLength < policy.minContextLength)
+      return {
+        state: 'rejected',
+        reason: 'context-too-small',
+        detail: `context ${contextLength} is under ${policy.minContextLength}`,
+      };
+  }
   const price = priceCheck(model, policy);
   if (price) return price;
   if (policy.requireLiveEndpoint) {

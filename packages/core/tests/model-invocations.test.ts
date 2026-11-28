@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { simulateReadableStream, tool } from 'ai';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
@@ -18,8 +18,10 @@ import {
   type ModelInvocationAttemptContext,
   type ModelInvocationConfig,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import { openRouterProvider } from '../src/entrypoints/agent-runtime/openrouter';
 import { createBunSqliteAgentRuntimeStore } from '../src/entrypoints/agent-runtime/sqlite/bun';
+import { defineAgentTool } from '../src/entrypoints/tools';
 
 type MockPart =
   Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'] extends ReadableStream<
@@ -62,12 +64,16 @@ const modelDescriptor = {
 };
 function successModel() {
   return new MockLanguageModelV4({
-    doGenerate: async () => ({
-      content: [{ type: 'text', text: 'answer' }],
-      finishReason: { unified: 'stop', raw: undefined },
-      usage,
-      warnings: [],
-      response: { id: 'response-1', modelId: 'effective-model' },
+    doStream: async () => ({
+      stream: simulateReadableStream<MockPart>({
+        chunks: [
+          { type: 'response-metadata', id: 'response-1', modelId: 'effective-model' },
+          { type: 'text-start', id: 't' },
+          { type: 'text-delta', id: 't', delta: 'answer' },
+          { type: 'text-end', id: 't' },
+          { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+        ],
+      }),
     }),
   });
 }
@@ -77,7 +83,11 @@ function registry(first = successModel(), second = successModel()) {
       first: modelDescriptor,
       second: { ...modelDescriptor, modelId: 'fallback-model' },
     },
-    providers: { test: { create: (id) => (id === 'fallback-model' ? second : first) } },
+    providers: {
+      test: {
+        create: (id) => fromAiSdkModel(id === 'fallback-model' ? second : first),
+      },
+    },
   });
 }
 
@@ -213,7 +223,7 @@ describe('public completion and agent invocation receipts', () => {
     await expect(
       ledger.read({ conversationId: input.conversationId, limit: 100 }, 'spoof'),
     ).rejects.toThrow('Forbidden');
-    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(model.doStreamCalls).toHaveLength(0);
     expect(
       (await store.readEvents({ conversationId: input.conversationId, limit: 100 })).items,
     ).toHaveLength(0);
@@ -247,7 +257,7 @@ describe('public completion and agent invocation receipts', () => {
         'succeeded',
       ]);
       expect(results[0]?.invocationId).toBe(results[1]?.invocationId);
-      expect(model.doGenerateCalls).toHaveLength(1);
+      expect(model.doStreamCalls).toHaveLength(1);
       await expect(other.complete({ ...input, prompt: 'changed' }, 'trusted')).rejects.toThrow(
         'conflicts',
       );
@@ -270,7 +280,7 @@ describe('public completion and agent invocation receipts', () => {
         authorize,
       });
       expect((await imported.complete(input, 'trusted')).outcome).toBe('duplicate');
-      expect(model.doGenerateCalls).toHaveLength(1);
+      expect(model.doStreamCalls).toHaveLength(1);
     } finally {
       sqlite.close();
       await rm(filename, { force: true });
@@ -281,7 +291,7 @@ describe('public completion and agent invocation receipts', () => {
 
   test('fallback has separate attempts, measured usage and no invented effective identity', async () => {
     const failed = new MockLanguageModelV4({
-      doGenerate: async () => {
+      doStream: async () => {
         throw new Error('private upstream failure');
       },
     });
@@ -299,8 +309,8 @@ describe('public completion and agent invocation receipts', () => {
     });
     const result = await ledger.complete({ ...input, models: ['first', 'second'] }, 'trusted');
     expect(result.outcome).toBe('succeeded');
-    expect(failed.doGenerateCalls).toHaveLength(1);
-    expect(succeeded.doGenerateCalls).toHaveLength(1);
+    expect(failed.doStreamCalls).toHaveLength(1);
+    expect(succeeded.doStreamCalls).toHaveLength(1);
     expect(new Set(contexts.map((value) => value.attemptId)).size).toBe(2);
     const { items } = await ledger.read(
       { conversationId: input.conversationId, limit: 100 },
@@ -377,7 +387,9 @@ describe('public completion and agent invocation receipts', () => {
         context: z.literal('trusted'),
         inputMetadata: z.object({}),
       }),
-      models: { resolve: () => ({ descriptor: modelDescriptor, model }) },
+      models: {
+        resolve: () => ({ descriptor: modelDescriptor, driver: fromAiSdkModel(model) }),
+      },
       prompt: () => ({
         instructions: 'agent policy',
         sections: [],
@@ -385,8 +397,8 @@ describe('public completion and agent invocation receipts', () => {
         contextDecision: 'unavailable',
       }),
       tools: () => ({
-        echo: tool({
-          inputSchema: z.object({}),
+        echo: defineAgentTool({
+          input: z.object({}),
           execute: async () => {
             toolCalls += 1;
             return 'ok';

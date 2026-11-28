@@ -6,6 +6,11 @@ import {
 } from '../observability/bounded-sink';
 import type { ObservabilitySinkStatus } from '../observability/status';
 import { childSpan, createTraceContext } from '../observability/trace';
+import {
+  AgentModelCostDetailsSchema,
+  AgentModelFinishReasonSchema,
+  AgentStepTimingsSchema,
+} from './models-driver-telemetry';
 import { AgentStepSpendPhaseSchema, AgentStepSpendProviderSchema } from './run-step-spend';
 import {
   AgentProviderResponseSchema,
@@ -51,6 +56,11 @@ export const AgentStepFinishedEventSchema = AgentRunEventBaseSchema.extend({
    */
   phase: AgentStepSpendPhaseSchema,
   provider: AgentStepSpendProviderSchema.optional(),
+  finishReason: AgentModelFinishReasonSchema.optional(),
+  rawFinishReason: z.string().min(1).optional(),
+  toolCallCount: z.int().nonnegative().optional(),
+  costDetails: AgentModelCostDetailsSchema.optional(),
+  timings: AgentStepTimingsSchema.optional(),
   ttftMs: z.number().nonnegative().optional(),
   /** What this one step reported — the provider's own figure, per step. */
   usage: AgentUsageSchema,

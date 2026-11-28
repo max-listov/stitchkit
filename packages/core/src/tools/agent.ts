@@ -1,207 +1,164 @@
-import type { ToolExecutionOptions, ToolSet } from 'ai';
+import type { Tool, ToolExecutionOptions, ToolSet } from 'ai';
 import { jsonSchema, tool } from 'ai';
+import type {
+  AgentModelFileData,
+  AgentModelJsonValue,
+  AgentModelMessage,
+  AgentModelProviderOptions,
+  AgentToolModelOutput,
+} from '../agent-parts/model';
 import { isRecord } from '../internal/typed';
 import type { ServiceDef } from '../server/types';
-import { inspectOnlyError, resolveToolAccess, type ToolAccess } from './access';
-import { AgentToolError } from './agent-tool-error';
-import type { ToolDurability, ToolDurabilityFactory } from './durability-port';
-import { isToolExecutionControlError } from './execute';
-import type { ErrorHintFn, ToolCallHooks } from './execute-hooks';
-import { toolCauseFromResult, toolResultFromError } from './execute-result';
-import { createToolRunner, formatToolError, type ToolExtend } from './mount';
-import type { AgentToolRegistry } from './registry';
-import { resolveRuntimeToolCall } from './runtime-call-context';
-import { agentPresenterOf } from './runtime-tool';
-import type { RuntimeToolDefinition } from './runtime-tool-declaration';
-import { localVerdict } from './schema/json-schema-origin';
-import { collectToolSurface } from './surface';
+import { adaptAiSdkMessages, safeJsonValue } from './agent-messages';
+import { type AgentMountConfig, type AgentToolSet, buildAgentTools } from './agent-tools';
 
-export interface AgentContext {
-  [key: string]: unknown;
+type AiSdkToolOutput = Awaited<
+  ReturnType<NonNullable<Tool<unknown, unknown>['toModelOutput']>>
+>;
+type AiSdkProviderOptions = NonNullable<Tool<unknown, unknown>['providerOptions']>;
+type AiSdkContentItem = Extract<AiSdkToolOutput, { type: 'content' }>['value'][number];
+type AiSdkFilePart = Extract<AiSdkContentItem, { type: 'file' }>;
+
+function toAiSdkProviderOptions(
+  options: AgentModelProviderOptions | undefined,
+): AiSdkProviderOptions | undefined {
+  if (!options) return undefined;
+  const out: AiSdkProviderOptions = {};
+  for (const [namespace, entry] of Object.entries(options)) {
+    if (!entry) continue;
+    const inner: Record<string, AgentModelJsonValue> = {};
+    for (const [key, value] of Object.entries(entry)) {
+      if (value !== undefined) inner[key] = safeJsonValue(value);
+    }
+    out[namespace] = inner;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
-export interface AgentMountConfig {
-  context?: AgentContext;
-  /** Tool-call observability hooks. */
-  hooks?: ToolCallHooks;
-  /**
-   * Required access policy for every mounted tool call — pass `{ gate }` with
-   * `beforeHandle` (for example from `createAuthHook`), `{ open: 'public' | 'local-operator' | 'remote' }`,
-   * or `{ inspect: true }` for read-only surface inspection that refuses every execution.
-   */
-  access: ToolAccess;
-  extend?: ToolExtend;
-  /** Coerce JSON-stringified arrays/objects in tool arguments. Default: true. */
-  coerceJsonArgs?: boolean;
-  /** Report output keys the contract schema removed — → ADR 0037. */
-  onOutputStrip?: (toolName: string, paths: string[]) => void;
-  /** Flatten discriminated union inputs into a single object. Default: false. */
-  flattenUnionInput?: boolean;
-  /**
-   * Advertise every input, runtime tools included, with no `$ref`: references
-   * written out, each recursive definition unrolled this many levels and
-   * closed by an open node. For providers that refuse recursive schemas.
-   * A tool's `tool.inputRecursionDepth` wins. Absent: references stay.
-   */
-  inputRecursionDepth?: number;
-  /** The most levels the provider accepts in one input document; deeper nodes open. Absent: no limit. */
-  inputNestingDepth?: number;
-  /** Global error hint injected into every failed tool result. */
-  errorHint?: ErrorHintFn;
-  /** Framework-managed pathless operations mounted beside contract tools. */
-  runtimeTools?: readonly RuntimeToolDefinition[];
-  /**
-   * A composed tool registry. Mutually exclusive with `runtimeTools`: one
-   * declaration of the runtime surface, not two lists to reconcile.
-   */
-  registry?: AgentToolRegistry;
-  /**
-   * Make tool bodies restartable: `step` / `sleep` / `waitFor` appear in the
-   * handler context, backed by whatever ledger the application already has.
-   *
-   * Without it a tool that starts slow work and must report exactly once —
-   * including after a host restart — has to keep that bookkeeping beside the
-   * tool instead of inside it. `agent-runtime` supplies its own durability
-   * through the call context and does not need this option; an application
-   * running its own loop does, and had no way to reach it.
-   */
-  durability?: ToolDurabilityFactory;
+function toAiSdkFileData(data: AgentModelFileData): AiSdkFilePart['data'] {
+  if (data.type === 'data') return { type: 'data', data: data.data };
+  if (data.type === 'url') return { type: 'url', url: data.url };
+  if (data.type === 'reference') return { type: 'reference', reference: data.reference };
+  return { type: 'text', text: data.text };
 }
 
+function toAiSdkModelOutput(output: AgentToolModelOutput): AiSdkToolOutput {
+  const sanitized = toAiSdkProviderOptions(output.providerOptions);
+  const opts = sanitized ? { providerOptions: sanitized } : {};
+  if (output.type === 'text' || output.type === 'error-text') {
+    return { type: output.type, value: output.value, ...opts };
+  }
+  if (output.type === 'json' || output.type === 'error-json') {
+    return { type: output.type, value: output.value, ...opts };
+  }
+  if (output.type === 'execution-denied') {
+    return {
+      type: 'execution-denied',
+      ...(output.reason !== undefined && { reason: output.reason }),
+      ...opts,
+    };
+  }
+  const items: AiSdkContentItem[] = output.value.map((part): AiSdkContentItem => {
+    const partSanitized = toAiSdkProviderOptions(part.providerOptions);
+    const partOpts = partSanitized ? { providerOptions: partSanitized } : {};
+    if (part.type === 'text') return { type: 'text', text: part.text, ...partOpts };
+    if (part.type === 'file') {
+      return {
+        type: 'file',
+        data: toAiSdkFileData(part.data),
+        mediaType: part.mediaType,
+        ...(part.filename !== undefined && { filename: part.filename }),
+        ...partOpts,
+      };
+    }
+    return { type: 'custom', ...partOpts };
+  });
+  return { type: 'content', value: items, ...opts };
+}
+
+/**
+ * Adapt a peer-free `AgentToolSet` into an AI SDK `ToolSet`.
+ *
+ * Wraps each declared JSON Schema with `jsonSchema()` so `@ai-sdk/provider-utils`
+ * preserves `additionalProperties` and every authored keyword verbatim, and emits
+ * only non-deprecated `{ type: 'file', data, mediaType }` outputs. → ADR 0336.
+ */
+function toAiSdkToolSet(nativeTools: AgentToolSet): ToolSet {
+  const tools: ToolSet = {};
+  for (const [name, nativeTool] of Object.entries(nativeTools)) {
+    const parseInput = nativeTool.parseInput;
+    const inputSchema = jsonSchema<unknown>(nativeTool.inputSchema, {
+      validate: async (value) => {
+        if (parseInput) {
+          const parsed = await parseInput(value);
+          return parsed.ok
+            ? { success: true, value: parsed.value }
+            : {
+                success: false,
+                error:
+                  parsed.error instanceof Error
+                    ? parsed.error
+                    : new Error(String(parsed.error)),
+              };
+        }
+        return isRecord(value)
+          ? { success: true, value }
+          : { success: false, error: new Error('Tool arguments must be an object') };
+      },
+    });
+    const nativeExecute = nativeTool.execute;
+    const execute = nativeExecute
+      ? (rawArgs: unknown, options: ToolExecutionOptions<Record<string, unknown>>) => {
+          let adaptedMessages: AgentModelMessage[] | undefined;
+          return nativeExecute.call(nativeTool, rawArgs, {
+            toolCallId: options.toolCallId,
+            get messages() {
+              adaptedMessages ??= adaptAiSdkMessages(options.messages);
+              return adaptedMessages;
+            },
+            abortSignal: options.abortSignal,
+          });
+        }
+      : undefined;
+    const nativeToModelOutput = nativeTool.toModelOutput;
+    const toModelOutput = nativeToModelOutput
+      ? async (options: { toolCallId: string; input: unknown; output: unknown }) =>
+          toAiSdkModelOutput(await nativeToModelOutput.call(nativeTool, options))
+      : undefined;
+    const toolProviderOptions = toAiSdkProviderOptions(nativeTool.providerOptions);
+    const shared = {
+      description: nativeTool.description,
+      inputSchema,
+      ...(nativeTool.strict !== undefined && { strict: nativeTool.strict }),
+      ...(toolProviderOptions && { providerOptions: toolProviderOptions }),
+    };
+    const withOutput = { ...shared, ...(toModelOutput && { toModelOutput }) };
+    if (execute) {
+      tools[name] = tool<unknown, unknown, Record<string, unknown>>({
+        ...withOutput,
+        ...(nativeTool.outputSchema && { outputSchema: nativeTool.outputSchema }),
+        execute,
+      });
+    } else if (nativeTool.outputSchema) {
+      tools[name] = tool<unknown, unknown, Record<string, unknown>>({
+        ...withOutput,
+        outputSchema: nativeTool.outputSchema,
+      });
+    } else {
+      tools[name] = tool<unknown, never, Record<string, unknown>>(shared);
+    }
+  }
+  return tools;
+}
+
+/**
+ * Mount contract services and runtime tools as an AI SDK `ToolSet` for applications
+ * driving their own AI SDK loop. Delegates surface projection and execution to
+ * `mountAgentTools`. → ADR 0336.
+ */
 export function mountAgent(
   services: ServiceDef | ServiceDef[],
   config: AgentMountConfig,
 ): ToolSet {
-  const lifecycle = resolveToolAccess('mountAgent', config);
-  const serviceList = Array.isArray(services) ? services : [services];
-  if (config.registry && config.runtimeTools) {
-    throw new Error('mountAgent accepts either runtimeTools or a registry, not both');
-  }
-  const runtimeTools = config.registry ? config.registry.tools : config.runtimeTools;
-  const tools: ToolSet = {};
-  const runTool = createToolRunner({
-    source: 'agent',
-    toolSurface: true,
-    extend: config.extend,
-    context: config.context,
-    hooks: config.hooks,
-    lifecycle,
-    coerceJsonArgs: config.coerceJsonArgs,
-    onOutputStrip: config.onOutputStrip,
-  });
-
-  for (const entry of collectToolSurface({
-    surface: { services: serviceList, runtimeTools },
-    transport: 'AGENT',
-    extend: config.extend,
-    flattenUnionInput: config.flattenUnionInput,
-    inputRecursionDepth: config.inputRecursionDepth,
-    inputNestingDepth: config.inputNestingDepth,
-  })) {
-    const { mountable } = entry;
-    const inputSchema = jsonSchema(mountable.presentationSchema, {
-      validate: async (value) =>
-        isRecord(value)
-          ? { success: true, value }
-          : { success: false, error: new Error('Tool arguments must be an object') },
-    });
-    const execute = async (rawArgs: unknown, options: ToolExecutionOptions<unknown>) => {
-      const inspectErr = inspectOnlyError(lifecycle);
-      if (inspectErr) {
-        const result = toolResultFromError(inspectErr);
-        throw new AgentToolError(
-          formatToolError(result, mountable.name, config.errorHint),
-          toolCauseFromResult(result),
-        );
-      }
-      const args = isRecord(rawArgs) ? rawArgs : {};
-      // The runtime's own durability and progress travel in the SDK call
-      // context; an application that runs its own loop declares a durability
-      // factory instead. The context wins where both exist: it is the runtime
-      // driving the call, and its ledger is the one the run is recorded in.
-      const runtimeCall = resolveRuntimeToolCall(
-        options.context,
-        options.toolCallId,
-        options.abortSignal,
-      );
-      const durability: ToolDurability | undefined =
-        runtimeCall?.durability ??
-        config.durability?.(options.toolCallId, options.abortSignal);
-      // The provider's call id travels as ordinary call context, so it reaches
-      // `beforeToolCall` / `afterToolCall` / `onToolError` on the existing hook
-      // seam instead of through a second observation channel of its own. The
-      // runtime's reporter replaces the no-op `ctx.reportProgress` the same way.
-      const callContext = {
-        signal: options.abortSignal,
-        toolCallId: options.toolCallId,
-        ...(runtimeCall && { reportProgress: runtimeCall.reportProgress }),
-      };
-      const executeTool = durability
-        ? createToolRunner({
-            source: 'agent',
-            toolSurface: true,
-            extend: config.extend,
-            context: {
-              ...config.context,
-              // Bound, because the port is public and an application may
-              // satisfy it with a class: a method taken as a bare value
-              // loses `this` and fails on its first call.
-              step: durability.step.bind(durability),
-              sleep: durability.sleep.bind(durability),
-              waitFor: durability.waitFor.bind(durability),
-            },
-            hooks: config.hooks,
-            lifecycle,
-            coerceJsonArgs: config.coerceJsonArgs,
-            onOutputStrip: config.onOutputStrip,
-          })
-        : runTool;
-      const result = await executeTool(mountable, args, callContext).catch((err: unknown) => {
-        if (isToolExecutionControlError(err)) throw err;
-        throw new AgentToolError(
-          formatToolError(toolResultFromError(err), mountable.name, config.errorHint),
-          err,
-        );
-      });
-      if (result.ok) return result.data;
-      throw new AgentToolError(
-        formatToolError(result, mountable.name, config.errorHint),
-        toolCauseFromResult(result),
-      );
-    };
-
-    const presenter =
-      entry.kind === 'runtime' ? agentPresenterOf(entry.definition) : undefined;
-    if (entry.kind === 'runtime' && presenter) {
-      const { definition } = entry;
-      const output = definition.output;
-      if (!output) {
-        throw new Error(
-          `Runtime tool "${definition.name}" presenter requires an output schema`,
-        );
-      }
-      tools[definition.name] = tool({
-        description: definition.description,
-        inputSchema,
-        outputSchema: output,
-        execute,
-        toModelOutput: async ({ output: rawOutput }) => {
-          const parsed = output.safeParse(rawOutput);
-          if (parsed.success) return presenter(parsed.data);
-          if (localVerdict(output, parsed.error) === null) return presenter(rawOutput);
-          return { type: 'text', value: JSON.stringify(rawOutput) };
-        },
-      });
-    } else {
-      const output = entry.kind === 'runtime' ? entry.definition.output : undefined;
-      tools[mountable.name] = tool({
-        description: mountable.method.desc,
-        inputSchema,
-        ...(output && { outputSchema: output }),
-        execute,
-      });
-    }
-  }
-
-  return tools;
+  return toAiSdkToolSet(buildAgentTools(services, config, 'mountAgent'));
 }

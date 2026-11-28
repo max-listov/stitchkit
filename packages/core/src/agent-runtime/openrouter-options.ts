@@ -1,8 +1,36 @@
-import type { OpenRouterChatSettings } from '@openrouter/ai-sdk-provider';
 import { z } from 'zod';
+import {
+  type AgentCacheControl,
+  AgentCacheControlSchema,
+  type AgentModelProviderOptions,
+} from '../agent-parts/model';
 import { isRecord } from '../internal/typed';
+import { assertNoExtraBodyClash, recordField } from './provider-http';
 
-/** `reasoning.effort`; `max` is newer than the SDK's type and travels in the raw body. */
+/** Request keys owned by the OpenRouter policy or protocol; `extraBody` cannot silently shadow them. */
+export const OPENROUTER_POLICY_KEYS = [
+  'provider',
+  'reasoning',
+  'session_id',
+  'usage',
+  'cache_control',
+  'model',
+  'stream',
+  'messages',
+  'response_format',
+  'tools',
+  'tool_choice',
+  'max_tokens',
+  'temperature',
+  'top_p',
+  'top_k',
+  'presence_penalty',
+  'frequency_penalty',
+  'seed',
+  'stop',
+] as const;
+
+/** `reasoning.effort` levels supported by OpenRouter, including `max`. */
 export const OpenRouterReasoningEffortSchema = z.enum([
   'none',
   'minimal',
@@ -15,7 +43,7 @@ export const OpenRouterReasoningEffortSchema = z.enum([
 /** Reasoning effort level inferred from `OpenRouterReasoningEffortSchema`. */
 export type OpenRouterReasoningEffort = z.infer<typeof OpenRouterReasoningEffortSchema>;
 
-const Usd = z.number().nonnegative().finite();
+const Usd = z.number().nonnegative();
 
 /** The most this request may cost; OpenRouter routes only to endpoints under it. */
 export const OpenRouterMaxPriceSchema = z.strictObject({
@@ -45,25 +73,50 @@ export const OpenRouterProviderRoutingSchema = z.strictObject({
 /** Upstream provider routing preferences inferred from `OpenRouterProviderRoutingSchema`. */
 export type OpenRouterProviderRouting = z.infer<typeof OpenRouterProviderRoutingSchema>;
 
+const OpenRouterReasoningPolicySchema = z
+  .strictObject({
+    effort: OpenRouterReasoningEffortSchema.optional(),
+    maxTokens: z.int().positive().optional(),
+    enabled: z.boolean().optional(),
+    exclude: z.boolean().optional(),
+  })
+  .superRefine((reasoning, context) => {
+    if (reasoning.effort !== undefined && reasoning.maxTokens !== undefined) {
+      context.addIssue({
+        code: 'custom',
+        path: ['maxTokens'],
+        message: 'Specify reasoning.effort or reasoning.maxTokens, not both',
+      });
+    }
+    if (
+      reasoning.effort === undefined &&
+      reasoning.maxTokens === undefined &&
+      reasoning.enabled === undefined
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['effort'],
+        message:
+          'Specify at least one of reasoning.effort, reasoning.maxTokens, or reasoning.enabled',
+      });
+    }
+  });
+
 /**
  * Everything a request to one OpenRouter model needs beyond the prompt. `sessionId`
  * keeps a conversation on one upstream (prompt caches); `provider.order` names the
  * upstreams outright — the two decide the same thing, so a policy names one.
- * `looseTools` sends tool and response schemas with `strict: false`, for upstreams
+ * `looseTools` sends function tool schemas with `strict: false`, for upstreams
  * whose strict mode rejects ordinary JSON Schema.
  */
 export const OpenRouterRequestPolicySchema = z
   .strictObject({
     sessionId: z.string().min(1).max(256).optional(),
-    reasoning: z
-      .strictObject({
-        effort: OpenRouterReasoningEffortSchema,
-        exclude: z.boolean().optional(),
-      })
-      .optional(),
+    reasoning: OpenRouterReasoningPolicySchema.optional(),
     provider: OpenRouterProviderRoutingSchema.optional(),
     maxPrice: OpenRouterMaxPriceSchema.optional(),
     looseTools: z.boolean().optional(),
+    cacheControl: AgentCacheControlSchema.optional(),
   })
   .superRefine((policy, context) => {
     if (policy.sessionId !== undefined && policy.provider?.order !== undefined)
@@ -76,10 +129,25 @@ export const OpenRouterRequestPolicySchema = z
 /** OpenRouter request policy inferred from `OpenRouterRequestPolicySchema`. */
 export type OpenRouterRequestPolicy = z.infer<typeof OpenRouterRequestPolicySchema>;
 
-/** The policy as `@openrouter/ai-sdk-provider` chat settings, with `usage` accounting on. */
-export function buildOpenRouterChatSettings(
+export interface OpenRouterWireReasoning {
+  readonly effort?: OpenRouterReasoningEffort;
+  readonly max_tokens?: number;
+  readonly enabled?: boolean;
+  readonly exclude?: boolean;
+}
+
+export interface OpenRouterWirePolicy {
+  readonly provider?: Record<string, unknown>;
+  readonly reasoning?: OpenRouterWireReasoning;
+  readonly sessionId?: string;
+  readonly looseTools: boolean;
+  readonly cacheControl?: AgentCacheControl;
+}
+
+/** Validate and project `OpenRouterRequestPolicy` into OpenRouter wire fields. */
+export function resolveOpenRouterWirePolicy(
   raw: OpenRouterRequestPolicy,
-): OpenRouterChatSettings {
+): OpenRouterWirePolicy {
   const policy = OpenRouterRequestPolicySchema.parse(raw);
   const routing = policy.provider;
   const price = policy.maxPrice;
@@ -107,78 +175,111 @@ export function buildOpenRouterChatSettings(
           ...(routing?.zdr !== undefined && { zdr: routing.zdr }),
           ...(routing?.sort && { sort: routing.sort }),
           ...(routing?.quantizations && { quantizations: routing.quantizations }),
-          ...(maxPrice && { max_price: maxPrice }),
+          ...(maxPrice && Object.keys(maxPrice).length > 0 && { max_price: maxPrice }),
         }
       : undefined;
-  const reasoning = policy.reasoning;
-  // `max` is not in the SDK's union: the whole reasoning object goes in the raw body,
-  // where the SDK does not touch it, rather than half in settings and half outside.
-  const rawReasoning =
-    reasoning?.effort === 'max'
-      ? {
-          reasoning: {
-            effort: 'max',
-            ...(reasoning.exclude !== undefined && { exclude: reasoning.exclude }),
-          },
-        }
-      : undefined;
-  const extraBody = {
-    ...rawReasoning,
-    ...(policy.sessionId !== undefined && { session_id: policy.sessionId }),
-  };
+
   return {
-    usage: { include: true },
-    ...(provider && { provider }),
-    ...(reasoning &&
-      reasoning.effort !== 'max' && {
-        reasoning: {
-          effort: reasoning.effort,
-          ...(reasoning.exclude !== undefined && { exclude: reasoning.exclude }),
-        },
-      }),
-    ...(Object.keys(extraBody).length > 0 && { extraBody }),
-    ...(policy.looseTools && { structuredOutputs: { strict: false } }),
+    ...(provider && Object.keys(provider).length > 0 && { provider }),
+    ...(policy.reasoning && {
+      reasoning: {
+        ...(policy.reasoning.effort !== undefined && { effort: policy.reasoning.effort }),
+        ...(policy.reasoning.maxTokens !== undefined && {
+          max_tokens: policy.reasoning.maxTokens,
+        }),
+        ...(policy.reasoning.enabled !== undefined && { enabled: policy.reasoning.enabled }),
+        ...(policy.reasoning.exclude !== undefined && { exclude: policy.reasoning.exclude }),
+      },
+    }),
+    ...(policy.sessionId !== undefined && { sessionId: policy.sessionId }),
+    looseTools: policy.looseTools === true,
+    ...(policy.cacheControl !== undefined && { cacheControl: policy.cacheControl }),
   };
 }
 
-/**
- * A chat-completions body with every function tool marked `strict: false`: the SDK does
- * not serialize a tool's `strict`, so `looseTools` can only be delivered on the wire.
- */
-export function withOpenRouterLooseTools(body: unknown): unknown {
-  if (!isRecord(body) || !Array.isArray(body.tools)) return body;
-  return {
-    ...body,
-    tools: body.tools.map((tool: unknown) =>
-      isRecord(tool) && tool.type === 'function' && isRecord(tool.function)
-        ? { ...tool, function: { ...tool.function, strict: false } }
-        : tool,
-    ),
-  };
+export interface MergedOpenRouterStepPolicy {
+  readonly provider?: Record<string, unknown>;
+  readonly reasoning?: OpenRouterWireReasoning;
+  readonly stepSessionId?: string;
+  readonly baseSessionId?: string;
+  readonly looseTools: boolean;
+  readonly explicitCacheControl?: AgentCacheControl;
+  readonly baseCacheControl?: AgentCacheControl;
+  readonly stepExtraBody?: Readonly<Record<string, unknown>>;
 }
 
 /**
- * Rewrite a chat-completions body on its way out: `rewrite` gets the parsed body
- * and returns the one to send. Bodies that are not JSON text pass unchanged.
+ * Parse per-step `providerOptions.openrouter` through `OpenRouterRequestPolicySchema` +
+ * `resolveOpenRouterWirePolicy` (separating explicit `extraBody` pass-through) and merge
+ * cleanly with the model's resolved `OpenRouterWirePolicy`.
  */
-export function rewriteOpenRouterBodyFetch(
-  inner: typeof fetch,
-  rewrite: (body: unknown) => unknown,
-): typeof fetch {
-  const wrapped = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const fromRequest = input instanceof Request && init?.body === undefined;
-    const text = fromRequest ? await input.clone().text() : init?.body;
-    if (typeof text !== 'string' || text.length === 0) return inner(input, init);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return inner(input, init);
+export function mergeOpenRouterStepPolicy(
+  base: OpenRouterWirePolicy,
+  providerOptions: AgentModelProviderOptions | undefined,
+): MergedOpenRouterStepPolicy {
+  const reqOr = recordField(providerOptions, 'openrouter');
+  if (!reqOr || Object.keys(reqOr).length === 0) {
+    return {
+      ...(base.provider !== undefined && { provider: base.provider }),
+      ...(base.reasoning !== undefined && { reasoning: base.reasoning }),
+      ...(base.sessionId !== undefined && { baseSessionId: base.sessionId }),
+      looseTools: base.looseTools,
+      ...(base.cacheControl !== undefined && { baseCacheControl: base.cacheControl }),
+    };
+  }
+
+  let stepExtraBody: Record<string, unknown> | undefined;
+  const policyInput: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(reqOr)) {
+    if (key === 'extraBody') {
+      if (value !== undefined) {
+        if (!isRecord(value)) {
+          throw new TypeError(
+            'openRouterProvider: providerOptions.openrouter.extraBody must be a plain object',
+          );
+        }
+        assertNoExtraBodyClash('openRouterProvider', value, OPENROUTER_POLICY_KEYS);
+        stepExtraBody = value;
+      }
+      continue;
     }
-    const body = JSON.stringify(rewrite(parsed));
-    if (fromRequest) return inner(new Request(input, { body }), init);
-    return inner(input, { ...init, body });
+    policyInput[key] = value;
+  }
+
+  const parsedStep = OpenRouterRequestPolicySchema.parse(policyInput);
+  const stepWire = resolveOpenRouterWirePolicy(parsedStep);
+
+  let mergedProvider: Record<string, unknown> | undefined;
+  if (base.provider || stepWire.provider) {
+    // Explicit step `sessionId` supersedes inherited `defaultPolicy.provider.order` (I9).
+    const baseProvider =
+      stepWire.sessionId !== undefined && base.provider
+        ? Object.fromEntries(Object.entries(base.provider).filter(([k]) => k !== 'order'))
+        : base.provider;
+    const baseMaxPrice = isRecord(baseProvider?.max_price) ? baseProvider.max_price : null;
+    const stepMaxPrice = isRecord(stepWire.provider?.max_price)
+      ? stepWire.provider.max_price
+      : null;
+    const combined: Record<string, unknown> = {
+      ...baseProvider,
+      ...stepWire.provider,
+      ...(baseMaxPrice && stepMaxPrice && { max_price: { ...baseMaxPrice, ...stepMaxPrice } }),
+    };
+    if (Object.keys(combined).length > 0) mergedProvider = combined;
+  }
+
+  return {
+    ...(mergedProvider !== undefined && { provider: mergedProvider }),
+    ...((stepWire.reasoning ?? base.reasoning) !== undefined && {
+      reasoning: stepWire.reasoning ?? base.reasoning,
+    }),
+    ...(stepWire.sessionId !== undefined && { stepSessionId: stepWire.sessionId }),
+    ...(base.sessionId !== undefined && { baseSessionId: base.sessionId }),
+    looseTools: parsedStep.looseTools !== undefined ? stepWire.looseTools : base.looseTools,
+    ...(stepWire.cacheControl !== undefined && {
+      explicitCacheControl: stepWire.cacheControl,
+    }),
+    ...(base.cacheControl !== undefined && { baseCacheControl: base.cacheControl }),
+    ...(stepExtraBody !== undefined && { stepExtraBody }),
   };
-  // `typeof fetch` carries the runtime's extras (Bun's `preconnect`); keep the inner one's.
-  return Object.assign(wrapped, { preconnect: inner.preconnect });
 }

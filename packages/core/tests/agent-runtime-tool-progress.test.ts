@@ -8,7 +8,7 @@
  * of a bare `started`.
  */
 import { describe, expect, test } from 'bun:test';
-import { jsonSchema, simulateReadableStream, type ToolSet, tool } from 'ai';
+import { jsonSchema, simulateReadableStream, tool } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import type { McpReportProgress } from '../src/contract/runtime-context';
@@ -19,6 +19,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel, fromAiSdkTools } from '../src/entrypoints/agent-runtime/ai-sdk';
 import {
   AGENT_TOOL_PROGRESS_MESSAGE_MAX,
   type AgentControlView,
@@ -27,7 +28,7 @@ import {
 } from '../src/entrypoints/agent-runtime/browser';
 import { defineContract } from '../src/entrypoints/contract';
 import { implement } from '../src/entrypoints/server';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import { type AgentToolSet, defineAgentTool, mountAgentTools } from '../src/entrypoints/tools';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -105,7 +106,7 @@ function steppingClock(): () => Date {
 }
 
 async function run(
-  tools: ToolSet,
+  tools: AgentToolSet,
   options: { now?: () => Date } = {},
 ): Promise<{ events: AgentRuntimeEvent[]; model: MockLanguageModelV4 }> {
   const model = new MockLanguageModelV4({
@@ -123,7 +124,7 @@ async function run(
           contextWindow: 1_000,
           capabilities: ['tools'],
         },
-        model,
+        driver: fromAiSdkModel(model),
       }),
     },
     prompt: () => ({
@@ -160,7 +161,7 @@ describe('tool progress under the agent runtime', () => {
   test('each report is a transient event of the call, and the model reads only the result', async () => {
     const stages = ['waiting: queued', 'waiting: rendering', 'finished: done'];
     const { events, model } = await run(
-      mountAgent([generationService(stages)], { access: { open: 'local-operator' } }),
+      mountAgentTools([generationService(stages)], { access: { open: 'local-operator' } }),
     );
 
     expect(progressEvents(events)).toEqual(
@@ -183,7 +184,7 @@ describe('tool progress under the agent runtime', () => {
   test('the control view shows the last report while the call runs and drops it when it settles', async () => {
     const stages = ['waiting: queued', 'waiting: rendering'];
     const { events } = await run(
-      mountAgent([generationService(stages)], { access: { open: 'local-operator' } }),
+      mountAgentTools([generationService(stages)], { access: { open: 'local-operator' } }),
     );
     const lastProgress = events.findLastIndex((event) => event.type === 'tool-progress');
     const running = viewAfter(events.slice(0, lastProgress + 1)).conversations.progress;
@@ -207,7 +208,7 @@ describe('tool progress under the agent runtime', () => {
   test('a report after the call settled is dropped', async () => {
     let report: McpReportProgress | undefined;
     const { events } = await run(
-      mountAgent([generationService([], (kept) => (report = kept))], {
+      mountAgentTools([generationService([], (kept) => (report = kept))], {
         access: { open: 'local-operator' },
       }),
     );
@@ -220,7 +221,7 @@ describe('tool progress under the agent runtime', () => {
     const at = new Date(Date.UTC(2026, 10, 10));
     const long = 'x'.repeat(AGENT_TOOL_PROGRESS_MESSAGE_MAX + 200);
     const { events } = await run(
-      mountAgent([generationService([long, 'second', 'third'])], {
+      mountAgentTools([generationService([long, 'second', 'third'])], {
         access: { open: 'local-operator' },
       }),
       {
@@ -251,7 +252,7 @@ describe('tool progress under the agent runtime', () => {
       contextSchema,
       execute: async () => ({ status: 'finished' }),
     });
-    const { events } = await run({ generation_wait: own });
+    const { events } = await run(await fromAiSdkTools({ generation_wait: own }));
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool-status',
@@ -327,9 +328,9 @@ describe('the control view keeps each call to itself', () => {
 
 describe('tool status is durable', () => {
   test('each status follows the checkpoint that holds its call, at that snapshot version', async () => {
-    const plain = tool({
+    const plain = defineAgentTool({
       description: 'Wait',
-      inputSchema: jsonSchema<Record<string, never>>({ type: 'object' }),
+      input: z.object({}),
       execute: async () => ({ status: 'finished' }),
     });
     const { events } = await run({ generation_wait: plain });

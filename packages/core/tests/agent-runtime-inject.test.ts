@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { simulateReadableStream, tool } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   type AgentInputPolicy,
+  type AgentModelDriver,
+  type AgentModelMessage,
+  type AgentModelStreamPart,
   type AgentRuntimeEvent,
   type AgentRuntimeInput,
   type AgentRuntimeStore,
@@ -11,6 +12,8 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
+import { defineAgentTool } from '../src/entrypoints/tools';
 
 /**
  * A two-step model with a barrier in the middle.
@@ -23,14 +26,16 @@ import {
 function barrierModel(toolSteps = 1) {
   const atTool = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
-  const prompts: unknown[][] = [];
+  const prompts: AgentModelMessage[][] = [];
   let call = 0;
-  const model = new MockLanguageModelV4({
-    doStream: async ({ prompt }) => {
+  const driver: AgentModelDriver = {
+    provider: 'test',
+    modelId: 'test-model',
+    async stream(request) {
       call += 1;
-      prompts.push(prompt as unknown[]);
+      prompts.push([...request.instructions, ...request.messages]);
       const last = call > toolSteps;
-      const body = last
+      const body: AgentModelStreamPart[] = last
         ? [
             { type: 'text-start', id: 'text-1' },
             { type: 'text-delta', id: 'text-1', delta: 'answered' },
@@ -44,34 +49,32 @@ function barrierModel(toolSteps = 1) {
               input: '{}',
             },
           ];
+      const parts: AgentModelStreamPart[] = [
+        ...body,
+        {
+          type: 'finish',
+          finishReason: last ? 'stop' : 'tool-calls',
+          usage: {
+            inputTokens: { value: 10, provenance: 'provider-reported' },
+            outputTokens: { value: 5, provenance: 'provider-reported' },
+          },
+        },
+      ];
       return {
-        stream: simulateReadableStream({
-          chunks: [
-            ...body,
-            {
-              type: 'finish',
-              finishReason: { unified: last ? 'stop' : 'tool-calls', raw: undefined },
-              usage: {
-                inputTokens: {
-                  total: 10,
-                  noCache: 10,
-                  cacheRead: undefined,
-                  cacheWrite: undefined,
-                },
-                outputTokens: { total: 5, text: 5, reasoning: undefined },
-              },
-            },
-          ],
-        } as never),
+        parts: {
+          async *[Symbol.asyncIterator]() {
+            for (const part of parts) yield part;
+          },
+        },
       };
     },
-  });
-  return { model, prompts, atTool: atTool.promise, release, arrive: atTool.resolve };
+  };
+  return { model: driver, prompts, atTool: atTool.promise, release, arrive: atTool.resolve };
 }
 
 function runtimeWith(input: {
   store: AgentRuntimeStore;
-  model: MockLanguageModelV4;
+  model: AgentModelDriver;
   inputPolicy: AgentInputPolicy | ((request: AgentRuntimeInput) => AgentInputPolicy);
   onTool?: (call: number) => Promise<void>;
   coalescePending?: boolean;
@@ -89,7 +92,7 @@ function runtimeWith(input: {
           contextWindow: 100_000,
           capabilities: [],
         },
-        model: input.model,
+        driver: input.model,
       }),
     },
     prompt: () => ({
@@ -99,9 +102,9 @@ function runtimeWith(input: {
       contextDecision: 'unavailable',
     }),
     tools: () => ({
-      wait: tool({
+      wait: defineAgentTool({
         description: 'w',
-        inputSchema: z.object({}),
+        input: z.object({}),
         execute: async () => {
           toolCalls += 1;
           await input.onTool?.(toolCalls);
@@ -529,36 +532,27 @@ describe('an input that joins a run in flight', () => {
     const store = createMemoryAgentRuntimeStore();
     const atFirstTool = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    let call = 0;
     // Step one calls a tool; step two throws. No revision drift, so nothing
     // else can quietly drop the pending absorption on the way — if the
     // executor offered it here, the store would refuse the whole commit and the
     // run's terminal record would be lost over a successor's bookkeeping.
-    const model = new MockLanguageModelV4({
-      doStream: async () => {
-        call += 1;
-        if (call > 1) throw new Error('provider exploded');
-        return {
-          stream: simulateReadableStream({
-            chunks: [
-              { type: 'tool-call', toolCallId: 'call-1', toolName: 'wait', input: '{}' },
-              {
-                type: 'finish',
-                finishReason: { unified: 'tool-calls', raw: undefined },
-                usage: {
-                  inputTokens: {
-                    total: 10,
-                    noCache: 10,
-                    cacheRead: undefined,
-                    cacheWrite: undefined,
-                  },
-                  outputTokens: { total: 5, text: 5, reasoning: undefined },
-                },
-              },
-            ],
-          } as never),
-        };
-      },
+    const model = createScriptedModelDriver({
+      provider: 'test',
+      modelId: 'test-model',
+      steps: [
+        [
+          { type: 'tool-call', toolCallId: 'call-1', toolName: 'wait', input: '{}' },
+          {
+            type: 'finish',
+            finishReason: 'tool-calls',
+            usage: {
+              inputTokens: { value: 10, provenance: 'provider-reported' },
+              outputTokens: { value: 5, provenance: 'provider-reported' },
+            },
+          },
+        ],
+        { throw: new Error('provider exploded') },
+      ],
     });
     const runtime = runtimeWith({
       store,

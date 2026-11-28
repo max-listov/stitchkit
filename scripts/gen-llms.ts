@@ -261,24 +261,13 @@ export const GUIDE_SLICES: GuideMap = {
   'agent-runtime.md': {
     primary: './agent-runtime',
     also: [
-      './agent-runtime/testing',
-      './agent-runtime/harness',
-      './agent-runtime/coding-tools',
-      './agent-runtime/browser',
-      './agent-runtime/react',
-      './agent-runtime/realtime',
-      './agent-runtime/openrouter',
-      './agent-runtime/postgres',
+      ...'testing harness coding-tools browser react realtime openrouter openai anthropic ai-sdk postgres sqlite/bun sqlite/node sandbox'
+        .split(' ')
+        .map((sub) => `./agent-runtime/${sub}`),
       './agent-executor',
-      './agent-executor/acp',
-      './agent-executor/claude',
-      './agent-executor/claude-sdk',
-      './agent-executor/codex',
-      './agent-executor/testing',
-      './agent-executor/testing/claude-sdk',
-      './agent-runtime/sqlite/bun',
-      './agent-runtime/sqlite/node',
-      './agent-runtime/sandbox',
+      ...'acp claude claude-sdk codex testing testing/claude-sdk'
+        .split(' ')
+        .map((sub) => `./agent-executor/${sub}`),
     ],
   },
   'application-kernel.md': {
@@ -295,7 +284,10 @@ export const GUIDE_SLICES: GuideMap = {
   'primitives.md': { primary: './primitives' },
   'application-migration-recipes.md': { primary: './application' },
   'cli.md': { primary: './cli', also: ['./cli/publish'] },
-  'realtime.md': { primary: './server', also: ['.', './react', './node'] },
+  'realtime.md': {
+    primary: './server',
+    also: ['.', './react', './node', './realtime', './device-relay'],
+  },
   'live.md': { primary: './live' },
   'auth-and-errors.md': { primary: './server', also: ['./node', './contract', '.'] },
   'oauth.md': { primary: './oauth', also: ['./google'] },

@@ -12,7 +12,9 @@ import {
   writeGreenGate,
 } from './gate-memo';
 import { VERIFY_BUILT_ENV } from './lane-build';
+import { executeNodeQueueStepsPlan, planNodeQueueStepsExecution } from './node-queue';
 import {
+  buildVerifyStepPlan,
   FAST_GATE,
   FAST_STEPS,
   FAST_SUBSET_STEPS,
@@ -247,19 +249,61 @@ export async function runBounded(
   await Promise.all(workers);
 }
 
+/** Label reported to the optional host node queue for each verify profile. */
+export function verifyQueueLabel(flags: ReadonlySet<string>): string {
+  if (flags.has('--release')) return 'stitchkit-verify-release';
+  if (flags.has('--head')) return 'stitchkit-verify-head';
+  if (flags.has('--candidate')) return 'stitchkit-verify-candidate';
+  if (flags.has('--fast')) return 'stitchkit-verify-fast';
+  return 'stitchkit-verify';
+}
+
+async function runInternalMode(args: readonly string[]): Promise<boolean> {
+  if (args[0] === '--internal-step') {
+    const step = args[1];
+    if (!step) throw new Error('verify.ts: --internal-step requires a step name');
+    if (args.includes('--built')) process.env[VERIFY_BUILT_ENV] = '1';
+    else delete process.env[VERIFY_BUILT_ENV];
+    process.stderr.write(`[gate] ${step}\n`);
+    await runStep(step);
+    return true;
+  }
+  if (args[0] === '--internal-heavy') {
+    const rawConcurrency = args[1];
+    const separator = args.indexOf('--');
+    const lanes = separator === -1 ? [] : args.slice(separator + 1);
+    let concurrency: number;
+    if (rawConcurrency === 'auto') {
+      // Measure host memory here, AFTER acquiring the node queue slot and finishing sequential steps.
+      const choice = chooseHeavyConcurrency();
+      concurrency = choice.concurrency;
+      process.stderr.write(
+        `[gate] heavy lanes: ${choice.concurrency} at a time (${choice.because})\n`,
+      );
+    } else {
+      concurrency = Number(rawConcurrency);
+    }
+    if (!Number.isInteger(concurrency) || concurrency < 1 || lanes.length === 0) {
+      throw new Error(
+        'verify.ts: --internal-heavy requires "auto" or positive concurrency and lanes after --',
+      );
+    }
+    if (args.slice(2, separator).includes('--built')) process.env[VERIFY_BUILT_ENV] = '1';
+    else delete process.env[VERIFY_BUILT_ENV];
+    await runBounded(lanes, concurrency, async (step) => {
+      process.stderr.write(`[gate] ${step}\n`);
+      await runStep(step);
+    });
+    return true;
+  }
+  return false;
+}
+
 async function main(): Promise<void> {
   const args = Bun.argv.slice(2);
+  if (await runInternalMode(args)) return;
   const ifChanged = args.includes('--if-changed');
   const flags = new Set(args);
-  const profile = flags.has('--release')
-    ? await releaseProfile(root)
-    : flags.has('--head')
-      ? PROFILES.head
-      : flags.has('--candidate')
-        ? PROFILES.candidate
-        : flags.has('--fast')
-          ? PROFILES.fast
-          : PROFILES.full;
   const known = new Set<string>(VERIFY_FLAGS);
   const unknown = args.filter((argument) => !known.has(argument));
   if (unknown.length > 0) {
@@ -278,6 +322,16 @@ async function main(): Promise<void> {
       `verify.ts: ${selectedProfiles.join(' and ')} select different gates; pass one`,
     );
   }
+
+  const profile = flags.has('--release')
+    ? await releaseProfile(root)
+    : flags.has('--head')
+      ? PROFILES.head
+      : flags.has('--candidate')
+        ? PROFILES.candidate
+        : flags.has('--fast')
+          ? PROFILES.fast
+          : PROFILES.full;
 
   const memo = gateMemoPath();
   const toolchain = await toolchainFingerprint();
@@ -315,25 +369,60 @@ async function main(): Promise<void> {
     // Never trust an inherited freshness marker from the caller's environment.
     delete process.env[VERIFY_BUILT_ENV];
     const { sequential, heavy } = splitProfile(profile.steps);
-    for (const step of sequential) {
-      process.stderr.write(`[gate] ${step}\n`);
-      await runStep(step);
-      // The lanes this run starts next stand on the tree this step just built.
-      if (step === 'build') process.env[VERIFY_BUILT_ENV] = '1';
+    // Validate an explicit VERIFY_HEAVY_CONCURRENCY setting eagerly before entering the queue,
+    // without freezing a pre-queue host RAM reading while another job holds the slot.
+    if (
+      heavy.length > 0 &&
+      Bun.env.VERIFY_HEAVY_CONCURRENCY !== undefined &&
+      Bun.env.VERIFY_HEAVY_CONCURRENCY !== ''
+    ) {
+      chooseHeavyConcurrency();
     }
-    // Measured, not asserted. The heavy lanes build Next twice, drive real
-    // browsers and run a supervisor; two of them at once on a host that cannot
-    // hold both get timeouts rather than results. `VERIFY_HEAVY_CONCURRENCY`
-    // still wins — the host is asked only when nobody has answered.
-    if (heavy.length > 0) {
-      const choice = chooseHeavyConcurrency();
-      process.stderr.write(
-        `[gate] heavy lanes: ${choice.concurrency} at a time (${choice.because})\n`,
-      );
-      await runBounded(heavy, choice.concurrency, async (step) => {
+    const planSteps = buildVerifyStepPlan({
+      root,
+      sequential,
+      heavy,
+      heavyConcurrency: 'auto',
+    });
+    const queuedPlan = planNodeQueueStepsExecution({
+      label: verifyQueueLabel(flags),
+      kind: 'verify',
+      steps: planSteps,
+      fallbackCommand: [process.execPath, ...process.argv.slice(1)],
+      env: process.env,
+    });
+    if (queuedPlan.mode === 'queued') {
+      // Older host queue without `--plan`: the delegated `verify.ts` child owns its own
+      // worktree watcher and green memo write, so release ours and return its exact exit code.
+      await guard.finish();
+      process.exitCode = await executeNodeQueueStepsPlan(queuedPlan, process.env);
+      return;
+    }
+    if (queuedPlan.mode === 'queued-plan') {
+      const code = await executeNodeQueueStepsPlan(queuedPlan, process.env);
+      if (code !== 0) {
+        process.exitCode = code;
+        return;
+      }
+    } else {
+      for (const step of sequential) {
         process.stderr.write(`[gate] ${step}\n`);
         await runStep(step);
-      });
+        // The lanes this run starts next stand on the tree this step just built.
+        if (step === 'build') process.env[VERIFY_BUILT_ENV] = '1';
+      }
+      // Measured right before heavy lanes start, not before waiting for the queue or running fast steps.
+      // `VERIFY_HEAVY_CONCURRENCY` still wins — the host is asked only when nobody has answered.
+      if (heavy.length > 0) {
+        const heavyChoice = chooseHeavyConcurrency();
+        process.stderr.write(
+          `[gate] heavy lanes: ${heavyChoice.concurrency} at a time (${heavyChoice.because})\n`,
+        );
+        await runBounded(heavy, heavyChoice.concurrency, async (step) => {
+          process.stderr.write(`[gate] ${step}\n`);
+          await runStep(step);
+        });
+      }
     }
 
     const after = await worktreeTreeHash(root);

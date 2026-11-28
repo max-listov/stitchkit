@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runBunInstall } from './install.mjs';
 
 /** A library bundles public imports once, and ships their declaration closure with Zod as its only peer. */
 export function qualifyNeutralLibrary(author) {
@@ -132,7 +133,7 @@ for (const asset of native?.assets ?? []) {
         },
       }),
     );
-    run('bun', ['install', '--ignore-scripts'], consumer);
+    runBunInstall(consumer, ['install', '--ignore-scripts'], { timeoutMs: 60_000 });
     assert.equal(
       existsSync(join(consumer, 'node_modules/stitchkit')),
       false,

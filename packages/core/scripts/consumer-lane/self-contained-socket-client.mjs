@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, parse } from 'node:path';
+import { runBunInstall } from './install.mjs';
 
 /**
  * The other half of the same artifact problem: a program that DIALS.
@@ -240,7 +241,7 @@ export async function runSelfContainedSocketClientProof({ workdir, tarball, pkgR
       2,
     )}\n`,
   );
-  execFileSync('bun', ['install'], { cwd: source, stdio: 'pipe' });
+  runBunInstall(source, ['install']);
   writeFileSync(join(source, 'server.ts'), SERVER_SOURCE);
   for (const fixture of [
     'observation.mjs',

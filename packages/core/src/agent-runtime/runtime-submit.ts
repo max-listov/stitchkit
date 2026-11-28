@@ -1,5 +1,5 @@
-import type { ToolSet } from 'ai';
 import type { z } from 'zod';
+import type { AgentToolSet } from '../tools/agent-tools';
 import type { RuntimeAdmissionReservation } from './admission-lanes';
 import type { AgentInputPolicy } from './coordinator';
 import { agentDurableEventId } from './events';
@@ -58,7 +58,7 @@ interface Submission<CONTEXT> {
   offeredRunId?: string;
 }
 
-export function submitAgentInput<CONTEXT, TOOLS extends ToolSet>(
+export function submitAgentInput<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   rawInput: AgentRuntimeInput,
 ): RuntimeTicket {
@@ -80,7 +80,7 @@ export function submitAgentInput<CONTEXT, TOOLS extends ToolSet>(
   return publicTicket;
 }
 
-function parseSubmittedInput<CONTEXT, TOOLS extends ToolSet>(
+function parseSubmittedInput<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   rawInput: AgentRuntimeInput,
 ): SubmittedInput {
@@ -107,7 +107,7 @@ function parseSubmittedInput<CONTEXT, TOOLS extends ToolSet>(
   return input;
 }
 
-function createSubmission<CONTEXT, TOOLS extends ToolSet>(
+function createSubmission<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   rawInput: AgentRuntimeInput,
   input: SubmittedInput,
@@ -181,7 +181,7 @@ function createSubmission<CONTEXT, TOOLS extends ToolSet>(
   };
 }
 
-function registerTicket<CONTEXT, TOOLS extends ToolSet>(
+function registerTicket<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   submission: Submission<CONTEXT>,
   conversationTickets: Map<string, RuntimeTicket> | undefined,
@@ -213,7 +213,7 @@ function registerTicket<CONTEXT, TOOLS extends ToolSet>(
 }
 
 /** Preflight, the durable write, the admission events, then the handoff — in that order. */
-async function admitSubmission<CONTEXT, TOOLS extends ToolSet>(
+async function admitSubmission<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   submission: Submission<CONTEXT>,
   handedOff: () => void,
@@ -328,7 +328,7 @@ function projectAdmission<CONTEXT>(
   };
 }
 
-async function publishAdmission<CONTEXT, TOOLS extends ToolSet>(
+async function publishAdmission<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   admission: AgentRuntimeAdmission,
 ): Promise<void> {
@@ -356,7 +356,7 @@ async function publishAdmission<CONTEXT, TOOLS extends ToolSet>(
 }
 
 /** A duplicate input answers from the durable record; it never schedules a run. */
-function settleDuplicate<CONTEXT, TOOLS extends ToolSet>(
+function settleDuplicate<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   submission: Submission<CONTEXT>,
   admission: AgentRuntimeAdmission,
@@ -401,7 +401,7 @@ function settleDuplicate<CONTEXT, TOOLS extends ToolSet>(
   }
 }
 
-function handOffToCoordinator<CONTEXT, TOOLS extends ToolSet>(
+function handOffToCoordinator<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   submission: Submission<CONTEXT>,
   acceptedRun: AgentRun,

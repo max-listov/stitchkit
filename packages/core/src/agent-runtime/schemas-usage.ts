@@ -74,6 +74,14 @@ export const AgentCostValueSchema = z.object({
 
 export type AgentUsageValue = z.infer<typeof AgentUsageValueSchema>;
 
+/**
+ * Token and cost accounting for one step or run.
+ *
+ * Cross-provider invariants:
+ * - `inputTokens` is always the **total** prompt size (inclusive of cache read and cache write).
+ * - `outputTokens` is always the **total** generated output (inclusive of reasoning tokens).
+ * - Absent or unreported counters carry `{ provenance: 'unavailable' }`, never a synthetic `0`.
+ */
 export const AgentUsageSchema = z.object({
   inputTokens: AgentUsageValueSchema,
   outputTokens: AgentUsageValueSchema,

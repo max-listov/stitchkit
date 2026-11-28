@@ -253,7 +253,10 @@ export function bindAgentHarnessRealtime<CONTEXT, IDENTITY>(
         }
         if (closed) return fail('CONNECTION_CLOSED', 'Connection is closed');
         return connection.request(
-          request.operation === 'submit' || request.operation === 'respond-approval'
+          request.operation === 'submit' ||
+            request.operation === 'respond-approval' ||
+            request.operation === 'respond-input' ||
+            request.operation === 'set-permission-mode'
             ? { ...request, context: allowed.context }
             : request,
         );

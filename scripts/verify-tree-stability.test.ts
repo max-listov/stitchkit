@@ -62,7 +62,7 @@ test('the actual runner never certifies a mixed tree, including mutation then re
           [process.execPath, join(root, 'scripts/verify.ts'), '--fast', '--if-changed'],
           {
             cwd: root,
-            env: { ...Bun.env, STITCHKIT_GATE_MEMO_DIR: memo },
+            env: { ...Bun.env, STITCHKIT_GATE_MEMO_DIR: memo, STITCHKIT_NODE_QUEUE: '0' },
             stdout: 'pipe',
             stderr: 'pipe',
           },

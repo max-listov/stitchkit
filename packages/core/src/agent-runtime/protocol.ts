@@ -1,4 +1,6 @@
 import type { ZodType, z } from 'zod';
+import type { AgentInstructions, AgentModelMessage } from '../agent-parts/model';
+import type { AgentStepResult } from './models-driver-step';
 import {
   AgentJsonObjectSchema,
   type AgentMessage,
@@ -11,12 +13,50 @@ export interface AgentTerminalAcceptanceInput {
   message: AgentMessage;
   reason: AgentTerminalReason;
   policyName?: string;
+  /** Completed model steps produced so far in this run. */
+  steps?: readonly AgentStepResult[];
+  /** Number of terminal continuations already executed in this run. */
+  continuations?: number;
 }
+
+/**
+ * Verdict returned by `protocol.acceptTerminal`:
+ * - `true` / `{ action: 'accept' }`: commit the terminal message as-is.
+ * - `false` / `{ action: 'reject' }`: reject as `output_rejected`.
+ * - `{ action: 'continue', message, instructions? }`: append `message` and run another
+ *   bounded continuation step (capped by `loop.maxContinuations`, default 3).
+ */
+export type AgentTerminalAcceptanceDecision =
+  | boolean
+  | { readonly action: 'accept' }
+  | { readonly action: 'reject' }
+  | {
+      readonly action: 'continue';
+      readonly message: AgentModelMessage;
+      readonly instructions?: AgentInstructions;
+    };
 
 export type AgentTerminalAcceptance =
   | 'allow-empty'
   | 'require-output'
-  | ((input: AgentTerminalAcceptanceInput) => boolean | Promise<boolean>);
+  | ((
+      input: AgentTerminalAcceptanceInput,
+    ) => AgentTerminalAcceptanceDecision | Promise<AgentTerminalAcceptanceDecision>);
+
+/** Pure helper: whether any completed step performed tool work (client or provider). */
+export function carriedToolWork(steps: readonly AgentStepResult[]): boolean {
+  return steps.some(
+    (step) =>
+      step.toolCalls.length > 0 ||
+      step.toolResults.length > 0 ||
+      step.content.some(
+        (part) =>
+          part.type === 'tool-call' ||
+          part.type === 'tool-result' ||
+          part.type === 'tool-error',
+      ),
+  );
+}
 
 /** Generic final-output policy used by `terminalAcceptance: 'require-output'`. */
 export function hasAgentTerminalOutput(input: AgentTerminalAcceptanceInput): boolean {
@@ -42,7 +82,8 @@ export interface AgentProtocolConfig<CONTEXT extends ZodType, INPUT_METADATA ext
    * Default `allow-empty` preserves protocols where an empty stop is valid.
    * `require-output` accepts non-blank text, generated files, structured opaque
    * provider output, and an explicit tool-only policy stop. A callback owns any
-   * product-specific definition without rewriting a committed terminal record.
+   * product-specific definition without rewriting a committed terminal record,
+   * and may return `{ action: 'continue', message }` for bounded continuation.
    */
   terminalAcceptance?: AgentTerminalAcceptance;
 }
@@ -54,7 +95,9 @@ export interface AgentProtocol<CONTEXT extends ZodType, INPUT_METADATA extends Z
   parseInputMetadata(input: unknown): z.infer<typeof AgentJsonObjectSchema>;
   parseMessage(input: unknown): AgentMessage;
   parsePart(input: unknown): AgentMessagePart;
-  acceptTerminal?(input: AgentTerminalAcceptanceInput): boolean | Promise<boolean>;
+  acceptTerminal?(
+    input: AgentTerminalAcceptanceInput,
+  ): AgentTerminalAcceptanceDecision | Promise<AgentTerminalAcceptanceDecision>;
 }
 
 export function defineAgentProtocol<CONTEXT extends ZodType, INPUT_METADATA extends ZodType>(

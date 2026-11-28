@@ -34,7 +34,6 @@
         "@modelcontextprotocol/client": "^2.4.0",
         "@modelcontextprotocol/ext-apps": "^2.0.4",
         "@modelcontextprotocol/server": "^2.4.0",
-        "@openrouter/ai-sdk-provider": "^3.1.0",
         "@opentelemetry/api": "^1.10.0",
         "@seriousme/openapi-schema-validator": "^2.12.0",
         "@socket.io/bun-engine": "^0.1.2",
@@ -66,7 +65,6 @@
         "@anthropic-ai/claude-agent-sdk": "^0.3.332",
         "@modelcontextprotocol/ext-apps": "^1.7.2 || ^2.0.0",
         "@modelcontextprotocol/server": "^2.0.0",
-        "@openrouter/ai-sdk-provider": "^3.1.0",
         "@opentelemetry/api": "^1.9.0",
         "@socket.io/bun-engine": "^0.1.2",
         "@socket.io/component-emitter": "^3.1.2",
@@ -88,7 +86,6 @@
         "@anthropic-ai/claude-agent-sdk",
         "@modelcontextprotocol/ext-apps",
         "@modelcontextprotocol/server",
-        "@openrouter/ai-sdk-provider",
         "@opentelemetry/api",
         "@socket.io/bun-engine",
         "@socket.io/component-emitter",
@@ -136,7 +133,6 @@
         "stitchkit-tui-gallery": "./dist/gallery/main.js",
       },
       "dependencies": {
-        "ai": "^7.0.179",
         "zod": "^4.6.7",
       },
       "devDependencies": {

@@ -1,8 +1,10 @@
-import type { ModelMessage, ToolApprovalConfiguration, ToolSet } from 'ai';
+import type { AgentModelMessage } from '../agent-parts/model';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { issueRunContext } from './context-issue';
 import { AgentContextOverflowError } from './context-refusal';
 import { createAgentToolFenceLifecycle } from './managed-tools';
 import type { AgentResolvedModel } from './models';
+import type { AgentToolApprovalConfiguration } from './models-driver-step';
 import type { ComposedAgentPrompt } from './prompt';
 import { adoptSnapshot, type RunExecution } from './run-execution-state';
 import {
@@ -13,26 +15,26 @@ import {
   snapshotForRunPrompt,
   USER_INSTRUCTION_SEED_KEY,
 } from './run-prompt-history';
-import { applyStepBarriers } from './run-step-barriers';
 import { recordStepSpend } from './run-step-spend';
 import type { AgentContextUsage, AgentRuntimeRunContext } from './runtime';
 import type { AgentSnapshot } from './schemas';
 import { appliedSnapshot } from './terminal-commit';
 
 /** Everything the model phase needs that turn preparation settled once for the run. */
-export interface PreparedTurn<CONTEXT, TOOLS extends ToolSet> {
+export interface PreparedTurn<CONTEXT, TOOLS extends AgentToolSet> {
   selectedModel: AgentResolvedModel;
   runtimeContext: AgentRuntimeRunContext<CONTEXT>;
   prompt: ComposedAgentPrompt;
   tools: TOOLS;
-  /** `loop.toolApproval` under the step's call bound. */
-  toolApproval: ToolApprovalConfiguration<TOOLS, CONTEXT> | undefined;
-  history: ModelMessage[];
+  toolApproval: AgentToolApprovalConfiguration<TOOLS, CONTEXT> | undefined;
+  history: AgentModelMessage[];
   projection: RunHistoryProjection;
 }
 
-async function compactHistory<CONTEXT, TOOLS extends ToolSet>(
+async function compactHistory<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
+  selectedModel: AgentResolvedModel,
+  tools: TOOLS,
 ): Promise<void> {
   const { config, runtimeEpoch, generateId } = execution.dependencies;
   const { state, operationLifecycle, executionSignal } = execution;
@@ -45,6 +47,9 @@ async function compactHistory<CONTEXT, TOOLS extends ToolSet>(
       conversationId: state.run.conversationId,
       store: config.store,
       signal: executionSignal,
+      context: execution.input.context,
+      model: selectedModel.descriptor,
+      tools,
     });
   } catch (error) {
     const latest = await config.store.loadRun({
@@ -74,7 +79,7 @@ async function compactHistory<CONTEXT, TOOLS extends ToolSet>(
   await operationLifecycle.finish('completed');
 }
 
-function createRuntimeContext<CONTEXT, TOOLS extends ToolSet>(
+function createRuntimeContext<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
 ): AgentRuntimeRunContext<CONTEXT> {
   const { runtimeEpoch, config } = execution.dependencies;
@@ -130,7 +135,7 @@ function createRuntimeContext<CONTEXT, TOOLS extends ToolSet>(
  * Answers whether this call inserted any, which is what `finalizeSeed` asks,
  * or `undefined` when the prompt had nothing to seed and no store was touched.
  */
-async function seedUserInstructions<CONTEXT, TOOLS extends ToolSet>(
+async function seedUserInstructions<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
   prompt: ComposedAgentPrompt,
 ): Promise<boolean | undefined> {
@@ -167,14 +172,13 @@ async function seedUserInstructions<CONTEXT, TOOLS extends ToolSet>(
  * composed prompt and tools, the seeded instructions, the context decision
  * and the projected history.
  */
-export async function prepareTurn<CONTEXT, TOOLS extends ToolSet>(
+export async function prepareTurn<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
 ): Promise<PreparedTurn<CONTEXT, TOOLS>> {
   const { config } = execution.dependencies;
   const { state, executionSignal } = execution;
   const runtimeContext = createRuntimeContext(execution);
   execution.runtimeContext = runtimeContext;
-  await compactHistory(execution);
   const selectedModel = await config.models.resolve({
     context: execution.input.context,
     conversationId: state.run.conversationId,
@@ -182,22 +186,35 @@ export async function prepareTurn<CONTEXT, TOOLS extends ToolSet>(
     snapshot: state.snapshot,
   });
   state.selectedModel = selectedModel;
-  let promptSnapshot: AgentSnapshot = snapshotForRunPrompt(state.snapshot, state.run.id);
-  const [composedPrompt, rawTools] = await Promise.all([
-    config.prompt({
+  let tools: TOOLS;
+  let composedPrompt: ComposedAgentPrompt;
+  let promptSnapshot: AgentSnapshot;
+  if (config.history?.compact) {
+    tools = await config.tools(runtimeContext);
+    await compactHistory(execution, selectedModel, tools);
+    promptSnapshot = snapshotForRunPrompt(state.snapshot, state.run.id);
+    composedPrompt = await config.prompt({
       context: execution.input.context,
       signal: executionSignal,
       event: promptSnapshot.runs[0]?.id === state.run.id ? 'session.started' : 'turn.started',
       model: selectedModel,
       snapshot: promptSnapshot,
-    }),
-    config.tools(runtimeContext),
-  ]);
-  const { tools, toolApproval } = applyStepBarriers(
-    rawTools,
-    config.loop?.toolApproval,
-    config.loop?.stepBarriers,
-  );
+    });
+  } else {
+    promptSnapshot = snapshotForRunPrompt(state.snapshot, state.run.id);
+    [composedPrompt, tools] = await Promise.all([
+      config.prompt({
+        context: execution.input.context,
+        signal: executionSignal,
+        event:
+          promptSnapshot.runs[0]?.id === state.run.id ? 'session.started' : 'turn.started',
+        model: selectedModel,
+        snapshot: promptSnapshot,
+      }),
+      config.tools(runtimeContext),
+    ]);
+  }
+  const toolApproval = config.loop?.toolApproval;
   let prompt = composedPrompt;
   const userInstructionsInserted = await seedUserInstructions(execution, prompt);
   if (userInstructionsInserted !== undefined) {
@@ -205,9 +222,6 @@ export async function prepareTurn<CONTEXT, TOOLS extends ToolSet>(
   }
   if (prompt.finalizeSeed)
     prompt = { ...prompt, ...prompt.finalizeSeed(userInstructionsInserted ?? false) };
-  // This runtime's own decision, taken before any provider call. It used to
-  // land in the catch-all below and commit `provider_failure` — a durable
-  // record blaming an upstream that was never contacted.
   if (prompt.contextDecision === 'oversized') {
     throw new AgentContextOverflowError();
   }
@@ -220,10 +234,8 @@ export async function prepareTurn<CONTEXT, TOOLS extends ToolSet>(
     config,
     currentRun: () => state.run,
     durableSystem: await loadDurableSystem(config, state.run.conversationId),
+    tools,
   });
-  // User-role instructions already live in that durable projection — they
-  // were seeded above and survive every retry of this run, so there is
-  // nothing to prepend here. → ADR 0178
-  const history: ModelMessage[] = [...(await projection.projectHistory(promptSnapshot))];
+  const history: AgentModelMessage[] = [...(await projection.projectHistory(promptSnapshot))];
   return { selectedModel, runtimeContext, prompt, tools, toolApproval, history, projection };
 }

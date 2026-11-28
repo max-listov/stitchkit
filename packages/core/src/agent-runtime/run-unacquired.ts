@@ -1,4 +1,4 @@
-import type { ToolSet } from 'ai';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { agentDurableEventId } from './events';
 import type { RunExecutionInput, RunExecutorDependencies } from './run-execution-state';
 import { withStoreRetries } from './run-store-retry';
@@ -26,7 +26,7 @@ import {
  * process is behind it. A run owned by this process with no executor here is the
  * remaining case: the reply to its own acquisition was lost, so it is closed too.
  */
-export async function closeUnacquiredRun<CONTEXT, TOOLS extends ToolSet>(
+export async function closeUnacquiredRun<CONTEXT, TOOLS extends AgentToolSet>(
   dependencies: RunExecutorDependencies<CONTEXT, TOOLS>,
   input: RunExecutionInput<CONTEXT>,
   failure: unknown,

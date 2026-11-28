@@ -50,6 +50,7 @@ export function projectExecutorDeltas(deltas: Iterable<ExecutorDelta>): AgentMes
           toolName: delta.toolName,
           outcome: delta.outcome,
           ...(delta.output !== undefined && { output: delta.output }),
+          ...(delta.provider !== undefined && { provider: delta.provider }),
         });
         break;
       case 'request':
@@ -65,6 +66,7 @@ export function projectExecutorDeltas(deltas: Iterable<ExecutorDelta>): AgentMes
       case 'usage':
       case 'context-usage':
       case 'status':
+      case 'plan':
       case 'turn-end':
       case 'error':
         break;

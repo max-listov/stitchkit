@@ -1,9 +1,15 @@
 import { describe, expect, test } from 'bun:test';
+import { z } from 'zod';
 import {
   AgentMessageSchema,
   projectAgentHistory,
   projectAgentHistoryDetailed,
 } from '../src/entrypoints/agent-runtime';
+import {
+  defineAgentTool,
+  defineViewFileTool,
+  mountAgentTools,
+} from '../src/entrypoints/tools';
 
 describe('agent history projection', () => {
   test('opts failed terminal evidence in with an explicit non-success marker', async () => {
@@ -501,5 +507,200 @@ describe('an interrupted turn does not pass as a finished one', () => {
       omittedParts: ['file'],
     });
     expect(JSON.stringify(projected.messages)).not.toContain('internal://');
+  });
+});
+
+describe('assistant file parts and multimodal tool-result projection across turns', () => {
+  const at = '2026-11-28T00:00:00.000Z';
+  const user = AgentMessageSchema.parse({
+    schemaVersion: 1,
+    id: 'user-mm-1',
+    conversationId: 'conv-mm',
+    role: 'user',
+    status: 'committed',
+    parts: [{ type: 'text', text: 'Inspect and generate image' }],
+    createdAt: at,
+    updatedAt: at,
+  });
+
+  test('projects persisted assistant file parts through resolveFile and respects unresolvedFile fallbacks', async () => {
+    const assistant = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'assistant-file-1',
+      conversationId: 'conv-mm',
+      runId: 'run-mm-1',
+      role: 'assistant',
+      status: 'completed',
+      parts: [
+        { type: 'text', text: 'Generated preview:' },
+        {
+          type: 'file',
+          mediaType: 'image/png',
+          reference: 's3://private-bucket/generated/chart.png',
+          filename: 'chart.png',
+        },
+      ],
+      createdAt: at,
+      updatedAt: at,
+    });
+
+    const resolved = await projectAgentHistoryDetailed([user, assistant], {
+      resolveFile: () => ({ type: 'url', url: new URL('https://cdn.example.com/chart.png') }),
+    });
+    expect(resolved.decisions[1]).toEqual({
+      messageId: 'assistant-file-1',
+      action: 'projected',
+      reason: 'projected',
+    });
+    expect(resolved.messages[1]).toEqual({
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'Generated preview:' },
+        {
+          type: 'file',
+          data: { type: 'url', url: new URL('https://cdn.example.com/chart.png') },
+          mediaType: 'image/png',
+          filename: 'chart.png',
+        },
+      ],
+    });
+
+    // Default omit records omittedParts and never leaks storage reference.
+    const omitted = await projectAgentHistoryDetailed([user, assistant]);
+    expect(omitted.decisions[1]).toMatchObject({
+      action: 'projected',
+      omittedParts: ['file'],
+    });
+    expect(JSON.stringify(omitted.messages)).not.toContain('private-bucket');
+
+    // Text fallback describes attachment without leaking storage reference.
+    const placeholder = await projectAgentHistory([user, assistant], {
+      unresolvedFile: 'text',
+    });
+    expect(JSON.stringify(placeholder)).toContain('[attachment: chart.png]');
+    expect(JSON.stringify(placeholder)).not.toContain('private-bucket');
+
+    // Error fallback throws inward naming the reference.
+    await expect(
+      projectAgentHistory([user, assistant], { unresolvedFile: 'error' }),
+    ).rejects.toThrow('s3://private-bucket/generated/chart.png');
+  });
+
+  test('projects persisted multimodal tool results via mounted tools (defineViewFileTool) and resolveToolModelOutput', async () => {
+    const sampleBytes = new Uint8Array([1, 2, 3]);
+    const viewTool = defineViewFileTool({
+      description: 'View image',
+      identity: { serviceName: 'media', action: 'view', scope: 'user' },
+      files: {
+        read: async (path) => ({
+          ref: { path, mediaType: 'image/png', size: sampleBytes.byteLength },
+          bytes: sampleBytes,
+        }),
+        write: async (path) => ({ path, size: 0 }),
+      },
+    });
+    const tools = mountAgentTools([], {
+      access: { open: 'local-operator' },
+      runtimeTools: [viewTool],
+    });
+    const customTool = defineAgentTool({
+      input: z.object({ id: z.string() }),
+      execute: async () => ({ label: 'ok' }),
+      toModelOutput: ({ input, output }) => ({
+        type: 'text',
+        value: `${input.id}:${output.label}`,
+      }),
+    });
+
+    const assistant = AgentMessageSchema.parse({
+      schemaVersion: 1,
+      id: 'assistant-mm-tool',
+      conversationId: 'conv-mm',
+      runId: 'run-mm-2',
+      role: 'assistant',
+      status: 'completed',
+      parts: [
+        {
+          type: 'tool-call',
+          callId: 'vf-1',
+          toolName: 'view_file',
+          input: { paths: ['a.png'] },
+        },
+        {
+          type: 'tool-result',
+          callId: 'vf-1',
+          toolName: 'view_file',
+          outcome: 'success',
+          output: {
+            content: [{ type: 'image', data: 'AQID', mimeType: 'image/png' }],
+            errors: [],
+          },
+        },
+        { type: 'tool-call', callId: 'c-1', toolName: 'custom_view', input: { id: 'item-7' } },
+        {
+          type: 'tool-result',
+          callId: 'c-1',
+          toolName: 'custom_view',
+          outcome: 'success',
+          output: { label: 'ok' },
+        },
+        {
+          type: 'tool-call',
+          callId: 'e-1',
+          toolName: 'view_file',
+          input: { paths: ['missing'] },
+        },
+        {
+          type: 'tool-result',
+          callId: 'e-1',
+          toolName: 'view_file',
+          outcome: 'error',
+          output: { message: 'Not found' },
+        },
+      ],
+      createdAt: at,
+      updatedAt: at,
+    });
+
+    const projected = await projectAgentHistory([user, assistant], {
+      tools: { ...tools, custom_view: customTool },
+    });
+    const toolMessages = projected.filter((m) => m.role === 'tool');
+    expect(toolMessages).toHaveLength(3);
+    expect(toolMessages[0]?.content[0]).toEqual({
+      type: 'tool-result',
+      toolCallId: 'vf-1',
+      toolName: 'view_file',
+      output: {
+        type: 'content',
+        value: [
+          { type: 'file', data: { type: 'data', data: 'AQID' }, mediaType: 'image/png' },
+        ],
+      },
+    });
+    expect(toolMessages[1]?.content[0]).toEqual({
+      type: 'tool-result',
+      toolCallId: 'c-1',
+      toolName: 'custom_view',
+      output: { type: 'text', value: 'item-7:ok' },
+    });
+    // Failed tool results stay error-json instead of calling toModelOutput.
+    expect(toolMessages[2]?.content[0]).toEqual({
+      type: 'tool-result',
+      toolCallId: 'e-1',
+      toolName: 'view_file',
+      output: { type: 'error-json', value: { message: 'Not found' } },
+    });
+
+    // Custom resolveToolModelOutput override wins when returning a non-undefined value.
+    const overridden = await projectAgentHistory([user, assistant], {
+      resolveToolModelOutput: ({ toolCallId }) =>
+        toolCallId === 'vf-1' ? { type: 'text', value: 'overridden-view' } : undefined,
+    });
+    const overriddenTool = overridden.find((m) => m.role === 'tool');
+    expect(overriddenTool?.content[0]).toMatchObject({
+      toolCallId: 'vf-1',
+      output: { type: 'text', value: 'overridden-view' },
+    });
   });
 });

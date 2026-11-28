@@ -367,7 +367,8 @@ test('waiting for an abort and reading its reason each have one owner in the sou
   // A controller that exists only to follow a caller and a timer is `linkAbortSignals`. A
   // signal's reason forwarded by hand is left only where the controller is an owned lifetime its
   // owner aborts and reads on its own — a link yields a second, derived signal, not that owner.
-  const forwardedByHand = /\.abort\(\s*(?:[\w$]+\??\.)*signal\??\.reason\s*\)/g;
+  const forwardedByHand = /\.abort\(\s*(?:[\w$]+\??\.)*\w*[sS]ignal\??\.reason\s*\)/g;
+  expect('controller.abort(sourceSignal.reason);'.match(forwardedByHand)).toHaveLength(1);
   expect(
     Object.fromEntries(
       sources.flatMap((path) => {
@@ -376,6 +377,8 @@ test('waiting for an abort and reading its reason each have one owner in the sou
       }),
     ),
   ).toEqual({
+    // Claude SDK takes an AbortController whose lifetime the probe also aborts in finally.
+    'agent-executor/claude-sdk/probe.ts': 1,
     // The command's lifetime: also aborted by `killOn`, its deadline and the owner's own stop.
     'process/command-owner.ts': 2,
     // A close deadline armed only after the leader exits, into a controller the caller owns;

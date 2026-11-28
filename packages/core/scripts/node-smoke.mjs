@@ -40,6 +40,9 @@ const entrypoints = [
   'stitchkit/agent-runtime/harness',
   'stitchkit/agent-runtime/coding-tools',
   'stitchkit/agent-runtime/openrouter',
+  'stitchkit/agent-runtime/openai',
+  'stitchkit/agent-runtime/anthropic',
+  'stitchkit/agent-runtime/ai-sdk',
   'stitchkit/agent-runtime/postgres',
   'stitchkit/agent-executor',
   'stitchkit/agent-executor/acp',
@@ -242,18 +245,12 @@ await http.shutdown({ gracePeriodMs: 0 });
 // A physical peer close is a neutral transport cancellation, not an
 // application failure. Drive the real srvx bridge with node:net so this cannot
 // pass through an in-process Fetch Request whose signal the test owns itself.
-let resolveDisconnectAdmitted;
-const disconnectAdmitted = new Promise((resolve) => {
-  resolveDisconnectAdmitted = resolve;
-});
-let resolveDisconnectAborted;
-const disconnectAborted = new Promise((resolve) => {
-  resolveDisconnectAborted = resolve;
-});
-let resolveDisconnectCompleted;
-const disconnectCompleted = new Promise((resolve) => {
-  resolveDisconnectCompleted = resolve;
-});
+const { promise: disconnectAdmitted, resolve: resolveDisconnectAdmitted } =
+  Promise.withResolvers();
+const { promise: disconnectAborted, resolve: resolveDisconnectAborted } =
+  Promise.withResolvers();
+const { promise: disconnectCompleted, resolve: resolveDisconnectCompleted } =
+  Promise.withResolvers();
 const disconnectEvents = [];
 const disconnectObservability = createObservability({
   request: {

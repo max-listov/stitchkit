@@ -37,6 +37,8 @@ const SYNONYMS: Readonly<Record<string, string>> = {
 export const SUBPARTS: readonly string[] = [
   'admission',
   'agent',
+  'ai',
+  'anthropic',
   'archive',
   'branch',
   'browser',
@@ -57,6 +59,7 @@ export const SUBPARTS: readonly string[] = [
   'managed',
   'models',
   'observability',
+  'openai',
   'openrouter',
   'owned',
   'projections',
@@ -77,6 +80,8 @@ export const SUBPARTS: readonly string[] = [
 
 /** Declared runtime directions. A sub-part not listed imports no other sub-part. */
 export const SUBPART_ALLOWED: Readonly<Record<string, readonly string[]>> = {
+  ai: ['run'],
+  anthropic: ['provider'],
   archive: ['coding'],
   branch: [
     'archive',
@@ -99,10 +104,10 @@ export const SUBPART_ALLOWED: Readonly<Record<string, readonly string[]>> = {
   deferred: ['context'],
   event: ['agent', 'context', 'schemas', 'store'],
   harness: ['browser', 'contained', 'control', 'event', 'models', 'prompt', 'run'],
-  invocation: ['provider', 'schemas'],
-  observability: ['run', 'schemas'],
-  // `sessionPerConversation` reads the current attempt's conversation on the wire.
-  openrouter: ['invocation', 'models'],
+  invocation: ['owned', 'provider', 'schemas'],
+  observability: ['models', 'run', 'schemas'],
+  openai: ['provider'],
+  openrouter: ['models', 'provider'],
   projections: ['invocation', 'run', 'schemas', 'store'],
   prompt: ['run', 'schemas'],
   protocol: ['schemas'],
@@ -117,6 +122,7 @@ export const SUBPART_ALLOWED: Readonly<Record<string, readonly string[]>> = {
     'injection',
     'invocation',
     'managed',
+    'models',
     'owned',
     'provider',
     'retry',
@@ -187,12 +193,6 @@ export const SUBPART_EXCEPTIONS: readonly {
     specifier: './terminal-status',
     reason:
       'the reducer and the run classify a terminal the same way; moved into the store, the classifier would import the run history it reads',
-  },
-  {
-    file: 'invocation-attempt.ts',
-    specifier: './run-step-spend',
-    reason:
-      'an attempt records the step-spend fact the run owns; moved into invocation, the fact would import the run state it sums',
   },
 ];
 

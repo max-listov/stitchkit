@@ -114,6 +114,12 @@
     "signal": {
       "test": "caller abort cancels GET, JSON, multipart and raw-response calls"
     },
+    "timeout": {
+      "test": "propagates relative budget across two hops, narrows after local work and feeds createBoundedAdmission without AsyncLocalStorage"
+    },
+    "propagateDeadline": {
+      "test": "createHttpClient and createClient honour propagateDeadline: true and false"
+    },
     "onUploadProgress": {
       "test": "a 300 KB multipart body is counted to the length the server received"
     }
@@ -1909,6 +1915,9 @@
     "timeout": {
       "test": "endpoint timeout is distinct from caller cancellation"
     },
+    "propagateDeadline": {
+      "test": "createHttpClient and createClient honour propagateDeadline: true and false"
+    },
     "headers": {
       "test": "headers as function"
     },
@@ -2127,6 +2136,9 @@
     },
     "ambient": {
       "test": "the Codex driver passes the engine conformance kit"
+    },
+    "wrapCommand": {
+      "test": "CodexDriverConfig.wrapCommand wraps app-server startup, preserves providerPid and clean close(), and fails closed when wrapCommand rejects"
     },
     "resolveFile": {
       "test": "Codex encodes ordered text+image UserInput with data URL and refuses invalid parts before turn/start"
@@ -2349,6 +2361,9 @@
     },
     "ambient": {
       "test": "the ACP driver passes the engine conformance kit"
+    },
+    "wrapCommand": {
+      "test": "AcpDriverConfig.wrapCommand wraps process startup, preserves onProviderPid and clean close(), and fails closed on SANDBOX_UNAVAILABLE"
     },
     "requestTimeoutMs": {
       "test": "a missing agent, a signed-out agent and a silent agent each answer at once"
@@ -3399,14 +3414,26 @@
     }
   },
   "AgentStepBarriers": {
+    "filterStepText": {
+      "test": "stepText: after-tools holds on isToolResultFailure and tool-approval-request, applies filterStepText, and respects stepTextOnInterrupt"
+    },
     "maxReasoningCharsPerStep": {
       "test": "reasoning past its bound stops the run as policy_stop"
     },
     "maxToolCallsPerStep": {
       "test": "a step making more calls than allowed has the extra one refused to the model"
     },
+    "onMaxReasoningChars": {
+      "test": "onMaxReasoningChars: finish-length cuts step cleanly and allows protocol.acceptTerminal recovery"
+    },
+    "onPredecessorFailure": {
+      "test": "A7: stepBarriers.onPredecessorFailure refuses dependent call on failure while default still runs"
+    },
     "stepText": {
       "test": "after-tools: a step whose call failed shows none of its text; a clean step shows it after the call"
+    },
+    "stepTextOnInterrupt": {
+      "test": "stepText: after-tools holds on isToolResultFailure and tool-approval-request, applies filterStepText, and respects stepTextOnInterrupt"
     },
     "toolDependencies": {
       "test": "a read of an entity waits for the step's earlier write of it"
@@ -3477,6 +3504,9 @@
     }
   },
   "OpenRouterRequestPolicy": {
+    "cacheControl": {
+      "test": "gates auto policy cache_control via openRouterAllowsInlineCacheControl (never attaches to google/gemini*)"
+    },
     "looseTools": {
       "test": "a model's own policy puts strict false on the wire, without the provider-wide switch"
     },
@@ -3950,5 +3980,968 @@
     "cpuQuotaPercent": { "test": "scope limit %s becomes its own unit property" },
     "cpuWeight": { "test": "scope limit %s becomes its own unit property" },
     "runtimeMaxSeconds": { "test": "scope limit %s becomes its own unit property" }
+  },
+  "DeviceRelayHubConfig": {
+    "authenticateDevice": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    },
+    "authorizeAccess": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "broker": {
+      "test": "RelayBrokerPort routes RPC and cursor streams across two backend hub replicas"
+    },
+    "defaultRpcTimeoutMs": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "instanceId": {
+      "test": "RelayBrokerPort routes RPC and cursor streams across two backend hub replicas"
+    },
+    "leaseSweepIntervalMs": {
+      "test": "(b) disconnect and heartbeat lease expiry immediately mark device offline and fail calls honestly"
+    },
+    "leaseTtlMs": {
+      "test": "(b) disconnect and heartbeat lease expiry immediately mark device offline and fail calls honestly"
+    },
+    "logger": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "maxBufferedStreamFrames": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "maxConcurrentStreamsPerDevice": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "maxInFlightRequestsPerDevice": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "maxRequestBodyBytes": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "maxResponseBodyBytes": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "maxStreamFrameBytes": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "now": {
+      "test": "(b) disconnect and heartbeat lease expiry immediately mark device offline and fail calls honestly"
+    },
+    "onDeviceStateChange": {
+      "test": "(b) disconnect and heartbeat lease expiry immediately mark device offline and fail calls honestly"
+    }
+  },
+  "DeviceRelayFetchOptions": {
+    "accountId": {
+      "test": "(c) foreign accountId receives FORBIDDEN without ever touching the desktop device"
+    },
+    "deviceId": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    },
+    "maxRequestBodyBytes": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "maxResponseBodyBytes": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "timeoutMs": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    }
+  },
+  "DeviceRelayStreamOpenOptions": {
+    "accountId": {
+      "test": "(c) foreign accountId receives FORBIDDEN without ever touching the desktop device"
+    },
+    "cursor": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    },
+    "deviceId": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    },
+    "maxBufferedFrames": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "maxFrameBytes": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "openTimeoutMs": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "params": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "share": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    },
+    "signal": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    },
+    "topic": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    }
+  },
+  "DeviceRelayAgentConfig": {
+    "allowRpc": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "allowStreamTopics": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "capabilities": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    },
+    "deviceId": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    },
+    "fetch": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    },
+    "heartbeatIntervalMs": {
+      "test": "(b) disconnect and heartbeat lease expiry immediately mark device offline and fail calls honestly"
+    },
+    "heartbeatTimeoutMs": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "helloTimeoutMs": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "leaseTtlMs": {
+      "test": "(b) disconnect and heartbeat lease expiry immediately mark device offline and fail calls honestly"
+    },
+    "maxConcurrentStreams": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "maxInFlightRequests": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "maxRequestBodyBytes": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "maxResponseBodyBytes": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "maxStreamFrameBytes": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "now": {
+      "test": "(b) disconnect and heartbeat lease expiry immediately mark device offline and fail calls honestly"
+    },
+    "onError": {
+      "test": "(d) DeviceRelayAgent refuses non-allowlisted RPC and stream topics locally without invoking local handlers, enforces size/credit limits and stops on non-retryable auth refusal"
+    },
+    "onStateChange": {
+      "test": "every declared hub, fetch, stream and agent option is load-bearing (timeouts, capacities, params, custom authorization and observers)"
+    },
+    "openStream": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    },
+    "transport": {
+      "test": "(a) unary Fetch RPC and multiplexed cursor streams succeed end-to-end with AbortSignal cancellation and upstream cleanup on last subscriber"
+    }
+  },
+  "DevicePresenceContractOptions": {
+    "eventPrefix": {
+      "test": "every declared contract, server, client and relay-adapter option is load-bearing"
+    }
+  },
+  "DevicePresenceServerOptions": {
+    "accountOf": {
+      "test": "enforces strict accountId isolation, refuses non-user principals without breaking other protocols, and never retries failing/timed-out commands"
+    },
+    "commandTimeoutMs": {
+      "test": "enforces strict accountId isolation, refuses non-user principals without breaking other protocols, and never retries failing/timed-out commands"
+    },
+    "logger": {
+      "test": "every declared contract, server, client and relay-adapter option is load-bearing"
+    },
+    "maxDevicesPerAccount": {
+      "test": "every declared contract, server, client and relay-adapter option is load-bearing"
+    },
+    "now": {
+      "test": "mounts on one shared RealtimeServerHandle alongside watchContract and DeviceRelayHub, syncs states and executes typed remote commands"
+    },
+    "onRejected": {
+      "test": "every declared contract, server, client and relay-adapter option is load-bearing"
+    },
+    "onSnapshot": {
+      "test": "mounts on one shared RealtimeServerHandle alongside watchContract and DeviceRelayHub, syncs states and executes typed remote commands"
+    }
+  },
+  "DevicePresenceClientConfig": {
+    "capabilities": {
+      "test": "mounts on one shared RealtimeServerHandle alongside watchContract and DeviceRelayHub, syncs states and executes typed remote commands"
+    },
+    "commandTimeoutMs": {
+      "test": "every declared contract, server, client and relay-adapter option is load-bearing"
+    },
+    "device": {
+      "test": "mounts on one shared RealtimeServerHandle alongside watchContract and DeviceRelayHub, syncs states and executes typed remote commands"
+    },
+    "initialStates": {
+      "test": "mounts on one shared RealtimeServerHandle alongside watchContract and DeviceRelayHub, syncs states and executes typed remote commands"
+    },
+    "onError": {
+      "test": "every declared contract, server, client and relay-adapter option is load-bearing"
+    },
+    "onSnapshot": {
+      "test": "every declared contract, server, client and relay-adapter option is load-bearing"
+    },
+    "requestTimeoutMs": {
+      "test": "every declared contract, server, client and relay-adapter option is load-bearing"
+    },
+    "transport": {
+      "test": "mounts on one shared RealtimeServerHandle alongside watchContract and DeviceRelayHub, syncs states and executes typed remote commands"
+    }
+  },
+  "DevicePresenceRelayAdapterConfig": {
+    "capabilities": {
+      "test": "mounts on one shared RealtimeServerHandle alongside watchContract and DeviceRelayHub, syncs states and executes typed remote commands"
+    },
+    "capability": {
+      "test": "mounts on one shared RealtimeServerHandle alongside watchContract and DeviceRelayHub, syncs states and executes typed remote commands"
+    },
+    "clearOnClose": {
+      "test": "every declared contract, server, client and relay-adapter option is load-bearing"
+    },
+    "getState": {
+      "test": "every declared contract, server, client and relay-adapter option is load-bearing"
+    },
+    "presence": {
+      "test": "mounts on one shared RealtimeServerHandle alongside watchContract and DeviceRelayHub, syncs states and executes typed remote commands"
+    }
+  },
+  "OpenRouterProviderSettings": {
+    "apiKey": {
+      "test": "uses camelCase baseUrl/providerApiKeys, sets headers, and enforces redirect: error"
+    },
+    "appName": {
+      "test": "uses camelCase baseUrl/providerApiKeys, sets headers, and enforces redirect: error"
+    },
+    "appUrl": {
+      "test": "uses camelCase baseUrl/providerApiKeys, sets headers, and enforces redirect: error"
+    },
+    "baseUrl": {
+      "test": "uses camelCase baseUrl/providerApiKeys, sets headers, and enforces redirect: error"
+    },
+    "extraBody": {
+      "test": "validates defaultPolicy fail-fast and refuses extraBody clashes across all POLICY_KEYS"
+    },
+    "fetch": {
+      "test": "uses camelCase baseUrl/providerApiKeys, sets headers, and enforces redirect: error"
+    },
+    "headers": {
+      "test": "uses camelCase baseUrl/providerApiKeys, sets headers, and enforces redirect: error"
+    },
+    "providerApiKeys": {
+      "test": "uses camelCase baseUrl/providerApiKeys, sets headers, and enforces redirect: error"
+    }
+  },
+  "OpenAiProviderSettings": {
+    "apiKey": {
+      "test": "sends auth/org/project/custom headers, posts to /responses, and refuses redirects"
+    },
+    "baseUrl": {
+      "test": "sends auth/org/project/custom headers, posts to /responses, and refuses redirects"
+    },
+    "extraBody": {
+      "test": "openAiProvider validates defaultPolicy up front and rejects extraBody clashes"
+    },
+    "fetch": {
+      "test": "sends auth/org/project/custom headers, posts to /responses, and refuses redirects"
+    },
+    "headers": {
+      "test": "sends auth/org/project/custom headers, posts to /responses, and refuses redirects"
+    },
+    "organization": {
+      "test": "sends auth/org/project/custom headers, posts to /responses, and refuses redirects"
+    },
+    "project": {
+      "test": "sends auth/org/project/custom headers, posts to /responses, and refuses redirects"
+    }
+  },
+  "OpenAiProviderAccess": {
+    "cachePerConversation": {
+      "test": "sends auth/org/project/custom headers, posts to /responses, and refuses redirects"
+    },
+    "defaultPolicy": {
+      "test": "openAiProvider validates defaultPolicy up front and rejects extraBody clashes"
+    },
+    "resolvePolicy": {
+      "test": "sends auth/org/project/custom headers, posts to /responses, and refuses redirects"
+    }
+  },
+  "OpenAiRequestPolicy": {
+    "include": {
+      "test": "defaults to store: false and auto-includes encrypted reasoning appropriately"
+    },
+    "parallelToolCalls": {
+      "test": "encodes tools with strict: false default, structured outputs, history hygiene, and prompt_cache_key"
+    },
+    "promptCacheKey": {
+      "test": "encodes tools with strict: false default, structured outputs, history hygiene, and prompt_cache_key"
+    },
+    "promptCacheRetention": {
+      "test": "encodes tools with strict: false default, structured outputs, history hygiene, and prompt_cache_key"
+    },
+    "reasoning": {
+      "test": "defaults to store: false and auto-includes encrypted reasoning appropriately"
+    },
+    "serviceTier": {
+      "test": "encodes tools with strict: false default, structured outputs, history hygiene, and prompt_cache_key"
+    },
+    "store": {
+      "test": "defaults to store: false and auto-includes encrypted reasoning appropriately"
+    },
+    "strictTools": {
+      "test": "sends auth/org/project/custom headers, posts to /responses, and refuses redirects"
+    },
+    "truncation": {
+      "test": "encodes tools with strict: false default, structured outputs, history hygiene, and prompt_cache_key"
+    },
+    "user": {
+      "test": "encodes tools with strict: false default, structured outputs, history hygiene, and prompt_cache_key"
+    }
+  },
+  "OpenAiReasoningPolicy": {
+    "effort": {
+      "test": "validates OpenAiReasoningPolicySchema and OpenAiRequestPolicySchema strictly"
+    },
+    "summary": {
+      "test": "validates OpenAiReasoningPolicySchema and OpenAiRequestPolicySchema strictly"
+    }
+  },
+  "AnthropicProviderSettings": {
+    "apiKey": {
+      "test": "streams multi-block thinking, redacted_thinking, text, streamed + zero-arg tools, ping, and merged usage"
+    },
+    "apiVersion": {
+      "test": "streams multi-block thinking, redacted_thinking, text, streamed + zero-arg tools, ping, and merged usage"
+    },
+    "baseUrl": {
+      "test": "streams multi-block thinking, redacted_thinking, text, streamed + zero-arg tools, ping, and merged usage"
+    },
+    "betas": {
+      "test": "streams multi-block thinking, redacted_thinking, text, streamed + zero-arg tools, ping, and merged usage"
+    },
+    "extraBody": {
+      "test": "anthropicProvider validates defaultPolicy and extraBody clashes up front"
+    },
+    "fetch": {
+      "test": "streams multi-block thinking, redacted_thinking, text, streamed + zero-arg tools, ping, and merged usage"
+    },
+    "headers": {
+      "test": "streams multi-block thinking, redacted_thinking, text, streamed + zero-arg tools, ping, and merged usage"
+    }
+  },
+  "AnthropicProviderAccess": {
+    "defaultPolicy": {
+      "test": "anthropicProvider validates defaultPolicy and extraBody clashes up front"
+    },
+    "resolvePolicy": {
+      "test": "streams multi-block thinking, redacted_thinking, text, streamed + zero-arg tools, ping, and merged usage"
+    }
+  },
+  "AnthropicRequestPolicy": {
+    "betas": {
+      "test": "streams multi-block thinking, redacted_thinking, text, streamed + zero-arg tools, ping, and merged usage"
+    },
+    "cacheControl": {
+      "test": "places tool-turn cache_control ONLY on the last tool_result and omits disable_parallel_tool_use on none"
+    },
+    "disableParallelToolUse": {
+      "test": "encodes tools, eagerInputStreaming, tool_choice, output_config (effort + json_schema), and cache budgeting + TTL order"
+    },
+    "eagerInputStreaming": {
+      "test": "encodes tools, eagerInputStreaming, tool_choice, output_config (effort + json_schema), and cache budgeting + TTL order"
+    },
+    "effort": {
+      "test": "encodes tools, eagerInputStreaming, tool_choice, output_config (effort + json_schema), and cache budgeting + TTL order"
+    },
+    "maxOutputTokens": {
+      "test": "rejects budgetTokens below 1024 and maxOutputTokens <= budgetTokens (negative controls)"
+    },
+    "serviceTier": {
+      "test": "encodes tools, eagerInputStreaming, tool_choice, output_config (effort + json_schema), and cache budgeting + TTL order"
+    },
+    "thinking": {
+      "test": "preserves verbatim multi-block thinking + redacted_thinking, skips foreign/unsigned, never caches thinking"
+    }
+  },
+  "FromAiSdkModelOptions": {
+    "normalizeUsage": {
+      "test": "fromAiSdkModel converts multimodal files, native V4 tool content files, approvals, and responseFormat"
+    },
+    "resolveResponseProvider": {
+      "test": "fromAiSdkModel converts multimodal files, native V4 tool content files, approvals, and responseFormat"
+    }
+  },
+  "AgentModelDriverDecorator": {
+    "beforeStream": {
+      "test": "threads per-stream state and invokes onClose exactly once on normal finish"
+    },
+    "onClose": {
+      "test": "threads per-stream state and invokes onClose exactly once on normal finish"
+    },
+    "onPart": {
+      "test": "threads per-stream state and invokes onClose exactly once on normal finish"
+    },
+    "transformRequest": {
+      "test": "threads per-stream state and invokes onClose exactly once on normal finish"
+    },
+    "transformSignal": {
+      "test": "transformSignal tightens the inner signal without ever loosening the parent signal"
+    }
+  },
+  "AgentStepToolCallBatchDecision": {
+    "refuse": {
+      "test": "enforces activeTools after repair, deterministic parallel order, safe error redaction, invalid-input {}, and beforeStepToolCalls (B4)"
+    }
+  },
+  "ScriptedModelDriverOptions": {
+    "modelId": {
+      "test": "forwards topP/seed, writes correlatedRequest to payload, and records failed status on mid-stream error"
+    },
+    "onRequest": {
+      "test": "forwards topP/seed, writes correlatedRequest to payload, and records failed status on mid-stream error"
+    },
+    "provider": {
+      "test": "forwards topP/seed, writes correlatedRequest to payload, and records failed status on mid-stream error"
+    },
+    "steps": {
+      "test": "forwards topP/seed, writes correlatedRequest to payload, and records failed status on mid-stream error"
+    }
+  },
+  "DefineAgentToolConfig": {
+    "cacheControl": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "description": {
+      "test": "defineAgentTool uses input JSON Schema (supports .transform()/.default()) and enforces output schema (I9)"
+    },
+    "execute": {
+      "test": "defineAgentTool uses input JSON Schema (supports .transform()/.default()) and enforces output schema (I9)"
+    },
+    "flattenUnionInput": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "input": {
+      "test": "defineAgentTool uses input JSON Schema (supports .transform()/.default()) and enforces output schema (I9)"
+    },
+    "needsApproval": {
+      "test": "toolDependencies + tool.needsApproval returning true settles barrier immediately without hanging"
+    },
+    "onInputAvailable": {
+      "test": "runStandaloneClientTools handles empty AsyncIterable, invokes onInputAvailable, and ignores aborted settlements"
+    },
+    "output": {
+      "test": "defineAgentTool uses input JSON Schema (supports .transform()/.default()) and enforces output schema (I9)"
+    },
+    "providerOptions": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "strict": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "toModelOutput": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    }
+  },
+  "CompleteTextInput": {
+    "cacheControl": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "correlation": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "driver": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "headers": {
+      "test": "completeText enforces stopPolicies, idleTimeoutMs, and per-request headers"
+    },
+    "idleTimeoutMs": {
+      "test": "completeText enforces stopPolicies, idleTimeoutMs, and per-request headers"
+    },
+    "instructions": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "maxSteps": {
+      "test": "completeText executes multi-step tools with prepareStep, deterministic order, and safe error redaction"
+    },
+    "messages": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "onAttemptDiscarded": {
+      "test": "completeText retries transient failures, reports onAttemptDiscarded, and throws AgentRetryExhaustedError with accumulated usage"
+    },
+    "onPart": {
+      "test": "streamComplete and onPart stream reasoning, text, streaming tool results, and abort cleanly on early break"
+    },
+    "onStepFinish": {
+      "test": "completeText executes multi-step tools with prepareStep, deterministic order, and safe error redaction"
+    },
+    "prepareStep": {
+      "test": "completeText executes multi-step tools with prepareStep, deterministic order, and safe error redaction"
+    },
+    "prompt": {
+      "test": "completeText enforces stopPolicies, idleTimeoutMs, and per-request headers"
+    },
+    "providerOptions": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "repairToolCall": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "responseFormat": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "retry": {
+      "test": "completeText retries transient failures, reports onAttemptDiscarded, and throws AgentRetryExhaustedError with accumulated usage"
+    },
+    "settings": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "signal": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "stopPolicies": {
+      "test": "completeText enforces stopPolicies, idleTimeoutMs, and per-request headers"
+    },
+    "toolChoice": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "tools": {
+      "test": "completeText executes multi-step tools with prepareStep, deterministic order, and safe error redaction"
+    }
+  },
+  "CompleteObjectInput": {
+    "cacheControl": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "correlation": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "driver": {
+      "test": "completeObject enforces draft-2020-12 strict schema and supports multi-step tool loop"
+    },
+    "headers": {
+      "test": "completeText enforces stopPolicies, idleTimeoutMs, and per-request headers"
+    },
+    "idleTimeoutMs": {
+      "test": "completeText enforces stopPolicies, idleTimeoutMs, and per-request headers"
+    },
+    "instructions": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "maxSteps": {
+      "test": "completeObject enforces draft-2020-12 strict schema and supports multi-step tool loop"
+    },
+    "messages": {
+      "test": "completeObject enforces draft-2020-12 strict schema and supports multi-step tool loop"
+    },
+    "onAttemptDiscarded": {
+      "test": "completeText retries transient failures, reports onAttemptDiscarded, and throws AgentRetryExhaustedError with accumulated usage"
+    },
+    "onPart": {
+      "test": "streamComplete and onPart stream reasoning, text, streaming tool results, and abort cleanly on early break"
+    },
+    "onStepFinish": {
+      "test": "completeText executes multi-step tools with prepareStep, deterministic order, and safe error redaction"
+    },
+    "prepareStep": {
+      "test": "completeText executes multi-step tools with prepareStep, deterministic order, and safe error redaction"
+    },
+    "prompt": {
+      "test": "completeObject supports .optional()/.transform()/.default() with strict-mode null stripping and distinguishes tool-calls, content-filter, and provider-error"
+    },
+    "providerOptions": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "repairToolCall": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "retry": {
+      "test": "completeText retries transient failures, reports onAttemptDiscarded, and throws AgentRetryExhaustedError with accumulated usage"
+    },
+    "schema": {
+      "test": "completeObject enforces draft-2020-12 strict schema and supports multi-step tool loop"
+    },
+    "schemaDescription": {
+      "test": "completeObject enforces draft-2020-12 strict schema and supports multi-step tool loop"
+    },
+    "schemaName": {
+      "test": "completeObject enforces draft-2020-12 strict schema and supports multi-step tool loop"
+    },
+    "settings": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "signal": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "stopPolicies": {
+      "test": "completeText enforces stopPolicies, idleTimeoutMs, and per-request headers"
+    },
+    "strict": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "toolChoice": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "tools": {
+      "test": "completeObject enforces draft-2020-12 strict schema and supports multi-step tool loop"
+    }
+  },
+  "AgentModelRequest": {
+    "cacheControl": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "correlation": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "headers": {
+      "test": "providers resolve dynamic apiKey per call, merge request.headers while protecting content-type, emit server timestamp, and fail-fast on provider tools"
+    },
+    "instructions": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "messages": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "providerOptions": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "responseFormat": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "settings": {
+      "test": "completeText runs peer-free with multimodal messages, settings, cacheControl, ping, and timings"
+    },
+    "toolChoice": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    },
+    "tools": {
+      "test": "defineAgentTool and completeText/completeObject honor cacheControl, providerOptions, strict, flattenUnionInput, toModelOutput, toolChoice, repairToolCall, signal, and responseFormat"
+    }
+  },
+  "AgentHistoryProjectionOptions": {
+    "evidencePolicy": {
+      "test": "opts failed terminal evidence in with an explicit non-success marker"
+    },
+    "incompleteToolTurn": {
+      "test": "omits leading assistants and unmatched tool calls with inspectable decisions"
+    },
+    "interruptedAssistant": {
+      "test": "the default marks the fragment where a bare one used to go"
+    },
+    "leadingAssistant": {
+      "test": "omits leading assistants and unmatched tool calls with inspectable decisions"
+    },
+    "resolveFile": {
+      "test": "projects persisted assistant file parts through resolveFile and respects unresolvedFile fallbacks"
+    },
+    "resolveToolModelOutput": {
+      "test": "projects persisted multimodal tool results via mounted tools (defineViewFileTool) and resolveToolModelOutput"
+    },
+    "tools": {
+      "test": "projects persisted multimodal tool results via mounted tools (defineViewFileTool) and resolveToolModelOutput"
+    },
+    "unresolvedFile": {
+      "test": "projects persisted assistant file parts through resolveFile and respects unresolvedFile fallbacks"
+    }
+  },
+  "ProcessSandboxSpec": {
+    "bwrapExecutable": {
+      "test": "fails closed with SANDBOX_UNAVAILABLE when bwrap binary is missing or platform is unsupported"
+    },
+    "denyPaths": {
+      "test": "buildSeatbeltProfile denies writes to workspace in workspace-readonly and enforces denyPaths and network policy"
+    },
+    "envAllowlist": {
+      "test": "workspace-strict preserves real workspace path and streaming stdio while hiding sibling space, control socket, host secrets and unallowed env"
+    },
+    "homeDir": {
+      "test": "buildSeatbeltProfile denies writes to workspace in workspace-readonly and enforces denyPaths and network policy"
+    },
+    "network": {
+      "test": "buildSeatbeltProfile denies writes to workspace in workspace-readonly and enforces denyPaths and network policy"
+    },
+    "privateTmpDir": {
+      "test": "bind-mounts privateTmpDir, masks denyPaths under /bin, and falls back to workspace when cwd is outside mounted roots"
+    },
+    "profile": {
+      "test": "validates ProcessSandboxSpec strictly and refuses writableDirs overlapping workspace in workspace-readonly"
+    },
+    "readOnlyPaths": {
+      "test": "workspace-strict preserves real workspace path and streaming stdio while hiding sibling space, control socket, host secrets and unallowed env"
+    },
+    "sandboxExecExecutable": {
+      "exempt": "macOS-only override for the sandbox-exec binary path, validated by ProcessSandboxSpecSchema and forwarded to spawn"
+    },
+    "systemReadOnlyPaths": {
+      "exempt": "Linux bubblewrap host system read-only mount allowlist overriding defaults; validated by ProcessSandboxSpecSchema"
+    },
+    "unixSockets": {
+      "test": "buildSeatbeltProfile denies writes to workspace in workspace-readonly and enforces denyPaths and network policy"
+    },
+    "workspace": {
+      "test": "validates ProcessSandboxSpec strictly and refuses writableDirs overlapping workspace in workspace-readonly"
+    },
+    "writableDirs": {
+      "test": "validates ProcessSandboxSpec strictly and refuses writableDirs overlapping workspace in workspace-readonly"
+    }
+  },
+  "ProcessSandboxProbeOptions": {
+    "bwrapExecutable": {
+      "test": "fails closed with SANDBOX_UNAVAILABLE when bwrap binary is missing or platform is unsupported"
+    },
+    "platform": {
+      "test": "fails closed with SANDBOX_UNAVAILABLE when bwrap binary is missing or platform is unsupported"
+    },
+    "sandboxExecExecutable": {
+      "exempt": "macOS-only override for the sandbox-exec binary probed on darwin hosts"
+    },
+    "signal": {
+      "test": "refuses symlink writableDirs and privateTmpDir that resolve into workspace under workspace-readonly, and cancels aborted probes promptly"
+    }
+  },
+  "AgentPrepareStepResult": {
+    "activeTools": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "cacheControl": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "driver": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "frequencyPenalty": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "headers": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "instructions": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "maxOutputTokens": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "messages": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "presencePenalty": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "providerOptions": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "responseFormat": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "seed": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "stopSequences": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "temperature": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "toolChoice": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "topK": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "topP": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    }
+  },
+  "AgentModelCallSettings": {
+    "frequencyPenalty": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "maxOutputTokens": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "presencePenalty": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "seed": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "stopSequences": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "temperature": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "topK": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    },
+    "topP": {
+      "test": "prepareStep forwards every AgentPrepareStepResult override and AgentModelCallSettings field to the driver"
+    }
+  },
+  "AgentRetryPolicy": {
+    "delayMs": {
+      "test": "recordAgentRetryDecision enforces maxRetryDurationMs wall-clock budget"
+    },
+    "maxAttempts": {
+      "test": "recordAgentRetryDecision enforces maxRetryDurationMs wall-clock budget"
+    },
+    "maxRetryDurationMs": {
+      "test": "recordAgentRetryDecision enforces maxRetryDurationMs wall-clock budget"
+    }
+  },
+  "StructuredCompactionConfig": {
+    "createSummaryMessage": {
+      "test": "structuredCompaction reads leading summary via readPreviousSummary and passes it to summarize"
+    },
+    "evidencePolicy": {
+      "test": "opt-in releases the complete failed prefix and keeps the newest turn"
+    },
+    "keepRecentTurns": {
+      "test": "structuredCompaction reads leading summary via readPreviousSummary and passes it to summarize"
+    },
+    "maxAttempts": {
+      "test": "recomputes from a fresh snapshot after a CAS conflict within a bounded attempt count"
+    },
+    "readPreviousSummary": {
+      "test": "structuredCompaction reads leading summary via readPreviousSummary and passes it to summarize"
+    },
+    "schema": {
+      "test": "structuredCompaction reads leading summary via readPreviousSummary and passes it to summarize"
+    },
+    "summarize": {
+      "test": "structuredCompaction reads leading summary via readPreviousSummary and passes it to summarize"
+    },
+    "threshold": {
+      "test": "structuredCompaction forwards tools and context into threshold and summarize (and leaves threshold context undefined when omitted)"
+    }
+  },
+  "AnthropicThinkingPolicy": {
+    "type": {
+      "test": "accepts adaptive, enabled (>=1024), and disabled thinking policies"
+    }
+  },
+  "AgentMountConfig": {
+    "access": {
+      "test": "the one-line harness composition retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    },
+    "coerceJsonArgs": {
+      "test": "mountAgentTools honours extend, errorHint, coerceJsonArgs, flattenUnionInput, inputRecursionDepth, and inputNestingDepth"
+    },
+    "context": {
+      "test": "the one-line harness composition retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    },
+    "durability": {
+      "test": "a declared factory puts step into the handler context"
+    },
+    "errorHint": {
+      "test": "mountAgentTools honours extend, errorHint, coerceJsonArgs, flattenUnionInput, inputRecursionDepth, and inputNestingDepth"
+    },
+    "extend": {
+      "test": "mountAgentTools honours extend, errorHint, coerceJsonArgs, flattenUnionInput, inputRecursionDepth, and inputNestingDepth"
+    },
+    "flattenUnionInput": {
+      "test": "mountAgentTools honours extend, errorHint, coerceJsonArgs, flattenUnionInput, inputRecursionDepth, and inputNestingDepth"
+    },
+    "hooks": {
+      "test": "the one-line harness composition retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    },
+    "inputNestingDepth": {
+      "test": "mountAgentTools honours extend, errorHint, coerceJsonArgs, flattenUnionInput, inputRecursionDepth, and inputNestingDepth"
+    },
+    "inputRecursionDepth": {
+      "test": "mountAgentTools honours extend, errorHint, coerceJsonArgs, flattenUnionInput, inputRecursionDepth, and inputNestingDepth"
+    },
+    "onOutputStrip": {
+      "test": "the one-line harness composition retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    },
+    "registry": {
+      "test": "mountAgent accepts the registry and refuses two surface declarations"
+    },
+    "runtimeTools": {
+      "test": "the one-line harness composition retains mapped identity, mount options, hooks, authorization and exactly one fence"
+    }
+  },
+  "OpenRouterCatalogCacheOptions": {
+    "apiKey": {
+      "test": "hydrates from pluggable store, tolerates corrupted/failing store reads and writes, and passes snapshot options through"
+    },
+    "concurrency": {
+      "test": "validates timer, concurrency and maxResponseBytes options eagerly before any fetch or store read"
+    },
+    "endpointsFor": {
+      "test": "hydrates from pluggable store, tolerates corrupted/failing store reads and writes, and passes snapshot options through"
+    },
+    "fetcher": {
+      "test": "hydrates from pluggable store, tolerates corrupted/failing store reads and writes, and passes snapshot options through"
+    },
+    "freshMs": {
+      "test": "coalesces concurrent reads, honours freshMs TTL, and isolates per-caller AbortSignals"
+    },
+    "maxResponseBytes": {
+      "test": "validates timer, concurrency and maxResponseBytes options eagerly before any fetch or store read"
+    },
+    "now": {
+      "test": "coalesces concurrent reads, honours freshMs TTL, and isolates per-caller AbortSignals"
+    },
+    "onError": {
+      "test": "hydrates from pluggable store, tolerates corrupted/failing store reads and writes, and passes snapshot options through"
+    },
+    "retryBackoffMs": {
+      "test": "falls back to unavailable and stale on upstream failure, obeys retryBackoffMs, and recovers on forceRefresh or backoff expiry"
+    },
+    "store": {
+      "test": "hydrates from pluggable store, tolerates corrupted/failing store reads and writes, and passes snapshot options through"
+    },
+    "timeoutMs": {
+      "test": "validates timer, concurrency and maxResponseBytes options eagerly before any fetch or store read"
+    }
+  },
+  "OpenRouterModelCatalogOptions": {
+    "apiKey": {
+      "test": "openRouterModelCatalog accepts optional and dynamic apiKey factories and AgentModelProviderOptionsSchema handles optional undefined fields"
+    },
+    "fetcher": {
+      "test": "keeps the complete popularity order and joins sourced benchmark facts"
+    },
+    "now": {
+      "test": "keeps the complete popularity order and joins sourced benchmark facts"
+    },
+    "timeoutMs": {
+      "test": "bounds the whole catalog fan-out with one timeout signal"
+    }
+  },
+  "OpenRouterModelFilter": {
+    "author": {
+      "test": "findOpenRouterModel and listOpenRouterModels support every lookup and filter criterion"
+    },
+    "freeOnly": {
+      "test": "findOpenRouterModel and listOpenRouterModels support every lookup and filter criterion"
+    },
+    "inputModalities": {
+      "test": "findOpenRouterModel and listOpenRouterModels support every lookup and filter criterion"
+    },
+    "maxCompletionUsdPerMillion": {
+      "test": "findOpenRouterModel and listOpenRouterModels support every lookup and filter criterion"
+    },
+    "maxPromptUsdPerMillion": {
+      "test": "findOpenRouterModel and listOpenRouterModels support every lookup and filter criterion"
+    },
+    "minContextLength": {
+      "test": "findOpenRouterModel and listOpenRouterModels support every lookup and filter criterion"
+    },
+    "outputModalities": {
+      "test": "findOpenRouterModel and listOpenRouterModels support every lookup and filter criterion"
+    },
+    "reasoning": {
+      "test": "findOpenRouterModel and listOpenRouterModels support every lookup and filter criterion"
+    },
+    "tools": {
+      "test": "findOpenRouterModel and listOpenRouterModels support every lookup and filter criterion"
+    }
   }
 }

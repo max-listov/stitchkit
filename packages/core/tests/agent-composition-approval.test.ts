@@ -3,11 +3,15 @@ import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { createSocketIOClient } from '../src/browser/socket-io';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import { createAgentController } from '../src/entrypoints/agent-runtime/browser';
 import { bindAgentHarnessRealtime } from '../src/entrypoints/agent-runtime/realtime';
 import { inspectAgentRun } from '../src/entrypoints/agent-runtime/testing';
-import { composeToolLifecycle, defineRuntimeTool } from '../src/entrypoints/tools';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import {
+  composeToolLifecycle,
+  defineRuntimeTool,
+  mountAgentTools,
+} from '../src/entrypoints/tools';
 import { createServer } from '../src/server/bun';
 import { createSocketIOServer } from '../src/server/socket-io';
 import { compositionHarness, eventually } from './support/agent-composition';
@@ -74,11 +78,11 @@ test('browser approval executes one authorized tool and interrupt cancels a live
           contextWindow: 8_000,
           capabilities: ['tools'],
         },
-        model,
+        driver: fromAiSdkModel(model),
       }),
     },
     tools: (run) =>
-      mountAgent([], {
+      mountAgentTools([], {
         context: run.context,
         access: { gate: composeToolLifecycle(run.toolFenceLifecycle) },
         runtimeTools: [

@@ -3,8 +3,8 @@ const AGENT_TOOL_ERROR_BRAND = Symbol.for('stitchkit.AgentToolError');
 /**
  * A mounted tool failed with a model-safe, transport-shaped error envelope.
  *
- * The AI SDK must observe a throw so it emits `tool-error`; returning this
- * envelope would incorrectly mark the call successful. The original cause is
+ * The agent tool loop must observe a throw so it emits `tool-error`; returning
+ * this envelope would incorrectly mark the call successful. The original cause is
  * retained for local observability while `message` contains only the safe
  * envelope that may be sent to the model provider.
  */

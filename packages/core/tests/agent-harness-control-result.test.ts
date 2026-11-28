@@ -1,5 +1,4 @@
 import { expect, test } from 'bun:test';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   createMemoryAgentRuntimeStore,
@@ -9,6 +8,7 @@ import {
   createAgentHarnessControlServer,
   createHeadlessAgentHarness,
 } from '../src/entrypoints/agent-runtime/harness';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
 
 function fixtureHarness() {
   return createHeadlessAgentHarness({
@@ -22,7 +22,7 @@ function fixtureHarness() {
           contextWindow: 8_000,
           capabilities: [],
         },
-        model: new MockLanguageModelV4(),
+        driver: createScriptedModelDriver({ provider: 'fixture', modelId: 'm', steps: [] }),
       }),
     },
     resources: { load: () => ({ resources: [], diagnostics: [] }) },

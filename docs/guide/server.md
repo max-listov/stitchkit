@@ -37,9 +37,39 @@ Every handler receives one `ctx` argument:
 | `traceId` | `string` | per-request trace id |
 | `ipAddress` | `string` | caller IP |
 | `userAgent` | `string` | caller user-agent |
+| `remainingTimeoutMs?` | `(reserveMs?: number) => number \| undefined` | live remaining ms until the active request deadline (or `undefined` when unbounded; present on HTTP calls) |
 
 The same handler runs for HTTP, MCP and agent calls — `ctx.source` tells you
 which. Anything an auth hook attaches (e.g. the resolved user) is also on `ctx`.
+
+### Inbound deadline budgets
+
+When an HTTP caller sends a relative remaining budget in `x-stitchkit-timeout-ms` (for example via
+`createHttpClient({ propagateDeadline: true })`, a `createClient` endpoint with a declared
+`timeout`, or per-call `withOptions(..., { timeout })`):
+
+- `createHandler` / `createServer` clamps the inbound budget to the endpoint's declared `timeout`
+  (a caller can narrow its budget, never extend it past the server's own ceiling).
+- `hooks.authorize` (and route-group `authorize`) runs first so unauthorized callers still receive
+  `401`/`403`; an inbound value of `0` then fails immediately with `REQUEST_TIMEOUT` (`408`) before
+  payload parsing, `beforeHandle`, or the handler runs. Malformed non-integer values are ignored so
+  the endpoint's declared timeout remains authoritative.
+- Inside the handler, `ctx.remainingTimeoutMs?.(reserveMs?)` returns the live remaining integer
+  milliseconds (clamped to `>= 0`, subtracting optional `reserveMs` for response serialization), or
+  `undefined` when neither an inbound header nor an endpoint `timeout` bounds the request. Always
+  check `remaining <= 0` before forwarding `{ timeout: remaining }` so an exhausted budget fails with
+  `408` instead of throwing a `RangeError` from timer validation:
+
+```ts
+const remaining = ctx.remainingTimeoutMs?.(200)
+if (remaining !== undefined && remaining <= 0) {
+  throw new AppError('REQUEST_TIMEOUT', {
+    status: 408,
+    message: 'Request deadline budget exhausted',
+  })
+}
+await downstream.list.withOptions(remaining !== undefined ? { timeout: remaining } : {})
+```
 
 ### Request attributes from the ingress
 

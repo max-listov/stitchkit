@@ -198,4 +198,59 @@ describe('the run event union holds what the flat shape could only promise', () 
       }),
     ).toThrow();
   });
+
+  test('step-finished validates full telemetry fields and rejects invalid finishReason or negative timings', () => {
+    const valid = AgentStepFinishedEventSchema.parse({
+      schemaVersion: 1,
+      eventId: 'event-step-1',
+      type: 'step-finished',
+      conversationId: 'conversation-1',
+      runId: 'run-1',
+      traceId: 'trace-1',
+      spanId: 'span-1',
+      state: 'running',
+      phase: 'step',
+      step: 0,
+      attempt: 1,
+      modelId: 'claude-sonnet-4-6',
+      provider: { key: 'anthropic' },
+      usage: unknownUsage(),
+      finishReason: 'tool-calls',
+      rawFinishReason: 'tool_use',
+      toolCallCount: 2,
+      costDetails: { promptCostUsd: 0.001, outputCostUsd: 0.002, isByok: false },
+      timings: {
+        ttftMs: 42,
+        responseTimeMs: 120,
+        toolExecutionMs: 35,
+        stepTimeMs: 155,
+        chunkIntervalsMs: { min: 2, p10: 2, median: 5, avg: 6, p90: 11, max: 12 },
+      },
+      response: {
+        id: 'resp-1',
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-6',
+        timestamp: '2026-11-28T10:00:00.000Z',
+      },
+      emittedAt: '2026-11-28T10:00:01.000Z',
+    });
+    expect(valid.finishReason).toBe('tool-calls');
+    expect(valid.toolCallCount).toBe(2);
+    expect(valid.timings?.chunkIntervalsMs?.median).toBe(5);
+    expect(valid.response?.timestamp).toBe('2026-11-28T10:00:00.000Z');
+
+    // Negative controls: unknown finishReason, negative toolCallCount, negative timing rejected.
+    expect(() =>
+      AgentStepFinishedEventSchema.parse({ ...valid, finishReason: 'made-up' }),
+    ).toThrow();
+    expect(() =>
+      AgentStepFinishedEventSchema.parse({ ...valid, toolCallCount: -1 }),
+    ).toThrow();
+    expect(() =>
+      AgentStepFinishedEventSchema.parse({
+        ...valid,
+        timings: { ...valid.timings, stepTimeMs: -1 },
+      }),
+    ).toThrow();
+  });
 });

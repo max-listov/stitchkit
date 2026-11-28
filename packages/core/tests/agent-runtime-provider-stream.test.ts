@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { simulateReadableStream, tool } from 'ai';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { ownedProviderStream } from '../src/agent-runtime/owned-provider-stream';
@@ -9,6 +9,9 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
+import { defineAgentTool } from '../src/entrypoints/tools';
+import { withDeadline } from '../src/internal/deadline';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -156,7 +159,7 @@ describe('agent runtime provider stream ownership', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       prompt: () => ({
@@ -166,8 +169,8 @@ describe('agent runtime provider stream ownership', () => {
         contextDecision: 'unavailable',
       }),
       tools: () => ({
-        effect: tool({
-          inputSchema: z.object({}),
+        effect: defineAgentTool({
+          input: z.object({}),
           execute: () => {
             toolEffects += 1;
             return { ok: true };
@@ -201,5 +204,93 @@ describe('agent runtime provider stream ownership', () => {
     expect(providerCalls).toBe(3);
     expect(toolEffects).toBe(1);
     await runtime.close();
+  });
+
+  test('catches synchronous iterator.return() throw and prevents UnhandledPromiseRejection on cleanup or deadline timeout', async () => {
+    // 1. Synchronous throw inside iterator.return() must report to onCleanupFailure and preserve primary error.
+    const primary = new Error('primary failure');
+    const syncThrow = new Error('sync return failure');
+    let secondary: unknown;
+    const syncThrowStream: AsyncIterable<string> = {
+      [Symbol.asyncIterator]() {
+        let delivered = false;
+        return {
+          async next() {
+            if (!delivered) {
+              delivered = true;
+              return { done: false, value: 'first' };
+            }
+            return { done: true, value: undefined };
+          },
+          return() {
+            throw syncThrow;
+          },
+        };
+      },
+    };
+    const consumeSyncThrow = async () => {
+      for await (const _chunk of ownedProviderStream({
+        stream: syncThrowStream,
+        abort: () => undefined,
+        onCleanupFailure: (error) => {
+          secondary = error;
+        },
+      })) {
+        throw primary;
+      }
+    };
+    await expect(consumeSyncThrow()).rejects.toBe(primary);
+    expect(secondary).toBe(syncThrow);
+
+    // 2. Timed-out cleanup whose promise rejects later must NOT trigger UnhandledPromiseRejection.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const deferred = Promise.withResolvers<IteratorResult<string>>();
+      let timeoutError: unknown;
+      const slowCleanupStream: AsyncIterable<string> = {
+        [Symbol.asyncIterator]() {
+          let delivered = false;
+          return {
+            async next() {
+              if (!delivered) {
+                delivered = true;
+                return { done: false, value: 'chunk' };
+              }
+              return { done: true, value: undefined };
+            },
+            return() {
+              return deferred.promise;
+            },
+          };
+        },
+      };
+      for await (const _chunk of ownedProviderStream({
+        stream: slowCleanupStream,
+        abort: () => undefined,
+        onCleanupFailure: (error) => {
+          timeoutError = error;
+        },
+        cleanupTimeoutMs: 10,
+      })) {
+        break;
+      }
+      expect(timeoutError).toBeInstanceOf(Error);
+
+      // Also exercise withDeadline directly when expiry wins and the underlying promise rejects later.
+      const late = Promise.withResolvers<string>();
+      const deadlineOutcome = await withDeadline(late.promise, 10);
+      expect(deadlineOutcome).toEqual({ settled: false });
+
+      deferred.reject(new Error('late cleanup rejection'));
+      late.reject(new Error('late deadline rejection'));
+      await Bun.sleep(25);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });

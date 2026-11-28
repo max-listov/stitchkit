@@ -1,4 +1,4 @@
-import type { ToolSet } from 'ai';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { agentDurableEventId } from './events';
 import type { RunExecution } from './run-execution-state';
 import { abortTerminalReason, statedUsage } from './runtime-internals';
@@ -20,7 +20,7 @@ import { assistantStatus } from './terminal-status';
  * The terminal reason of a stream that ended without a throw: a stop policy,
  * an abort, and the protocol's verdict on the output all have their say.
  */
-export async function settleStreamOutcome<CONTEXT, TOOLS extends ToolSet>(
+export async function settleStreamOutcome<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
 ): Promise<void> {
   const { config, now } = execution.dependencies;
@@ -34,8 +34,20 @@ export async function settleStreamOutcome<CONTEXT, TOOLS extends ToolSet>(
   );
   if (state.terminalPolicyName !== undefined) state.terminalReason = 'policy_stop';
   if (executionSignal.aborted) state.terminalReason = abortTerminalReason(executionSignal);
-  const awaitsApproval = state.parts.some((part) => part.type === 'tool-approval-request');
-  if (
+  const respondedApprovals = new Set(
+    state.parts
+      .filter((part) => part.type === 'tool-approval-response')
+      .map((part) => part.approvalId),
+  );
+  const awaitsApproval = state.parts.some(
+    (part) =>
+      part.type === 'tool-approval-request' && !respondedApprovals.has(part.approvalId),
+  );
+  if (state.terminalDecision === 'rejected' && !executionSignal.aborted) {
+    state.terminalReason = 'output_rejected';
+    state.internalCause ??= new Error('Agent terminal output was rejected by the protocol');
+  } else if (
+    state.terminalDecision === undefined &&
     !awaitsApproval &&
     config.protocol.acceptTerminal &&
     (state.terminalReason === 'success' ||
@@ -48,13 +60,14 @@ export async function settleStreamOutcome<CONTEXT, TOOLS extends ToolSet>(
       parts: state.parts,
       updatedAt: now().toISOString(),
     });
-    if (
-      !(await config.protocol.acceptTerminal({
-        message: candidate,
-        reason: state.terminalReason,
-        ...(state.terminalPolicyName && { policyName: state.terminalPolicyName }),
-      }))
-    ) {
+    const verdict = await config.protocol.acceptTerminal({
+      message: candidate,
+      reason: state.terminalReason,
+      ...(state.terminalPolicyName && { policyName: state.terminalPolicyName }),
+    });
+    const accepted =
+      verdict === true || (typeof verdict === 'object' && verdict.action === 'accept');
+    if (!accepted) {
       state.terminalReason = 'output_rejected';
       state.internalCause = new Error('Agent terminal output was rejected by the protocol');
     }
@@ -62,7 +75,7 @@ export async function settleStreamOutcome<CONTEXT, TOOLS extends ToolSet>(
 }
 
 /** The operator's record of what this executor spent, whoever settled the run. */
-function emitSpend<CONTEXT, TOOLS extends ToolSet>(
+function emitSpend<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
   report: {
     eventId: string;
@@ -103,7 +116,7 @@ function emitSpend<CONTEXT, TOOLS extends ToolSet>(
  * run's to report, not to hide and not to fail the committed terminal
  * with — it rides into the operator event as the cause.
  */
-async function stopChildrenAfterExplicitStop<CONTEXT, TOOLS extends ToolSet>(
+async function stopChildrenAfterExplicitStop<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
   committedByCaller: boolean,
 ): Promise<void> {
@@ -126,7 +139,7 @@ async function stopChildrenAfterExplicitStop<CONTEXT, TOOLS extends ToolSet>(
 }
 
 /** Commit the terminal the earlier phases decided, and report it on both channels. */
-export async function commitRunTerminal<CONTEXT, TOOLS extends ToolSet>(
+export async function commitRunTerminal<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
 ): Promise<AgentRuntimeResult> {
   const { config, publish, runtimeEpoch, now } = execution.dependencies;

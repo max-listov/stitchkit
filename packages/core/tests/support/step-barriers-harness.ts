@@ -3,7 +3,7 @@
  * one provider response, the tools and the barriers are the test's own, and
  * every published event is kept.
  */
-import { jsonSchema, simulateReadableStream, type ToolSet } from 'ai';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
@@ -15,6 +15,8 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../../src/entrypoints/agent-runtime/ai-sdk';
+import type { AgentToolSet } from '../../src/entrypoints/tools';
 
 export const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -46,21 +48,21 @@ export const text = (delta: string) => [
   { type: 'text-end' as const, id: 't' },
 ];
 export const answer = (said = 'final') => round([...text(said), finish('stop')]);
-export const noInput = jsonSchema<Record<string, string>>({ type: 'object' });
+export const noInput = z.record(z.string(), z.string());
 export const idOf = (input: unknown) => z.object({ id: z.string() }).parse(input).id;
 
-type Loop = NonNullable<AgentRuntimeConfig<Record<string, never>, ToolSet>['loop']>;
+type Loop = NonNullable<AgentRuntimeConfig<Record<string, never>, AgentToolSet>['loop']>;
 
 export function harness(
   rounds: ReturnType<typeof round>[],
-  tools: ToolSet,
+  tools: AgentToolSet,
   stepBarriers: AgentStepBarriers,
   loop: Omit<Loop, 'stepBarriers'> = {},
 ) {
   const events: AgentRuntimeEvent[] = [];
   const store = createMemoryAgentRuntimeStore();
   // One model across runs: a run answered after an approval reads the next round.
-  const model = new MockLanguageModelV4({ doStream: rounds });
+  const driver = fromAiSdkModel(new MockLanguageModelV4({ doStream: rounds }));
   const runtime = createAgentRuntime({
     protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
     store,
@@ -72,7 +74,7 @@ export function harness(
           contextWindow: 1_000,
           capabilities: ['tools'],
         },
-        model,
+        driver,
       }),
     },
     prompt: () => ({

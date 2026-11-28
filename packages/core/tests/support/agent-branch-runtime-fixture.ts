@@ -1,5 +1,3 @@
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   type AgentRuntimeStore,
@@ -22,33 +20,30 @@ export function branchRuntime(
           contextWindow: 4096,
           capabilities: [],
         },
-        model: new MockLanguageModelV4({
-          doStream: async (options) => {
-            onPrompt(options.prompt);
+        driver: {
+          provider: 'test',
+          modelId: 'branch-fixture',
+          async stream(request) {
+            onPrompt([...request.instructions, ...request.messages]);
             return {
-              stream: simulateReadableStream({
-                chunks: [
-                  { type: 'text-start', id: 'text' },
-                  { type: 'text-delta', id: 'text', delta: 'retained answer' },
-                  { type: 'text-end', id: 'text' },
-                  {
+              parts: {
+                async *[Symbol.asyncIterator]() {
+                  yield { type: 'text-start', id: 'text' };
+                  yield { type: 'text-delta', id: 'text', delta: 'retained answer' };
+                  yield { type: 'text-end', id: 'text' };
+                  yield {
                     type: 'finish',
-                    finishReason: { unified: 'stop', raw: undefined },
+                    finishReason: 'stop',
                     usage: {
-                      inputTokens: {
-                        total: 1,
-                        noCache: 1,
-                        cacheRead: undefined,
-                        cacheWrite: undefined,
-                      },
-                      outputTokens: { total: 1, text: 1, reasoning: undefined },
+                      inputTokens: { value: 1, provenance: 'provider-reported' },
+                      outputTokens: { value: 1, provenance: 'provider-reported' },
                     },
-                  },
-                ],
-              }),
+                  };
+                },
+              },
             };
           },
-        }),
+        },
       }),
     },
     prompt: () => ({

@@ -1,5 +1,5 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
-import type { Tool } from 'ai';
+import type { ToolSet } from 'ai';
 import { createDeferredAgentToolSurface } from 'stitchkit/agent-runtime';
 import {
   type CliConfig,
@@ -8,9 +8,10 @@ import {
   createCliInvoker,
 } from 'stitchkit/cli';
 import {
+  type AgentToolModelOutput,
   createRuntimeToolFactory,
   defineRuntimeTool,
-  type RuntimeAgentModelOutput,
+  mountAgentTools,
   type RuntimeMcpPresentation,
   type RuntimeToolDefinition,
   type RuntimeToolDefinitionWithOutput,
@@ -55,6 +56,7 @@ const invoker: CliInvokerConfig<{ id: string }> = {
 void createCli(cli);
 void createCliInvoker(invoker);
 void mountAgent([], { access: { open: 'local-operator' }, runtimeTools: [typed] });
+void mountAgentTools([], { access: { open: 'local-operator' }, runtimeTools: [typed] });
 // A registered list is the deferred Agent surface's catalog without a conversion.
 const catalog: readonly RuntimeToolDefinition[] = [typed];
 void createDeferredAgentToolSurface({
@@ -64,12 +66,15 @@ void createDeferredAgentToolSurface({
 });
 const sdkMcp = { content: [{ type: 'text', text: 'hello' }] } satisfies CallToolResult;
 const mcp: RuntimeMcpPresentation = sdkMcp;
-const model: RuntimeAgentModelOutput = { type: 'text', value: 'hello' };
-const sdkModel: Awaited<ReturnType<NonNullable<Tool<unknown, unknown>['toModelOutput']>>> =
-  model;
+const model: AgentToolModelOutput = { type: 'text', value: 'hello' };
+const sdkTools: ToolSet = mountAgent([], {
+  access: { open: 'local-operator' },
+  runtimeTools: [typed],
+});
 void sdkMcp;
 void mcp;
-void sdkModel;
+void model;
+void sdkTools;
 // @ts-expect-error MCP SDK text content requires text, not a number.
 const malformedMcp: CallToolResult = { content: [{ type: 'text', text: 1 }] };
 // @ts-expect-error The shared framework presenter preserves SDK content types.
@@ -80,8 +85,8 @@ const missingPresentation: RuntimeMcpPresentation = {};
 const malformedMetadata: RuntimeMcpPresentation = { content: [], _meta: 42 };
 // @ts-expect-error The framework owns MCP validation/error fields.
 const reservedMcp: RuntimeMcpPresentation = { content: [], isError: true };
-// @ts-expect-error An AI SDK text result requires a string value.
-const malformedAgent: RuntimeAgentModelOutput = { type: 'text', value: 1 };
+// @ts-expect-error An AgentToolModelOutput text result requires a string value.
+const malformedAgent: AgentToolModelOutput = { type: 'text', value: 1 };
 void malformedMcp;
 void malformedPresentation;
 void missingPresentation;

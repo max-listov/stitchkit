@@ -11,6 +11,8 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
 
 function submitAfterTerminalConflictWithOwnershipDrift(drift: 'owner' | 'fencing') {
   const durable = createMemoryAgentRuntimeStore();
@@ -52,7 +54,7 @@ function submitAfterTerminalConflictWithOwnershipDrift(drift: 'owner' | 'fencing
           contextWindow: 1_000,
           capabilities: [],
         },
-        model: new MockLanguageModelV4(),
+        driver: createScriptedModelDriver({ steps: [] }),
       }),
     },
     prompt: () => {
@@ -86,7 +88,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => ({
@@ -129,7 +131,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -192,7 +194,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: async () => {
@@ -307,7 +309,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       prompt: () => ({
@@ -394,7 +396,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -485,7 +487,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -557,7 +559,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -600,7 +602,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -650,7 +652,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -713,7 +715,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -817,7 +819,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {
@@ -861,7 +863,7 @@ describe('agent runtime terminalization', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({ steps: [] }),
         }),
       },
       prompt: () => {

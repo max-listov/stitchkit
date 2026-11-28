@@ -65,9 +65,23 @@ async function runControlledOperation<CONTEXT>(
   harness: HeadlessAgentHarness<CONTEXT>,
   request: Extract<
     AgentControlRequest,
-    { operation: 'interrupt' | 'respond-approval' | 'submit' }
+    {
+      operation:
+        | 'interrupt'
+        | 'respond-approval'
+        | 'respond-input'
+        | 'set-permission-mode'
+        | 'submit';
+    }
   >,
 ): Promise<AgentControlResponse> {
+  if (request.operation === 'respond-input' || request.operation === 'set-permission-mode') {
+    return controlFailure(
+      request.requestId,
+      'UNSUPPORTED_OPERATION',
+      `Operation "${request.operation}" is not supported by this agent harness`,
+    );
+  }
   if (request.operation === 'interrupt') {
     await harness.interrupt({
       conversationId: request.conversationId,

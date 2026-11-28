@@ -21,6 +21,8 @@ export const AgentBrowserRequestSchema = z.discriminatedUnion('operation', [
   }),
   AgentControlRequestSchema.options[4],
   AgentControlRequestSchema.options[5].omit({ context: true }),
+  AgentControlRequestSchema.options[6].omit({ context: true }),
+  AgentControlRequestSchema.options[7].omit({ context: true }),
 ]);
 /**
  * A request a browser may send to the agent controller (attach, send message, interrupt and so

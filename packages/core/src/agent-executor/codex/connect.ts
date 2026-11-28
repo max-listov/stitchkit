@@ -1,7 +1,12 @@
 import { abortReason, raceAbort } from '../../internal/abort-race';
 import { assertTimerMs, withSignalDeadline } from '../../internal/deadline';
 import { assertExpectedOwnerUid } from '../../internal/unix-socket';
-import { type EngineProcess, spawnEngineProcess } from '../engine-process';
+import {
+  type EngineProcess,
+  type EngineProcessWrapCommand,
+  resolveWrappedEngineCommand,
+  spawnEngineProcess,
+} from '../engine-process';
 import { createJsonRpcPeer, type JsonRpcPeer } from '../json-rpc-peer';
 import { type ExecutorProfileConfig, engineEnvironment } from '../profile';
 import {
@@ -61,6 +66,7 @@ export interface CodexConnectConfig {
   readonly transport?: CodexTransportConfig | undefined;
   readonly serverArgs?: readonly string[] | undefined;
   readonly ambient: Readonly<Record<string, string | undefined>>;
+  readonly wrapCommand?: EngineProcessWrapCommand | undefined;
   readonly version: string;
   readonly maxFrameBytes?: number | undefined;
   readonly onObserverError?: ObserverErrorHandler | undefined;
@@ -249,6 +255,17 @@ async function connectCodexStdio(
   onStartupPhase?: (phase: ExecutorStartupPhase) => void,
 ): Promise<CodexConnection> {
   const env = engineEnvironment(profile, config.ambient);
+  const command = await resolveWrappedEngineCommand(
+    {
+      executable: config.executable,
+      args: [...config.prefix, 'app-server', ...extraArgs],
+      cwd,
+      env,
+    },
+    config.wrapCommand,
+    'createCodexDriver',
+    signal,
+  );
   let endedError: Error | undefined;
   let ready = false;
   const peer = createJsonRpcPeer({
@@ -265,10 +282,10 @@ async function connectCodexStdio(
   };
   emitStartupPhase(onStartupPhase, 'spawning', config.onObserverError);
   const engine = spawnEngineProcess({
-    executable: config.executable,
-    args: [...config.prefix, 'app-server', ...extraArgs],
-    cwd,
-    env,
+    executable: command.executable,
+    args: command.args,
+    cwd: command.cwd,
+    env: command.env,
     signal,
     ...(config.maxFrameBytes !== undefined && { maxLineBytes: config.maxFrameBytes }),
   });
@@ -360,18 +377,35 @@ export async function connectCodex(
   if (transport.kind === 'unix-listen') {
     assertCodexUnixListenTargetAvailable(transport.socketPath, 'createCodexDriver');
     const env = engineEnvironment(profile, config.ambient);
+    let command: Awaited<ReturnType<typeof resolveWrappedEngineCommand>>;
+    try {
+      command = await resolveWrappedEngineCommand(
+        {
+          executable: config.executable,
+          args: [
+            ...config.prefix,
+            'app-server',
+            '--listen',
+            `unix://${transport.socketPath}`,
+            ...extraArgs,
+          ],
+          cwd,
+          env,
+        },
+        config.wrapCommand,
+        'createCodexDriver',
+        signal,
+      );
+    } catch (error) {
+      peer.close(error);
+      throw error;
+    }
     emitStartupPhase(onStartupPhase, 'spawning', config.onObserverError);
     spawnedEngine = spawnEngineProcess({
-      executable: config.executable,
-      args: [
-        ...config.prefix,
-        'app-server',
-        '--listen',
-        `unix://${transport.socketPath}`,
-        ...extraArgs,
-      ],
-      cwd,
-      env,
+      executable: command.executable,
+      args: command.args,
+      cwd: command.cwd,
+      env: command.env,
       signal,
       stdoutMode: 'drain',
       ...(config.maxFrameBytes !== undefined && { maxLineBytes: config.maxFrameBytes }),

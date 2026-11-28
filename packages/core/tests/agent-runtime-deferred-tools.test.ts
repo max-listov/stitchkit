@@ -1,22 +1,25 @@
 import { describe, expect, test } from 'bun:test';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { placeholderDeferredSearch } from '../src/agent-runtime/deferred-tool-search';
 import { ranked } from '../src/agent-runtime/deferred-tool-selection';
 import {
   AgentContextOverflowError,
+  type AgentModelDriver,
+  type AgentModelRequest,
+  type AgentModelStreamPart,
   AgentRunSchema,
+  type AgentUsage,
   createAgentRuntime,
   createDeferredAgentToolSurface,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
 import { defineRuntimeTool } from '../src/entrypoints/tools';
 
-const usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 1, text: 1, reasoning: undefined },
+const usage: AgentUsage = {
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
 };
 
 const descriptor = {
@@ -45,8 +48,8 @@ function runtimeTool(name: string, calls: string[]) {
   });
 }
 
-function names(options: Parameters<MockLanguageModelV4['doStream']>[0]): string[] {
-  return options.tools?.map((entry) => entry.name) ?? [];
+function names(request: AgentModelRequest): string[] {
+  return request.tools.map((entry) => entry.name);
 }
 
 describe('deferred Agent tool surface', () => {
@@ -59,11 +62,13 @@ describe('deferred Agent tool surface', () => {
     const always = runtimeTool('ask_user', calls);
     const providerSurfaces: string[][] = [];
     let step = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async (options) => {
-        providerSurfaces.push(names(options));
+    const driver: AgentModelDriver = {
+      provider: 'test',
+      modelId: 'deferred-tools',
+      async stream(request) {
+        providerSurfaces.push(names(request));
         step += 1;
-        const chunks =
+        const chunks: AgentModelStreamPart[] =
           step === 1
             ? [
                 {
@@ -87,20 +92,19 @@ describe('deferred Agent tool surface', () => {
                   { type: 'text-delta', id: 'answer', delta: 'complete' },
                   { type: 'text-end', id: 'answer' },
                 ];
+        const parts: AgentModelStreamPart[] = [
+          ...chunks,
+          { type: 'finish', finishReason: step < 3 ? 'tool-calls' : 'stop', usage },
+        ];
         return {
-          stream: simulateReadableStream({
-            chunks: [
-              ...chunks,
-              {
-                type: 'finish',
-                finishReason: { unified: step < 3 ? 'tool-calls' : 'stop', raw: undefined },
-                usage,
-              },
-            ],
-          } as never),
+          parts: {
+            async *[Symbol.asyncIterator]() {
+              for (const part of parts) yield part;
+            },
+          },
         };
       },
-    });
+    };
     const deferred = createDeferredAgentToolSurface<{ mode: 'member' | 'broadcast' }>({
       runtimeTools: [...catalog, always],
       alwaysOn: ['ask_user'],
@@ -119,7 +123,7 @@ describe('deferred Agent tool surface', () => {
     const runtime = createAgentRuntime({
       protocol,
       store: createMemoryAgentRuntimeStore(),
-      models: { resolve: () => ({ descriptor, model }) },
+      models: { resolve: () => ({ descriptor, driver }) },
       prompt: () => ({
         instructions: 'test',
         sections: [],
@@ -160,30 +164,31 @@ describe('deferred Agent tool surface', () => {
     const calls: string[] = [];
     const surfaces: string[][] = [];
     let step = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async (options) => {
-        surfaces.push(names(options));
+    const driver: AgentModelDriver = {
+      provider: 'test',
+      modelId: 'deferred-tools',
+      async stream(request) {
+        surfaces.push(names(request));
         step += 1;
         const call = step === 1 ? 'operation_known' : 'operation_unknown';
+        const parts: AgentModelStreamPart[] = [
+          {
+            type: 'tool-call',
+            toolCallId: `call-${step}`,
+            toolName: call,
+            input: JSON.stringify({ value: 'not-run' }),
+          },
+          { type: 'finish', finishReason: 'tool-calls', usage },
+        ];
         return {
-          stream: simulateReadableStream({
-            chunks: [
-              {
-                type: 'tool-call',
-                toolCallId: `call-${step}`,
-                toolName: call,
-                input: JSON.stringify({ value: 'not-run' }),
-              },
-              {
-                type: 'finish',
-                finishReason: { unified: 'tool-calls', raw: undefined },
-                usage,
-              },
-            ],
-          } as never),
+          parts: {
+            async *[Symbol.asyncIterator]() {
+              for (const part of parts) yield part;
+            },
+          },
         };
       },
-    });
+    };
     const deferred = createDeferredAgentToolSurface({
       runtimeTools: [runtimeTool('operation_known', calls)],
       search: {
@@ -198,7 +203,7 @@ describe('deferred Agent tool surface', () => {
     const runtime = createAgentRuntime({
       protocol,
       store,
-      models: { resolve: () => ({ descriptor, model }) },
+      models: { resolve: () => ({ descriptor, driver }) },
       prompt: () => ({
         instructions: 'test',
         sections: [],
@@ -293,7 +298,6 @@ describe('deferred Agent tool surface', () => {
     });
     const prepare = deferred.prepareStep(async () => ({
       instructions: 'application instruction',
-      activeTools: ['member_one', 'member_two', 'member_three'],
     }));
     const run = AgentRunSchema.parse({
       schemaVersion: 1,
@@ -329,9 +333,10 @@ describe('deferred Agent tool surface', () => {
     const prepared = await prepare({
       steps: [],
       stepNumber: 2,
-      model: new MockLanguageModelV4({}),
-      instructions: undefined,
-      initialInstructions: undefined,
+      driver: createScriptedModelDriver({ steps: [] }),
+      activeTools: [],
+      instructions: '',
+      initialInstructions: '',
       messages: [
         toolMessage(receipt(['member_one']), receipt(['member_two'])),
         toolMessage(receipt(['member_three'])),
@@ -339,13 +344,11 @@ describe('deferred Agent tool surface', () => {
       ],
       initialMessages: [],
       responseMessages: [],
-      toolsContext: undefined,
-      runtimeContext: undefined,
       context: { mode: 'member' },
       run,
       signal: new AbortController().signal,
-      toolFenceLifecycle: {},
-    } as never);
+      toolFenceLifecycle: { beforeHandle: () => undefined },
+    });
     expect(prepared).toMatchObject({
       instructions: 'application instruction',
       activeTools: ['tool_search', 'member_pin', 'member_three'],
@@ -354,14 +357,13 @@ describe('deferred Agent tool surface', () => {
     const isolated = await prepare({
       steps: [],
       stepNumber: 0,
-      model: new MockLanguageModelV4({}),
-      instructions: undefined,
-      initialInstructions: undefined,
+      driver: createScriptedModelDriver({ steps: [] }),
+      activeTools: [],
+      instructions: '',
+      initialInstructions: '',
       messages: [toolMessage(receipt(['member_one'], 'another-run'))],
       initialMessages: [],
       responseMessages: [],
-      toolsContext: undefined,
-      runtimeContext: undefined,
       context: { mode: 'broadcast' },
       run: AgentRunSchema.parse({
         ...run,
@@ -369,9 +371,56 @@ describe('deferred Agent tool surface', () => {
         assistantMessageId: 'assistant-two',
       }),
       signal: new AbortController().signal,
-      toolFenceLifecycle: {},
-    } as never);
+      toolFenceLifecycle: { beforeHandle: () => undefined },
+    });
     expect(isolated?.activeTools).toEqual(['tool_search']);
+
+    // Application activeTools intersects deferred active tools: narrows (including []) without ever widening.
+    const narrowed = await deferred.prepareStep(async () => ({
+      instructions: 'narrowed',
+      activeTools: ['member_one', 'member_two', 'member_three'],
+    }))({
+      steps: [],
+      stepNumber: 2,
+      driver: createScriptedModelDriver({ steps: [] }),
+      activeTools: [],
+      instructions: '',
+      initialInstructions: '',
+      messages: [toolMessage(receipt(['member_three']))],
+      initialMessages: [],
+      responseMessages: [],
+      context: { mode: 'member' },
+      run,
+      signal: new AbortController().signal,
+      toolFenceLifecycle: { beforeHandle: () => undefined },
+    });
+    expect(narrowed).toMatchObject({
+      instructions: 'narrowed',
+      activeTools: ['member_three'],
+    });
+
+    const disabled = await deferred.prepareStep(async () => ({
+      instructions: 'wrap-up',
+      activeTools: [],
+    }))({
+      steps: [],
+      stepNumber: 3,
+      driver: createScriptedModelDriver({ steps: [] }),
+      activeTools: [],
+      instructions: '',
+      initialInstructions: '',
+      messages: [toolMessage(receipt(['member_three']))],
+      initialMessages: [],
+      responseMessages: [],
+      context: { mode: 'member' },
+      run,
+      signal: new AbortController().signal,
+      toolFenceLifecycle: { beforeHandle: () => undefined },
+    });
+    expect(disabled).toMatchObject({
+      instructions: 'wrap-up',
+      activeTools: [],
+    });
   });
 
   test('keeps a multimodal runtime presenter on the direct mounted tool', async () => {
@@ -463,10 +512,12 @@ describe('a search marked inactive_call', () => {
     select?: (query: string) => string[],
   ): Promise<unknown> {
     let step = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async () => {
+    const driver: AgentModelDriver = {
+      provider: 'test',
+      modelId: 'deferred-tools',
+      async stream() {
         step += 1;
-        const chunks =
+        const chunks: AgentModelStreamPart[] =
           step === 1
             ? [
                 {
@@ -481,20 +532,19 @@ describe('a search marked inactive_call', () => {
                 { type: 'text-delta', id: 'answer', delta: 'complete' },
                 { type: 'text-end', id: 'answer' },
               ];
+        const parts: AgentModelStreamPart[] = [
+          ...chunks,
+          { type: 'finish', finishReason: step === 1 ? 'tool-calls' : 'stop', usage },
+        ];
         return {
-          stream: simulateReadableStream({
-            chunks: [
-              ...chunks,
-              {
-                type: 'finish',
-                finishReason: { unified: step === 1 ? 'tool-calls' : 'stop', raw: undefined },
-                usage,
-              },
-            ],
-          } as never),
+          parts: {
+            async *[Symbol.asyncIterator]() {
+              for (const part of parts) yield part;
+            },
+          },
         };
       },
-    });
+    };
     const described = (name: string, description: string) =>
       defineRuntimeTool({
         name,
@@ -521,7 +571,7 @@ describe('a search marked inactive_call', () => {
     const runtime = createAgentRuntime({
       protocol,
       store: createMemoryAgentRuntimeStore(),
-      models: { resolve: () => ({ descriptor, model }) },
+      models: { resolve: () => ({ descriptor, driver }) },
       prompt: () => ({
         instructions: 'test',
         sections: [],

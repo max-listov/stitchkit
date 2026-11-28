@@ -17,9 +17,9 @@ bun add stitchkit zod
 
 `zod` is a required peer — schemas are the source of truth everywhere. Other
 peers are optional and pulled in only when you use the matching feature
-(`@modelcontextprotocol/server` for MCP servers, `ai` for agents, `socket.io*` for
-realtime, `@tanstack/react-query` + `react-query-kit` for React). See
-[deps](#dependencies) below.
+(`@modelcontextprotocol/server` for MCP servers, `ai` for AI SDK adapters,
+`socket.io*` for realtime, `@tanstack/react-query` + `react-query-kit` for
+React). See [deps](#dependencies) below.
 
 ## Entrypoints
 
@@ -39,15 +39,16 @@ own, recorded as an ADR.
 | `stitchkit` | browser **and** server | stable<br>_redefined in 5 of the 40 minors since 0.94.0, most recently 0.127.0_ | `defineContract`, `createClient`, `createHttpClient`, `createSocketIOClient`, `parseSSE`, the error model |
 | `stitchkit/http` | browser, React Native/Hermes **and** server | evolving<br>_redefined in 2 of the 40 minors since 0.94.0, most recently 0.127.0_ | typed HTTP client factories and `ApiError`, without optional realtime peers |
 | `stitchkit/realtime` | browser, React Native/Hermes **and** server | evolving<br>_redefined in 1 of the 40 minors since 0.94.0, most recently 0.127.0_ | typed realtime clients, binding to an existing socket and retained topics with a required explicit Socket.IO peer loader |
+| `stitchkit/device-relay` | browser, React Native/Hermes **and** server | evolving<br>_redefined in 0 of the 1 minor since 0.133.0_ | peer-free User Device Relay over realtime — `createDeviceRelayHub`, `createDeviceRelayAgent`, `createMemoryRelayBroker`, `deviceRelayRealtimeContract`, Fetch-compatible unary RPC and credit-paced cursor streams |
 | `stitchkit/contract` | browser **and** server | stable<br>_redefined in 5 of the 40 minors since 0.94.0, most recently 0.127.0_ | the contract layer alone — `defineContract`, errors, pagination |
 | `stitchkit/live` | browser **and** server | evolving<br>_redefined in 2 of the 40 minors since 0.94.0, most recently 0.127.0_ | `defineEvents` — topic declarations beside the operation contract — and watched reads: `createWatchClient`, the value/difference frame and its reassembly |
 | `stitchkit/primitives` | browser **and** server | evolving<br>_redefined in 0 of the 40 minors since 0.94.0_ | generic values and declarations for lifecycle, access, audit, delivery and exports, exact money and rounding tables |
 | `stitchkit/handler` | browser, React Native/Hermes **and** server | evolving<br>_redefined in 0 of the 7 minors since 0.127.0_ | portable `createHandler`, `implement`, errors and `serveBridge` over a string `postMessage` port, with no Node built-ins |
 | `stitchkit/server` | server (Bun) | stable<br>_redefined in 5 of the 40 minors since 0.94.0, most recently 0.127.0_ | `createServer`, `implement`, hooks, auth, Socket.IO server, server primitives |
 | `stitchkit/node` | server (Node ≥ 22.3) | stable<br>_redefined in 2 of the 40 minors since 0.94.0, most recently 0.127.0_ | `serveNode` + the runtime-agnostic core — the Node mirror of `/server` |
-| `stitchkit/tools` | server | stable<br>_redefined in 10 of the 40 minors since 0.94.0, most recently 0.127.0_ | the transport-neutral tool layer — registry, tool names and manifest, runtime tools, native tools, the OAuth provider, the durability engine; loads no optional peer at runtime |
+| `stitchkit/tools` | server | stable<br>_redefined in 10 of the 40 minors since 0.94.0, most recently 0.127.0_ | the transport-neutral tool layer — `mountAgentTools`, `defineAgentTool`, registry, tool names and manifest, runtime tools, native tools, the OAuth provider, the durability engine; loads no optional peer at runtime |
 | `stitchkit/tools/mcp` | server (Bun or Node) | evolving<br>_redefined in 3 of the 40 minors since 0.94.0, most recently 0.127.0_ | the canonical MCP HTTP/stdio server, schemas and typed MCP presenters; only Zod and the MCP server SDK peers |
-| `stitchkit/tools/agent` | server (Bun or Node) | evolving<br>_redefined in 1 of the 40 minors since 0.94.0, most recently 0.127.0_ | `mountAgent` — a contract's operations as AI SDK tools; only Zod and the `ai` peer |
+| `stitchkit/tools/agent` | server (Bun or Node) | evolving<br>_redefined in 1 of the 40 minors since 0.94.0, most recently 0.127.0_ | `mountAgent` — thin AI SDK `ToolSet` adapter over `mountAgentTools` for apps driving their own SDK loop; only Zod and the `ai` peer |
 | `stitchkit/tools/toolkit` | server (Bun or Node) | evolving<br>_redefined in 1 of the 40 minors since 0.94.0, most recently 0.127.0_ | `createToolkit` — one tool set served over MCP and to an AI SDK agent; the MCP server SDK and `ai` peers |
 | `stitchkit/tools/contract` | browser + server | evolving<br>_redefined in 2 of the 40 minors since 0.94.0, most recently 0.124.0_ | the shapes a tool surface speaks — async-operation contract, snapshot and cancel schemas, view-file input/output — without the runtime that serves them |
 | `stitchkit/tools/invoker` | server | stable<br>_redefined in 3 of the 40 minors since 0.94.0, most recently 0.127.0_ | peer-free `createToolInvoker` over the canonical contract tool runner |
@@ -88,19 +89,22 @@ own, recorded as an ADR.
 | `stitchkit/react` | browser + server rendering | stable<br>_redefined in 2 of the 40 minors since 0.94.0, most recently 0.127.0_ | `createCursorQuery`, `createCacheBridge`, QueryClient and `ApiError` retry policy |
 | `stitchkit/react/keyboard` | browser | evolving<br>_redefined in 1 of the 40 minors since 0.94.0, most recently 0.115.0_ | which part of a screen gets a key — ordered layers, one Escape per level, list zones with real focus; see [keyboard guide](keyboard.md) |
 | `stitchkit/react/keyboard/testing` | server (Bun or Node) | evolving<br>_redefined in 0 of the 40 minors since 0.94.0_ | the keyboard layers and zones without a DOM — fakes for the window, elements and key events beside the two engines, to test the order of layers, `scope`/`inert` and the edges of a zone in milliseconds |
-| `stitchkit/agent-runtime` | server | evolving<br>_redefined in 9 of the 40 minors since 0.94.0, most recently 0.128.0_ | optional durable conversation/run loop, history, models, prompts, fencing and events |
-| `stitchkit/agent-runtime/sandbox` | server | evolving<br>_redefined in 0 of the 40 minors since 0.94.0_ | optional Linux Bubblewrap sessions, host sandbox capability probes, durable workspaces and a host HTTP credential gateway; see [sandbox guide](sandbox.md) |
-| `stitchkit/agent-runtime/testing` | tests on Bun or Node | evolving<br>_redefined in 2 of the 40 minors since 0.94.0, most recently 0.127.0_ | credential-free replay, scripted provider faults, deterministic race controls and the agent-store conformance kit |
-| `stitchkit/agent-runtime/harness` | server | evolving<br>_redefined in 0 of the 40 minors since 0.94.0_ | resource-aware process-local facade over the canonical Agent runtime; supervision stays outside |
+| `stitchkit/agent-runtime` | server | evolving<br>_redefined in 9 of the 40 minors since 0.94.0, most recently 0.128.0_ | peer-free durable conversation/run loop over `AgentModelDriver`, stateless `completeText`/`completeObject`, driver composition, history, models, prompts, fencing and events |
+| `stitchkit/agent-runtime/sandbox` | server | evolving<br>_redefined in 0 of the 40 minors since 0.94.0_ | optional Linux Bubblewrap sessions, long-lived OS process sandboxes (`createProcessSandbox`, `probeProcessSandbox`, `buildSeatbeltProfile`), durable workspaces and a host HTTP credential gateway; see [sandbox guide](sandbox.md) |
+| `stitchkit/agent-runtime/testing` | tests on Bun or Node | evolving<br>_redefined in 2 of the 40 minors since 0.94.0, most recently 0.127.0_ | peer-free `createScriptedModelDriver`, credential-free replay, scripted provider faults, deterministic race controls and the agent-store conformance kit |
+| `stitchkit/agent-runtime/harness` | server | evolving<br>_redefined in 0 of the 40 minors since 0.94.0_ | peer-free resource-aware process-local facade over the canonical Agent runtime; supervision stays outside |
 | `stitchkit/agent-runtime/coding-tools` | server (Bun or Node) | evolving<br>_redefined in 3 of the 40 minors since 0.94.0, most recently 0.127.0_ | bounded host-authorized direct file and shell tools; a root boundary, not an OS sandbox |
-| `stitchkit/agent-runtime/openrouter` | server | evolving<br>_redefined in 1 of the 40 minors since 0.94.0, most recently 0.127.0_ | isolated OpenRouter language-model adapter |
-| `stitchkit/agent-runtime/browser` | browser + server | evolving<br>_redefined in 2 of the 40 minors since 0.94.0, most recently 0.127.0_ | canonical agent records, events, reconnect cursor and optional conversation controller |
+| `stitchkit/agent-runtime/openrouter` | server | evolving<br>_redefined in 1 of the 40 minors since 0.94.0, most recently 0.127.0_ | peer-free native OpenRouter Chat Completions SSE driver, catalog, admission, route pinning and spend reconciliation |
+| `stitchkit/agent-runtime/openai` | server | evolving<br>_redefined in 0 of the 1 minor since 0.133.0_ | peer-free native OpenAI Responses API (`POST /v1/responses`) driver, policy schemas and provenance-aware usage normalization |
+| `stitchkit/agent-runtime/anthropic` | server | evolving<br>_redefined in 0 of the 1 minor since 0.133.0_ | peer-free native Anthropic Messages API (`POST /v1/messages`) driver, thinking/cache policy schemas and provenance-aware usage normalization |
+| `stitchkit/agent-runtime/ai-sdk` | server | evolving<br>_redefined in 0 of the 1 minor since 0.133.0_ | thin optional-peer adapter (`fromAiSdkModel`, `fromAiSdkTools`) bridging AI SDK v4 models and `ToolSet`s onto `AgentModelDriver` and `AgentToolSet`; requires `ai` |
+| `stitchkit/agent-runtime/browser` | browser + server | evolving<br>_redefined in 2 of the 40 minors since 0.94.0, most recently 0.127.0_ | canonical agent records, events, reconnect cursor, interactive approval/input/permission-mode/host-status state (`deriveAgentConversationActivity`, `deriveAgentConversationState`, `delivery: 'unknown'` reconciliation) and optional conversation controller |
 | `stitchkit/agent-runtime/react` | browser + server | evolving<br>_redefined in 0 of the 40 minors since 0.94.0_ | React subscription to an application-owned agent controller |
 | `stitchkit/agent-runtime/realtime` | server (Bun or Node) | evolving<br>_redefined in 2 of the 40 minors since 0.94.0, most recently 0.127.0_ | authorized agent control over the existing Socket.IO server |
-| `stitchkit/agent-executor` | server (Bun or Node) | evolving<br>_redefined in 4 of the 7 minors since 0.127.0, most recently 0.133.0_ | the executor ↔ server contract for external coding agents (Claude Code, Codex, ACP): delta vocabulary over the shared message parts, thread leases with a fence, turn phases and their reports |
+| `stitchkit/agent-executor` | server (Bun or Node) | evolving<br>_redefined in 4 of the 7 minors since 0.127.0, most recently 0.133.0_ | the executor ↔ server contract for external coding agents (Claude Code, Codex, ACP): delta vocabulary (including `ExecutorPlanDelta`) over the shared message parts, thread leases with a fence, turn phases and their reports |
 | `stitchkit/agent-executor/claude` | server (Bun or Node) | evolving<br>_redefined in 0 of the 7 minors since 0.127.0_ | the Claude Code driver: the unmodified CLI over `stream-json`, permission requests answered by the host, reconcile by the input's id in the profile's transcript |
 | `stitchkit/agent-executor/claude-sdk` | server (Bun or Node) | evolving<br>_redefined in 1 of the 7 minors since 0.127.0, most recently 0.131.0_ | Claude through the Agent SDK: the application's `query` (optional peer `@anthropic-ai/claude-agent-sdk`), the CLI's classifier, `canUseTool` asked of the host |
-| `stitchkit/agent-executor/acp` | server (Bun or Node) | evolving<br>_redefined in 0 of the 7 minors since 0.127.0_ | an Agent Client Protocol v1 agent over stdio: settings by category, images, MCP servers, `session/resume`/`load`/`list`, `session/cancel`; no reconcile |
+| `stitchkit/agent-executor/acp` | server (Bun or Node) | evolving<br>_redefined in 0 of the 7 minors since 0.127.0_ | an Agent Client Protocol v1 agent over stdio: settings by category, images, MCP servers, tool metadata (`title`/`kind`/`locations`), meaningful `tool_call_update` progress updates, typed `plan` deltas, `session/resume`/`load`/`list`, `session/cancel`; no reconcile |
 | `stitchkit/agent-executor/codex` | server (Bun or Node) | evolving<br>_redefined in 3 of the 7 minors since 0.127.0, most recently 0.133.0_ | the Codex driver: `codex app-server` over stdio or Unix-socket WebSocket (`unix-listen` / `unix-connect`), thread policy and live controls, approval and input requests answered by the host, unknown server requests refused, reconcile by the client id in `thread/turns/list` |
 | `stitchkit/agent-executor/testing` | server (Bun or Node) | evolving<br>_redefined in 1 of the 7 minors since 0.127.0, most recently 0.133.0_ | the engine conformance kit, deterministic replay driver, portable fake Codex app-server, fail-loud consumer stub factories, and schema-validated test fixtures; no optional peer |
 | `stitchkit/agent-executor/testing/claude-sdk` | server (Bun or Node) | evolving<br>_redefined in 0 of the 1 minor since 0.133.0_ | the multi-turn fake Claude SDK query harness and the Claude SDK session stub, typed by the optional peer `@anthropic-ai/claude-agent-sdk` |
@@ -214,10 +218,13 @@ map — feature → packages:
 | MCP server (`stitchkit/tools/mcp`) | `@modelcontextprotocol/server` |
 | AI SDK agent tools (`stitchkit/tools/agent`) | `ai` |
 | MCP and agent toolkit (`stitchkit/tools/toolkit`) | `@modelcontextprotocol/server` `ai` |
-| Agent application runtime (`stitchkit/agent-runtime`) | `ai` |
-| Headless Agent harness (`stitchkit/agent-runtime/harness`) | `ai` |
-| Agent coding tools (`stitchkit/agent-runtime/coding-tools`) | — |
-| OpenRouter runtime adapter (`stitchkit/agent-runtime/openrouter`) | `ai` `@openrouter/ai-sdk-provider` |
+| Agent application runtime (`stitchkit/agent-runtime`) | — (peer-free) |
+| Headless Agent harness (`stitchkit/agent-runtime/harness`) | — (peer-free) |
+| Agent coding tools (`stitchkit/agent-runtime/coding-tools`) | — (peer-free) |
+| OpenRouter native provider (`stitchkit/agent-runtime/openrouter`) | — (peer-free) |
+| OpenAI native provider (`stitchkit/agent-runtime/openai`) | — (peer-free) |
+| Anthropic native provider (`stitchkit/agent-runtime/anthropic`) | — (peer-free) |
+| AI SDK runtime adapter (`stitchkit/agent-runtime/ai-sdk`) | `ai` |
 | Postgres agent store (`stitchkit/agent-runtime/postgres`) | — (the application's own Postgres client) |
 | SQLite agent store (`stitchkit/agent-runtime/sqlite/bun` or `/node`) | — (runtime built-in) |
 | Agent executor — Claude Agent SDK leaf (`stitchkit/agent-executor/claude-sdk`) | `@anthropic-ai/claude-agent-sdk` |
@@ -234,6 +241,7 @@ map — feature → packages:
 | **Socket.IO server on Bun** | `socket.io` `@socket.io/bun-engine` |
 | **Socket.IO server on Node** | `socket.io` |
 | Socket.IO client | `socket.io-client` (runtime peer; unrelated root declarations remain peer-free) |
+| User Device Relay (`stitchkit/device-relay`) | — (peer-free; binds to any Socket.IO or compatible realtime transport) |
 | grammY lifecycle adapters (`stitchkit/application/grammy`) | `grammy` |
 | Telegram platform primitives (`stitchkit/telegram`) | — (peer-free) |
 | Telegram message markup (`stitchkit/telegram/html`) | — (peer-free) |
@@ -256,7 +264,7 @@ you import — both for `stitchkit/tools/toolkit`:
 
 ```bash
 bun add @modelcontextprotocol/server@^2   # stitchkit/tools/mcp
-bun add ai@^7                             # stitchkit/tools/agent
+bun add ai@^7                             # stitchkit/tools/agent or stitchkit/agent-runtime/ai-sdk
 ```
 
 Browser, HTTP-client and React entrypoints remain usable without either MCP

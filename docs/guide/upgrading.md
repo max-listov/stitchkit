@@ -1,5 +1,175 @@
 # Upgrading stitchkit
 
+## Unreleased migration: agent-runtime-native-model-port
+
+### agent-runtime-native-model-port
+
+**Who must act:** applications using `stitchkit/agent-runtime` or `stitchkit/agent-runtime/harness` with AI SDK `LanguageModel`, `ToolSet`, `ModelMessage`, or `LanguageModelUsage` types.
+
+`stitchkit/agent-runtime` now executes models exclusively through `AgentModelDriver` (one provider call per step, zero AI SDK dependencies). Migrate cleanly in two steps:
+
+#### Step 1 — Mechanical compatibility (keep existing AI SDK models and tools)
+
+1. Rename `AgentLanguageModelProvider` to `AgentModelDriverFactory` and `AgentResolvedModel.model` to `AgentResolvedModel.driver`.
+2. Wrap any AI SDK v4 `LanguageModel` with `fromAiSdkModel` and any AI SDK `ToolSet` (including `mountAgent(...)`) with `fromAiSdkTools` from `stitchkit/agent-runtime/ai-sdk`.
+3. Update `history.resolveFile` to return tagged `AgentModelFileData` (`{ type: 'data', data }`, `{ type: 'url', url }`, `{ type: 'reference', reference }`, or `{ type: 'text', text }`), and read `AgentGeneratedFile` (`file.mediaType`, `file.data`, `file.uint8Array`, `file.base64`, `file.url`) in `persistGeneratedFile`.
+4. Update `prepareStep` and `stopPolicies` to read peer-free `AgentStepResult` / `AgentModelMessage` / `AgentInstructions`. `AgentRuntimeStopPolicy<CONTEXT>` now takes a single `<CONTEXT>` generic (removing the unused first generic), and all tool events in `AgentModelStreamPart` and `CompleteStreamPart` use unified `toolCallId`.
+
+```ts
+// Before
+import { mountAgent } from 'stitchkit/tools/agent';
+
+const runtime = createAgentRuntime({
+  models: { resolve: () => ({ descriptor, model: aiSdkModel }) },
+  tools: (ctx) =>
+    mountAgent(services, {
+      context: ctx.context,
+      access: { gate: ctx.toolFenceLifecycle },
+    }),
+  // ...
+});
+
+// After (Step 1: compatibility adapter)
+import { fromAiSdkModel, fromAiSdkTools } from 'stitchkit/agent-runtime/ai-sdk';
+import { mountAgent } from 'stitchkit/tools/agent';
+
+const runtime = createAgentRuntime({
+  models: { resolve: () => ({ descriptor, driver: fromAiSdkModel(aiSdkModel) }) },
+  tools: (ctx) =>
+    fromAiSdkTools(
+      mountAgent(services, {
+        context: ctx.context,
+        access: { gate: ctx.toolFenceLifecycle },
+      }),
+    ),
+  // ...
+});
+```
+
+#### Step 2 — Full peer-free migration (remove `ai` and `@openrouter/ai-sdk-provider`)
+
+1. Replace `fromAiSdkModel(...)` with one of the three peer-free native providers:
+   - `openRouterProvider` from `stitchkit/agent-runtime/openrouter`
+   - `openAiProvider` from `stitchkit/agent-runtime/openai`
+   - `anthropicProvider` from `stitchkit/agent-runtime/anthropic`
+2. Replace `fromAiSdkTools(mountAgent(...))` with `mountAgentTools(...)` from `stitchkit/tools`, and replace custom AI SDK `tool(...)` declarations with `defineAgentTool(...)` from `stitchkit/tools`.
+3. Replace direct `generateText` / `generateObject` helper calls with `completeText` / `completeObject` from `stitchkit/agent-runtime`, and replace `wrapLanguageModel` middleware with `wrapModelDriver` / `composeModelDrivers`.
+4. Remove `ai` and `@openrouter/ai-sdk-provider` from `package.json` if nothing else in your project uses `stitchkit/tools/agent` or `stitchkit/agent-runtime/ai-sdk`.
+
+```ts
+// After (Step 2: completely peer-free)
+import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter';
+import { defineAgentTool, mountAgentTools } from 'stitchkit/tools';
+
+const openrouter = openRouterProvider({ apiKey: env.OPENROUTER_API_KEY });
+
+const runtime = createAgentRuntime({
+  models: {
+    resolve: () => ({ descriptor, driver: openrouter.create(descriptor.modelId) }),
+  },
+  tools: (ctx) =>
+    mountAgentTools(services, {
+      context: ctx.context,
+      access: { gate: ctx.toolFenceLifecycle },
+    }),
+  // ...
+});
+```
+
+### openrouter-native-driver
+
+**Who must act:** applications using `stitchkit/agent-runtime/openrouter` with `baseURL`, `extraHeaders`, `provider_api_keys`, or `@openrouter/ai-sdk-provider`.
+
+`openRouterProvider` now talks directly to OpenRouter's Chat Completions SSE endpoint over Web `fetch` and requires no optional peers. Update settings keys to camelCase and uninstall `@openrouter/ai-sdk-provider`:
+
+```ts
+// Before
+const provider = openRouterProvider({
+  apiKey: env.OPENROUTER_API_KEY,
+  baseURL: 'https://openrouter.ai/api/v1',
+});
+
+// After
+const provider = openRouterProvider({
+  apiKey: env.OPENROUTER_API_KEY,
+  baseUrl: 'https://openrouter.ai/api/v1',
+  appName: 'my-app',
+  appUrl: 'https://example.com',
+  providerApiKeys: { anthropic: env.ANTHROPIC_BYOK_KEY },
+});
+```
+
+`OpenRouterProviderAccess.sessionPerConversation` now reads `request.correlation.conversationId` directly and no longer requires configuring `invocations`.
+
+### tools-agent-tool-model-output
+
+**Who must act:** callers of `stitchkit/tools` referencing `RuntimeAgentModelOutput` or returning legacy deprecated AI SDK tool-output shapes (`file-data`, `image-data`, `file-url`, `image-url`, `file-id`, `image-file-id`) from `present.agent`.
+
+1. Rename `RuntimeAgentModelOutput` imports to `AgentToolModelOutput` from `stitchkit/tools`.
+2. Replace deprecated content part kinds inside `present.agent` with canonical `{ type: 'file', data, mediaType, filename? }`:
+
+```ts
+// Before
+import type { RuntimeAgentModelOutput } from 'stitchkit/tools';
+const output: RuntimeAgentModelOutput = {
+  type: 'content',
+  value: [
+    { type: 'image-data', data: base64Png, mediaType: 'image/png' },
+    { type: 'file-url', url: 'https://example.com/report.pdf', mediaType: 'application/pdf' },
+  ],
+};
+
+// After
+import type { AgentToolModelOutput } from 'stitchkit/tools';
+const output: AgentToolModelOutput = {
+  type: 'content',
+  value: [
+    { type: 'file', data: { type: 'data', data: base64Png }, mediaType: 'image/png' },
+    {
+      type: 'file',
+      data: { type: 'url', url: new URL('https://example.com/report.pdf') },
+      mediaType: 'application/pdf',
+    },
+  ],
+};
+```
+
+Applications using `mountAgent` (`stitchkit/tools/agent`) with their own AI SDK loop continue to work unchanged and receive non-deprecated `{ type: 'file', data, mediaType }` tool outputs.
+
+### agent-runtime-testing-replay-driver
+
+**Who must act:** tests calling `createReplayAgentProvider` from `stitchkit/agent-runtime/testing` expecting an AI SDK `LanguageModel` instead of an `AgentModelDriver`.
+
+`createReplayAgentProvider` now returns an `AgentModelDriverFactory` whose `.create(modelId)` returns an `AgentModelDriver`. Assign it to `AgentResolvedModel.driver` (or pass it to `completeText`/`completeObject`). For scripted multi-step tests with direct request inspection, use `createScriptedModelDriver` from `stitchkit/agent-runtime/testing`:
+
+```ts
+import { createScriptedModelDriver } from 'stitchkit/agent-runtime/testing';
+
+const driver = createScriptedModelDriver({
+  steps: [
+    [
+      { type: 'text-delta', id: 't1', delta: 'Hello' },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        usage: {
+          inputTokens: { value: 10, provenance: 'provider-reported' },
+          outputTokens: { value: 2, provenance: 'provider-reported' },
+        },
+      },
+    ],
+  ],
+});
+```
+
+### executor-acp-plan-and-tool-provider
+
+**Who must act:** every caller of `stitchkit/agent-executor` that switches exhaustively on `ExecutorDelta['type']`, and every operator running an executor and its server on different releases across `0.134.0`.
+
+`ExecutorDeltaSchema` / `ExecutorDelta` now includes `ExecutorPlanDeltaSchema` (`{ type: 'plan', action, planId?, entries, ... }`) for structured ACP plan lifecycle updates (`plan`, `plan_update`, `plan_removed`), and `ExecutorToolResultDeltaSchema` (plus `AgentToolResultPartSchema`) now carries an optional `provider` envelope for ACP tool metadata (`title`, `kind`, `locations`). `projectExecutorDeltas` ignores `plan` deltas automatically; add a `case 'plan':` branch to any custom exhaustive `switch (delta.type)`.
+
+**Upgrade the server before any executor.** Every object on the executor ↔ server wire contract is strict (ADR 0334), so a server on `0.133.x` or older refuses a whole `report` carrying either `deltas[].type = 'plan'` or `tool-result.provider`. An older executor writes neither key and keeps working against a `0.134.0` server. In the reverse direction (`server → executor`), `offer.input` now permits an optional `provider` envelope on `text` and `tool-result` parts (because `AgentMessagePartSchema` parts are non-strict, an older executor strips those keys rather than rejecting the offer, so upgrade executors too if you rely on forwarding them). See the full release matrix in the [API reference](../api/reference.md#version-skew-between-an-executor-and-its-server).
+
 ## Released migration: 0.133.0
 
 ### executor-testing-claude-sdk-subpath

@@ -34,7 +34,8 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
+import { mountAgentTools } from '../src/entrypoints/tools';
 import { issuedRunContext } from './support/issued-run-context';
 
 type StreamPart =
@@ -113,7 +114,7 @@ describe('the run reaches a tool factory only from the runtime', () => {
             contextWindow: 4096,
             capabilities: [],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       prompt: () => ({
@@ -124,7 +125,7 @@ describe('the run reaches a tool factory only from the runtime', () => {
         sections: [],
       }),
       tools: (run) =>
-        mountAgent([], {
+        mountAgentTools([], {
           access: { open: 'local-operator' },
           runtimeTools: createAgentStateTools({ state, run }),
         }),

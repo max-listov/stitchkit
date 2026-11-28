@@ -1,49 +1,29 @@
 import { bindRealtimeClient, type RealtimeClientTransport } from '../browser/realtime-client';
 import { assertTimerMs } from '../internal/deadline';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import { agentControlRealtimeContract } from './browser-control-contract';
 import {
-  type AgentBrowserRequest,
-  agentControlRealtimeContract,
-} from './browser-control-contract';
+  type AgentApprovalResponseInput,
+  type AgentBrowserCommand,
+  type AgentInputResponseInput,
+  commandIdempotencyKey,
+  isWriteOperation,
+  refreshedView,
+  retainSnapshots,
+  withConfirmedWriteOutcome,
+  withUnknownDelivery,
+} from './browser-controller-view';
+import type { AgentPermissionMode, AgentWriteOperation } from './control-interaction-schema';
+import type {
+  AgentControlDelivery,
+  AgentControlErrorCode,
+  AgentControlResponse,
+} from './control-schema';
 import {
-  type AgentControlDelivery,
-  type AgentControlErrorCode,
-  type AgentControlResponse,
   type AgentControlView,
   createAgentControlView,
-  reduceAgentControlEvent,
-  reduceAgentControlSnapshot,
-} from './control-schema';
-import type { AgentSnapshot } from './schemas';
-
-/**
- * The view across a reconnect: each conversation keeps its last snapshot and the
- * snapshot version it was read at, so the screen does not go blank; what only the
- * lost connection could vouch for — in-flight run text, run cursors, the durable
- * event ids since the snapshot — is dropped and rebuilt by the next attach.
- */
-function retainSnapshots(view: AgentControlView): AgentControlView {
-  const conversations: Record<string, AgentControlView['conversations'][string]> = {};
-  const cursors: Record<string, AgentControlView['cursor']['conversations'][string]> = {};
-  for (const [id, conversation] of Object.entries(view.conversations)) {
-    if (!conversation.snapshot) continue;
-    conversations[id] = {
-      snapshot: conversation.snapshot,
-      resyncRequired: conversation.resyncRequired,
-      transientByRun: {},
-    };
-    // The retained snapshot's own version. The next attach answer replaces the
-    // snapshot whatever its version: the server's versions may have restarted
-    // (a memory store, a purged and reused conversation), and the answer is the present.
-    const version = conversation.snapshot.version;
-    cursors[id] = {
-      runs: {},
-      durableEventIds: [],
-      ...(version !== undefined && { snapshotVersion: version }),
-    };
-  }
-  return { ...createAgentControlView(), cursor: { conversations: cursors }, conversations };
-}
+  reduceAgentControlDelivery,
+} from './control-view';
 
 /**
  * Config for `createAgentController`: a realtime transport, one conversation id, `observe` or
@@ -70,58 +50,22 @@ export interface AgentControllerState {
 }
 
 /**
- * A browser request without `schemaVersion`, `requestId` and `conversationId`; the controller
- * fills those in.
- */
-export type AgentBrowserCommand<T extends AgentBrowserRequest = AgentBrowserRequest> =
-  T extends unknown ? Omit<T, 'schemaVersion' | 'requestId' | 'conversationId'> : never;
-
-/**
  * Browser handle on one conversation: `getSnapshot` and `subscribe` read state, `request`
- * sends a command, `close` detaches (the transport stays yours).
+ * sends a command, `respondApproval`/`respondInput`/`setPermissionMode` issue typed interactive
+ * actions, and `close` detaches (the transport stays yours).
  */
 export interface AgentController {
   getSnapshot(): AgentControllerState;
   subscribe(listener: () => void): () => void;
   request(command: AgentBrowserCommand): Promise<AgentControlResponse>;
+  /** Answer a pending tool approval request (supports optional `idempotencyKey`). */
+  respondApproval(input: AgentApprovalResponseInput): Promise<AgentControlResponse>;
+  /** Answer a pending structured user-input prompt. */
+  respondInput(input: AgentInputResponseInput): Promise<AgentControlResponse>;
+  /** Request a permission mode change for the session. */
+  setPermissionMode(permissionMode: AgentPermissionMode): Promise<AgentControlResponse>;
   /** Release this attachment; the supplied transport and remote runtime remain application-owned. */
   close(): Promise<void>;
-}
-
-/**
- * Preserve active transient progress across a durable refresh; terminal runs lose transient
- * state. Within a connection a snapshot older than the view is a late answer and is dropped;
- * an attach answer is taken as it is, since it is what the connection starts from.
- */
-function refreshed(
-  view: AgentControlView,
-  snapshot: AgentSnapshot,
-  answer: 'attach' | 'refresh',
-): AgentControlView {
-  const current = view.conversations[snapshot.conversationId];
-  if (
-    answer === 'refresh' &&
-    Math.max(
-      current?.snapshot?.version ?? 0,
-      view.cursor.conversations[snapshot.conversationId]?.snapshotVersion ?? 0,
-    ) > snapshot.version
-  )
-    return view;
-  const next = reduceAgentControlSnapshot(view, snapshot);
-  const transientByRun = Object.fromEntries(
-    Object.entries(current?.transientByRun ?? {}).filter(([id]) =>
-      snapshot.runs.some(
-        (run) => run.id === id && ['running', 'interrupt_requested'].includes(run.state),
-      ),
-    ),
-  );
-  return {
-    ...next,
-    conversations: {
-      ...next.conversations,
-      [snapshot.conversationId]: { snapshot, resyncRequired: false, transientByRun },
-    },
-  };
 }
 
 /**
@@ -153,6 +97,12 @@ class ConversationController implements AgentController {
   private tail: Promise<unknown> = Promise.resolve();
   /** In-flight requests of the current connection, each with the way to settle it early. */
   private readonly pending = new Map<object, (reason: Error) => void>();
+  /** Currently dispatched write awaiting acknowledgement; disconnect marks it `delivery: 'unknown'`. */
+  private activeWrite?: {
+    requestId: string;
+    operation: AgentWriteOperation;
+    idempotencyKey?: string;
+  };
 
   private offDelivery: () => void;
   private offConnection: () => void;
@@ -188,16 +138,18 @@ class ConversationController implements AgentController {
     this.update({ ...this.state, status: 'error', error: { code, message } });
   }
   private apply(delivery: AgentControlDelivery) {
-    if (delivery.type === 'event') {
-      this.update({
-        ...this.state,
-        view: reduceAgentControlEvent(this.state.view, delivery.event),
-      });
-    } else if (delivery.type === 'access-denied') {
+    if (delivery.type === 'access-denied') {
       this.failure('FORBIDDEN', 'Access to the conversation was withdrawn; attach again');
-    } else {
-      this.failure('EVENT_OVERFLOW', 'Reconnect the transport to restore agent state');
+      return;
     }
+    if (delivery.type === 'resync-required') {
+      this.failure('EVENT_OVERFLOW', 'Reconnect the transport to restore agent state');
+      return;
+    }
+    this.update({
+      ...this.state,
+      view: reduceAgentControlDelivery(this.state.view, delivery),
+    });
   }
   private scheduleRefresh() {
     if (
@@ -233,6 +185,14 @@ class ConversationController implements AgentController {
       throw new Error('Agent controller is disconnected');
     this.busy = true;
     const requestId = crypto.randomUUID();
+    const idempotencyKey = commandIdempotencyKey(command);
+    if (isWriteOperation(command.operation)) {
+      this.activeWrite = {
+        requestId,
+        operation: command.operation,
+        ...(idempotencyKey !== undefined && { idempotencyKey }),
+      };
+    }
     try {
       const response = await this.client.request(
         'agent:control',
@@ -248,6 +208,25 @@ class ConversationController implements AgentController {
         throw new Error('Agent controller connection changed');
       if (response.requestId !== requestId)
         throw new Error('Agent control acknowledgement identity mismatch');
+      if (response.outcome === 'unknown') {
+        if (isWriteOperation(command.operation)) {
+          this.update({
+            ...this.state,
+            view: withUnknownDelivery(this.state.view, this.config.conversationId, {
+              delivery: 'unknown',
+              requestId: response.requestId,
+              operation: command.operation,
+              ...(response.idempotencyKey !== undefined
+                ? { idempotencyKey: response.idempotencyKey }
+                : idempotencyKey !== undefined
+                  ? { idempotencyKey }
+                  : {}),
+              ...(response.message !== undefined && { reason: response.message }),
+            }),
+          });
+        }
+        return response;
+      }
       if (response.outcome === 'error') {
         this.failure(response.error.code, response.error.message);
         return response;
@@ -257,7 +236,7 @@ class ConversationController implements AgentController {
           throw new Error('Agent snapshot conversation mismatch');
         this.update({
           status: 'ready',
-          view: refreshed(
+          view: refreshedView(
             this.state.view,
             response.snapshot,
             command.operation === 'attach' ? 'attach' : 'refresh',
@@ -266,6 +245,12 @@ class ConversationController implements AgentController {
         if (!this.state.view.conversations[this.config.conversationId]?.resyncRequired)
           this.refreshAttempts = 0;
       }
+      const nextView = withConfirmedWriteOutcome(
+        this.state.view,
+        this.config.conversationId,
+        command,
+      );
+      if (nextView) this.update({ ...this.state, view: nextView });
       if (command.operation === 'detach')
         this.update({ ...this.state, status: 'disconnected' });
       return response;
@@ -277,6 +262,7 @@ class ConversationController implements AgentController {
         );
       throw error;
     } finally {
+      if (this.activeWrite?.requestId === requestId) this.activeWrite = undefined;
       if (epoch === this.generation) {
         this.busy = false;
         const deliveries = this.buffered;
@@ -314,6 +300,28 @@ class ConversationController implements AgentController {
     });
     return result;
   }
+  respondApproval(input: AgentApprovalResponseInput): Promise<AgentControlResponse> {
+    return this.request({
+      operation: 'respond-approval',
+      approvalId: input.approvalId,
+      approved: input.approved,
+      ...(input.reason !== undefined && { reason: input.reason }),
+      ...(input.idempotencyKey !== undefined && { idempotencyKey: input.idempotencyKey }),
+      ...(input.metadata !== undefined && { metadata: input.metadata }),
+    });
+  }
+  respondInput(input: AgentInputResponseInput): Promise<AgentControlResponse> {
+    return this.request({
+      operation: 'respond-input',
+      inputId: input.inputId,
+      answer: input.answer,
+      ...(input.idempotencyKey !== undefined && { idempotencyKey: input.idempotencyKey }),
+      ...(input.metadata !== undefined && { metadata: input.metadata }),
+    });
+  }
+  setPermissionMode(permissionMode: AgentPermissionMode): Promise<AgentControlResponse> {
+    return this.request({ operation: 'set-permission-mode', permissionMode });
+  }
   private receive(delivery: AgentControlDelivery) {
     const conversationId =
       delivery.type === 'event' ? delivery.event.conversationId : delivery.conversationId;
@@ -339,8 +347,8 @@ class ConversationController implements AgentController {
   }
   private changed(connected: boolean) {
     this.generation += 1;
-    // Requests of the previous connection can no longer be answered; they must not
-    // hold capacity the new attach needs until their own timeouts run out.
+    const lostWrite = !connected ? this.activeWrite : undefined;
+    this.activeWrite = undefined;
     const previous = [...this.pending.values()];
     this.pending.clear();
     for (const settle of previous) settle(new Error('Agent controller connection changed'));
@@ -350,9 +358,21 @@ class ConversationController implements AgentController {
     this.overflowed = false;
     this.refreshAttempts = 0;
     this.tail = Promise.resolve();
+    let nextView = retainSnapshots(this.state.view);
+    if (lostWrite) {
+      nextView = withUnknownDelivery(nextView, this.config.conversationId, {
+        delivery: 'unknown',
+        requestId: lostWrite.requestId,
+        operation: lostWrite.operation,
+        ...(lostWrite.idempotencyKey !== undefined && {
+          idempotencyKey: lostWrite.idempotencyKey,
+        }),
+        reason: 'Transport disconnected before acknowledgement',
+      });
+    }
     this.update({
       status: connected ? 'connecting' : 'disconnected',
-      view: retainSnapshots(this.state.view),
+      view: nextView,
     });
     if (connected)
       void this.request({ operation: 'attach', access: this.config.access }).catch(() => {

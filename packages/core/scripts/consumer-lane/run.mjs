@@ -30,6 +30,7 @@ import { availableParallelism, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { placeFixtureSupport } from './fixture-support/place.mjs';
+import { runBunInstall } from './install.mjs';
 import {
   declarationProofArguments,
   declarationProofVariants,
@@ -222,15 +223,13 @@ if (isMain) {
       manifest.dependencies.stitchkit = `file:${tarball}`;
       writeFileSync(join(dir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
-      // Checked-in templates point at local source so editors can type them before
-      // a package exists. The consumer lane must prove the opposite boundary:
-      // remove that authoring-only path before installing and checking the tarball.
+      // Templates map local source for editor typing; remove `paths` so the lane checks the tarball.
       const tsconfigPath = join(dir, 'tsconfig.json');
       const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'));
       delete tsconfig.compilerOptions.paths;
       writeFileSync(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`);
 
-      step(`${name}: install`, () => run('bun', ['install', '--no-save'], dir));
+      step(`${name}: install`, () => runBunInstall(dir, ['install', '--no-save']));
     }
 
     // Every fixture's installed proofs share one pool, so the slowest proof of one fixture overlaps
@@ -464,9 +463,9 @@ if (isMain) {
           }
         }
 
-        // The agent runtime needs `ai`, so this belongs to the fixture that
-        // opted into it — and it is the exact invocation the upgrading guide
-        // shows, so the guide cannot drift from the package again unnoticed.
+        // Exercises the peer-free agent-runtime store conformance harness in
+        // the full fixture — the exact invocation the upgrading guide shows,
+        // so the guide cannot drift from the package again unnoticed.
         const storeConformanceOutput = step('full: agent store conformance', () =>
           run('bun', ['src/agent-store-conformance.ts'], dir),
         );

@@ -10,6 +10,10 @@ import type { EndpointDef } from '../contract/define';
 import { linkAbortSignals } from '../internal/abort-race';
 import { type BackoffPolicy, backoffDelay } from '../internal/backoff';
 import { assertTimerMs } from '../internal/deadline';
+import {
+  applyOutboundDeadlineHeader,
+  DEADLINE_BUDGET_HEADER,
+} from '../internal/deadline-budget';
 import { sleep } from '../internal/timers';
 import { ApiError } from './api-error';
 import { classifyBridgeTransportRetry } from './bridge-errors';
@@ -43,11 +47,12 @@ function withTimeout(
 ): RequestOptions | undefined {
   const responseType = contractResponseType(endpoint);
   const idempotent = declaredReplay(endpoint);
-  if (endpoint.timeout === undefined && responseType === undefined && idempotent === undefined)
+  const effectiveTimeout = options?.timeout ?? endpoint.timeout;
+  if (effectiveTimeout === undefined && responseType === undefined && idempotent === undefined)
     return options;
   return {
     ...options,
-    ...(endpoint.timeout !== undefined && { timeout: endpoint.timeout }),
+    ...(effectiveTimeout !== undefined && { timeout: effectiveTimeout }),
     ...(responseType && { responseType }),
     ...(idempotent !== undefined && { idempotent }),
   };
@@ -271,8 +276,17 @@ export function createFetchExecutor<K extends string>(
       streamAbort && options?.signal
         ? linkAbortSignals(options.signal, streamAbort.signal).signal
         : (streamAbort?.signal ?? options?.signal);
-    const openTimeoutMs = endpoint.timeout ?? config.timeout ?? 30_000;
+    const openTimeoutMs = options?.timeout ?? endpoint.timeout ?? config.timeout ?? 30_000;
     const cancellation = createRequestCancellation(callerSignal, openTimeoutMs);
+    const shouldPropagateDeadline =
+      options?.propagateDeadline ??
+      (options?.timeout !== undefined || endpoint.timeout !== undefined
+        ? true
+        : (config.propagateDeadline ?? false));
+    const deadlineAt = shouldPropagateDeadline ? performance.now() + openTimeoutMs : undefined;
+    const hasCallerDeadlineHeader = Object.keys(headers).some(
+      (key) => key.toLowerCase() === DEADLINE_BUDGET_HEADER,
+    );
     const bodyLifetime = endpoint.rawResponse || streamAbort ? 'handed-out' : 'read';
 
     try {
@@ -282,13 +296,20 @@ export function createFetchExecutor<K extends string>(
           : hasBody
             ? JSON.stringify(plan.remainingArgs)
             : undefined;
-        const deliver =
+        const baseDeliver =
           options?.onUploadProgress && progressRoute
             ? withUploadProgress(executeFetch, options.onUploadProgress, {
                 route: progressRoute,
                 responseType: contractResponseType(endpoint),
               })
             : executeFetch;
+        const deliver: ClientFetch =
+          deadlineAt !== undefined && !hasCallerDeadlineHeader
+            ? (targetUrl, reqInit) => {
+                const next = applyOutboundDeadlineHeader(targetUrl, reqInit, deadlineAt);
+                return baseDeliver(next.input, next.init);
+              }
+            : baseDeliver;
         const res = await deliverWithReplay(
           deliver,
           url,

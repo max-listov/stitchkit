@@ -20,4 +20,8 @@ export {
   createAgentRaceBarrier,
   createAgentRaceDriver,
   createAgentRaceTrace,
+  createScriptedModelDriver,
+  type ScriptedModelDriver,
+  type ScriptedModelDriverOptions,
+  type ScriptedModelStep,
 } from '../../agent-runtime/testing';

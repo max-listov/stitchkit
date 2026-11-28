@@ -10,6 +10,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 
 function count(value: number): AgentTokenCount {
   return { value, provenance: 'computed' };
@@ -69,7 +70,7 @@ test('the runtime counts seeded instructions once on first and second turn', asy
           contextWindow: 70,
           capabilities: [],
         },
-        model,
+        driver: fromAiSdkModel(model),
       }),
     },
     prompt: ({ snapshot, context, signal, event }) =>

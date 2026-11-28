@@ -23,8 +23,14 @@ import {
   defineAgentProtocol,
   defineStateSlot,
 } from 'stitchkit/agent-runtime';
+import { fromAiSdkModel } from 'stitchkit/agent-runtime/ai-sdk';
+import { anthropicProvider } from 'stitchkit/agent-runtime/anthropic';
+import { openAiProvider } from 'stitchkit/agent-runtime/openai';
 import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter';
-import { createAgentRaceTrace } from 'stitchkit/agent-runtime/testing';
+import {
+  createAgentRaceTrace,
+  createScriptedModelDriver,
+} from 'stitchkit/agent-runtime/testing';
 import { createCli, defineCliCommand } from 'stitchkit/cli';
 import { defineContract, defineErrors } from 'stitchkit/contract';
 import { createManagedFileBoundary } from 'stitchkit/files';
@@ -43,6 +49,7 @@ import {
   type ErrorHintFn,
   flattenToolJsonSchema,
   listToolNames,
+  mountAgentTools,
   summarizeTransports,
   type ToolAccess,
   type ToolCallContext,
@@ -147,19 +154,24 @@ check(
 
 const packedApiError = new ApiError('CONFLICT', { status: 409, traceId: 'packed-trace-id' });
 
+const emptyProtocol = defineAgentProtocol({
+  context: z.object({}),
+  inputMetadata: z.object({}),
+});
+const packedDescriptor = (modelId: string) => ({
+  provider: 'packed',
+  modelId,
+  contextWindow: 1_000,
+  capabilities: [],
+});
 const packedAgentStore = createMemoryAgentRuntimeStore();
 const packedAgentRuntime = createAgentRuntime({
-  protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+  protocol: emptyProtocol,
   store: packedAgentStore,
   models: {
     resolve: () => ({
-      descriptor: {
-        provider: 'packed',
-        modelId: 'packed-model',
-        contextWindow: 1_000,
-        capabilities: [],
-      },
-      model: new MockLanguageModelV4(),
+      descriptor: packedDescriptor('packed-model'),
+      driver: fromAiSdkModel(new MockLanguageModelV4()),
     }),
   },
   prompt: () => {
@@ -249,19 +261,14 @@ check(
   packedCatalog[0]?.name === 'packed_catalog_probe' && packedCatalog[0].schemaBytes > 0,
 );
 
-const packedStepModel = new MockLanguageModelV4();
+const packedStepDriver = createScriptedModelDriver({ steps: [] });
 const packedStepRuntime = createAgentRuntime({
-  protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+  protocol: emptyProtocol,
   store: createMemoryAgentRuntimeStore(),
   models: {
     resolve: () => ({
-      descriptor: {
-        provider: 'packed',
-        modelId: 'packed-step-model',
-        contextWindow: 1_000,
-        capabilities: [],
-      },
-      model: packedStepModel,
+      descriptor: packedDescriptor('packed-step-model'),
+      driver: packedStepDriver,
     }),
   },
   prompt: () => ({
@@ -285,17 +292,16 @@ const packedStepTerminal = await packedStepRuntime.submit({
 }).result;
 check(
   'the packed agent runtime preserves a typed step context refusal',
-  packedStepTerminal.reason === 'context_overflow' &&
-    packedStepModel.doStreamCalls.length === 0,
+  packedStepTerminal.reason === 'context_overflow' && packedStepDriver.requests.length === 0,
 );
 await packedStepRuntime.close();
 
-const packedOpenRouter = openRouterProvider({ apiKey: 'packed-no-network-key' });
-const packedOpenRouterModel = packedOpenRouter.create('provider/model');
+const packedKey = { apiKey: 'packed-no-network-key' };
 check(
-  'the packed isolated OpenRouter adapter constructs a language model',
-  typeof packedOpenRouterModel !== 'string' &&
-    packedOpenRouterModel.modelId === 'provider/model',
+  'the packed native providers construct model drivers without network or SDK peers',
+  openRouterProvider(packedKey).create('provider/model').modelId === 'provider/model' &&
+    openAiProvider(packedKey).create('gpt-5').provider === 'openai' &&
+    anthropicProvider(packedKey).create('claude-sonnet-4-5').provider === 'anthropic',
 );
 check(
   'the packed root ApiError exposes its response trace id',
@@ -510,12 +516,12 @@ buildMcpServer(
   undefined,
 );
 check('the packed rawTools escape hatch remains explicit', rawMounted);
+const packedAccess: ToolAccess = { open: 'local-operator' };
+const packedMount = { access: packedAccess, runtimeTools: [nativeDefinition] };
 check(
-  'the packed Agent mount accepts the same runtime definition',
-  typeof mountAgent([], {
-    access: { open: 'local-operator' },
-    runtimeTools: [nativeDefinition],
-  }).native_update?.execute === 'function',
+  'the packed Agent mounts accept the same runtime definition',
+  typeof mountAgent([], packedMount).native_update?.execute === 'function' &&
+    typeof mountAgentTools([], packedMount).native_update?.execute === 'function',
 );
 const packedSurface = { services: [service], runtimeTools: packedRuntimeTools };
 const packedInvoker = createToolInvoker(service, {
@@ -650,12 +656,15 @@ function packedWorkspace(event: EntityCacheEvent<PackedEntity>): string {
   }
   throw new Error('A scoped delete must carry its entity');
 }
+const entityProjection = {
+  getId: (entity: PackedEntity) => entity.id,
+  getListItemId: (item: PackedListItem) => item.id,
+  toListItem: (entity: PackedEntity) => ({ id: entity.id, label: entity.label }),
+};
 const packedQueryClient = new QueryClient();
 packedQueryClient.setQueryData<PackedListItem[]>(['workspace', 'w1', 'entities'], []);
 const packedCache = createEntityCacheHandlers<PackedEntity, PackedListItem>({
-  getId: (entity) => entity.id,
-  getListItemId: (item) => item.id,
-  toListItem: (entity) => ({ id: entity.id, label: entity.label }),
+  ...entityProjection,
   list: {
     key: (event) => ['workspace', packedWorkspace(event), 'entities'],
     shape: 'array',
@@ -689,9 +698,7 @@ packedFilteredClient.setQueryData<PackedFilteredPage>(packedFilteredKey, {
 });
 // A server order the row does not carry: only a row entering the list is placed.
 const packedInsertCache = createEntityCacheHandlers<PackedEntity, PackedListItem>({
-  getId: (entity) => entity.id,
-  getListItemId: (item) => item.id,
-  toListItem: (entity) => ({ id: entity.id, label: entity.label }),
+  ...entityProjection,
   list: {
     key: ['placed'],
     shape: 'array',
@@ -719,9 +726,7 @@ check(
     .join() === 'm,z,a',
 );
 const packedFilteredCache = createEntityCacheHandlers<PackedEntity, PackedListItem>({
-  getId: (entity) => entity.id,
-  getListItemId: (item) => item.id,
-  toListItem: (entity) => ({ id: entity.id, label: entity.label }),
+  ...entityProjection,
   list: {
     key: ['entities'],
     shape: 'paginated',
@@ -857,7 +862,7 @@ const errorHint: ErrorHintFn = () => null;
 const seenByOnToolError: unknown[] = [];
 const seenByAfterToolCall: Array<{
   result: ToolResult;
-  error: unknown;
+  error?: unknown;
   context: ToolCallContext;
 }> = [];
 const events: RequestEvent[] = [];
@@ -870,18 +875,10 @@ const hooks: ToolCallHooks = {
   onToolError: ({ error }) => {
     seenByOnToolError.push(error);
   },
-  afterToolCall: ({ toolName, args, result, durationMs, context, endpoint, error }) => {
-    seenByAfterToolCall.push({ result, error, context });
+  afterToolCall: (info) => {
+    seenByAfterToolCall.push(info);
     // Chain the framework's own audit hook, exactly as a project would.
-    void audit.toolCall.afterToolCall?.({
-      toolName,
-      args,
-      result,
-      durationMs,
-      context,
-      endpoint,
-      error,
-    });
+    void audit.toolCall.afterToolCall?.(info);
   },
 };
 

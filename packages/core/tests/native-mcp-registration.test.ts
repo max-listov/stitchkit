@@ -326,7 +326,7 @@ describe('framework-owned native MCP registration', () => {
             description: 'Return invalid output',
             identity: { serviceName: 'native', action: 'invalidOutput', method: 'POST' },
             input: z.object({}),
-            output: z.object({ count: z.number().finite() }),
+            output: z.object({ count: z.number() }),
             handler: () => ({ count: Number.NaN }),
           },
         ],

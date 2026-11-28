@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   AgentMessageSchema,
@@ -8,6 +7,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
 import { expectTimerRejection } from './support/timer-refusal';
 
 /**
@@ -33,7 +33,11 @@ function createRuntime(options: { preflight?: () => Promise<void> } = {}) {
           contextWindow: 1_000,
           capabilities: [],
         },
-        model: new MockLanguageModelV4(),
+        driver: createScriptedModelDriver({
+          provider: 'test',
+          modelId: 'test-model',
+          steps: [],
+        }),
       }),
       ...(options.preflight && { preflight: options.preflight }),
     },
@@ -101,7 +105,11 @@ describe('close() waits for the admissions already inside', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({
+            provider: 'test',
+            modelId: 'test-model',
+            steps: [],
+          }),
         }),
       },
       prompt: () => {
@@ -151,7 +159,11 @@ describe('close() waits for the admissions already inside', () => {
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({
+            provider: 'test',
+            modelId: 'test-model',
+            steps: [],
+          }),
         }),
       },
       prompt: () => {
@@ -342,7 +354,11 @@ describe('close() stops recovery mid-item, and waits for the one inside', () => 
             contextWindow: 1_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4(),
+          driver: createScriptedModelDriver({
+            provider: 'test',
+            modelId: 'test-model',
+            steps: [],
+          }),
         }),
       },
       prompt: () => {

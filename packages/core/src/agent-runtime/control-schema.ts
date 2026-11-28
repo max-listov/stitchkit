@@ -1,7 +1,16 @@
 import { z } from 'zod';
+import {
+  AgentControlDeliveryOutcomeSchema,
+  AgentHostStatusSchema,
+  AgentInputAnswerSchema,
+  AgentPendingApprovalSchema,
+  AgentPendingInputSchema,
+  AgentPermissionModeSchema,
+  AgentWriteOperationSchema,
+} from './control-interaction-schema';
 import { isDurableAgentRuntimeEvent } from './event-durability';
 import { type AgentRuntimeEvent, AgentRuntimeEventSchema } from './event-schema';
-import { AgentMessagePartSchema, type AgentSnapshot, AgentSnapshotSchema } from './schemas';
+import { AgentMessagePartSchema, AgentSnapshotSchema, AgentTimestampSchema } from './schemas';
 
 const AgentControlIdentitySchema = z
   .object({ schemaVersion: z.literal(1), requestId: z.string().min(1) })
@@ -39,9 +48,25 @@ export const AgentControlRequestSchema = z.discriminatedUnion('operation', [
     conversationId: z.string().min(1),
     approvalId: z.string().min(1),
     approved: z.boolean(),
+    idempotencyKey: z.string().min(1).optional(),
     reason: z.string().min(1).optional(),
     context: z.unknown(),
     metadata: z.unknown().optional(),
+  }),
+  AgentControlIdentitySchema.extend({
+    operation: z.literal('respond-input'),
+    conversationId: z.string().min(1),
+    inputId: z.string().min(1),
+    idempotencyKey: z.string().min(1).optional(),
+    answer: AgentInputAnswerSchema,
+    context: z.unknown(),
+    metadata: z.unknown().optional(),
+  }),
+  AgentControlIdentitySchema.extend({
+    operation: z.literal('set-permission-mode'),
+    conversationId: z.string().min(1),
+    permissionMode: AgentPermissionModeSchema,
+    context: z.unknown(),
   }),
 ]);
 export type AgentControlRequest = z.infer<typeof AgentControlRequestSchema>;
@@ -61,6 +86,7 @@ export const AgentControlErrorCodeSchema = z.enum([
   'CONTROL_REQUEST_FAILED',
   'EVENT_OVERFLOW',
   'FORBIDDEN',
+  'HOST_OFFLINE',
   'LEASE_CONFLICT',
   'LEASE_REQUIRED',
   'NOT_ATTACHED',
@@ -68,6 +94,7 @@ export const AgentControlErrorCodeSchema = z.enum([
   'REQUEST_CAPACITY',
   'REQUEST_REJECTED',
   'RESYNC_EXHAUSTED',
+  'UNSUPPORTED_OPERATION',
 ]);
 /**
  * One of the codes in `AgentControlErrorCodeSchema`, reported in a failed control response or
@@ -90,6 +117,12 @@ export const AgentControlResponseSchema = z.discriminatedUnion('outcome', [
     error: z
       .object({ code: AgentControlErrorCodeSchema, message: z.string().min(1) })
       .strict(),
+  }).strict(),
+  AgentControlResponseIdentitySchema.extend({
+    outcome: z.literal('unknown'),
+    delivery: z.literal('unknown'),
+    idempotencyKey: z.string().min(1).optional(),
+    message: z.string().min(1).optional(),
   }).strict(),
 ]);
 export type AgentControlResponse = z.infer<typeof AgentControlResponseSchema>;
@@ -117,6 +150,55 @@ export const AgentControlDeliverySchema = z.discriminatedUnion('type', [
       schemaVersion: z.literal(1),
       type: z.literal('access-denied'),
       conversationId: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      type: z.literal('approval-state'),
+      conversationId: z.string().min(1),
+      pendingApprovals: z.array(AgentPendingApprovalSchema),
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      type: z.literal('input-state'),
+      conversationId: z.string().min(1),
+      pendingInputs: z.array(AgentPendingInputSchema),
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      type: z.literal('permission-mode'),
+      conversationId: z.string().min(1),
+      permissionMode: AgentPermissionModeSchema,
+      supportedPermissionModes: z.array(AgentPermissionModeSchema).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      type: z.literal('host-status'),
+      conversationId: z.string().min(1),
+      hostStatus: AgentHostStatusSchema,
+      validUntil: AgentTimestampSchema.optional(),
+      reason: z.string().min(1).optional(),
+      observedAt: AgentTimestampSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      type: z.literal('delivery-state'),
+      conversationId: z.string().min(1),
+      requestId: z.string().min(1),
+      operation: AgentWriteOperationSchema,
+      delivery: AgentControlDeliveryOutcomeSchema,
+      idempotencyKey: z.string().min(1).optional(),
+      reason: z.string().min(1).optional(),
+      recordedAt: AgentTimestampSchema.optional(),
     })
     .strict(),
 ]);
@@ -192,154 +274,6 @@ export function advanceAgentMultiSessionCursor(
             [event.runId]: { runtimeEpoch: event.runtimeEpoch, sequence: event.sequence },
           },
         },
-      },
-    },
-  };
-}
-
-/** A tool call still running, with the last progress it reported. */
-export interface AgentToolActivity {
-  toolName: string;
-  message?: string;
-  progress?: number;
-  total?: number;
-}
-
-/** What a run shows while it streams, before its next checkpoint makes it durable. */
-export interface AgentRunTransient {
-  text: string;
-  reasoning: string;
-  /** Running tool calls that reported progress, by call id; a call leaves on its terminal status. */
-  tools: Readonly<Record<string, AgentToolActivity>>;
-}
-
-export interface AgentConversationView {
-  snapshot?: AgentSnapshot;
-  resyncRequired: boolean;
-  transientByRun: Readonly<Record<string, AgentRunTransient>>;
-}
-
-const EMPTY_TRANSIENT: AgentRunTransient = { text: '', reasoning: '', tools: {} };
-
-/** The run's transient state after one event; an event that is not about it leaves it as it was. */
-function nextRunTransient(
-  transient: AgentRunTransient,
-  event: AgentRuntimeEvent,
-): AgentRunTransient {
-  switch (event.type) {
-    case 'assistant-delta':
-      return { ...transient, text: transient.text + event.textDelta };
-    case 'reasoning-delta':
-      return { ...transient, reasoning: transient.reasoning + event.textDelta };
-    case 'attempt-reset':
-      return EMPTY_TRANSIENT;
-    case 'tool-progress': {
-      const { toolName, message, progress, total } = event;
-      return {
-        ...transient,
-        tools: {
-          ...transient.tools,
-          [event.callId]: {
-            toolName,
-            ...(message !== undefined && { message }),
-            ...(progress !== undefined && { progress }),
-            ...(total !== undefined && { total }),
-          },
-        },
-      };
-    }
-    case 'tool-status': {
-      if (event.status === 'started' || !Object.hasOwn(transient.tools, event.callId)) {
-        return transient;
-      }
-      return {
-        ...transient,
-        tools: Object.fromEntries(
-          Object.entries(transient.tools).filter(([callId]) => callId !== event.callId),
-        ),
-      };
-    }
-    default:
-      return transient;
-  }
-}
-export interface AgentControlView {
-  cursor: AgentMultiSessionCursor;
-  conversations: Readonly<Record<string, AgentConversationView>>;
-}
-
-export function createAgentControlView(): AgentControlView {
-  return { cursor: { conversations: {} }, conversations: {} };
-}
-
-export function reduceAgentControlSnapshot(
-  view: AgentControlView,
-  rawSnapshot: AgentSnapshot,
-): AgentControlView {
-  const snapshot = AgentSnapshotSchema.parse(rawSnapshot);
-  const previous = view.cursor.conversations[snapshot.conversationId] ?? { runs: {} };
-  return {
-    cursor: {
-      conversations: {
-        ...view.cursor.conversations,
-        [snapshot.conversationId]: {
-          ...previous,
-          snapshotVersion: snapshot.version,
-          durableEventIds: [],
-        },
-      },
-    },
-    conversations: {
-      ...view.conversations,
-      [snapshot.conversationId]: {
-        snapshot,
-        resyncRequired: false,
-        transientByRun: {},
-      },
-    },
-  };
-}
-
-export function reduceAgentControlEvent(
-  view: AgentControlView,
-  rawEvent: AgentRuntimeEvent,
-): AgentControlView {
-  const event = AgentRuntimeEventSchema.parse(rawEvent);
-  const advanced = advanceAgentMultiSessionCursor(view.cursor, event);
-  if (advanced.status === 'duplicate') return view;
-  const current = view.conversations[event.conversationId] ?? {
-    resyncRequired: false,
-    transientByRun: {},
-  };
-  if (advanced.status === 'gap') {
-    return {
-      cursor: advanced.cursor,
-      conversations: {
-        ...view.conversations,
-        [event.conversationId]: { ...current, resyncRequired: true },
-      },
-    };
-  }
-  const nextTransient = nextRunTransient(
-    current.transientByRun[event.runId] ?? EMPTY_TRANSIENT,
-    event,
-  );
-  const snapshotStale =
-    isDurableAgentRuntimeEvent(event) && current.snapshot?.version !== event.snapshotVersion;
-  const transientByRun =
-    event.type === 'terminal'
-      ? Object.fromEntries(
-          Object.entries(current.transientByRun).filter(([runId]) => runId !== event.runId),
-        )
-      : { ...current.transientByRun, [event.runId]: nextTransient };
-  return {
-    cursor: advanced.cursor,
-    conversations: {
-      ...view.conversations,
-      [event.conversationId]: {
-        ...current,
-        resyncRequired: current.resyncRequired || snapshotStale,
-        transientByRun,
       },
     },
   };

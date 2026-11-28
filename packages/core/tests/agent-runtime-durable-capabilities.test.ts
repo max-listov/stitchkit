@@ -1,7 +1,5 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { simulateReadableStream, type ToolSet, tool } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   createSqliteAgentRuntimeStore,
@@ -33,8 +31,9 @@ import {
 import {
   createFaultProviderServer,
   createReplayAgentProvider,
+  createScriptedModelDriver,
 } from '../src/entrypoints/agent-runtime/testing';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import { type AgentToolSet, defineAgentTool, mountAgentTools } from '../src/entrypoints/tools';
 import { issuedRunContext } from './support/issued-run-context';
 
 function sqlite(): SqliteDatabase {
@@ -55,7 +54,7 @@ function sqlite(): SqliteDatabase {
   };
 }
 
-function executable(tools: ToolSet, name: string) {
+function executable(tools: AgentToolSet, name: string) {
   const execute = tools[name]?.execute;
   if (!execute) throw new Error(`expected executable tool ${name}`);
   return execute;
@@ -196,11 +195,11 @@ describe('agent runtime durable capabilities', () => {
       store,
       definitions: [agentGoalStateSlot, agentTodoStateSlot],
     });
-    const tools = mountAgent([], {
+    const tools = mountAgentTools([], {
       access: { open: 'local-operator' },
       runtimeTools: createAgentStateTools({ run: issuedRunContext('state-tools'), state }),
     });
-    const options = { toolCallId: 'state', messages: [], context: undefined };
+    const options = { toolCallId: 'state', messages: [] };
     await executable(tools, 'create_goal')({ objective: 'ship it' }, options);
     await executable(tools, 'todo_write')(
       { items: [{ step: 'verify', status: 'in_progress' }] },
@@ -227,29 +226,24 @@ describe('agent runtime durable capabilities', () => {
       value: { objective: 'survive compaction' },
       actor: 'human',
     });
-    const model = new MockLanguageModelV4({
-      doStream: async () => ({
-        stream: simulateReadableStream({
-          chunks: [
-            { type: 'text-start', id: 'answer' },
-            { type: 'text-delta', id: 'answer', delta: 'ok' },
-            { type: 'text-end', id: 'answer' },
-            {
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: undefined },
-              usage: {
-                inputTokens: {
-                  total: 1,
-                  noCache: 1,
-                  cacheRead: undefined,
-                  cacheWrite: undefined,
-                },
-                outputTokens: { total: 1, text: 1, reasoning: undefined },
-              },
+    const driver = createScriptedModelDriver({
+      provider: 'fixture',
+      modelId: 'fixture',
+      steps: [
+        [
+          { type: 'text-start', id: 'answer' },
+          { type: 'text-delta', id: 'answer', delta: 'ok' },
+          { type: 'text-end', id: 'answer' },
+          {
+            type: 'finish',
+            finishReason: 'stop',
+            usage: {
+              inputTokens: { value: 1, provenance: 'provider-reported' },
+              outputTokens: { value: 1, provenance: 'provider-reported' },
             },
-          ],
-        }),
-      }),
+          },
+        ],
+      ],
     });
     const runtime = createAgentRuntime({
       protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
@@ -263,7 +257,7 @@ describe('agent runtime durable capabilities', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model,
+          driver,
         }),
       },
       prompt: () => ({
@@ -285,10 +279,12 @@ describe('agent runtime durable capabilities', () => {
     // The request names its instructions and messages by hash; the rendered
     // slot text is in the ledger one hop away, in the bodies it names.
     const request = events.items.find((event) => event.kind === 'provider/request');
-    const requestPayload = request?.payload as {
-      instructionsSha256?: string;
-      messageShas?: string[];
-    };
+    const requestPayload = z
+      .object({
+        instructionsSha256: z.string().optional(),
+        messageShas: z.array(z.string()).optional(),
+      })
+      .parse(request?.payload);
     expect(requestPayload.instructionsSha256).toHaveLength(64);
     expect(JSON.stringify(events.items.map((event) => event.payload))).toContain(
       'survive compaction',
@@ -313,7 +309,7 @@ describe('agent runtime durable capabilities', () => {
     expect(await search({ requestingConversationId: 'a', query: 'needle' })).toEqual([
       expect.objectContaining({ conversationId: 'a', seq: 1 }),
     ]);
-    const tools = mountAgent([], {
+    const tools = mountAgentTools([], {
       access: { open: 'local-operator' },
       runtimeTools: createAgentEventSearchTools({
         run: issuedRunContext('a'),
@@ -321,7 +317,7 @@ describe('agent runtime durable capabilities', () => {
         store: runtime.store,
       }),
     });
-    const options = { toolCallId: 'search', messages: [], context: undefined };
+    const options = { toolCallId: 'search', messages: [] };
     expect(
       await executable(tools, 'session_event')({ conversationId: 'a', seq: 1 }, options),
     ).toEqual(expect.objectContaining({ conversationId: 'a', seq: 1 }));
@@ -330,7 +326,7 @@ describe('agent runtime durable capabilities', () => {
     ).rejects.toMatchObject({ output: { error: 'INTERNAL_SERVER_ERROR' } });
     // The host may open another conversation to this one, target by target.
     const approved: string[] = [];
-    const authorized = mountAgent([], {
+    const authorized = mountAgentTools([], {
       access: { open: 'local-operator' },
       runtimeTools: createAgentEventSearchTools({
         run: issuedRunContext('a'),
@@ -468,8 +464,8 @@ describe('agent runtime durable capabilities', () => {
   });
 
   test('replay and retry use declared models and record the durable boundary', async () => {
-    const first = new MockLanguageModelV4();
-    const second = new MockLanguageModelV4();
+    const first = createScriptedModelDriver({ steps: [] });
+    const second = createScriptedModelDriver({ steps: [] });
     const provider = createReplayAgentProvider({ attempts: { model: [first, second] } });
     expect(provider.create('model')).toBe(first);
     expect(provider.create('model')).toBe(second);
@@ -492,43 +488,32 @@ describe('agent runtime durable capabilities', () => {
 
   test('runtime retries a cut stream at a durable boundary without retaining partial output', async () => {
     let calls = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async () => {
+    const driver = createScriptedModelDriver({
+      provider: 'fault',
+      modelId: 'fault',
+      onRequest: () => {
         calls += 1;
-        if (calls === 1) {
-          return {
-            stream: simulateReadableStream({
-              chunks: [
-                { type: 'text-start', id: 'first' },
-                { type: 'text-delta', id: 'first', delta: 'partial' },
-                { type: 'error', error: new AgentProviderStreamCutError() },
-              ],
-            }),
-          };
-        }
-        return {
-          stream: simulateReadableStream({
-            chunks: [
-              { type: 'text-start', id: 'second' },
-              { type: 'text-delta', id: 'second', delta: 'recovered' },
-              { type: 'text-end', id: 'second' },
-              {
-                type: 'finish',
-                finishReason: { unified: 'stop', raw: undefined },
-                usage: {
-                  inputTokens: {
-                    total: 1,
-                    noCache: 1,
-                    cacheRead: undefined,
-                    cacheWrite: undefined,
-                  },
-                  outputTokens: { total: 1, text: 1, reasoning: undefined },
-                },
-              },
-            ],
-          }),
-        };
       },
+      steps: [
+        [
+          { type: 'text-start', id: 'first' },
+          { type: 'text-delta', id: 'first', delta: 'partial' },
+          { type: 'error', error: new AgentProviderStreamCutError() },
+        ],
+        [
+          { type: 'text-start', id: 'second' },
+          { type: 'text-delta', id: 'second', delta: 'recovered' },
+          { type: 'text-end', id: 'second' },
+          {
+            type: 'finish',
+            finishReason: 'stop',
+            usage: {
+              inputTokens: { value: 1, provenance: 'provider-reported' },
+              outputTokens: { value: 1, provenance: 'provider-reported' },
+            },
+          },
+        ],
+      ],
     });
     const store = createMemoryAgentRuntimeStore();
     const runtime = createAgentRuntime({
@@ -542,7 +527,7 @@ describe('agent runtime durable capabilities', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model,
+          driver,
         }),
       },
       prompt: () => ({
@@ -574,42 +559,26 @@ describe('agent runtime durable capabilities', () => {
   test('runtime never retries a provider failure after a tool has executed', async () => {
     let providerCalls = 0;
     let toolCalls = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async () => {
+    const driver = createScriptedModelDriver({
+      provider: 'fault',
+      modelId: 'fault',
+      onRequest: () => {
         providerCalls += 1;
-        if (providerCalls === 1) {
-          return {
-            stream: simulateReadableStream({
-              chunks: [
-                {
-                  type: 'tool-call',
-                  toolCallId: 'effect-1',
-                  toolName: 'effect',
-                  input: '{}',
-                },
-                {
-                  type: 'finish',
-                  finishReason: { unified: 'tool-calls', raw: undefined },
-                  usage: {
-                    inputTokens: {
-                      total: 1,
-                      noCache: 1,
-                      cacheRead: undefined,
-                      cacheWrite: undefined,
-                    },
-                    outputTokens: { total: 1, text: 1, reasoning: undefined },
-                  },
-                },
-              ],
-            }),
-          };
-        }
-        return {
-          stream: simulateReadableStream({
-            chunks: [{ type: 'error', error: new AgentProviderStreamCutError() }],
-          }),
-        };
       },
+      steps: [
+        [
+          { type: 'tool-call', toolCallId: 'effect-1', toolName: 'effect', input: '{}' },
+          {
+            type: 'finish',
+            finishReason: 'tool-calls',
+            usage: {
+              inputTokens: { value: 1, provenance: 'provider-reported' },
+              outputTokens: { value: 1, provenance: 'provider-reported' },
+            },
+          },
+        ],
+        [{ type: 'error', error: new AgentProviderStreamCutError() }],
+      ],
     });
     const store = createMemoryAgentRuntimeStore();
     const runtime = createAgentRuntime({
@@ -623,7 +592,7 @@ describe('agent runtime durable capabilities', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model,
+          driver,
         }),
       },
       prompt: () => ({
@@ -633,8 +602,8 @@ describe('agent runtime durable capabilities', () => {
         contextDecision: 'unavailable',
       }),
       tools: () => ({
-        effect: tool({
-          inputSchema: z.object({}),
+        effect: defineAgentTool({
+          input: z.object({}),
           execute: () => {
             toolCalls += 1;
             return { ok: true };

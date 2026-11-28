@@ -1,26 +1,29 @@
 {
   "$comment": "Ceilings on the public surface. Raising a limit or adding a shared name is a reviewed change with its reason, not a regenerated snapshot; the reason for each raise lives in its commit and the CHANGELOG. → ADR 0198, docs/PRINCIPLES.md I8.",
   "limits": {
-    "stitchkit": 265,
-    "stitchkit/agent-executor": 112,
-    "stitchkit/agent-executor/acp": 39,
+    "stitchkit": 266,
+    "stitchkit/agent-executor": 122,
+    "stitchkit/agent-executor/acp": 43,
     "stitchkit/agent-executor/claude": 8,
     "stitchkit/agent-executor/claude-sdk": 40,
     "stitchkit/agent-executor/codex": 134,
     "stitchkit/agent-executor/testing": 45,
     "stitchkit/agent-executor/testing/claude-sdk": 7,
-    "stitchkit/agent-runtime": 413,
-    "stitchkit/agent-runtime/browser": 96,
+    "stitchkit/agent-runtime": 511,
+    "stitchkit/agent-runtime/ai-sdk": 3,
+    "stitchkit/agent-runtime/anthropic": 8,
+    "stitchkit/agent-runtime/browser": 128,
     "stitchkit/agent-runtime/coding-tools": 10,
     "stitchkit/agent-runtime/harness": 31,
-    "stitchkit/agent-runtime/openrouter": 40,
+    "stitchkit/agent-runtime/openai": 8,
+    "stitchkit/agent-runtime/openrouter": 60,
     "stitchkit/agent-runtime/postgres": 7,
-    "stitchkit/agent-runtime/sandbox": 27,
+    "stitchkit/agent-runtime/sandbox": 45,
     "stitchkit/agent-runtime/sqlite/bun": 9,
     "stitchkit/agent-runtime/sqlite/node": 9,
     "stitchkit/agent-runtime/react": 1,
     "stitchkit/agent-runtime/realtime": 3,
-    "stitchkit/agent-runtime/testing": 17,
+    "stitchkit/agent-runtime/testing": 21,
     "stitchkit/application": 327,
     "stitchkit/application/diagnostic-journal": 3,
     "stitchkit/application/directory-inbox": 1,
@@ -28,7 +31,7 @@
     "stitchkit/application/opentelemetry": 5,
     "stitchkit/cli": 98,
     "stitchkit/cli/publish": 4,
-    "stitchkit/contract": 120,
+    "stitchkit/contract": 121,
     "stitchkit/declaration": 30,
     "stitchkit/files": 66,
     "stitchkit/files/packaging": 20,
@@ -49,14 +52,14 @@
     "stitchkit/react/keyboard/testing": 16,
     "stitchkit/release": 17,
     "stitchkit/remote": 2,
-    "stitchkit/server": 235,
+    "stitchkit/server": 240,
     "stitchkit/telegram": 116,
     "stitchkit/telegram/grammy": 7,
     "stitchkit/telegram/html": 24,
     "stitchkit/telegram/voice": 9,
     "stitchkit/telegram/screens": 77,
     "stitchkit/testing": 83,
-    "stitchkit/tools": 175,
+    "stitchkit/tools": 186,
     "stitchkit/tools/connections": 30,
     "stitchkit/tools/contract": 16,
     "stitchkit/tools/invoker": 4,
@@ -71,7 +74,8 @@
     "stitchkit/tools/toolkit": 2,
     "stitchkit/handler": 41,
     "stitchkit/http": 62,
-    "stitchkit/realtime": 18,
+    "stitchkit/realtime": 58,
+    "stitchkit/device-relay": 79,
     "stitchkit/sync": 51,
     "stitchkit/sync/postgres": 25,
     "stitchkit/service-host": 104,
@@ -101,6 +105,7 @@
         "ContractStreamFrame",
         "ContractStreamFrameSchema",
         "ContractStreamFraming",
+        "DEADLINE_BUDGET_HEADER",
         "DEFAULT_CONTRACT_STREAM_FRAME_BYTES",
         "DeclaredRefusal",
         "DeclaredToolView",
@@ -316,6 +321,7 @@
         "AgentRuntimePublisher",
         "AgentSnapshot",
         "AgentSnapshotSchema",
+        "AgentSourcePart",
         "AgentSourcePartSchema",
         "AgentTerminalEventSchema",
         "AgentTerminalReason",
@@ -539,6 +545,11 @@
       "entrypoints": ["stitchkit/server", "stitchkit/tools"],
       "reason": "operation identity is read by server hooks and tool hooks",
       "names": ["OperationIdentity"]
+    },
+    {
+      "entrypoints": ["stitchkit/tools", "stitchkit/tools/agent"],
+      "reason": "mountAgent in stitchkit/tools/agent adapts mountAgentTools from stitchkit/tools into an AI SDK ToolSet and re-exports the shared context and mount configuration types without duplicating them (ADR 0336).",
+      "names": ["AgentContext", "AgentMountConfig"]
     },
     {
       "entrypoints": ["stitchkit/tools", "stitchkit/tools/contract"],
@@ -1504,6 +1515,44 @@
         "createStubClaudeSdkSession"
       ],
       "reason": "The multi-turn fake Claude SDK query harness and the Claude SDK session stub are typed by @anthropic-ai/claude-agent-sdk, so they live on their own subpath and stitchkit/agent-executor/testing declares no optional peer (I7)."
+    },
+    {
+      "entrypoint": "stitchkit/agent-runtime/openai",
+      "names": [
+        "OpenAiProviderAccess",
+        "OpenAiProviderSettings",
+        "OpenAiReasoningPolicy",
+        "OpenAiReasoningPolicySchema",
+        "OpenAiRequestPolicy",
+        "OpenAiRequestPolicySchema",
+        "normalizeOpenAiUsage",
+        "openAiProvider"
+      ],
+      "reason": "New peer-free evolving native OpenAI Responses API provider leaf implementing AgentModelDriverFactory with Zod-first request/reasoning policies and provenance-honest usage normalization (ADR 0336)."
+    },
+    {
+      "entrypoint": "stitchkit/agent-runtime/anthropic",
+      "names": [
+        "AnthropicProviderAccess",
+        "AnthropicProviderSettings",
+        "AnthropicRequestPolicy",
+        "AnthropicRequestPolicySchema",
+        "AnthropicThinkingPolicy",
+        "AnthropicThinkingPolicySchema",
+        "anthropicProvider",
+        "normalizeAnthropicUsage"
+      ],
+      "reason": "New peer-free evolving native Anthropic Messages API provider leaf implementing AgentModelDriverFactory with Zod-first request/thinking policies and provenance-honest usage normalization (ADR 0336)."
+    },
+    {
+      "entrypoint": "stitchkit/agent-runtime/ai-sdk",
+      "names": ["FromAiSdkModelOptions", "fromAiSdkModel", "fromAiSdkTools"],
+      "reason": "New evolving optional-peer adapter leaf isolating the ai peer so stitchkit/agent-runtime and the three native providers carry zero AI SDK runtime or declaration references (ADR 0336)."
+    },
+    {
+      "entrypoint": "stitchkit/agent-runtime",
+      "names": ["AgentModelProviderOptionValue"],
+      "reason": "Export the recursive JSON-with-optional-undefined value member of AgentModelProviderOptions and AgentModelProviderToolSpec.config so check-public-types needs no allowlist bypass, z.input rejects non-JSON values, and consumer declarations emit zero elided any."
     }
   ]
 }

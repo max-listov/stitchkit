@@ -15,6 +15,119 @@ additive**; the first breaking change landed in 0.10.0. Grep the file for
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes
+
+**Who must act:** applications using `stitchkit/agent-runtime` or `stitchkit/agent-runtime/harness` with AI SDK `LanguageModel`, `ToolSet`, `ModelMessage`, or `LanguageModelUsage` types. [Migration](docs/guide/upgrading.md#agent-runtime-native-model-port)
+
+**Who must act:** applications using `stitchkit/agent-runtime/openrouter` with `baseURL`, `extraHeaders`, `provider_api_keys`, or `@openrouter/ai-sdk-provider`. [Migration](docs/guide/upgrading.md#openrouter-native-driver)
+
+**Who must act:** callers of `stitchkit/tools` referencing `RuntimeAgentModelOutput` or returning legacy deprecated AI SDK tool-output shapes (`file-data`, `image-data`, `file-url`, `image-url`, `file-id`, `image-file-id`) from `present.agent`. [Migration](docs/guide/upgrading.md#tools-agent-tool-model-output)
+
+**Who must act:** tests calling `createReplayAgentProvider` from `stitchkit/agent-runtime/testing` expecting an AI SDK `LanguageModel` instead of an `AgentModelDriver`. [Migration](docs/guide/upgrading.md#agent-runtime-testing-replay-driver)
+
+- `stitchkit/agent-runtime`, `stitchkit/agent-runtime/harness` — `stitchkit/agent-runtime` now owns its single native step loop behind the peer-free `AgentModelDriver` port and removes `streamText`/`generateText` and all AI SDK types from its public declarations. `AgentLanguageModelProvider` is replaced by `AgentModelDriverFactory`, `AgentResolvedModel.model` is renamed to `AgentResolvedModel.driver`, `AgentRuntimeStopPolicy<CONTEXT>` drops its unused first generic, all tool stream events in `AgentModelStreamPart` and `CompleteStreamPart` uniformly use `toolCallId`, and `createAgentRuntime`, `createHeadlessAgentHarness`, `createDeferredAgentToolSurface`, `projectAgentHistory`, `prepareStep`, `stopPolicies`, `history.resolveFile`, and `persistGeneratedFile` now operate on peer-free `AgentToolSet`, `AgentModelMessage`, `AgentModelFileData`, `AgentGeneratedFile`, and `AgentStepResult`. Existing AI SDK v4 models and `ToolSet`s bridge cleanly in step 1 through `fromAiSdkModel` / `fromAiSdkTools` (`stitchkit/agent-runtime/ai-sdk`), and migrate completely off `ai` in step 2 using the native providers and `mountAgentTools` / `defineAgentTool`. → ADR 0336
+
+  ```ts
+  // before
+  import { mountAgent } from 'stitchkit/tools/agent';
+  import type { AgentLanguageModelProvider } from 'stitchkit/agent-runtime';
+  const runtime = createAgentRuntime({
+    models: { resolve: () => ({ descriptor, model: aiSdkModel }) },
+    tools: (ctx) => mountAgent(service, { context: ctx.context, access: { gate: ctx.toolFenceLifecycle } }),
+    // ...
+  });
+  // after (step 1: keep existing AI SDK model/tools via the optional adapter)
+  import { fromAiSdkModel, fromAiSdkTools } from 'stitchkit/agent-runtime/ai-sdk';
+  const runtime = createAgentRuntime({
+    models: { resolve: () => ({ descriptor, driver: fromAiSdkModel(aiSdkModel) }) },
+    tools: (ctx) => fromAiSdkTools(mountAgent(service, { context: ctx.context, access: { gate: ctx.toolFenceLifecycle } })),
+    // ...
+  });
+  // after (step 2: peer-free native provider + mountAgentTools)
+  import { mountAgentTools } from 'stitchkit/tools';
+  import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter';
+  const provider = openRouterProvider({ apiKey: env.OPENROUTER_API_KEY });
+  const runtime = createAgentRuntime({
+    models: { resolve: () => ({ descriptor, driver: provider.create(descriptor.modelId) }) },
+    tools: (ctx) => mountAgentTools(service, { context: ctx.context, access: { gate: ctx.toolFenceLifecycle } }),
+    // ...
+  });
+  ```
+
+  **Affects:** `stitchkit/agent-runtime` AgentLanguageModelProvider, AgentResolvedModel(driver), defineModelRegistry, AgentModelRegistry, createAgentRuntime(tools, loop, history), AgentRuntimeConfig(tools, loop, history), AgentRuntime, AgentRuntimePrepareStep, AgentRuntimeStopPolicy, agentChildBudgetStopPolicy, projectAgentHistory, projectAgentHistoryDetailed, AgentHistoryProjectionResult, AgentHistoryProjectionOptions(resolveFile), createDeferredAgentToolSurface, DeferredAgentToolController; `stitchkit/agent-runtime/harness` createHeadlessAgentHarness, HeadlessAgentHarness, HeadlessAgentHarnessConfig, HeadlessAgentModelResolver
+
+- `stitchkit/agent-runtime/openrouter` — `openRouterProvider` is now a peer-free native OpenRouter Chat Completions SSE driver returning `AgentModelDriverFactory` over Web `fetch`, dropping `@openrouter/ai-sdk-provider` and `ai`. `OpenRouterProviderSettings` uses camelCase `baseUrl`, `providerApiKeys`, `appName`, `appUrl`, `headers`, `fetch`, and `extraBody`; `sessionPerConversation` reads `request.correlation.conversationId` directly without requiring `invocations`. → ADR 0336
+
+  ```ts
+  // before
+  const provider = openRouterProvider({
+    apiKey: env.OPENROUTER_API_KEY,
+    baseURL: 'https://openrouter.ai/api/v1',
+  });
+  // after
+  const provider = openRouterProvider({
+    apiKey: env.OPENROUTER_API_KEY,
+    baseUrl: 'https://openrouter.ai/api/v1',
+    providerApiKeys: { anthropic: env.ANTHROPIC_BYOK_KEY },
+  });
+  ```
+
+  **Affects:** `stitchkit/agent-runtime/openrouter` openRouterProvider, OpenRouterProviderSettings(baseUrl, providerApiKeys), OpenRouterProviderAccess(sessionPerConversation), normalizeOpenRouterUsage
+
+- `stitchkit/tools`, `stitchkit/tools/agent` — `RuntimeAgentModelOutput` in `stitchkit/tools` is renamed without an alias to `AgentToolModelOutput`, using canonical non-deprecated `{ type: 'file', data: AgentModelFileData, mediaType, filename? }` content parts in place of deprecated AI SDK part types (`file-data`, `image-data`, `file-url`, `image-url`, `file-id`, `image-file-id`). `mountAgent` in `stitchkit/tools/agent` now adapts `mountAgentTools` and emits only non-deprecated `{ type: 'file', data, mediaType }` parts. → ADR 0336
+
+  ```ts
+  // before
+  import type { RuntimeAgentModelOutput } from 'stitchkit/tools';
+  const out: RuntimeAgentModelOutput = {
+    type: 'content',
+    value: [{ type: 'image-data', data: base64Png, mediaType: 'image/png' }],
+  };
+  // after
+  import type { AgentToolModelOutput } from 'stitchkit/tools';
+  const out: AgentToolModelOutput = {
+    type: 'content',
+    value: [{ type: 'file', data: { type: 'data', data: base64Png }, mediaType: 'image/png' }],
+  };
+  ```
+
+  **Affects:** `stitchkit/tools` RuntimeAgentModelOutput, AgentToolModelOutput, RuntimeToolPresenters(agent), defineRuntimeTool, createRuntimeToolFactory, defineDownloadTool, defineUploadTool, defineViewFileTool, defineWaitTool, RuntimeToolDefinitionWithOutput; `stitchkit/tools/agent` mountAgent(behaviour)
+
+- `stitchkit/agent-runtime/testing` — `createReplayAgentProvider` now returns an `AgentModelDriverFactory` producing `AgentModelDriver` instances rather than AI SDK `LanguageModel` instances. → ADR 0336
+
+  ```ts
+  // before
+  const model = replayProvider.create('demo/model');
+  // after: pass the returned AgentModelDriver directly to AgentResolvedModel.driver or completeText
+  const driver = replayProvider.create('demo/model');
+  ```
+
+  **Affects:** `stitchkit/agent-runtime/testing` createReplayAgentProvider
+
+### Added
+
+- `stitchkit/agent-runtime/openai` — new peer-free **evolving** native OpenAI Responses API (`POST /v1/responses`) provider leaf over Web `fetch` and SSE (`openAiProvider`, `OpenAiProviderSettings`, `OpenAiProviderAccess`, `OpenAiRequestPolicySchema`, `OpenAiRequestPolicy`, `OpenAiReasoningPolicySchema`, `OpenAiReasoningPolicy`, `normalizeOpenAiUsage`). Defaults to stateless `store: false` with automatic `include: ['reasoning.encrypted_content']` round-trip, `role: 'developer'` instructions, loose `strict: false` tool schemas, `item_id` (`fc_*`) vs `call_id` separation, `text.format` structured outputs, `cachePerConversation` (`prompt_cache_key`), and fail-fast refusal of unsupported settings (I9). → ADR 0336
+- `stitchkit/agent-runtime/anthropic` — new peer-free **evolving** native Anthropic Messages API (`POST /v1/messages`) provider leaf over Web `fetch` and SSE (`anthropicProvider`, `AnthropicProviderSettings`, `AnthropicProviderAccess`, `AnthropicRequestPolicySchema`, `AnthropicRequestPolicy`, `AnthropicThinkingPolicySchema`, `AnthropicThinkingPolicy`, `normalizeAnthropicUsage`). Enforces mandatory `maxOutputTokens` and `maxOutputTokens > thinking.budgetTokens` before hitting the network, preserves verbatim multi-block `thinking` + `signature` and `redacted_thinking`, splits images out of `is_error` tool results, budgets ≤ 4 cache breakpoints with TTL-order checks, computes total `inputTokens` with `computed` provenance when cache counters are positive (ADR 0109), maps `output_config.format` JSON Schema (refusing schemaless `json-object`), and classifies `529 overloaded_error` as retryable. → ADR 0336
+- `stitchkit/agent-runtime/ai-sdk` — new optional-peer (`ai`) **evolving** adapter leaf (`fromAiSdkModel`, `FromAiSdkModelOptions`, `fromAiSdkTools`) bridging any AI SDK v4 `LanguageModel` (via `doStream()`, without `streamText` or `generateText`) and `ToolSet` (normalizing legacy deprecated tool outputs) onto `AgentModelDriver` and `AgentToolSet`. → ADR 0336
+- `stitchkit/agent-runtime` — added peer-free stateless single- and multi-step completions and standalone streaming (`completeText`, `streamComplete`, `completeObject`, `AgentStructuredOutputError` including `'interrupted'`, `AgentRetryExhaustedError`, `AgentCompleteStopPolicy`, compile-time `prompt` vs `messages` XOR, fail-closed `tool.needsApproval` refusal via `AgentToolApprovalError` with `reason: 'approval-unsupported'`, `onPart`, `retry`, `stopPolicies`, `idleTimeoutMs`, strict-mode optional-`null` stripping with union/discriminator awareness, and `toJsonSchema(..., 'input')`), full per-step telemetry (`finishReason`, `rawFinishReason`, `toolCallCount`, `costDetails`, split `timings` with `chunkIntervalsMs`, and `response.{modelId,timestamp}`) on both `AgentStepSpend` and `AgentStepFinishedEvent`, leak-free driver lifecycle composition (`wrapModelDriver`, `composeModelDrivers`, `AgentModelDriverDecorator` with `transformSignal` tightening), canonical `AgentProviderError` and `isAgentProviderError`, additive `AgentModelToolSpec` (`type: 'provider'`, with `AgentModelProviderOptionValue` config) union branch with fail-fast driver refusal, per-request `AgentModelRequest.headers` (preserving `content-type: application/json`), dynamic per-call `apiKey` factories on `openRouterProvider`, `openAiProvider`, and `anthropicProvider`, `loop.maxDurationMs` wall-clock run deadlines, `stepBarriers` parity (`onMaxReasoningChars: 'abort' | 'finish-length'`, `stepTextOnInterrupt: 'drop' | 'flush'`, `filterStepText(text, { step, interrupted, finishReason, toolCalls, toolResults })`, and `onPredecessorFailure: 'refuse'` across invalid inputs, batch refusals, approval failures, and `isToolResultFailure` payloads), typed per-tool `input` in `loop.toolApproval`, resolved `model`/`tools`/`context` in `history.compact`, `{ summary, usage }` accumulation in `structuredCompaction`, PII-safe tool dispatch errors (`AgentUnknownToolError`, `AgentInvalidToolInputError`), typed WebCrypto HMAC-SHA256 tool-approval errors (`AgentToolApprovalError`, `AgentInvalidToolApprovalSignatureError`, `AgentToolCallNotFoundForApprovalError`), whole-step batch tool refusal (`loop.beforeStepToolCalls`), bounded terminal continuations (`protocol.acceptTerminal` returning `{ action: 'continue', message, instructions? }`, `loop.maxContinuations`, `carriedToolWork`), stream observability hooks (`loop.onAttemptDiscarded`, `loop.onToolInputStart`), `AgentGeneratedFile.filename` forwarded to `persistGeneratedFile`, and canonical peer-free model-exchange schemas (`AgentModelMessageSchema`, `AgentModelFileDataSchema`, `AgentModelResponseFormatSchema`, `AgentCacheControlSchema`, `AgentModelProviderOptionsSchema`, `AgentModelProviderOptionValue`, `AgentToolModelOutputSchema`). → ADR 0336
+- `stitchkit/tools`, `stitchkit/tools/toolkit` — added peer-free `mountAgentTools` (including single-argument `mountAgentTools({ runtimeTools, access })` on both `stitchkit/tools` and `Toolkit.mountAgentTools`), `defineAgentTool` (with distinct `z.input`/`z.output` typing for `.transform()`/`.default()` output schemas, schema-typed `AsyncIterable<TOutputInput>` zero-lag streaming, distributive union return unwrapping for `Value | AsyncIterable<Value>`, direct `DefineAgentToolConfig` pass-through overload, and spread-safe executor-keyed output validation), `DefineAgentToolConfig`, `AgentTool`, `AgentToolSet`, `AgentToolCall`, `AgentToolParseResult`, `AgentToolInputAvailableOptions`, `AgentToolToModelOutputOptions`, `AgentMountConfig`, and `AgentContext` as the single peer-free tool definition and contract projection path. → ADR 0336
+- `stitchkit/agent-runtime/testing` — added deterministic peer-free `createScriptedModelDriver` (`ScriptedModelDriver`, `ScriptedModelDriverOptions`, `ScriptedModelStep`) for unit and integration tests without external SDKs. → ADR 0336
+- `stitchkit/agent-runtime/openrouter` — added portable `cacheControl` on `OpenRouterRequestPolicySchema`, BYOK `costDetails` (`cost + upstream_inference_cost`), `reasoning_details` and Gemini `thought_signature` round-trip, `native_finish_reason` abnormal-stop guard, `looseTools` preserving explicit per-tool `strict: true`, optional static/dynamic `apiKey` on catalog loaders (`loadOpenRouterCatalogSnapshot`, `fetchOpenRouterModelEndpoints`, `openRouterModelCatalog`), nullable `/models` row resilience and `~`-router model IDs, enriched catalog model/endpoint metadata (`canonicalSlug`, `description`, `createdAt`, `aliasTarget`, `outputModalities`, `tokenizer`, `topProviderContextLength`, `maxCompletionTokens`, `reasoning`, `requestUsd`, `imageUsd`, `cacheReadUsdPerMillion`, `cacheWriteUsdPerMillion`, `cacheWrite1hUsdPerMillion`, `pricingTiers`, `hasConditionalPricing`, endpoint `latencyP50Ms`/`throughputP50`/`uptime1d`/`tag`), pricing ceiling and endpoint summary helpers (`resolveOpenRouterModelCeiling`, `summarizeOpenRouterEndpoints`), snapshot queries (`findOpenRouterModel`, `listOpenRouterModels`, `OpenRouterModelFilter`), discriminated-union `createOpenRouterCatalogCache` (`OpenRouterCatalogCache`, `OpenRouterCatalogCacheOptions`, `OpenRouterCatalogCacheReadResult`, `OpenRouterCatalogStore`) with single-flight coalescing, TTL, retry backoff, and optional pluggable persistence, `include_reasoning` capability detection, and `evaluateOpenRouterModelAdmission` synchronization (`aliasTarget`, `'context-unknown'`, effective context length, and worst-case pricing ceilings). → ADR 0336
+- `stitchkit/agent-runtime/browser` — added `AgentSourcePart` type export beside `AgentSourcePartSchema`.
+- `stitchkit/agent-runtime/browser` — extended `AgentConversationView`, `AgentControlDelivery`, `AgentControlRequest`, `AgentBrowserRequest`, `AgentControlResponse` and `AgentController` with strict Zod schemas for native and remote interactive session states: `waiting-approval` (`AgentPendingApprovalSchema`, `respondApproval` with optional `idempotencyKey`), `waiting-input` (`AgentPendingInputSchema`, `AgentInputQuestionSchema`, `AgentInputAnswerSchema`, `respondInput`), permission modes (`AgentPermissionModeSchema`, `permissionMode`, `supportedPermissionModes`, `setPermissionMode`), executor host reachability (`AgentHostStatusSchema`, `AgentHostAvailabilitySchema` with `validUntil` and `reason`, overlaying `host-offline` in `deriveAgentConversationState` without turning active `working` state in `deriveAgentConversationActivity` into `idle`), and honest `delivery: 'unknown'` tracking and reconciliation (`reduceAgentControlDelivery`). Cloud sessions leave native-only fields absent without synthetic defaults.
+- `stitchkit/device-relay` — new peer-free, browser- and Hermes-safe **evolving** entrypoint for User Device Relay over realtime (`createDeviceRelayHub`, `createDeviceRelayAgent`, `createMemoryRelayBroker`, `RelayBrokerPort`, `deviceRelayRealtimeContract`, `DeviceRelayError`). Multiplexes Fetch-compatible unary RPCs (`createRelayFetch`) and credit-paced resumable cursor streams (`openRelayStream`, with optional `share: true` fan-out that closes upstream when the last subscriber leaves) over a single outbound realtime socket with conservative heartbeat leases, strict owner-only default authorization (`FORBIDDEN` for foreign accounts), default-deny local allowlists on the device agent, and retryable vs. non-retryable failure classification.
+- `stitchkit/realtime`, `stitchkit/server` — added account-scoped online device presence, ephemeral capability state slots and targeted remote command bus over a shared `RealtimeServerHandle` (`createDevicePresenceContract`, `createDevicePresenceClient`, `createDevicePresenceRelayAdapter` in `stitchkit/realtime`; `bindDevicePresence` in `stitchkit/server`). Enforces per-account isolation via `accountOf(identity)` without disrupting non-user sockets on the same server, protects reconnect handoffs against stale disconnects of the same `deviceId`, cleans up state on `disconnect`/`readmit`, republishes local capability states automatically on reconnect, and delivers typed command acknowledgements (`ok`, `DEVICE_OFFLINE`, `FORBIDDEN`, `TIMEOUT`, `UNSUPPORTED_CAPABILITY`, `HANDLER_ERROR`, `INVALID_COMMAND`, `DISCONNECTED`) without retrying side-effectful commands.
+- `stitchkit/agent-executor`, `stitchkit/agent-executor/acp` — ACP tool calls and tool results now preserve `title`, `kind`, and `locations` (`AcpToolLocationSchema`, `AcpToolLocation`) inside `provider: { schemaVersion: 1, provider: 'acp', data: ... }` (`AgentToolResultPartSchema.provider` added without breaking existing callers); meaningful `tool_call_update` (`in_progress`/`pending`) records with new arguments or metadata emit updated `tool-call` deltas on the same `itemId` while suppressing empty heartbeats; `plan`, `plan_update`, and `plan_removed` notifications map to typed `ExecutorPlanDelta` (`ExecutorPlanDeltaSchema`, `ExecutorPlanEntrySchema`, `ExecutorPlanEntryStatusSchema`, `ExecutorPlanEntryPrioritySchema`, `AcpPlanEntrySchema`, `AcpPlanEntry`). **Upgrade the server before any executor:** strict executor ↔ server wire contracts reject new `plan` deltas and `tool-result.provider` envelopes on older servers ([Upgrade note](docs/guide/upgrading.md#executor-acp-plan-and-tool-provider)).
+- `stitchkit`, `stitchkit/contract`, `stitchkit/http`, `stitchkit/server` — added hop-by-hop relative HTTP deadline budget propagation via `DEADLINE_BUDGET_HEADER` (`x-stitchkit-timeout-ms`), per-call `timeout` and `propagateDeadline` on `ClientRequestOptions`, `ClientConfig`, `HttpClientConfig`, and `RequestOptions`, automatic `X-Stitchkit-Timeout-Ms` CORS allow-header, and server-side deadline enforcement in `createHandler` / `createServer` (clamping inbound budgets to the endpoint's declared `timeout`, failing fast with `408 REQUEST_TIMEOUT` on `'0'`, ignoring malformed headers, linking `ctx.signal` to deadline expiry, and exposing monotonic `ctx.remainingTimeoutMs(reserveMs?)` for downstream calls and `createBoundedAdmission`).
+- `stitchkit/agent-runtime/sandbox`, `stitchkit/agent-executor`, `stitchkit/agent-executor/acp`, `stitchkit/agent-executor/codex` — added a reusable fail-closed OS process sandbox wrapper (`createProcessSandbox`, `probeProcessSandbox`, `buildSeatbeltProfile`, `ProcessSandboxSpecSchema`) for long-lived streaming stdio/IPC processes (`workspace-strict` and `workspace-readonly` on Linux `bwrap` and macOS Seatbelt `sandbox-exec`, throwing `SandboxError('SANDBOX_UNAVAILABLE', ...)` rather than falling back silently) and added optional `wrapCommand?: EngineProcessWrapCommand` (`EngineProcessCommandSpec`) to `AcpDriverConfig` and `CodexDriverConfig` with preserved `providerPid` and clean `close()`.
+
+### Fixed
+
+- `stitchkit/http`, `stitchkit` — serialize query parameters to a string before handing requests to Ky so runtimes and polyfills without `URLSearchParams.prototype.size` (such as `react-native-url-polyfill`) no longer silently drop query parameters.
+  **Affects:** `stitchkit/http` createClient, createHttpClient, createUrlBuilder; `stitchkit` createClient, createHttpClient, createUrlBuilder
+- `stitchkit/agent-runtime` — exported `AgentModelProviderOptionValue` with matching `z.input`/`z.output` typing on `AgentModelProviderOptionsSchema` and `AgentModelProviderToolSpec.config` so `OpenRouterRequestPolicy`, `OpenAiRequestPolicy`, and `AnthropicRequestPolicy` assign cleanly under `exactOptionalPropertyTypes: true`, non-JSON inputs are rejected at compile time, and consumer declarations emit zero elided `any`; `AgentModelStreamPart` (`file`) and `AgentGeneratedFile` carry optional `filename` forwarded to `persistGeneratedFile`.
+  **Affects:** `stitchkit/agent-runtime` AgentModelProviderOptionValue, AgentModelProviderOptions, AgentModelProviderOptionsSchema, AgentModelProviderToolSpec, AgentModelStreamPart, AgentGeneratedFile
+
 ## [0.133.2] - 2026-11-27
 
 ### Added

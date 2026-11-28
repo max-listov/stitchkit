@@ -1,41 +1,51 @@
-import { MockLanguageModelV4 } from 'ai/test';
 import {
   createMemoryAgentRuntimeStore,
   createModelInvocationLedger,
   currentModelInvocationAttempt,
   defineModelRegistry,
 } from 'stitchkit/agent-runtime';
+import { createScriptedModelDriver } from 'stitchkit/agent-runtime/testing';
 
 let calls = 0;
 let attemptId: string | undefined;
-const model = new MockLanguageModelV4({
-  doGenerate: async ({ prompt, tools }) => {
-    calls += 1;
-    attemptId = currentModelInvocationAttempt()?.attemptId;
-    if (prompt.length !== 1 || prompt[0]?.role !== 'user' || tools?.length) {
-      throw new Error('Completion acquired agent instructions or tools');
-    }
-    return {
-      content: [{ type: 'text', text: 'receipt delivered' }],
-      usage: {
-        inputTokens: {
-          total: undefined,
-          noCache: undefined,
-          cacheRead: undefined,
-          cacheWrite: undefined,
-        },
-        outputTokens: { total: undefined, text: undefined, reasoning: undefined },
-      },
-      finishReason: { unified: 'stop', raw: undefined },
-      warnings: [],
-    };
-  },
+const driver = createScriptedModelDriver({
+  provider: 'test',
+  modelId: 'requested',
+  steps: [
+    async (request) => {
+      calls += 1;
+      attemptId = currentModelInvocationAttempt()?.attemptId;
+      if (
+        request.instructions.length !== 0 ||
+        request.messages.length !== 1 ||
+        request.messages[0]?.role !== 'user' ||
+        request.tools.length !== 0
+      ) {
+        throw new Error('Completion acquired agent instructions or tools');
+      }
+      return {
+        parts: (async function* () {
+          yield { type: 'text-start' as const, id: 'completion' };
+          yield { type: 'text-delta' as const, id: 'completion', delta: 'receipt delivered' };
+          yield { type: 'text-end' as const, id: 'completion' };
+          yield {
+            type: 'finish' as const,
+            finishReason: 'stop' as const,
+            usage: {
+              inputTokens: { provenance: 'unavailable' as const },
+              outputTokens: { provenance: 'unavailable' as const },
+            },
+          };
+        })(),
+      };
+    },
+  ],
 });
 const models = defineModelRegistry({
   models: {
     primary: { provider: 'test', modelId: 'requested', contextWindow: 4096, capabilities: [] },
   },
-  providers: { test: { create: () => model } },
+  providers: { test: { create: () => driver } },
 });
 const ledger = createModelInvocationLedger({
   store: createMemoryAgentRuntimeStore(),

@@ -1,6 +1,5 @@
-import type { LanguageModel, LanguageModelUsage } from 'ai';
 import { z } from 'zod';
-import type { AgentUsage } from './schemas';
+import type { AgentModelDriver, AgentModelDriverFactory } from './models-driver';
 
 export const AgentModelCapabilitySchema = z.enum(['tools', 'vision', 'reasoning', 'files']);
 
@@ -150,37 +149,16 @@ export function createMemoryAgentModelSelectionStore(): AgentModelSelectionStore
   };
 }
 
-export interface AgentLanguageModelProvider {
-  create(modelId: string): LanguageModel;
-  normalizeUsage?(input: {
-    usage: LanguageModelUsage;
-    providerMetadata?: unknown;
-  }): AgentUsage;
-  /**
-   * Which upstream provider actually answered this step, when the SDK reports
-   * it, for the response identity a completed step publishes.
-   *
-   * Here for the same reason `normalizeUsage` is here: the shape is one
-   * gateway's, not the runtime's. Read in the neutral core it would put a
-   * vendor key into a boundary whose whole rule is that it has no domain
-   * model, and the second gateway to report the same fact under another name
-   * would have to be added there too. → ADR 0002.
-   */
-  resolveResponseProvider?(input: { providerMetadata?: unknown }): string | undefined;
-}
-
 export interface AgentModelRegistryConfig<
   MODELS extends Record<string, AgentModelDescriptor>,
 > {
   models: MODELS;
-  providers: Readonly<Record<string, AgentLanguageModelProvider>>;
+  providers: Readonly<Record<string, AgentModelDriverFactory>>;
 }
 
 export interface AgentResolvedModel {
   descriptor: AgentModelDescriptor;
-  model: LanguageModel;
-  normalizeUsage?: AgentLanguageModelProvider['normalizeUsage'];
-  resolveResponseProvider?: AgentLanguageModelProvider['resolveResponseProvider'];
+  driver: AgentModelDriver;
 }
 
 export interface AgentModelRegistry<MODEL_KEY extends string> {
@@ -201,6 +179,7 @@ export function defineModelRegistry<MODELS extends Record<string, AgentModelDesc
   type ModelKey = Extract<keyof MODELS, string>;
   const descriptors = new Map<ModelKey, AgentModelDescriptor>();
   for (const key in config.models) {
+    if (!Object.hasOwn(config.models, key)) continue;
     const declaration = config.models[key];
     if (declaration) descriptors.set(key, AgentModelDescriptorSchema.parse(declaration));
   }
@@ -227,7 +206,10 @@ export function defineModelRegistry<MODELS extends Record<string, AgentModelDesc
     if (!supports(key, required)) {
       throw new Error(`Agent model ${key} does not satisfy required capabilities`);
     }
-    if (!config.providers[selected.provider]) {
+    if (
+      !Object.hasOwn(config.providers, selected.provider) ||
+      !config.providers[selected.provider]
+    ) {
       throw new Error(`Unknown agent model provider: ${selected.provider}`);
     }
     return selected;
@@ -240,15 +222,13 @@ export function defineModelRegistry<MODELS extends Record<string, AgentModelDesc
     preflight,
     resolve(key, required = []) {
       const selected = preflight(key, required);
-      const provider = config.providers[selected.provider];
+      const provider = Object.hasOwn(config.providers, selected.provider)
+        ? config.providers[selected.provider]
+        : undefined;
       if (!provider) throw new Error(`Unknown agent model provider: ${selected.provider}`);
       return {
         descriptor: selected,
-        model: provider.create(selected.modelId),
-        ...(provider.normalizeUsage && { normalizeUsage: provider.normalizeUsage }),
-        ...(provider.resolveResponseProvider && {
-          resolveResponseProvider: provider.resolveResponseProvider,
-        }),
+        driver: provider.create(selected.modelId),
       };
     },
     snapshot(input) {

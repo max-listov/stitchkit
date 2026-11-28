@@ -2,24 +2,25 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   type AgentMessage,
   AgentMessageSchema,
+  type AgentModelDriver,
+  type AgentModelMessage,
   type AgentRuntimeStore,
   type AgentStoreMutationResult,
+  type AgentUsage,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
 import { openSqliteStore } from './support/sqlite-store';
 
-const usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 1, text: 1, reasoning: undefined },
+const usage: AgentUsage = {
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
 };
 
 const BRIEF = 'TENANT BRIEF';
@@ -65,22 +66,24 @@ function instructionMessage(conversationId: string, id: string, text: string): A
 }
 
 function runtimeWith(store: AgentRuntimeStore) {
-  const prompts: { role?: string }[][] = [];
-  const model = new MockLanguageModelV4({
-    doStream: async ({ prompt }) => {
-      prompts.push(prompt as { role?: string }[]);
+  const prompts: AgentModelMessage[][] = [];
+  const driver: AgentModelDriver = {
+    provider: 'test',
+    modelId: 'instruction-seeding',
+    async stream(request) {
+      prompts.push([...request.instructions, ...request.messages]);
       return {
-        stream: simulateReadableStream({
-          chunks: [
-            { type: 'text-start', id: 'answer' },
-            { type: 'text-delta', id: 'answer', delta: 'ok' },
-            { type: 'text-end', id: 'answer' },
-            { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-          ],
-        }) as never,
+        parts: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: 'text-start', id: 'answer' };
+            yield { type: 'text-delta', id: 'answer', delta: 'ok' };
+            yield { type: 'text-end', id: 'answer' };
+            yield { type: 'finish', finishReason: 'stop', usage };
+          },
+        },
       };
     },
-  });
+  };
   const runtime = createAgentRuntime({
     protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
     store,
@@ -92,7 +95,7 @@ function runtimeWith(store: AgentRuntimeStore) {
           contextWindow: 100_000,
           capabilities: [],
         },
-        model,
+        driver,
       }),
     },
     prompt: () => ({
@@ -205,11 +208,12 @@ describe('durable once-seeding of user-role instructions', () => {
     const before = await store.loadSnapshot('c1');
     const seedId = before.messages.find((message) => textOf(message) === BRIEF)?.id;
     expect(seedId).toBeDefined();
+    if (!seedId) throw new Error('expected seedId');
 
     const compacted = await store.replaceCompactedRange({
       conversationId: 'c1',
       expectedVersion: before.version,
-      replacedMessageIds: [seedId as string],
+      replacedMessageIds: [seedId],
       summary: AgentMessageSchema.parse({
         schemaVersion: 1,
         id: 'summary-1',
@@ -378,7 +382,7 @@ describe('durable once-seeding of user-role instructions', () => {
         'SELECT count(*) AS count FROM stitchkit_agent_runtime_messages WHERE conversation_id = ? AND id = ?',
       )
       .get(conversationId, 'seed-1');
-    expect((stored as { count: number }).count).toBe(1);
+    expect(z.object({ count: z.number() }).parse(stored).count).toBe(1);
 
     await fixture.close();
   });

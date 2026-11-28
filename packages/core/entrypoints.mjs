@@ -19,6 +19,7 @@ export const ENTRYPOINTS = [
   { subpath: '.', source: 'src/entrypoints/index.ts', browser: true },
   { subpath: './http', source: 'src/entrypoints/http.ts', browser: true },
   { subpath: './realtime', source: 'src/entrypoints/realtime.ts', browser: true },
+  { subpath: './device-relay', source: 'src/entrypoints/device-relay.ts', browser: true },
   { subpath: './live', source: 'src/entrypoints/live.ts', browser: true },
   { subpath: './react', source: 'src/entrypoints/react.ts', browser: true },
   { subpath: './react/keyboard', source: 'src/entrypoints/react/keyboard.ts', browser: true },
@@ -85,6 +86,21 @@ export const ENTRYPOINTS = [
   {
     subpath: './agent-runtime/openrouter',
     source: 'src/entrypoints/agent-runtime/openrouter.ts',
+    browser: false,
+  },
+  {
+    subpath: './agent-runtime/openai',
+    source: 'src/entrypoints/agent-runtime/openai.ts',
+    browser: false,
+  },
+  {
+    subpath: './agent-runtime/anthropic',
+    source: 'src/entrypoints/agent-runtime/anthropic.ts',
+    browser: false,
+  },
+  {
+    subpath: './agent-runtime/ai-sdk',
+    source: 'src/entrypoints/agent-runtime/ai-sdk.ts',
     browser: false,
   },
   {

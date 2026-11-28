@@ -1,14 +1,18 @@
 import { expect, test } from 'bun:test';
-import { type FilePart, type ModelMessage, simulateReadableStream, tool } from 'ai';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import type { ProviderJournalContentSchema } from '../src/agent-runtime/provider-content';
 import { ProviderJournalMessageSchema } from '../src/agent-runtime/provider-journal';
 import {
+  type AgentModelFileData,
+  type AgentModelMessage,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
+import { defineAgentTool } from '../src/entrypoints/tools';
 import { branch } from './support/agent-branch-fixture';
 
 type StreamPart =
@@ -18,7 +22,7 @@ type StreamPart =
     ? Part
     : never;
 
-async function runWriter(messages?: ModelMessage[], presenter = false) {
+async function runWriter(messages?: AgentModelMessage[], presenter = false) {
   const store = createMemoryAgentRuntimeStore();
   let calls = 0;
   const usage = {
@@ -37,33 +41,42 @@ async function runWriter(messages?: ModelMessage[], presenter = false) {
           contextWindow: 10000,
           capabilities: [],
         },
-        model: new MockLanguageModelV4({
-          supportedUrls: { '*': [/^https:\/\/example\.com\//] },
-          doStream: async () => {
-            calls++;
-            const chunks: StreamPart[] =
-              presenter && calls === 1
-                ? [{ type: 'tool-call', toolCallId: 'call', toolName: 'example', input: '{}' }]
-                : [
-                    { type: 'text-start', id: 'text' },
-                    { type: 'text-delta', id: 'text', delta: 'answer' },
-                    { type: 'text-end', id: 'text' },
-                  ];
-            chunks.push({
-              type: 'finish',
-              finishReason: {
-                unified: presenter && calls === 1 ? 'tool-calls' : 'stop',
-                raw: undefined,
-              },
-              usage,
-            });
-            return {
-              stream: simulateReadableStream({
-                chunks,
-              }),
-            };
-          },
-        }),
+        driver: fromAiSdkModel(
+          new MockLanguageModelV4({
+            supportedUrls: { '*': [/^https:\/\/example\.com\//] },
+            doStream: async () => {
+              calls++;
+              const chunks: StreamPart[] =
+                presenter && calls === 1
+                  ? [
+                      {
+                        type: 'tool-call',
+                        toolCallId: 'call',
+                        toolName: 'example',
+                        input: '{}',
+                      },
+                    ]
+                  : [
+                      { type: 'text-start', id: 'text' },
+                      { type: 'text-delta', id: 'text', delta: 'answer' },
+                      { type: 'text-end', id: 'text' },
+                    ];
+              chunks.push({
+                type: 'finish',
+                finishReason: {
+                  unified: presenter && calls === 1 ? 'tool-calls' : 'stop',
+                  raw: undefined,
+                },
+                usage,
+              });
+              return {
+                stream: simulateReadableStream({
+                  chunks,
+                }),
+              };
+            },
+          }),
+        ),
       }),
     },
     prompt: () => ({
@@ -73,8 +86,8 @@ async function runWriter(messages?: ModelMessage[], presenter = false) {
       contextDecision: 'unavailable',
     }),
     tools: () => ({
-      example: tool({
-        inputSchema: z.object({}),
+      example: defineAgentTool({
+        input: z.object({}),
         execute: () => ({ value: 'result' }),
         toModelOutput: () => ({
           type: 'content',
@@ -115,8 +128,8 @@ async function runWriter(messages?: ModelMessage[], presenter = false) {
   }
 }
 
-const files: FilePart['data'][] = [
-  'aGVsbG8=',
+const files: AgentModelFileData[] = [
+  { type: 'data', data: 'aGVsbG8=' },
   { type: 'text', text: 'inline' },
   { type: 'data', data: new Uint8Array([1, 2]) },
   { type: 'url', url: new URL('https://example.com/file') },

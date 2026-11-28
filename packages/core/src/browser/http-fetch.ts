@@ -63,20 +63,30 @@ export function createRetryAwareFetch(
   };
 }
 
-/** Query parameters as a search string; `undefined` drops a key, an array repeats it. */
+/**
+ * Query parameters as a serialized search string; `undefined` drops a key, an
+ * array repeats it. Serializes here (rather than returning `URLSearchParams`)
+ * so neither Stitchkit nor Ky reads `URLSearchParams.prototype.size`, which
+ * polyfills such as `react-native-url-polyfill` omit (`undefined`).
+ */
 export function searchParamsOf(
   params: Record<string, ParamValue | ParamArrayValue>,
-): URLSearchParams | undefined {
+): string | undefined {
   const searchParams = new URLSearchParams();
+  let hasParams = false;
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined) continue;
     if (Array.isArray(value)) {
-      for (const item of value) searchParams.append(key, String(item));
+      for (const item of value) {
+        searchParams.append(key, String(item));
+        hasParams = true;
+      }
     } else {
       searchParams.set(key, String(value));
+      hasParams = true;
     }
   }
-  return searchParams.size > 0 ? searchParams : undefined;
+  return hasParams ? searchParams.toString() : undefined;
 }
 
 /** Read a response as the caller's `responseType` asked: parsed JSON by default. */

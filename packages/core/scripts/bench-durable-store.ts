@@ -12,8 +12,6 @@
  * gate: nothing here asserts a threshold.
  */
 import { Database } from 'bun:sqlite';
-import { simulateReadableStream, tool } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   createSqliteAgentRuntimeStore,
@@ -21,17 +19,13 @@ import {
   type SqliteValue,
 } from '../src/agent-runtime/sqlite-bun';
 import {
+  type AgentModelStreamPart,
+  type AgentUsage,
   createAgentEventSearch,
   createAgentRuntime,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
-
-type StreamPart =
-  Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'] extends ReadableStream<
-    infer T
-  >
-    ? T
-    : never;
+import { defineAgentTool } from '../src/entrypoints/tools';
 
 const LedgerBytesRowSchema = z.object({
   bytes: z.number(),
@@ -68,9 +62,9 @@ const database: SqliteDatabase = {
 };
 const handle = createSqliteAgentRuntimeStore({ database });
 
-const usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 1, text: 1, reasoning: undefined },
+const usage: AgentUsage = {
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
 };
 
 function message(conversationId: string, id: string) {
@@ -164,16 +158,18 @@ try {
           contextWindow: 1_000_000,
           capabilities: [],
         },
-        model: new MockLanguageModelV4({
-          doStream: async () => {
+        driver: {
+          provider: 'bench',
+          modelId: 'bench',
+          async stream() {
             call += 1;
             const last = call >= steps;
-            const chunks: StreamPart[] = last
+            const chunks: AgentModelStreamPart[] = last
               ? [
                   { type: 'text-start', id: 't' },
                   { type: 'text-delta', id: 't', delta: 'done' },
                   { type: 'text-end', id: 't' },
-                  { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+                  { type: 'finish', finishReason: 'stop', usage },
                 ]
               : [
                   {
@@ -182,15 +178,17 @@ try {
                     toolName: 'echo',
                     input: '{}',
                   },
-                  {
-                    type: 'finish',
-                    finishReason: { unified: 'tool-calls', raw: undefined },
-                    usage,
-                  },
+                  { type: 'finish', finishReason: 'tool-calls', usage },
                 ];
-            return { stream: simulateReadableStream<StreamPart>({ chunks }) };
+            return {
+              parts: {
+                async *[Symbol.asyncIterator]() {
+                  for (const part of chunks) yield part;
+                },
+              },
+            };
           },
-        }),
+        },
       }),
     },
     prompt: () => ({
@@ -200,7 +198,11 @@ try {
       contextDecision: 'unavailable',
     }),
     tools: () => ({
-      echo: tool({ description: 'e', inputSchema: z.object({}), execute: async () => 'ok' }),
+      echo: defineAgentTool({
+        description: 'e',
+        input: z.object({}),
+        execute: async () => 'ok',
+      }),
     }),
     loop: { maxSteps: steps + 1 },
   });

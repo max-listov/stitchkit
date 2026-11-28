@@ -1,12 +1,11 @@
-import type { ToolApprovalConfiguration, ToolSet } from 'ai';
 import type { ContractDef } from '../contract/define';
 import { contractOperationEffects, type OperationEffect } from '../contract/operation-effect';
 import { raceAbort } from '../internal/abort-race';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
-import { mapObjectTypeBoundary } from '../internal/typed';
 import { AgentToolError } from '../tools/agent-tool-error';
 import { listContractToolNames } from '../tools/list-names';
-import { carryDeferredToolCatalog } from './deferred-tools-internal';
+import type { AgentModelFinishReason } from './models-driver';
+import type { AgentStepToolCall, AgentStepToolResult } from './models-driver-step';
 
 /**
  * What one tool call touches, by entity key. Within a step a read waits for the
@@ -27,8 +26,15 @@ export interface AgentStepBarriers {
    * error naming the bound, without asking for its approval.
    */
   maxToolCallsPerStep?: number;
-  /** Reasoning one step may stream, in characters; past it the run stops as `policy_stop`. */
+  /** Reasoning one step may stream, in characters; see `onMaxReasoningChars` for overflow action. */
   maxReasoningCharsPerStep?: number;
+  /**
+   * What happens when a step exceeds `maxReasoningCharsPerStep`:
+   * - `'abort'` (default): stops the run immediately as `policy_stop`.
+   * - `'finish-length'`: cuts off the current step cleanly with `finishReason: 'length'`
+   *   so `protocol.acceptTerminal` can decide whether to accept, reject, or continue recovery.
+   */
+  onMaxReasoningChars?: 'abort' | 'finish-length';
   /**
    * Which entities a call reads and writes. Calls run in the order the model made
    * them as far as their entities allow: a read waits until every earlier write of
@@ -41,18 +47,45 @@ export interface AgentStepBarriers {
   }) => AgentToolCallDependencies | undefined;
   /**
    * `after-tools`: a step's text is held until the step ends, and shown only when
-   * none of its tool calls failed — the model never announces what did not happen.
-   * Text held when the run is interrupted before the step ends is not shown.
-   * Default `immediate`.
+   * none of its tool calls failed or requested approval — the model never announces
+   * what did not happen. Default `immediate`.
    */
   stepText?: 'immediate' | 'after-tools';
+  /**
+   * What happens to text held by `stepText: 'after-tools'` if the run is interrupted
+   * before the step completes (when no tool in the step has failed):
+   * - `'drop'` (default): held text is discarded on interrupt.
+   * - `'flush'`: held text is flushed to the assistant message before committing the interrupt.
+   */
+  stepTextOnInterrupt?: 'drop' | 'flush';
+  /**
+   * Optional transform/filter invoked before releasing held step text under `stepText: 'after-tools'`.
+   * Return a replacement string to emit, or `undefined` / empty string to suppress the held text.
+   */
+  filterStepText?: (
+    text: string,
+    context: {
+      readonly step: number;
+      readonly interrupted: boolean;
+      readonly finishReason: AgentModelFinishReason;
+      readonly toolCalls: readonly AgentStepToolCall[];
+      readonly toolResults: readonly AgentStepToolResult[];
+    },
+  ) => string | undefined;
+  /**
+   * What a dependent tool call does when an earlier call it waited on for the same
+   * entity failed in the same step: `'run'` executes as usual (default); `'refuse'`
+   * refuses the dependent call with a structured `AgentToolError` without running it.
+   */
+  onPredecessorFailure?: 'run' | 'refuse';
 }
 
-/** A step bound that stops the run was crossed: `reasoning`. */
+/** A step bound that stops the run (or cuts the current step cleanly) was crossed: `reasoning`. */
 export class AgentStepBarrierError extends Error {
   constructor(
     readonly bound: 'reasoning',
     message: string,
+    readonly action: 'abort' | 'finish-length' = 'abort',
   ) {
     super(message);
     this.name = 'AgentStepBarrierError';
@@ -73,315 +106,154 @@ export function assertStepBarriers(barriers: AgentStepBarriers | undefined): voi
     RangeError,
   );
   if (
+    barriers.onMaxReasoningChars !== undefined &&
+    !['abort', 'finish-length'].includes(barriers.onMaxReasoningChars)
+  )
+    throw new RangeError(
+      "stepBarriers.onMaxReasoningChars must be 'abort' or 'finish-length'",
+    );
+  if (
     barriers.stepText !== undefined &&
     !['immediate', 'after-tools'].includes(barriers.stepText)
   )
     throw new RangeError("stepBarriers.stepText must be 'immediate' or 'after-tools'");
+  if (
+    barriers.stepTextOnInterrupt !== undefined &&
+    !['drop', 'flush'].includes(barriers.stepTextOnInterrupt)
+  )
+    throw new RangeError("stepBarriers.stepTextOnInterrupt must be 'drop' or 'flush'");
+  if (
+    barriers.onPredecessorFailure !== undefined &&
+    !['run', 'refuse'].includes(barriers.onPredecessorFailure)
+  )
+    throw new RangeError("stepBarriers.onPredecessorFailure must be 'run' or 'refuse'");
 }
 
-interface CallEntry {
-  refused: boolean;
-  ahead: readonly Promise<void>[];
-  settle: () => void;
+/** Refusal raised when a step exceeds `maxToolCallsPerStep`. */
+export function stepToolCallLimitRefusal(limit: number): AgentToolError {
+  return new AgentToolError({
+    code: 'STEP_TOOL_CALL_LIMIT',
+    message: `Refused: a step may make at most ${limit} tool calls; make the rest in the next step`,
+  });
+}
+
+export interface StepCallSlot {
+  readonly refused: boolean;
+  readonly limit?: number;
+  waitAhead(signal?: AbortSignal): Promise<void>;
+  settle(ok?: boolean): void;
 }
 
 interface EntityState {
-  write?: Promise<void>;
-  reads: Promise<void>[];
-}
-
-interface StepLedger {
-  /** The history the SDK hands every call of one step: the step's identity. */
-  messages: unknown;
-  count: number;
-  calls: Map<string, CallEntry>;
-  entities: Map<string, EntityState>;
-}
-
-function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    typeof Reflect.get(value, Symbol.asyncIterator) === 'function'
-  );
-}
-
-function isAsyncGeneratorFunction(value: unknown): boolean {
-  return Object.prototype.toString.call(value) === '[object AsyncGeneratorFunction]';
+  write?: Promise<boolean>;
+  reads: Promise<boolean>[];
 }
 
 /**
- * The one final result of a call that resolved to `value`: an async iterable
- * a promise resolved to is drained, and its last value is the result.
+ * Per-step tool-call scheduler enforcing `maxToolCallsPerStep` and entity read/write
+ * ordering directly as scheduling policy rather than wrapping tool functions. → ADR 0336.
  */
-async function finalOutput(value: unknown): Promise<unknown> {
-  if (!isAsyncIterable(value)) return value;
-  let last: unknown;
-  for await (const output of value) last = output;
-  return last;
-}
-
-/**
- * The step ledger of one run turn: a call is entered the first time the SDK shows
- * it — `onInputAvailable`, its approval, or its execution — which happens in the
- * order the model made the calls, before any of them runs.
- */
-function createStepLedger(barriers: AgentStepBarriers) {
-  let current: StepLedger | undefined;
-  return (
-    messages: unknown,
-    toolCallId: string,
-    toolName: string,
-    input: unknown,
-  ): CallEntry => {
-    if (current === undefined || current.messages !== messages)
-      current = { messages, count: 0, calls: new Map(), entities: new Map() };
-    const ledger = current;
-    const known = ledger.calls.get(toolCallId);
+export function createStepCallScheduler(barriers: AgentStepBarriers | undefined) {
+  let count = 0;
+  const entities = new Map<string, EntityState>();
+  const limit = barriers?.maxToolCallsPerStep;
+  const stateOf = (entity: string): EntityState => {
+    const known = entities.get(entity);
     if (known) return known;
-    ledger.count += 1;
-    const limit = barriers.maxToolCallsPerStep;
-    const refused = limit !== undefined && ledger.count > limit;
-    const own = Promise.withResolvers<void>();
-    const dependencies = refused
-      ? undefined
-      : barriers.toolDependencies?.({ toolName, input });
-    const writes = new Set(dependencies?.writes ?? []);
+    const fresh: EntityState = { reads: [] };
+    entities.set(entity, fresh);
+    return fresh;
+  };
+
+  const registerDependencies = (
+    dependencies: AgentToolCallDependencies,
+    ownPromise: Promise<boolean>,
+  ): Promise<boolean>[] => {
+    const writes = new Set(dependencies.writes ?? []);
     const reads = new Set(
-      [...(dependencies?.reads ?? [])].filter((entity) => !writes.has(entity)),
+      [...(dependencies.reads ?? [])].filter((entity) => !writes.has(entity)),
     );
-    const stateOf = (entity: string): EntityState => {
-      const known = ledger.entities.get(entity);
-      if (known) return known;
-      const fresh: EntityState = { reads: [] };
-      ledger.entities.set(entity, fresh);
-      return fresh;
-    };
-    const ahead: Promise<void>[] = [];
+    const ahead: Promise<boolean>[] = [];
     for (const entity of reads) {
       const state = stateOf(entity);
       if (state.write) ahead.push(state.write);
-      state.reads.push(own.promise);
+      state.reads.push(ownPromise);
     }
     for (const entity of writes) {
       const state = stateOf(entity);
       if (state.write) ahead.push(state.write);
       ahead.push(...state.reads);
-      state.write = own.promise;
+      state.write = ownPromise;
       state.reads = [];
     }
-    const entry = { refused, ahead, settle: () => own.resolve() };
-    ledger.calls.set(toolCallId, entry);
-    return entry;
+    return ahead;
   };
-}
 
-function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return (
-    (typeof value === 'object' || typeof value === 'function') &&
-    value !== null &&
-    typeof Reflect.get(value, 'then') === 'function'
-  );
-}
-
-/**
- * When approval prevents a call from running in this step (`needsApproval: true`,
- * `'needs-approval'`, `'user-approval'`, `'denied'`, or an exception), settle its
- * ledger slot immediately so later calls on the same entity do not deadlock waiting
- * on an `execute()` that the SDK will never invoke.
- */
-function settleOnDecision<V>(
-  entry: CallEntry,
-  produce: () => V | PromiseLike<V>,
-  skipsExecute: (decision: V) => boolean,
-): V | Promise<V> {
-  let result: V | PromiseLike<V>;
-  try {
-    result = produce();
-  } catch (error) {
-    entry.settle();
-    throw error;
-  }
-  if (isPromiseLike(result)) {
-    return Promise.resolve(result).then(
-      (value) => {
-        if (skipsExecute(value)) entry.settle();
-        return value;
-      },
-      (error: unknown) => {
-        entry.settle();
-        throw error;
-      },
-    );
-  }
-  if (skipsExecute(result)) entry.settle();
-  return result;
-}
-
-function approvalSkipsExecute(decision: unknown): boolean {
-  if (decision === undefined) return false;
-  const status =
-    typeof decision === 'object' && decision !== null && 'type' in decision
-      ? Reflect.get(decision, 'type')
-      : decision;
-  return status !== 'approved' && status !== 'not-applicable';
-}
-
-const callLimitRefusal = (limit: number | undefined) =>
-  new AgentToolError({
-    code: 'STEP_TOOL_CALL_LIMIT',
-    message: `Refused: a step may make at most ${limit} tool calls; make the rest in the next step`,
-  });
-
-/**
- * The run turn's tools and tool approval with the step's call bound and
- * dependency order applied. A call's result does not depend on whether it
- * waited for an earlier one: an `async *execute` still streams, and any other
- * `execute` ends in one result — an async iterable it returns, or that its
- * promise resolves to, is drained and its last value is the result. `execute`
- * runs with its tool as `this`.
- */
-export function applyStepBarriers<TOOLS extends ToolSet, CONTEXT>(
-  tools: TOOLS,
-  toolApproval: ToolApprovalConfiguration<TOOLS, CONTEXT> | undefined,
-  barriers: AgentStepBarriers | undefined,
-): { tools: TOOLS; toolApproval: ToolApprovalConfiguration<TOOLS, CONTEXT> | undefined } {
-  if (!barriers || (barriers.maxToolCallsPerStep === undefined && !barriers.toolDependencies))
-    return { tools, toolApproval };
-  const enter = createStepLedger(barriers);
-  const limit = barriers.maxToolCallsPerStep;
-
-  const executableTools = new Set<string>();
-  const wrapped = mapObjectTypeBoundary<TOOLS, TOOLS>(tools, (name, tool) => {
-    const toolName = String(name);
-    const execute = tool.execute;
-    if (typeof execute !== 'function') return tool;
-    executableTools.add(toolName);
-    const { onInputAvailable, needsApproval } = tool;
-    type Options = Parameters<typeof execute>[1];
-    const settled = (entry: CallEntry, result: unknown): unknown => {
-      if (isAsyncIterable(result))
-        return (async function* () {
-          try {
-            yield* result;
-          } finally {
-            entry.settle();
-          }
-        })();
-      return Promise.resolve(result).then(finalOutput).finally(entry.settle);
-    };
-    return {
-      ...tool,
-      onInputAvailable: async (
-        options: Parameters<NonNullable<typeof onInputAvailable>>[0],
-      ) => {
-        const entry = enter(options.messages, options.toolCallId, toolName, options.input);
-        if (!onInputAvailable) return;
-        try {
-          await onInputAvailable.call(tool, options);
-        } catch (error) {
-          entry.settle();
-          throw error;
-        }
-      },
-      ...(needsApproval !== undefined && {
-        needsApproval: (
-          input: unknown,
-          options: Parameters<Exclude<typeof needsApproval, boolean | undefined>>[1],
-        ) => {
-          const entry = enter(options.messages, options.toolCallId, toolName, input);
-          if (entry.refused) return false;
-          return settleOnDecision(
-            entry,
-            () =>
-              typeof needsApproval === 'function'
-                ? needsApproval.call(tool, input, options)
-                : needsApproval,
-            (value) => Boolean(value),
-          );
-        },
-      }),
-      execute: (input: unknown, options: Options) => {
-        const entry = enter(options.messages, options.toolCallId, toolName, input);
-        if (entry.refused) {
-          entry.settle();
-          throw callLimitRefusal(limit);
-        }
-        if (entry.ahead.length === 0) {
-          try {
-            return settled(entry, execute.call(tool, input, options));
-          } catch (error) {
-            entry.settle();
-            throw error;
-          }
-        }
-        const waitAhead = () => {
-          const all = Promise.all(entry.ahead);
-          return options.abortSignal ? raceAbort(all, options.abortSignal) : all;
-        };
-        const start = () => waitAhead().then(() => execute.call(tool, input, options));
-        if (isAsyncGeneratorFunction(execute))
-          return (async function* () {
-            try {
-              const result = await start();
-              if (isAsyncIterable(result)) yield* result;
-            } finally {
-              entry.settle();
-            }
-          })();
-        // Keep a Promise return shape so non-generator tools emit a single final
-        // tool-result, while draining any AsyncIterable returned by a wrapper
-        // before releasing the barrier.
-        return Promise.resolve().then(start).then(finalOutput).finally(entry.settle);
-      },
-    };
-  });
-  carryDeferredToolCatalog(tools, wrapped);
-  return { tools: wrapped, toolApproval: boundApproval(toolApproval, enter, executableTools) };
-}
-
-/** A call past the bound is refused on execution, so nobody is asked to approve it. */
-function boundApproval<TOOLS extends ToolSet, CONTEXT>(
-  approval: ToolApprovalConfiguration<TOOLS, CONTEXT> | undefined,
-  enter: ReturnType<typeof createStepLedger>,
-  executableTools: ReadonlySet<string>,
-): ToolApprovalConfiguration<TOOLS, CONTEXT> | undefined {
-  if (approval === undefined) return undefined;
-  if (typeof approval === 'function')
-    return (options) => {
-      if (
-        !executableTools.has(options.toolCall.toolName) ||
-        options.toolCall.providerExecuted === true
-      ) {
-        return approval(options);
+  return {
+    /**
+     * Record a failed predecessor (invalid input or batch refusal) on its entities
+     * without consuming `maxToolCallsPerStep`, so subsequent dependent calls in this
+     * step see the failure when `onPredecessorFailure: 'refuse'` is active.
+     */
+    recordFailedPredecessor(toolName: string, input: unknown): readonly string[] {
+      if (!barriers?.toolDependencies) return [];
+      let dependencies: AgentToolCallDependencies | undefined;
+      try {
+        dependencies = barriers.toolDependencies({ toolName, input });
+      } catch {
+        return [];
       }
-      const entry = enter(
-        options.messages,
-        options.toolCall.toolCallId,
-        options.toolCall.toolName,
-        options.toolCall.input,
-      );
-      if (entry.refused) return 'not-applicable';
-      return settleOnDecision(entry, () => approval(options), approvalSkipsExecute);
-    };
-  return mapObjectTypeBoundary<typeof approval, typeof approval>(approval, (name, decide) => {
-    const toolName = String(name);
-    if (!executableTools.has(toolName) || decide === undefined) return decide;
-    return (input: unknown, options: { toolCallId: string; messages: unknown }) => {
-      const entry = enter(options.messages, options.toolCallId, toolName, input);
-      if (entry.refused) return 'not-applicable';
-      // Reflect.apply: each entry decides for its own tool's input; this wrapper
-      // only forwards what the SDK handed it.
-      return settleOnDecision(
-        entry,
-        () =>
-          typeof decide === 'function'
-            ? Reflect.apply(decide, undefined, [input, options])
-            : decide,
-        approvalSkipsExecute,
-      );
-    };
-  });
+      if (!dependencies) return [];
+      registerDependencies(dependencies, Promise.resolve(false));
+      return [...(dependencies.reads ?? []), ...(dependencies.writes ?? [])];
+    },
+    enter(toolName: string, input: unknown): StepCallSlot {
+      count += 1;
+      const refused = limit !== undefined && count > limit;
+      if (refused) {
+        return {
+          refused: true,
+          limit,
+          waitAhead: async () => undefined,
+          settle: () => undefined,
+        };
+      }
+      const dependencies = barriers?.toolDependencies?.({ toolName, input });
+      if (!dependencies) {
+        return {
+          refused: false,
+          waitAhead: async () => undefined,
+          settle: () => undefined,
+        };
+      }
+      const own = Promise.withResolvers<boolean>();
+      let settled = false;
+      const settle = (ok = true): void => {
+        if (settled) return;
+        settled = true;
+        own.resolve(ok);
+      };
+      const ahead = registerDependencies(dependencies, own.promise);
+      return {
+        refused: false,
+        async waitAhead(signal?: AbortSignal) {
+          if (ahead.length === 0) return;
+          const all = Promise.all(ahead);
+          const outcomes = await (signal ? raceAbort(all, signal) : all);
+          if (
+            barriers?.onPredecessorFailure === 'refuse' &&
+            outcomes.some((ok) => ok === false)
+          ) {
+            throw new AgentToolError({
+              code: 'STEP_PREDECESSOR_FAILED',
+              message: 'Refused: an earlier tool call on the same entity failed in this step',
+            });
+          }
+        },
+        settle,
+      };
+    },
+  };
 }
 
 /**

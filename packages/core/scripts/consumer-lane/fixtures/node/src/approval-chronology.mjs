@@ -2,12 +2,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { defineAgentProtocol, projectAgentHistoryDetailed } from 'stitchkit/agent-runtime';
 import { createAgentCodingTools } from 'stitchkit/agent-runtime/coding-tools';
 import { createHeadlessAgentHarness } from 'stitchkit/agent-runtime/harness';
-import { mountAgent } from 'stitchkit/tools/agent';
+import { createScriptedModelDriver } from 'stitchkit/agent-runtime/testing';
+import { mountAgentTools } from 'stitchkit/tools';
 import { z } from 'zod';
 
 // SQLite drivers are runtime-specific leaves; neither host imports the other driver.
@@ -15,43 +14,35 @@ const openSqlite = process.versions.bun
   ? (await import('stitchkit/agent-runtime/sqlite/bun')).createBunSqliteAgentRuntimeStore
   : (await import('stitchkit/agent-runtime/sqlite/node')).createNodeSqliteAgentRuntimeStore;
 const usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 1, text: 1, reasoning: undefined },
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
 };
-const toolStream = (id, toolName, input) => ({
-  stream: simulateReadableStream({
-    chunks: [
-      { type: 'tool-call', toolCallId: id, toolName, input: JSON.stringify(input) },
-      { type: 'finish', finishReason: { unified: 'tool-calls', raw: undefined }, usage },
-    ],
-  }),
-});
-const textStream = () => ({
-  stream: simulateReadableStream({
-    chunks: [
-      { type: 'text-start', id: 'text' },
-      { type: 'text-delta', id: 'text', delta: 'complete' },
-      { type: 'text-end', id: 'text' },
-      { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-    ],
-  }),
-});
+const toolStep = (toolCallId, toolName, input) => [
+  { type: 'tool-call', toolCallId, toolName, input: JSON.stringify(input) },
+  { type: 'finish', finishReason: 'tool-calls', usage },
+];
+const textStep = () => [
+  { type: 'text-start', id: 'text' },
+  { type: 'text-delta', id: 'text', delta: 'complete' },
+  { type: 'text-end', id: 'text' },
+  { type: 'finish', finishReason: 'stop', usage },
+];
 
 for (const automatic of [false, true]) {
   const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-packed-approval-'));
   const filename = path.join(root, 'runtime.sqlite');
   let sqlite = openSqlite({ filename });
   const writes = [];
-  const model = new MockLanguageModelV4({
-    doStream: [
-      toolStream(
+  const driver = createScriptedModelDriver({
+    steps: [
+      toolStep(
         'first',
         automatic ? 'read_file' : 'write_file',
         automatic ? { path: 'seed.txt' } : { path: 'first.txt', content: 'first' },
       ),
-      toolStream('second', 'write_file', { path: 'second.txt', content: 'second' }),
-      textStream(),
-      textStream(),
+      toolStep('second', 'write_file', { path: 'second.txt', content: 'second' }),
+      textStep(),
+      textStep(),
     ],
   });
   const open = () =>
@@ -70,7 +61,7 @@ for (const automatic of [false, true]) {
             contextWindow: 16_000,
             capabilities: ['tools'],
           },
-          model,
+          driver,
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
@@ -82,7 +73,7 @@ for (const automatic of [false, true]) {
         providerOverhead: { provenance: 'unavailable' },
       }),
       tools: (context) =>
-        mountAgent([], {
+        mountAgentTools([], {
           runtimeTools: createAgentCodingTools({
             root,
             authorize: (request) => {
@@ -134,7 +125,7 @@ for (const automatic of [false, true]) {
       context: {},
     });
     assert.equal((await second.result).reason, 'success');
-    assert.equal(model.doStreamCalls.length, 3);
+    assert.equal(driver.requests.length, 3);
     assert.equal(await readFile(path.join(root, 'second.txt'), 'utf8'), 'second');
     if (!automatic)
       assert.equal(await readFile(path.join(root, 'first.txt'), 'utf8'), 'first');
@@ -161,7 +152,7 @@ for (const automatic of [false, true]) {
       metadata: {},
     }).result;
     assert.equal(later.reason, 'success');
-    assert.equal(model.doStreamCalls.length, 4);
+    assert.equal(driver.requests.length, 4);
     assert.deepEqual(writes, automatic ? ['second.txt'] : ['first.txt', 'second.txt']);
     assert.deepEqual(await harness.pendingApprovals('packed'), []);
   } finally {

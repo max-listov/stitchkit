@@ -3,17 +3,20 @@ import { withDeadline } from '../internal/deadline';
 const DEFAULT_CLEANUP_TIMEOUT_MS = 1_000;
 
 async function settleCleanup(operation: Promise<unknown>, timeoutMs: number): Promise<void> {
-  if (!(await withDeadline(operation, timeoutMs)).settled)
+  const outcome = await withDeadline(operation, timeoutMs);
+  if (!outcome.settled) {
+    void operation.catch(() => undefined);
     throw new Error(`Provider stream cleanup exceeded ${timeoutMs} ms`);
+  }
 }
 
 /**
  * Consume the one provider stream owned by a runtime attempt.
  *
- * AI SDK result streams are tee branches so cancelling only the branch being
- * iterated does not necessarily stop the retained provider branch. Abort the
- * attempt first, then close the iterator within a finite budget. Cleanup is a
- * secondary failure: callers keep the operation that made them leave the loop
+ * Provider stream adapters may retain an underlying transport or tee branch, so
+ * cancelling only the iterated branch does not necessarily stop upstream reads.
+ * Abort the attempt first, then close the iterator within a finite budget. Cleanup
+ * is a secondary failure: callers keep the operation that made them leave the loop
  * as the primary cause.
  */
 export async function* ownedProviderStream<T>(input: {
@@ -36,13 +39,13 @@ export async function* ownedProviderStream<T>(input: {
   } finally {
     if (!completed) {
       input.abort();
-      const cleanup = iterator.return?.();
-      if (cleanup) {
-        try {
+      try {
+        const cleanup = iterator.return?.();
+        if (cleanup) {
           await settleCleanup(cleanup, input.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS);
-        } catch (error) {
-          input.onCleanupFailure(error);
         }
+      } catch (error) {
+        input.onCleanupFailure(error);
       }
     }
   }

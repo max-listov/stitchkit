@@ -7,8 +7,7 @@ import {
   createHeadlessAgentHarness,
   type HeadlessAgentModelResolver,
 } from '../src/entrypoints/agent-runtime/harness';
-import { composeToolLifecycle } from '../src/entrypoints/tools';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import { composeToolLifecycle, mountAgentTools } from '../src/entrypoints/tools';
 
 declare const models: HeadlessAgentModelResolver<{ tenant: string }>;
 
@@ -41,7 +40,7 @@ createHeadlessAgentHarness({
     // @ts-expect-error — the protocol context is concrete, not an untyped dictionary.
     const invalid: number = context.tenant;
     void invalid;
-    return mountAgent([], {
+    return mountAgentTools([], {
       context: { tenant, assistantMessageId: run.assistantMessageId },
       access: { gate: composeToolLifecycle(toolFenceLifecycle) },
     });

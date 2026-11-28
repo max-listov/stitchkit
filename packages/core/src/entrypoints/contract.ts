@@ -146,3 +146,4 @@ export {
   type WithToolView,
   withToolView,
 } from '../contract/tool-view';
+export { DEADLINE_BUDGET_HEADER } from '../internal/deadline-budget';

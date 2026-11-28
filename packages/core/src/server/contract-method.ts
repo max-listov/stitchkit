@@ -54,6 +54,7 @@ export function contractMethodFields(
     stream: 'stream' in endpoint ? endpoint.stream : undefined,
     multipart: endpoint.multipart,
     maxJsonBodyBytes: endpoint.maxJsonBodyBytes,
+    timeout: endpoint.timeout,
     // Transport-neutral retry/replay hint — rides through untouched (→ ADR 0027).
     idempotent: endpoint.idempotent,
     // The authored `tool` group, flattened: a `MethodDef` is also built by

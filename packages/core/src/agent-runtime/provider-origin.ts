@@ -1,41 +1,13 @@
-import {
-  InvalidToolApprovalError,
-  InvalidToolApprovalSignatureError,
-  ToolCallNotFoundForApprovalError,
-} from 'ai';
-
 /**
- * Which errors actually came from the provider.
+ * Which errors came out of the model driver call itself.
  *
- * The terminal reason used to be decided by elimination: anything thrown that
- * was not a context refusal became `provider_failure`. That blamed an upstream
- * for a store conflict, for an application callback and for this runtime's own
- * refusals — including ones raised after a provider call had already succeeded,
- * where "was the provider called" cannot tell the two apart either.
- *
- * So the origin is marked where it is known, at the one boundary the runtime
- * wraps: a throw out of `doStream` is the provider failing to answer, and so
- * is a rejected read of the stream it returned — a connection cut mid-answer.
- * Bun 1.3 delivered that cut as an `error` part; Bun 1.4 rejects the read, and
- * the unmarked error was blamed on the runtime. Errors the provider reports
- * *inside* the stream arrive as `error` parts and are classified at that
- * branch instead; they never reach the catch-all.
+ * The terminal reason is decided by origin, never by elimination: anything
+ * thrown inside `driver.stream()` or while iterating `stream.parts` is marked
+ * here so the runtime classifies it as `provider_failure` (unless the runtime
+ * itself owns the failure, e.g. `AgentContextOverflowError`), while store
+ * conflicts, application callbacks and approval refusals stay unmarked. → ADR 0336.
  */
 const providerOrigin = new WeakSet<object>();
-
-/**
- * Whether the SDK refused something this runtime handed it.
- *
- * The stack is the SDK's and the timing is the provider call's, but the subject
- * is an approval this runtime issued — so the failure is this runtime's.
- */
-export function isOwnInputRefusal(error: unknown): boolean {
-  return (
-    InvalidToolApprovalSignatureError.isInstance(error) ||
-    InvalidToolApprovalError.isInstance(error) ||
-    ToolCallNotFoundForApprovalError.isInstance(error)
-  );
-}
 
 /** Records that this error came out of the provider call itself. */
 export function markProviderOrigin<T>(error: T): T {
@@ -49,27 +21,30 @@ export function hasProviderOrigin(error: unknown): boolean {
 }
 
 /**
- * The provider's stream, with every failed read marked as the provider's.
- *
- * Only reads of this stream pass through here: the runtime's own work on the
- * parts happens downstream, so its failures stay unmarked.
+ * Wrap a driver's part stream so every rejected read is marked provider-origin
+ * while downstream runtime work on yielded parts remains unmarked.
  */
-export function markProviderStream<T>(stream: ReadableStream<T>): ReadableStream<T> {
-  const reader = stream.getReader();
-  return new ReadableStream<T>({
-    async pull(controller) {
-      let read: Awaited<ReturnType<typeof reader.read>>;
-      try {
-        read = await reader.read();
-      } catch (error) {
-        controller.error(isOwnInputRefusal(error) ? error : markProviderOrigin(error));
-        return;
-      }
-      if (read.done) controller.close();
-      else controller.enqueue(read.value);
+export function markProviderParts<T>(source: AsyncIterable<T>): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator]() {
+      const iterator = source[Symbol.asyncIterator]();
+      return {
+        async next() {
+          try {
+            return await iterator.next();
+          } catch (error) {
+            throw markProviderOrigin(error);
+          }
+        },
+        async return(value?: unknown) {
+          if (!iterator.return) return { done: true as const, value: undefined };
+          return iterator.return(value);
+        },
+        async throw(error?: unknown) {
+          if (!iterator.throw) throw error;
+          return iterator.throw(error);
+        },
+      };
     },
-    cancel(reason) {
-      return reader.cancel(reason);
-    },
-  });
+  };
 }

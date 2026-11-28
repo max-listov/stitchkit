@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { Instructions, ModelMessage } from 'ai';
+import type { AgentInstructions, AgentModelMessage } from '../agent-parts/model';
+import { isRecord } from '../internal/typed';
 import type { AgentResolvedModel } from './models';
 import {
   ProviderJournalMessageSchema,
@@ -20,7 +21,7 @@ import { canonicalAgentJson } from './store-events';
  * bytes, in the ledger, on every step that carried the attachment. The
  * record names the bytes by hash and size instead.
  */
-function withoutBinaryParts(message: ModelMessage): unknown {
+function withoutBinaryParts(message: unknown): unknown {
   const reference = (value: unknown): unknown => {
     if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
       const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : value;
@@ -34,10 +35,7 @@ function withoutBinaryParts(message: ModelMessage): unknown {
     if (Array.isArray(value)) return value.map(reference);
     if (value && typeof value === 'object') {
       return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
-          key,
-          reference(entry),
-        ]),
+        Object.entries(value).map(([key, entry]) => [key, reference(entry)]),
       );
     }
     return value;
@@ -50,12 +48,15 @@ export interface RunProviderLedger {
   recordRequest(request: {
     stepNumber: number;
     attempt: number;
-    instructions: Instructions;
-    messages: readonly ModelMessage[];
+    modelId?: string;
+    instructions: AgentInstructions;
+    messages: readonly AgentModelMessage[];
   }): Promise<void>;
   recordResponse(response: {
     id: string;
-    providerMetadata: unknown;
+    modelId?: string;
+    timestamp?: Date | string;
+    responseProvider?: string;
     stepNumber: number;
     attempt: number;
     usage: AgentUsage;
@@ -72,15 +73,13 @@ export async function createRunProviderLedger(input: {
   if (input.audited) {
     return {
       async recordRequest() {
-        // The audited SDK boundary owns this record, after all step overrides.
+        // The audited driver boundary owns this record, after all step overrides.
       },
       async recordResponse(response) {
-        return providerResponseIdentity(
-          response.id,
-          state.selectedModel?.resolveResponseProvider?.({
-            providerMetadata: response.providerMetadata,
-          }),
-        );
+        return providerResponseIdentity(response.id, response.responseProvider, {
+          ...(response.modelId !== undefined && { modelId: response.modelId }),
+          ...(response.timestamp !== undefined && { timestamp: response.timestamp }),
+        });
       },
     };
   }
@@ -107,7 +106,7 @@ export async function createRunProviderLedger(input: {
       });
       for (const event of page.items) {
         if (event.kind !== 'provider/message') continue;
-        const sha = (event.payload as { sha256?: unknown } | null)?.sha256;
+        const sha = isRecord(event.payload) ? event.payload.sha256 : undefined;
         if (typeof sha === 'string') knownMessageShas.add(sha);
       }
       fromSeq = page.nextSeq;
@@ -117,8 +116,8 @@ export async function createRunProviderLedger(input: {
     async recordRequest(request) {
       const messageShas: string[] = [];
       for (const message of request.messages) {
-        // Through JSON first: the SDK's messages carry `undefined` fields and
-        // provider metadata that a canonical encoder must not see.
+        // Through JSON first: `AgentModelDriver` messages can carry `undefined` fields
+        // and non-JSON values that a canonical encoder must not see.
         const body = canonicalAgentJson(
           JSON.parse(JSON.stringify(withoutBinaryParts(message))),
         );
@@ -137,7 +136,7 @@ export async function createRunProviderLedger(input: {
           typeof request.instructions === 'string'
             ? request.instructions
             : canonicalAgentJson(
-                JSON.parse(JSON.stringify(withoutBinaryParts(request.instructions as never))),
+                JSON.parse(JSON.stringify(withoutBinaryParts(request.instructions))),
               ),
         )
         .digest('hex');
@@ -152,7 +151,7 @@ export async function createRunProviderLedger(input: {
           runId: state.run.id,
           attempt: request.attempt,
           stepNumber: request.stepNumber,
-          modelId: requestModelId,
+          modelId: request.modelId ?? requestModelId,
           instructionsSha256,
           messageShas,
           bodySha256,
@@ -160,12 +159,10 @@ export async function createRunProviderLedger(input: {
       });
     },
     async recordResponse(response) {
-      const identity = providerResponseIdentity(
-        response.id,
-        state.selectedModel?.resolveResponseProvider?.({
-          providerMetadata: response.providerMetadata,
-        }),
-      );
+      const identity = providerResponseIdentity(response.id, response.responseProvider, {
+        ...(response.modelId !== undefined && { modelId: response.modelId }),
+        ...(response.timestamp !== undefined && { timestamp: response.timestamp }),
+      });
       await store.appendEvent({
         conversationId: state.run.conversationId,
         kind: 'provider/response',

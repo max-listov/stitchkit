@@ -10,6 +10,7 @@ import {
   defineAgentProtocol,
   recordAgentRetryDecision,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import {
   createAgentControlView,
   reduceAgentControlEvent,
@@ -81,14 +82,15 @@ describe('a retry on the transport', () => {
           },
           // A retry answered by a different upstream is the point of this
           // assertion, and the upstream name is the adapter's to read.
-          resolveResponseProvider: ({ providerMetadata }) => {
-            const metadata = providerMetadata as
-              | { openrouter?: { provider?: unknown } }
-              | undefined;
-            const name = metadata?.openrouter?.provider;
-            return typeof name === 'string' ? name : undefined;
-          },
-          model,
+          driver: fromAiSdkModel(model, {
+            resolveResponseProvider: ({ providerMetadata }) => {
+              const metadata = providerMetadata as
+                | { openrouter?: { provider?: unknown } }
+                | undefined;
+              const name = metadata?.openrouter?.provider;
+              return typeof name === 'string' ? name : undefined;
+            },
+          }),
         }),
       },
       prompt: () => ({
@@ -134,7 +136,12 @@ describe('a retry on the transport', () => {
         runId: result.run.id,
         attempt: 1,
         stepNumber: 0,
-        response: { id: 'failed-generation', provider: 'FirstProvider' },
+        response: {
+          id: 'failed-generation',
+          provider: 'FirstProvider',
+          modelId: 'fault',
+          timestamp: '1970-01-01T00:00:00.000Z',
+        },
         usage: {
           inputTokens: { value: 7, provenance: 'provider-reported' },
           outputTokens: { value: 1, provenance: 'provider-reported' },
@@ -148,7 +155,12 @@ describe('a retry on the transport', () => {
         runId: result.run.id,
         attempt: 2,
         stepNumber: 0,
-        response: { id: 'recovered-generation', provider: 'SecondProvider' },
+        response: {
+          id: 'recovered-generation',
+          provider: 'SecondProvider',
+          modelId: 'fault',
+          timestamp: '1970-01-01T00:00:00.001Z',
+        },
         usage: {
           inputTokens: { value: 3, provenance: 'provider-reported' },
           outputTokens: { value: 1, provenance: 'provider-reported' },

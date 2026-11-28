@@ -3,35 +3,33 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { createMemoryAgentRuntimeStore, defineAgentProtocol } from 'stitchkit/agent-runtime';
 import { createAgentCodingTools } from 'stitchkit/agent-runtime/coding-tools';
 import {
   createAgentHarnessFileResources,
   createHeadlessAgentHarness,
 } from 'stitchkit/agent-runtime/harness';
+import { createScriptedModelDriver } from 'stitchkit/agent-runtime/testing';
 import { AppError } from 'stitchkit/contract';
-import { composeToolLifecycle, defineRuntimeTool } from 'stitchkit/tools';
-import { mountAgent } from 'stitchkit/tools/agent';
+import { composeToolLifecycle, defineRuntimeTool, mountAgentTools } from 'stitchkit/tools';
 import { z } from 'zod';
 import './approval-chronology.mjs';
 
 const usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 1, text: 1, reasoning: undefined },
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
 };
-const textStream = (text) => ({
-  stream: simulateReadableStream({
-    chunks: [
-      { type: 'text-start', id: 'answer' },
-      { type: 'text-delta', id: 'answer', delta: text },
-      { type: 'text-end', id: 'answer' },
-      { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-    ],
-  }),
-});
-const modelB = new MockLanguageModelV4({ doStream: [textStream('model-b')] });
+const textStep = (text) => [
+  { type: 'text-start', id: 'answer' },
+  { type: 'text-delta', id: 'answer', delta: text },
+  { type: 'text-end', id: 'answer' },
+  { type: 'finish', finishReason: 'stop', usage },
+];
+const toolStep = (toolCallId, toolName, input) => [
+  { type: 'tool-call', toolCallId, toolName, input: JSON.stringify(input) },
+  { type: 'finish', finishReason: 'tool-calls', usage },
+];
+const driverB = createScriptedModelDriver({ steps: [textStep('model-b')] });
 const root = await mkdtemp(path.join(tmpdir(), 'stitchkit-packed-harness-'));
 try {
   const initialProof = 'packed direct tool';
@@ -49,122 +47,26 @@ try {
     '---\nname: inspect\ndescription: Inspect one exact file.\n---\n\nUse a direct coding tool.',
   );
   const proofSha256 = createHash('sha256').update(initialProof).digest('hex');
-  const modelA = new MockLanguageModelV4({
-    doStream: [
-      {
-        stream: simulateReadableStream({
-          chunks: [
-            {
-              type: 'tool-call',
-              toolCallId: 'search-1',
-              toolName: 'search_files',
-              input: JSON.stringify({ query: 'proof.txt', mode: 'path' }),
-            },
-            {
-              type: 'finish',
-              finishReason: { unified: 'tool-calls', raw: undefined },
-              usage,
-            },
-          ],
-        }),
-      },
-      {
-        stream: simulateReadableStream({
-          chunks: [
-            {
-              type: 'tool-call',
-              toolCallId: 'skill-1',
-              toolName: 'read_resource',
-              input: JSON.stringify({ name: 'inspect' }),
-            },
-            {
-              type: 'finish',
-              finishReason: { unified: 'tool-calls', raw: undefined },
-              usage,
-            },
-          ],
-        }),
-      },
-      {
-        stream: simulateReadableStream({
-          chunks: [
-            {
-              type: 'tool-call',
-              toolCallId: 'patch-1',
-              toolName: 'edit_file',
-              input: JSON.stringify({
-                path: 'proof.txt',
-                // Optional now, and kept here on purpose: the packed harness is
-                // where the digest fence has to keep working, not only the
-                // one-call default.
-                expectedSha256: proofSha256,
-                oldText: 'direct',
-                newText: 'approved',
-              }),
-            },
-            {
-              type: 'finish',
-              finishReason: { unified: 'tool-calls', raw: undefined },
-              usage,
-            },
-          ],
-        }),
-      },
-      {
-        stream: simulateReadableStream({
-          chunks: [
-            {
-              type: 'tool-call',
-              toolCallId: 'guarded-1',
-              toolName: 'guarded_operation',
-              input: '{}',
-            },
-            {
-              type: 'finish',
-              finishReason: { unified: 'tool-calls', raw: undefined },
-              usage,
-            },
-          ],
-        }),
-      },
-      {
-        stream: simulateReadableStream({
-          chunks: [
-            {
-              type: 'tool-call',
-              toolCallId: 'shell-1',
-              toolName: 'run_command',
-              input: JSON.stringify({
-                executable: 'printf',
-                args: ['0123456789abcdef'],
-              }),
-            },
-            {
-              type: 'finish',
-              finishReason: { unified: 'tool-calls', raw: undefined },
-              usage,
-            },
-          ],
-        }),
-      },
-      {
-        stream: simulateReadableStream({
-          chunks: [
-            {
-              type: 'tool-call',
-              toolCallId: 'artifact-read-1',
-              toolName: 'read_output',
-              input: JSON.stringify({ reference: 'packed-output', maxBytes: 64 }),
-            },
-            {
-              type: 'finish',
-              finishReason: { unified: 'tool-calls', raw: undefined },
-              usage,
-            },
-          ],
-        }),
-      },
-      textStream('model-a'),
+  const driverA = createScriptedModelDriver({
+    steps: [
+      toolStep('search-1', 'search_files', { query: 'proof.txt', mode: 'path' }),
+      toolStep('skill-1', 'read_resource', { name: 'inspect' }),
+      toolStep('patch-1', 'edit_file', {
+        path: 'proof.txt',
+        // Optional now, and kept here on purpose: the packed harness is
+        // where the digest fence has to keep working, not only the
+        // one-call default.
+        expectedSha256: proofSha256,
+        oldText: 'direct',
+        newText: 'approved',
+      }),
+      toolStep('guarded-1', 'guarded_operation', {}),
+      toolStep('shell-1', 'run_command', {
+        executable: 'printf',
+        args: ['0123456789abcdef'],
+      }),
+      toolStep('artifact-read-1', 'read_output', { reference: 'packed-output', maxBytes: 64 }),
+      textStep('model-a'),
     ],
   });
   const profiles = [];
@@ -235,7 +137,7 @@ try {
           contextWindow: 8_000,
           capabilities: ['tools'],
         },
-        model: context.model === 'a' ? modelA : modelB,
+        driver: context.model === 'a' ? driverA : driverB,
       }),
     },
     resources: fileResources,
@@ -248,7 +150,7 @@ try {
     }),
     estimateResourceTokens: () => ({ value: 4, provenance: 'measured' }),
     tools: (run) =>
-      mountAgent([], {
+      mountAgentTools([], {
         runtimeTools: [...codingTools, guardedOperation, ...fileResources.runtimeTools],
         access: { gate: composeToolLifecycle(run.toolFenceLifecycle) },
       }),

@@ -16,7 +16,25 @@ import {
 function twoStepToolModel() {
   let step = 0;
   return new MockLanguageModelV4({
-    doStream: async () => {
+    doStream: async (options) => {
+      if (!options.tools || options.tools.length === 0) {
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'response-metadata', id: 'resp-complete', modelId: 'priced-model' },
+              { type: 'text-start', id: 't' },
+              { type: 'text-delta', id: 't', delta: 'completed' },
+              { type: 'text-end', id: 't' },
+              {
+                type: 'finish',
+                finishReason: { unified: 'stop', raw: undefined },
+                usage: sdkUsage({ input: 60, output: 15 }),
+                providerMetadata: { billing: { cost: 0.125, currency: 'USD' } },
+              },
+            ],
+          }),
+        };
+      }
       step += 1;
       if (step === 1) {
         return {
@@ -51,13 +69,6 @@ function twoStepToolModel() {
         }),
       };
     },
-    doGenerate: async () => ({
-      content: [{ type: 'text', text: 'completed' }],
-      usage: sdkUsage({ input: 60, output: 15 }),
-      warnings: [],
-      finishReason: { unified: 'stop', raw: undefined },
-      providerMetadata: { billing: { cost: 0.125, currency: 'USD' } },
-    }),
   });
 }
 
@@ -226,7 +237,7 @@ describe('agentUsageProjection', () => {
     const sqlite = createBunSqliteAgentRuntimeStore({ filename: ':memory:' });
     const projections = createAgentProjectionStore({ store: sqlite.store, host: sqlite.host });
     const brokenModel = new MockLanguageModelV4({
-      doGenerate: async () => {
+      doStream: async () => {
         throw new Error('upstream 503');
       },
     });

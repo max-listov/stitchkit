@@ -13,9 +13,10 @@ import {
   projectAgentHistory,
   projectAgentHistoryDetailed,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import { createAgentCodingTools } from '../src/entrypoints/agent-runtime/coding-tools';
 import { createHeadlessAgentHarness } from '../src/entrypoints/agent-runtime/harness';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import { mountAgentTools } from '../src/entrypoints/tools';
 import { sqliteScratchDir } from './support/sqlite-scratch';
 
 const usage = {
@@ -94,7 +95,7 @@ describe('durable approval continuations', () => {
                 contextWindow: 16_000,
                 capabilities: ['tools'],
               },
-              model,
+              driver: fromAiSdkModel(model),
             }),
           },
           resources: { load: () => ({ resources: [], diagnostics: [] }) },
@@ -106,7 +107,7 @@ describe('durable approval continuations', () => {
             providerOverhead: { provenance: 'unavailable' },
           }),
           tools: (context) =>
-            mountAgent([], {
+            mountAgentTools([], {
               runtimeTools: createAgentCodingTools({
                 root,
                 authorize: (request) => {
@@ -268,7 +269,7 @@ describe('durable approval continuations', () => {
               contextWindow: 8_000,
               capabilities: ['tools'],
             },
-            model,
+            driver: fromAiSdkModel(model),
           }),
         },
         resources: { load: () => ({ resources: [], diagnostics: [] }) },
@@ -280,7 +281,7 @@ describe('durable approval continuations', () => {
           providerOverhead: { provenance: 'unavailable' },
         }),
         tools: (context) =>
-          mountAgent([], {
+          mountAgentTools([], {
             runtimeTools: createAgentCodingTools({
               root,
               authorize: ({ operation }) => {

@@ -1,17 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   AgentProviderStreamCutError,
+  type AgentUsage,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
 
-const usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 1, text: 1, reasoning: undefined },
+const usage: AgentUsage = {
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
 };
 
 function textIn(prompt: unknown): string {
@@ -29,25 +29,26 @@ describe('an injected input survives a retried attempt', () => {
     const store = createMemoryAgentRuntimeStore();
     const prompts: unknown[] = [];
     let calls = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async ({ prompt }) => {
+    const driver = createScriptedModelDriver({
+      provider: 'test',
+      modelId: 'test',
+      onRequest: (request) => {
         calls += 1;
-        prompts.push(prompt);
-        const chunks: Record<string, unknown>[] =
-          calls === 1
-            ? [
-                { type: 'text-start', id: 'a' },
-                { type: 'text-delta', id: 'a', delta: 'partial' },
-                { type: 'error', error: new AgentProviderStreamCutError() },
-              ]
-            : [
-                { type: 'text-start', id: 'b' },
-                { type: 'text-delta', id: 'b', delta: 'answered' },
-                { type: 'text-end', id: 'b' },
-                { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-              ];
-        return { stream: simulateReadableStream({ chunks } as never) };
+        prompts.push([...request.instructions, ...request.messages]);
       },
+      steps: [
+        [
+          { type: 'text-start', id: 'a' },
+          { type: 'text-delta', id: 'a', delta: 'partial' },
+          { type: 'error', error: new AgentProviderStreamCutError() },
+        ],
+        [
+          { type: 'text-start', id: 'b' },
+          { type: 'text-delta', id: 'b', delta: 'answered' },
+          { type: 'text-end', id: 'b' },
+          { type: 'finish', finishReason: 'stop', usage },
+        ],
+      ],
     });
     // The first run is parked inside prompt composition, which is before the
     // provider is reached: the second input arrives while it waits, so step
@@ -66,7 +67,7 @@ describe('an injected input survives a retried attempt', () => {
             contextWindow: 100_000,
             capabilities: [],
           },
-          model,
+          driver,
         }),
       },
       prompt: async () => {

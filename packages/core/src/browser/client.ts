@@ -31,6 +31,12 @@ export interface ClientConfig {
   /** Override Web Fetch delivery while preserving the complete client pipeline. */
   fetch?: ClientFetch;
   timeout?: number;
+  /**
+   * Emit the remaining relative call deadline in `x-stitchkit-timeout-ms` on every request
+   * (recomputed on transport retries). Defaults to `false`; per-call `withOptions({ timeout })`
+   * propagates automatically unless `propagateDeadline: false`.
+   */
+  propagateDeadline?: boolean;
   headers?: Record<string, string> | (() => Record<string, string>);
   credentials?: NonNullable<RequestInit['credentials']>;
   onError?: (status: number, body: unknown) => void;

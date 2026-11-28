@@ -1,16 +1,18 @@
 ---
 title: "Agent application runtime architecture"
-description: Current ownership, state transitions, linearization points and resilience boundaries of the optional server-only agent runtime.
+description: Current ownership, native AgentModelDriver execution boundary, three peer-free providers, state transitions, linearization points and resilience boundaries of the optional server-only agent runtime.
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-11-22 00:28 +08:00
+updated: 2026-11-28
 ---
 
 # Agent application runtime architecture
 
-`stitchkit/agent-runtime` is one optional server-only execution protocol for a tool-using language
-model. It is not a generic job framework. `mountAgent` remains an independent lower-level surface.
+`stitchkit/agent-runtime` is one optional, peer-free, server-only execution protocol for a
+tool-using language model. It is not a generic job framework. `mountAgentTools` (`stitchkit/tools`,
+peer-free) and `mountAgent` (`stitchkit/tools/agent`, thin AI SDK adapter) remain independent
+lower-level surfaces.
 
 ## Ownership
 
@@ -21,8 +23,9 @@ model. It is not a generic job framework. `mountAgent` remains an independent lo
 | Atomicity and durable rows | application adapter | one `AgentRuntimeStoreDriver.transaction` over head, runs, admissions and history; read access may borrow a coherent snapshot without reserving the writer slot |
 | Process-local queue, interrupt, supersede and settlement | Stitchkit | `coordinator.ts` |
 | Distributed ownership | application adapter | lease plus optional monotonic `fencingToken` persisted with the run |
-| Model allowlist/default | application | registry declarations and selection policy |
-| Provider construction/usage normalization | provider adapter | isolated provider entrypoint |
+| Model allowlist/default | application | registry declarations (`AgentModelDriverFactory`) and selection policy |
+| Provider wire transport & usage normalization | peer-free provider leaf or `ai-sdk` adapter | `openrouter`, `openai`, `anthropic` over shared `provider-*` transport; optional `agent-runtime/ai-sdk` leaf (`fromAiSdkModel`, `fromAiSdkTools`) |
+| Tool projection & definition | Stitchkit core (`stitchkit/tools`) | `mountAgentTools` and `defineAgentTool` over neutral `agent-parts/model.ts`; `mountAgent` in `stitchkit/tools/agent` adapts `AgentToolSet` for AI SDK loops |
 | Prompt order/budget and whole-turn slicing | Stitchkit | `prompt.ts` |
 | Domain prompt text and tools | application | typed callbacks |
 | Headless resource composition and applied profile evidence | Stitchkit facade | `agent-runtime/harness` over the same runtime |
@@ -96,15 +99,31 @@ admission when wired through `models.preflight`. Discovery is an optional versio
 source/observation time and explicit staleness validation. The application still owns which model
 is allowed and selected.
 
-The managed loop is the only AI SDK stream switch. It disables whole-call retries, accumulates
-text/reasoning/tools/sources/files/provider envelopes, uses bounded checkpoints, applies dynamic
-step and named stop policy, and commits exactly one terminal state by CAS. Tool fencing runs before
-the handler and again before accepting its result; stale control errors are never model-facing.
+The runtime owns the single native step loop behind one model port: `AgentModelDriver.stream(request, signal)`
+(ADR 0336). One `stream()` call represents one provider step with no driver-level retries and no
+driver-level tool execution. Any throw out of `stream()` or while iterating `parts` is
+provider-origin by construction; HTTP and stream failures raise `AgentProviderError` or
+`AgentProviderStreamCutError`. Three peer-free native providers (`openrouter`, `openai`,
+`anthropic`) sit over a shared Web Fetch-clean `provider-*` transport (strict `redirect: 'error'`,
+bounded error/JSON reads, `Retry-After` parsing, secret redaction, O(N) WHATWG SSE decoding with
+keepalive `ping`, surrogate sanitization, orphan tool-call repair, deterministic sorted-key JSON,
+cache-breakpoint budgeting ≤ 4, and provenance-honest usage normalization). Applications bridging
+an AI SDK v4 `LanguageModel` or `ToolSet` use `stitchkit/agent-runtime/ai-sdk` (`fromAiSdkModel`
+calling `model.doStream()` directly and `fromAiSdkTools` normalizing external tool outputs); no
+module in `packages/core/src/` imports `streamText` or `generateText`.
+
+The native step loop owns tool-call JSON parsing, Zod input validation (`AgentUnknownToolError`,
+`AgentInvalidToolInputError`), first-class `repairToolCall`, whole-step batch refusal
+(`beforeStepToolCalls`), dependency-ordered and count-bounded tool scheduling (`stepBarriers`,
+including `onPredecessorFailure: 'refuse'` fail-cascade), WebCrypto HMAC-SHA256 tool-approval
+signing and verification (executed once before retry attempts), bounded terminal continuations
+(`protocol.acceptTerminal` returning `continue` capped by `loop.maxContinuations`), and dynamic
+step/stop policies (`prepareStep`, `stopPolicies`, `onAttemptDiscarded`, `onToolInputStart`), then
+commits exactly one terminal state by CAS. Tool fencing runs before the handler and again before
+accepting its result; stale control errors are never model-facing.
 Model-request and compaction phases update `AgentRun.lastOperation` through that same store and
 publish durable `run-operation` events. Awaited step preparation serializes each request after the
-previous structural checkpoint; concrete models then use SDK call identity in an awaited model
-middleware, while global provider IDs use a runtime-generated identity during preparation. Both
-paths make request start a fail-closed pre-`doStream` admission boundary;
+previous structural checkpoint and invokes pre-request admission before `driver.stream()`;
 first output is the first non-empty text/reasoning/tool-argument delta or complete tool call. Structural tool,
 approval and step boundaries checkpoint independently from the ordinary delta batch, without
 claiming persistence before a tool effect; the following provider step waits for the prior
@@ -113,11 +132,17 @@ alike — take their turn in a per-run queue and read the current revision insid
 asynchronous store cannot make two of them name the same revision; independent runs still proceed
 in parallel, and the terminal commit keeps its bounded retry. → ADR 0174.
 
+`wrapModelDriver` and `composeModelDrivers` decorate any `AgentModelDriver` in outer-to-inner
+order with guaranteed single-execution `onClose` on finish, throw, early consumer break, or signal
+abort. `completeText` and `completeObject` execute single- or multi-step completions over the same
+`AgentModelDriver` port and tool execution mechanics without requiring a store, raising typed
+`AgentStructuredOutputError` on truncation, empty text, invalid JSON, or Zod schema mismatch.
+
 Each provider attempt has a runtime-owned abort controller composed with the run signal. Leaving
-its consumer loop before natural completion aborts that attempt before bounded iterator cleanup.
-This is required because the AI SDK result stream is a tee branch: closing the branch alone need
-not release the retained provider branch. Cleanup failure is retained as a secondary internal
-cause and cannot replace the storage, runtime or consumer failure that ended consumption.
+its consumer loop before natural completion aborts that attempt before bounded iterator cleanup
+(`owned-provider-stream.ts`), ensuring the underlying provider HTTP stream releases deterministically.
+Cleanup failure is retained as a secondary internal cause and cannot replace the storage, runtime
+or consumer failure that ended consumption.
 
 `createHeadlessAgentHarness` is a facade over this same loop, store and coordinator. It resolves a
 caller-provided model per run, loads bounded typed resources, composes them through the canonical
@@ -207,8 +232,10 @@ Provider attempts are independent records with requested, sent and effective mod
 facts and provenance-aware usage. A provider finish is counted once, even when a
 failed stream is drained for its billed usage.
 
-`invocation-attempt.ts` owns the shared SDK boundary; `invocation-schema.ts` owns the
-receipt shapes, `invocations.ts` owns admission/authentication and completion,
+`invocation-attempt.ts` decorates `AgentModelDriver` (preserving `currentModelInvocationAttempt()`
+across `stream()` and streamed reads); `invocation-schema.ts` owns the
+receipt shapes, `invocations.ts` owns admission/authentication and completion (collecting text directly
+over `driver.stream()` with `ownedProviderStream` cleanup),
 `invocation-read.ts` owns paginated reads, and `invocation-payload.ts` encrypts and
 verifies payload artifacts. No second database or loop is introduced. The optional
 agent integration suppresses the legacy provider writer for that invocation.

@@ -34,6 +34,9 @@ test('React views share one controller through StrictMode and unmount only their
       };
     },
     request: async () => ({ schemaVersion: 1, requestId: 'unused', outcome: 'ok' }),
+    respondApproval: async () => ({ schemaVersion: 1, requestId: 'unused', outcome: 'ok' }),
+    respondInput: async () => ({ schemaVersion: 1, requestId: 'unused', outcome: 'ok' }),
+    setPermissionMode: async () => ({ schemaVersion: 1, requestId: 'unused', outcome: 'ok' }),
     close: async () => {
       closed += 1;
     },

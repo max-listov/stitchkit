@@ -1,15 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import type { ToolSet } from 'ai';
 import { z } from 'zod';
 import {
   type AgentStoreEventEnvelope,
+  type AgentToolSet,
   createLocalStepDurability,
+  mountAgentTools,
   type StepDurabilityLedger,
   type ToolDurability,
 } from '../src/entrypoints/tools';
 import type { MethodDef } from '../src/server/types';
-import { mountAgent } from '../src/tools/agent';
-import { createRuntimeToolContext } from '../src/tools/runtime-call-context';
 
 /*
  * `mountAgent` could already put `step` / `sleep` / `waitFor` into a tool body — but only
@@ -25,7 +24,7 @@ import { createRuntimeToolContext } from '../src/tools/runtime-call-context';
  */
 
 /** The mounted tool's executor, narrowed once — the shape every agent test uses. */
-function executable(tools: ToolSet, name: string) {
+function executable(tools: AgentToolSet, name: string) {
   const execute = tools[name]?.execute;
   if (!execute) throw new Error(`expected executable tool ${name}`);
   return execute;
@@ -76,36 +75,27 @@ function ledger(): { durability: ToolDurability; ran: string[] } {
 describe('a mounted tool body can be made restartable without agent-runtime', () => {
   test('a declared factory puts step into the handler context', async () => {
     const { durability, ran } = ledger();
-    const tools = mountAgent(service, {
+    const tools = mountAgentTools(service, {
       access: { open: 'local-operator' },
       durability: () => durability,
     });
     const execute = executable(tools, 'render_media');
 
-    const result = await execute(
-      { prompt: 'forest' },
-      { toolCallId: 'call-1', messages: [], context: undefined },
-    );
+    const result = await execute({ prompt: 'forest' }, { toolCallId: 'call-1', messages: [] });
     expect(result).toEqual({ asset: 'asset-for-[object Object]' });
     expect(ran).toEqual(['render']);
   });
 
   test('a replay returns the record instead of running the body again', async () => {
     const { durability, ran } = ledger();
-    const tools = mountAgent(service, {
+    const tools = mountAgentTools(service, {
       access: { open: 'local-operator' },
       durability: () => durability,
     });
     const execute = executable(tools, 'render_media');
 
-    await execute(
-      { prompt: 'forest' },
-      { toolCallId: 'call-1', messages: [], context: undefined },
-    );
-    await execute(
-      { prompt: 'forest' },
-      { toolCallId: 'call-1', messages: [], context: undefined },
-    );
+    await execute({ prompt: 'forest' }, { toolCallId: 'call-1', messages: [] });
+    await execute({ prompt: 'forest' }, { toolCallId: 'call-1', messages: [] });
     // The whole point: the second call did not re-run the effectful body.
     expect(ran).toEqual(['render']);
   });
@@ -113,7 +103,7 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
   test('the factory is given the provider call id, so a ledger can key by it', async () => {
     const seen: string[] = [];
     const { durability } = ledger();
-    const tools = mountAgent(service, {
+    const tools = mountAgentTools(service, {
       access: { open: 'local-operator' },
       durability: (toolCallId) => {
         seen.push(toolCallId);
@@ -121,14 +111,14 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
       },
     });
     const execute = executable(tools, 'render_media');
-    await execute({ prompt: 'a' }, { toolCallId: 'call-7', messages: [], context: undefined });
+    await execute({ prompt: 'a' }, { toolCallId: 'call-7', messages: [] });
     expect(seen).toEqual(['call-7']);
   });
 
   test('the call signal reaches the factory, so a park can end when the call does', async () => {
     let seen: AbortSignal | undefined;
     const { durability } = ledger();
-    const tools = mountAgent(service, {
+    const tools = mountAgentTools(service, {
       access: { open: 'local-operator' },
       durability: (_toolCallId, signal) => {
         seen = signal;
@@ -142,7 +132,6 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
       {
         toolCallId: 'call-8',
         messages: [],
-        context: undefined,
         abortSignal: controller.signal,
       },
     );
@@ -150,12 +139,12 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
   });
 
   test("the runtime's own durability wins over a declared factory", async () => {
-    // When `agent-runtime` drives the call it puts its durability into the SDK
-    // context. That one is the run's ledger, and the run is recorded there — a
-    // declared factory must not silently redirect its steps elsewhere.
+    // When `agent-runtime` drives the call it passes its durability directly on
+    // `AgentToolCall.durability`. That one is the run's ledger, and the run is
+    // recorded there — a declared factory must not silently redirect its steps elsewhere.
     const fromRuntime = ledger();
     const fromFactory = ledger();
-    const tools = mountAgent(service, {
+    const tools = mountAgentTools(service, {
       access: { open: 'local-operator' },
       durability: () => fromFactory.durability,
     });
@@ -165,11 +154,7 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
       {
         toolCallId: 'call-10',
         messages: [],
-        context: createRuntimeToolContext(() => ({
-          durability: fromRuntime.durability as never,
-          // This test is about the ledger; progress has its own file.
-          reportProgress: () => Promise.resolve(),
-        })),
+        durability: fromRuntime.durability,
       },
     );
     expect(fromRuntime.ran).toEqual(['render']);
@@ -177,14 +162,9 @@ describe('a mounted tool body can be made restartable without agent-runtime', ()
   });
 
   test('without the option the tool body sees no durability at all', async () => {
-    const tools = mountAgent(service, { access: { open: 'local-operator' } });
+    const tools = mountAgentTools(service, { access: { open: 'local-operator' } });
     const execute = executable(tools, 'render_media');
-    expect(
-      await execute(
-        { prompt: 'a' },
-        { toolCallId: 'call-9', messages: [], context: undefined },
-      ),
-    ).toEqual({
+    expect(await execute({ prompt: 'a' }, { toolCallId: 'call-9', messages: [] })).toEqual({
       asset: 'no-durability',
     });
   });
@@ -252,7 +232,7 @@ describe('the durability engine runs over a two-method ledger the application ow
         return { asset };
       },
     };
-    const tools = mountAgent(
+    const tools = mountAgentTools(
       { name: 'media', prefix: 'media', scope: 'public', methods: { render: method } },
       {
         // A fresh engine per call, as a restarted host would build one — the
@@ -267,7 +247,7 @@ describe('the durability engine runs over a two-method ledger the application ow
       },
     );
     const execute = executable(tools, 'render_media');
-    const call = { toolCallId: 'call-1', messages: [], context: undefined };
+    const call = { toolCallId: 'call-1', messages: [] };
 
     expect(await execute({ prompt: 'forest' }, call)).toEqual({ asset: 'asset-1' });
     expect(await execute({ prompt: 'forest' }, call)).toEqual({ asset: 'asset-1' });

@@ -1098,3 +1098,112 @@ Use existing shared watches for paginated lists and selected-detail queries; bin
 each exact argument set to its query key. No global domain/query registry or new
 UI components are needed. Reconnect and revision/delta recovery remain owned by the
 watch client; silent lost notifications are repaired by hub reconciliation.
+
+## Account-scoped device presence
+
+When an account spans multiple online devices (desktop, mobile, web) that advertise typed
+capability state and accept targeted remote commands, mount device presence onto your existing
+`RealtimeServerHandle` instead of opening a second connection:
+
+```ts
+// shared/presence.ts
+import { createDevicePresenceContract } from 'stitchkit/realtime'
+import { z } from 'zod'
+
+export const devicePresence = createDevicePresenceContract({
+  mic: {
+    state: z.strictObject({ recording: z.boolean() }),
+    command: z.discriminatedUnion('action', [
+      z.strictObject({ action: z.literal('start') }),
+      z.strictObject({ action: z.literal('stop') }),
+    ]),
+    result: z.strictObject({ recording: z.boolean() }),
+  },
+})
+
+// server (stitchkit/server)
+import { bindDevicePresence } from 'stitchkit/server'
+
+const presence = bindDevicePresence(devicePresence, socket, {
+  accountOf: (identity) => identity.userId ?? null, // null refuses non-user principals
+})
+// Call presence.readmit(socketId) after logout or permission changes to evict immediately.
+
+// device client (stitchkit/realtime)
+import { createDevicePresenceClient } from 'stitchkit/realtime'
+
+const client = createDevicePresenceClient(devicePresence, {
+  transport,
+  device: { deviceId: 'desktop-1', name: 'Desktop', platform: 'macos' },
+  capabilities: ['mic'],
+  initialStates: { mic: { recording: false } },
+})
+
+const offMic = client.onCommand('mic', async (command) => ({
+  recording: command.action === 'start',
+}))
+
+// Send a typed command from another device in the same account:
+const ack = await client.sendCommand({
+  targetDeviceId: 'desktop-1',
+  capability: 'mic',
+  command: { action: 'stop' },
+})
+```
+
+Each account's online device list is versioned (`revision`), capacity-bounded
+(`maxDevicesPerAccount`), and scoped strictly to `accountOf(handshakeIdentity)`. Local capability
+states are republished automatically after reconnect (`publishState(capability, state | null)`),
+and `createDevicePresenceRelayAdapter` in `stitchkit/realtime` can mirror a `DeviceRelayAgent`'s
+liveness into a `DevicePresenceRelayStateSchema` capability slot.
+
+## User Device Relay (`stitchkit/device-relay`)
+
+`stitchkit/device-relay` is a peer-free evolving entrypoint for reaching a user-owned device behind
+NAT over an outbound realtime connection — multiplexing Fetch-compatible unary RPCs and
+credit-paced cursor streams without exposing inbound device ports:
+
+```ts
+// server (stitchkit/server + stitchkit/device-relay)
+import { bindRealtimeServer } from 'stitchkit/server'
+import {
+  createDeviceRelayHub,
+  createMemoryRelayBroker,
+  DEVICE_RELAY_ORIGIN,
+  deviceRelayRealtimeContract,
+} from 'stitchkit/device-relay'
+
+const hub = createDeviceRelayHub<SocketIdentity>({
+  broker: createMemoryRelayBroker(),
+  authenticateDevice: ({ identity }) =>
+    identity.userId ? { accountId: identity.userId, deviceId: identity.deviceId } : null,
+})
+const unbindRelay = hub.bindRealtime(bindRealtimeServer(deviceRelayRealtimeContract, socket))
+
+const relayFetch = hub.createRelayFetch({ accountId: 'user-1', deviceId: 'mac-1' })
+// DEVICE_RELAY_ORIGIN is 'http://device-relay.invalid' (relative paths like '/local/status' also work):
+const response = await relayFetch(`${DEVICE_RELAY_ORIGIN}/local/status`)
+
+// device agent (stitchkit/device-relay)
+import { createDeviceRelayAgent } from 'stitchkit/device-relay'
+
+const agent = createDeviceRelayAgent({
+  transport,
+  deviceId: 'mac-1',
+  capabilities: ['rpc'],
+  allowRpc: [{ methods: ['GET'], pathPrefix: '/local/' }],
+  fetch: (input, init) => localHandler(input, init),
+})
+```
+
+- **Fail-closed routing and bounds:** unknown/offline devices, unauthorized callers, unallowlisted
+  paths or topics, oversized payloads, and RPC/stream capacity limits reject with typed
+  `DeviceRelayError` codes (`UNAUTHORIZED`, `FORBIDDEN`, `IDENTITY_MISMATCH`,
+  `OPERATION_NOT_ALLOWED`, `INVALID_REQUEST`, `PAYLOAD_TOO_LARGE`, `DEVICE_OFFLINE`,
+  `DELIVERY_UNKNOWN`, `DEVICE_BUSY`, `STREAM_CAPACITY`, `STREAM_UNAVAILABLE`, `STREAM_OVERFLOW`,
+  `FRAME_UNREPRESENTABLE`, `TIMEOUT`, `TRANSPORT_ERROR`, `BROKER_UNAVAILABLE`, `CLOSED`).
+- **Backpressure and resume:** `hub.openRelayStream({ accountId, deviceId, topic, cursor?, share? })`
+  issues explicit credit frames (`DeviceRelayStreamCredit`) and carries opaque cursors so a
+  reconnected consumer can resume without unbounded hub buffering.
+- **Horizontal scale:** replace `createMemoryRelayBroker()` with your own `RelayBrokerPort` (for
+  example over Redis or Postgres pub/sub) when multiple server instances hold device sockets.

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { simulateReadableStream, tool } from 'ai';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
@@ -13,6 +13,8 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
+import { defineAgentTool } from '../src/entrypoints/tools';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -74,38 +76,42 @@ describe('the request ledger', () => {
             // carries what its model resolves and never learns one gateway's
             // metadata key. `openRouterProvider` supplies this in production,
             // and its own reading of `openrouter.provider` is pinned beside it.
-            resolveResponseProvider: ({ providerMetadata }) => {
-              const metadata = providerMetadata as
-                | { openrouter?: { provider?: unknown } }
-                | undefined;
-              const name = metadata?.openrouter?.provider;
-              return typeof name === 'string' ? name : undefined;
-            },
-            model: new MockLanguageModelV4({
-              doStream: async () => ({
-                stream: simulateReadableStream({
-                  chunks: [
-                    {
-                      type: 'response-metadata',
-                      id: 'gen-1',
-                      modelId: 'identity-model',
-                      timestamp: new Date(0),
-                    },
-                    { type: 'text-start', id: 't' },
-                    { type: 'text-delta', id: 't', delta: 'done' },
-                    { type: 'text-end', id: 't' },
-                    {
-                      type: 'finish',
-                      finishReason: { unified: 'stop', raw: undefined },
-                      usage,
-                      providerMetadata: {
-                        openrouter: { provider: 'DeepInfra', ignored: true },
+            driver: fromAiSdkModel(
+              new MockLanguageModelV4({
+                doStream: async () => ({
+                  stream: simulateReadableStream({
+                    chunks: [
+                      {
+                        type: 'response-metadata',
+                        id: 'gen-1',
+                        modelId: 'identity-model',
+                        timestamp: new Date(0),
                       },
-                    },
-                  ],
-                } as never),
+                      { type: 'text-start', id: 't' },
+                      { type: 'text-delta', id: 't', delta: 'done' },
+                      { type: 'text-end', id: 't' },
+                      {
+                        type: 'finish',
+                        finishReason: { unified: 'stop', raw: undefined },
+                        usage,
+                        providerMetadata: {
+                          openrouter: { provider: 'DeepInfra', ignored: true },
+                        },
+                      },
+                    ],
+                  } as never),
+                }),
               }),
-            }),
+              {
+                resolveResponseProvider: ({ providerMetadata }) => {
+                  const metadata = providerMetadata as
+                    | { openrouter?: { provider?: unknown } }
+                    | undefined;
+                  const name = metadata?.openrouter?.provider;
+                  return typeof name === 'string' ? name : undefined;
+                },
+              },
+            ),
           }),
         },
         prompt: () => ({
@@ -131,7 +137,12 @@ describe('the request ledger', () => {
       expect(observed).toContainEqual(
         expect.objectContaining({
           type: 'step-finished',
-          response: { id: 'gen-1', provider: 'DeepInfra' },
+          response: {
+            id: 'gen-1',
+            provider: 'DeepInfra',
+            modelId: 'identity-model',
+            timestamp: '1970-01-01T00:00:00.000Z',
+          },
         }),
       );
       await runtime.close();
@@ -156,7 +167,12 @@ describe('the request ledger', () => {
             runId: expect.any(String),
             attempt: 1,
             stepNumber: 0,
-            response: { id: 'gen-1', provider: 'DeepInfra' },
+            response: {
+              id: 'gen-1',
+              provider: 'DeepInfra',
+              modelId: 'identity-model',
+              timestamp: '1970-01-01T00:00:00.000Z',
+            },
             usage: expectedUsage,
           },
         ]);
@@ -171,7 +187,12 @@ describe('the request ledger', () => {
             runId: expect.any(String),
             attempt: 1,
             stepNumber: 0,
-            response: { id: 'gen-1', provider: 'DeepInfra' },
+            response: {
+              id: 'gen-1',
+              provider: 'DeepInfra',
+              modelId: 'identity-model',
+              timestamp: '1970-01-01T00:00:00.000Z',
+            },
             usage: expectedUsage,
           },
         ]);
@@ -197,7 +218,7 @@ describe('the request ledger', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model: twoStepModel(),
+          driver: fromAiSdkModel(twoStepModel()),
         }),
       },
       prompt: () => ({
@@ -207,7 +228,11 @@ describe('the request ledger', () => {
         contextDecision: 'unavailable',
       }),
       tools: () => ({
-        echo: tool({ description: 'e', inputSchema: z.object({}), execute: async () => 'ok' }),
+        echo: defineAgentTool({
+          description: 'e',
+          input: z.object({}),
+          execute: async () => 'ok',
+        }),
       }),
       loop: { maxSteps: 4 },
     });
@@ -293,18 +318,24 @@ describe('the request ledger', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4({
-            doStream: async () => ({
-              stream: simulateReadableStream({
-                chunks: [
-                  { type: 'text-start', id: 't' },
-                  { type: 'text-delta', id: 't', delta: 'seen' },
-                  { type: 'text-end', id: 't' },
-                  { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-                ],
-              } as never),
+          driver: fromAiSdkModel(
+            new MockLanguageModelV4({
+              doStream: async () => ({
+                stream: simulateReadableStream({
+                  chunks: [
+                    { type: 'text-start', id: 't' },
+                    { type: 'text-delta', id: 't', delta: 'seen' },
+                    { type: 'text-end', id: 't' },
+                    {
+                      type: 'finish',
+                      finishReason: { unified: 'stop', raw: undefined },
+                      usage,
+                    },
+                  ],
+                } as never),
+              }),
             }),
-          }),
+          ),
         }),
       },
       prompt: () => ({
@@ -322,7 +353,7 @@ describe('the request ledger', () => {
               { type: 'text', text: 'look' },
               {
                 type: 'file',
-                data: new Uint8Array(4_096),
+                data: { type: 'data', data: new Uint8Array(4_096) },
                 mediaType: 'application/octet-stream',
               },
             ],
@@ -359,18 +390,24 @@ describe('the request ledger', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4({
-            doStream: async () => ({
-              stream: simulateReadableStream({
-                chunks: [
-                  { type: 'text-start', id: 't' },
-                  { type: 'text-delta', id: 't', delta: 'ok' },
-                  { type: 'text-end', id: 't' },
-                  { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-                ],
-              } as never),
+          driver: fromAiSdkModel(
+            new MockLanguageModelV4({
+              doStream: async () => ({
+                stream: simulateReadableStream({
+                  chunks: [
+                    { type: 'text-start', id: 't' },
+                    { type: 'text-delta', id: 't', delta: 'ok' },
+                    { type: 'text-end', id: 't' },
+                    {
+                      type: 'finish',
+                      finishReason: { unified: 'stop', raw: undefined },
+                      usage,
+                    },
+                  ],
+                } as never),
+              }),
             }),
-          }),
+          ),
         }),
       },
       prompt: () => ({
@@ -380,7 +417,7 @@ describe('the request ledger', () => {
         contextDecision: 'unavailable',
       }),
       tools: () => ({}),
-      loop: { prepareStep: () => ({ instructions: 'overridden by prepareStep' }) as never },
+      loop: { prepareStep: () => ({ instructions: 'overridden by prepareStep' }) },
     });
     await runtime.submit({
       conversationId: 'override',

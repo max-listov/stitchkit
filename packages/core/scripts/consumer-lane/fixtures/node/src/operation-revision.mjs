@@ -3,26 +3,44 @@
  *
  * The assistant checkpoint and the model-request admission are two owned
  * mutations of one run, written by two independent schedules: the stream
- * consumer and the SDK's model middleware. When the store answers on a later
+ * consumer and the model driver lifecycle. When the store answers on a later
  * tick, both used to name the revision they read before their own `await`, and
- * the loser of that race threw a store conflict from inside `wrapStream` — so
- * the provider was never called and the run ended `provider_failure`.
+ * the loser of that race threw a store conflict — so the provider was never
+ * called and the run ended `provider_failure`.
  *
  * A consumer reported it against a published release that every in-repo gate
  * had passed, so the proof belongs here, on the artifact as it is installed.
  */
 import { setImmediate } from 'node:timers/promises';
-import { convertArrayToReadableStream, MockLanguageModelV3 } from 'ai/test';
 import {
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from 'stitchkit/agent-runtime';
+import { createScriptedModelDriver } from 'stitchkit/agent-runtime/testing';
 import { z } from 'zod';
 
 const durable = createMemoryAgentRuntimeStore();
 const outcomes = [];
-let calls = 0;
+const driver = createScriptedModelDriver({
+  provider: 'fixture',
+  modelId: 'fixture',
+  steps: [
+    [
+      { type: 'text-start', id: 'answer' },
+      { type: 'text-delta', id: 'answer', delta: 'done' },
+      { type: 'text-end', id: 'answer' },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        usage: {
+          inputTokens: { value: 1, provenance: 'provider-reported' },
+          outputTokens: { value: 1, provenance: 'provider-reported' },
+        },
+      },
+    ],
+  ],
+});
 
 const runtime = createAgentRuntime({
   protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
@@ -50,26 +68,7 @@ const runtime = createAgentRuntime({
         contextWindow: 32768,
         capabilities: [],
       },
-      model: new MockLanguageModelV3({
-        doStream: async () => {
-          calls += 1;
-          return {
-            stream: convertArrayToReadableStream([
-              { type: 'text-start', id: 'answer' },
-              { type: 'text-delta', id: 'answer', delta: 'done' },
-              { type: 'text-end', id: 'answer' },
-              {
-                type: 'finish',
-                finishReason: { unified: 'stop', raw: undefined },
-                usage: {
-                  inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
-                  outputTokens: { total: 1, text: 1, reasoning: 0 },
-                },
-              },
-            ]),
-          };
-        },
-      }),
+      driver,
     }),
   },
   prompt: () => ({
@@ -92,9 +91,14 @@ try {
 
   const conflicts = outcomes.filter((outcome) => !outcome.endsWith(':applied'));
   const text = result.message.parts.map((part) => part.text ?? '').join('');
-  if (result.reason !== 'success' || calls !== 1 || text !== 'done' || conflicts.length > 0) {
+  if (
+    result.reason !== 'success' ||
+    driver.requests.length !== 1 ||
+    text !== 'done' ||
+    conflicts.length > 0
+  ) {
     console.error(
-      `[operation-revision] reason=${result.reason} calls=${calls} text=${text} conflicts=${conflicts.join(',') || 'none'}`,
+      `[operation-revision] reason=${result.reason} calls=${driver.requests.length} text=${text} conflicts=${conflicts.join(',') || 'none'}`,
     );
     process.exitCode = 1;
   } else {

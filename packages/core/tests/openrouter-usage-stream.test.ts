@@ -1,10 +1,11 @@
 import { expect, test } from 'bun:test';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { streamText } from 'ai';
-import { normalizeOpenRouterUsage, openRouterProvider } from '../src/agent-runtime/openrouter';
+import {
+  normalizeOpenRouterUsage,
+  openRouterProvider,
+} from '../src/entrypoints/agent-runtime/openrouter';
 
 async function readStep(details?: number, omitUsage = false) {
-  const usage = {
+  const wireUsage = {
     prompt_tokens: 100,
     completion_tokens: 4,
     total_tokens: 104,
@@ -25,10 +26,10 @@ async function readStep(details?: number, omitUsage = false) {
     {
       id: 'fixture',
       choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-      ...(omitUsage ? {} : { usage }),
+      ...(omitUsage ? {} : { usage: wireUsage }),
     },
   ];
-  const provider = createOpenRouter({
+  const provider = openRouterProvider({
     apiKey: 'fixture',
     fetch: Object.assign(
       async () =>
@@ -44,50 +45,51 @@ async function readStep(details?: number, omitUsage = false) {
       },
     ),
   });
-  const result = streamText({
-    model: provider.chat('fixture/model'),
-    prompt: 'test',
-    maxRetries: 0,
-  });
-  await result.consumeStream();
-  const step = (await result.steps)[0];
-  if (!step) throw new Error('SSE fixture did not produce a step');
-  return step;
+  const stream = await provider.create('fixture/model').stream(
+    {
+      instructions: [],
+      messages: [{ role: 'user', content: 'test' }],
+      tools: [],
+      settings: {},
+      correlation: { conversationId: 'conv', attemptId: 'att', step: 0 },
+    },
+    new AbortController().signal,
+  );
+  for await (const part of stream.parts) {
+    if (part.type === 'finish') {
+      return { finish: part, wireUsage: omitUsage ? undefined : wireUsage };
+    }
+  }
+  throw new Error('SSE fixture did not produce a finish part');
 }
 
 for (const value of [undefined, 0, 3]) {
   test(`real SSE preserves counter provenance: ${value ?? 'missing'}`, async () => {
-    const step = await readStep(value);
-    // The real adapter synthesizes zero even when the provider said nothing.
-    expect(step.usage.inputTokenDetails.cacheReadTokens).toBe(value ?? 0);
-    const direct = normalizeOpenRouterUsage(step.usage, step.providerMetadata);
-    const runtime = openRouterProvider({ apiKey: 'fixture' }).normalizeUsage?.({
-      usage: step.usage,
-      providerMetadata: step.providerMetadata,
-    });
+    const { finish, wireUsage } = await readStep(value);
+    const direct = normalizeOpenRouterUsage(wireUsage);
+    const runtime = finish.usage;
     const count: ReturnType<typeof normalizeOpenRouterUsage>['cacheReadTokens'] =
       value === undefined
         ? { provenance: 'unavailable' }
         : { value, provenance: 'provider-reported' };
     for (const normalized of [direct, runtime]) {
-      expect(normalized?.cacheReadTokens).toEqual(count);
-      expect(normalized?.cacheWriteTokens).toEqual(count);
-      expect(normalized?.reasoningTokens).toEqual(count);
-      expect(normalized?.inputTokens).toEqual({ value: 100, provenance: 'provider-reported' });
-      expect(normalized?.outputTokens).toEqual({ value: 4, provenance: 'provider-reported' });
-      expect(normalized?.cost).toEqual({ provenance: 'unavailable' });
+      expect(normalized.cacheReadTokens).toEqual(count);
+      expect(normalized.cacheWriteTokens).toEqual(count);
+      expect(normalized.reasoningTokens).toEqual(count);
+      expect(normalized.inputTokens).toEqual({ value: 100, provenance: 'provider-reported' });
+      expect(normalized.outputTokens).toEqual({ value: 4, provenance: 'provider-reported' });
+      expect(normalized.cost).toEqual({ provenance: 'unavailable' });
     }
   });
 }
 
 test('SSE without usage and normalized-only records cannot manufacture measured totals', async () => {
-  const step = await readStep(undefined, true);
-  expect(step.usage.inputTokens).toBeUndefined();
-  for (const usage of [
-    step.usage,
-    { ...step.usage, inputTokens: 100, outputTokens: 4, raw: undefined },
+  const { finish } = await readStep(undefined, true);
+  for (const result of [
+    finish.usage,
+    normalizeOpenRouterUsage(undefined),
+    normalizeOpenRouterUsage({ inputTokens: 100, outputTokens: 4, raw: undefined }),
   ]) {
-    const result = normalizeOpenRouterUsage(usage, step.providerMetadata);
     for (const field of [
       result.inputTokens,
       result.outputTokens,

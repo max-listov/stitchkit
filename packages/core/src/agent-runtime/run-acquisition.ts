@@ -1,5 +1,5 @@
-import type { ToolSet } from 'ai';
 import { createMutationQueue } from '../internal/mutation-queue';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { agentDurableEventId } from './events';
 import {
   adoptSnapshot,
@@ -20,15 +20,15 @@ import { AgentRuntimeConflictError, appliedSnapshot } from './terminal-commit';
  * ownership write happens here, because from that write on a failure has a run
  * to close: {@link beginRunExecution} runs under the executor's `try`.
  */
-export type RunAcquisition<CONTEXT, TOOLS extends ToolSet> =
+export type RunAcquisition<CONTEXT, TOOLS extends AgentToolSet> =
   | { kind: 'absorbed'; result: AgentRuntimeResult }
   | { kind: 'acquired'; execution: RunExecution<CONTEXT, TOOLS> };
 
-export async function acquireRun<CONTEXT, TOOLS extends ToolSet>(
+export async function acquireRun<CONTEXT, TOOLS extends AgentToolSet>(
   dependencies: RunExecutorDependencies<CONTEXT, TOOLS>,
   input: RunExecutionInput<CONTEXT>,
 ): Promise<RunAcquisition<CONTEXT, TOOLS>> {
-  const { config, runtimeEpoch, now, idleTimeoutMs, injection } = dependencies;
+  const { config, runtimeEpoch, now, idleTimeoutMs, maxDurationMs, injection } = dependencies;
   // This run is no longer a queued successor, whatever happens next, so it
   // stops being something another run may take on. First, before any I/O that
   // can throw: no ordering may let a run absorb the input it is itself about
@@ -124,11 +124,14 @@ export async function acquireRun<CONTEXT, TOOLS extends ToolSet>(
     internalCause: undefined,
     providerStreamCleanupFailure: undefined,
     reasoningPartIndex: undefined,
+    reasoningPartIndexes: new Map<string, number>(),
+    textPartIndexes: new Map<string, number>(),
+    terminalDecision: undefined,
     firstOutputAt: undefined,
     terminalPolicyName: undefined,
     lastPromptTokens: { provenance: 'unavailable' },
   };
-  const idleDeadline = createIdleDeadline(input.signal, idleTimeoutMs);
+  const idleDeadline = createIdleDeadline(input.signal, idleTimeoutMs, maxDurationMs);
   const serialize = createMutationQueue();
   const operationLifecycle = createAgentRunOperationLifecycle({
     store: config.store,
@@ -160,7 +163,7 @@ export async function acquireRun<CONTEXT, TOOLS extends ToolSet>(
  * draft. A failure here reaches `classifyRunFailure` like any other, so the run
  * ends in a terminal instead of staying `running` with an owner that has left.
  */
-export async function beginRunExecution<CONTEXT, TOOLS extends ToolSet>(
+export async function beginRunExecution<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
 ): Promise<void> {
   const { config, publish, runtimeEpoch, generateId, now } = execution.dependencies;

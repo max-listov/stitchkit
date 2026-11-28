@@ -77,8 +77,8 @@ export const SpendFactsSchema = z.strictObject({
   cacheWriteTokens: Count.optional(),
   /** Work that is not tokens (`seconds` of audio, `characters` spoken, `images` made), named freely. */
   workUnit: Label.optional(),
-  workAmount: z.number().nonnegative().finite().optional(),
-  costUsd: z.number().nonnegative().finite().optional(),
+  workAmount: z.number().nonnegative().optional(),
+  costUsd: z.number().nonnegative().optional(),
   costStatus: SpendCostStatusSchema,
   durationMs: Count.optional(),
   ttftMs: Count.optional(),

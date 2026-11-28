@@ -18,7 +18,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { ToolSet } from 'ai';
 import type { ZodObject } from 'zod';
 import type { ServiceDef } from '../server/types';
-import { type AgentMountConfig, mountAgent } from './agent';
+import { mountAgent } from './agent';
+import { type AgentMountConfig, type AgentToolSet, mountAgentTools } from './agent-tools';
 import type { CliCommandDefinition } from './cli/command';
 import { type CliConfig, createCli } from './cli/create-cli';
 import { createMcpHandler, type McpHandlerConfig, type McpHttpHandler } from './mcp/handler';
@@ -62,6 +63,11 @@ export interface Toolkit<TContext extends Record<string, unknown>> {
     services: ServiceDef | ServiceDef[],
     config: WithStaticContext<AgentMountConfig, TContext>,
   ): ToolSet;
+  mountAgentTools(config: WithStaticContext<AgentMountConfig, TContext>): AgentToolSet;
+  mountAgentTools(
+    services: ServiceDef | ServiceDef[],
+    config: WithStaticContext<AgentMountConfig, TContext>,
+  ): AgentToolSet;
   buildMcpServer<TAuth>(
     config: WithAuthContext<McpServerBuildConfig<TAuth>, TAuth, TContext>,
     auth: TAuth,
@@ -83,15 +89,49 @@ export interface Toolkit<TContext extends Record<string, unknown>> {
   ): Promise<void>;
 }
 
+function isMountConfig<TContext extends Record<string, unknown>>(
+  value: ServiceDef | ServiceDef[] | WithStaticContext<AgentMountConfig, TContext>,
+): value is WithStaticContext<AgentMountConfig, TContext> {
+  return !Array.isArray(value) && 'access' in value;
+}
+
 /**
  * Fix the tool-handler context type once. `const tools =
  * createToolkit<AppContext>()` — then `tools.createCli`, `tools.mountMcp`, … all
  * type-check their injected `context` against `AppContext`.
  */
 export function createToolkit<TContext extends Record<string, unknown>>(): Toolkit<TContext> {
+  function forwardMountAgentTools(
+    config: WithStaticContext<AgentMountConfig, TContext>,
+  ): AgentToolSet;
+  function forwardMountAgentTools(
+    services: ServiceDef | ServiceDef[],
+    config: WithStaticContext<AgentMountConfig, TContext>,
+  ): AgentToolSet;
+  function forwardMountAgentTools(
+    servicesOrConfig:
+      | ServiceDef
+      | ServiceDef[]
+      | WithStaticContext<AgentMountConfig, TContext>,
+    config?: WithStaticContext<AgentMountConfig, TContext>,
+  ): AgentToolSet {
+    if (config === undefined) {
+      if (!isMountConfig(servicesOrConfig)) {
+        throw new TypeError('mountAgentTools requires an AgentMountConfig');
+      }
+      return mountAgentTools(servicesOrConfig);
+    }
+    if (isMountConfig(servicesOrConfig)) {
+      throw new TypeError(
+        'mountAgentTools received config as the first argument alongside a second argument',
+      );
+    }
+    return mountAgentTools(servicesOrConfig, config);
+  }
   return {
     mountMcp: (server, services, config) => mountMcp(server, services, config),
     mountAgent: (services, config) => mountAgent(services, config),
+    mountAgentTools: forwardMountAgentTools,
     buildMcpServer: (config, auth) => buildMcpServer(config, auth),
     createMcpHandler: (config) => createMcpHandler(config),
     createStdioMcpServer: (config) => createStdioMcpServer(config),

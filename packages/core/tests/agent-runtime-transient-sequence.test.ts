@@ -8,6 +8,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import {
   createAgentControlView,
   reduceAgentControlEvent,
@@ -59,7 +60,7 @@ describe('transient event sequence', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       prompt: () => ({

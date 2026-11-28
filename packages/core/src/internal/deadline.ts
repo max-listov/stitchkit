@@ -64,14 +64,17 @@ export async function withDeadline<VALUE = unknown>(
   const expiry = new Promise<{ settled: false }>((resolve) => {
     timer = setTimeout(() => resolve({ settled: false }), timeoutMs);
   });
+  const settled = value.then((settledValue: VALUE): { settled: true; value: VALUE } => ({
+    settled: true,
+    value: settledValue,
+  }));
   try {
-    return await Promise.race([
-      value.then((settledValue: VALUE): { settled: true; value: VALUE } => ({
-        settled: true,
-        value: settledValue,
-      })),
-      expiry,
-    ]);
+    const result = await Promise.race([settled, expiry]);
+    if (!result.settled) {
+      void value.catch(() => undefined);
+      void settled.catch(() => undefined);
+    }
+    return result;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

@@ -1,28 +1,23 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import {
-  type Instructions,
-  type LanguageModelCallStartEvent,
-  type ModelMessage,
-  type PrepareStepFunction,
-  type StopCondition,
-  stepCountIs,
-  type TextStreamPart,
-  type ToolSet,
-} from 'ai';
-import type { LocalStepDurability } from '../durability/contract';
-import { createLocalStepDurability } from '../durability/engine';
-import { linkAbortSignals } from '../internal/abort-race';
-import { streamAgentTextBoundary } from '../internal/ai-sdk-typed';
-import { createRuntimeToolContext } from '../tools/runtime-call-context';
+import type { AgentModelMessage } from '../agent-parts/model';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { deferredToolRepair } from './deferred-tools-internal';
 import type { AgentInjectableInput } from './injection';
-import { ownedProviderStream } from './owned-provider-stream';
-import { classifyProviderFailure } from './provider-failure';
+import type { AgentToolCallRepairFunction } from './models-driver-step';
+import { type AgentProviderFailureReason, classifyProviderFailure } from './provider-failure';
+import { hasProviderOrigin } from './provider-origin';
 import { recordAgentRetryDecision } from './retry-policy';
-import { checkpoint, type RunExecution, transientSequence } from './run-execution-state';
+import {
+  checkpoint,
+  type RunExecution,
+  runUsage,
+  transientSequence,
+} from './run-execution-state';
 import { failureThisRuntimeOwns } from './run-failure';
+import type { AgentLoopEvent } from './run-loop-events';
+import { executeOneModelStep, type StepRunState } from './run-model-step';
 import { createRunProviderLedger, type RunProviderLedger } from './run-provider-ledger';
-import { normalizeStepUsage, recordStepSpend } from './run-step-spend';
+import { evaluateTerminalContinuation } from './run-step-prepare';
 import {
   applyStreamPart,
   isOutputPart,
@@ -30,95 +25,60 @@ import {
   type StreamPartScope,
   TOOL_STATUS_PARTS,
 } from './run-stream-parts';
-import { createToolProgressReporter } from './run-tool-progress';
+import { resetStepTextTracking } from './run-stream-step-text';
+import { executeApprovalContinuations } from './run-tool-approval-flow';
 import type { PreparedTurn } from './run-turn-preparation';
+import { addUsage } from './runtime-internals';
+import type { AgentUsage } from './schemas';
+import { unknownUsage } from './schemas-usage-state';
 
-/** What outlives one provider attempt: the retry count and what the SDK carries forward. */
+const DEFAULT_MAX_CONTINUATIONS = 3;
+
 interface AttemptLoopState {
   retryAttempt: number;
-  /**
-   * What the current attempt took from the injection registry.
-   *
-   * `take` removes an entry, so a retry that starts over from `history`
-   * would run without it — and the terminal would still absorb it, marking
-   * a person's input answered by a model that never saw it. The retry
-   * hands these back before its first step.
-   */
+  retryWindowStart: number;
   takenThisAttempt: AgentInjectableInput[];
-  /** The last `prepareStep` override of the instructions, which the SDK carries forward. */
-  instructionsOverride: unknown;
 }
 
-/** One provider attempt: a stream from the first step to `finish`, or to a retry. */
 interface ModelAttempt {
   readonly providerAttempt: number;
   readonly attemptPartStart: number;
   retrying: boolean;
-  // Once a retry is decided the rest of this attempt's stream is drained
-  // for its `finish-step` only: the provider bills those tokens whether
-  // or not the answer was kept, so they belong in this run's spend.
   draining: boolean;
-  readonly attemptAbort: AbortController;
+  retryDelayMs: number;
+  discardReason?: AgentProviderFailureReason;
+  discardUsage?: AgentUsage;
 }
 
-/** Everything one attempt's phases share for the whole run. */
-interface AttemptContext<CONTEXT, TOOLS extends ToolSet> {
+interface AttemptContext<CONTEXT, TOOLS extends AgentToolSet> {
   execution: RunExecution<CONTEXT, TOOLS>;
   turn: PreparedTurn<CONTEXT, TOOLS>;
   loop: AttemptLoopState;
   ledger: RunProviderLedger;
+  baseMessages: readonly AgentModelMessage[];
 }
 
-function createStopConditions<CONTEXT, TOOLS extends ToolSet>(
-  execution: RunExecution<CONTEXT, TOOLS>,
-  turn: PreparedTurn<CONTEXT, TOOLS>,
-): StopCondition<TOOLS>[] {
-  const { config, maxSteps } = execution.dependencies;
-  const { state } = execution;
-  const maxStepCondition = stepCountIs(maxSteps);
-  const stopConditions: StopCondition<TOOLS>[] = [
-    async (options) => {
-      const stopped = await maxStepCondition(options);
-      if (stopped && state.terminalPolicyName === undefined)
-        state.terminalPolicyName = 'max-steps';
-      return stopped;
-    },
-  ];
-  for (const policy of config.loop?.stopPolicies ?? []) {
-    stopConditions.push(async (options) => {
-      const stopped = await policy.when({ ...options, ...turn.runtimeContext });
-      if (stopped && state.terminalPolicyName === undefined)
-        state.terminalPolicyName = policy.name;
-      return stopped;
-    });
-  }
-  return stopConditions;
+function chainRepairHooks(
+  primary: AgentToolCallRepairFunction | undefined,
+  secondary: AgentToolCallRepairFunction | undefined,
+): AgentToolCallRepairFunction | undefined {
+  if (!primary) return secondary;
+  if (!secondary) return primary;
+  return async (input) => (await primary(input)) ?? secondary(input);
 }
 
-/** What this boundary takes on, projected for the provider. */
-async function takeInjectedMessages<CONTEXT, TOOLS extends ToolSet>(
+async function takeInjectedMessages<CONTEXT, TOOLS extends AgentToolSet>(
   context: AttemptContext<CONTEXT, TOOLS>,
-): Promise<ModelMessage[]> {
+): Promise<AgentModelMessage[]> {
   const { execution, turn, loop } = context;
   const { state } = execution;
   const taken =
     execution.dependencies.injection?.take(execution.input.key, state.run.id) ?? [];
   if (taken.length === 0) return [];
   loop.takenThisAttempt.push(...taken);
-  const messages: ModelMessage[] = [];
+  const messages: AgentModelMessage[] = [];
   for (const entry of taken) {
-    // Only this admission's own message, never a re-projection of the
-    // snapshot — and through `projectInputs`, which does not touch
-    // `carriedSystem`. The withdrawn version re-projected the whole
-    // snapshot, so an unrelated queued input reached a run that never
-    // recorded it and was then answered a second time by its own run.
     messages.push(...(await turn.projection.projectInputs([entry.input])));
-    // Keyed by run, and it grows: `coalescePending` can add an input to a
-    // successor after an earlier boundary already took one of its
-    // inputs, and the absorption is only committed if it covers the
-    // successor WHOLE. Re-taking at every boundary is what keeps it
-    // whole; only an input that arrives after the last boundary is left
-    // behind, and that one simply runs on its own.
     const ids = state.absorbed.get(entry.runId) ?? [];
     ids.push(entry.input.id);
     state.absorbed.set(entry.runId, ids);
@@ -126,204 +86,47 @@ async function takeInjectedMessages<CONTEXT, TOOLS extends ToolSet>(
   return messages;
 }
 
-async function prepareAttemptStep<CONTEXT, TOOLS extends ToolSet>(
-  context: AttemptContext<CONTEXT, TOOLS>,
-  attempt: ModelAttempt,
-  options: Parameters<PrepareStepFunction<TOOLS>>[0],
-) {
-  const { execution, turn, loop, ledger } = context;
-  const { config, generateId } = execution.dependencies;
-  const { state } = execution;
-  // The SDK can prepare the next step before the consumer has read
-  // that previous step's `finish-step` stream part. Derive the
-  // provider-reported fill from the completed step the SDK hands us,
-  // rather than depending on stream-consumer scheduling.
-  const previousStep = options.steps.at(-1);
-  if (previousStep) {
-    state.lastPromptTokens = normalizeStepUsage(
-      state.selectedModel,
-      previousStep.usage,
-      previousStep.providerMetadata,
-    ).inputTokens;
-  }
-  const prepared = await config.loop?.prepareStep?.({
-    ...options,
-    ...turn.runtimeContext,
-  });
-  const injected = await takeInjectedMessages(context);
-  // The SDK carries a `prepareStep` message list into the next step,
-  // so appending only what was taken *this* boundary is right — and
-  // appending the whole accumulated list would duplicate it.
-  const preparedStep =
-    injected.length === 0
-      ? prepared
-      : {
-          ...prepared,
-          messages: [...(prepared?.messages ?? options.messages), ...injected],
-        };
-  const providerMessages = preparedStep?.messages ?? options.messages;
-  // After the previous step's checkpoint has landed (that is what
-  // `prepareModel` waits for) and before `doStream`: the request is
-  // recorded in ledger order, and the provider is not called until
-  // it is.
-  const model = await execution.operationLifecycle.prepareModel(
-    execution.invocation
-      ? execution.invocation.wrap(turn.selectedModel, options.stepNumber, preparedStep?.model)
-      : (preparedStep?.model ?? turn.selectedModel.model),
-    options.stepNumber,
-    generateId(),
-  );
-  // What the provider is told, not what the prompt composed: a
-  // `prepareStep` may override `instructions`/`system`, and the SDK
-  // carries that override into every later step of the call.
-  const override = preparedStep as { instructions?: unknown; system?: unknown } | undefined;
-  if (override?.instructions !== undefined) loop.instructionsOverride = override.instructions;
-  else if (override?.system !== undefined) loop.instructionsOverride = override.system;
-  await ledger.recordRequest({
-    stepNumber: options.stepNumber,
-    attempt: attempt.providerAttempt,
-    instructions: (loop.instructionsOverride ??
-      turn.projection.withCarriedSystem(turn.prompt.instructions)) as Instructions,
-    messages: providerMessages,
-  });
-  return { ...preparedStep, model };
-}
-
-/** The step ledger of one tool call: the host's durability port, or the runtime's local one. */
-function runToolDurability<CONTEXT, TOOLS extends ToolSet>(
-  context: AttemptContext<CONTEXT, TOOLS>,
-  toolName: string,
-  toolCallId: string,
-  signal: AbortSignal | undefined,
-): LocalStepDurability {
-  const { config } = context.execution.dependencies;
-  const { state } = context.execution;
-  const port = config.durability;
-  if (typeof port === 'function')
-    return port({
-      store: config.store,
-      conversationId: state.run.conversationId,
-      runId: state.run.id,
-      toolName,
-      toolCallId,
-      signal,
-    });
-  return createLocalStepDurability({
-    store: config.store,
-    conversationId: state.run.conversationId,
-    runId: JSON.stringify([state.run.id, toolName, toolCallId]),
-    signal,
-  });
-}
-
-function startAttemptStream<CONTEXT, TOOLS extends ToolSet>(
-  context: AttemptContext<CONTEXT, TOOLS>,
-  attempt: ModelAttempt,
-  stopConditions: StopCondition<TOOLS>[],
-  attemptSignal: AbortSignal,
-) {
-  const { execution, turn } = context;
-  const { config } = execution.dependencies;
-  const { idleDeadline, operationLifecycle } = execution;
-  const { tools } = turn;
-  return streamAgentTextBoundary<TOOLS>({
-    model: turn.selectedModel.model,
-    tools,
-    // Every tool call gets the run's progress reporter, and its step ledger
-    // when the runtime has one. A tool that declares its own `contextSchema`
-    // owns its context contract, so the runtime's opaque object is not put
-    // where the SDK would validate it against that schema.
-    toolsContext: Object.fromEntries(
-      Object.entries(tools)
-        .filter(([, tool]) => tool.contextSchema === undefined)
-        .map(([toolName]) => [
-          toolName,
-          createRuntimeToolContext((toolCallId, signal) => ({
-            ...(config.durability && {
-              durability: runToolDurability(context, toolName, toolCallId, signal),
-            }),
-            reportProgress: createToolProgressReporter(
-              execution,
-              toolName,
-              toolCallId,
-              signal,
-            ),
-          })),
-        ]),
-    ),
-    instructions: turn.projection.withCarriedSystem(turn.prompt.instructions),
-    messages: turn.history,
-    abortSignal: attemptSignal,
-    maxRetries: 0,
-    stopWhen: stopConditions,
-    onLanguageModelCallStart: (event: LanguageModelCallStartEvent) => {
-      idleDeadline.start();
-      operationLifecycle.noteProviderCall(event.callId);
-    },
-    onLanguageModelCallEnd: () => idleDeadline.stop(),
-    onToolExecutionStart: () => idleDeadline.suspend(),
-    onToolExecutionEnd: () => idleDeadline.resume(),
-    repairToolCall: deferredToolRepair(config.loop?.prepareStep),
-    ...(turn.toolApproval && {
-      toolApproval: turn.toolApproval,
-      runtimeContext: execution.input.context,
-    }),
-    ...(config.loop?.toolApprovalSecret && {
-      experimental_toolApprovalSecret: config.loop.toolApprovalSecret,
-    }),
-    prepareStep: (options: Parameters<PrepareStepFunction<TOOLS>>[0]) =>
-      prepareAttemptStep(context, attempt, options),
-  });
-}
-
-/** A part of an attempt already being retried: only its spend is kept. */
-async function drainAbandonedPart<CONTEXT, TOOLS extends ToolSet>(
-  context: AttemptContext<CONTEXT, TOOLS>,
-  attempt: ModelAttempt,
-  part: TextStreamPart<TOOLS>,
-): Promise<void> {
-  if (part.type !== 'finish-step') return;
-  await recordStepSpend(context.execution, {
-    phase: 'abandoned-attempt',
-    part,
-    attempt: attempt.providerAttempt,
-    selectedModel: context.turn.selectedModel,
-    ledger: context.ledger,
-  });
-}
-
-/**
- * Whether a provider error part starts a retry. When it does, this attempt's
- * output is discarded, its injected inputs are handed back and the attempt
- * turns to draining.
- */
-async function retryAfterProviderError<CONTEXT, TOOLS extends ToolSet>(
+async function retryAfterProviderError<CONTEXT, TOOLS extends AgentToolSet>(
   context: AttemptContext<CONTEXT, TOOLS>,
   attempt: ModelAttempt,
   error: unknown,
+  attemptTotalUsage?: AgentUsage,
 ): Promise<boolean> {
   const { execution, loop } = context;
   const { config, injection } = execution.dependencies;
   const { state, executionSignal } = execution;
   const retry = config.loop?.retry;
-  if (!retry || failureThisRuntimeOwns(error) !== undefined) return false;
+  if (!retry || failureThisRuntimeOwns(error) !== undefined || executionSignal.aborted) {
+    return false;
+  }
   const invokedTool = state.parts
     .slice(attempt.attemptPartStart)
-    .some((candidate) => candidate.type === 'tool-call');
+    .some((candidate) => candidate.type === 'tool-call' || candidate.type === 'tool-result');
+  const failure = classifyProviderFailure(error);
   const decision = invokedTool
     ? { retry: false, delayMs: 0 }
     : await recordAgentRetryDecision({
         store: config.store,
         conversationId: state.run.conversationId,
         attempt: loop.retryAttempt,
-        failure: classifyProviderFailure(error),
+        failure,
         policy: retry,
+        elapsedMs: Math.max(0, performance.now() - loop.retryWindowStart),
       });
   if (!decision.retry) return false;
   await execution.operationLifecycle.finish('failed');
+  if (state.modelUsage !== undefined) {
+    state.abandonedUsage = state.abandonedUsage
+      ? addUsage(state.abandonedUsage, state.modelUsage)
+      : state.modelUsage;
+    state.modelUsage = undefined;
+    state.usage = runUsage(state);
+  }
   state.parts.splice(attempt.attemptPartStart);
-  // Hand back what this attempt took, and stop claiming it was
-  // answered: the next attempt takes it again at its own boundary.
+  state.reasoningPartIndex = undefined;
+  state.reasoningPartIndexes.clear();
+  state.textPartIndex = undefined;
+  state.textPartIndexes.clear();
   for (const entry of loop.takenThisAttempt) {
     injection?.offer(execution.input.key, entry);
     const ids = state.absorbed.get(entry.runId);
@@ -334,91 +137,169 @@ async function retryAfterProviderError<CONTEXT, TOOLS extends ToolSet>(
     }
   }
   loop.takenThisAttempt = [];
-  // Checkpoint after the splice: the durable draft must not carry
-  // the output the retry is discarding.
   await checkpoint(execution);
   state.eventsSinceCheckpoint = 0;
-  if (decision.delayMs > 0) {
-    await delay(decision.delayMs, undefined, { signal: executionSignal });
-  }
-  loop.retryAttempt += 1;
-  await config.store.appendEvent({
-    conversationId: state.run.conversationId,
-    kind: 'retry/started',
-    payload: { attempt: loop.retryAttempt },
-  });
   attempt.retrying = true;
   attempt.draining = true;
+  attempt.retryDelayMs = decision.delayMs;
+  attempt.discardReason = failure.reason;
+  if (attemptTotalUsage !== undefined) {
+    attempt.discardUsage = attempt.discardUsage
+      ? addUsage(attempt.discardUsage, attemptTotalUsage)
+      : attemptTotalUsage;
+  }
   return true;
 }
 
-async function consumeAttempt<CONTEXT, TOOLS extends ToolSet>(
+async function dispatchLoopEvent<CONTEXT, TOOLS extends AgentToolSet>(
+  context: AttemptContext<CONTEXT, TOOLS>,
+  scope: StreamPartScope,
+  part: AgentLoopEvent,
+): Promise<void> {
+  const { execution } = context;
+  const { checkpointEveryEvents } = execution.dependencies;
+  const { state, operationLifecycle } = execution;
+  state.eventsSinceCheckpoint += 1;
+  const held =
+    part.type === 'text-delta' &&
+    execution.dependencies.config.loop?.stepBarriers?.stepText === 'after-tools';
+  if (isOutputPart(part) && !held) {
+    if (state.firstOutputAt === undefined) state.firstOutputAt = performance.now();
+    await operationLifecycle.firstOutput();
+  }
+  await applyStreamPart(execution, scope, part);
+  const preliminaryToolResult = part.type === 'tool-result' && part.preliminary === true;
+  if (TOOL_STATUS_PARTS.includes(part.type) && !preliminaryToolResult) {
+    state.eventsSinceCheckpoint = 0;
+    return;
+  }
+  const structuralBoundary =
+    STRUCTURAL_BOUNDARY_PARTS.includes(part.type) && !preliminaryToolResult;
+  if (structuralBoundary || state.eventsSinceCheckpoint >= checkpointEveryEvents) {
+    await checkpoint(execution);
+    state.eventsSinceCheckpoint = 0;
+    if (part.type === 'finish-step') operationLifecycle.checkpointStep(state.step - 1);
+  }
+}
+
+async function runSingleAttempt<CONTEXT, TOOLS extends AgentToolSet>(
   context: AttemptContext<CONTEXT, TOOLS>,
   attempt: ModelAttempt,
-  stream: AsyncIterable<TextStreamPart<TOOLS>>,
+  attemptSignal: AbortSignal,
 ): Promise<void> {
   const { execution, turn, ledger } = context;
-  const { checkpointEveryEvents } = execution.dependencies;
-  const { state, idleDeadline, operationLifecycle } = execution;
+  const { config } = execution.dependencies;
   const scope: StreamPartScope = {
     selectedModel: turn.selectedModel,
     ledger,
     providerAttempt: attempt.providerAttempt,
   };
-  for await (const part of ownedProviderStream({
-    stream,
-    abort: () =>
-      attempt.attemptAbort.abort(new Error('Agent runtime released provider stream')),
-    onCleanupFailure: (error) => {
-      state.providerStreamCleanupFailure = error;
-    },
-  })) {
-    idleDeadline.touch();
-    if (attempt.draining) {
-      await drainAbandonedPart(context, attempt, part);
+  const emit = (event: AgentLoopEvent) => dispatchLoopEvent(context, scope, event);
+  const initialInstructions = turn.projection.withCarriedSystem(turn.prompt.instructions);
+  const declaredToolNames = Object.keys(turn.tools);
+  const repairToolCall = chainRepairHooks(
+    config.loop?.repairToolCall,
+    deferredToolRepair(config.loop?.prepareStep),
+  );
+  const maxContinuations = config.loop?.maxContinuations ?? DEFAULT_MAX_CONTINUATIONS;
+  let continuations = 0;
+
+  const runState: StepRunState = {
+    currentMessages: [...context.baseMessages],
+    responseMessages: [],
+    steps: [],
+    attemptTotalUsage: undefined,
+    lastFinishReason: 'stop',
+    continuationInstructions: undefined,
+    activeDriver: turn.selectedModel.driver,
+  };
+
+  for (let stepNumber = 0; ; stepNumber += 1) {
+    let stepOutcome: 'continue' | 'break' | 'return';
+    try {
+      stepOutcome = await executeOneModelStep({
+        execution,
+        turn,
+        ledger,
+        baseMessages: context.baseMessages,
+        providerAttempt: attempt.providerAttempt,
+        isRetrying: () => attempt.retrying,
+        isDraining: () => attempt.draining,
+        onErrorPart: (error) =>
+          retryAfterProviderError(context, attempt, error, runState.attemptTotalUsage),
+        onAbandonedUsage: (usage) => {
+          attempt.discardUsage = attempt.discardUsage
+            ? addUsage(attempt.discardUsage, usage)
+            : usage;
+        },
+        onStepDriver: (stepModel) => {
+          scope.stepModel = stepModel;
+        },
+        takeInjectedMessages: () => takeInjectedMessages(context),
+        attemptSignal,
+        emit,
+        stepNumber,
+        initialInstructions,
+        declaredToolNames,
+        repairToolCall,
+        runState,
+      });
+    } catch (error) {
+      if (
+        hasProviderOrigin(error) &&
+        failureThisRuntimeOwns(error) === undefined &&
+        !execution.executionSignal.aborted
+      ) {
+        const retried = await retryAfterProviderError(
+          context,
+          attempt,
+          error,
+          runState.attemptTotalUsage,
+        );
+        if (retried) return;
+      }
+      throw error;
+    }
+
+    if (stepOutcome === 'return') return;
+    if (stepOutcome === 'continue') continue;
+
+    const terminalVerdict = await evaluateTerminalContinuation({
+      execution,
+      lastFinishReason: runState.lastFinishReason,
+      steps: runState.steps,
+      continuations,
+      maxContinuations,
+      attemptSignal,
+    });
+    if (terminalVerdict.action === 'continue') {
+      continuations += 1;
+      runState.currentMessages = [...runState.currentMessages, terminalVerdict.message];
+      runState.responseMessages.push(terminalVerdict.message);
+      runState.continuationInstructions = terminalVerdict.instructions;
       continue;
     }
-    state.eventsSinceCheckpoint += 1;
-    if (
-      part.type === 'error' &&
-      (await retryAfterProviderError(context, attempt, part.error))
-    ) {
-      continue;
-    }
-    const held =
-      part.type === 'text-delta' &&
-      context.execution.dependencies.config.loop?.stepBarriers?.stepText === 'after-tools';
-    if (isOutputPart(part) && !held) {
-      if (state.firstOutputAt === undefined) state.firstOutputAt = performance.now();
-      await operationLifecycle.firstOutput();
-    }
-    await applyStreamPart(execution, scope, part);
-    if (TOOL_STATUS_PARTS.includes(part.type)) {
-      // Its tool-status checkpoint just wrote the draft.
-      state.eventsSinceCheckpoint = 0;
-      continue;
-    }
-    const structuralBoundary = STRUCTURAL_BOUNDARY_PARTS.includes(part.type);
-    if (structuralBoundary || state.eventsSinceCheckpoint >= checkpointEveryEvents) {
-      await checkpoint(execution);
-      state.eventsSinceCheckpoint = 0;
-      if (part.type === 'finish-step') operationLifecycle.checkpointStep(state.step - 1);
-    }
+    break;
   }
+
+  await emit({
+    type: 'finish',
+    finishReason: runState.lastFinishReason,
+    totalUsage: runState.attemptTotalUsage ?? unknownUsage(),
+  });
 }
 
 /** Every provider attempt of the run, until one ends without being retried. */
-export async function runModelAttempts<CONTEXT, TOOLS extends ToolSet>(
+export async function runModelAttempts<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
   turn: PreparedTurn<CONTEXT, TOOLS>,
 ): Promise<void> {
   const { config, publish, now } = execution.dependencies;
   const { state } = execution;
-  const stopConditions = createStopConditions(execution, turn);
   const loop: AttemptLoopState = {
     retryAttempt: 1,
+    retryWindowStart: performance.now(),
     takenThisAttempt: [],
-    instructionsOverride: undefined,
   };
   const ledger = await createRunProviderLedger({
     store: config.store,
@@ -426,28 +307,63 @@ export async function runModelAttempts<CONTEXT, TOOLS extends ToolSet>(
     selectedModel: turn.selectedModel,
     audited: execution.invocation !== undefined,
   });
-  const context: AttemptContext<CONTEXT, TOOLS> = { execution, turn, loop, ledger };
+
+  // Execute pending approval continuations ONCE before the retry loop so retries never
+  // replay approved side-effects or splice away their durable tool results.
+  const baseMessages: AgentModelMessage[] = [...turn.history];
+  const context: AttemptContext<CONTEXT, TOOLS> = {
+    execution,
+    turn,
+    loop,
+    ledger,
+    baseMessages,
+  };
+  const continuationScope: StreamPartScope = {
+    selectedModel: turn.selectedModel,
+    ledger,
+    providerAttempt: 1,
+  };
+  await executeApprovalContinuations({
+    execution,
+    tools: turn.tools,
+    toolApproval: turn.toolApproval,
+    messages: baseMessages,
+    signal: execution.executionSignal,
+    emit: (event) => dispatchLoopEvent(context, continuationScope, event),
+  });
+
   for (;;) {
     const attempt: ModelAttempt = {
       providerAttempt: loop.retryAttempt,
       attemptPartStart: state.parts.length,
       retrying: false,
       draining: false,
-      attemptAbort: new AbortController(),
+      retryDelayMs: 0,
     };
-    // Linked for this attempt only: the run's signal outlives every attempt it retries.
-    const link = linkAbortSignals(execution.executionSignal, attempt.attemptAbort.signal);
-    try {
-      const result = startAttemptStream(context, attempt, stopConditions, link.signal);
-      await consumeAttempt(context, attempt, result.stream);
-    } finally {
-      link.release();
-    }
+    await runSingleAttempt(context, attempt, execution.executionSignal);
     if (!attempt.retrying) break;
-    // A retried attempt starts its step over: text it held is not the next one's.
+    await config.loop?.onAttemptDiscarded?.({
+      attempt: attempt.providerAttempt,
+      reason: attempt.discardReason ?? 'unknown',
+      ...(attempt.discardUsage !== undefined && { usage: attempt.discardUsage }),
+    });
+    if (attempt.retryDelayMs > 0) {
+      await delay(attempt.retryDelayMs, undefined, { signal: execution.executionSignal });
+    }
+    loop.retryAttempt += 1;
+    await config.store.appendEvent({
+      conversationId: state.run.conversationId,
+      kind: 'retry/started',
+      payload: { attempt: loop.retryAttempt },
+    });
+    state.step = 0;
+    execution.operationLifecycle.resetCheckpointStep();
+    state.lastPromptTokens = { provenance: 'unavailable' };
+    state.terminalDecision = undefined;
+    state.terminalPolicyName = undefined;
+    state.textPartIndex = undefined;
     state.stepGuard = { text: '', toolFailed: false, reasoningChars: 0 };
-    // Subscribers drop what the failed attempt streamed before the next
-    // attempt's first delta arrives.
+    resetStepTextTracking(state);
     await publish({
       type: 'attempt-reset',
       conversationId: state.run.conversationId,

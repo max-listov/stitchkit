@@ -3,26 +3,38 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
-import { type LanguageModel, simulateReadableStream, tool } from 'ai';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV3, MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   type AgentCompactionResult,
+  type AgentModelDriver,
+  type AgentModelStreamPart,
   type AgentRuntimeEvent,
   type AgentRuntimeStore,
+  type AgentUsage,
   type ComposedAgentPrompt,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
+  defineModelRegistry,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import {
   AgentControlDeliverySchema,
   createAgentControlView,
   reduceAgentControlEvent,
 } from '../src/entrypoints/agent-runtime/browser';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
+import { defineAgentTool } from '../src/entrypoints/tools';
 
-const usage = {
+const usage: AgentUsage = {
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
+};
+
+const sdkUsage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
   outputTokens: { total: 1, text: 1, reasoning: undefined },
 };
@@ -68,14 +80,14 @@ function prompt(): ComposedAgentPrompt {
 }
 
 function runtimeConfig(
-  model: LanguageModel,
+  driver: AgentModelDriver,
   events: AgentRuntimeEvent[],
   store: AgentRuntimeStore = createMemoryAgentRuntimeStore(),
 ) {
   return {
     protocol,
     store,
-    models: { resolve: () => ({ descriptor, model }) },
+    models: { resolve: () => ({ descriptor, driver }) },
     prompt,
     tools: () => ({}),
     publish: (event: AgentRuntimeEvent) => {
@@ -92,44 +104,25 @@ describe('agent runtime durable operation lifecycle', () => {
     const firstOutput = Promise.withResolvers<void>();
     const releaseDelta = Promise.withResolvers<void>();
     const releaseFinish = Promise.withResolvers<void>();
-    let stage = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async () => ({
-        stream: new ReadableStream({
-          async pull(controller) {
-            if (stage === 0) {
-              stage = 1;
-              controller.enqueue({ type: 'stream-start', warnings: [] });
-              return;
-            }
-            if (stage === 1) {
-              stage = 2;
-              controller.enqueue({ type: 'text-start', id: 'text-1' });
-              return;
-            }
-            if (stage === 2) {
+    const driver: AgentModelDriver = {
+      provider: 'test',
+      modelId: 'test-model',
+      async stream() {
+        return {
+          parts: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: 'text-start', id: 'text-1' };
               await releaseDelta.promise;
-              stage = 3;
-              controller.enqueue({ type: 'text-delta', id: 'text-1', delta: 'hello' });
-              return;
-            }
-            if (stage === 3) {
+              yield { type: 'text-delta', id: 'text-1', delta: 'hello' };
               await releaseFinish.promise;
-              stage = 4;
-              controller.enqueue({ type: 'text-end', id: 'text-1' });
-              return;
-            }
-            controller.enqueue({
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: undefined },
-              usage,
-            });
-            controller.close();
+              yield { type: 'text-end', id: 'text-1' };
+              yield { type: 'finish', finishReason: 'stop', usage };
+            },
           },
-        }),
-      }),
-    });
-    const config = runtimeConfig(model, events);
+        };
+      },
+    };
+    const config = runtimeConfig(driver, events);
     const store = config.store;
     config.publish = (event) => {
       events.push(event);
@@ -186,42 +179,28 @@ describe('agent runtime durable operation lifecycle', () => {
 
   test('gives two model steps distinct durable request identities', async () => {
     const events: AgentRuntimeEvent[] = [];
-    const model = new MockLanguageModelV4({
-      doStream: [
-        {
-          stream: simulateReadableStream({
-            chunks: [
-              { type: 'tool-call', toolCallId: 'tool-1', toolName: 'lookup', input: '{}' },
-              {
-                type: 'finish',
-                finishReason: { unified: 'tool-calls', raw: undefined },
-                usage,
-              },
-            ],
-          }),
-        },
-        {
-          stream: simulateReadableStream({
-            chunks: [
-              { type: 'text-start', id: 'text-2' },
-              { type: 'text-delta', id: 'text-2', delta: 'done' },
-              { type: 'text-end', id: 'text-2' },
-              {
-                type: 'finish',
-                finishReason: { unified: 'stop', raw: undefined },
-                usage,
-              },
-            ],
-          }),
-        },
+    const driver = createScriptedModelDriver({
+      provider: 'test',
+      modelId: 'test-model',
+      steps: [
+        [
+          { type: 'tool-call', toolCallId: 'tool-1', toolName: 'lookup', input: '{}' },
+          { type: 'finish', finishReason: 'tool-calls', usage },
+        ],
+        [
+          { type: 'text-start', id: 'text-2' },
+          { type: 'text-delta', id: 'text-2', delta: 'done' },
+          { type: 'text-end', id: 'text-2' },
+          { type: 'finish', finishReason: 'stop', usage },
+        ],
       ],
     });
-    const config = runtimeConfig(model, events);
+    const config = runtimeConfig(driver, events);
     const store = config.store;
     const runtime = createAgentRuntime({
       ...config,
       tools: () => ({
-        lookup: tool({ inputSchema: z.object({}), execute: () => ({ ok: true }) }),
+        lookup: defineAgentTool({ input: z.object({}), execute: () => ({ ok: true }) }),
       }),
       loop: { maxSteps: 3 },
     });
@@ -242,23 +221,24 @@ describe('agent runtime durable operation lifecycle', () => {
 
   test('keeps lifecycle admission around an AI SDK v3 provider model', async () => {
     const events: AgentRuntimeEvent[] = [];
-    const model = new MockLanguageModelV3({
+    expect(() => fromAiSdkModel(new MockLanguageModelV3())).toThrow(TypeError);
+    const model = new MockLanguageModelV4({
       doStream: async () => ({
         stream: simulateReadableStream({
           chunks: [
-            { type: 'text-start', id: 'v3-text' },
-            { type: 'text-delta', id: 'v3-text', delta: 'done' },
-            { type: 'text-end', id: 'v3-text' },
+            { type: 'text-start', id: 'v4-text' },
+            { type: 'text-delta', id: 'v4-text', delta: 'done' },
+            { type: 'text-end', id: 'v4-text' },
             {
               type: 'finish',
               finishReason: { unified: 'stop', raw: undefined },
-              usage,
+              usage: sdkUsage,
             },
           ],
-        } as never),
+        }),
       }),
     });
-    const runtime = createAgentRuntime(runtimeConfig(model, events));
+    const runtime = createAgentRuntime(runtimeConfig(fromAiSdkModel(model), events));
 
     expect((await submit(runtime).result).reason).toBe('success');
     expect(model.doStreamCalls).toHaveLength(1);
@@ -273,42 +253,46 @@ describe('agent runtime durable operation lifecycle', () => {
   test('admits a global provider model ID before provider execution', async () => {
     const events: AgentRuntimeEvent[] = [];
     let providerCalls = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async () => {
-        providerCalls += 1;
-        return {
-          stream: simulateReadableStream({
-            chunks: [
-              {
-                type: 'finish',
-                finishReason: { unified: 'stop', raw: undefined },
-                usage,
-              },
-            ],
+    expect(() => fromAiSdkModel('openai/gpt-4.1-mini')).toThrow(TypeError);
+    const registry = defineModelRegistry({
+      models: {
+        'openai/gpt-4.1-mini': {
+          provider: 'test',
+          modelId: 'openai/gpt-4.1-mini',
+          contextWindow: 1_000,
+          capabilities: [],
+        },
+      },
+      providers: {
+        test: {
+          create: (modelId) => ({
+            provider: 'test',
+            modelId,
+            async stream() {
+              providerCalls += 1;
+              return {
+                parts: {
+                  async *[Symbol.asyncIterator]() {
+                    yield { type: 'finish', finishReason: 'stop', usage };
+                  },
+                },
+              };
+            },
           }),
-        };
+        },
       },
     });
-    const globals = globalThis as typeof globalThis & { AI_SDK_DEFAULT_PROVIDER?: unknown };
-    const previousProvider = globals.AI_SDK_DEFAULT_PROVIDER;
-    globals.AI_SDK_DEFAULT_PROVIDER = {
-      specificationVersion: 'v4',
-      languageModel: () => model,
-    } as never;
-
-    try {
-      const runtime = createAgentRuntime(runtimeConfig('openai/gpt-4.1-mini', events));
-      expect((await submit(runtime).result).reason).toBe('success');
-      expect(providerCalls).toBe(1);
-      expect(operations(events).map((event) => event.operation.phase)).toEqual([
-        'started',
-        'completed',
-      ]);
-      await runtime.close();
-    } finally {
-      if (previousProvider === undefined) delete globals.AI_SDK_DEFAULT_PROVIDER;
-      else globals.AI_SDK_DEFAULT_PROVIDER = previousProvider;
-    }
+    const runtime = createAgentRuntime({
+      ...runtimeConfig(registry.resolve('openai/gpt-4.1-mini').driver, events),
+      models: { resolve: () => registry.resolve('openai/gpt-4.1-mini') },
+    });
+    expect((await submit(runtime).result).reason).toBe('success');
+    expect(providerCalls).toBe(1);
+    expect(operations(events).map((event) => event.operation.phase)).toEqual([
+      'started',
+      'completed',
+    ]);
+    await runtime.close();
   });
 
   test('serializes a deferred lifecycle write after the previous structural checkpoint', async () => {
@@ -336,45 +320,42 @@ describe('agent runtime durable operation lifecycle', () => {
       },
     };
     let providerCalls = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async () => {
+    const driver: AgentModelDriver = {
+      provider: 'test',
+      modelId: 'test-model',
+      async stream() {
         providerCalls += 1;
         order.push(`provider-${providerCalls}`);
+        const parts: AgentModelStreamPart[] =
+          providerCalls === 1
+            ? [
+                {
+                  type: 'tool-call',
+                  toolCallId: 'tool-deferred',
+                  toolName: 'lookup',
+                  input: '{}',
+                },
+                { type: 'finish', finishReason: 'tool-calls', usage },
+              ]
+            : [
+                { type: 'text-start', id: 'text-deferred' },
+                { type: 'text-delta', id: 'text-deferred', delta: 'done' },
+                { type: 'text-end', id: 'text-deferred' },
+                { type: 'finish', finishReason: 'stop', usage },
+              ];
         return {
-          stream: simulateReadableStream({
-            chunks:
-              providerCalls === 1
-                ? [
-                    {
-                      type: 'tool-call',
-                      toolCallId: 'tool-deferred',
-                      toolName: 'lookup',
-                      input: '{}',
-                    },
-                    {
-                      type: 'finish',
-                      finishReason: { unified: 'tool-calls', raw: undefined },
-                      usage,
-                    },
-                  ]
-                : [
-                    { type: 'text-start', id: 'text-deferred' },
-                    { type: 'text-delta', id: 'text-deferred', delta: 'done' },
-                    { type: 'text-end', id: 'text-deferred' },
-                    {
-                      type: 'finish',
-                      finishReason: { unified: 'stop', raw: undefined },
-                      usage,
-                    },
-                  ],
-          } as never),
+          parts: {
+            async *[Symbol.asyncIterator]() {
+              for (const part of parts) yield part;
+            },
+          },
         };
       },
-    });
+    };
     const runtime = createAgentRuntime({
-      ...runtimeConfig(model, events, store),
+      ...runtimeConfig(driver, events, store),
       tools: () => ({
-        lookup: tool({ inputSchema: z.object({}), execute: () => ({ answer: 42 }) }),
+        lookup: defineAgentTool({ input: z.object({}), execute: () => ({ answer: 42 }) }),
       }),
       loop: { maxSteps: 3, checkpointEveryEvents: 10_000 },
     });
@@ -401,15 +382,19 @@ describe('agent runtime durable operation lifecycle', () => {
         return durable.recordRunOperation(input);
       },
     };
-    const model = new MockLanguageModelV4({
-      doStream: async () => {
+    const driver = createScriptedModelDriver({
+      provider: 'test',
+      modelId: 'test-model',
+      onRequest: () => {
         providerCalls += 1;
-        return { stream: simulateReadableStream({ chunks: [] } as never) };
       },
+      steps: [[]],
     });
-    const runtime = createAgentRuntime(runtimeConfig(model, events, store));
+    const runtime = createAgentRuntime(runtimeConfig(driver, events, store));
 
-    expect((await submit(runtime).result).reason).toBe('provider_failure');
+    // Admission failed in storage before the provider was ever contacted, so
+    // the terminal record classifies it as `runtime_failure`, not `provider_failure`.
+    expect((await submit(runtime).result).reason).toBe('runtime_failure');
     expect(providerCalls).toBe(0);
     expect(operations(events)).toEqual([]);
     await runtime.close();
@@ -418,18 +403,10 @@ describe('agent runtime durable operation lifecycle', () => {
   test('records real compaction boundaries before the provider request', async () => {
     const events: AgentRuntimeEvent[] = [];
     const config = runtimeConfig(
-      new MockLanguageModelV4({
-        doStream: async () => ({
-          stream: simulateReadableStream({
-            chunks: [
-              {
-                type: 'finish',
-                finishReason: { unified: 'stop', raw: undefined },
-                usage,
-              },
-            ],
-          }),
-        }),
+      createScriptedModelDriver({
+        provider: 'test',
+        modelId: 'test-model',
+        steps: [[{ type: 'finish', finishReason: 'stop', usage }]],
       }),
       events,
     );
@@ -491,23 +468,19 @@ describe('agent runtime durable operation lifecycle', () => {
         return durable.checkpointRunAssistant(input);
       },
     };
-    const model = new MockLanguageModelV4({
-      doStream: async () => ({
-        stream: simulateReadableStream({
-          chunks: [
-            { type: 'text-start', id: 'text-1' },
-            ...deltas,
-            { type: 'text-end', id: 'text-1' },
-            {
-              type: 'finish',
-              finishReason: { unified: 'stop', raw: undefined },
-              usage,
-            },
-          ],
-        }),
-      }),
+    const driver = createScriptedModelDriver({
+      provider: 'test',
+      modelId: 'test-model',
+      steps: [
+        [
+          { type: 'text-start', id: 'text-1' },
+          ...deltas,
+          { type: 'text-end', id: 'text-1' },
+          { type: 'finish', finishReason: 'stop', usage },
+        ],
+      ],
     });
-    const runtime = createAgentRuntime(runtimeConfig(model, events, store));
+    const runtime = createAgentRuntime(runtimeConfig(driver, events, store));
 
     await submit(runtime).result;
     expect(events.filter((event) => event.type === 'assistant-delta')).toHaveLength(
@@ -524,38 +497,43 @@ describe('agent runtime durable operation lifecycle', () => {
     const events: AgentRuntimeEvent[] = [];
     const secondRequestStarted = Promise.withResolvers<void>();
     let call = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async ({ abortSignal }) => {
+    const driver: AgentModelDriver = {
+      provider: 'test',
+      modelId: 'test-model',
+      async stream(_request, signal) {
         call += 1;
         if (call === 1) {
           return {
-            stream: simulateReadableStream({
-              chunks: [
-                { type: 'tool-call', toolCallId: 'tool-1', toolName: 'lookup', input: '{}' },
-                {
-                  type: 'finish',
-                  finishReason: { unified: 'tool-calls', raw: undefined },
-                  usage,
-                },
-              ],
-            }),
+            parts: {
+              async *[Symbol.asyncIterator]() {
+                yield {
+                  type: 'tool-call',
+                  toolCallId: 'tool-1',
+                  toolName: 'lookup',
+                  input: '{}',
+                };
+                yield { type: 'finish', finishReason: 'tool-calls', usage };
+              },
+            },
           };
         }
         return {
-          stream: new ReadableStream({
-            start(controller) {
-              controller.enqueue({ type: 'stream-start', warnings: [] });
+          parts: {
+            async *[Symbol.asyncIterator]() {
               secondRequestStarted.resolve();
-              abortSignal?.addEventListener('abort', () => controller.close(), { once: true });
+              await new Promise<void>((resolve) => {
+                if (signal.aborted) resolve();
+                else signal.addEventListener('abort', () => resolve(), { once: true });
+              });
             },
-          }),
+          },
         };
       },
-    });
+    };
     const runtime = createAgentRuntime({
-      ...runtimeConfig(model, events, primary.store),
+      ...runtimeConfig(driver, events, primary.store),
       tools: () => ({
-        lookup: tool({ inputSchema: z.object({}), execute: () => ({ answer: 42 }) }),
+        lookup: defineAgentTool({ input: z.object({}), execute: () => ({ answer: 42 }) }),
       }),
       loop: { maxSteps: 3, checkpointEveryEvents: 20 },
     });
@@ -585,7 +563,7 @@ describe('agent runtime durable operation lifecycle', () => {
     const compactionEvents: AgentRuntimeEvent[] = [];
     const compactionSecret = 'private-compaction-cause';
     const compactionRuntime = createAgentRuntime({
-      ...runtimeConfig(new MockLanguageModelV4(), compactionEvents),
+      ...runtimeConfig(createScriptedModelDriver({ steps: [] }), compactionEvents),
       history: {
         compact: () => Promise.reject(new Error(compactionSecret)),
       },
@@ -600,17 +578,23 @@ describe('agent runtime durable operation lifecycle', () => {
 
     const cancellationEvents: AgentRuntimeEvent[] = [];
     const requestStarted = Promise.withResolvers<void>();
-    const blocked = new MockLanguageModelV4({
-      doStream: async ({ abortSignal }) => ({
-        stream: new ReadableStream({
-          start(controller) {
-            controller.enqueue({ type: 'stream-start', warnings: [] });
-            requestStarted.resolve();
-            abortSignal?.addEventListener('abort', () => controller.close(), { once: true });
+    const blocked: AgentModelDriver = {
+      provider: 'test',
+      modelId: 'test-model',
+      async stream(_request, signal) {
+        return {
+          parts: {
+            async *[Symbol.asyncIterator]() {
+              requestStarted.resolve();
+              await new Promise<void>((resolve) => {
+                if (signal.aborted) resolve();
+                else signal.addEventListener('abort', () => resolve(), { once: true });
+              });
+            },
           },
-        }),
-      }),
-    });
+        };
+      },
+    };
     const cancelledRuntime = createAgentRuntime(runtimeConfig(blocked, cancellationEvents));
     const cancelled = submit(cancelledRuntime);
     const admission = await cancelled.admission;
@@ -633,19 +617,15 @@ describe('agent runtime durable operation lifecycle', () => {
     const secret = 'provider-secret-response';
     const failedRuntime = createAgentRuntime(
       runtimeConfig(
-        new MockLanguageModelV4({
-          doStream: async () => ({
-            stream: simulateReadableStream({
-              chunks: [
-                { type: 'error', error: new Error(secret) },
-                {
-                  type: 'finish',
-                  finishReason: { unified: 'error', raw: undefined },
-                  usage,
-                },
-              ],
-            }),
-          }),
+        createScriptedModelDriver({
+          provider: 'test',
+          modelId: 'test-model',
+          steps: [
+            [
+              { type: 'error', error: new Error(secret) },
+              { type: 'finish', finishReason: 'error', usage },
+            ],
+          ],
         }),
         failureEvents,
       ),
@@ -687,20 +667,20 @@ describe('agent runtime durable operation lifecycle', () => {
     let calls = 0;
     const runtime = createAgentRuntime({
       ...runtimeConfig(
-        new MockLanguageModelV4({
-          doStream: async () => {
+        createScriptedModelDriver({
+          provider: 'test',
+          modelId: 'test-model',
+          onRequest: () => {
             calls += 1;
-            return {
-              stream: simulateReadableStream({
-                chunks: [
-                  { type: 'text-start', id: 'answer' },
-                  { type: 'text-delta', id: 'answer', delta: 'done' },
-                  { type: 'text-end', id: 'answer' },
-                  { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-                ],
-              }),
-            };
           },
+          steps: [
+            [
+              { type: 'text-start', id: 'answer' },
+              { type: 'text-delta', id: 'answer', delta: 'done' },
+              { type: 'text-end', id: 'answer' },
+              { type: 'finish', finishReason: 'stop', usage },
+            ],
+          ],
         }),
         events,
         deferred,
@@ -741,18 +721,22 @@ describe('agent runtime durable operation lifecycle', () => {
     };
     const runtime = createAgentRuntime({
       ...runtimeConfig(
-        new MockLanguageModelV4({
-          doStream: async () => ({
-            stream: simulateReadableStream({
-              chunks: [
-                { type: 'text-start', id: 'answer' },
-                { type: 'text-delta', id: 'answer', delta: 'done' },
-                { type: 'text-end', id: 'answer' },
-                { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-              ],
-            }),
-          }),
-        }),
+        {
+          provider: 'test',
+          modelId: 'test-model',
+          async stream() {
+            return {
+              parts: {
+                async *[Symbol.asyncIterator]() {
+                  yield { type: 'text-start', id: 'answer' };
+                  yield { type: 'text-delta', id: 'answer', delta: 'done' };
+                  yield { type: 'text-end', id: 'answer' };
+                  yield { type: 'finish', finishReason: 'stop', usage };
+                },
+              },
+            };
+          },
+        },
         events,
         deferred,
       ),
@@ -804,20 +788,20 @@ describe('agent runtime durable operation lifecycle', () => {
     };
     const conflicted = createAgentRuntime({
       ...runtimeConfig(
-        new MockLanguageModelV4({
-          doStream: async () => {
+        createScriptedModelDriver({
+          provider: 'test',
+          modelId: 'test-model',
+          onRequest: () => {
             calls += 1;
-            return {
-              stream: simulateReadableStream({
-                chunks: [
-                  { type: 'text-start', id: 'answer' },
-                  { type: 'text-delta', id: 'answer', delta: 'done' },
-                  { type: 'text-end', id: 'answer' },
-                  { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-                ],
-              }),
-            };
           },
+          steps: [
+            [
+              { type: 'text-start', id: 'answer' },
+              { type: 'text-delta', id: 'answer', delta: 'done' },
+              { type: 'text-end', id: 'answer' },
+              { type: 'finish', finishReason: 'stop', usage },
+            ],
+          ],
         }),
         conflictEvents,
         refusing,
@@ -838,17 +822,17 @@ describe('agent runtime durable operation lifecycle', () => {
     const rejectedEvents: AgentRuntimeEvent[] = [];
     const rejecting = createAgentRuntime({
       ...runtimeConfig(
-        new MockLanguageModelV4({
-          doStream: async () => ({
-            stream: simulateReadableStream({
-              chunks: [
-                { type: 'text-start', id: 'answer' },
-                { type: 'text-delta', id: 'answer', delta: 'done' },
-                { type: 'text-end', id: 'answer' },
-                { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-              ],
-            }),
-          }),
+        createScriptedModelDriver({
+          provider: 'test',
+          modelId: 'test-model',
+          steps: [
+            [
+              { type: 'text-start', id: 'answer' },
+              { type: 'text-delta', id: 'answer', delta: 'done' },
+              { type: 'text-end', id: 'answer' },
+              { type: 'finish', finishReason: 'stop', usage },
+            ],
+          ],
         }),
         rejectedEvents,
       ),
@@ -861,7 +845,7 @@ describe('agent runtime durable operation lifecycle', () => {
     // And this runtime's own callback failing before any provider call.
     const runtimeEvents: AgentRuntimeEvent[] = [];
     const broken = createAgentRuntime({
-      ...runtimeConfig(new MockLanguageModelV4(), runtimeEvents),
+      ...runtimeConfig(createScriptedModelDriver({ steps: [] }), runtimeEvents),
       prompt: () => {
         throw new Error('prompt fixture');
       },

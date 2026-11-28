@@ -2,7 +2,9 @@
 title: Model invocations share provider evidence
 description: Plain completions and agent loops use one store, an atomic admission fence and one audited provider boundary.
 status: accepted
+amendedBy: ["0336"]
 created: 2026-09-28
+updated: 2026-11-28
 ---
 
 # Model invocations share provider evidence
@@ -18,8 +20,12 @@ agent changes the prompt and makes its behavior depend on agent policy.
 
 `createModelInvocationLedger` belongs to `stitchkit/agent-runtime`, an evolving
 entrypoint. Its completion path calls the AI SDK once per explicitly declared model
-attempt, with `maxRetries: 0`, the supplied user prompt, and no tools or instructions.
-The existing agent loop opts into the same provider middleware via `invocations`.
+attempt, with `maxRetries: 0`, the supplied user prompt, and no tools or instructions
+(amended by ADR 0336: plain completions stream directly through `AgentModelDriver.stream()`
+without `generateText`).
+The existing agent loop opts into the same provider middleware via `invocations`
+(amended by ADR 0336: the audited boundary decorates `AgentModelDriver` rather than
+AI SDK `wrapLanguageModel`).
 It retains its admission, tools, step checkpoints, retry policy and fencing.
 
 The canonical `AgentRuntimeStore` event log owns invocation starts, provider requests,

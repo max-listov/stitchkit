@@ -13,14 +13,14 @@ import {
   projectAgentHistory,
   structuredCompaction,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import {
   type AgentHarnessProfileEvent,
   createAgentHarnessControlServer,
   createAgentHarnessFileResources,
   createHeadlessAgentHarness,
 } from '../src/entrypoints/agent-runtime/harness';
-import { defineRuntimeTool } from '../src/entrypoints/tools';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import { defineRuntimeTool, mountAgentTools } from '../src/entrypoints/tools';
 import { sqliteScratchDir } from './support/sqlite-scratch';
 
 const usage = {
@@ -77,7 +77,7 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
@@ -232,7 +232,9 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4({ doStream: [textStream('during-attach')] }),
+          driver: fromAiSdkModel(
+            new MockLanguageModelV4({ doStream: [textStream('during-attach')] }),
+          ),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
@@ -407,17 +409,14 @@ describe('published headless Agent harness', () => {
       "---\nname: 'changed'\ndescription: changed\n---\n\nChanged body.",
     );
     expect(await discovered.load()).toBe(loaded);
-    const tools = mountAgent([], {
+    const tools = mountAgentTools([], {
       access: { open: 'local-operator' },
       runtimeTools: discovered.runtimeTools,
     });
     const execute = tools.read_resource?.execute;
     if (!execute) throw new Error('expected read_resource');
     expect(
-      await execute(
-        { name: 'review' },
-        { toolCallId: 'resource', messages: [], context: undefined },
-      ),
+      await execute({ name: 'review' }, { toolCallId: 'resource', messages: [] }),
     ).toEqual(
       expect.objectContaining({
         name: 'review',
@@ -463,7 +462,9 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model: new MockLanguageModelV4({ doStream: [textStream('complete')] }),
+          driver: fromAiSdkModel(
+            new MockLanguageModelV4({ doStream: [textStream('complete')] }),
+          ),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
@@ -562,13 +563,13 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: ['tools'],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
       promptBudget: ({ contextWindow }) => budget(contextWindow),
       tools: (context) =>
-        mountAgent([], {
+        mountAgentTools([], {
           runtimeTools: [dangerous],
           access: { gate: context.toolFenceLifecycle },
         }),
@@ -705,13 +706,13 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: ['tools'],
           },
-          model: firstModel,
+          driver: fromAiSdkModel(firstModel),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
       promptBudget: ({ contextWindow }) => budget(contextWindow),
       tools: (context) =>
-        mountAgent([], {
+        mountAgentTools([], {
           runtimeTools: [effect],
           access: { gate: context.toolFenceLifecycle },
         }),
@@ -744,13 +745,13 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: ['tools'],
           },
-          model: secondModel,
+          driver: fromAiSdkModel(secondModel),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
       promptBudget: ({ contextWindow }) => budget(contextWindow),
       tools: (context) =>
-        mountAgent([], {
+        mountAgentTools([], {
           runtimeTools: [effect],
           access: { gate: context.toolFenceLifecycle },
         }),
@@ -824,13 +825,13 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: ['tools'],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
       promptBudget: ({ contextWindow }) => budget(contextWindow),
       tools: (context) =>
-        mountAgent([], {
+        mountAgentTools([], {
           runtimeTools: [denied],
           access: { gate: context.toolFenceLifecycle },
         }),
@@ -917,7 +918,7 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: ['tools'],
           },
-          model: context.model === 'a' ? modelA : modelB,
+          driver: fromAiSdkModel(context.model === 'a' ? modelA : modelB),
         }),
       },
       resources: {
@@ -936,7 +937,7 @@ describe('published headless Agent harness', () => {
       promptBudget: ({ contextWindow }) => budget(contextWindow),
       estimateResourceTokens: () => ({ value: 4, provenance: 'measured' }),
       tools: (context) =>
-        mountAgent([], {
+        mountAgentTools([], {
           runtimeTools: [echo],
           context: context.context,
           access: {
@@ -1037,13 +1038,13 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: ['tools'],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
       promptBudget: ({ contextWindow }) => budget(contextWindow),
       tools: (context) =>
-        mountAgent([], {
+        mountAgentTools([], {
           runtimeTools: [effect],
           access: { gate: context.toolFenceLifecycle },
         }),
@@ -1071,7 +1072,7 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model: replacementModel,
+          driver: fromAiSdkModel(replacementModel),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
@@ -1106,7 +1107,7 @@ describe('published headless Agent harness', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },

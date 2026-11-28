@@ -8,8 +8,8 @@
  * whether it waited or not.
  */
 import { describe, expect, test } from 'bun:test';
-import { type Tool, tool } from 'ai';
 import { createToolDependencyResolver } from '../src/entrypoints/agent-runtime';
+import { type AgentTool, defineAgentTool } from '../src/entrypoints/tools';
 import {
   answer,
   call,
@@ -22,8 +22,8 @@ import {
 } from './support/step-barriers-harness';
 
 /** What the conversation and the event stream hold for call `c-w2`. */
-async function observeCall(w2: Tool, waits: boolean) {
-  const w1 = tool({ inputSchema: noInput, execute: async () => 'w1-done' });
+async function observeCall(w2: AgentTool, waits: boolean) {
+  const w1 = defineAgentTool({ input: noInput, execute: async () => 'w1-done' });
   const calls = waits
     ? [call('c-w1', 'w1', { id: 'e1' }), call('c-w2', 'w2', { id: 'e1' })]
     : [call('c-w2', 'w2', { id: 'e1' }), call('c-w1', 'w1', { id: 'e2' })];
@@ -58,13 +58,13 @@ const iterate = async function* () {
 };
 
 describe('a tool keeps one result shape under dependency order', () => {
-  const shapes: Record<string, Tool> = {
-    'an arrow returning an async iterable': tool({
-      inputSchema: noInput,
+  const shapes: Record<string, AgentTool> = {
+    'an arrow returning an async iterable': defineAgentTool({
+      input: noInput,
       execute: () => iterate(),
     }),
-    'an async function returning an async iterable': tool({
-      inputSchema: noInput,
+    'an async function returning an async iterable': defineAgentTool({
+      input: noInput,
       execute: async () => iterate(),
     }),
   };
@@ -78,8 +78,8 @@ describe('a tool keeps one result shape under dependency order', () => {
   }
 
   test('an async *execute streams with or without waiting', async () => {
-    const w2 = tool({
-      inputSchema: noInput,
+    const w2 = defineAgentTool({
+      input: noInput,
       async *execute() {
         yield 'w2-partial';
         yield 'w2-done';
@@ -92,8 +92,8 @@ describe('a tool keeps one result shape under dependency order', () => {
   });
 
   test('a streaming tool records its final value once, its intermediate values never', async () => {
-    const streaming = tool({
-      inputSchema: noInput,
+    const streaming = defineAgentTool({
+      input: noInput,
       async *execute() {
         yield 'partial';
         yield 'done';

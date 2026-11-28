@@ -1,14 +1,9 @@
-import type {
-  GeneratedFile,
-  ModelMessage,
-  PrepareStepFunction,
-  StopCondition,
-  ToolApprovalConfiguration,
-  ToolSet,
-} from 'ai';
 import type { z } from 'zod';
+import type { AgentGeneratedFile, AgentModelMessage } from '../agent-parts/model';
 import type { LocalStepDurability } from '../durability/engine';
+import { assertNonNegativeSafeInteger } from '../internal/positive-integer';
 import type { ToolGate } from '../tools/access';
+import type { AgentToolSet } from '../tools/agent-tools';
 import type { AgentChildManager } from './children';
 import type { AgentCompactionResult } from './compaction';
 import type {
@@ -21,10 +16,22 @@ import type { AgentRuntimeEvent, AgentRuntimePublisher } from './events';
 import type { AgentHistoryProjectionOptions } from './history';
 import type { ModelInvocationTrace } from './invocation-schema';
 import type { ModelInvocationLedger } from './invocations';
-import type { AgentResolvedModel } from './models';
+import type { AgentModelDescriptor, AgentResolvedModel } from './models';
+import type {
+  AgentPrepareStepInput,
+  AgentPrepareStepResult,
+  AgentStepResult,
+  AgentStepToolCallBatchHook,
+  AgentToolApprovalConfiguration,
+  AgentToolCallRepairFunction,
+} from './models-driver-step';
 import type { AgentObservability } from './observability';
 import type { ComposedAgentPrompt } from './prompt';
-import type { AgentTerminalAcceptanceInput } from './protocol';
+import type {
+  AgentTerminalAcceptanceDecision,
+  AgentTerminalAcceptanceInput,
+} from './protocol';
+import type { AgentProviderFailureReason } from './provider-failure';
 import type { AgentRetryPolicy } from './retry-policy';
 import type { AgentStepBarriers } from './run-step-barriers';
 import type { AgentStepSpend } from './run-step-spend';
@@ -40,6 +47,7 @@ import type {
   AgentMessagePart,
   AgentRun,
   AgentSnapshot,
+  AgentUsage,
   AgentUsageValue,
 } from './schemas';
 import type { AnyAgentStateSlot } from './state-slots';
@@ -54,7 +62,9 @@ export interface AgentRuntimeProtocolInput<CONTEXT> {
   parseContext(input: unknown): CONTEXT;
   parseInputMetadata(input: unknown): z.infer<typeof AgentJsonObjectSchema>;
   parsePart(input: unknown): AgentMessagePart;
-  acceptTerminal?(input: AgentTerminalAcceptanceInput): boolean | Promise<boolean>;
+  acceptTerminal?(
+    input: AgentTerminalAcceptanceInput,
+  ): AgentTerminalAcceptanceDecision | Promise<AgentTerminalAcceptanceDecision>;
 }
 
 export interface AgentRuntimeInput {
@@ -172,16 +182,21 @@ export interface AgentRuntimeRunContext<CONTEXT> {
   contextUsage?: AgentContextUsage;
   /**
    * Absent until a model is resolved for the run; carries the resolved model
-   * descriptor and adapter hooks (`normalizeUsage`, `resolveResponseProvider`).
+   * descriptor and `AgentModelDriver`.
    */
   selectedModel?: AgentResolvedModel;
 }
 
-export type AgentRuntimePrepareStep<CONTEXT, TOOLS extends ToolSet = ToolSet> = (
-  input: Parameters<PrepareStepFunction<TOOLS>>[0] & AgentRuntimeRunContext<CONTEXT>,
-) => ReturnType<PrepareStepFunction<TOOLS>>;
+export type AgentRuntimePrepareStep<CONTEXT, TOOLS extends AgentToolSet = AgentToolSet> = (
+  input: AgentPrepareStepInput<TOOLS> & AgentRuntimeRunContext<CONTEXT>,
+) =>
+  | AgentPrepareStepResult<TOOLS>
+  | undefined
+  | void
+  | Promise<AgentPrepareStepResult<TOOLS> | undefined>
+  | Promise<void>;
 
-export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
+export interface AgentRuntimeConfig<CONTEXT, TOOLS extends AgentToolSet = AgentToolSet> {
   protocol: AgentRuntimeProtocolInput<CONTEXT>;
   store: AgentRuntimeStore;
   /** Opt into shared completion/agent receipts using this same store. */
@@ -243,27 +258,58 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
      */
     idleTimeoutMs?: number | null;
     /**
+     * Hard wall-clock deadline for the entire run, in milliseconds. Unlike `idleTimeoutMs`,
+     * this clock never pauses during tool execution or resets on provider output.
+     * Omit or pass `null` to disable.
+     */
+    maxDurationMs?: number | null;
+    /**
      * Prepare each provider step. Throw `AgentContextOverflowError` when the
      * application can prove the assembled step exceeds the model budget.
      */
     prepareStep?: AgentRuntimePrepareStep<CONTEXT, TOOLS>;
-    stopPolicies?: readonly AgentRuntimeStopPolicy<TOOLS, CONTEXT>[];
-    toolApproval?: ToolApprovalConfiguration<TOOLS, CONTEXT>;
-    /** Enables the SDK's HMAC binding between approval request and exact tool call/input. */
+    /** First-class hook to rewrite an inactive, unknown or invalid tool call before execution. */
+    repairToolCall?: AgentToolCallRepairFunction;
+    stopPolicies?: readonly AgentRuntimeStopPolicy<CONTEXT>[];
+    toolApproval?: AgentToolApprovalConfiguration<TOOLS, CONTEXT>;
+    /** Enables WebCrypto HMAC-SHA256 binding between approval request and exact tool call/input. */
     toolApprovalSecret?: string | Uint8Array;
     /** Retry provider stream failures only before any tool call in that attempt. */
     retry?: AgentRetryPolicy;
     /** Guards on each model step: call count, call order by entity, reasoning, text after tools. */
     stepBarriers?: AgentStepBarriers;
+    /** Maximum terminal continuations allowed when `protocol.acceptTerminal` returns `continue`. Default 3. */
+    maxContinuations?: number;
+    /** Whole-step policy hook invoked once all tool calls on a step are parsed and validated. */
+    beforeStepToolCalls?: AgentStepToolCallBatchHook<CONTEXT>;
+    /** Invoked when a provider attempt is discarded for retry, with its failure reason and any billed usage. */
+    onAttemptDiscarded?(input: {
+      readonly attempt: number;
+      readonly reason: AgentProviderFailureReason;
+      readonly usage?: AgentUsage;
+    }): void | Promise<void>;
+    /** Invoked when a provider announces the start of a streamed tool-call input block. */
+    onToolInputStart?(input: {
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly providerExecuted?: boolean;
+    }): void | Promise<void>;
   };
   history?: {
     compact?(input: {
       conversationId: string;
       store: AgentRuntimeStore;
       signal: AbortSignal;
+      context: CONTEXT;
+      model: AgentModelDescriptor;
+      tools: TOOLS;
     }): AgentCompactionResult | Promise<AgentCompactionResult>;
-    project?(messages: readonly AgentMessage[]): ModelMessage[] | Promise<ModelMessage[]>;
+    project?(
+      messages: readonly AgentMessage[],
+      context: { readonly tools: TOOLS },
+    ): AgentModelMessage[] | Promise<AgentModelMessage[]>;
     resolveFile?: AgentHistoryProjectionOptions['resolveFile'];
+    resolveToolModelOutput?: AgentHistoryProjectionOptions['resolveToolModelOutput'];
     unresolvedFile?: AgentHistoryProjectionOptions['unresolvedFile'];
     interruptedAssistant?: AgentHistoryProjectionOptions['interruptedAssistant'];
     evidencePolicy?: AgentHistoryEvidencePolicy;
@@ -299,7 +345,7 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
   stepSpendTimeoutMs?: number;
   observe?: AgentObservability;
   persistGeneratedFile?(
-    file: GeneratedFile,
+    file: AgentGeneratedFile,
   ):
     | { reference: string; filename?: string }
     | Promise<{ reference: string; filename?: string }>;
@@ -312,11 +358,11 @@ export interface AgentRuntimeConfig<CONTEXT, TOOLS extends ToolSet = ToolSet> {
  * same run context `prepareStep` sees, so a rule that depends on its run reads it
  * here instead of keeping a map of its own keyed by run.
  */
-export interface AgentRuntimeStopPolicy<TOOLS extends ToolSet = ToolSet, CONTEXT = unknown> {
+export interface AgentRuntimeStopPolicy<CONTEXT = unknown> {
   name: string;
   when: (
-    input: Parameters<StopCondition<TOOLS>>[0] & AgentRuntimeRunContext<CONTEXT>,
-  ) => ReturnType<StopCondition<TOOLS>>;
+    input: { readonly steps: readonly AgentStepResult[] } & AgentRuntimeRunContext<CONTEXT>,
+  ) => boolean | Promise<boolean>;
 }
 
 export interface AgentRuntime<CONTEXT = unknown> {
@@ -351,9 +397,14 @@ export interface AgentRuntime<CONTEXT = unknown> {
  * phase in its own module taking that state — submission (`runtime-submit`),
  * recovery (`runtime-recovery`), and run control and close (`runtime-control`).
  */
-export function createAgentRuntime<CONTEXT, TOOLS extends ToolSet>(
+export function createAgentRuntime<CONTEXT, TOOLS extends AgentToolSet>(
   config: AgentRuntimeConfig<CONTEXT, TOOLS>,
 ): AgentRuntime<CONTEXT> {
+  assertNonNegativeSafeInteger(
+    'loop.maxContinuations',
+    config.loop?.maxContinuations,
+    RangeError,
+  );
   const state = createAgentRuntimeState(config);
   return {
     submit: (rawInput) => submitAgentInput(state, rawInput),

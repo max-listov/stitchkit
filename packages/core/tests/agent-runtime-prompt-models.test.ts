@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import {
   AgentMessageSchema,
@@ -7,6 +8,8 @@ import {
   selectAgentHistory,
   validateAgentModelSnapshot,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
 
 describe('agent prompt and model policy', () => {
   test('reservation overflow is irreducible even with empty history', async () => {
@@ -131,7 +134,7 @@ describe('agent prompt and model policy', () => {
         test: {
           create: () => {
             constructed = true;
-            return new MockLanguageModelV4();
+            return createScriptedModelDriver({ steps: [] });
           },
         },
       },
@@ -148,22 +151,46 @@ describe('agent prompt and model policy', () => {
     expect(constructed).toBeFalse();
   });
 
-  test('a resolved model carries its provider adapter hooks', () => {
+  test('a resolved model carries its provider adapter hooks', async () => {
     // Both hooks answer a question only the adapter can: how this gateway
-    // reports usage, and which upstream actually answered. A registry that
-    // resolves the model and drops them leaves the runtime with a step whose
-    // response has no provider and a usage figure with the wrong provenance —
-    // silently, because everything still typechecks and runs.
+    // reports usage, and which upstream actually answered. Under ADR 0336,
+    // `fromAiSdkModel` binds them directly into the driver's `finish` stream part.
     const registry = defineModelRegistry({
       providers: {
         test: {
-          create: () => new MockLanguageModelV4(),
-          normalizeUsage: () => ({
-            inputTokens: { value: 1, provenance: 'provider-reported' },
-            outputTokens: { provenance: 'unavailable' },
-            cost: { provenance: 'unavailable' },
-          }),
-          resolveResponseProvider: () => 'Upstream',
+          create: () =>
+            fromAiSdkModel(
+              new MockLanguageModelV4({
+                doStream: async () => ({
+                  stream: simulateReadableStream({
+                    chunks: [
+                      {
+                        type: 'finish',
+                        finishReason: { unified: 'stop', raw: undefined },
+                        usage: {
+                          inputTokens: {
+                            total: 1,
+                            noCache: 1,
+                            cacheRead: undefined,
+                            cacheWrite: undefined,
+                          },
+                          outputTokens: { total: 0, text: 0, reasoning: undefined },
+                        },
+                        providerMetadata: { gateway: { provider: 'Upstream' } },
+                      },
+                    ],
+                  }),
+                }),
+              }),
+              {
+                normalizeUsage: () => ({
+                  inputTokens: { value: 1, provenance: 'provider-reported' },
+                  outputTokens: { provenance: 'unavailable' },
+                  cost: { provenance: 'unavailable' },
+                }),
+                resolveResponseProvider: () => 'Upstream',
+              },
+            ),
         },
       },
       models: {
@@ -176,8 +203,28 @@ describe('agent prompt and model policy', () => {
       },
     });
     const resolved = registry.resolve('text');
-    expect(resolved.resolveResponseProvider?.({ providerMetadata: {} })).toBe('Upstream');
-    expect(resolved.normalizeUsage).toBeDefined();
+    const stream = await resolved.driver.stream(
+      {
+        instructions: [],
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [],
+        settings: {},
+        correlation: { conversationId: 'c1', attemptId: 'a1', step: 0 },
+      },
+      new AbortController().signal,
+    );
+    const parts = [];
+    for await (const part of stream.parts) parts.push(part);
+    const finish = parts.find((part) => part.type === 'finish');
+    expect(finish).toMatchObject({
+      type: 'finish',
+      responseProvider: 'Upstream',
+      usage: {
+        inputTokens: { value: 1, provenance: 'provider-reported' },
+        outputTokens: { provenance: 'unavailable' },
+        cost: { provenance: 'unavailable' },
+      },
+    });
   });
 
   test('preserves provider options on structured system instructions', async () => {
@@ -301,7 +348,7 @@ describe('agent prompt and model policy', () => {
 
   test('publishes versioned model snapshots and rejects stale or unavailable entries', () => {
     const registry = defineModelRegistry({
-      providers: { test: { create: () => new MockLanguageModelV4() } },
+      providers: { test: { create: () => createScriptedModelDriver({ steps: [] }) } },
       models: {
         removed: {
           provider: 'test',

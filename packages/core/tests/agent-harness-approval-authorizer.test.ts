@@ -9,12 +9,13 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import { createAgentCodingTools } from '../src/entrypoints/agent-runtime/coding-tools';
 import {
   AgentHarnessApprovalRejectedError,
   createHeadlessAgentHarness,
 } from '../src/entrypoints/agent-runtime/harness';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import { mountAgentTools } from '../src/entrypoints/tools';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -80,7 +81,7 @@ describe('approval response-time authorizer', () => {
               contextWindow: 16_000,
               capabilities: ['tools'],
             },
-            model,
+            driver: fromAiSdkModel(model),
           }),
         },
         resources: { load: () => ({ resources: [], diagnostics: [] }) },
@@ -92,7 +93,7 @@ describe('approval response-time authorizer', () => {
           providerOverhead: { provenance: 'unavailable' },
         }),
         tools: () =>
-          mountAgent([], {
+          mountAgentTools([], {
             access: { open: 'local-operator' },
             runtimeTools: createAgentCodingTools({ root, authorize: () => true }),
           }),
@@ -104,7 +105,7 @@ describe('approval response-time authorizer', () => {
         // The policy judges the responder, not the request: only the initiating
         // principal may decide.
         authorizeApprovalResponse: ({ responder }) =>
-          (responder as { principalId?: string }).principalId === 'owner'
+          z.object({ principalId: z.literal('owner') }).safeParse(responder).success
             ? { status: 'allowed' }
             : { status: 'rejected', reason: 'approver is not the initiating principal' },
       });

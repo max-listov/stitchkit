@@ -117,8 +117,13 @@ export interface RuntimeContext {
   spanId?: string;
   ipAddress?: string;
   userAgent?: string;
-  /** Transport cancellation for the active call (MCP and future cancellable lanes). */
+  /** Transport cancellation for the active call (HTTP disconnect/deadline, MCP and future cancellable lanes). */
   signal?: AbortSignal;
+  /**
+   * Remaining call deadline budget in integer milliseconds (subtracting optional `reserveMs`), or
+   * `undefined` when neither an inbound deadline header nor an endpoint `timeout` applies.
+   */
+  remainingTimeoutMs?: (reserveMs?: number) => number | undefined;
   /** The provider's id of the call on the agent transport; absent on every other one. */
   toolCallId?: string;
   /** Validated metadata for an MCP call; absent on every other transport. */
@@ -154,6 +159,13 @@ export interface HandlerContext<TParams = undefined, TInput = undefined> {
   spanId?: string;
   ipAddress?: string;
   userAgent?: string;
+  /** Transport cancellation for the active call (HTTP disconnect/deadline, MCP and future cancellable lanes). */
+  signal?: AbortSignal;
+  /**
+   * Remaining call deadline budget in integer milliseconds (subtracting optional `reserveMs`), or
+   * `undefined` when neither an inbound deadline header nor an endpoint `timeout` applies.
+   */
+  remainingTimeoutMs?: (reserveMs?: number) => number | undefined;
   /** Validated metadata for an MCP call; absent on every other transport. */
   mcp?: McpCallContext;
   /** Report progress on the call in flight — a no-op when none was asked for. */

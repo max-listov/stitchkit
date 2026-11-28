@@ -1,4 +1,6 @@
+import { join } from 'node:path';
 import { evidenceLanes } from './evidence-lanes';
+import type { NodeQueueStep } from './node-queue';
 import { starterHeadDecision } from './release-starter-head';
 import { readReleaseTrain } from './release-train';
 
@@ -109,4 +111,63 @@ export async function releaseProfile(root: string): Promise<VerifyProfile> {
     gate: `verify:release:${targets.sort().join('+')}`,
     steps: [...FAST_STEPS, ...steps],
   };
+}
+
+/**
+ * Builds the `run-step-plan/v1` steps for a verify profile.
+ *
+ * Sequential steps always appear individually; heavy lanes appear as one bounded parallel step
+ * (`--internal-heavy auto` to measure host memory only after acquiring the queue slot, or an
+ * explicit positive concurrency), or individually when concurrency is explicitly pinned to 1.
+ */
+export function buildVerifyStepPlan(input: {
+  readonly root: string;
+  readonly sequential: readonly string[];
+  readonly heavy: readonly string[];
+  readonly heavyConcurrency: number | 'auto';
+  readonly verifyScript?: string;
+  readonly runtime?: string;
+}): readonly NodeQueueStep[] {
+  const runtime = input.runtime ?? process.execPath;
+  const verifyScript = input.verifyScript ?? join(input.root, 'scripts/verify.ts');
+  const steps: NodeQueueStep[] = [];
+  let built = false;
+  for (const step of input.sequential) {
+    steps.push({
+      name: step,
+      argv: built
+        ? [runtime, verifyScript, '--internal-step', step, '--built']
+        : ['bun', 'run', step],
+      cwd: input.root,
+    });
+    if (step === 'build') built = true;
+  }
+  if (input.heavy.length > 0) {
+    if (input.heavyConcurrency !== 'auto' && input.heavyConcurrency <= 1) {
+      for (const lane of input.heavy) {
+        steps.push({
+          name: lane,
+          argv: built
+            ? [runtime, verifyScript, '--internal-step', lane, '--built']
+            : ['bun', 'run', lane],
+          cwd: input.root,
+        });
+      }
+    } else {
+      steps.push({
+        name: 'heavy-lanes',
+        argv: [
+          runtime,
+          verifyScript,
+          '--internal-heavy',
+          String(input.heavyConcurrency),
+          ...(built ? ['--built'] : []),
+          '--',
+          ...input.heavy,
+        ],
+        cwd: input.root,
+      });
+    }
+  }
+  return steps;
 }

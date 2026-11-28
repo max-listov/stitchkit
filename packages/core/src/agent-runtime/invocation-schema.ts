@@ -32,7 +32,7 @@ export const CompletionInvocationInputSchema = z
     settings: z
       .object({
         maxOutputTokens: z.int().positive().optional(),
-        temperature: z.number().finite().optional(),
+        temperature: z.number().optional(),
         topP: z.number().min(0).max(1).optional(),
         seed: z.int().optional(),
       })

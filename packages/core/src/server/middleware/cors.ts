@@ -136,9 +136,11 @@ export function deniedRequestCors(
  * - `traceparent` / `tracestate` — W3C Trace Context, what
  *   `createHttpClient({ trace: true })` emits on every request; without it that
  *   feature dies on the cross-origin preflight.
+ * - `X-Stitchkit-Timeout-Ms` — relative remaining deadline budget propagated by
+ *   `createClient` / `createHttpClient`.
  */
 export const DEFAULT_CORS_ALLOW_HEADERS =
-  'Content-Type, Authorization, X-Trace-Id, traceparent, tracestate';
+  'Content-Type, Authorization, X-Trace-Id, traceparent, tracestate, X-Stitchkit-Timeout-Ms';
 
 /**
  * The default `Access-Control-Expose-Headers`. Without it a cross-origin

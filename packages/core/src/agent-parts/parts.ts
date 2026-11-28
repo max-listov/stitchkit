@@ -22,6 +22,7 @@ export type AgentProviderEnvelope = z.infer<typeof AgentProviderEnvelopeSchema>;
 export const AgentTextPartSchema = z.object({
   type: z.literal('text'),
   text: z.string(),
+  provider: AgentProviderEnvelopeSchema.optional(),
 });
 
 export const AgentReasoningPartSchema = z.object({
@@ -44,6 +45,8 @@ export const AgentSourcePartSchema = z.object({
   title: z.string().optional(),
 });
 
+export type AgentSourcePart = z.infer<typeof AgentSourcePartSchema>;
+
 export const AgentToolCallPartSchema = z.object({
   type: z.literal('tool-call'),
   callId: z.string().min(1),
@@ -58,6 +61,7 @@ export const AgentToolResultPartSchema = z.object({
   toolName: z.string().min(1),
   outcome: z.enum(['success', 'error', 'interrupted']),
   output: z.json().optional(),
+  provider: AgentProviderEnvelopeSchema.optional(),
 });
 
 export const AgentToolApprovalRequestPartSchema = z.object({

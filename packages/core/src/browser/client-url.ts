@@ -3,6 +3,7 @@ import { inputIsQuery } from '../internal/http-input';
 import { parseTrailingWildcard } from '../internal/route-pattern';
 import { refuseLocally } from './api-error';
 import type { ContractClientConfig, PathPrefixArgs } from './client';
+import { searchParamsOf } from './http-fetch';
 
 type QueryParams = Record<string, string | number | boolean | Array<string | number>>;
 
@@ -207,15 +208,8 @@ function stripConsumedArgs(
 
 function appendQuery(relativeUrl: string, params: QueryParams | undefined): string {
   if (!params) return relativeUrl;
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (Array.isArray(value)) {
-      for (const item of value) search.append(key, String(item));
-    } else {
-      search.set(key, String(value));
-    }
-  }
-  return search.size > 0 ? `${relativeUrl}?${search}` : relativeUrl;
+  const query = searchParamsOf(params);
+  return query ? `${relativeUrl}?${query}` : relativeUrl;
 }
 
 /** Plan the complete request URL and body/form fields without executing I/O. */

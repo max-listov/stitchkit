@@ -161,6 +161,14 @@
       "types": "./dist/entrypoints/agent-runtime/openrouter.d.ts",
       "import": "./dist/entrypoints/agent-runtime/openrouter.js"
     },
+    "./agent-runtime/openai": {
+      "types": "./dist/entrypoints/agent-runtime/openai.d.ts",
+      "import": "./dist/entrypoints/agent-runtime/openai.js"
+    },
+    "./agent-runtime/anthropic": {
+      "types": "./dist/entrypoints/agent-runtime/anthropic.d.ts",
+      "import": "./dist/entrypoints/agent-runtime/anthropic.js"
+    },
     "./agent-executor": {
       "types": "./dist/entrypoints/agent-executor.d.ts",
       "import": "./dist/entrypoints/agent-executor.js"
@@ -341,6 +349,10 @@
       "types": "./dist/entrypoints/agent-runtime/realtime.d.ts",
       "import": "./dist/entrypoints/agent-runtime/realtime.js"
     },
+    "./agent-runtime/ai-sdk": {
+      "types": "./dist/entrypoints/agent-runtime/ai-sdk.d.ts",
+      "import": "./dist/entrypoints/agent-runtime/ai-sdk.js"
+    },
     "./process": {
       "types": "./dist/entrypoints/process.d.ts",
       "import": "./dist/entrypoints/process.js"
@@ -360,6 +372,10 @@
     "./realtime": {
       "types": "./dist/entrypoints/realtime.d.ts",
       "import": "./dist/entrypoints/realtime.js"
+    },
+    "./device-relay": {
+      "types": "./dist/entrypoints/device-relay.d.ts",
+      "import": "./dist/entrypoints/device-relay.js"
     }
   },
   "publishConfig": {
@@ -371,7 +387,7 @@
     "build:js": "bun run build:entrypoints && bun scripts/preserve-webpack-ignore.mjs",
     "build:types": "bun x tsc -p tsconfig.build.json --emitDeclarationOnly && bun scripts/rewrite-declaration-specifiers.mjs",
     "build": "bun ../../scripts/package-build-lock.ts -- bun run build:unlocked",
-    "build:unlocked": "rm -rf dist && cp ../../CHANGELOG.md ./CHANGELOG.md && bun run build:js && chmod +x dist/entrypoints/bin/upgrade-cli.js && bun run build:types && bun scripts/check-browser-clean.mjs && bun scripts/check-browser-executes.mjs && bun scripts/check-env-live.mjs && bun scripts/check-public-types.mjs && bun scripts/check-durability-port-standalone.mjs && bun scripts/check-tools-neutral.mjs && bun scripts/check-declarations-strict.mjs",
+    "build:unlocked": "rm -rf dist && cp ../../CHANGELOG.md ./CHANGELOG.md && bun run build:js && chmod +x dist/entrypoints/bin/upgrade-cli.js && bun run build:types && bun scripts/check-browser-clean.mjs && bun scripts/check-browser-executes.mjs && bun scripts/check-env-live.mjs && bun scripts/check-public-types.mjs && bun scripts/check-durability-port-standalone.mjs && bun scripts/check-tools-neutral.mjs && node scripts/check-agent-runtime-clean.mjs && bun scripts/check-declarations-strict.mjs",
     "dev": "bun run build:entrypoints -- --watch",
     "prepack": "bun ../../scripts/sync-package-readme.ts && bun ../../scripts/gen-llms.ts && bun run build",
     "test": "bun ../../scripts/test-leak-gate.ts --tmpdir -- bun test",
@@ -386,7 +402,6 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.332",
     "@modelcontextprotocol/ext-apps": "^1.7.2 || ^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
-    "@openrouter/ai-sdk-provider": "^3.1.0",
     "@opentelemetry/api": "^1.9.0",
     "@socket.io/bun-engine": "^0.1.2",
     "@socket.io/component-emitter": "^3.1.2",
@@ -412,9 +427,6 @@
       "optional": true
     },
     "@modelcontextprotocol/server": {
-      "optional": true
-    },
-    "@openrouter/ai-sdk-provider": {
       "optional": true
     },
     "@opentelemetry/api": {
@@ -472,7 +484,6 @@
     "@modelcontextprotocol/client": "^2.4.0",
     "@modelcontextprotocol/ext-apps": "^2.0.4",
     "@modelcontextprotocol/server": "^2.4.0",
-    "@openrouter/ai-sdk-provider": "^3.1.0",
     "@opentelemetry/api": "^1.10.0",
     "@seriousme/openapi-schema-validator": "^2.12.0",
     "@socket.io/bun-engine": "^0.1.2",

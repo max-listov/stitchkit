@@ -13,6 +13,7 @@ import {
   defineAgentProtocol,
   runStateForTerminalReason,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 
 const at = '2026-08-26T00:00:00.000Z';
 const base = {
@@ -113,11 +114,13 @@ describe('a refusal this runtime made does not blame the provider', () => {
             contextWindow: 10,
             capabilities: [],
           },
-          model: new MockLanguageModelV4({
-            doStream: async () => ({
-              stream: simulateReadableStream({ chunks: [] } as never),
+          driver: fromAiSdkModel(
+            new MockLanguageModelV4({
+              doStream: async () => ({
+                stream: simulateReadableStream({ chunks: [] } as never),
+              }),
             }),
-          }),
+          ),
         }),
       },
       // Refused before any provider call: the record used to say the provider
@@ -161,7 +164,7 @@ describe('a refusal this runtime made does not blame the provider', () => {
       models: {
         resolve: () => ({
           descriptor: { provider: 'test', modelId: 'm', contextWindow: 10, capabilities: [] },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       prompt: () => ({
@@ -224,7 +227,7 @@ describe('a refusal this runtime made does not blame the provider', () => {
       models: {
         resolve: () => ({
           descriptor: { provider: 'test', modelId: 'm', contextWindow: 10, capabilities: [] },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       prompt: () => ({
@@ -252,11 +255,13 @@ describe('a refusal this runtime made does not blame the provider', () => {
     await observability.flush();
 
     expect(model.doStreamCalls).toHaveLength(0);
-    expect(terminal.reason).toBe('provider_failure');
+    // Under ADR 0336 `prepareStep` executes outside `driver.stream()`, so an unmarked
+    // callback throw is truthfully classified as `runtime_failure` rather than blaming the provider.
+    expect(terminal.reason).toBe('runtime_failure');
     expect(observed).toContainEqual(
       expect.objectContaining({
         type: 'run-terminal',
-        terminalReason: 'provider_failure',
+        terminalReason: 'runtime_failure',
         internalCause: failure,
       }),
     );

@@ -28,7 +28,9 @@ const base = {
 };
 
 /** Text and reasoning arrive as chunks appended to their item, in order. */
-export const ExecutorTextDeltaSchema = AgentTextPartSchema.extend(base).strict();
+export const ExecutorTextDeltaSchema = AgentTextPartSchema.omit({ provider: true })
+  .extend(base)
+  .strict();
 export const ExecutorReasoningDeltaSchema = AgentReasoningPartSchema.extend(base).strict();
 export const ExecutorToolCallDeltaSchema = AgentToolCallPartSchema.extend(base).strict();
 /** `toolName` is required, as in a message: a dialect that omits it (Claude's `tool_result`) is mapped by `callId`. */
@@ -129,6 +131,27 @@ export const ExecutorStatusDeltaSchema = z.strictObject({
   phase: ExecutorStartupPhaseSchema,
 });
 
+/** Progress status for one step in an executor plan update. */
+export const ExecutorPlanEntryStatusSchema = z.enum(['pending', 'in_progress', 'completed']);
+/** Priority label for one step in an executor plan update. */
+export const ExecutorPlanEntryPrioritySchema = z.enum(['low', 'medium', 'high']);
+
+/** One validated step inside a live executor plan delta. */
+export const ExecutorPlanEntrySchema = z.strictObject({
+  content: z.string(),
+  status: ExecutorPlanEntryStatusSchema.optional(),
+  priority: ExecutorPlanEntryPrioritySchema.optional(),
+});
+
+/** Live plan lifecycle update emitted by an engine (`set`, `update`, or `remove`). */
+export const ExecutorPlanDeltaSchema = z.strictObject({
+  type: z.literal('plan'),
+  ...base,
+  action: z.enum(['set', 'update', 'remove']),
+  planId: z.string().min(1).optional(),
+  entries: z.array(ExecutorPlanEntrySchema).optional(),
+});
+
 export const ExecutorTurnEndDeltaSchema = z.strictObject({
   type: z.literal('turn-end'),
   ...base,
@@ -180,6 +203,7 @@ export const ExecutorDeltaSchema = z.discriminatedUnion('type', [
   ExecutorUsageDeltaSchema,
   ExecutorContextUsageDeltaSchema,
   ExecutorStatusDeltaSchema,
+  ExecutorPlanDeltaSchema,
   ExecutorTurnEndDeltaSchema,
   ExecutorErrorDeltaSchema,
   ExecutorWindowDeltaSchema,
@@ -187,6 +211,14 @@ export const ExecutorDeltaSchema = z.discriminatedUnion('type', [
 
 /** Executor turn delta event inferred from `ExecutorDeltaSchema`. */
 export type ExecutorDelta = z.infer<typeof ExecutorDeltaSchema>;
+/** Live plan delta event inferred from `ExecutorPlanDeltaSchema`. */
+export type ExecutorPlanDelta = z.infer<typeof ExecutorPlanDeltaSchema>;
+/** One plan step inferred from `ExecutorPlanEntrySchema`. */
+export type ExecutorPlanEntry = z.infer<typeof ExecutorPlanEntrySchema>;
+/** Plan step status inferred from `ExecutorPlanEntryStatusSchema`. */
+export type ExecutorPlanEntryStatus = z.infer<typeof ExecutorPlanEntryStatusSchema>;
+/** Plan step priority inferred from `ExecutorPlanEntryPrioritySchema`. */
+export type ExecutorPlanEntryPriority = z.infer<typeof ExecutorPlanEntryPrioritySchema>;
 /** Executor delta error category inferred from `ExecutorErrorKindSchema`. */
 export type ExecutorErrorKind = z.infer<typeof ExecutorErrorKindSchema>;
 /** Thread reusability disposition inferred from `ExecutorThreadDispositionSchema`. */

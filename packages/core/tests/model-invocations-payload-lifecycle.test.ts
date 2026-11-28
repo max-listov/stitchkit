@@ -24,6 +24,7 @@ import {
   InvocationPayloadTooLargeError,
   type ModelInvocationAuthorizationInput,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import { createBunSqliteAgentRuntimeStore } from '../src/entrypoints/agent-runtime/sqlite/bun';
 
 const usage = {
@@ -32,6 +33,21 @@ const usage = {
 };
 
 const trace = { operationId: 'op-1', purpose: 'chat', project: 'test' };
+
+function textStreamModel(text: string) {
+  return new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: [
+          { type: 'text-start', id: 't1' },
+          { type: 'text-delta', id: 't1', delta: text },
+          { type: 'text-end', id: 't1' },
+          { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+        ],
+      }),
+    }),
+  });
+}
 
 function makeModels(model: MockLanguageModelV4) {
   return defineModelRegistry({
@@ -43,20 +59,13 @@ function makeModels(model: MockLanguageModelV4) {
         capabilities: ['tools'],
       },
     },
-    providers: { test: { create: () => model } },
+    providers: { test: { create: () => fromAiSdkModel(model) } },
   });
 }
 
 describe('invocation maxPayloadBytes omission and payload expiry purge', () => {
   test('oversized request payload in wrapGenerate and wrapStream succeeds with payloadOmitted and InvocationPayloadTooLargeError', async () => {
-    const generateModel = new MockLanguageModelV4({
-      doGenerate: async () => ({
-        content: [{ type: 'text', text: 'live answer' }],
-        usage,
-        warnings: [],
-        finishReason: { unified: 'stop', raw: undefined },
-      }),
-    });
+    const generateModel = textStreamModel('live answer');
     const store = createMemoryAgentRuntimeStore();
     const ledger = createModelInvocationLedger({
       store,
@@ -85,7 +94,7 @@ describe('invocation maxPayloadBytes omission and payload expiry purge', () => {
       expect(completed.receiptError.maxBytes).toBe(1_024);
       expect(completed.receiptError.sha256).toMatch(/^[a-f0-9]{64}$/);
     }
-    expect(generateModel.doGenerateCalls).toHaveLength(1);
+    expect(generateModel.doStreamCalls).toHaveLength(1);
     const records = (await ledger.read({ conversationId: 'conv-gen', limit: 100 }, {})).items;
     const req = records.find((r) => r.record.type === 'provider/request')?.record;
     expect(req).toMatchObject({
@@ -161,14 +170,7 @@ describe('invocation maxPayloadBytes omission and payload expiry purge', () => {
   });
 
   test('storage failure during request payload write is NOT hidden as omission (fails closed)', async () => {
-    const model = new MockLanguageModelV4({
-      doGenerate: async () => ({
-        content: [{ type: 'text', text: 'must not run' }],
-        usage,
-        warnings: [],
-        finishReason: { unified: 'stop', raw: undefined },
-      }),
-    });
+    const model = textStreamModel('must not run');
     const baseStore = createMemoryAgentRuntimeStore();
     const baseAppendOnce = baseStore.appendEventOnce;
     if (!baseAppendOnce) throw new Error('memory store missing appendEventOnce');
@@ -200,7 +202,7 @@ describe('invocation maxPayloadBytes omission and payload expiry purge', () => {
       {},
     );
     expect(outcome.outcome).toBe('failed');
-    expect(model.doGenerateCalls).toHaveLength(0);
+    expect(model.doStreamCalls).toHaveLength(0);
   });
 
   test('purgePayloads redacts expired bodies in SQLite + FTS5, preserves fresh rows, paginates without starvation, is idempotent, and branches cleanly', async () => {
@@ -208,14 +210,7 @@ describe('invocation maxPayloadBytes omission and payload expiry purge', () => {
     const dbPath = join(dir, 'agent.sqlite');
     const sqlite = createBunSqliteAgentRuntimeStore({ filename: dbPath });
     try {
-      const model = new MockLanguageModelV4({
-        doGenerate: async () => ({
-          content: [{ type: 'text', text: 'answer text' }],
-          usage,
-          warnings: [],
-          finishReason: { unified: 'stop', raw: undefined },
-        }),
-      });
+      const model = textStreamModel('answer text');
       const actions: ModelInvocationAuthorizationInput[] = [];
       const ledger = createModelInvocationLedger({
         store: sqlite.store,
@@ -437,14 +432,7 @@ describe('invocation maxPayloadBytes omission and payload expiry purge', () => {
 
   test('memory store purgePayloads redacts expired bodies with conversationId scoping, pagination, and idempotency', async () => {
     const store = createMemoryAgentRuntimeStore();
-    const model = new MockLanguageModelV4({
-      doGenerate: async () => ({
-        content: [{ type: 'text', text: 'memory answer' }],
-        usage,
-        warnings: [],
-        finishReason: { unified: 'stop', raw: undefined },
-      }),
-    });
+    const model = textStreamModel('memory answer');
     const ledger = createModelInvocationLedger({
       store,
       models: makeModels(model),

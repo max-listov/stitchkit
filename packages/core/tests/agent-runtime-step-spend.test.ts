@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
-import { simulateReadableStream, tool } from 'ai';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { openRouterProvider } from '../src/agent-runtime/openrouter';
@@ -23,6 +23,9 @@ import {
   defineAgentProtocol,
   defineModelRegistry,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
+import { defineAgentTool } from '../src/entrypoints/tools';
 import { expectTimerRefusal } from './support/timer-refusal';
 
 /** The spend fact inside a hook input, without the run context that travels around it. */
@@ -178,9 +181,10 @@ describe('step spend hook and unified spend recording', () => {
             contextWindow: 16_000,
             capabilities: [],
           },
-          model,
-          normalizeUsage: normalizePricedUsage,
-          resolveResponseProvider: readMockUpstream,
+          driver: fromAiSdkModel(model, {
+            normalizeUsage: normalizePricedUsage,
+            resolveResponseProvider: readMockUpstream,
+          }),
         }),
       },
       prompt: () => ({
@@ -319,8 +323,7 @@ describe('step spend hook and unified spend recording', () => {
       },
       providers: {
         direct: {
-          create: () => model,
-          normalizeUsage: normalizePricedUsage,
+          create: () => fromAiSdkModel(model, { normalizeUsage: normalizePricedUsage }),
         },
       },
     });
@@ -404,10 +407,11 @@ describe('step spend hook and unified spend recording', () => {
     expect(facts.map((entry) => entry.spend.phase)).toEqual(['compaction', 'step']);
     expect(facts[0]?.spend.trace?.project).toBe('proj:acme');
     expect(facts[1]?.spend.trace?.project).toBe('proj:acme');
-    // A compaction is the application's own call: it names no model, provider or response.
+    // A compaction is the application's own call: it names no model, provider or response on spend,
+    // while `selectedModel` is already resolved on the run context so compaction knows the context window.
     expect(facts[0]?.spend).not.toHaveProperty('model');
     expect(facts[0]?.spend).not.toHaveProperty('response');
-    expect(facts[0]?.selectedModelId).toBeUndefined();
+    expect(facts[0]?.selectedModelId).toBe('traced-model');
     expect(facts[1]?.selectedModelId).toBe('traced-model');
     expect(facts[0]?.runIdFromContext).toBe(result.run.id);
     expect(facts[1]?.runIdFromContext).toBe(result.run.id);
@@ -483,11 +487,7 @@ describe('step spend hook and unified spend recording', () => {
               contextWindow: 100_000,
               capabilities: [],
             },
-            model: provider.create('fixture/model'),
-            ...(provider.normalizeUsage && { normalizeUsage: provider.normalizeUsage }),
-            ...(provider.resolveResponseProvider && {
-              resolveResponseProvider: provider.resolveResponseProvider,
-            }),
+            driver: provider.create('fixture/model'),
           }),
         },
         prompt: () => ({
@@ -568,22 +568,24 @@ describe('step spend hook and unified spend recording', () => {
               contextWindow: 16_000,
               capabilities: [],
             },
-            model: new MockLanguageModelV4({
-              doStream: async () => ({
-                stream: simulateReadableStream({
-                  chunks: [
-                    { type: 'text-start', id: 't' },
-                    { type: 'text-delta', id: 't', delta: 'ok' },
-                    { type: 'text-end', id: 't' },
-                    {
-                      type: 'finish',
-                      finishReason: { unified: 'stop', raw: undefined },
-                      usage: sdkUsage(10, 5),
-                    },
-                  ],
-                } as never),
+            driver: fromAiSdkModel(
+              new MockLanguageModelV4({
+                doStream: async () => ({
+                  stream: simulateReadableStream({
+                    chunks: [
+                      { type: 'text-start', id: 't' },
+                      { type: 'text-delta', id: 't', delta: 'ok' },
+                      { type: 'text-end', id: 't' },
+                      {
+                        type: 'finish',
+                        finishReason: { unified: 'stop', raw: undefined },
+                        usage: sdkUsage(10, 5),
+                      },
+                    ],
+                  } as never),
+                }),
               }),
-            }),
+            ),
           }),
         },
         prompt: () => ({
@@ -761,7 +763,7 @@ describe('step spend hook and unified spend recording', () => {
               contextWindow: 16_000,
               capabilities: [],
             },
-            model: new MockLanguageModelV4(),
+            driver: createScriptedModelDriver({ steps: [] }),
           }),
         },
         prompt: () => ({
@@ -889,11 +891,7 @@ describe('step spend hook and unified spend recording', () => {
               contextWindow: 100_000,
               capabilities: ['tools'],
             },
-            model: provider.create('fixture/model'),
-            ...(provider.normalizeUsage && { normalizeUsage: provider.normalizeUsage }),
-            ...(provider.resolveResponseProvider && {
-              resolveResponseProvider: provider.resolveResponseProvider,
-            }),
+            driver: provider.create('fixture/model'),
           }),
         },
         prompt: () => ({
@@ -903,9 +901,9 @@ describe('step spend hook and unified spend recording', () => {
           contextDecision: 'unavailable',
         }),
         tools: () => ({
-          ping: tool({
+          ping: defineAgentTool({
             description: 'ping',
-            inputSchema: z.strictObject({}),
+            input: z.strictObject({}),
             execute: async () => 'pong',
           }),
         }),
@@ -1004,8 +1002,7 @@ describe('step spend hook and unified spend recording', () => {
               contextWindow: 100_000,
               capabilities: ['tools'],
             },
-            model: provider.create('fixture/model'),
-            ...(provider.normalizeUsage && { normalizeUsage: provider.normalizeUsage }),
+            driver: provider.create('fixture/model'),
           }),
         },
         prompt: () => ({
@@ -1015,9 +1012,9 @@ describe('step spend hook and unified spend recording', () => {
           contextDecision: 'unavailable',
         }),
         tools: () => ({
-          ping: tool({
+          ping: defineAgentTool({
             description: 'ping',
-            inputSchema: z.strictObject({}),
+            input: z.strictObject({}),
             execute: async () => 'pong',
           }),
         }),
@@ -1089,22 +1086,24 @@ describe('step spend hook and unified spend recording', () => {
               contextWindow: 16_000,
               capabilities: [],
             },
-            model: new MockLanguageModelV4({
-              doStream: async () => ({
-                stream: simulateReadableStream({
-                  chunks: [
-                    { type: 'text-start', id: 't' },
-                    { type: 'text-delta', id: 't', delta: 'paid answer' },
-                    { type: 'text-end', id: 't' },
-                    {
-                      type: 'finish',
-                      finishReason: { unified: 'stop', raw: undefined },
-                      usage: sdkUsage(250, 40),
-                    },
-                  ],
-                } as never),
+            driver: fromAiSdkModel(
+              new MockLanguageModelV4({
+                doStream: async () => ({
+                  stream: simulateReadableStream({
+                    chunks: [
+                      { type: 'text-start', id: 't' },
+                      { type: 'text-delta', id: 't', delta: 'paid answer' },
+                      { type: 'text-end', id: 't' },
+                      {
+                        type: 'finish',
+                        finishReason: { unified: 'stop', raw: undefined },
+                        usage: sdkUsage(250, 40),
+                      },
+                    ],
+                  } as never),
+                }),
               }),
-            }),
+            ),
           }),
         },
         prompt: () => ({
@@ -1175,7 +1174,7 @@ describe('step spend hook and unified spend recording', () => {
               contextWindow: 16_000,
               capabilities: [],
             },
-            model: new MockLanguageModelV4(),
+            driver: createScriptedModelDriver({ steps: [] }),
           }),
         },
         prompt: () => ({
@@ -1245,29 +1244,33 @@ describe('step spend hook and unified spend recording', () => {
             capabilities: [],
           },
           // Adapter intentionally omits `cacheReadTokens` while SDK stream emits `cacheRead: 0`.
-          normalizeUsage: ({ usage }) => ({
-            inputTokens: reported(usage.inputTokens ?? 0),
-            outputTokens: reported(usage.outputTokens ?? 0),
-          }),
-          model: new MockLanguageModelV4({
-            doStream: async () => ({
-              stream: simulateReadableStream({
-                chunks: [
-                  { type: 'text-start', id: 't' },
-                  { type: 'text-delta', id: 't', delta: 'ok' },
-                  { type: 'text-end', id: 't' },
-                  {
-                    type: 'finish',
-                    finishReason: { unified: 'stop', raw: undefined },
-                    usage: {
-                      inputTokens: { total: 100, noCache: 100, cacheRead: 0, cacheWrite: 0 },
-                      outputTokens: { total: 10, text: 10, reasoning: 0 },
+          driver: fromAiSdkModel(
+            new MockLanguageModelV4({
+              doStream: async () => ({
+                stream: simulateReadableStream({
+                  chunks: [
+                    { type: 'text-start', id: 't' },
+                    { type: 'text-delta', id: 't', delta: 'ok' },
+                    { type: 'text-end', id: 't' },
+                    {
+                      type: 'finish',
+                      finishReason: { unified: 'stop', raw: undefined },
+                      usage: {
+                        inputTokens: { total: 100, noCache: 100, cacheRead: 0, cacheWrite: 0 },
+                        outputTokens: { total: 10, text: 10, reasoning: 0 },
+                      },
                     },
-                  },
-                ],
-              } as never),
+                  ],
+                } as never),
+              }),
             }),
-          }),
+            {
+              normalizeUsage: ({ usage }) => ({
+                inputTokens: reported(usage.inputTokens ?? 0),
+                outputTokens: reported(usage.outputTokens ?? 0),
+              }),
+            },
+          ),
         }),
       },
       prompt: () => ({
@@ -1315,37 +1318,39 @@ describe('step spend hook and unified spend recording', () => {
               contextWindow: 16_000,
               capabilities: [],
             },
-            normalizeUsage: normalizePricedUsage,
-            model: new MockLanguageModelV4({
-              doStream: async () => {
-                calls += 1;
-                const failed = calls < 3;
-                const chunks: Record<string, unknown>[] = failed
-                  ? [
-                      { type: 'text-start', id: `a-${calls}` },
-                      { type: 'text-delta', id: `a-${calls}`, delta: 'cut' },
-                      { type: 'error', error: new AgentProviderStreamCutError() },
-                      {
-                        type: 'finish',
-                        finishReason: { unified: 'error', raw: undefined },
-                        usage: sdkUsage(10 * calls, calls),
-                        providerMetadata: { openrouter: { usage: { cost: 0.01 * calls } } },
-                      },
-                    ]
-                  : [
-                      { type: 'text-start', id: 'ok' },
-                      { type: 'text-delta', id: 'ok', delta: 'done' },
-                      { type: 'text-end', id: 'ok' },
-                      {
-                        type: 'finish',
-                        finishReason: { unified: 'stop', raw: undefined },
-                        usage: sdkUsage(30, 3),
-                        providerMetadata: { openrouter: { usage: { cost: 0.03 } } },
-                      },
-                    ];
-                return { stream: simulateReadableStream({ chunks } as never) };
-              },
-            }),
+            driver: fromAiSdkModel(
+              new MockLanguageModelV4({
+                doStream: async () => {
+                  calls += 1;
+                  const failed = calls < 3;
+                  const chunks: Record<string, unknown>[] = failed
+                    ? [
+                        { type: 'text-start', id: `a-${calls}` },
+                        { type: 'text-delta', id: `a-${calls}`, delta: 'cut' },
+                        { type: 'error', error: new AgentProviderStreamCutError() },
+                        {
+                          type: 'finish',
+                          finishReason: { unified: 'error', raw: undefined },
+                          usage: sdkUsage(10 * calls, calls),
+                          providerMetadata: { openrouter: { usage: { cost: 0.01 * calls } } },
+                        },
+                      ]
+                    : [
+                        { type: 'text-start', id: 'ok' },
+                        { type: 'text-delta', id: 'ok', delta: 'done' },
+                        { type: 'text-end', id: 'ok' },
+                        {
+                          type: 'finish',
+                          finishReason: { unified: 'stop', raw: undefined },
+                          usage: sdkUsage(30, 3),
+                          providerMetadata: { openrouter: { usage: { cost: 0.03 } } },
+                        },
+                      ];
+                  return { stream: simulateReadableStream({ chunks } as never) };
+                },
+              }),
+              { normalizeUsage: normalizePricedUsage },
+            ),
           }),
         },
         prompt: () => ({
@@ -1402,35 +1407,42 @@ describe('step spend hook and unified spend recording', () => {
               contextWindow: 16_000,
               capabilities: ['tools'],
             },
-            normalizeUsage: normalizePricedUsage,
-            model: new MockLanguageModelV4({
-              doStream: async () => {
-                calls += 1;
-                const chunks: Record<string, unknown>[] =
-                  calls === 1
-                    ? [
-                        { type: 'tool-call', toolCallId: 'c1', toolName: 'ping', input: '{}' },
-                        {
-                          type: 'finish',
-                          finishReason: { unified: 'tool-calls', raw: undefined },
-                          usage: sdkUsage(100, 10),
-                          providerMetadata: { openrouter: { usage: { cost: 0.1 } } },
-                        },
-                      ]
-                    : [
-                        { type: 'text-start', id: 't' },
-                        { type: 'text-delta', id: 't', delta: 'done' },
-                        { type: 'text-end', id: 't' },
-                        {
-                          type: 'finish',
-                          finishReason: { unified: 'stop', raw: undefined },
-                          usage: sdkUsage(200, 20),
-                          providerMetadata: { openrouter: { usage: { cost: 0.2 } } },
-                        },
-                      ];
-                return { stream: simulateReadableStream({ chunks } as never) };
-              },
-            }),
+            driver: fromAiSdkModel(
+              new MockLanguageModelV4({
+                doStream: async () => {
+                  calls += 1;
+                  const chunks: Record<string, unknown>[] =
+                    calls === 1
+                      ? [
+                          {
+                            type: 'tool-call',
+                            toolCallId: 'c1',
+                            toolName: 'ping',
+                            input: '{}',
+                          },
+                          {
+                            type: 'finish',
+                            finishReason: { unified: 'tool-calls', raw: undefined },
+                            usage: sdkUsage(100, 10),
+                            providerMetadata: { openrouter: { usage: { cost: 0.1 } } },
+                          },
+                        ]
+                      : [
+                          { type: 'text-start', id: 't' },
+                          { type: 'text-delta', id: 't', delta: 'done' },
+                          { type: 'text-end', id: 't' },
+                          {
+                            type: 'finish',
+                            finishReason: { unified: 'stop', raw: undefined },
+                            usage: sdkUsage(200, 20),
+                            providerMetadata: { openrouter: { usage: { cost: 0.2 } } },
+                          },
+                        ];
+                  return { stream: simulateReadableStream({ chunks } as never) };
+                },
+              }),
+              { normalizeUsage: normalizePricedUsage },
+            ),
           }),
         },
         prompt: () => ({
@@ -1440,9 +1452,9 @@ describe('step spend hook and unified spend recording', () => {
           contextDecision: 'unavailable',
         }),
         tools: () => ({
-          ping: tool({
+          ping: defineAgentTool({
             description: 'ping',
-            inputSchema: z.strictObject({}),
+            input: z.strictObject({}),
             execute: async () => 'pong',
           }),
         }),
@@ -1473,5 +1485,192 @@ describe('step spend hook and unified spend recording', () => {
       expect(result.run.usage?.inputTokens.value).toBe(300);
       expect(result.run.usage?.cost?.value).toBeCloseTo(0.3, 6);
     }
+  });
+
+  test('propagates finishReason, toolCallCount, costDetails, split timings with chunkIntervalsMs, and response identity to both onStepSpend and observe', async () => {
+    const store = createMemoryAgentRuntimeStore();
+    const facts: AgentStepSpend[] = [];
+    const observed: AgentRunEvent[] = [];
+    const ts = new Date('2026-11-28T10:15:00.000Z');
+    const driver = createScriptedModelDriver({
+      provider: 'openrouter',
+      modelId: 'anthropic/claude-sonnet-4-6',
+      steps: [
+        [
+          {
+            type: 'response-metadata',
+            id: 'gen-step-0',
+            modelId: 'anthropic/claude-sonnet-4-6',
+            timestamp: ts,
+          },
+          { type: 'tool-call', toolCallId: 'c1', toolName: 'ping', input: '{}' },
+          {
+            type: 'finish',
+            finishReason: 'tool-calls',
+            rawFinishReason: 'tool_use',
+            usage: {
+              inputTokens: { value: 50, provenance: 'provider-reported' },
+              outputTokens: { value: 12, provenance: 'provider-reported' },
+              cost: { value: 0.004, currency: 'USD', provenance: 'provider-reported' },
+            },
+            costDetails: { promptCostUsd: 0.0015, outputCostUsd: 0.0025, isByok: false },
+            responseProvider: 'Anthropic',
+          },
+        ],
+        [
+          {
+            type: 'response-metadata',
+            id: 'gen-step-1',
+            modelId: 'anthropic/claude-sonnet-4-6',
+            timestamp: ts,
+          },
+          { type: 'text-delta', id: 't1', delta: 'Hel' },
+          { type: 'text-delta', id: 't1', delta: 'lo ' },
+          { type: 'text-delta', id: 't1', delta: 'world' },
+          {
+            type: 'finish',
+            finishReason: 'stop',
+            rawFinishReason: 'end_turn',
+            usage: {
+              inputTokens: { value: 80, provenance: 'provider-reported' },
+              outputTokens: { value: 9, provenance: 'provider-reported' },
+              cost: { value: 0.006, currency: 'USD', provenance: 'provider-reported' },
+            },
+            costDetails: { promptCostUsd: 0.002, outputCostUsd: 0.004, isByok: true },
+            responseProvider: 'Anthropic',
+          },
+        ],
+      ],
+    });
+    const observe = createAgentObservability({
+      write: (event) => {
+        observed.push(event);
+      },
+    });
+    const runtime = createAgentRuntime({
+      protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
+      store,
+      models: {
+        resolve: () => ({
+          descriptor: {
+            provider: 'openrouter',
+            modelId: 'anthropic/claude-sonnet-4-6',
+            contextWindow: 200_000,
+            capabilities: ['tools'],
+          },
+          driver,
+        }),
+      },
+      prompt: () => ({
+        instructions: 'test',
+        sections: [],
+        instructionTokens: { provenance: 'unavailable' },
+        contextDecision: 'unavailable',
+      }),
+      tools: () => ({
+        ping: defineAgentTool({
+          description: 'ping',
+          input: z.object({}),
+          execute: async () => {
+            await Bun.sleep(10);
+            return 'pong';
+          },
+        }),
+      }),
+      observe,
+      onStepSpend: (input) => {
+        if (input.phase !== 'step') return;
+        facts.push(
+          AgentStepSpendSchema.parse({
+            conversationId: input.conversationId,
+            runId: input.runId,
+            step: input.step,
+            attempt: input.attempt,
+            usage: input.usage,
+            phase: input.phase,
+            model: input.model,
+            provider: input.provider,
+            response: input.response,
+            ...(input.finishReason !== undefined && { finishReason: input.finishReason }),
+            ...(input.rawFinishReason !== undefined && {
+              rawFinishReason: input.rawFinishReason,
+            }),
+            ...(input.toolCallCount !== undefined && { toolCallCount: input.toolCallCount }),
+            ...(input.costDetails !== undefined && { costDetails: input.costDetails }),
+            ...(input.timings !== undefined && { timings: input.timings }),
+          }),
+        );
+      },
+    });
+
+    const result = await runtime.submit({
+      conversationId: 'conv-telemetry',
+      idempotencyKey: 'tel-1',
+      context: {},
+      parts: [{ type: 'text', text: 'go' }],
+      metadata: {},
+    }).result;
+    await observe.flush();
+    await runtime.close();
+
+    expect(result.reason).toBe('success');
+    expect(facts).toHaveLength(2);
+    const step0 = facts[0];
+    const step1 = facts[1];
+    expect(step0?.phase).toBe('step');
+    expect(step1?.phase).toBe('step');
+    if (step0?.phase === 'step' && step1?.phase === 'step') {
+      expect(step0.finishReason).toBe('tool-calls');
+      expect(step0.rawFinishReason).toBe('tool_use');
+      expect(step0.toolCallCount).toBe(1);
+      expect(step0.costDetails).toEqual({
+        promptCostUsd: 0.0015,
+        outputCostUsd: 0.0025,
+        isByok: false,
+      });
+      expect(step0.response).toEqual({
+        id: 'gen-step-0',
+        provider: 'Anthropic',
+        modelId: 'anthropic/claude-sonnet-4-6',
+        timestamp: ts.toISOString(),
+      });
+      expect(step0.timings?.toolExecutionMs).toBeGreaterThanOrEqual(5);
+      // Step 0 had no multi-chunk text/reasoning/tool-input deltas -> chunkIntervalsMs omitted.
+      expect(step0.timings?.chunkIntervalsMs).toBeUndefined();
+
+      expect(step1.finishReason).toBe('stop');
+      expect(step1.rawFinishReason).toBe('end_turn');
+      expect(step1.toolCallCount).toBe(0);
+      expect(step1.costDetails).toEqual({
+        promptCostUsd: 0.002,
+        outputCostUsd: 0.004,
+        isByok: true,
+      });
+      expect(step1.timings?.ttftMs).toBeGreaterThanOrEqual(0);
+      expect(step1.timings?.responseTimeMs).toBeGreaterThanOrEqual(0);
+      expect(step1.timings?.stepTimeMs).toBeGreaterThanOrEqual(0);
+      // Step 1 streamed 3 text-deltas -> chunkIntervalsMs computed with 2 intervals.
+      expect(step1.timings?.chunkIntervalsMs).toBeDefined();
+      expect(step1.timings?.chunkIntervalsMs?.min).toBeGreaterThanOrEqual(0);
+      expect(step1.timings?.chunkIntervalsMs?.max).toBeGreaterThanOrEqual(
+        step1.timings?.chunkIntervalsMs?.min ?? 0,
+      );
+    }
+
+    const stepFinished = observed.filter((event) => event.type === 'step-finished');
+    expect(stepFinished).toHaveLength(2);
+    expect(stepFinished[0]).toMatchObject({
+      finishReason: 'tool-calls',
+      rawFinishReason: 'tool_use',
+      toolCallCount: 1,
+      costDetails: { promptCostUsd: 0.0015, outputCostUsd: 0.0025, isByok: false },
+      response: {
+        id: 'gen-step-0',
+        provider: 'Anthropic',
+        modelId: 'anthropic/claude-sonnet-4-6',
+        timestamp: ts.toISOString(),
+      },
+    });
+    expect(stepFinished[1]?.timings?.chunkIntervalsMs).toBeDefined();
   });
 });

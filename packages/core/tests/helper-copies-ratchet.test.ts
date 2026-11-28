@@ -42,7 +42,6 @@ const INLINE_INTEGER_RULE =
 const INLINE_INTEGER_COPIES: Record<string, number> = {
   'agent-runtime/compaction.ts': 1,
   'agent-runtime/models.ts': 1,
-  'agent-runtime/openrouter.ts': 1,
   'agent-runtime/prompt.ts': 4,
   'agent-runtime/runtime-internals.ts': 1,
   'agent-runtime/runtime-recovery.ts': 1,

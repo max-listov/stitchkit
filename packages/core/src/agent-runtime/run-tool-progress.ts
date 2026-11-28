@@ -7,8 +7,8 @@
  * watching: it never reaches the model, which receives only the tool's result,
  * and it is not part of the durable history.
  */
-import type { ToolSet } from 'ai';
 import type { McpProgressUpdate, McpReportProgress } from '../contract/runtime-context';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { AGENT_TOOL_PROGRESS_MESSAGE_MAX } from './event-schema';
 import type { RunExecution } from './run-execution-state';
 import { transientHead } from './run-stream-parts';
@@ -25,7 +25,7 @@ function finite(value: number | undefined): number | undefined {
 }
 
 /** One reporter per tool call, bound to the run that issued it. */
-export function createToolProgressReporter<CONTEXT, TOOLS extends ToolSet>(
+export function createToolProgressReporter<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
   toolName: string,
   callId: string,

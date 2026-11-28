@@ -14,6 +14,7 @@ import {
   defineModelRegistry,
   type ModelInvocationConfig,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 
 const descriptor = {
   provider: 'mock',
@@ -34,13 +35,17 @@ const usage = {
   inputTokens: { total: 8, noCache: 8, cacheRead: undefined, cacheWrite: undefined },
   outputTokens: { total: 2, text: 2, reasoning: undefined },
 };
-const answering = () =>
+const answering = (text = 'the answer') =>
   new MockLanguageModelV4({
-    doGenerate: async () => ({
-      content: [{ type: 'text', text: 'the answer' }],
-      usage,
-      warnings: [],
-      finishReason: { unified: 'stop', raw: undefined },
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: [
+          { type: 'text-start', id: 't' },
+          { type: 'text-delta', id: 't', delta: text },
+          { type: 'text-end', id: 't' },
+          { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+        ],
+      }),
     }),
   });
 
@@ -48,7 +53,7 @@ function setup(model: MockLanguageModelV4, extra: Partial<ModelInvocationConfig>
   const store = createMemoryAgentRuntimeStore();
   const models = defineModelRegistry({
     models: { model: descriptor },
-    providers: { mock: { create: () => model } },
+    providers: { mock: { create: () => fromAiSdkModel(model) } },
   });
   const ledger = createModelInvocationLedger({
     store,
@@ -197,19 +202,74 @@ test("a provider attempt's own receipt failing costs neither the answer nor a lo
   });
 
   const long = 'y'.repeat(200_000);
-  const { ledger } = setup(
-    new MockLanguageModelV4({
-      doGenerate: async () => ({
-        content: [{ type: 'text', text: long }],
-        usage,
-        warnings: [],
-        finishReason: { unified: 'stop', raw: undefined },
-      }),
-    }),
-    { maxPayloadBytes: 65_536 },
-  );
+  const { ledger } = setup(answering(long), { maxPayloadBytes: 65_536 });
   const answered = await ledger.complete({ ...input, idempotencyKey: 'long' }, {});
   expect(answered.outcome).toBe('succeeded');
   expect(answered.text).toHaveLength(200_000);
   expect(answered.receiptError).toBeUndefined();
+});
+
+test('invocationJson handles undefined, BigInt, circular plain objects, and shared DAG references', () => {
+  expect(invocationJson(undefined)).toBeNull();
+  expect(invocationJson({ count: 9007199254740993n })).toEqual({ count: '9007199254740993' });
+
+  const cyclic: Record<string, unknown> = { label: 'root' };
+  cyclic.self = cyclic;
+  expect(invocationJson(cyclic)).toEqual({ label: 'root', self: '[Circular]' });
+
+  const shared = { ok: true };
+  expect(invocationJson([shared, shared])).toEqual([{ ok: true }, { ok: true }]);
+});
+
+test('streamEvidence trims thousands of small stream parts in linear O(N) time', async () => {
+  const store = createMemoryAgentRuntimeStore();
+  const models = defineModelRegistry({
+    models: { model: descriptor },
+    providers: {
+      mock: {
+        create: () => ({
+          provider: 'mock',
+          modelId: 'model',
+          async stream() {
+            return {
+              parts: {
+                async *[Symbol.asyncIterator]() {
+                  yield { type: 'text-start' as const, id: 't' };
+                  for (let i = 0; i < 5_000; i += 1) {
+                    yield { type: 'text-delta' as const, id: 't', delta: `c${i % 10}` };
+                  }
+                  yield { type: 'text-end' as const, id: 't' };
+                  yield {
+                    type: 'finish' as const,
+                    finishReason: 'stop' as const,
+                    rawFinishReason: 'r'.repeat(800),
+                    usage: {
+                      inputTokens: { value: 8, provenance: 'provider-reported' as const },
+                      outputTokens: { value: 2, provenance: 'provider-reported' as const },
+                    },
+                  };
+                },
+              },
+            };
+          },
+        }),
+      },
+    },
+  });
+  const ledger = createModelInvocationLedger({
+    store,
+    models,
+    payloadKey: randomBytes(32),
+    maxPayloadBytes: 4_096,
+    authorize: () => ({ subject: 'verified' }),
+  });
+  const started = performance.now();
+  const result = await ledger.complete(
+    { ...input, idempotencyKey: 'linear', timeoutMs: 5_000 },
+    {},
+  );
+  const elapsedMs = performance.now() - started;
+  expect(result.outcome).toBe('succeeded');
+  expect(result.text).toHaveLength(10_000);
+  expect(elapsedMs).toBeLessThan(1_000);
 });

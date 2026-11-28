@@ -1,12 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { type LanguageModelUsage, simulateReadableStream, tool } from 'ai';
+import { type LanguageModelUsage, simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
-import {
-  addUsage,
-  normalizeSdkUsage,
-  unknownUsage,
-} from '../src/agent-runtime/runtime-internals';
+import { addUsage, normalizeTokenUsage } from '../src/agent-runtime/runtime-internals';
+import { unknownUsage } from '../src/agent-runtime/schemas-usage-state';
 import {
   type AgentRunEvent,
   type AgentRuntimeEvent,
@@ -16,6 +13,8 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
+import { defineAgentTool } from '../src/entrypoints/tools';
 
 const sdkUsage = (input: number, output: number) => ({
   inputTokens: { total: input, noCache: input, cacheRead: undefined, cacheWrite: undefined },
@@ -51,7 +50,13 @@ const normalizeUsage = ({
   const meta = providerMetadata as { openrouter?: { usage?: { cost?: number } } } | undefined;
   const cost = meta?.openrouter?.usage?.cost;
   return {
-    ...normalizeSdkUsage(usage),
+    ...normalizeTokenUsage({
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      reasoningTokens: usage.outputTokenDetails.reasoningTokens,
+      cacheReadTokens: usage.inputTokenDetails.cacheReadTokens,
+      cacheWriteTokens: usage.inputTokenDetails.cacheWriteTokens,
+    }),
     ...(cost !== undefined && {
       cost: { value: cost, currency: 'USD', provenance: 'provider-reported' as const },
     }),
@@ -84,8 +89,7 @@ function runtimeWith(input: {
           contextWindow: 100_000,
           capabilities: [],
         },
-        model: input.model,
-        normalizeUsage,
+        driver: fromAiSdkModel(input.model, { normalizeUsage }),
       }),
     },
     prompt: () => ({
@@ -95,7 +99,11 @@ function runtimeWith(input: {
       contextDecision: 'unavailable',
     }),
     tools: () => ({
-      ping: tool({ description: 'p', inputSchema: z.object({}), execute: async () => 'pong' }),
+      ping: defineAgentTool({
+        description: 'p',
+        input: z.object({}),
+        execute: async () => 'pong',
+      }),
     }),
     loop: { maxSteps: 10 },
     runs: { inputPolicy: input.inputPolicy },
@@ -178,8 +186,7 @@ function compactingRuntime(model: MockLanguageModelV4) {
           contextWindow: 100_000,
           capabilities: [],
         },
-        model,
-        normalizeUsage,
+        driver: fromAiSdkModel(model, { normalizeUsage }),
       }),
     },
     prompt: () => ({
@@ -365,8 +372,7 @@ describe('a run that never settles still says what it cost', () => {
             contextWindow: 100_000,
             capabilities: [],
           },
-          model: threeStepModel(),
-          normalizeUsage,
+          driver: fromAiSdkModel(threeStepModel(), { normalizeUsage }),
         }),
       },
       prompt: () => ({
@@ -376,9 +382,9 @@ describe('a run that never settles still says what it cost', () => {
         contextDecision: 'unavailable',
       }),
       tools: () => ({
-        ping: tool({
+        ping: defineAgentTool({
           description: 'p',
-          inputSchema: z.object({}),
+          input: z.object({}),
           execute: async () => 'pong',
         }),
       }),
@@ -428,8 +434,7 @@ describe('a run that never settles still says what it cost', () => {
             contextWindow: 100_000,
             capabilities: [],
           },
-          model: threeStepModel(),
-          normalizeUsage,
+          driver: fromAiSdkModel(threeStepModel(), { normalizeUsage }),
         }),
       },
       prompt: () => ({
@@ -439,9 +444,9 @@ describe('a run that never settles still says what it cost', () => {
         contextDecision: 'unavailable',
       }),
       tools: () => ({
-        ping: tool({
+        ping: defineAgentTool({
           description: 'p',
-          inputSchema: z.object({}),
+          input: z.object({}),
           execute: async () => 'pong',
         }),
       }),
@@ -590,8 +595,7 @@ describe('the two event channels are gated for their own readers', () => {
             contextWindow: 100_000,
             capabilities: [],
           },
-          model: threeStepModel(),
-          normalizeUsage,
+          driver: fromAiSdkModel(threeStepModel(), { normalizeUsage }),
         }),
       },
       prompt: () => ({
@@ -601,9 +605,9 @@ describe('the two event channels are gated for their own readers', () => {
         contextDecision: 'unavailable',
       }),
       tools: () => ({
-        ping: tool({
+        ping: defineAgentTool({
           description: 'p',
-          inputSchema: z.object({}),
+          input: z.object({}),
           execute: async () => 'pong',
         }),
       }),
@@ -649,8 +653,7 @@ describe('a run says who ended it', () => {
             contextWindow: 100_000,
             capabilities: [],
           },
-          model,
-          normalizeUsage,
+          driver: fromAiSdkModel(model, { normalizeUsage }),
         }),
       },
       prompt: () => ({
@@ -738,8 +741,7 @@ describe('a spend figure outlives the channel that reported it', () => {
             contextWindow: 100_000,
             capabilities: [],
           },
-          model: threeStepModel(),
-          normalizeUsage,
+          driver: fromAiSdkModel(threeStepModel(), { normalizeUsage }),
         }),
       },
       prompt: () => ({
@@ -749,9 +751,9 @@ describe('a spend figure outlives the channel that reported it', () => {
         contextDecision: 'unavailable',
       }),
       tools: () => ({
-        ping: tool({
+        ping: defineAgentTool({
           description: 'p',
-          inputSchema: z.object({}),
+          input: z.object({}),
           execute: async () => 'pong',
         }),
       }),
@@ -816,8 +818,7 @@ describe('a spend figure outlives the channel that reported it', () => {
             contextWindow: 100_000,
             capabilities: [],
           },
-          model,
-          normalizeUsage,
+          driver: fromAiSdkModel(model, { normalizeUsage }),
         }),
       },
       prompt: () => ({

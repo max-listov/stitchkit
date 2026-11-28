@@ -223,7 +223,8 @@ from the root `stitchkit`.
 | `ContractDef` | _type_ | a defined contract |
 | `PathParams` | _type_ | infer named `:segments` and a terminal `*wildcard` from a path literal as string params |
 | `ContractMeta` | _type_ | a contract's `prefix` + optional `scope` and `meta` (a default every endpoint shallow-merges over) |
-| `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid); optional `effect?: OperationEffect` declares `'read' \| 'write'` side effects; `safelistedBody: true` admits the JSON body as `text/plain` from an allow-listed `Origin` — [guide](../guide/server.md#safelisted-request-bodies-beacons) |
+| `EndpointDef` | _type_ | a single endpoint definition; `output` declares JSON response presence (`null` is data, `undefined` is invalid); optional `timeout` bounds both client calls and server-side deadline clamping; optional `effect?: OperationEffect` declares `'read' \| 'write'` side effects; `safelistedBody: true` admits the JSON body as `text/plain` from an allow-listed `Origin` — [guide](../guide/server.md#safelisted-request-bodies-beacons) |
+| `DEADLINE_BUDGET_HEADER` | constant | `'x-stitchkit-timeout-ms'` — relative remaining call budget in integer milliseconds propagated across HTTP hops (`createHttpClient` / `createClient` outbound, `createHandler` / `createServer` inbound with contract-ceiling clamping, `408 REQUEST_TIMEOUT` on `'0'`, linked `ctx.signal`, and `ctx.remainingTimeoutMs(reserveMs?)`) |
 | `OperationEffect` / `OperationEffectSchema` | _type_ / schema | closed `'read' \| 'write'` side-effect classification declared on contract endpoints |
 | `contractOperationEffects` / `requireContractOperationEffects` | function | project declared endpoint `effect` tags from a contract; `requireContractOperationEffects` fails closed and lists every operation missing `effect` |
 | `withToolView` | function | declare an endpoint's call and answer on the tool surface (MCP, AGENT, CLI): input `defaults`, and optionally a view `output` and a `project`, typed against the endpoint's own schemas; HTTP keeps the full answer — [guide](../guide/mcp-and-agents.md#a-different-answer-for-tools--withtoolview) |
@@ -554,6 +555,8 @@ Also re-exports the error helpers from `stitchkit/contract`.
 
 | `bindSocketRegistry` | function | room membership and consistent replay over an already-authenticated realtime server |
 | `AuthorizedSocketRoom` / `SocketRegistry` / `SocketRegistryConnection` / `SocketRegistryOptions` / `SocketRegistryServer` / `SocketRegistrySnapshot` / `SocketReplayFrame` | _type_ | authorized room token, structural server boundary, replay frames and immutable registry state |
+| `bindDevicePresence` | function | mounts account-scoped online device presence, ephemeral capability state slots and targeted remote commands onto an existing `RealtimeServerHandle` |
+| `DevicePresenceServer` / `DevicePresenceServerOptions` / `DevicePresenceServerSnapshot` / `DevicePresenceAccountResolver` | _type_ | mounted server registry handle, `accountOf` authorization callback and diagnostic snapshot for `bindDevicePresence` |
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createSocketIOServer` | function | the typed Socket.IO server — [guide](../guide/realtime.md#server--createsocketioserver) |
@@ -1015,20 +1018,22 @@ server writing it.
 
 ## `stitchkit/agent-runtime`
 
-Server-only optional application runtime. See the
+Server-only, peer-free optional application runtime. Runs models exclusively through `AgentModelDriver` (one provider call per step) with no AI SDK dependency. See the
 [agent runtime guide](../guide/agent-runtime.md).
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `createAgentRuntime` | function | compose durable acceptance, stream loop, checkpoints, coordination, managed tools and winner-only terminal publication; reconciles same-owner terminal/interrupt/head CAS races before releasing the lane |
-| `createDeferredAgentToolSurface` | function | bounded canonical catalog search plus durable same-run activation of direct `mountAgent` tools; supports one immutable surface or a finite identity-specific registry |
+| `createAgentRuntime` | function | compose durable acceptance, native `AgentModelDriver` step loop, tool parsing/validation, WebCrypto HMAC-SHA256 tool approvals, `beforeStepToolCalls`, bounded terminal continuations (`maxContinuations`), `onAttemptDiscarded`, `onToolInputStart`, checkpoints, coordination, managed tools and winner-only terminal publication; reconciles same-owner terminal/interrupt/head CAS races before releasing the lane |
+| `createDeferredAgentToolSurface` | function | bounded canonical catalog search plus durable same-run activation of direct `mountAgentTools` tools; supports one immutable surface or a finite identity-specific registry |
 | `DeferredAgentToolSearchInputSchema` / `DeferredAgentToolMatchSchema` / `DeferredAgentToolReceiptSchema` | schema | bounded search input, public match and versioned durable selection receipt |
 | `DeferredAgentToolSurfaceConfig` / `DeferredAgentToolCommonConfig` / `DeferredAgentToolSurfaceDefinition` / `DeferredAgentToolController` | _type_ | finite catalogs, selector, pin, budget and `mount`/`prepareStep` composition contracts |
 | `DeferredAgentRuntimeToolDefinition` / `DeferredAgentToolMountConfig` | _type_ | peer-free Agent-only runtime definition and canonical mount configuration accepted by the controller |
 | `DeferredAgentToolManifestEntry` / `DeferredAgentToolSearchContext` / `DeferredAgentToolReceipt` | _type_ | canonical selector input and inferred durable receipt records |
 | `DeferredAgentToolEvent` | _type_ | PII-free search/step evidence with surface, provenance, counts, canonical schema bytes and ceilings |
-| `defineAgentProtocol` | function | declare context, input metadata, canonical parts and optional pre-CAS terminal acceptance (`allow-empty`, `require-output` or callback) |
+| `defineAgentProtocol` | function | declare context, input metadata, canonical parts and optional pre-CAS terminal acceptance (`allow-empty`, `require-output` or callback returning `AgentTerminalAcceptanceDecision`) |
 | `hasAgentTerminalOutput` | function | generic `require-output` predicate for non-blank text, generated files, structured provider parts and explicit tool-only policy stops |
+| `carriedToolWork` | function | pure helper returning whether any completed `AgentStepResult` performed client or provider tool work |
+| `AgentTerminalAcceptanceDecision` | _type_ | `boolean \| { action: 'accept' } \| { action: 'reject' } \| { action: 'continue', message, instructions? }` returned by `protocol.acceptTerminal` for bounded continuations (capped by `loop.maxContinuations`, default 3) |
 | `AgentMessageSchema` / `AgentRunSchema` / `AgentSnapshotSchema` | schema | versioned canonical engine records |
 | `AgentRunQueuePrioritySchema` | schema | durable opt-in priority for queued `interrupt-next` runs |
 | `AgentRuntimeStore` | _type_ | aggregate CAS transaction boundary for message, run and compaction mutations |
@@ -1053,8 +1058,8 @@ Server-only optional application runtime. See the
 | `AgentConversationPurgeResultSchema` / `AgentConversationPurgeResult` | schema / _type_ | typed deletion/refusal outcomes; active refusal includes run IDs |
 | `AgentConversationPurgedError` | class | runtime mutation rejected because its conversation ID is permanently purged |
 | `AgentConversationPurgeDriver` | _type_ | optional `driver.conversations` capability: serialized tombstone read and atomic removal of all owned records |
-| `projectAgentHistory` | function | asynchronously project canonical records and resolved multimodal files into provider-valid AI SDK messages |
-| `defineModelRegistry` | function | typed language-model descriptors, capabilities and provider construction |
+| `projectAgentHistory` | function | asynchronously project canonical records and resolved multimodal files into provider-valid peer-free `AgentModelMessage[]` |
+| `defineModelRegistry` | function | typed language-model descriptors, capabilities and `AgentModelDriverFactory` construction |
 | `AgentModelCatalogSchema` / `AgentModelCatalog` | schema / _type_ | provider-neutral complete/partial model catalog with separately sourced popularity, metrics, prices and observation time |
 | `AgentModelCatalogEntrySchema` / `AgentModelCatalogEntry` | schema / _type_ | one canonical provider model descriptor with optional price, popularity and metric evidence |
 | `AgentModelPriceSchema` / `AgentModelPrice` | schema / _type_ | normalized per-token input/output pricing and source currency |
@@ -1080,7 +1085,7 @@ Server-only optional application runtime. See the
 | `selectCompactableHistory` | function | which oldest whole complete turns may be summarised away — the half of compaction that needs no store (→ ADR 0142) |
 | `SelectCompactableHistoryOptions` / `CompactableHistory` | _type_ | message list, retained-turn count and evidence policy in; `leadingSummary`, `compactable` and `retained` out |
 | `createAgentSessionCoordinator` | function | strict process-local queue/interrupt/supersede lifecycle |
-| `AgentRuntimeStopPolicy` | _type_ | named stop rule persisted and published on policy stop; `when` receives the AI SDK `steps` plus the run context `prepareStep` gets (`context`, `run`, `signal`, `toolFenceLifecycle`, `contextUsage`) |
+| `AgentRuntimeStopPolicy` | _type_ | named stop rule `AgentRuntimeStopPolicy<CONTEXT = unknown>` persisted and published on policy stop; `when` receives `AgentStepResult[]` plus the run context `prepareStep` gets (`context`, `run`, `signal`, `toolFenceLifecycle`, `contextUsage`) |
 | `AgentRuntimePrepareStep` | _type_ | per-run controlled step callback with typed domain context and managed run signal/fence |
 | `AgentContextOverflowError` | class | deliberate application budget refusal thrown from `loop.prepareStep`; terminalizes as `context_overflow` without classifying arbitrary error text |
 | `AgentRuntimeRecordIds` | _type_ | optional caller-provided input, run and assistant IDs for stable application records |
@@ -1094,7 +1099,7 @@ Server-only optional application runtime. See the
 | `AgentSessionCloseOptions` | _type_ | `gracePeriodMs` for natural settlement, then abort, then `forceTimeoutMs` for bounded settlement after it |
 | `AgentSessionCloseResult` | _type_ | what `close()` achieved: `settled`, or `timedOut` with `remaining` runs still in flight. Only omitting `forceTimeoutMs` guarantees nothing is in flight on return |
 | `AgentHistoryProjectionOptions` | _type_ | storage-neutral file resolver, explicit unresolved-file behavior, and how an interrupted turn reaches the model (`interruptedAssistant`) |
-| `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgent`; compose beside application idempotency for [durable operations](../guide/mcp-and-agents.md#durable-application-owned-execution) |
+| `createAgentToolFenceLifecycle` | function | pre-effect and post-effect run ownership fence for `mountAgentTools` / `mountAgent`; compose beside application idempotency for [durable operations](../guide/mcp-and-agents.md#durable-application-owned-execution) |
 | `AgentRuntimeEventSchema` | schema | transient stream lifecycle plus post-commit admission/checkpoint/run-state/run-operation/terminal projections |
 | `AgentRunOperationKindSchema` / `AgentRunOperationPhaseSchema` / `AgentRunOperationSchema` / `AgentRunOperation` | schemas / _type_ | latest durable model-request or compaction phase with operation/step identity and original timestamps; request admission is awaited before provider invocation |
 | `RecordRunOperationSchema` / `RecordRunOperation` | schema / _type_ | owner/fencing/revision-checked mutation of `AgentRun.lastOperation` |
@@ -1129,7 +1134,38 @@ Server-only optional application runtime. See the
 | `AgentChildHandle` / `AgentChildManager` / `AgentChildManagerConfig` / `AgentChildRemainingBudget` / `createAgentChildManager` / `createAgentChildTools` / `AgentChildToolsConfig` / `AGENT_CHILD_TOOL_DESCRIPTORS` / `agentChildBudgetStopPolicy` | _types_ / functions / constant | host execution port, child lifecycle with required `remainingBudget` and `maxActiveChildren`, cascade (given to `createAgentRuntime` as `children`), messaging, Agent tools bound to the parent conversation of the run context `tools()` receives (plus their deeply frozen static catalog descriptors), and the child runtime's own budget stop policy — `recordStepUsage` at every step boundary, `policy_stop` as `child-budget` when spent |
 | `AgentCompanionHost` / `AgentCompanionScope` / `AgentSqlSession` / `AgentSqlTables` / `AgentSqlValue` | _types_ | the store's companion host — one store transaction with the purge check and the event append (`transaction(conversationId, work)`), a read transaction (`read(work)`), the companion tables — given by the SQLite and Postgres stores and taken by every companion |
 | `AgentToolDefinition` / `AgentToolDescriptor` | _types_ | peer-neutral executable shape returned by the bound agent-only tool factories and its non-executable static catalog descriptor shape (assignable to `SurfaceRuntimeToolDefinition` without an active run) |
-| `AgentProviderStreamCutError` | class | explicit retryable provider stream truncation evidence |
+| `AgentProviderStreamCutError` / `AgentProviderStreamCutErrorOptions` | class / _type_ | explicit retryable provider stream truncation evidence and constructor options |
+
+### Native model port, driver composition and peer-free completions
+
+`stitchkit/agent-runtime` executes models through `AgentModelDriver` — one provider call per step,
+no SDK retries and no tool execution inside the driver. `completeText` and `completeObject` reuse
+the same native step execution without requiring a store. → ADR 0336.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `AgentModelDriver` / `AgentModelDriverFactory` | _type_ | single-step model port (`stream(request, signal)`) and provider factory registered in `defineModelRegistry` |
+| `AgentModelRequest` / `AgentModelStream` / `AgentModelStreamPart` | _type_ | normalized single-step request (`instructions`, `messages`, `tools`, `toolChoice`, `responseFormat`, `cacheControl`, `settings`, `providerOptions`, `headers`, `correlation`) and ordered stream event union (including keepalive `ping`, multi-block reasoning/text/tool events with unified `toolCallId`, `file` with optional `filename`, and terminal `finish`) |
+| `AgentModelToolSpec` / `AgentModelFunctionToolSpec` / `AgentModelProviderToolSpec` / `AgentModelJsonValue` / `AgentModelToolChoice` / `AgentModelCallSettings` / `AgentModelCorrelation` | _type_ | union of client function tool specs (JSON Schema 2020-12) and provider-native tool specs (`type: 'provider'` with `AgentModelJsonValue` config), tool-choice directive, call sampling settings and non-secret request correlation (`conversationId`, `runId`, `invocationId`, `attemptId`, `step`) |
+| `AgentModelFinishReason` / `AgentModelResponseMetadata` / `AgentModelCostDetails` / `AgentStepTimings` / `AgentStepChunkIntervals` | _type_ | normalized step finish reason, response metadata (including server `modelId` and `timestamp`), optional provider-reported cost/BYOK breakdown (`promptCostUsd`, `outputCostUsd`, `isByok`), and measured step/response/tool/TTFT timings with optional inter-chunk interval percentiles (`min`, `p10`, `median`, `avg`, `p90`, `max`) |
+| `wrapModelDriver` / `composeModelDrivers` | function | wrap one `AgentModelDriver` with one or an ordered outer-to-inner list of lifecycle decorators whose `onClose` runs once on finish, error, early stream cancellation, or abort |
+| `AgentModelDriverDecorator` / `AgentModelDriverStreamOutcome` | _type_ | generic per-stream interceptor (`beforeStream`, `transformRequest`, `transformSignal`, `onPart`, `onClose`) and terminal stream outcome (`finished`, `errored`, `cancelled`) |
+| `completeText` / `streamComplete` / `CompleteTextInput` / `CompleteTextOptions` / `CompletePromptInput` / `CompleteTextResult` / `CompleteTextStream` / `CompleteStreamPart` / `CompletePrepareStep` / `AgentCompleteStopPolicy` | functions / _types_ | peer-free single- or multi-step completion and standalone async-iterable streaming over any `AgentModelDriver` (no store required), with compile-time XOR on `prompt` vs `messages`, `retry`, `stopPolicies`, `idleTimeoutMs`, `onPart`, `headers`, tools, `prepareStep`, `repairToolCall`, timings and usage |
+| `completeObject` / `CompleteObjectInput` / `CompleteObjectResult` | function / _types_ | peer-free structured-output completion emitting strict JSON Schema (`draft-2020-12` via `toJsonSchema(..., 'input')`), stripping strict-mode optional `null`s prior to Zod validation, and supporting multi-step tool loops |
+| `AgentStructuredOutputError` / `AgentStructuredOutputErrorReason` / `AgentStructuredOutputErrorDetails` | class / _types_ | typed error thrown by `completeObject` with `reason` (`'truncated' \| 'tool-calls' \| 'content-filter' \| 'provider-error' \| 'interrupted' \| 'empty' \| 'invalid-json' \| 'schema-mismatch'`), `finishReason`, `rawText`, `steps`, and `usage` |
+| `AgentRetryExhaustedError` / `AgentRetryExhaustedErrorDetails` / `AgentRetryAttemptRecord` | class / _types_ | typed error thrown when stateless completion retries exhaust `retry.maxAttempts` or `maxRetryDurationMs`, carrying every failed attempt, `lastError`, and accumulated billable `usage` |
+| `AgentProviderError` / `AgentProviderErrorDetails` / `isAgentProviderError` | class / _type_ / function | canonical provider HTTP/envelope error carrying `provider`, `statusCode`, `code`, `errorType`, `requestId`, `retryAfterMs`, `failureReason`, redacted safe message, and runtime type guard |
+| `AgentUnknownToolError` / `AgentInvalidToolInputError` | class | PII-safe tool-dispatch errors for unknown/inactive tools and invalid JSON or Zod tool inputs |
+| `AgentToolApprovalError` / `AgentToolApprovalErrorReason` / `AgentInvalidToolApprovalSignatureError` / `AgentToolCallNotFoundForApprovalError` | class / _type_ | typed failures and machine reason codes (`'invalid-signature' \| 'call-not-found' \| 'input-validation-failed' \| 'input-mutated' \| 'invalid-policy-decision' \| 'approval-unsupported'`) for invalid approval payloads, WebCrypto HMAC-SHA256 signature verification failure, unresolved approval call IDs, or standalone fail-closed `needsApproval` refusal |
+| `AgentToolApprovalConfiguration` / `AgentToolApprovalDecision` / `AgentToolApprovalCallOptions` / `AgentToolApprovalToolRule` | _type_ | per-call or per-tool approval policy evaluated by the native step loop |
+| `AgentStepToolCallBatchHook` / `AgentStepToolCallBatchInput` / `AgentStepToolCallBatchDecision` | _type_ | `loop.beforeStepToolCalls` whole-step batch policy invoked once all tool calls of a step are parsed and validated, able to refuse selected calls by `toolCallId` |
+| `AgentToolCallRepairFunction` / `AgentToolCallRepairInput` | _type_ | first-class `repairToolCall` hook that rewrites an unknown, inactive, or invalid tool call before execution |
+| `AgentPrepareStepInput` / `AgentPrepareStepResult` | _type_ | step-preparation input and per-step overrides (`driver`, `instructions`, `messages`, `activeTools`, `toolChoice`, `responseFormat`, `cacheControl`, sampling settings, `providerOptions`, `headers`) |
+| `AgentStepResult` / `AgentStepContentPart` / `AgentStepToolCall` / `AgentStepToolResult` | _type_ | peer-free completed step record delivered to `prepareStep`, `stopPolicies`, and `onStepFinish` |
+| `AgentModelMessageSchema` / `AgentModelMessage` / `AgentModelSystemMessageSchema` / `AgentModelSystemMessage` / `AgentModelUserMessageSchema` / `AgentModelUserMessage` / `AgentModelAssistantMessageSchema` / `AgentModelAssistantMessage` / `AgentModelToolMessageSchema` / `AgentModelToolMessage` / `AgentInstructions` | schemas / _types_ | canonical peer-free model-exchange message schemas and normalized instruction input |
+| `AgentModelUserContentPartSchema` / `AgentModelUserContentPart` / `AgentModelAssistantContentPartSchema` / `AgentModelAssistantContentPart` / `AgentModelToolContentPartSchema` / `AgentModelToolContentPart` / `AgentToolModelContentPart` / `AgentToolModelOutputSchema` | schemas / _types_ | non-deprecated content part schemas (`text`, `reasoning`, `file`, `reasoning-file`, `tool-call`, `tool-result`, approvals, `custom`) and structured tool-output schema |
+| `AgentModelFileDataSchema` / `AgentModelFileData` / `AgentGeneratedFile` / `AgentGeneratedFileData` | schema / _types_ | tagged file payload (`data`, `url`, `reference`, `text`) and generated model file (`mediaType`, `data`, optional `filename`, `url?`, lazy `base64`/`uint8Array`, `providerMetadata?`) handed to `persistGeneratedFile` |
+| `AgentModelResponseFormatSchema` / `AgentModelResponseFormat` / `AgentCacheControlSchema` / `AgentCacheControl` / `AgentModelProviderOptionsSchema` / `AgentModelProviderOptions` / `AgentModelProviderOptionValue` | schemas / _types_ | portable structured-output format (`text`, `json-object`, `json-schema`), prompt-cache breakpoint directive (`ephemeral`, optional `'5m' \| '1h'` TTL), and namespaced provider options with recursive `AgentModelProviderOptionValue` supporting optional `undefined` keys under `exactOptionalPropertyTypes` |
 
 ### Complete runtime inventory
 
@@ -1139,26 +1175,24 @@ transport adapters validate the same records. Runtime composition types are `Age
 `AgentRuntimeResult`, `AgentRuntimeInterruptInput`, `AgentRuntimeAbandonInput`, `AgentRuntimeRecoveryInput`,
 `AgentRuntimeRecoveryDecision`, `AgentRuntimeRecoveryOutcome`, `AgentRuntimePublisher`,
 `AgentInputPolicy`, `AgentStopReason`, `AgentCoordinatedRun`, `AgentRunTicket`,
-`AgentSessionCoordinator`, `AgentCompactionContext`, `AgentCompactionResult` and
-`StructuredCompactionConfig`.
+`AgentSessionCoordinator`, `AgentCompactionContext`, `AgentCompactionResult`,
+`AgentCompactionSummaryOutput` and `StructuredCompactionConfig`.
 
 A provider refusal is classified rather than phrased. `classifyProviderFailure` returns an
 `AgentProviderFailure` — an `AgentProviderFailureReason` (`insufficient-credits`, `rate-limited`,
-`model-unavailable`, `context-overflow`, `timeout`, `cancelled`, `unknown`), the provider's `status`
-when it supplied one, whether the same request is `retryable` unchanged, and the `evidence` the
-answer rests on: `status` is the provider stating its own answer, `message` is us reading its prose,
-and `none` is an honest refusal to guess. The sentence a user reads stays with the application —
+`overloaded`, `server-error`, `model-unavailable`, `context-overflow`, `timeout`, `cancelled`,
+`stream-cut`, `unknown`), the provider's `status` when it supplied one, optional `retryAfterMs`,
+whether the same request is `retryable` unchanged, and the `evidence` the answer rests on: `code`
+is a machine error code from the provider, `status` is the provider stating its own HTTP answer,
+`message` is us reading its prose, and `none` is an honest refusal to guess. The sentence a user reads stays with the application —
 its tone and its decision about what to admit are not the core's to make. `isToolResultFailure`
 recognises a failure carried inside a *successful* tool result, in both the bare and the
 `{ value: … }` envelope. Both are plain functions and need no runtime. → ADR 0141
 
-`normalizeOpenRouterUsage` is the same normalisation `openRouterProvider`
-applies, exported so an application calling the SDK directly gets provenance-correct numbers
-without adopting the runtime. Pass each completed SDK step's usage, including `raw`.
-Token provenance comes from the original OpenRouter fields: missing fields remain
-`unavailable`, even when the SDK substitutes zero. Aggregate usage without `raw` cannot
-establish reported token counts. Explicit zero remains `provider-reported`; cost is never
-estimated from token prices.
+`normalizeOpenRouterUsage` (exported from `stitchkit/agent-runtime/openrouter`, alongside
+`normalizeOpenAiUsage` on `/openai` and `normalizeAnthropicUsage` on `/anthropic`) is the same
+provenance-aware normalisation `openRouterProvider` applies. Missing fields remain `unavailable`,
+explicit zero remains `provider-reported`, and cost is never estimated from token prices.
 
 `AgentContextUsage` reaches every step through `AgentRuntimeRunContext.contextUsage`: how full the
 model's context is, as `usedTokens` (an `AgentUsageValue`, so it carries the provenance that says
@@ -1173,7 +1207,7 @@ Canonical protocol exports are `AgentProtocol`, `AgentProtocolConfig`, `AgentTer
 `AgentTerminalAcceptanceInput`, `hasAgentTerminalOutput`, `AgentRecordIdSchema`, `AgentRecordVersionSchema`,
 `AgentTimestampSchema`, `AgentJsonObjectSchema`, `AgentProviderEnvelopeSchema`,
 `AgentProviderEnvelope`, `AgentMessagePartSchema`, `AgentMessagePart`, `AgentTextPartSchema`,
-`AgentReasoningPartSchema`, `AgentFilePartSchema`, `AgentSourcePartSchema`,
+`AgentReasoningPartSchema`, `AgentFilePartSchema`, `AgentSourcePartSchema`, `AgentSourcePart`,
 `AgentToolCallPartSchema`, `AgentToolResultPartSchema`, `AgentOpaquePartSchema`,
 `AgentControlPartSchema`, `AgentMessageRoleSchema`, `AgentMessageStatusSchema`, `AgentMessage`,
 `AgentAssistantPlaceholderSchema`, `AgentAssistantPlaceholder`, `AgentRunStateSchema`,
@@ -1263,7 +1297,7 @@ Compaction never deletes canonical effect events or the retained terminal receip
 chronological completeness does not settle an external effect. See the
 [failed-prefix recovery contract](../guide/agent-runtime.md#recovering-a-prefix-after-a-failed-turn).
 
-Model exports are `AgentLanguageModelProvider`, `AgentModelCapability`,
+Model exports are `AgentModelDriverFactory`, `AgentModelCapability`,
 `AgentModelCapabilitySchema`, `AgentModelDescriptor`,
 `AgentModelDescriptorSchema`, `AgentModelRegistry`, `AgentModelRegistryConfig`,
 `AgentModelRegistrySnapshot`, `AgentModelRegistrySnapshotSchema`, `AgentModelSnapshotPolicy`,
@@ -1324,7 +1358,7 @@ preserved) and reporting `InvocationPayloadTooLargeError` through `complete().re
 | `ModelInvocationAttemptContext` | type | conversation, operation, invocation, attempt, step and optional agent run identity |
 | `currentModelInvocationAttempt` | function | returns causal IDs inside the provider transport; undefined outside an invocation |
 | `modelInvocationSpendAttribution` | function | the current attempt as `stitchkit/spend` attribution fields (conversation, run, invocation, attempt, step) — a spend gateway's `context` |
-| `AgentStepBarriers` / `AgentToolCallDependencies` | _type_ | `loop.stepBarriers`, guards on each model step, checked by `createAgentRuntime`: `maxToolCallsPerStep` (a call past it is refused to the model as a `STEP_TOOL_CALL_LIMIT` tool error, without asking for its approval), `toolDependencies` (in the order the model made the calls, a read of an entity waits for the step's earlier writes of it and a write for its earlier reads and writes), `maxReasoningCharsPerStep` (past it the run stops as `policy_stop`), `stepText: 'after-tools'` (a step's text is held to its end and shown only if none of its tool calls failed; held text of an interrupted step is not shown); a streaming tool still streams, a deferred tool catalog survives the wrapping |
+| `AgentStepBarriers` / `AgentToolCallDependencies` | _type_ | `loop.stepBarriers`, guards on each model step, checked by `createAgentRuntime`: `maxToolCallsPerStep` (a call past it is refused to the model as a `STEP_TOOL_CALL_LIMIT` tool error, without asking for its approval), `toolDependencies` (in the order the model made the calls, a read of an entity waits for the step's earlier writes of it and a write for its earlier reads and writes), `onPredecessorFailure` (`'run'` default, or `'refuse'` to fail-cascade dependent calls on the same entity with `STEP_PREDECESSOR_FAILED`), `maxReasoningCharsPerStep` (past it the run stops as `policy_stop`), `stepText: 'after-tools'` (a step's text is held to its end and shown only if none of its tool calls failed; held text of an interrupted step is not shown) |
 | `AgentStepBarrierError` | class | the run stopped at a step bound: `bound` is `reasoning` |
 | `createToolDependencyResolver` | function | `toolDependencies` from operation effects — the `effect` of each endpoint of `contracts`, under its mounted tool name, and `effects` (by tool name) for tools of no contract — and the application's `entityOf(toolName, input)`: a `write` tool writes its entity, a `read` tool reads it |
 
@@ -1338,14 +1372,16 @@ both one lookup instead of a scan of the conversation log.
 
 ## `stitchkit/agent-runtime/testing`
 
-Credential-free provider and concurrency fixtures for Bun and Node tests.
+Peer-free, credential-free model drivers, provider fault servers, and concurrency fixtures for Bun and Node tests.
 
 | Export | Kind | Summary |
 |--------|------|---------|
+| `createScriptedModelDriver` | function | deterministic peer-free `AgentModelDriver` for tests: replays scripted stream parts, records every `AgentModelRequest`, and supports per-step throws or async stream factories |
+| `ScriptedModelDriver` / `ScriptedModelDriverOptions` / `ScriptedModelStep` | _types_ | scripted driver handle (exposing `requests`), driver options (`provider`, `modelId`, `steps`, `onRequest`), and one scripted turn (`AgentModelStreamPart[]`, `{ throw }`, or stream function) |
 | `createFaultProviderServer` | function | start an OpenAI-compatible local SSE endpoint with deterministic pass, connection-refused, timeout, stream-cut, HTTP, malformed JSON, slow-stream and missing-usage steps |
 | `AgentFaultStepSchema` / `AgentFaultStep` | schema / _type_ | strict fault-plan step vocabulary |
 | `defineAgentFaultPlan` | function | validate a non-empty deterministic fault sequence |
-| `createReplayAgentProvider` | function | serve a declared sequence of credential-free language-model fixtures per model ID |
+| `createReplayAgentProvider` | function | serve a declared sequence of credential-free `AgentModelDriver` fixtures per model ID |
 | `createAgentRaceBarrier` / `AgentRaceBarrier` | function / _type_ | named bounded deterministic concurrency barrier |
 | `createAgentRaceTrace` / `AgentRaceTrace` / `AgentRaceTraceEntry` | function / _type_ | record and assert exact event order without wall-clock guesses |
 | `createAgentRaceDriver` / `AgentRaceDriver` | function / _type_ | collect named barriers and release their teardown together |
@@ -1361,8 +1397,8 @@ that exact run. Completion requires terminal reason `success`, not `policy_stop`
 
 ## `stitchkit/agent-runtime/harness`
 
-Server-only evolving facade over the canonical Agent runtime. It requires the optional `ai` peer
-and introduces no store, queue or model-provider implementation of its own.
+Server-only, peer-free evolving facade over the canonical Agent runtime. It introduces no store,
+queue or model-provider implementation of its own.
 
 | Export | Kind | Summary |
 |--------|------|---------|
@@ -1438,7 +1474,7 @@ not path filtering, to constrain its filesystem access. → ADR 0172.
 
 ## `stitchkit/agent-runtime/browser`
 
-Browser-safe canonical agent data. It re-exports the run, message, part, usage,
+Browser-safe canonical agent data. It re-exports the run, message, part (including `AgentSourcePart`), usage,
 terminal and provider-envelope schemas/types listed under
 `stitchkit/agent-runtime`, together with all runtime delivery event schemas (durable and transient,
 including `AgentAttemptResetEventSchema` for `attempt-reset`),
@@ -1453,9 +1489,20 @@ run's streamed text, reasoning and running tool calls before its next checkpoint
 `AgentToolActivity` (one running call with its last reported progress),
 `AGENT_TOOL_PROGRESS_MESSAGE_MAX` (the longest progress message a run publishes),
 `advanceAgentMultiSessionCursor`, `createAgentControlView`, `reduceAgentControlSnapshot`,
-`reduceAgentControlEvent` and
-`agentDurableEventId`. It imports no model provider, executor, store, event sink
-or Node context module.
+`reduceAgentControlEvent`, `reduceAgentControlDelivery`, `deriveAgentConversationActivity`,
+`deriveAgentConversationState` and
+`agentDurableEventId`. For interactive and remote-host runtimes, it also exports strict Zod schemas
+and types for pending approvals (`AgentPendingApprovalSchema` / `AgentPendingApproval`),
+structured input prompts (`AgentPendingInputSchema` / `AgentPendingInput`,
+`AgentInputQuestionSchema` / `AgentInputQuestion`, `AgentInputOptionSchema` / `AgentInputOption`,
+`AgentInputAnswerSchema` / `AgentInputAnswer`), permission modes (`AgentPermissionModeSchema` /
+`AgentPermissionMode`), host reachability (`AgentHostStatusSchema` / `AgentHostStatus`,
+`AgentHostAvailabilitySchema` / `AgentHostAvailability`), write delivery reconciliation
+(`AgentWriteOperationSchema` / `AgentWriteOperation`, `AgentControlDeliveryOutcomeSchema` /
+`AgentControlDeliveryOutcome`, `AgentPendingDeliverySchema` / `AgentPendingDelivery`), and derived
+conversation phases (`AgentConversationActivitySchema` / `AgentConversationActivity`,
+`AgentConversationStateSchema` / `AgentConversationState`). It imports no model provider, executor,
+store, event sink or Node context module.
 
 Use this entrypoint from client components and shared DTO packages. The full
 `stitchkit/agent-runtime` entrypoint remains server-only.
@@ -1475,10 +1522,13 @@ realtime `transport`, `conversationId`, `access` (`observe` or `control`), optio
 `maxPendingRequests` (32). All bounds are positive safe integers. One controller owns one
 attachment per conversation on that transport; share the controller between views.
 
-`AgentController` exposes stable `subscribe`, `getSnapshot`, `request(command)` and async
-`close`. `AgentBrowserCommand` uses the canonical operations, without request/conversation identity;
-`submit` requires a caller-owned idempotency key. Unknown-outcome mutations are never
-replayed automatically. `AgentControllerState` distinguishes connecting, ready,
+`AgentController` exposes stable `subscribe`, `getSnapshot`, `request(command)`, typed interactive
+actions `respondApproval` (`AgentApprovalResponseInput`), `respondInput`
+(`AgentInputResponseInput`) and `setPermissionMode`, and async `close`. `AgentBrowserCommand` uses
+the canonical operations, without request/conversation identity; `submit` requires a caller-owned
+idempotency key, and `respond-approval` / `respond-input` accept an optional `idempotencyKey`.
+Unknown-outcome mutations (`outcome: 'unknown', delivery: 'unknown'` or a mid-flight disconnect)
+record `pendingDelivery` on `AgentConversationView` and are never replayed automatically. `AgentControllerState` distinguishes connecting, ready,
 disconnected, error and closed and retains the canonical full `view` plus safe error
 code/message. Errors in automatic attach/refresh appear there, and so does an
 `access-denied` delivery: the server detached the conversation, the state becomes
@@ -1492,18 +1542,79 @@ See [agent composition](../guide/agent-composition.md) for a complete wiring exa
 
 ## `stitchkit/agent-runtime/openrouter`
 
+Server-only, peer-free native OpenRouter provider over Web `fetch` and Chat Completions SSE
+(no `@openrouter/ai-sdk-provider` or `ai` peer). Supports `reasoning_details` and Gemini
+`thought_signature` round-trip, prompt-cache budgeting (≤ 4 breakpoints), BYOK `costDetails`
+(`cost + upstream_inference_cost`), `native_finish_reason` abnormal-stop guards, and
+`AgentProviderError` classification. → ADR 0336.
+
 | Export | Kind | Summary |
 |--------|------|---------|
-| `openRouterProvider` / `OpenRouterProviderAccess` | function / _type_ | isolated `@openrouter/ai-sdk-provider` language-model factory; the optional second argument shapes every request and is the one place a request policy is applied — `defaultPolicy`, `resolvePolicy(modelId)` from the application's own model table, and `sessionPerConversation` (`session_id` = the agent runtime attempt's conversation, keeping a thread on one upstream); a provider-level `extraBody` that would overwrite `provider`, `reasoning`, `session_id` or `usage` is refused |
-| `OpenRouterRequestPolicySchema` / `OpenRouterRequestPolicy` / `OpenRouterProviderRoutingSchema` / `OpenRouterProviderRouting` / `OpenRouterMaxPriceSchema` / `OpenRouterMaxPrice` / `OpenRouterReasoningEffortSchema` / `OpenRouterReasoningEffort` | schemas / _types_ | one request's policy: `sessionId` or `provider.order` (never both; an empty order is refused), routing (`allowFallbacks`, `requireParameters`, `dataCollection`, `zdr`, `only`, `ignore`, `sort`, `quantizations`), `maxPrice` in USD per million tokens or per request/image, `reasoning.effort` up to `max`, `looseTools` (every function tool and the response schema sent with `strict: false`; the SDK does not serialize a tool's `strict`, so `openRouterProvider` sets it on the wire); usage accounting is always on, and `effort: 'max'` and `session_id` travel in the raw body, where the SDK leaves them alone |
+| `openRouterProvider` / `OpenRouterProviderAccess` | function / _type_ | native peer-free `AgentModelDriverFactory` over OpenRouter Chat Completions SSE; the optional second argument shapes every request — `defaultPolicy`, `resolvePolicy(modelId)` from the application's own model table, and `sessionPerConversation` (`session_id` derived directly from `request.correlation.conversationId`, hashed when over 256 chars, without requiring `invocations`, yielding to explicit `provider.order`); a provider-level `extraBody` that would overwrite owned wire keys is refused |
+| `OpenRouterProviderSettings` | _type_ | `{ apiKey, baseUrl?, headers?, appName?, appUrl?, providerApiKeys?, fetch?, extraBody? }` — camelCase settings sending `HTTP-Referer`, `X-OpenRouter-Title`, and `X-Provider-API-Keys` with `redirect: 'error'` |
+| `OpenRouterRequestPolicySchema` / `OpenRouterRequestPolicy` / `OpenRouterProviderRoutingSchema` / `OpenRouterProviderRouting` / `OpenRouterMaxPriceSchema` / `OpenRouterMaxPrice` / `OpenRouterReasoningEffortSchema` / `OpenRouterReasoningEffort` | schemas / _types_ | one request's policy: `sessionId` or `provider.order` (never both; an empty order is refused), routing (`allowFallbacks`, `requireParameters`, `dataCollection`, `zdr`, `only`, `ignore`, `sort`, `quantizations`), `maxPrice` in USD per million tokens or per request/image, `reasoning.effort` up to `max`, `looseTools` (`strict: false` while preserving explicit per-tool `strict: true`), and optional portable `cacheControl` (`AgentCacheControl`) |
+| `normalizeOpenRouterUsage` | function | provenance-aware normalization of raw OpenRouter `usage` payloads (including BYOK `cost_details.upstream_inference_cost` with `computed` cost provenance; missing counters stay `unavailable`) |
 | `createOpenRouterRouteResolver` / `OpenRouterRouteResolver` / `createMemoryOpenRouterRouteStore` / `OpenRouterRouteStore` / `OpenRouterRoutePinSchema` / `OpenRouterRoutePin` | functions / _types_ / schema | keep a thread on one upstream outside the agent runtime: `session-sticky` (its `session_id`; a key over 256 characters is hashed) or `provider-order` (the upstream slug that answered first, from `record`, with `allowFallbacks: false` unless the base policy says otherwise); a pin replaces the base policy's route; the memory store is least-recently-used, bounded by `maxEntries` and `ttlMs` |
-| `loadOpenRouterCatalogSnapshot` / `fetchOpenRouterModelEndpoints` / `OpenRouterSnapshotOptions` / `OpenRouterCatalogSnapshotSchema` / `OpenRouterCatalogSnapshot` / `OpenRouterSnapshotModelSchema` / `OpenRouterSnapshotModel` / `OpenRouterEndpointSchema` / `OpenRouterEndpoint` | functions / _types_ / schemas | a timestamped snapshot of `/models` (name, input modalities, prices per million — only plain non-negative decimals: OpenRouter's `-1`, an empty string or `0x…` stay absent, never zero) and, for named models, their upstreams; ids are checked as `author/slug` before the network, endpoint requests run 1–16 at once and stop at the first failure, bodies are bounded, redirects refused |
-| `evaluateOpenRouterModelAdmission` / `OpenRouterAdmissionPolicySchema` / `OpenRouterAdmissionPolicy` / `OpenRouterModelAdmissionSchema` / `OpenRouterModelAdmission` / `OpenRouterAdmissionReasonSchema` / `OpenRouterAdmissionReason` | function / schemas / _types_ | decide one model from a stored snapshot: `admitted`, `unverified` (stale or future-dated snapshot, unknown price, no endpoint list) or `rejected` with a reason (`requiredParameters`, `requiredInputModalities`, context, price, live endpoint); `~`, `-latest`, `:batch`, `stealth/`, `openrouter/auto` and an `aliasOf` model are always refused; the result is a schema, so a stored decision reads back |
+| `loadOpenRouterCatalogSnapshot` / `fetchOpenRouterModelEndpoints` / `OpenRouterSnapshotOptions` / `OpenRouterCatalogSnapshotSchema` / `OpenRouterCatalogSnapshot` / `OpenRouterSnapshotModelSchema` / `OpenRouterSnapshotModel` / `OpenRouterEndpointSchema` / `OpenRouterEndpoint` / `OpenRouterPricingTierSchema` / `OpenRouterPricingTier` / `OpenRouterModelAliasTargetSchema` / `OpenRouterModelAliasTarget` / `OpenRouterModelReasoningMetaSchema` / `OpenRouterModelReasoningMeta` | functions / _types_ / schemas | a timestamped snapshot of `/models` (supporting unauthenticated public reads or static/async `apiKey`, full model metadata including `canonicalSlug`, `description`, `createdAt`, `aliasTarget`, `inputModalities`, `outputModalities`, `tokenizer`, `topProviderContextLength`, `maxCompletionTokens`, `reasoning`, per-million/request/image/cache prices including `cacheWrite1hUsdPerMillion` and conditional `pricingTiers` — distinguishing omitted keys from explicit `null`/`-1` unknowns, never treating unknown as zero — rejecting paginated truncation and duplicate ids) and per-model endpoints (including `cacheWrite1hUsdPerMillion`, `latencyP50Ms`, `throughputP50`, `uptime1d`, `tag`); ids are checked as `author/slug` (or `~author/slug`) before the network, endpoint requests run 1–16 at once and stop at the first failure, bodies are bounded, redirects refused |
+| `resolveOpenRouterModelCeiling` / `OpenRouterModelPricingCeilingSchema` / `OpenRouterModelPricingCeiling` / `summarizeOpenRouterEndpoints` / `OpenRouterEndpointSummarySchema` / `OpenRouterEndpointSummary` | functions / schemas / _types_ | compute the worst-case pricing ceiling across base rates, 5m/1h cache-write rates (`cacheWriteUsdPerMillion`, `cacheWrite1hUsdPerMillion`), conditional `pricingTiers`, and UTC-window overrides (refusing to understate unknown/unrepresentable conditional pricing) and aggregate distinct upstream provider count, median latency/throughput, and 1-day uptime across a model's endpoints |
+| `findOpenRouterModel` / `listOpenRouterModels` / `OpenRouterModelFilter` | functions / _type_ | query an `OpenRouterCatalogSnapshot` by exact `id` or `canonicalSlug`, or filter models by `tools`, `reasoning` (`reasoning`, `include_reasoning`, or declared efforts), `inputModalities`, `outputModalities`, `minContextLength` (via effective context `min(contextLength, topProviderContextLength)`), `maxPromptUsdPerMillion`, `maxCompletionUsdPerMillion`, `freeOnly`, and `author` |
+| `createOpenRouterCatalogCache` / `OpenRouterCatalogCache` / `OpenRouterCatalogCacheOptions` / `OpenRouterCatalogCacheReadResult` / `OpenRouterCatalogStore` | function / _types_ | Web Fetch-clean cached OpenRouter catalog reader with single-flight coalescing, per-caller `AbortSignal` isolation, `freshMs` TTL, `retryBackoffMs` stale fallback, optional pluggable persistence (`store`), and `read`/`refresh`/`getModel`/`listModels`; `OpenRouterCatalogCacheReadResult` is a discriminated union on `status` (`'current' \| 'stale' \| 'unavailable'`) narrowing `snapshot`, `observedAt`, `models`, and `lastError` without casts (use `read()` for admission/billing decisions; `getModel`/`listModels` map `'unavailable'` to `undefined`/`[]`) |
+| `evaluateOpenRouterModelAdmission` / `OpenRouterAdmissionPolicySchema` / `OpenRouterAdmissionPolicy` / `OpenRouterModelAdmissionSchema` / `OpenRouterModelAdmission` / `OpenRouterAdmissionReasonSchema` / `OpenRouterAdmissionReason` | function / schemas / _types_ | decide one model from a stored snapshot: `admitted`, `unverified` (stale or future-dated snapshot, `'context-unknown'`, `'price-unknown'`, `'endpoints-unknown'`) or `rejected` with a reason (`requiredParameters`, `requiredInputModalities`, effective context `min(contextLength, topProviderContextLength)`, worst-case pricing ceilings via `resolveOpenRouterModelCeiling`, live endpoint); `~`, `-latest`, `:batch`, `stealth/`, `openrouter/auto`, `aliasOf`, and `aliasTarget` models are always refused as `'floating-alias'`; the result is a schema, so a stored decision reads back |
 | `openRouterSpendProvider` / `createOpenRouterSpendReconciler` | functions | OpenRouter for `stitchkit/spend`: the gateway provider (origin, key read per call, usage format) and the reconciler that prices an attempt by its generation id (`GET /api/v1/generation`; a 404 is "not yet"; `apiKey` may be a function of the record, since OpenRouter prices a generation only for the key that made it) |
 | `OpenRouterHttpError` | class | a non-2xx answer from OpenRouter, with its `status` |
-| `openRouterModelCatalog` | function | complete tool-capable text catalog plus independent weekly popularity and available benchmark observations; a `timeoutMs` that is not an integer from 1 to 2147483647 ms (the timer range) is refused when the catalog is created (`RangeError`) |
-| `OpenRouterProviderSettings` | _type_ | official provider settings accepted by the factory |
-| `OpenRouterModelCatalogOptions` / `OpenRouterCatalogFetch` | _type_ | credential, timeout, clock and injected fetch boundary for catalog loading |
+| `openRouterModelCatalog` | function | complete tool-capable text catalog plus independent weekly popularity and available benchmark observations (optional static or async `apiKey`); a `timeoutMs` that is not an integer from 1 to 2147483647 ms (the timer range) is refused when the catalog is created (`RangeError`) |
+| `OpenRouterModelCatalogOptions` / `OpenRouterCatalogFetch` | _type_ | optional static/dynamic credential, timeout, clock and injected fetch boundary for catalog loading |
+
+## `stitchkit/agent-runtime/openai`
+
+Server-only, peer-free native OpenAI Responses API (`POST /v1/responses`) provider over Web
+`fetch` and SSE. Defaults to stateless (`store: false`) with automatic
+`include: ['reasoning.encrypted_content']` round-trip, `role: 'developer'` instructions,
+`strict: false` default tool schemas, `item_id` (`fc_*`) vs `call_id` separation, `text.format`
+structured outputs, `prompt_cache_key`, and fail-fast refusal of unsupported settings (I9).
+→ ADR 0336.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `openAiProvider` | function | native peer-free `AgentModelDriverFactory` targeting OpenAI Responses (`POST /v1/responses`) |
+| `OpenAiProviderSettings` | _type_ | `{ apiKey, baseUrl?, organization?, project?, headers?, fetch?, extraBody? }` — refuses `extraBody` clashes with owned protocol keys and enforces `redirect: 'error'` |
+| `OpenAiProviderAccess` | _type_ | `{ defaultPolicy?, resolvePolicy?(modelId), cachePerConversation? }` — per-model policy resolution and automatic ≤ 64-char `prompt_cache_key` derivation from `correlation.conversationId` |
+| `OpenAiRequestPolicySchema` / `OpenAiRequestPolicy` | schema / _type_ | validated Responses API request policy (`store`, `reasoning`, `serviceTier`, `truncation`, `promptCacheKey`, `promptCacheRetention`, `parallelToolCalls`, `strictTools`, `include`, `user`) |
+| `OpenAiReasoningPolicySchema` / `OpenAiReasoningPolicy` | schema / _type_ | reasoning `effort` (`'none' \| 'minimal' \| 'low' \| 'medium' \| 'high' \| 'xhigh'`) and optional `summary` (`'auto' \| 'concise' \| 'detailed'`) |
+| `normalizeOpenAiUsage` | function | provenance-aware normalization of OpenAI Responses `usage` objects (`input_tokens`, `output_tokens`, `cached_tokens`, `reasoning_tokens`; corrupted sub-counters degrade to `unavailable`) |
+
+## `stitchkit/agent-runtime/anthropic`
+
+Server-only, peer-free native Anthropic Messages API (`POST /v1/messages`) provider over Web
+`fetch` and SSE. Enforces mandatory `maxOutputTokens` and `maxOutputTokens > thinking.budgetTokens`
+fail-fast before any HTTP call, preserves verbatim multi-block `thinking` + `signature` and
+`redacted_thinking` blocks, splits images out of `is_error` tool results, budgets ≤ 4 cache
+breakpoints with TTL-order validation, computes total `inputTokens = input_tokens + cache_read +
+cache_creation` with `computed` provenance (ADR 0109), maps `output_config.format` JSON Schema
+(refusing schemaless `json-object`), and classifies `529 overloaded_error` as retryable.
+→ ADR 0336.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `anthropicProvider` | function | native peer-free `AgentModelDriverFactory` targeting Anthropic Messages (`POST /v1/messages`) |
+| `AnthropicProviderSettings` | _type_ | `{ apiKey, baseUrl?, apiVersion?, betas?, headers?, fetch?, extraBody? }` — merges `anthropic-beta` flags deterministically, refuses `extraBody` clashes, and enforces `redirect: 'error'` |
+| `AnthropicProviderAccess` | _type_ | `{ defaultPolicy?, resolvePolicy?(modelId) }` — validates `defaultPolicy` up front and resolves per-model policy |
+| `AnthropicRequestPolicySchema` / `AnthropicRequestPolicy` | schema / _type_ | validated Messages API request policy (`maxOutputTokens`, `thinking`, `effort`, `cacheControl`, `eagerInputStreaming`, `disableParallelToolUse`, `serviceTier`, `betas`) |
+| `AnthropicThinkingPolicySchema` / `AnthropicThinkingPolicy` | schema / _type_ | thinking mode (`{ type: 'adaptive' }`, `{ type: 'enabled', budgetTokens }` with `budgetTokens >= 1024`, or `{ type: 'disabled' }`) |
+| `normalizeAnthropicUsage` | function | provenance-aware normalization of Anthropic `usage` objects, assembling total `inputTokens` with `computed` provenance when cache counters are positive |
+
+## `stitchkit/agent-runtime/ai-sdk`
+
+Server-only evolving optional-peer adapter (`ai`). Adapts any AI SDK v4 `LanguageModel` or
+`ToolSet` onto `AgentModelDriver` and `AgentToolSet` without importing `streamText` or
+`generateText`, keeping `stitchkit/agent-runtime` and all three native providers free of AI SDK
+dependencies. → ADR 0336.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `fromAiSdkModel` | function | wrap an AI SDK v4 `LanguageModel` (`specificationVersion: 'v4'`) as a single-step `AgentModelDriver` driving `model.doStream()` directly |
+| `FromAiSdkModelOptions` | _type_ | optional `{ normalizeUsage?, resolveResponseProvider? }` hooks for mapping AI SDK step usage and gateway `providerMetadata` |
+| `fromAiSdkTools` | function | async adapter converting an AI SDK `ToolSet` into a peer-free `AgentToolSet`; refuses provider-defined tools (`type: 'provider'`) and normalizes legacy deprecated tool outputs into canonical `{ type: 'file', data, mediaType }` parts |
 
 ## `stitchkit/agent-executor`
 
@@ -1518,12 +1629,12 @@ leaves of their own; this entrypoint knows no vendor. Evolving.
 | `PlanLimitsSchema` / `PlanLimits` / `PlanWindowSchema` / `PlanWindow` | schemas / _types_ | a subscription's limits: `known`, `no-plan-limit` or `unpublished`, with optional `plan` and the last read's error beside the last answer; each window carries `name`, `usedPercent`, and optional `resetsAt`, `windowDurationMins`, `label`, and `scope` |
 | `ThreadClaimSchema` / `ThreadClaim` / `ThreadLeaseSchema` / `ThreadLease` / `ThreadRenewSchema` / `ThreadReleaseSchema` | schemas / _types_ | thread leases pinned to an executor and profile, under a fence |
 | `TurnOfferSchema` / `TurnOffer` / `TurnPhaseSchema` / `TurnPhase` / `TurnReportSchema` / `TurnReport` / `TurnReportAckSchema` / `TurnFailureKindSchema` / `TurnInterruptSchema` / `InteractionReplySchema` / `InteractionReply` / `EXECUTOR_ERRORS` | schemas / _types_ / constant | a turn offered under its thread's `turnOrdinal`, its phases and reports applied once by `executorSeq` (acknowledged `applied`, `duplicate` or `not-retained`), interrupts, answers to an engine's requests (`approve` with optional `scope: 'once' \| 'session'` and `updatedInput`, `deny` with optional `interrupt: boolean`), and the refusal codes |
-| `ExecutorDeltaSchema` / `ExecutorDelta` / `ExecutorStatusDeltaSchema` / `ExecutorStartupPhaseSchema` / `ExecutorStartupPhase` / `ExecutorThreadDispositionSchema` / `ExecutorThreadDisposition` / `ExecutorErrorKindSchema` / `ExecutorErrorKind` / `ExecutorRawSchema` / `ExecutorTokenUsageSchema` / `ExecutorTokenUsage` / `ExecutorModelUsageSchema` / `ExecutorModelUsage` | schemas / _types_ | what an engine said: `agent-parts` blocks with `turnId`, `itemId` and `raw`, plus requests, usage (including optional `cacheCreationInputTokens`, `thinkingTokens`, `totalTokens`, cumulative `total`, and per-model `modelUsage`), the context gauge (`context-usage`), lifecycle `status` deltas (`ExecutorStartupPhase` is an open label of 1–64 trimmed characters; the drivers emit `spawning`, `initializing` and `verifying`, and a reader treats any other label as a phase it does not know), the end of the turn (with optional `threadDisposition`: `'reusable' \| 'broken'`, also carried on `TurnReportSchema.failure`), errors by kind and window resets |
-| `projectExecutorDeltas` | function | fold a turn's deltas into the message parts the agent runtime stores (ignoring lifecycle `status` deltas) |
+| `ExecutorDeltaSchema` / `ExecutorDelta` / `ExecutorStatusDeltaSchema` / `ExecutorPlanDeltaSchema` / `ExecutorPlanDelta` / `ExecutorPlanEntrySchema` / `ExecutorPlanEntry` / `ExecutorPlanEntryStatusSchema` / `ExecutorPlanEntryStatus` / `ExecutorPlanEntryPrioritySchema` / `ExecutorPlanEntryPriority` / `ExecutorStartupPhaseSchema` / `ExecutorStartupPhase` / `ExecutorThreadDispositionSchema` / `ExecutorThreadDisposition` / `ExecutorErrorKindSchema` / `ExecutorErrorKind` / `ExecutorRawSchema` / `ExecutorTokenUsageSchema` / `ExecutorTokenUsage` / `ExecutorModelUsageSchema` / `ExecutorModelUsage` | schemas / _types_ | what an engine said: `agent-parts` blocks with `turnId`, `itemId` and `raw` (including optional `provider` metadata on `tool-call` and `tool-result`), live `plan` deltas (`set`, `update`, `remove` with typed `entries` carrying `content`, `status` and optional `priority`), plus requests, usage (including optional `cacheCreationInputTokens`, `thinkingTokens`, `totalTokens`, cumulative `total`, and per-model `modelUsage`), the context gauge (`context-usage`), lifecycle `status` deltas (`ExecutorStartupPhase` is an open label of 1–64 trimmed characters; the drivers emit `spawning`, `initializing` and `verifying`, and a reader treats any other label as a phase it does not know), the end of the turn (with optional `threadDisposition`: `'reusable' \| 'broken'`, also carried on `TurnReportSchema.failure`), errors by kind and window resets |
+| `projectExecutorDeltas` | function | fold a turn's deltas into the message parts the agent runtime stores (forwarding `provider` metadata on `tool-call` / `tool-result` and ignoring lifecycle `status` and `plan` deltas) |
 | `buildContextHandoff` / `withInlineHandoffContext` / `InlineHandoffComposition` / `ContextHandoffInputSchema` / `ContextHandoffInput` / `ContextHandoffEntrySchema` / `ContextHandoffEntry` / `ContextHandoffMessageEntrySchema` / `ContextHandoffClearEntrySchema` / `ContextHandoffBudgetSchema` / `ContextHandoffStrategySchema` / `ContextHandoffResultSchema` / `ContextHandoffResult` / `ContextHandoffSelectedItemSchema` / `ContextHandoffSelectedItem` / `ContextHandoffStructuredItemSchema` / `ContextHandoffStructuredItem` | functions / schemas / _types_ | pure portable context-handoff builder for cross-engine or cross-session transitions: supports `full` and `delta` (`afterItemId` or `afterTurnId`, fail-closed `missingAnchor: 'error'` or `'full'`) strategies respecting the latest `clear` barrier, keeps intact items by fixed priority (`last user → last assistant → first user → newest..oldest`) under strict `maxTokens` / `maxBytes` / `maxOmittedIds` (and optional `contextWindowTokens` / `usedTokens` / `workReserveTokens`; an omitted `usedTokens` counts as `0` — the caller's statement that the receiving thread is new, so a caller that does not know the fill of a thread in use omits `contextWindowTokens` too) ceilings while dropping non-text/binary/reasoning/provider parts, emits deterministic `inlineText` and Responses API `structuredItems`, and composes inline context ahead of a user prompt via `withInlineHandoffContext` (deferring on leading `/slash` commands) |
 | `AgentEngineDriver` / `AgentEngineSession` / `AgentEngineTurn` / `ExecutorEngineInfo` | _types_ | one vendor's engine behind one interface: info, declarative `capabilities`, login status, a session per connection (accepting `onStartupPhase` on `open`), turns with `interrupt` and `respond`, `findInput` for a `client-id` engine. A session stops for one reason, asked in one order — its `close()`, the loss of its engine, the caller's `signal`, its own abort: `open` given an aborted signal rejects with the signal's reason; an abort in a turn fails its stream with that reason, and `respond` and `startTurn` then reject with it; `respond` on a turn that failed rejects with that failure; `interrupt` on an ended turn or a stopped session resolves and tells the engine nothing; `close()` may be called again |
 | `dispatchTurn` / `DispatchOutcome` | function / _type_ | send a turn's input at most once through `LocalStepDurability.effect`: `sent`, `delivered` after a reconcile, or `unknown_after_restart` — never resent |
-| `spawnEngineProcess` / `EngineProcess` | function / _type_ | an engine process talked to by lines over `stitchkit/process`: declared environment, owner-loss termination, optional leader `pid` / `pidReady`, `stdoutMode` (`'lines'` default or `'drain'` for socket-serving engines), bounded lines (`maxLineBytes`), stderr, queued stdin (`maxPendingStdinBytes`) and stdin written over the connection's life (`maxStdinBytes`, a refused `send()` that leaves the engine running); every option checked before the spawn |
+| `spawnEngineProcess` / `EngineProcess` / `EngineProcessCommandSpec` / `EngineProcessWrapCommand` | function / _types_ | an engine process talked to by lines over `stitchkit/process` plus the structural command-wrapper hook contract (`EngineProcessCommandSpec`, `EngineProcessWrapCommand`) accepted by ACP and Codex drivers: declared environment, owner-loss termination, optional leader `pid` / `pidReady`, `stdoutMode` (`'lines'` default or `'drain'` for socket-serving engines), bounded lines (`maxLineBytes`), stderr, queued stdin (`maxPendingStdinBytes`) and stdin written over the connection's life (`maxStdinBytes`, a refused `send()` that leaves the engine running); every option checked before the spawn |
 | `createExecutorLeases` / `memoryExecutorLeaseStore` / `ExecutorLeaseStateStore` / `ExecutorLeaseState` / `ExecutorLeaseStateSchema` / `ExecutorLeaseRefusal` | functions / _types_ / class | the server's thread leases and turn receipts over one atomically updated value, bounded by threads: each thread keeps the receipts of its last `retainedTurns` turns (default 64, at most 1024) and the highest `turnOrdinal` it let go, a report of a turn at or below it is `not-retained`, and `resume(resumable)` answers a hello the same way; a `StateStore` of `stitchkit/application` fits; a refusal is an `ExecutorLeaseRefusal` — an `AppError` with status 409 and a code of `EXECUTOR_ERRORS` — so an operation returning the service's promise answers `409 { error: { code } }` |
 | `ExecutorProfileConfigSchema` / `ExecutorProfileConfig` / `EXECUTOR_ENV_KEY_PATTERN` / `engineEnvironment` / `ownCredentials` / `helloProfile` / `CREDENTIAL_VARIABLES` | schema / _type_ / constants / functions | a profile on the executor's machine, the one rule for a declared variable's name (`EXECUTOR_ENV_KEY_PATTERN`: the schema refuses a profile whose `env` holds any other name, on every path a profile takes), the engine's allowlisted environment with an explicit profile's `home` as `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or (ACP) `HOME` plus explicit `profile.env` pass-through for host-specific overrides (such as `TMPDIR`, `SSH_CONNECTION`, or agent-specific `AGY_*` variables), and `helloProfile({ profile, status, ambient })` carrying no path and no value; a driver refuses a profile whose `engine` is not its own with a `TypeError`, before it reads a file or starts the engine |
 | `mergeRateLimitEvent` / `planLimitsReadFailed` / `planLimitsDue` / `planWindowExpired` / `planWindowDurationMins` | functions | plan limits kept as three answers (`mergeRateLimitEvent` preserving `plan`, `planLimitsReadFailed`, `planLimitsDue` treating clean `no-plan-limit`/`unpublished` as not due, `planWindowExpired`, and `planWindowDurationMins` deriving durations in minutes) |
@@ -1555,6 +1666,10 @@ What a release added to the wire, and so what a reader older than it refuses:
 | 0.130.0 | executor → server | `report` | `deltas[].type = 'status'`, `turn-end.threadDisposition`, `usage.cacheCreationInputTokens`, `usage.thinkingTokens`, `usage.totalTokens`, `usage.total`, `usage.modelUsage`, `failure.threadDisposition` |
 | 0.130.0 | server → executor | `reply` | `approve.scope`, `approve.updatedInput`, `deny.interrupt` |
 | 0.131.0 | executor → server | `hello` | `profiles[].planLimits.plan`, `profiles[].planLimits.windows[].scope` |
+| 0.134.0 | executor → server | `report` | `deltas[].type = 'plan'`, `tool-result.provider` |
+| 0.134.0 | server → executor | `offer` | `input[type=text].provider`, `input[type=tool-result].provider` |
+
+(`offer.input` uses non-strict `AgentMessagePartSchema` part objects, so an executor older than `0.134.0` strips `input[type=text].provider` and `input[type=tool-result].provider` instead of refusing the offer; `report` objects are strict, so an older server refuses `deltas[].type = 'plan'` and `tool-result.provider`.)
 
 For a Claude CLI or SDK profile that should use the user's native sign-in, pass
 `{ profileId: 'personal', engine: 'claude-sdk', home: join(homedir(), '.claude'), claudeConfigDir: 'default' }`.
@@ -1622,11 +1737,11 @@ approvals for unprompted tool calls. Explicit `approve` supports `scope: 'once'`
 
 | Export | Kind | Purpose |
 |--------|------|---------|
-| `createAcpDriver` / `AcpDriver` / `AcpDriverConfig` | function / _types_ | the driver (`approvalEnforcement: 'agent-initiated'`): `executable` and `args`; optional `clientInfo`, `sessionMeta`, `stdoutLineFilter`, `probeMode` (`'ephemeral-session' \| 'initialize-only' \| 'passive'`) / `passiveVersion`, `model` / `thoughtLevel` / `mode` (also overridable per open via `AcpOpenInput`, falling back to `session/set_model`), `mcpServers`, `transformUpdate`, post-settle `onUpdate` / `onPermissionRequest`, `permissionRequestDelivery` (`'external-only' \| 'all'`), `onProviderPid` (fired during `open()`), `onDisconnect`, `onObserverError` (every failure of a host callback the driver contained, with the name of the option that failed; a `JsonRpcError` thrown by `onPermissionRequest` outside a turn is its refusal and is not reported), `watchPromptOutcome`, `usageInputIncludesCachedRead`, `steerMode` (`'none' \| 'prompt'`), `resolveFile`, `maxImageBytes` (5 MiB), `maxFrameBytes` (8 MiB), `ambient`, and `requestTimeoutMs` (60 s, capping `session/close` / `session/delete` to at most 5 s; a request the agent sends while `close()` waits for `session/close` is refused — `session/request_permission` with the `cancelled` outcome, any other method with `-32601` — and after an abort or a lost connection nothing is written); exposes `probeCapabilities(AcpProbeCapabilitiesInput)` for non-inference capability probing |
+| `createAcpDriver` / `AcpDriver` / `AcpDriverConfig` | function / _types_ | the driver (`approvalEnforcement: 'agent-initiated'`): `executable` and `args`; optional `clientInfo`, `sessionMeta`, `stdoutLineFilter`, `probeMode` (`'ephemeral-session' \| 'initialize-only' \| 'passive'`) / `passiveVersion`, `model` / `thoughtLevel` / `mode` (also overridable per open via `AcpOpenInput`, falling back to `session/set_model`), `mcpServers`, `transformUpdate`, post-settle `onUpdate` / `onPermissionRequest`, `permissionRequestDelivery` (`'external-only' \| 'all'`), `onProviderPid` (fired during `open()`), `onDisconnect`, `onObserverError` (every failure of a host callback the driver contained, with the name of the option that failed; a `JsonRpcError` thrown by `onPermissionRequest` outside a turn is its refusal and is not reported), `watchPromptOutcome`, `usageInputIncludesCachedRead`, `steerMode` (`'none' \| 'prompt'`), `resolveFile`, `maxImageBytes` (5 MiB), `maxFrameBytes` (8 MiB), `ambient`, `wrapCommand` (command wrapper invoked before spawn, e.g. an OS process sandbox), and `requestTimeoutMs` (60 s, capping `session/close` / `session/delete` to at most 5 s; a request the agent sends while `close()` waits for `session/close` is refused — `session/request_permission` with the `cancelled` outcome, any other method with `-32601` — and after an abort or a lost connection nothing is written); exposes `probeCapabilities(AcpProbeCapabilitiesInput)` for non-inference capability probing |
 | `AcpSession` / `AcpOpenInput` / `AcpSteerTurnInput` / `AcpConfigOption` / `AcpConfigOptionChoice` / `acpOptionChoices` / `acpOptionValues` / `AcpApprovalEnforcement` | _types_ / functions | a session's `providerPid`, its agent's `initialize` answer (`initialized`, with `agentCapabilities.promptCapabilities`), optional `sessionMeta` (`_meta` returned by `session/new`, `session/resume`, or `session/load` when it is a plain JSON object), settings, title and commands, `approvalEnforcement` (`'agent-initiated'`), `setConfigOption(category or id, value)`, `respond(interactionId, reply)` for pending permissions, `steerTurn(input)` when `steerMode: 'prompt'`, per-open overrides on `AcpOpenInput`, and flat/grouped config-option flattening helpers (`acpOptionChoices`, `acpOptionValues`) |
 | `AcpProbeCapabilitiesInput` / `AcpCapabilitiesProbe` / `AcpProbeMode` / `AcpSteerMode` / `AcpSessionMetaInput` / `AcpWatchPromptOutcome` / `AcpPromptOutcomeOverride` | _types_ | non-inference capability probe input/result (running regardless of `probeMode`; returns optional `sessionMeta` from `session/new` when `_meta` is a plain JSON object; `eachModel: true` also selects each `model` value in the ephemeral session and returns `optionsByModel`; once `session/new` answered, `session/close` and `session/delete` run even after an abort or timeout), probe strategy, steer mode, static or `initialize`-derived `_meta` attachment on session open, and prompt-outcome verification hook reclassifying masked `end_turn` failures with `errorKind` and `threadDisposition` |
 | `AcpTransformUpdate` / `AcpUpdateEvent` / `AcpPermissionRequestEvent` | _types_ | update normalizer (`transformUpdate`), live/post-settle `session/update` observer payload (`onUpdate`), and permission request payload with `duringActiveTurn`, full typed `request.options`, and shared single-shot `respond()` (`onPermissionRequest`) |
-| `AcpClientInfoSchema` / `AcpClientInfo` / `AcpInitializeResultSchema` / `AcpInitializeResult` / `AcpConfigOptionSchema` / `AcpSessionUpdateSchema` / `AcpSessionUpdate` / `AcpPromptResult` / `AcpPromptUsage` / `AcpPermissionRequestSchema` / `AcpPermissionRequest` / `AcpPermissionOptionSchema` / `AcpPermissionOption` | schemas / _types_ | loose Zod schemas and typed ACP v1 wire payloads exposed to `sessionMeta`, `transformUpdate`, `onUpdate`, `onPermissionRequest`, and `watchPromptOutcome` |
+| `AcpClientInfoSchema` / `AcpClientInfo` / `AcpInitializeResultSchema` / `AcpInitializeResult` / `AcpConfigOptionSchema` / `AcpSessionUpdateSchema` / `AcpSessionUpdate` / `AcpToolLocationSchema` / `AcpToolLocation` / `AcpPlanEntrySchema` / `AcpPlanEntry` / `AcpPromptResult` / `AcpPromptUsage` / `AcpPermissionRequestSchema` / `AcpPermissionRequest` / `AcpPermissionOptionSchema` / `AcpPermissionOption` | schemas / _types_ | loose Zod schemas and typed ACP v1 wire payloads exposed to `sessionMeta`, `transformUpdate`, `onUpdate`, `onPermissionRequest`, and `watchPromptOutcome` (including tool `title`/`kind`/`locations`, meaningful `tool_call_update` progress updates, and `plan`/`plan_update`/`plan_removed` entries) |
 | `AcpSessionSummary` | _type_ | a session the agent keeps: id, working directory, title, last update |
 | `AcpMcpServerSchema` / `AcpMcpServer` | schema / _type_ | an MCP server as ACP v1 names it: a command with arguments and environment, or an `http`/`sse` URL with headers |
 | `ACP_PROTOCOL_VERSION` | constant | `1`; ACP v1 agents answering `protocolVersion >= 1` are accepted while protocol `< 1` and ACP v2 responses carrying `"info"` are refused at hello |
@@ -1651,7 +1766,7 @@ WebSocket-over-Unix-socket (`unix-listen` / `unix-connect`). Evolving.
 
 | Export | Kind | Purpose |
 |--------|------|---------|
-| `createCodexDriver` / `CodexDriver` / `CodexDriverConfig` | function / _types_ | the driver: `transport` (`stdio`, `unix-listen`, `unix-connect`), `serverArgs`, thread policy (`model`, `modelProvider`, `approvalPolicy`, `sandbox`, `developerInstructions`, `runtimeWorkspaceRoots`, `config`), `prepareThread` / `verifyThread` lifecycle hooks, observers (`onNotification`, `onServerRequest`, `serverRequestDelivery` `'external-only' \| 'all'`, `onDisconnect`, and `onObserverError`, which receives every failure of a host callback the driver contained with the name of the option that failed, or `driver:notification` for a failure inside a shared server's own handling), `maxFrameBytes` (WebSocket/stdio frame ceiling), optional `resolveFile` and `maxImageBytes` (default 5 MiB) for turn-input images, `connectControl(input)` for threadless connections, opt-in `openSharedServer(input)` for headless `stdio` multi-thread multiplexing (ADR 0329), approvals and input asked of the host, and multi-bucket limits from `account/rateLimits/read`. Closing a session, a control connection or a shared server on a stdio app-server answers every server request it still holds, and any that arrives while the process stops, as stopped; after an abort or a lost connection nothing is written, and on a Unix-socket transport such a request is left for the TUI |
+| `createCodexDriver` / `CodexDriver` / `CodexDriverConfig` | function / _types_ | the driver: `transport` (`stdio`, `unix-listen`, `unix-connect`), `serverArgs`, `wrapCommand` (command wrapper invoked before spawn, e.g. an OS process sandbox), thread policy (`model`, `modelProvider`, `approvalPolicy`, `sandbox`, `developerInstructions`, `runtimeWorkspaceRoots`, `config`), `prepareThread` / `verifyThread` lifecycle hooks, observers (`onNotification`, `onServerRequest`, `serverRequestDelivery` `'external-only' \| 'all'`, `onDisconnect`, and `onObserverError`, which receives every failure of a host callback the driver contained with the name of the option that failed, or `driver:notification` for a failure inside a shared server's own handling), `maxFrameBytes` (WebSocket/stdio frame ceiling), optional `resolveFile` and `maxImageBytes` (default 5 MiB) for turn-input images, `connectControl(input)` for threadless connections, opt-in `openSharedServer(input)` for headless `stdio` multi-thread multiplexing (ADR 0329), approvals and input asked of the host, and multi-bucket limits from `account/rateLimits/read`. Closing a session, a control connection or a shared server on a stdio app-server answers every server request it still holds, and any that arrives while the process stops, as stopped; after an abort or a lost connection nothing is written, and on a Unix-socket transport such a request is left for the TUI |
 | `CodexTransportConfig` | _type_ | transport selector: `{ kind: 'stdio' }`, `{ kind: 'unix-listen', socketPath, listenTimeoutMs? }`, or `{ kind: 'unix-connect', socketPath, expectedOwnerUid? }` (resolving symlink chains on parent directories safely across Linux and Darwin) |
 | `CodexSession` / `CodexControlClient` / `CodexControlConnection` / `CodexControlConnectInput` / `CodexRpcCallOptions` | _types_ | extended session returned by `open()` and threadless connection returned by `connectControl()`: expose `providerPid`, `userAgent` (from `initialize`), `respond`, `readConfig`, `readThread`, `resumeThread`, `startThreadTurn` (threadless `turn/start` without occupying a local session turn slot), `interruptTurn`, `steerTurn`, `compactThread`, `listThreads`, `listLoadedThreads`, `listCollaborationModes`, `listTurns`, `listItems`, `archiveThread`, `unarchiveThread`, `unsubscribeThread`, `setThreadName`, `updateThreadMetadata`, `revertThread`, `injectItems`, `listMcpServerStatus`, `listSkills`, `listModels`, `readAccount`, and `readRateLimits`, each accepting optional per-call `CodexRpcCallOptions` (`{ timeoutMs?, signal? }`); `CodexSession` also exposes `threadContext`, `startTurn` (returning `CodexTurn`), and non-mutating `forkThread` |
 | `CodexSharedServer` / `CodexSharedServerOpenInput` / `CodexSharedServerThreadInput` | _types_ | opt-in headless `stdio` multi-thread server returned by `driver.openSharedServer()` exposing `userAgent` and multiplexing up to `maxThreads` (default `32`, hard cap `256`) independent `CodexSession` instances with per-thread routing and `thread/unsubscribe` cleanup on thread close (refuses `unix-listen` / `unix-connect` fail-closed) |
@@ -1963,6 +2078,12 @@ server SDK), [`stitchkit/tools/agent`](#stitchkittoolsagent) (the `ai` peer) and
 
 | Export | Kind | Summary |
 |--------|------|---------|
+| `mountAgentTools` | function | project contract services and runtime tools into a peer-free `AgentToolSet` — the single contract-to-agent projection executed by `stitchkit/agent-runtime` and adapted by `mountAgent` (→ ADR 0336) |
+| `defineAgentTool` | function | define one standalone peer-free `AgentTool` from a Zod input schema without importing any external SDK |
+| `DefineAgentToolConfig` | _type_ | declarative configuration (`input`, optional `output`, `description`, `strict`, `cacheControl`, `providerOptions`, `flattenUnionInput`, `needsApproval`, `onInputAvailable`, `toModelOutput`, `execute`) for `defineAgentTool` |
+| `AgentTool` / `AgentToolSet` / `AgentToolCall` / `AgentToolParseResult` / `AgentToolInputAvailableOptions` / `AgentToolToModelOutputOptions` | _types_ | peer-free executable agent tool contract, map, invocation context (`toolCallId`, `messages`, `abortSignal`, `durability`, `reportProgress`), parse verdict and callback option shapes |
+| `AgentMountConfig` / `AgentContext` | _types_ | configuration and context map shared by `mountAgentTools` and `mountAgent` |
+| `AgentToolModelOutput` | _type_ | peer-free model-facing text/JSON/content output returned by `present.agent` and `AgentTool.toModelOutput` (non-deprecated `{ type: 'file', data, mediaType }` parts) |
 | `defineRuntimeTool` | function | define one validated pathless operation for explicit MCP, Agent and/or CLI surfaces — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createRuntimeToolFactory` | function | bind shared identity and Zod-validated per-call context for runtime tools — [guide](../guide/mcp-and-agents.md#pathless-runtime-tools-and-multimodal-results) |
 | `createToolInvoker` | function | compile an exposure-aware in-process dispatcher over the canonical tool runner; use `stitchkit/tools/invoker` or `stitchkit/tools`, both peer-free — [guide](../guide/mcp-and-agents.md#in-process-calls--createtoolinvoker) |
@@ -1985,7 +2106,7 @@ server SDK), [`stitchkit/tools/agent`](#stitchkittoolsagent) (the `ai` peer) and
 | `RuntimeToolIdentity` | _type_ | `{ serviceName, action, scope?, method, effect?, meta? }` for runtime lifecycle/audit and repeatable-read derivation (`readOnlyHint` → `effect: 'write'` → `effect: 'read'` → `GET`, guarded by `destructiveHint !== true`) |
 | `RuntimeToolHandlerContext` | _type_ | runtime context with the definition's parsed input |
 | `RuntimeToolOutput` | _type_ | output inferred from a runtime tool's optional Zod schema |
-| `RuntimeToolPresenters` | _type_ | optional MCP and AI SDK `toModelOutput` presentation callbacks |
+| `RuntimeToolPresenters` | _type_ | optional MCP and peer-free `present.agent` (`AgentToolModelOutput`) presentation callbacks |
 | `RuntimeMcpPresentation` | _type_ | MCP content/metadata result without framework-owned `structuredContent` or `isError` |
 | `RuntimeMcpInput` | _type_ | typed accepted multi-round input for an opted-in runtime tool |
 | `OAuthClientRegistrationConfig` | _type_ | deterministic pre-registered → CIMD → explicit-DCR client resolution |
@@ -1996,7 +2117,6 @@ server SDK), [`stitchkit/tools/agent`](#stitchkittoolsagent) (the `ai` peer) and
 | `CimdCachePolicy` | _type_ | bounded HTTP-aware cache policy: separate positive/negative pools (`maxEntries`), per-client and server-wide resolution rate limits (`maxResolutionsPerClient` / `maxResolutions` per `resolutionWindowMs`) |
 | `CimdCacheEvent` | _type_ | observable CIMD cache hit, miss, revalidation and eviction event |
 | `createSecureClientMetadataFetcher` | function | production HTTPS, DNS/IP-pinned CIMD fetcher |
-| `RuntimeAgentModelOutput` | _type_ | AI SDK model-facing text/JSON/content output returned by `present.agent` |
 | `AgentToolRegistry` / `AgentToolRegistryBuilder` / `AgentToolRegistryInput` | _type_ | the composed runtime surface and its builder: declared defaults, `replace`/`disable` by name, and the exact `{ tools, names }` a mount receives |
 | `defineToolRegistry` | function | compose runtime tools over one declared default set; an unknown `replace`/`disable` name is refused instead of silently leaving the default in place |
 | `ToolExtend` | _type_ | extra-args extension for `mountMcp` / `mountAgent` |
@@ -2249,14 +2369,16 @@ Interactive MCP resources — [ADR 0019](../decisions/0019-generic-native-tools.
 
 ## `stitchkit/tools/agent`
 
-Server-only. A contract's operations as Vercel AI SDK tools; needs Zod and the `ai`
-peer, not the MCP server SDK. → ADR 0284.
+Server-only thin adapter over `mountAgentTools` (`stitchkit/tools`) that projects a contract's
+operations into a Vercel AI SDK `ToolSet` emitting only non-deprecated `{ type: 'file', data,
+mediaType }` parts for applications running their own AI SDK loop. Needs Zod and the `ai` peer,
+not the MCP server SDK. → ADR 0284, ADR 0336.
 
 | Export | Kind | Summary |
 |--------|------|---------|
-| `mountAgent` | function | a Vercel AI SDK `ToolSet` from a service; failed executions reject through the SDK tool-error channel with a safe typed envelope, while successful output is never classified by field name — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
-| `AgentMountConfig` | _type_ | config for `mountAgent` |
-| `AgentContext` | _type_ | the context merged into agent tool handlers |
+| `mountAgent` | function | adapt `mountAgentTools` into a Vercel AI SDK `ToolSet`; failed executions reject through the SDK tool-error channel with a safe typed envelope, while successful output is never classified by field name — [guide](../guide/mcp-and-agents.md#ai-agents--mountagent) |
+| `AgentMountConfig` | _type_ | config for `mountAgent` (shared with `mountAgentTools`) |
+| `AgentContext` | _type_ | the context merged into agent tool handlers (shared with `mountAgentTools`) |
 
 ## `stitchkit/tools/toolkit`
 
@@ -2266,7 +2388,7 @@ needs both the `@modelcontextprotocol/server` and `ai` peers. → ADR 0284.
 | Export | Kind | Summary |
 |--------|------|---------|
 | `createToolkit` | function | context-typed tool mounts — [guide](../guide/cli.md#typed-context) |
-| `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` |
+| `Toolkit` | _type_ | the context-pinned tool surface from `createToolkit` (including both `mountAgentTools(services, config)` and single-argument `mountAgentTools(config)`) |
 
 ## `stitchkit/tools/connections`
 
@@ -3247,7 +3369,9 @@ host-only `SandboxCodingBinding`, with shared authorization, command collection 
 Its types are `AgentSandboxGrade`, `AgentSandboxRestriction`, `BubblewrapSandboxConfig`, `SandboxBackend`, `SandboxCommand`,
 `SandboxCreateInput`, `SandboxDriver`, `SandboxHandle`, `SandboxNetworkPolicy`,
 `SandboxPrewarmInput`, `SandboxProcess`, `SandboxRunOptions`, `SandboxSession`,
-and `SandboxState`. The [sandbox guide](../guide/sandbox.md) specifies lifecycle,
+and `SandboxState`. `createProcessSandbox`, `probeProcessSandbox`, and `buildSeatbeltProfile` provide a reusable fail-closed OS process sandbox wrapper for long-lived streaming stdio/IPC processes (`workspace-strict` and `workspace-readonly` profiles with real workspace paths, explicit `writableDirs`, `readOnlyPaths`, `denyPaths`, `unixSockets`, `network` policy, `envAllowlist`, `homeDir`, Linux `bwrap` and macOS Seatbelt `sandbox-exec`, throwing `SandboxError('SANDBOX_UNAVAILABLE', ...)` rather than falling back silently; its `wrapCommand` fits `AcpDriverConfig.wrapCommand` and `CodexDriverConfig.wrapCommand`). Its schemas and types are `ProcessSandboxSpecSchema`, `ProcessSandboxSpec`, `ProcessSandboxProfileSchema`, `ProcessSandboxProfile`, `ProcessSandboxNetworkSchema`, `ProcessSandboxNetwork`, `ProcessSandboxBackendKindSchema`, `ProcessSandboxBackendKind`, `ProcessSandboxUnixSocketSchema`, `ProcessSandboxUnixSocket`, `ProcessSandboxProbeResultSchema`, `ProcessSandboxProbeResult`, `ProcessSandboxProbeOptions`, `ProcessSandboxCommandSpec`, and `ProcessSandbox`.
+
+The [sandbox guide](../guide/sandbox.md) specifies lifecycle,
 network enforcement, gateway credentials and platform/resource boundaries.
 
 ## `stitchkit/agent-runtime/realtime`
@@ -3442,3 +3566,41 @@ Native consumers import HTTP factories, `ApiError`, `createUrlBuilder`,
 `RealtimeClient`, `defineRealtimeContract`, `InferRealtimeEventMap`, `createRetainedTopics`
 and `RetainedTopics` from `stitchkit/realtime`. `createQueryClientFactory` remains in
 `stitchkit/react`. Shared modules must use the same public leaves throughout their graph.
+
+### Account device presence and remote command bus
+
+Share one realtime connection across account-scoped online device presence, live capability state
+slots (media playback, active reading, relay status) and targeted remote commands with structured
+acknowledgements (`ok`, `DEVICE_OFFLINE`, `FORBIDDEN`, `TIMEOUT`, `UNSUPPORTED_CAPABILITY`,
+`HANDLER_ERROR`, `INVALID_COMMAND`, `DISCONNECTED`). Mount the server side with
+`bindDevicePresence` from `stitchkit/server`.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createDevicePresenceContract` / `DevicePresenceContract` / `DevicePresenceContractOptions` / `DevicePresenceCapabilityDef` / `DevicePresenceCapabilityMap` / `DevicePresenceCapabilityKey` / `DevicePresenceCapabilityResult` / `DevicePresenceEventNames` / `DevicePresenceSchemas` | function / _types_ | capability-driven strict Zod contract (`{ [capability]: { state, command, result? } }`) generating namespaced wire events and schemas |
+| `createDevicePresenceClient` / `DevicePresenceClient` / `DevicePresenceClientConfig` / `DevicePresenceSubscriber` / `DevicePresenceSendCommandInput` / `DevicePresenceCommandHandler` / `DevicePresenceCommandContext` | function / _types_ | typed browser / native client over `RealtimeClientTransport` with `subscribe`, `publishState`, `sendCommand`, `onCommand`, automatic re-announce and local state republication after reconnect |
+| `createDevicePresenceRelayAdapter` / `DevicePresenceRelayAdapter` / `DevicePresenceRelayAdapterConfig` / `DevicePresenceRelayStateSource` / `DevicePresenceRelayStateSchema` / `DevicePresenceRelayState` | function / schema / _types_ | connects a desktop or mobile relay host's lifecycle state to a presence capability slot over the shared socket |
+| `DevicePresenceIdentitySchema` / `DevicePresenceIdentity` / `DevicePresenceErrorCodeSchema` / `DevicePresenceErrorCode` | schemas / _types_ | strict device identity metadata and closed error code vocabulary |
+| `DevicePresenceDevice` / `DevicePresenceSnapshot` / `DevicePresenceStates` / `DevicePresenceStatesInput` / `DevicePresenceAnnouncePayload` / `DevicePresenceAnnounceAck` / `DevicePresenceStateUpdatePayload` / `DevicePresenceStateUpdateAck` / `DevicePresenceCommandRequest` / `DevicePresenceCommandDelivery` / `DevicePresenceCommandResult` | _types_ | inferred account presence snapshot, state update and targeted remote command wire payloads |
+| `DEFAULT_DEVICE_PRESENCE_PREFIX` / `DEFAULT_DEVICE_PRESENCE_COMMAND_TIMEOUT_MS` / `DEFAULT_DEVICE_PRESENCE_REQUEST_TIMEOUT_MS` | consts | default event namespace prefix and timeout bounds |
+
+## `stitchkit/device-relay`
+
+Peer-free, browser- and Hermes-safe User Device Relay over realtime. Multiplexes unary Fetch RPCs
+and credit-paced resumable cursor streams over a single outbound realtime connection from a user's
+desktop machine to a multi-tenant backend hub.
+
+| Export | Kind | Summary |
+|--------|------|---------|
+| `createDeviceRelayHub` / `DeviceRelayHub` / `DeviceRelayHubConfig` / `DeviceRelayFetchOptions` / `DeviceRelayStreamOpenOptions` | function / _types_ | backend hub binding authenticated `(accountId, deviceId)` sockets with conservative heartbeat leases, strict owner-only default access (`FORBIDDEN` for foreign accounts), Fetch-compatible `createRelayFetch`, and `openRelayStream` (with optional `share: true` fan-out that closes upstream when the last subscriber leaves) |
+| `DeviceRelayRealtimeServer` / `DeviceRelayServerConnection` / `DeviceRelayRawSocket` / `DeviceRelayDeviceAuthInput` / `DeviceRelayAuthenticatedDevice` / `DeviceRelayAccessRequest` | _types_ | peer-free structural server contracts satisfied directly by `bindRealtimeServer(deviceRelayRealtimeContract, io)` |
+| `createDeviceRelayAgent` / `DeviceRelayAgent` / `DeviceRelayAgentConfig` / `DeviceRelayAgentState` / `DeviceRelayRpcAllowRule` / `DeviceRelayAgentStreamInput` / `DeviceRelayUpstreamFrame` | function / _types_ | desktop-side relay agent with default-deny local allowlists (`allowRpc`, `allowStreamTopics`), credit-paced stream pumping, bounded payloads, and non-retryable auth refusal handling |
+| `createMemoryRelayBroker` / `RelayBrokerPort` / `RelayBrokerInstanceHandler` / `RelayBrokerStreamHandle` / `RelayBrokerStreamSink` | function / _types_ | multi-replica routing port (`RelayBrokerPort`) and in-memory default broker (`createMemoryRelayBroker`) |
+| `DeviceRelayStream` / `DeviceRelayStreamFrame` | _types_ | async-iterable cursor stream handle and yielded frame shape |
+| `deviceRelayRealtimeContract` | const | namespaced Zod-validated `RealtimeContract` (`stitchkit.relay.*` hello, heartbeat, unary RPC and cursor stream frames) |
+| `DeviceRelayError` / `DeviceRelayErrorCodeSchema` / `DeviceRelayErrorCode` / `DeviceRelayDeliveryStateSchema` / `DeviceRelayDeliveryState` / `isDeviceRelayRetryableCode` / `isRetryableDeviceRelayError` | class / schemas / functions | typed relay error vocabulary separating retryable transport/offline faults from non-retryable refusals and carrying honest `delivery` (`not-sent`, `unknown`, `delivered`) |
+| `DeviceRelayStateSchema` / `DeviceRelayState` / `DeviceRelayStatusSchema` / `DeviceRelayStatus` / `DeviceRelayOfflineReasonSchema` / `DeviceRelayOfflineReason` | schemas / _types_ | live presence snapshot, status (`online`, `offline`) and offline transition reasons (`disconnected`, `lease-expired`, `replaced`, `closed`) |
+| `DeviceRelayHelloSchema` / `DeviceRelayHello` / `DeviceRelayHelloAckSchema` / `DeviceRelayHelloAck` / `DeviceRelayHeartbeatSchema` / `DeviceRelayHeartbeat` / `DeviceRelayHeartbeatAckSchema` / `DeviceRelayHeartbeatAck` | schemas / _types_ | handshake registration and lease renewal wire frames |
+| `DeviceRelayRpcRequestSchema` / `DeviceRelayRpcRequest` / `DeviceRelayRpcCancelSchema` / `DeviceRelayRpcCancel` / `DeviceRelayRpcResponseSchema` / `DeviceRelayRpcResponse` / `DeviceRelayHeaderEntrySchema` / `DeviceRelayHeaderEntry` / `DeviceRelayBodyEncodingSchema` / `DeviceRelayBodyEncoding` | schemas / _types_ | unary HTTP-over-realtime request, cancel and response wire frames |
+| `DeviceRelayStreamOpenSchema` / `DeviceRelayStreamOpen` / `DeviceRelayStreamOpenAckSchema` / `DeviceRelayStreamOpenAck` / `DeviceRelayStreamCreditSchema` / `DeviceRelayStreamCredit` / `DeviceRelayStreamCloseSchema` / `DeviceRelayStreamClose` / `DeviceRelayStreamEventSchema` / `DeviceRelayStreamEvent` / `DeviceRelayJsonValueSchema` / `DeviceRelayJsonValue` | schemas / _types_ | cursor stream open, ack, credit, close and event wire frames |
+| `DEVICE_RELAY_ORIGIN` / `DEFAULT_DEVICE_RELAY_LEASE_TTL_MS` / `DEFAULT_DEVICE_RELAY_HEARTBEAT_INTERVAL_MS` / `DEFAULT_DEVICE_RELAY_RPC_TIMEOUT_MS` / `DEFAULT_DEVICE_RELAY_MAX_REQUEST_BYTES` / `DEFAULT_DEVICE_RELAY_MAX_RESPONSE_BYTES` / `DEFAULT_DEVICE_RELAY_MAX_STREAM_FRAME_BYTES` / `DEFAULT_DEVICE_RELAY_MAX_IN_FLIGHT_RPCS` / `DEFAULT_DEVICE_RELAY_MAX_CONCURRENT_STREAMS` / `DEFAULT_DEVICE_RELAY_MAX_BUFFERED_FRAMES` | consts | declared default bounds and synthetic path-parsing origin |

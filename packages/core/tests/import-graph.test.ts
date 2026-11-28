@@ -36,7 +36,7 @@ const SRC = resolve(import.meta.dir, '../src');
 /** Declared directions. A part not listed imports no other part. */
 export const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   internal: [],
-  'agent-parts': [],
+  'agent-parts': ['internal'],
   'agent-executor': [
     'agent-parts',
     'contract',
@@ -63,6 +63,7 @@ export const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   observability: ['contract', 'internal', 'server', 'tools'],
   realtime: ['contract', 'internal', 'server'],
   browser: ['contract', 'internal', 'observability', 'realtime'],
+  'device-relay': ['browser', 'internal', 'realtime'],
   live: ['browser', 'contract', 'internal', 'realtime'],
   react: ['browser', 'contract', 'internal', 'live', 'realtime'],
   application: ['contract', 'internal', 'live', 'observability', 'server'],
@@ -80,6 +81,7 @@ export const ALLOWED: Readonly<Record<string, readonly string[]>> = {
     'release',
   ],
   tools: [
+    'agent-parts',
     'browser',
     'contract',
     'durability',

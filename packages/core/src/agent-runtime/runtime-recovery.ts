@@ -1,5 +1,5 @@
-import type { ToolSet } from 'ai';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import type { AgentToolSet } from '../tools/agent-tools';
 import type {
   AgentRuntimeRecoverOptions,
   AgentRuntimeRecoveryInput,
@@ -11,7 +11,7 @@ import type { AgentRuntimeState } from './runtime-state';
 import type { AgentRecoverableDescriptor } from './store';
 import { AgentRuntimeConflictError } from './terminal-commit';
 
-export function resumeAgentRun<CONTEXT, TOOLS extends ToolSet>(
+export function resumeAgentRun<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   rawInput: AgentRuntimeRecoveryInput,
 ): { accepted: Promise<void>; result: Promise<AgentRuntimeResult> } {
@@ -70,7 +70,7 @@ export function resumeAgentRun<CONTEXT, TOOLS extends ToolSet>(
   return { accepted: accepted.promise, result: result.promise };
 }
 
-export async function recoverAgentRuns<CONTEXT, TOOLS extends ToolSet>(
+export async function recoverAgentRuns<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   options: AgentRuntimeRecoverOptions<CONTEXT>,
 ): Promise<readonly AgentRuntimeRecoveryOutcome[]> {
@@ -116,7 +116,7 @@ export async function recoverAgentRuns<CONTEXT, TOOLS extends ToolSet>(
   return outcomes;
 }
 
-async function collectRecoverable<CONTEXT, TOOLS extends ToolSet>(
+async function collectRecoverable<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   options: AgentRuntimeRecoverOptions<CONTEXT>,
   pageSize: number,
@@ -164,7 +164,7 @@ async function collectRecoverable<CONTEXT, TOOLS extends ToolSet>(
   return ordered;
 }
 
-async function recoverItem<CONTEXT, TOOLS extends ToolSet>(
+async function recoverItem<CONTEXT, TOOLS extends AgentToolSet>(
   state: AgentRuntimeState<CONTEXT, TOOLS>,
   options: AgentRuntimeRecoverOptions<CONTEXT>,
   item: AgentRecoverableDescriptor,

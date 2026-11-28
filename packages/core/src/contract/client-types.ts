@@ -112,6 +112,14 @@ export interface UploadProgress {
 /** Public per-call options accepted by every typed HTTP endpoint's `withOptions` method. */
 export interface ClientRequestOptions {
   signal?: AbortSignal;
+  /** Per-call timeout override in milliseconds; also propagated as a relative deadline budget unless `propagateDeadline: false`. */
+  timeout?: number;
+  /**
+   * Propagate the remaining relative timeout budget in `x-stitchkit-timeout-ms` so downstream
+   * Stitchkit servers can bound admission waits and nested hops. Defaults to `true` when per-call
+   * `timeout` is given, otherwise inherits the client's `propagateDeadline` setting (`false` by default).
+   */
+  propagateDeadline?: boolean;
   /**
    * Hear the request body leave: first `sentBytes: 0`, then growing values,
    * last equal to `totalBytes`. Bun and Node stream the encoded body through

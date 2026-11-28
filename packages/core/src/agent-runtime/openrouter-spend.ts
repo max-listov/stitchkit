@@ -27,7 +27,7 @@ export function openRouterSpendProvider(options: {
 const GenerationSchema = z.object({
   data: z
     .object({
-      total_cost: z.number().nonnegative().finite().nullish(),
+      total_cost: z.number().nonnegative().nullish(),
       provider_name: z.string().min(1).nullish(),
       model: z.string().min(1).nullish(),
       native_tokens_prompt: z.int().nonnegative().nullish(),

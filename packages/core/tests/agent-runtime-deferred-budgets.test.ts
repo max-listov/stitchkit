@@ -1,14 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import { asSchema, type ToolSet } from 'ai';
 import { z } from 'zod';
 import {
   AgentContextOverflowError,
+  type AgentPrepareStepInput,
   AgentRunSchema,
   createDeferredAgentToolSurface,
 } from '../src/entrypoints/agent-runtime';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
 import { defineContract, type RuntimeContext } from '../src/entrypoints/contract';
 import { createImplement } from '../src/entrypoints/server';
-import { defineRuntimeTool } from '../src/entrypoints/tools';
+import { type AgentToolSet, defineRuntimeTool } from '../src/entrypoints/tools';
 
 function definition(name: string, description = name) {
   return defineRuntimeTool({
@@ -41,7 +42,19 @@ const runContext = {
   toolFenceLifecycle: { beforeHandle: () => undefined },
 };
 
-function searchExecutor(tools: ToolSet) {
+const baseStepInput: AgentPrepareStepInput = {
+  stepNumber: 0,
+  steps: [],
+  messages: [],
+  responseMessages: [],
+  initialMessages: [],
+  initialInstructions: '',
+  instructions: '',
+  driver: createScriptedModelDriver({ steps: [] }),
+  activeTools: [],
+};
+
+function searchExecutor(tools: AgentToolSet) {
   const execute = tools.tool_search?.execute;
   if (!execute) throw new Error('expected deferred search tool');
   return execute;
@@ -71,7 +84,7 @@ describe('deferred Agent tool ceilings', () => {
     );
     const selected = await search(
       { query: 'private-query' },
-      { toolCallId: 'one', messages: [], context: undefined },
+      { toolCallId: 'one', messages: [] },
     );
     expect(selected).toMatchObject({
       status: 'SELECTED',
@@ -87,7 +100,7 @@ describe('deferred Agent tool ceilings', () => {
 
     const refused = await search(
       { query: 'query-that-is-over-the-configured-byte-limit' },
-      { toolCallId: 'two', messages: [], context: undefined },
+      { toolCallId: 'two', messages: [] },
     );
     expect(refused).toMatchObject({ status: 'SELECTION_REFUSED', selected: [] });
     expect(selectorCalls).toBe(1);
@@ -102,7 +115,7 @@ describe('deferred Agent tool ceilings', () => {
     });
     const receipt = await searchExecutor(
       searchOnly.mount(runContext, { access: { open: 'local-operator' } }),
-    )({ query: 'target' }, { toolCallId: 'search', messages: [], context: undefined });
+    )({ query: 'target' }, { toolCallId: 'search', messages: [] });
     expect(receipt).toMatchObject({ status: 'SELECTION_REFUSED', selected: [] });
 
     const pinned = createDeferredAgentToolSurface({
@@ -111,12 +124,11 @@ describe('deferred Agent tool ceilings', () => {
       search: { name: 'tool_search', maxQueryBytes: 32, maxResults: 1, maxResultBytes: 512 },
       activation: { maxSelectedTools: 1, maxActiveTools: 1, maxSchemaBytes: 4_096 },
     });
-    expect(
+    await expect(
       pinned.prepareStep()({
+        ...baseStepInput,
         ...runContext,
-        messages: [],
-        responseMessages: [],
-      } as never),
+      }),
     ).rejects.toBeInstanceOf(AgentContextOverflowError);
   });
 
@@ -145,7 +157,7 @@ describe('deferred Agent tool ceilings', () => {
         access: { open: 'local-operator' },
       }).lesson_put;
       if (!tool) throw new Error('expected the lesson_put tool');
-      return JSON.stringify(await asSchema(tool.inputSchema).jsonSchema);
+      return JSON.stringify(tool.inputSchema);
     };
     const limited = await mounted(10);
     // The node at f8 opens: its step to f9 would be the eleventh level.
@@ -187,14 +199,13 @@ describe('deferred Agent tool ceilings', () => {
     const tools = deferred.mount(runContext, { access: { open: 'local-operator' } });
     const mountedTool = tools.compute;
     if (!mountedTool) throw new Error('expected the compute tool');
-    const mounted = JSON.stringify(await asSchema(mountedTool.inputSchema).jsonSchema);
+    const mounted = JSON.stringify(mountedTool.inputSchema);
     expect(mounted).not.toContain('$ref');
     const mountedBytes = new TextEncoder().encode(mounted).byteLength;
     await deferred.prepareStep()({
+      ...baseStepInput,
       ...runContext,
-      messages: [],
-      responseMessages: [],
-    } as never);
+    });
     expect(events.at(-1)?.activeSchemaBytes).toBeGreaterThan(mountedBytes);
     expect(() => surface(mountedBytes)).toThrow('base tools exceed maxSchemaBytes');
   });
@@ -256,13 +267,10 @@ describe('deferred Agent tool ceilings', () => {
         activation: { maxSelectedTools: 1, maxActiveTools: 2, maxSchemaBytes: 8_192 },
       });
       const tools = deferred.mount(runContext, { access: { open: 'local-operator' } });
-      await searchExecutor(tools)(
-        { query: 'act' },
-        { toolCallId: 'search', messages: [], context: undefined },
-      );
+      await searchExecutor(tools)({ query: 'act' }, { toolCallId: 'search', messages: [] });
       const mountedTool = tools.act_tool;
       if (!mountedTool) throw new Error('expected the act tool');
-      const mounted = await asSchema(mountedTool.inputSchema).jsonSchema;
+      const mounted = mountedTool.inputSchema;
       const listed = ranked.find((entry) => entry.name === 'act_tool')?.inputSchema;
       return [mounted, listed].map((schema) => ({
         tenant: JSON.stringify(schema).includes('"tenant"'),

@@ -12,6 +12,7 @@ import {
   defineAgentProtocol,
   structuredCompaction,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -100,7 +101,7 @@ describe('queued inputs cross the provider boundary only with their assigned run
     const runtime = createAgentRuntime({
       protocol,
       store,
-      models: { resolve: () => ({ descriptor, model }) },
+      models: { resolve: () => ({ descriptor, driver: fromAiSdkModel(model) }) },
       prompt: () => ({
         instructions: 'test',
         sections: [],
@@ -177,7 +178,7 @@ describe('queued inputs cross the provider boundary only with their assigned run
     const runtime = createAgentRuntime({
       protocol,
       store,
-      models: { resolve: () => ({ descriptor, model }) },
+      models: { resolve: () => ({ descriptor, driver: fromAiSdkModel(model) }) },
       prompt: ({ snapshot }) => {
         promptSnapshots.push(snapshot);
         return {

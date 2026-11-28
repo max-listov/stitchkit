@@ -1,5 +1,3 @@
-import { simulateReadableStream, type ToolSet } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   createMemoryAgentRuntimeStore,
@@ -9,10 +7,11 @@ import {
   createHeadlessAgentHarness,
   type HeadlessAgentHarnessConfig,
 } from '../../src/entrypoints/agent-runtime/harness';
+import type { AgentToolSet } from '../../src/entrypoints/tools';
 import { until } from './until';
 
 export function compositionHarness(
-  overrides: Partial<HeadlessAgentHarnessConfig<{ owner: string }, ToolSet>> = {},
+  overrides: Partial<HeadlessAgentHarnessConfig<{ owner: string }, AgentToolSet>> = {},
 ) {
   return createHeadlessAgentHarness({
     protocol: defineAgentProtocol({
@@ -29,30 +28,29 @@ export function compositionHarness(
           contextWindow: 8_000,
           capabilities: [],
         },
-        model: new MockLanguageModelV4({
-          doStream: async () => ({
-            stream: simulateReadableStream({
-              chunks: [
-                { type: 'text-start', id: 'answer' },
-                { type: 'text-delta', id: 'answer', delta: `Hello ${context.owner}` },
-                { type: 'text-end', id: 'answer' },
-                {
-                  type: 'finish',
-                  finishReason: { unified: 'stop', raw: undefined },
-                  usage: {
-                    inputTokens: {
-                      total: 1,
-                      noCache: 1,
-                      cacheRead: undefined,
-                      cacheWrite: undefined,
+        driver: {
+          provider: 'fixture',
+          modelId: 'composition',
+          async stream() {
+            return {
+              parts: {
+                async *[Symbol.asyncIterator]() {
+                  yield { type: 'text-start', id: 'answer' };
+                  yield { type: 'text-delta', id: 'answer', delta: `Hello ${context.owner}` };
+                  yield { type: 'text-end', id: 'answer' };
+                  yield {
+                    type: 'finish',
+                    finishReason: 'stop',
+                    usage: {
+                      inputTokens: { value: 1, provenance: 'provider-reported' },
+                      outputTokens: { value: 1, provenance: 'provider-reported' },
                     },
-                    outputTokens: { total: 1, text: 1, reasoning: undefined },
-                  },
+                  };
                 },
-              ],
-            }),
-          }),
-        }),
+              },
+            };
+          },
+        },
       }),
     },
     resources: { load: async () => ({ resources: [], diagnostics: [] }) },

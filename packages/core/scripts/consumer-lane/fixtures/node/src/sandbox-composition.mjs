@@ -3,20 +3,19 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, readlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { createMemoryAgentRuntimeStore, defineAgentProtocol } from 'stitchkit/agent-runtime';
 import { createHeadlessAgentHarness } from 'stitchkit/agent-runtime/harness';
 import {
   createBubblewrapSandboxBackend,
   createSandboxCodingTools,
 } from 'stitchkit/agent-runtime/sandbox';
+import { createScriptedModelDriver } from 'stitchkit/agent-runtime/testing';
 import {
   createLocalStepDurability,
   defineRuntimeTool,
   defineToolRegistry,
+  mountAgentTools,
 } from 'stitchkit/tools';
-import { mountAgent } from 'stitchkit/tools/agent';
 import { z } from 'zod';
 
 const probe = spawnSync('/usr/bin/bwrap', [
@@ -71,41 +70,29 @@ if (probe.status === 0) {
       .build();
     assert.ok(!registry.names.includes('glob'));
     const usage = {
-      inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-      outputTokens: { total: 1, text: 1, reasoning: undefined },
+      inputTokens: { value: 1, provenance: 'provider-reported' },
+      outputTokens: { value: 1, provenance: 'provider-reported' },
     };
-    const model = new MockLanguageModelV4({
-      doStream: [
-        {
-          stream: simulateReadableStream({
-            chunks: [
-              {
-                type: 'tool-call',
-                toolCallId: 'command',
-                toolName: 'run_command',
-                input: JSON.stringify({
-                  executable: 'shell',
-                  args: ['-c', 'printf once >> effect; readlink /proc/self/ns/net'],
-                }),
-              },
-              {
-                type: 'finish',
-                finishReason: { unified: 'tool-calls', raw: undefined },
-                usage,
-              },
-            ],
-          }),
-        },
-        {
-          stream: simulateReadableStream({
-            chunks: [
-              { type: 'text-start', id: 'done' },
-              { type: 'text-delta', id: 'done', delta: 'complete' },
-              { type: 'text-end', id: 'done' },
-              { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-            ],
-          }),
-        },
+    const driver = createScriptedModelDriver({
+      steps: [
+        [
+          {
+            type: 'tool-call',
+            toolCallId: 'command',
+            toolName: 'run_command',
+            input: JSON.stringify({
+              executable: 'shell',
+              args: ['-c', 'printf once >> effect; readlink /proc/self/ns/net'],
+            }),
+          },
+          { type: 'finish', finishReason: 'tool-calls', usage },
+        ],
+        [
+          { type: 'text-start', id: 'done' },
+          { type: 'text-delta', id: 'done', delta: 'complete' },
+          { type: 'text-end', id: 'done' },
+          { type: 'finish', finishReason: 'stop', usage },
+        ],
       ],
     });
     const presented = [];
@@ -129,7 +116,7 @@ if (probe.status === 0) {
             contextWindow: 16000,
             capabilities: ['tools'],
           },
-          model,
+          driver,
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },
@@ -141,7 +128,10 @@ if (probe.status === 0) {
         providerOverhead: { provenance: 'unavailable' },
       }),
       tools: () =>
-        mountAgent([], { access: { open: 'local-operator' }, runtimeTools: registry.tools }),
+        mountAgentTools([], {
+          access: { open: 'local-operator' },
+          runtimeTools: registry.tools,
+        }),
       loop: {
         toolApproval: { run_command: 'user-approval' },
         toolApprovalSecret: 'packed-sandbox-fixture',
@@ -204,13 +194,13 @@ if (probe.status === 0) {
     await replay.step(payload.stepName, () => {
       throw new Error('recorded command executed again');
     });
-    const read = mountAgent([], {
+    const read = mountAgentTools([], {
       access: { open: 'local-operator' },
       runtimeTools: createSandboxCodingTools(handle, { authorize: () => true }),
     }).read_file.execute;
     const result = await read(
       { path: 'effect' },
-      { toolCallId: 'read-after-reconnect', messages: [], context: undefined },
+      { toolCallId: 'read-after-reconnect', messages: [] },
     );
     assert.equal(result.text, 'once');
     assert.equal(effects, 1);

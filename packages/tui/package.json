@@ -53,7 +53,6 @@
     "prepublishOnly": "bun run check && bun run test && bun run build"
   },
   "dependencies": {
-    "ai": "^7.0.179",
     "zod": "^4.6.7"
   },
   "peerDependencies": {

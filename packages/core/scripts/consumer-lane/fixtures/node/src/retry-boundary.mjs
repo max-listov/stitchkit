@@ -1,38 +1,34 @@
 /** A cut stream is retried once, at a durable boundary, and the partial output is dropped. */
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import {
   AgentProviderStreamCutError,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from 'stitchkit/agent-runtime';
+import { createScriptedModelDriver } from 'stitchkit/agent-runtime/testing';
 import { z } from 'zod';
 import { proof } from './packed-sqlite.mjs';
 
-let calls = 0;
 const usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 1, text: 1, reasoning: undefined },
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
 };
-const model = new MockLanguageModelV4({
-  doStream: async () => {
-    calls += 1;
-    const chunks =
-      calls === 1
-        ? [
-            { type: 'text-start', id: 'a' },
-            { type: 'text-delta', id: 'a', delta: 'partial' },
-            { type: 'error', error: new AgentProviderStreamCutError() },
-          ]
-        : [
-            { type: 'text-start', id: 'b' },
-            { type: 'text-delta', id: 'b', delta: 'recovered' },
-            { type: 'text-end', id: 'b' },
-            { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-          ];
-    return { stream: simulateReadableStream({ chunks }) };
-  },
+const driver = createScriptedModelDriver({
+  provider: 'fault',
+  modelId: 'fault',
+  steps: [
+    [
+      { type: 'text-start', id: 'a' },
+      { type: 'text-delta', id: 'a', delta: 'partial' },
+      { type: 'error', error: new AgentProviderStreamCutError() },
+    ],
+    [
+      { type: 'text-start', id: 'b' },
+      { type: 'text-delta', id: 'b', delta: 'recovered' },
+      { type: 'text-end', id: 'b' },
+      { type: 'finish', finishReason: 'stop', usage },
+    ],
+  ],
 });
 const store = createMemoryAgentRuntimeStore();
 const runtime = createAgentRuntime({
@@ -46,7 +42,7 @@ const runtime = createAgentRuntime({
         contextWindow: 8_000,
         capabilities: [],
       },
-      model,
+      driver,
     }),
   },
   prompt: () => ({
@@ -71,13 +67,13 @@ try {
   );
   proof(
     'retry boundary',
-    calls === 2 &&
+    driver.requests.length === 2 &&
       result.reason === 'success' &&
       parts.includes('recovered') &&
       !parts.includes('partial') &&
       kinds.indexOf('retry/scheduled') >= 0 &&
       kinds.indexOf('retry/scheduled') < kinds.indexOf('retry/started'),
-    `calls ${calls}, reason ${result.reason}, kinds ${kinds.join(',')}`,
+    `calls ${driver.requests.length}, reason ${result.reason}, kinds ${kinds.join(',')}`,
   );
 } finally {
   await runtime.close();

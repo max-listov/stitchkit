@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { LanguageModelUsage } from 'ai';
-import { normalizeSdkUsage } from '../src/agent-runtime/runtime-internals';
+import { normalizeTokenUsage } from '../src/agent-runtime/runtime-internals';
 import {
   AgentCostValueSchema,
   AgentProvenanceSchema,
@@ -39,15 +38,6 @@ const message = (id: string, role: 'user' | 'assistant', text: string) => ({
   createdAt: '2026-08-26T00:00:00.000Z',
   updatedAt: '2026-08-26T00:00:00.000Z',
 });
-
-const sdkUsage = (input: number, output: number): LanguageModelUsage =>
-  ({
-    inputTokens: input,
-    outputTokens: output,
-    totalTokens: input + output,
-    inputTokenDetails: {},
-    outputTokenDetails: {},
-  }) as unknown as LanguageModelUsage;
 
 describe('one provenance vocabulary', () => {
   test('every surface draws its words from the same list', () => {
@@ -107,7 +97,7 @@ describe('a token is an integer', () => {
   test('a provider that reports a fraction gets "unavailable", not a thrown run', () => {
     // The schema refuses the value; this path must not turn that refusal into
     // an exception out of the terminal commit of a run that already answered.
-    const usage = normalizeSdkUsage(sdkUsage(3.5, 10));
+    const usage = normalizeTokenUsage({ inputTokens: 3.5, outputTokens: 10 });
     expect(usage.inputTokens).toEqual({ provenance: 'unavailable' });
     expect(usage.outputTokens).toEqual({ value: 10, provenance: 'provider-reported' });
     expect(AgentUsageSchema.safeParse(usage).success).toBe(true);

@@ -1,5 +1,4 @@
 import { expect, test } from 'bun:test';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   AgentConversationPurgedError,
@@ -12,6 +11,7 @@ import {
   createAgentHarnessControlServer,
   createHeadlessAgentHarness,
 } from '../src/entrypoints/agent-runtime/harness';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
 import { purgeAdmission } from './fixtures/agent-purge';
 
 function models(preflight?: () => Promise<void>) {
@@ -24,7 +24,7 @@ function models(preflight?: () => Promise<void>) {
         contextWindow: 8_000,
         capabilities: [],
       },
-      model: new MockLanguageModelV4(),
+      driver: createScriptedModelDriver({ steps: [] }),
     }),
   };
 }

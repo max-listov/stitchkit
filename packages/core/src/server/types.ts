@@ -252,18 +252,11 @@ export interface MethodDef<TParams = unknown, TInput = unknown, TOutput = unknow
   multipartReceivers?: Record<string, MultipartReceiver>;
   /** Per-route JSON body ceiling; enforced before full buffering. */
   maxJsonBodyBytes?: number;
-  /**
-   * Whether the operation is safe to call twice with the same input — from
-   * `EndpointDef.idempotent`. The core attaches no behaviour; a retrying
-   * transport reads it to decide whether to replay a call after a reconnect.
-   * → ADR 0027.
-   */
+  /** Declared contract timeout ceiling in milliseconds — from `EndpointDef.timeout`. */
+  timeout?: number;
+  /** Whether the operation is safe to replay after a reconnect — from `EndpointDef.idempotent`. → ADR 0027. */
   idempotent?: boolean;
-  /**
-   * The handler returns the `Response` itself — from `EndpointDef.rawResponse`. Routed
-   * and gated like any endpoint, but never serialized, never validated against
-   * an output schema and never mounted as a tool. → ADR 0038.
-   */
+  /** The handler returns the `Response` itself — from `EndpointDef.rawResponse`. → ADR 0038. */
   rawResponse?: true;
   /** Retain the decoded JSON request text on `ctx.rawBody`. HTTP-only. */
   rawBody?: true;

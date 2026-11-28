@@ -1,8 +1,6 @@
-import { type LanguageModel, wrapLanguageModel } from 'ai';
 import type { MutationQueue } from '../internal/mutation-queue';
 import type { AgentRuntimeEvent } from './event-schema';
 import { agentDurableEventId } from './event-schema';
-import { isOwnInputRefusal, markProviderOrigin, markProviderStream } from './provider-origin';
 import { findRun } from './runtime-internals';
 import {
   type AgentRun,
@@ -11,7 +9,7 @@ import {
   type AgentSnapshot,
 } from './schemas';
 import type { AgentRuntimeStore } from './store';
-import { appliedSnapshot } from './terminal-commit';
+import { AgentRuntimeConflictError, appliedSnapshot } from './terminal-commit';
 
 type TerminalOperationPhase = 'completed' | 'failed' | 'cancelled';
 
@@ -29,9 +27,7 @@ export interface AgentRunOperationLifecycleConfig {
 /** One durable latest-operation state machine for an executing run. */
 export function createAgentRunOperationLifecycle(config: AgentRunOperationLifecycleConfig) {
   let active: AgentRunOperation | undefined;
-  let providerCallId: string | undefined;
   let checkpointedStep = -1;
-  const checkpointWaiters = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>();
 
   const record = (operation: AgentRunOperation): Promise<void> =>
     // Inside the queue, so the revision this names is the one the mutation
@@ -62,78 +58,35 @@ export function createAgentRunOperationLifecycle(config: AgentRunOperationLifecy
         emittedAt: config.now().toISOString(),
       });
     });
-  const startModelRequest = async (callId: string, step: number): Promise<void> => {
-    await record(
-      AgentRunOperationSchema.parse({
-        operationId: `${callId}:${step}`,
-        kind: 'model-request',
-        phase: 'started',
-        step,
-        startedAt: config.now().toISOString(),
-      }),
-    );
-  };
 
   return {
-    noteProviderCall(callId: string): void {
-      providerCallId = callId;
-    },
-    async prepareModel(
-      model: LanguageModel,
-      step: number,
-      fallbackCallId: string,
-    ): Promise<LanguageModel> {
+    /**
+     * Durable admission fence before one provider call: fails fast if the previous
+     * step's checkpoint has not landed, then writes `model-request/started` before the
+     * driver is invoked. → ADR 0174, ADR 0336.
+     */
+    async admitModelRequest(step: number, callId: string): Promise<void> {
       if (step > checkpointedStep + 1) {
-        const waiter = checkpointWaiters.get(step - 1) ?? Promise.withResolvers<void>();
-        checkpointWaiters.set(step - 1, waiter);
-        await waiter.promise;
+        throw new AgentRuntimeConflictError(
+          `model request step ${step} admitted before step ${checkpointedStep + 1} checkpoint`,
+        );
       }
-      if (typeof model === 'string') {
-        // Global provider IDs are resolved inside the SDK and therefore cannot
-        // be wrapped. Admit them here with the runtime's own stable identity.
-        await startModelRequest(fallbackCallId, step);
-        return model;
-      }
-      return wrapLanguageModel({
-        model,
-        middleware: {
-          specificationVersion: 'v4',
-          wrapStream: async ({ doStream }) => {
-            const callId = providerCallId;
-            providerCallId = undefined;
-            if (!callId) {
-              throw new Error(
-                'AgentRuntime model call reached the provider without lifecycle identity',
-              );
-            }
-            // This awaited write is the admission fence: the provider is not
-            // invoked when durable lifecycle storage rejects the transition.
-            await startModelRequest(callId, step);
-            try {
-              const result = await doStream();
-              return { ...result, stream: markProviderStream(result.stream) };
-            } catch (error) {
-              // The one place the provider's own failure is known as such —
-              // except for the checks the SDK runs on *our* inputs inside the
-              // same call. An approval this runtime issued and failed to
-              // verify is this runtime's refusal, whoever's stack it is on.
-              throw isOwnInputRefusal(error) ? error : markProviderOrigin(error);
-            }
-          },
-        },
-      });
+      await record(
+        AgentRunOperationSchema.parse({
+          operationId: `${callId}:${step}`,
+          kind: 'model-request',
+          phase: 'started',
+          step,
+          startedAt: config.now().toISOString(),
+        }),
+      );
     },
     checkpointStep(step: number): void {
       checkpointedStep = Math.max(checkpointedStep, step);
-      for (const [waitingFor, waiter] of checkpointWaiters) {
-        if (waitingFor > checkpointedStep) continue;
-        checkpointWaiters.delete(waitingFor);
-        waiter.resolve();
-      }
     },
-    failStepCheckpoints(error: unknown): void {
-      for (const waiter of checkpointWaiters.values()) waiter.reject(error);
-      checkpointWaiters.clear();
+    /** Reset the durable step admission watermark when a failed attempt restarts from step 0. */
+    resetCheckpointStep(): void {
+      checkpointedStep = -1;
     },
     startCompaction(operationId: string): Promise<void> {
       return record(

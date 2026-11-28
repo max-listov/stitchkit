@@ -1,10 +1,22 @@
 import { z } from 'zod';
-import type { AgentMessagePart } from '../../agent-parts/parts';
+import type { AgentMessagePart, AgentProviderEnvelope } from '../../agent-parts/parts';
 import { bytesToBase64, resolveImageBytes, validateImageOptions } from '../image-input';
 import { JsonRpcError } from '../json-rpc-peer';
 import { nonEmptyString } from '../session-primitives';
-import type { ExecutorDelta, ExecutorErrorKind, ExecutorTokenUsage } from '../vocabulary';
-import type { AcpPromptUsage, AcpSessionUpdate } from './v1-protocol';
+import {
+  type ExecutorDelta,
+  type ExecutorErrorKind,
+  type ExecutorPlanEntry,
+  ExecutorPlanEntryPrioritySchema,
+  ExecutorPlanEntryStatusSchema,
+  type ExecutorTokenUsage,
+} from '../vocabulary';
+import type {
+  AcpPlanEntry,
+  AcpPromptUsage,
+  AcpSessionUpdate,
+  AcpToolLocation,
+} from './v1-protocol';
 
 const ACP_AUTH_REQUIRED_CODE = -32000;
 const ACP_RATE_LIMIT_RE =
@@ -35,9 +47,6 @@ const QUIET = new Set([
   'config_option_update',
   'session_info_update',
   'current_mode_update',
-  'plan',
-  'plan_update',
-  'plan_removed',
   'compaction_update',
   'compaction_summary_chunk',
 ]);
@@ -49,11 +58,78 @@ function text(update: AcpSessionUpdate): string | undefined {
     : undefined;
 }
 
-/** Per-turn state used to keep text segments distinct across tool calls and remember tool names. */
+interface AcpTrackedToolState {
+  toolName: string;
+  input: z.infer<ReturnType<typeof z.json>>;
+  title?: string;
+  kind?: string;
+  locations?: readonly AcpToolLocation[];
+}
+
+/** Per-turn state used to keep text segments distinct across tool calls and remember tool names and metadata. */
 export interface AcpUpdateTrack {
   segment: number;
   lastKind?: string;
   toolNames: Map<string, string>;
+  toolStates?: Map<string, AcpTrackedToolState>;
+}
+
+function normalizeLocations(
+  locations: readonly AcpToolLocation[] | undefined,
+): Array<{ path: string; line?: number; column?: number }> | undefined {
+  if (!locations || locations.length === 0) return undefined;
+  return locations.map((loc) => ({
+    path: loc.path,
+    ...(typeof loc.line === 'number' && { line: loc.line }),
+    ...(typeof loc.column === 'number' && { column: loc.column }),
+  }));
+}
+
+function buildToolProviderEnvelope(meta: {
+  title?: string;
+  kind?: string;
+  locations?: readonly AcpToolLocation[];
+  status?: string;
+}): AgentProviderEnvelope | undefined {
+  const locations = normalizeLocations(meta.locations);
+  if (
+    meta.title === undefined &&
+    meta.kind === undefined &&
+    locations === undefined &&
+    meta.status === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    schemaVersion: 1,
+    provider: 'acp',
+    data: {
+      ...(meta.title !== undefined && { title: meta.title }),
+      ...(meta.kind !== undefined && { kind: meta.kind }),
+      ...(locations !== undefined && { locations }),
+      ...(meta.status !== undefined && { status: meta.status }),
+    },
+  };
+}
+
+function normalizePlanEntries(entries: readonly AcpPlanEntry[]): ExecutorPlanEntry[] {
+  return entries.map((entry) => {
+    const status = ExecutorPlanEntryStatusSchema.safeParse(entry.status);
+    const priority = ExecutorPlanEntryPrioritySchema.safeParse(entry.priority);
+    return {
+      content: entry.content,
+      ...(status.success && { status: status.data }),
+      ...(priority.success && { priority: priority.data }),
+    };
+  });
+}
+
+function ensureToolStates(
+  track: AcpUpdateTrack | undefined,
+): Map<string, AcpTrackedToolState> | undefined {
+  if (track === undefined) return undefined;
+  track.toolStates ??= new Map();
+  return track.toolStates;
 }
 
 function segmentItemId(
@@ -97,14 +173,27 @@ export function mapAcpUpdate(
     }
     case 'tool_call': {
       const callId = nonEmptyString(update.toolCallId) ?? `call-${chunk}`;
-      const toolName =
-        nonEmptyString(update.name) ??
-        nonEmptyString(update.title) ??
-        nonEmptyString(update.kind) ??
-        'tool';
+      const title = nonEmptyString(update.title);
+      const toolKind = nonEmptyString(update.kind);
+      const toolName = nonEmptyString(update.name) ?? title ?? toolKind ?? 'tool';
+      const input = update.rawInput ?? update.args ?? {};
+      const locations =
+        update.locations && update.locations.length > 0 ? update.locations : undefined;
+      const provider = buildToolProviderEnvelope({
+        ...(title !== undefined && { title }),
+        ...(toolKind !== undefined && { kind: toolKind }),
+        ...(locations !== undefined && { locations }),
+      });
       if (track !== undefined) {
         track.lastKind = 'tool';
         track.toolNames.set(callId, toolName);
+        ensureToolStates(track)?.set(callId, {
+          toolName,
+          input,
+          ...(title !== undefined && { title }),
+          ...(toolKind !== undefined && { kind: toolKind }),
+          ...(locations !== undefined && { locations }),
+        });
       }
       return [
         {
@@ -114,21 +203,83 @@ export function mapAcpUpdate(
           raw: raw(kind),
           callId,
           toolName,
-          input: update.rawInput ?? update.args ?? {},
+          input,
+          ...(provider !== undefined && { provider }),
         },
       ];
     }
     case 'tool_call_update': {
-      if (update.status !== 'completed' && update.status !== 'failed') return [];
       const callId = nonEmptyString(update.toolCallId) ?? `call-${chunk}`;
-      const output = update.rawOutput ?? update.content;
+      const previous = track?.toolStates?.get(callId);
+      const title = nonEmptyString(update.title) ?? previous?.title;
+      const toolKind = nonEmptyString(update.kind) ?? previous?.kind;
+      const locations =
+        update.locations && update.locations.length > 0
+          ? update.locations
+          : previous?.locations;
       const toolName =
         nonEmptyString(update.name) ??
-        nonEmptyString(update.title) ??
         nonEmptyString(track?.toolNames.get(callId)) ??
-        nonEmptyString(update.kind) ??
+        title ??
+        toolKind ??
         'tool';
-      if (track !== undefined) track.lastKind = 'tool';
+
+      if (update.status !== 'completed' && update.status !== 'failed') {
+        const hasInput = update.rawInput !== undefined || update.args !== undefined;
+        const hasNewMetadata =
+          nonEmptyString(update.title) !== undefined ||
+          nonEmptyString(update.kind) !== undefined ||
+          (update.locations !== undefined && update.locations.length > 0);
+        if (!hasInput && !hasNewMetadata) return [];
+        const input = update.rawInput ?? update.args ?? previous?.input ?? {};
+        const status = nonEmptyString(update.status);
+        const provider = buildToolProviderEnvelope({
+          ...(title !== undefined && { title }),
+          ...(toolKind !== undefined && { kind: toolKind }),
+          ...(locations !== undefined && { locations }),
+          ...(status !== undefined && { status }),
+        });
+        if (track !== undefined) {
+          track.lastKind = 'tool';
+          track.toolNames.set(callId, toolName);
+          ensureToolStates(track)?.set(callId, {
+            toolName,
+            input,
+            ...(title !== undefined && { title }),
+            ...(toolKind !== undefined && { kind: toolKind }),
+            ...(locations !== undefined && { locations }),
+          });
+        }
+        return [
+          {
+            type: 'tool-call',
+            ...base,
+            itemId: `call:${callId}`,
+            raw: raw(kind),
+            callId,
+            toolName,
+            input,
+            ...(provider !== undefined && { provider }),
+          },
+        ];
+      }
+
+      const output = update.rawOutput ?? update.content;
+      const hasUpdateMetadata =
+        nonEmptyString(update.title) !== undefined ||
+        nonEmptyString(update.kind) !== undefined ||
+        (update.locations !== undefined && update.locations.length > 0);
+      const provider = hasUpdateMetadata
+        ? buildToolProviderEnvelope({
+            ...(title !== undefined && { title }),
+            ...(toolKind !== undefined && { kind: toolKind }),
+            ...(locations !== undefined && { locations }),
+          })
+        : undefined;
+      if (track !== undefined) {
+        track.lastKind = 'tool';
+        track.toolStates?.delete(callId);
+      }
       return [
         {
           type: 'tool-result',
@@ -139,6 +290,28 @@ export function mapAcpUpdate(
           toolName,
           outcome: update.status === 'completed' ? 'success' : 'error',
           ...(output !== undefined && { output: z.json().parse(output) }),
+          ...(provider !== undefined && { provider }),
+        },
+      ];
+    }
+    case 'plan':
+    case 'plan_update':
+    case 'plan_removed': {
+      const planId = nonEmptyString(update.planId) ?? nonEmptyString(update.plan?.id);
+      const rawEntries = update.entries ?? update.plan?.entries;
+      const action = kind === 'plan' ? 'set' : kind === 'plan_update' ? 'update' : 'remove';
+      return [
+        {
+          type: 'plan',
+          ...base,
+          itemId: planId !== undefined ? `plan:${planId}` : 'plan',
+          raw: raw(kind),
+          action,
+          ...(planId !== undefined && { planId }),
+          ...(action !== 'remove' &&
+            (rawEntries !== undefined || action === 'set') && {
+              entries: normalizePlanEntries(rawEntries ?? []),
+            }),
         },
       ];
     }

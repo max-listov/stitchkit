@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ProviderJournalContentSchema, ProviderJournalOptions } from './provider-content';
-import { AgentUsageSchema } from './schemas';
+import { AgentProviderResponseSchema, AgentUsageSchema } from './schemas';
 
 /** Persisted provider records are shared by the writer and the strict branch reader. */
 const Hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -29,6 +29,6 @@ export const ProviderJournalResponseSchema = z.strictObject({
   runId: z.string(),
   attempt: z.int().nonnegative(),
   stepNumber: z.int().nonnegative(),
-  response: z.strictObject({ id: z.string(), provider: z.string().optional() }),
+  response: AgentProviderResponseSchema,
   usage: AgentUsageSchema.optional(),
 });

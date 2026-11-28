@@ -10,6 +10,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 import { createHeadlessAgentHarness } from '../src/entrypoints/agent-runtime/harness';
 
 const usage = {
@@ -55,7 +56,7 @@ describe('structured headless Agent runner example', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model,
+          driver: fromAiSdkModel(model),
         }),
       },
       resources: { load: () => ({ resources: [], diagnostics: [] }) },

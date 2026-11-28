@@ -3,6 +3,11 @@ import { abortReason } from './abort-race';
 /** The longest delay a timer can wait (2^31 - 1 ms, about 24.8 days); a longer one fires at once. */
 export const MAX_TIMER_MS = 2_147_483_647;
 
+/** Clamp a delay in milliseconds into the safe timer range (`0..MAX_TIMER_MS`). */
+export function clampTimerMs(ms: number): number {
+  return Math.min(Math.max(0, ms), MAX_TIMER_MS);
+}
+
 /** A clock that can also arm a one-shot timer — the seam `scheduleAt` steps on. */
 export interface SteppedTimerClock {
   now(): number;
@@ -37,16 +42,13 @@ export function scheduleAt(
     const delayMs = Math.max(0, dueAt - clock.now());
     // This read may have cancelled the wait too: then nothing is armed.
     if (cancelled) return;
-    step = clock.schedule(
-      () => {
-        const early = clock.now() < dueAt;
-        // Reading the clock may have run code that cancelled this wait.
-        if (cancelled) return;
-        if (early) arm();
-        else onDue();
-      },
-      Math.min(delayMs, MAX_TIMER_MS),
-    );
+    step = clock.schedule(() => {
+      const early = clock.now() < dueAt;
+      // Reading the clock may have run code that cancelled this wait.
+      if (cancelled) return;
+      if (early) arm();
+      else onDue();
+    }, clampTimerMs(delayMs));
   };
   arm();
   return {

@@ -83,7 +83,10 @@ const timerCalls: Record<string, { calls: number; delays: string }> = {
     calls: 1,
     delays: `runtime close forceTimeoutMs: ${RULE}`,
   },
-  'agent-runtime/runtime-internals.ts': { calls: 1, delays: `idleTimeoutMs: ${RULE}` },
+  'agent-runtime/runtime-internals.ts': {
+    calls: 2,
+    delays: `idleTimeoutMs, maxDurationMs: ${RULE}`,
+  },
   'agent-runtime/sandbox-broker.ts': { calls: 1, delays: 'constant' },
   'agent-runtime/schedules.ts': { calls: 1, delays: 'stepped by scheduleAt' },
   'agent-runtime/terminal-commit.ts': { calls: 1, delays: 'constant retry table' },
@@ -135,6 +138,18 @@ const timerCalls: Record<string, { calls: number; delays: string }> = {
     calls: 1,
     delays: `reconnectOnServerDisconnect: ${RULE}`,
   },
+  'device-relay/agent.ts': {
+    calls: 1,
+    delays: `heartbeatIntervalMs, leaseTtlMs: ${RULE}`,
+  },
+  'device-relay/hub-dispatch.ts': {
+    calls: 2,
+    delays: `timeoutMs, openTimeoutMs, defaultRpcTimeoutMs: ${RULE}`,
+  },
+  'device-relay/hub.ts': {
+    calls: 1,
+    delays: `leaseSweepIntervalMs, leaseTtlMs: ${RULE}`,
+  },
   'durability/contract.ts': { calls: 1, delays: 'a signature: a durable sleep, re-armed' },
   'durability/effect.ts': { calls: 1, delays: `reconcileTimeoutMs: ${RULE}` },
   'durability/scheduler.ts': { calls: 1, delays: 'stepped by scheduleAt' },
@@ -171,6 +186,14 @@ const timerCalls: Record<string, { calls: number; delays: string }> = {
   'server/contract-stream.ts': {
     calls: 1,
     delays: `stream lifetimeMs: ${RULE} at defineContract`,
+  },
+  'server/device-presence-handlers.ts': {
+    calls: 1,
+    delays: `commandTimeoutMs: ${RULE}; per-command timeoutMs by schema with MAX_TIMER_MS`,
+  },
+  'server/endpoint-dispatch.ts': {
+    calls: 1,
+    delays: 'inbound deadline budget capped by endpoint timeout and MAX_TIMER_MS',
   },
   'server/event-bus.ts': { calls: 2, delays: `listenerTimeoutMs: ${RULE} at defineEvents` },
   'server/shutdown.ts': {

@@ -5,4 +5,5 @@
  * that exposes its operations over HTTP and CLI imports `stitchkit/tools` and
  * installs neither the AI SDK nor the MCP server SDK. → ADR 0284.
  */
-export { type AgentContext, type AgentMountConfig, mountAgent } from '../../tools/agent';
+export { mountAgent } from '../../tools/agent';
+export type { AgentContext, AgentMountConfig } from '../../tools/agent-tools';

@@ -234,6 +234,29 @@ export type AcpMcpServer = z.infer<typeof AcpMcpServerSchema>;
 
 const ContentSchema = z.looseObject({ type: z.string(), text: z.string().optional() });
 
+/** Loose Zod schema for one ACP v1 tool call file location (`path`, optional `line`/`column`). */
+export const AcpToolLocationSchema = z.looseObject({
+  path: z.string().min(1),
+  line: z.int().nonnegative().nullish(),
+  column: z.int().nonnegative().nullish(),
+});
+/** One ACP v1 tool call location inferred from `AcpToolLocationSchema`. */
+export type AcpToolLocation = z.infer<typeof AcpToolLocationSchema>;
+
+/** Loose Zod schema for one ACP v1 plan entry (`content`, optional `status` and `priority`). */
+export const AcpPlanEntrySchema = z.looseObject({
+  content: z.string(),
+  status: z.string().optional(),
+  priority: z.string().optional(),
+});
+/** One ACP v1 plan entry inferred from `AcpPlanEntrySchema`. */
+export type AcpPlanEntry = z.infer<typeof AcpPlanEntrySchema>;
+
+const AcpPlanContainerSchema = z.looseObject({
+  id: z.string().optional(),
+  entries: z.array(AcpPlanEntrySchema).optional(),
+});
+
 /** Loose Zod schema for one ACP v1 `session/update` payload. */
 export const AcpSessionUpdateSchema = z.looseObject({
   sessionUpdate: z.string(),
@@ -246,6 +269,10 @@ export const AcpSessionUpdateSchema = z.looseObject({
   rawInput: z.json().optional(),
   args: z.json().optional(),
   rawOutput: z.json().optional(),
+  locations: z.array(AcpToolLocationSchema).optional(),
+  entries: z.array(AcpPlanEntrySchema).optional(),
+  plan: AcpPlanContainerSchema.nullish(),
+  planId: z.string().optional(),
   used: z.int().nonnegative().optional(),
   size: z.int().nonnegative().optional(),
   configOptions: z.array(AcpConfigOptionSchema).optional(),
@@ -297,6 +324,7 @@ export const AcpPermissionRequestSchema = z.looseObject({
     kind: z.string().optional(),
     rawInput: z.json().optional(),
     args: z.json().optional(),
+    locations: z.array(AcpToolLocationSchema).optional(),
   }),
   options: z.array(AcpPermissionOptionSchema),
 });

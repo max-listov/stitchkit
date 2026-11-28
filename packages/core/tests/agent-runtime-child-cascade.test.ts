@@ -1,6 +1,5 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, spyOn, test } from 'bun:test';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   createSqliteAgentRuntimeStore,
@@ -8,6 +7,7 @@ import {
   type SqliteValue,
 } from '../src/agent-runtime/sqlite-bun';
 import {
+  type AgentModelDriver,
   createAgentChildManager,
   createAgentRuntime,
   defineAgentProtocol,
@@ -32,17 +32,25 @@ function sqlite(): SqliteDatabase {
 }
 
 /** A provider that never answers until told to — the parent is stopped while it waits. */
-function blockedModel(release: Promise<void>) {
-  return new MockLanguageModelV4({
-    doStream: async () => ({
-      stream: new ReadableStream({
-        async pull(controller) {
-          await release;
-          controller.close();
+function blockedDriver(release: Promise<void>): AgentModelDriver {
+  return {
+    provider: 'test',
+    modelId: 'blocked',
+    async stream() {
+      return {
+        parts: {
+          [Symbol.asyncIterator]() {
+            return {
+              async next() {
+                await release;
+                return { done: true as const, value: undefined };
+              },
+            };
+          },
         },
-      }),
-    }),
-  });
+      };
+    },
+  };
 }
 
 describe('parent stop cascades to children', () => {
@@ -91,7 +99,7 @@ describe('parent stop cascades to children', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model: blockedModel(release.promise),
+          driver: blockedDriver(release.promise),
         }),
       },
       prompt: () => ({
@@ -182,7 +190,7 @@ describe('parent stop cascades to children', () => {
             contextWindow: 8_000,
             capabilities: [],
           },
-          model: blockedModel(release.promise),
+          driver: blockedDriver(release.promise),
         }),
       },
       prompt: () => ({

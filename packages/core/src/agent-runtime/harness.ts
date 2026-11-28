@@ -1,4 +1,4 @@
-import type { ToolSet } from 'ai';
+import type { AgentToolSet } from '../tools/agent-tools';
 import type { AgentRuntimeEvent, AgentRuntimePublisher } from './events';
 import {
   type AgentHarnessPendingApproval,
@@ -115,7 +115,7 @@ function profileEventOf(
  * Ask the response-time policy about this responder. A refusal is recorded and
  * thrown, and the request stays pending for a responder the policy accepts.
  */
-async function authorizeApprovalResponder<CONTEXT, TOOLS extends ToolSet>(
+async function authorizeApprovalResponder<CONTEXT, TOOLS extends AgentToolSet>(
   config: HeadlessAgentHarnessConfig<CONTEXT, TOOLS>,
   input: Parameters<HeadlessAgentHarness<CONTEXT>['respondToApproval']>[0],
   request: AgentHarnessPendingApproval,
@@ -148,7 +148,7 @@ async function authorizeApprovalResponder<CONTEXT, TOOLS extends ToolSet>(
   throw new AgentHarnessApprovalRejectedError(authorization.reason);
 }
 
-export function createHeadlessAgentHarness<CONTEXT, TOOLS extends ToolSet>(
+export function createHeadlessAgentHarness<CONTEXT, TOOLS extends AgentToolSet>(
   config: HeadlessAgentHarnessConfig<CONTEXT, TOOLS>,
 ): HeadlessAgentHarness<CONTEXT> {
   const {

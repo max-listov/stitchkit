@@ -8,6 +8,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -82,7 +83,7 @@ test('an exchange written without a model is history the next run reads, and an 
           contextWindow: 1_000,
           capabilities: [],
         },
-        model,
+        driver: fromAiSdkModel(model),
       }),
     },
     prompt: () => ({

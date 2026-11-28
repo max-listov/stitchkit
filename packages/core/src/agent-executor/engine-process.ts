@@ -1,3 +1,4 @@
+import { abortReason, raceAbort } from '../internal/abort-race';
 import { createBoundedLineDecoder } from '../internal/bounded-lines';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
 import type { NativeCommandResult } from '../process/contract';
@@ -11,6 +12,106 @@ const ENGINE_PENDING_STDIN_BYTES = 16 * 1024 * 1024;
 const ENGINE_STDIN_BYTES = 256 * 1024 * 1024;
 /** The end of stderr kept for a failure report. */
 const STDERR_TAIL_BYTES = 16 * 1024;
+
+/** Spawn parameters handed to an {@link EngineProcessWrapCommand} hook before launching an engine process. */
+export interface EngineProcessCommandSpec {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly env: Readonly<Record<string, string>>;
+  /** Optional abort signal cancelling asynchronous wrapping/probing work before spawn. */
+  readonly signal?: AbortSignal | undefined;
+}
+
+/** Optional hook rewriting an engine command (for example into an OS sandbox) before `stitchkit/process` spawns it. */
+export type EngineProcessWrapCommand = (
+  command: EngineProcessCommandSpec,
+) => EngineProcessCommandSpec | Promise<EngineProcessCommandSpec>;
+
+/** Eagerly check an optional `wrapCommand` hook before opening a driver or session. */
+export function assertEngineWrapCommand(
+  wrapCommand: EngineProcessWrapCommand | undefined,
+  caller: string,
+): void {
+  if (wrapCommand !== undefined && typeof wrapCommand !== 'function') {
+    throw new TypeError(`[stitchkit] ${caller}: wrapCommand must be a function`);
+  }
+}
+
+/** Run an optional `wrapCommand` hook and validate its returned command spec before spawning. */
+export async function resolveWrappedEngineCommand(
+  command: EngineProcessCommandSpec,
+  wrapCommand: EngineProcessWrapCommand | undefined,
+  caller: string,
+  signal?: AbortSignal | undefined,
+): Promise<{
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly env: Record<string, string>;
+}> {
+  const effectiveSignal = signal ?? command.signal;
+  if (effectiveSignal?.aborted) throw abortReason(effectiveSignal);
+  if (wrapCommand === undefined) {
+    return {
+      executable: command.executable,
+      args: [...command.args],
+      cwd: command.cwd,
+      env: { ...command.env },
+    };
+  }
+  const input: EngineProcessCommandSpec = {
+    executable: command.executable,
+    args: [...command.args],
+    cwd: command.cwd,
+    env: { ...command.env },
+    ...(effectiveSignal !== undefined && { signal: effectiveSignal }),
+  };
+  const wrapping = Promise.resolve().then(() => wrapCommand(input));
+  const wrapped: unknown =
+    effectiveSignal !== undefined
+      ? await raceAbort(wrapping, effectiveSignal)
+      : await wrapping;
+  if (effectiveSignal?.aborted) throw abortReason(effectiveSignal);
+  if (typeof wrapped !== 'object' || wrapped === null || Array.isArray(wrapped)) {
+    throw new TypeError(`[stitchkit] ${caller}: wrapCommand must return a command object`);
+  }
+  const executable: unknown = Reflect.get(wrapped, 'executable');
+  if (typeof executable !== 'string' || executable.trim().length === 0) {
+    throw new TypeError(
+      `[stitchkit] ${caller}: wrapCommand must return a non-empty string executable`,
+    );
+  }
+  const args: unknown = Reflect.get(wrapped, 'args');
+  if (
+    !Array.isArray(args) ||
+    !args.every((item): item is string => typeof item === 'string')
+  ) {
+    throw new TypeError(
+      `[stitchkit] ${caller}: wrapCommand must return an array of string args`,
+    );
+  }
+  const cwd: unknown = Reflect.get(wrapped, 'cwd');
+  if (typeof cwd !== 'string' || cwd.trim().length === 0) {
+    throw new TypeError(
+      `[stitchkit] ${caller}: wrapCommand must return a non-empty string cwd`,
+    );
+  }
+  const rawEnv: unknown = Reflect.get(wrapped, 'env');
+  if (typeof rawEnv !== 'object' || rawEnv === null || Array.isArray(rawEnv)) {
+    throw new TypeError(`[stitchkit] ${caller}: wrapCommand must return a string env record`);
+  }
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(rawEnv)) {
+    if (typeof value !== 'string') {
+      throw new TypeError(
+        `[stitchkit] ${caller}: wrapCommand env.${key} must be a string, received ${typeof value}`,
+      );
+    }
+    env[key] = value;
+  }
+  return { executable, args: [...args], cwd, env };
+}
 
 /** An engine process talked to by lines: one connection, one process. */
 export interface EngineProcess {

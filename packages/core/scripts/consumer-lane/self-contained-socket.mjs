@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, parse } from 'node:path';
+import { runBunInstall } from './install.mjs';
 
 /**
  * One self-contained artifact, on a machine that has nothing.
@@ -133,7 +134,7 @@ export function runSelfContainedSocketProof({ workdir, tarball, pkgRoot }) {
       2,
     )}\n`,
   );
-  execFileSync('bun', ['install'], { cwd: source, stdio: 'pipe' });
+  runBunInstall(source, ['install']);
 
   // Both runtimes, because both are how this is deployed: Node has no
   // auto-install at all, and Bun has one that must be off for the check to mean

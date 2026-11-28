@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { simulateReadableStream, tool } from 'ai';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
@@ -7,6 +7,8 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
+import { defineAgentTool } from '../src/entrypoints/tools';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -65,7 +67,7 @@ test('a stop policy sees the run it decides for, the same run prepareStep sees',
           contextWindow: 1_000,
           capabilities: [],
         },
-        model,
+        driver: fromAiSdkModel(model),
       }),
     },
     prompt: () => ({
@@ -75,8 +77,8 @@ test('a stop policy sees the run it decides for, the same run prepareStep sees',
       contextDecision: 'unavailable',
     }),
     tools: () => ({
-      lookup: tool({
-        inputSchema: z.object({ query: z.string() }),
+      lookup: defineAgentTool({
+        input: z.object({ query: z.string() }),
         execute: ({ query }) => ({ answer: query }),
       }),
     }),

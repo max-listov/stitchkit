@@ -9,6 +9,7 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 
 /*
  * A provider cut in the middle of an answer. `doStream()` has already returned,
@@ -66,7 +67,9 @@ function run(store: AgentRuntimeStore = createMemoryAgentRuntimeStore()) {
     models: {
       resolve: () => ({
         descriptor,
-        model: cutAfterFirstChunk(new Error('Failed to process successful response')),
+        driver: fromAiSdkModel(
+          cutAfterFirstChunk(new Error('Failed to process successful response')),
+        ),
       }),
     },
     prompt,

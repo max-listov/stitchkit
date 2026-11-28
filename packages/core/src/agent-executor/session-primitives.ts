@@ -4,7 +4,11 @@ import { abortReason, linkAbortSignals } from '../internal/abort-race';
 import { type BoundedChannel, createBoundedChannel } from '../internal/channel';
 import { jsonDataRefusal } from '../internal/json-data';
 import { runNativeCommand } from '../process/command';
-import type { EngineProcess } from './engine-process';
+import {
+  type EngineProcess,
+  type EngineProcessWrapCommand,
+  resolveWrappedEngineCommand,
+} from './engine-process';
 import { type ExecutorProfileConfig, engineEnvironment } from './profile';
 import {
   type ExecutorDelta,
@@ -206,21 +210,38 @@ export function sessionLiveness(input: {
 }
 
 /** Run a short-lived engine CLI command (`--version`, auth status) with the profile's allowlisted env. */
-export function runEngineCli(input: {
+export async function runEngineCli(input: {
   executable: string;
   prefix: readonly string[];
   args: readonly string[];
   profile: ExecutorProfileConfig;
   ambient: Readonly<Record<string, string | undefined>>;
+  cwd?: string | undefined;
+  wrapCommand?: EngineProcessWrapCommand | undefined;
+  signal?: AbortSignal | undefined;
 }) {
+  const env = engineEnvironment(input.profile, input.ambient);
+  const resolved = await resolveWrappedEngineCommand(
+    {
+      executable: input.executable,
+      args: [...input.prefix, ...input.args],
+      cwd: input.cwd ?? process.cwd(),
+      env,
+    },
+    input.wrapCommand,
+    'runEngineCli',
+    input.signal,
+  );
   return runNativeCommand({
-    executable: input.executable,
-    args: [...input.prefix, ...input.args],
-    env: engineEnvironment(input.profile, input.ambient),
+    executable: resolved.executable,
+    args: [...resolved.args],
+    cwd: resolved.cwd,
+    env: resolved.env,
     envPolicy: 'declared-only',
     capture: true,
     maxOutputBytes: 1024 * 1024,
     timeoutMs: 30_000,
+    ...(input.signal !== undefined && { signal: input.signal }),
   });
 }
 

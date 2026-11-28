@@ -1,41 +1,136 @@
 import { z } from 'zod';
 import { linkAbortSignals } from '../internal/abort-race';
 import {
+  assertValidOpenRouterEndpointsFor,
+  assertValidStaticOpenRouterApiKey,
+  nonEmptyStrings,
+  nonEmptyTrimmed,
+  nonNegativeFinite,
   type OpenRouterCatalogFetch,
+  OpenRouterEndpointsResponseSchema,
+  type OpenRouterModelSchema,
   OpenRouterModelsResponseSchema,
+  openRouterEndpointsUrl,
   openRouterJson,
-  usd,
+  parseOpenRouterWirePricing,
+  parseUnixSecondsIso,
+  percentageMetric,
   usdPerMillion,
   withOpenRouterTimeout,
 } from './openrouter-models';
 
-const Price = z.number().nonnegative().finite();
+const Price = z.number().nonnegative();
+const NonNegativeMetric = z.number().nonnegative();
+const Percentage = z.number().min(0).max(100);
+const UnknownPricingFieldSchema = z.enum([
+  'prompt',
+  'completion',
+  'request',
+  'image',
+  'cacheRead',
+  'cacheWrite',
+  'cacheWrite1h',
+]);
+
+const ConditionalPricingCeilingSchema = z.strictObject({
+  promptUsdPerMillion: Price.optional(),
+  completionUsdPerMillion: Price.optional(),
+  cacheReadUsdPerMillion: Price.optional(),
+  cacheWriteUsdPerMillion: Price.optional(),
+  cacheWrite1hUsdPerMillion: Price.optional(),
+  requestUsd: Price.optional(),
+  imageUsd: Price.optional(),
+});
+
+/** One conditional prompt-volume pricing tier reported in OpenRouter's `pricing.overrides`. */
+export const OpenRouterPricingTierSchema = z.strictObject({
+  minPromptTokens: z.int().positive(),
+  promptUsdPerMillion: Price.optional(),
+  completionUsdPerMillion: Price.optional(),
+  cacheReadUsdPerMillion: Price.optional(),
+  cacheWriteUsdPerMillion: Price.optional(),
+  cacheWrite1hUsdPerMillion: Price.optional(),
+  requestUsd: Price.optional(),
+  imageUsd: Price.optional(),
+  /** Pricing keys explicitly present with unknown (`null`, `"-1"`, or invalid) values in this tier. */
+  unknownPricingFields: z.array(UnknownPricingFieldSchema).min(1).optional(),
+});
+/** Conditional pricing tier inferred from `OpenRouterPricingTierSchema`. */
+export type OpenRouterPricingTier = z.infer<typeof OpenRouterPricingTierSchema>;
+
+/** Upstream target model referenced by an OpenRouter alias entry. */
+export const OpenRouterModelAliasTargetSchema = z.strictObject({
+  id: z.string().min(1),
+  name: z.string().min(1).optional(),
+});
+/** Alias target metadata inferred from `OpenRouterModelAliasTargetSchema`. */
+export type OpenRouterModelAliasTarget = z.infer<typeof OpenRouterModelAliasTargetSchema>;
+
+/** Reasoning effort metadata advertised by OpenRouter for a model. */
+export const OpenRouterModelReasoningMetaSchema = z.strictObject({
+  supportedEfforts: z.array(z.string().min(1)),
+  defaultEffort: z.string().min(1).optional(),
+});
+/** Reasoning metadata inferred from `OpenRouterModelReasoningMetaSchema`. */
+export type OpenRouterModelReasoningMeta = z.infer<typeof OpenRouterModelReasoningMetaSchema>;
 
 /** One upstream serving a model, as `/models/{author}/{slug}/endpoints` reports it. */
 export const OpenRouterEndpointSchema = z.strictObject({
   provider: z.string().min(1),
   contextLength: z.int().nonnegative().optional(),
+  maxCompletionTokens: z.int().nonnegative().optional(),
   /** Absent when OpenRouter did not state a real price (it writes `-1` for unknown). */
   promptUsdPerMillion: Price.optional(),
   completionUsdPerMillion: Price.optional(),
+  cacheReadUsdPerMillion: Price.optional(),
+  cacheWriteUsdPerMillion: Price.optional(),
+  cacheWrite1hUsdPerMillion: Price.optional(),
   supportedParameters: z.array(z.string()),
   /** OpenRouter's status code for the endpoint; `0` is up. */
   status: z.int().optional(),
+  /** Observed 30-minute P50 latency in milliseconds, when reported. */
+  latencyP50Ms: NonNegativeMetric.optional(),
+  /** Observed 30-minute P50 throughput (tokens/sec), when reported. */
+  throughputP50: NonNegativeMetric.optional(),
+  /** Observed 1-day uptime percentage (0–100), when reported. */
+  uptime1d: Percentage.optional(),
+  /** OpenRouter endpoint tag, when reported. */
+  tag: z.string().min(1).optional(),
 });
 /** Upstream provider endpoint metadata inferred from `OpenRouterEndpointSchema`. */
 export type OpenRouterEndpoint = z.infer<typeof OpenRouterEndpointSchema>;
 
-/** A model in a stored snapshot: what admission needs, nothing derived. */
+/** A model in a stored snapshot: what admission, routing and discovery need. */
 export const OpenRouterSnapshotModelSchema = z.strictObject({
   id: z.string().min(1),
   name: z.string().min(1).optional(),
   canonicalSlug: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+  createdAt: z.iso.datetime({ offset: true }).optional(),
+  aliasTarget: OpenRouterModelAliasTargetSchema.optional(),
   /** `text`, `image`, `file`, `audio` — what a request may carry. */
   inputModalities: z.array(z.string().min(1)).default([]),
-  contextLength: z.int().nonnegative(),
+  outputModalities: z.array(z.string().min(1)).optional(),
+  tokenizer: z.string().min(1).optional(),
+  contextLength: z.int().nonnegative().optional(),
+  topProviderContextLength: z.int().nonnegative().optional(),
+  maxCompletionTokens: z.int().nonnegative().optional(),
+  reasoning: OpenRouterModelReasoningMetaSchema.optional(),
   promptUsdPerMillion: Price.optional(),
   completionUsdPerMillion: Price.optional(),
   requestUsd: Price.optional(),
+  imageUsd: Price.optional(),
+  cacheReadUsdPerMillion: Price.optional(),
+  cacheWriteUsdPerMillion: Price.optional(),
+  cacheWrite1hUsdPerMillion: Price.optional(),
+  pricingTiers: z.array(OpenRouterPricingTierSchema).optional(),
+  hasConditionalPricing: z.boolean().optional(),
+  /** Pricing keys explicitly present with unknown (`null`, `"-1"`, or invalid) values on base pricing or non-token overrides. */
+  unknownPricingFields: z.array(UnknownPricingFieldSchema).min(1).optional(),
+  /** Worst-case rates from recognized non-token conditional overrides (such as UTC time-window schedules). */
+  conditionalPricingCeiling: ConditionalPricingCeilingSchema.optional(),
+  /** True when `pricing.overrides` included an unrecognized or malformed rule whose ceiling cannot be verified. */
+  hasUnverifiedPricingOverrides: z.boolean().optional(),
   supportedParameters: z.array(z.string()),
   /** Set by the application when it knows the id stands for another model. */
   aliasOf: z.string().min(1).optional(),
@@ -53,67 +148,97 @@ export const OpenRouterCatalogSnapshotSchema = z.strictObject({
 /** Timestamped OpenRouter catalog snapshot inferred from `OpenRouterCatalogSnapshotSchema`. */
 export type OpenRouterCatalogSnapshot = z.infer<typeof OpenRouterCatalogSnapshotSchema>;
 
-/** `author/slug` and nothing that could leave the path segment it is put in. */
-const MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
-
-function endpointsUrl(modelId: string): URL {
-  if (!MODEL_ID.test(modelId) || modelId.includes('..'))
-    throw new TypeError(`Not an OpenRouter model id: ${modelId}`);
-  const [author = '', slug = ''] = modelId.split('/');
-  return new URL(
-    `https://openrouter.ai/api/v1/models/${encodeURIComponent(author)}/${encodeURIComponent(slug)}/endpoints`,
-  );
-}
-
-const EndpointsResponseSchema = z.object({
-  data: z
-    .object({
-      endpoints: z.array(
-        z
-          .object({
-            provider_name: z.string().min(1),
-            context_length: z.int().nonnegative().nullish(),
-            pricing: z
-              .object({ prompt: z.string().optional(), completion: z.string().optional() })
-              .loose()
-              .nullish(),
-            supported_parameters: z.array(z.string()).nullish(),
-            status: z.int().nullish(),
-          })
-          .loose(),
-      ),
-    })
-    .loose(),
-});
-
 /** Options for loading an OpenRouter catalog snapshot and optional endpoint details. */
 export interface OpenRouterSnapshotOptions {
-  apiKey: string;
-  fetcher?: OpenRouterCatalogFetch;
+  /** Static API key or per-request resolver; omit to fetch the public catalog without `Authorization`. */
+  readonly apiKey?: string | (() => string | Promise<string>);
+  readonly fetcher?: OpenRouterCatalogFetch;
   /** Per request. Default 10 s. */
-  timeoutMs?: number;
+  readonly timeoutMs?: number;
   /** Largest response body read. Default 16 MiB. */
-  maxResponseBytes?: number;
+  readonly maxResponseBytes?: number;
   /** Models whose endpoints are fetched too (one request each). */
-  endpointsFor?: readonly string[];
+  readonly endpointsFor?: readonly string[];
   /** Endpoint requests in flight at once, 1–16. Default 4. */
-  concurrency?: number;
-  signal?: AbortSignal;
-  now?: () => Date;
+  readonly concurrency?: number;
+  readonly signal?: AbortSignal;
+  readonly now?: () => Date;
 }
 
-/** Every upstream of one model; a refused id never reaches the network. */
+function mapSnapshotModel(
+  model: z.infer<typeof OpenRouterModelSchema>,
+  endpoints: readonly OpenRouterEndpoint[] | undefined,
+): OpenRouterSnapshotModel {
+  const pricing = parseOpenRouterWirePricing(model.pricing);
+  const createdAt = parseUnixSecondsIso(model.created);
+  const name = model.name != null && model.name.trim().length > 0 ? model.name : model.id;
+  const description =
+    model.description != null && model.description.trim().length > 0
+      ? model.description
+      : undefined;
+  const canonicalSlug = nonEmptyTrimmed(model.canonical_slug);
+  const aliasTargetName = nonEmptyTrimmed(model.alias_target?.name);
+  const aliasTarget = model.alias_target
+    ? { id: model.alias_target.slug, ...(aliasTargetName && { name: aliasTargetName }) }
+    : undefined;
+  const outputModalities =
+    model.architecture.output_modalities != null
+      ? nonEmptyStrings(model.architecture.output_modalities)
+      : undefined;
+  const tokenizer = nonEmptyTrimmed(model.architecture.tokenizer);
+  const supportedEfforts = nonEmptyStrings(model.reasoning?.supported_efforts);
+  const defaultEffort = nonEmptyTrimmed(model.reasoning?.default_effort);
+  const reasoning =
+    supportedEfforts.length > 0 || defaultEffort !== undefined
+      ? { supportedEfforts, ...(defaultEffort && { defaultEffort }) }
+      : undefined;
+
+  return {
+    id: model.id,
+    name,
+    ...(canonicalSlug && { canonicalSlug }),
+    ...(description && { description }),
+    ...(createdAt && { createdAt }),
+    ...(aliasTarget && { aliasTarget }),
+    inputModalities: nonEmptyStrings(model.architecture.input_modalities),
+    ...(outputModalities !== undefined && { outputModalities }),
+    ...(tokenizer && { tokenizer }),
+    ...(model.context_length != null && { contextLength: model.context_length }),
+    ...(model.top_provider?.context_length != null && {
+      topProviderContextLength: model.top_provider.context_length,
+    }),
+    ...(model.top_provider?.max_completion_tokens != null && {
+      maxCompletionTokens: model.top_provider.max_completion_tokens,
+    }),
+    ...(reasoning && { reasoning }),
+    ...pricing.base,
+    ...(pricing.pricingTiers && { pricingTiers: pricing.pricingTiers }),
+    ...(pricing.hasConditionalPricing && { hasConditionalPricing: true }),
+    ...(pricing.unknownPricingFields.length > 0 && {
+      unknownPricingFields: pricing.unknownPricingFields,
+    }),
+    ...(pricing.conditionalPricingCeiling !== undefined && {
+      conditionalPricingCeiling: pricing.conditionalPricingCeiling,
+    }),
+    ...(pricing.hasUnverifiedPricingOverrides && { hasUnverifiedPricingOverrides: true }),
+    supportedParameters: model.supported_parameters,
+    ...(endpoints !== undefined && { endpoints: [...endpoints] }),
+  };
+}
+
+/** Every upstream of one model; a refused id or empty static key never reaches the network. */
 export async function fetchOpenRouterModelEndpoints(
   modelId: string,
-  options: Omit<OpenRouterSnapshotOptions, 'endpointsFor' | 'concurrency'>,
+  options: Omit<OpenRouterSnapshotOptions, 'endpointsFor' | 'concurrency'> = {},
 ): Promise<OpenRouterEndpoint[]> {
-  const url = endpointsUrl(modelId);
-  const parsed = EndpointsResponseSchema.parse(
+  assertValidStaticOpenRouterApiKey(options.apiKey);
+  const url = openRouterEndpointsUrl(modelId);
+  const parsed = OpenRouterEndpointsResponseSchema.parse(
     await withOpenRouterTimeout(options.timeoutMs ?? 10_000, options.signal, (signal) =>
       openRouterJson({
         fetcher: options.fetcher ?? fetch,
         url,
-        apiKey: options.apiKey,
+        ...(options.apiKey !== undefined && { apiKey: options.apiKey }),
         signal,
         ...(options.maxResponseBytes !== undefined && { maxBytes: options.maxResponseBytes }),
       }),
@@ -122,31 +247,50 @@ export async function fetchOpenRouterModelEndpoints(
   return parsed.data.endpoints.map((endpoint) => {
     const prompt = usdPerMillion(endpoint.pricing?.prompt);
     const completion = usdPerMillion(endpoint.pricing?.completion);
+    const cacheRead = usdPerMillion(endpoint.pricing?.input_cache_read);
+    const cacheWrite = usdPerMillion(endpoint.pricing?.input_cache_write);
+    const cacheWrite1h = usdPerMillion(endpoint.pricing?.input_cache_write_1h);
+    const latencyP50Ms = nonNegativeFinite(endpoint.latency_last_30m?.p50);
+    const throughputP50 = nonNegativeFinite(endpoint.throughput_last_30m?.p50);
+    const uptime1d = percentageMetric(endpoint.uptime_last_1d);
+    const tag = nonEmptyTrimmed(endpoint.tag);
     return OpenRouterEndpointSchema.parse({
       provider: endpoint.provider_name,
       ...(endpoint.context_length != null && { contextLength: endpoint.context_length }),
+      ...(endpoint.max_completion_tokens != null && {
+        maxCompletionTokens: endpoint.max_completion_tokens,
+      }),
       ...(prompt !== undefined && { promptUsdPerMillion: prompt }),
       ...(completion !== undefined && { completionUsdPerMillion: completion }),
+      ...(cacheRead !== undefined && { cacheReadUsdPerMillion: cacheRead }),
+      ...(cacheWrite !== undefined && { cacheWriteUsdPerMillion: cacheWrite }),
+      ...(cacheWrite1h !== undefined && { cacheWrite1hUsdPerMillion: cacheWrite1h }),
       supportedParameters: endpoint.supported_parameters ?? [],
       ...(endpoint.status != null && { status: endpoint.status }),
+      ...(latencyP50Ms !== undefined && { latencyP50Ms }),
+      ...(throughputP50 !== undefined && { throughputP50 }),
+      ...(uptime1d !== undefined && { uptime1d }),
+      ...(tag && { tag }),
     });
   });
 }
 
 /** Read `/models` (and, for `endpointsFor`, each model's upstreams) into a snapshot to store. */
 export async function loadOpenRouterCatalogSnapshot(
-  options: OpenRouterSnapshotOptions,
+  options: OpenRouterSnapshotOptions = {},
 ): Promise<OpenRouterCatalogSnapshot> {
   const concurrency = options.concurrency ?? 4;
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16)
     throw new RangeError('concurrency must be an integer from 1 to 16');
+  assertValidStaticOpenRouterApiKey(options.apiKey);
+  assertValidOpenRouterEndpointsFor(options.endpointsFor);
   const observedAt = (options.now?.() ?? new Date()).toISOString();
   const listing = OpenRouterModelsResponseSchema.parse(
     await withOpenRouterTimeout(options.timeoutMs ?? 10_000, options.signal, (signal) =>
       openRouterJson({
         fetcher: options.fetcher ?? fetch,
         url: new URL('https://openrouter.ai/api/v1/models'),
-        apiKey: options.apiKey,
+        ...(options.apiKey !== undefined && { apiKey: options.apiKey }),
         signal,
         ...(options.maxResponseBytes !== undefined && { maxBytes: options.maxResponseBytes }),
       }),
@@ -183,22 +327,6 @@ export async function loadOpenRouterCatalogSnapshot(
   return OpenRouterCatalogSnapshotSchema.parse({
     schemaVersion: 1,
     observedAt,
-    models: listing.map((model) => {
-      const prompt = usdPerMillion(model.pricing.prompt);
-      const completion = usdPerMillion(model.pricing.completion);
-      const request = usd(model.pricing.request);
-      return {
-        id: model.id,
-        name: model.name,
-        ...(model.canonical_slug && { canonicalSlug: model.canonical_slug }),
-        inputModalities: model.architecture.input_modalities,
-        contextLength: model.context_length,
-        ...(prompt !== undefined && { promptUsdPerMillion: prompt }),
-        ...(completion !== undefined && { completionUsdPerMillion: completion }),
-        ...(request !== undefined && { requestUsd: request }),
-        supportedParameters: model.supported_parameters,
-        ...(endpoints.has(model.id) && { endpoints: endpoints.get(model.id) }),
-      };
-    }),
+    models: listing.map((model) => mapSnapshotModel(model, endpoints.get(model.id))),
   });
 }

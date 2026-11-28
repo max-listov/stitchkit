@@ -8,6 +8,7 @@ import ky, {
 import type { UploadProgress } from '../contract/client-types';
 import type { ErrorEnvelope } from '../contract/errors';
 import { assertTimerMs } from '../internal/deadline';
+import { applyOutboundDeadlineHeader } from '../internal/deadline-budget';
 import { isRecord } from '../internal/typed';
 import {
   UNIX_CLIENT_TRANSPORT_ERROR_NAME,
@@ -25,6 +26,12 @@ import {
   readResponse,
   searchParamsOf,
 } from './http-fetch';
+import {
+  assertTransportChoice,
+  errorBodyOf,
+  jsonBodyOf,
+  requestFailure,
+} from './http-helpers';
 import { resolveClientFetch } from './native-fetch';
 import { responseTraceId } from './request-id';
 import type { ClientFetch } from './transport';
@@ -181,6 +188,12 @@ export interface HttpClientConfig {
    */
   release?: { observe(buildId: string | null): void };
   /**
+   * Emit the remaining relative call deadline in `x-stitchkit-timeout-ms` on every request
+   * (recomputed on transport retries). A caller-set header wins. Default `false`; per-call
+   * `options.timeout` propagates automatically unless `propagateDeadline: false`.
+   */
+  propagateDeadline?: boolean;
+  /**
    * Dial a unix domain socket instead of TCP (Bun runtime only). Other runtimes
    * fail before dispatch; use `createUnixClientTransport().fetch` for the
    * portable Bun/Node path. `baseUrl` stays required as the path/prefix source;
@@ -192,6 +205,8 @@ export interface HttpClientConfig {
 export interface RequestOptions {
   params?: Record<string, ParamValue | ParamArrayValue>;
   timeout?: number;
+  /** Override client-level `propagateDeadline` for this request. */
+  propagateDeadline?: boolean;
   signal?: AbortSignal;
   /**
    * How to read the body. `'response'` hands back the untouched `Response` —
@@ -232,69 +247,15 @@ export interface ConfiguredHttpClient extends HttpClient {
   readonly baseUrl: string;
 }
 
-/** `fetch` and `unix` are two transports; a unix socket needs Bun's own fetch. */
-function assertTransportChoice(config: HttpClientConfig): void {
-  if (config.fetch && config.unix) {
-    throw new TypeError('HttpClientConfig.fetch and unix are mutually exclusive');
-  }
-  if (config.unix !== undefined) {
-    if (!config.unix.startsWith('/') || config.unix.includes('\0')) {
-      throw new TypeError('HttpClientConfig.unix must be an absolute Unix socket path');
-    }
-    if (typeof Reflect.get(globalThis, 'Bun') !== 'object') {
-      throw new TypeError(
-        'HttpClientConfig.unix requires Bun; on Bun or Node use createUnixClientTransport().fetch for an explicit portable transport',
-      );
-    }
-  }
-}
-
-/**
- * The `ApiError` a failed request becomes. A cancellation is the caller's own
- * and emits nothing; anything else that is not already an `ApiError` is a
- * transport failure and emits `network_error`.
- */
-function requestFailure(error: unknown, emit: (event: ApiEvent) => void): ApiError {
-  if (error instanceof RequestCancellationError) {
-    return new ApiError(error.origin === 'caller' ? 'REQUEST_ABORTED' : 'REQUEST_TIMEOUT', {
-      status: 0,
-      message: error.message,
-      ...(error.cause !== undefined && { cause: error.cause }),
-    });
-  }
-  if (ApiError.is(error)) return error;
-  emit({ type: 'network_error' });
-  const response = isHTTPError(error) ? error.response : undefined;
-  const status = response?.status ?? 0;
-  const msg = error instanceof Error ? error.message : undefined;
-  // The message and the `cause` go to the same places the bare-fetch path
-  // sends them (`createFetchExecutor`). This path used to pass `undefined`
-  // for both and file the real text under `details.message` alone, so the
-  // ky adapter answered `API Error: UNKNOWN_ERROR` where the bare-fetch
-  // path answered "Unable to connect" — same failure, same client, two
-  // different stories.
-  return new ApiError('UNKNOWN_ERROR', {
-    status,
-    details: msg ? { message: msg } : undefined,
-    message: msg,
-    traceId: responseTraceId(response),
-    cause: error,
-  });
-}
-
-/** The body Ky sends for `json`, as the React Native upload route must send it. */
-function jsonBodyOf(data: unknown): string | null {
-  return data === undefined ? null : JSON.stringify(data);
-}
-
-/** Ky's pre-read error body: parsed JSON, or text a server sent without a JSON type. */
-function errorBodyOf(data: unknown): unknown {
-  if (typeof data !== 'string') return data ?? null;
-  try {
-    return JSON.parse(data);
-  } catch {
-    return null;
-  }
+function resolveOutboundDeadlineAt(
+  options: RequestOptions,
+  config: HttpClientConfig,
+  effectiveTimeoutMs: number,
+): number | undefined {
+  const shouldPropagate =
+    options.propagateDeadline ??
+    (options.timeout !== undefined ? true : (config.propagateDeadline ?? false));
+  return shouldPropagate ? performance.now() + effectiveTimeoutMs : undefined;
 }
 
 /**
@@ -405,10 +366,9 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
     data?: unknown,
     options: RequestOptions = {},
   ): Promise<T> {
-    const cancellation = createRequestCancellation(
-      options.signal,
-      options.timeout ?? config.timeout ?? 30_000,
-    );
+    const effectiveTimeoutMs = options.timeout ?? config.timeout ?? 30_000;
+    const cancellation = createRequestCancellation(options.signal, effectiveTimeoutMs);
+    const deadlineAt = resolveOutboundDeadlineAt(options, config, effectiveTimeoutMs);
     // Ky settles a cancelled request with the abort reason as soon as the
     // signal fires, so the transport's own rejection — the evidence of what the
     // cancellation did to the request — is recorded here and kept as the cause.
@@ -416,7 +376,8 @@ export function createHttpClient(config: HttpClientConfig): ConfiguredHttpClient
     const resolvedTransport = resolveClientFetch(config.fetch);
     const transport: ClientFetch = (input, init) => {
       transportFailure = undefined;
-      return resolvedTransport(input, init).catch((cause: unknown) => {
+      const next = applyOutboundDeadlineHeader(input, init, deadlineAt);
+      return resolvedTransport(next.input, next.init).catch((cause: unknown) => {
         transportFailure = { cause };
         throw cause;
       });

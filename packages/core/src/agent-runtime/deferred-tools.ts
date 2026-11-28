@@ -1,6 +1,5 @@
-import type { ToolCallRepairFunction, ToolSet } from 'ai';
 import { resolveToolAccess } from '../tools/access';
-import { mountAgent } from '../tools/agent';
+import { mountAgentTools } from '../tools/agent-tools';
 import { buildToolManifest } from '../tools/manifest';
 import { executableAgentRuntimeTools } from '../tools/runtime-tool';
 import { AgentContextOverflowError } from './context-refusal';
@@ -24,6 +23,7 @@ import {
   registerDeferredToolRepair,
   repairedSearchCall,
 } from './deferred-tools-internal';
+import type { AgentToolCallRepairFunction } from './models-driver-step';
 import type { AgentRuntimePrepareStep, AgentRuntimeRunContext } from './runtime';
 
 export * from './deferred-tool-types';
@@ -190,7 +190,7 @@ export function createDeferredAgentToolSurface<CONTEXT>(
         ...executableAgentRuntimeTools(surface.definition.runtimeTools ?? []),
         createDeferredSearchTool(config, runContext, surface),
       ];
-      const tools = mountAgent([...(surface.definition.services ?? [])], {
+      const tools = mountAgentTools([...(surface.definition.services ?? [])], {
         ...mountConfig,
         ...projection,
         runtimeTools,
@@ -228,7 +228,18 @@ export function createDeferredAgentToolSurface<CONTEXT>(
           surface,
         ).names;
         if (!names.includes(config.search.name)) names.unshift(config.search.name);
-        const bytes = assertActiveBudget(config, names, surface);
+        const surfaceBytes = assertActiveBudget(config, names, surface);
+        const activeTools =
+          application?.activeTools !== undefined
+            ? (() => {
+                const allowed = new Set(application.activeTools);
+                return names.filter((name) => allowed.has(name));
+              })()
+            : names;
+        const bytes =
+          activeTools.length === names.length
+            ? surfaceBytes
+            : schemaBytes(activeTools, surface);
         config.observe?.({
           schemaVersion: 1,
           type: 'step',
@@ -238,20 +249,25 @@ export function createDeferredAgentToolSurface<CONTEXT>(
           baseTools: surface.alwaysOn.length + 1,
           pinnedTools: pins.names.length,
           selectedTools: selected.names.length,
-          activeTools: names.length,
+          activeTools: activeTools.length,
           activeSchemaBytes: bytes,
           rejectedNames: selected.rejected,
           replacementTools: selected.names.length,
           source: currentSelection.source === 'durable' ? 'current' : selection.source,
         });
-        return { ...application, activeTools: names };
+        return { ...application, activeTools };
       };
-      const repair: ToolCallRepairFunction<ToolSet> = async ({ toolCall, tools, error }) => {
+      const repair: AgentToolCallRepairFunction = async ({
+        toolCall,
+        activeTools,
+        tools,
+        error,
+      }) => {
         const catalog = deferredToolCatalog(tools, config.search.name);
         if (
-          !('toolName' in error) ||
+          error.kind !== 'unknown-tool' ||
           !catalog?.has(toolCall.toolName) ||
-          toolCall.toolName in tools
+          activeTools.includes(toolCall.toolName)
         ) {
           return null;
         }

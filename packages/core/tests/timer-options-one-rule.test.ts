@@ -374,6 +374,8 @@ const durationsThatAreNotTimerOptions: Record<string, string> = {
     'a measured freshness',
   "tracking/server/active-interval.ts: if (typeof deltaMs !== 'number' || !Number.isFinite(deltaMs)) return null;":
     'a measured interval',
+  'agent-runtime/provider-failure.ts: Number.isFinite(value.retryAfterMs) &&':
+    'observed HTTP Retry-After header from provider',
   "observability/event-loop-delay.ts: assertPositiveSafeInteger('windowMs', windowMs);":
     'a window of buckets, bounded by the bucket count',
   "observability/event-loop-delay.ts: assertPositiveSafeInteger('resolutionMs', resolutionMs);":
@@ -465,6 +467,9 @@ test('a timer field of a schema states the timer ceiling', () => {
     'durationMs',
     'elapsedMs',
     'ttftMs',
+    'stepTimeMs',
+    'responseTimeMs',
+    'toolExecutionMs',
     'queueWaitMs',
     'lateByMs',
     'stopDurationMs',
@@ -487,6 +492,9 @@ test('a timer field of a schema states the timer ceiling', () => {
     'agent-executor/codex/protocol.ts: startedAtMs',
     'agent-executor/codex/responses.ts: startedAtMs',
     'agent-executor/codex/responses.ts: completedAtMs',
+    'device-relay/contract.ts: leaseExpiresAtMs',
+    'device-relay/contract.ts: serverTimeMs',
+    'device-relay/contract.ts: sentAtMs',
   ]);
   const found = sourceFiles(join(import.meta.dir, '..', 'src')).flatMap((path) =>
     [...readFileSync(path, 'utf8').matchAll(field)]

@@ -1,11 +1,12 @@
-import type { ToolSet } from 'ai';
 import { assertTimerMs } from '../internal/deadline';
 import { assertPositiveSafeInteger } from '../internal/positive-integer';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { createRuntimeAdmissionLanes, type RuntimeAdmissionLanes } from './admission-lanes';
 import { type AgentSessionCoordinator, createAgentSessionCoordinator } from './coordinator';
 import type { AgentRuntimeEvent } from './events';
 import { type AgentInjectionRegistry, createAgentInjectionRegistry } from './injection';
 import { assertAgentRetryPolicy } from './retry-policy';
+import { assertToolApprovalSecret } from './run-approval';
 import { createRunExecutor } from './run-execution';
 import type { RunExecutionInput } from './run-execution-state';
 import { assertStepBarriers } from './run-step-barriers';
@@ -30,7 +31,7 @@ export interface RuntimeTicket {
  * so each phase (submit, recovery, control, close) names what it touches by
  * taking it, rather than by being written inside the scope that declares it.
  */
-export interface AgentRuntimeState<CONTEXT, TOOLS extends ToolSet> {
+export interface AgentRuntimeState<CONTEXT, TOOLS extends AgentToolSet> {
   config: AgentRuntimeConfig<CONTEXT, TOOLS>;
   coordinator: AgentSessionCoordinator;
   /** Live tickets by conversation, then idempotency key, so a retry gets the same one. */
@@ -48,11 +49,12 @@ interface LoopLimits {
   checkpointEveryEvents: number;
   maxSteps: number;
   idleTimeoutMs?: number;
+  maxDurationMs?: number;
   stepSpendTimeoutMs: number;
 }
 
 /** Defaults applied and every limit validated before the runtime exists. */
-function resolveLoopLimits<CONTEXT, TOOLS extends ToolSet>(
+function resolveLoopLimits<CONTEXT, TOOLS extends AgentToolSet>(
   config: AgentRuntimeConfig<CONTEXT, TOOLS>,
 ): LoopLimits {
   const checkpointEveryEvents = config.loop?.checkpointEveryEvents ?? 20;
@@ -62,13 +64,17 @@ function resolveLoopLimits<CONTEXT, TOOLS extends ToolSet>(
   const declaredIdleTimeoutMs = config.loop?.idleTimeoutMs;
   const idleTimeoutMs =
     declaredIdleTimeoutMs === null ? undefined : (declaredIdleTimeoutMs ?? 60_000);
+  const declaredMaxDurationMs = config.loop?.maxDurationMs;
+  const maxDurationMs = declaredMaxDurationMs === null ? undefined : declaredMaxDurationMs;
   const stepSpendTimeoutMs = config.stepSpendTimeoutMs ?? DEFAULT_STEP_SPEND_TIMEOUT_MS;
   assertPositiveSafeInteger('checkpointEveryEvents', checkpointEveryEvents);
   assertPositiveSafeInteger('maxSteps', maxSteps);
   assertTimerMs('idleTimeoutMs', idleTimeoutMs);
+  assertTimerMs('maxDurationMs', maxDurationMs);
   assertTimerMs('stepSpendTimeoutMs', stepSpendTimeoutMs);
   if (config.loop?.retry) assertAgentRetryPolicy('loop.retry', config.loop.retry);
   assertStepBarriers(config.loop?.stepBarriers);
+  assertToolApprovalSecret(config.loop?.toolApprovalSecret);
   const policyNames = new Set<string>(['max-steps']);
   for (const policy of config.loop?.stopPolicies ?? []) {
     if (!policy.name || policyNames.has(policy.name)) {
@@ -80,11 +86,12 @@ function resolveLoopLimits<CONTEXT, TOOLS extends ToolSet>(
     checkpointEveryEvents,
     maxSteps,
     ...(idleTimeoutMs !== undefined && { idleTimeoutMs }),
+    ...(maxDurationMs !== undefined && { maxDurationMs }),
     stepSpendTimeoutMs,
   };
 }
 
-export function createAgentRuntimeState<CONTEXT, TOOLS extends ToolSet>(
+export function createAgentRuntimeState<CONTEXT, TOOLS extends AgentToolSet>(
   config: AgentRuntimeConfig<CONTEXT, TOOLS>,
 ): AgentRuntimeState<CONTEXT, TOOLS> {
   const coordinator = createAgentSessionCoordinator();
@@ -103,7 +110,7 @@ export function createAgentRuntimeState<CONTEXT, TOOLS extends ToolSet>(
   const injectionPossible =
     typeof config.runs?.inputPolicy === 'function' || config.runs?.inputPolicy === 'inject';
   const injection = injectionPossible ? createAgentInjectionRegistry() : undefined;
-  const { checkpointEveryEvents, maxSteps, idleTimeoutMs, stepSpendTimeoutMs } =
+  const { checkpointEveryEvents, maxSteps, idleTimeoutMs, maxDurationMs, stepSpendTimeoutMs } =
     resolveLoopLimits(config);
 
   const publish = async (event: AgentRuntimeEvent): Promise<void> => {
@@ -128,6 +135,7 @@ export function createAgentRuntimeState<CONTEXT, TOOLS extends ToolSet>(
     checkpointEveryEvents,
     maxSteps,
     ...(idleTimeoutMs !== undefined && { idleTimeoutMs }),
+    ...(maxDurationMs !== undefined && { maxDurationMs }),
     stepSpendTimeoutMs,
     ...(injection && { injection }),
   });

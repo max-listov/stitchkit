@@ -5,6 +5,8 @@
 // that mounts tools and drives its own loop supplies the two methods over the
 // database it already has and gets replay, absolute deadlines, park/deliver
 // and decode refusal, instead of writing them beside its tools. → ADR 0187.
+
+export type { AgentToolModelOutput } from '../agent-parts/model';
 export {
   createLocalStepDurability,
   type EffectHandlers,
@@ -57,6 +59,19 @@ export {
 export type { OperationIdentity } from '../server/types';
 export type { ToolAccess, ToolGate, ToolOpenReason } from '../tools/access';
 export { AgentToolError, isAgentToolError } from '../tools/agent-tool-error';
+export {
+  type AgentContext,
+  type AgentMountConfig,
+  type AgentTool,
+  type AgentToolCall,
+  type AgentToolInputAvailableOptions,
+  type AgentToolParseResult,
+  type AgentToolSet,
+  type AgentToolToModelOutputOptions,
+  type DefineAgentToolConfig,
+  defineAgentTool,
+  mountAgentTools,
+} from '../tools/agent-tools';
 export type {
   DurableJsonValue,
   ToolDurability,
@@ -153,7 +168,6 @@ export {
 export {
   createRuntimeToolFactory,
   defineRuntimeTool,
-  type RuntimeAgentModelOutput,
   type RuntimeMcpInput,
   type RuntimeMcpPresentation,
   type RuntimeToolDefinition,

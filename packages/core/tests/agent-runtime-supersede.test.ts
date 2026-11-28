@@ -20,6 +20,7 @@ import {
   selectAgentHistory,
   structuredCompaction,
 } from '../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -92,7 +93,7 @@ function runtimeFor(
   const runtime = createAgentRuntime({
     protocol,
     store,
-    models: { resolve: () => ({ descriptor, model }) },
+    models: { resolve: () => ({ descriptor, driver: fromAiSdkModel(model) }) },
     prompt: () => ({
       instructions: 'test',
       sections: [],
@@ -406,7 +407,7 @@ describe('a superseded record is not conversation, in every walker that reads hi
     const runtime = createAgentRuntime({
       protocol,
       store,
-      models: { resolve: () => ({ descriptor, model }) },
+      models: { resolve: () => ({ descriptor, driver: fromAiSdkModel(model) }) },
       prompt: () => ({
         instructions: 'test',
         sections: [],

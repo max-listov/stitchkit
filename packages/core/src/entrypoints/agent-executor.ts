@@ -8,7 +8,12 @@ export type {
   AgentEngineSession,
   AgentEngineTurn,
 } from '../agent-executor/engine';
-export { type EngineProcess, spawnEngineProcess } from '../agent-executor/engine-process';
+export {
+  type EngineProcess,
+  type EngineProcessCommandSpec,
+  type EngineProcessWrapCommand,
+  spawnEngineProcess,
+} from '../agent-executor/engine-process';
 export {
   EXECUTOR_ERRORS,
   type InteractionReply,
@@ -122,6 +127,14 @@ export {
   ExecutorErrorKindSchema,
   type ExecutorModelUsage,
   ExecutorModelUsageSchema,
+  type ExecutorPlanDelta,
+  ExecutorPlanDeltaSchema,
+  type ExecutorPlanEntry,
+  type ExecutorPlanEntryPriority,
+  ExecutorPlanEntryPrioritySchema,
+  ExecutorPlanEntrySchema,
+  type ExecutorPlanEntryStatus,
+  ExecutorPlanEntryStatusSchema,
   ExecutorRawSchema,
   type ExecutorStartupPhase,
   ExecutorStartupPhaseSchema,

@@ -62,16 +62,10 @@ const CURRENT_SCHEMAS: Record<Direction, Record<string, z.ZodType>> = {
   },
 };
 
-const current: Snapshot = {
-  'executor→server': {},
-  'server→executor': {},
-};
+const current: Snapshot = { 'executor→server': {}, 'server→executor': {} };
 for (const direction of DIRECTIONS) {
   for (const [name, schema] of Object.entries(CURRENT_SCHEMAS[direction])) {
-    current[direction][name] = z.toJSONSchema(schema, {
-      io: 'input',
-      unrepresentable: 'any',
-    });
+    current[direction][name] = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' });
   }
 }
 
@@ -132,6 +126,14 @@ const BASELINE = {
   },
   approve: { turnId: 't-1', interactionId: 'r-1', reply: { kind: 'approve' } },
   deny: { turnId: 't-1', interactionId: 'r-1', reply: { kind: 'deny', message: 'no' } },
+  offer: {
+    turnId: 't-1',
+    threadId: 'th-1',
+    turnOrdinal: 1,
+    fence: 1,
+    input: [{ type: 'text', text: 'hello' }],
+    inputDigest: 'sha256:abc',
+  },
 };
 
 interface Addition {
@@ -142,12 +144,24 @@ interface Addition {
   /** The message the addition travels in, and that message carrying it. */
   readonly message: string;
   readonly carrying: unknown;
+  /** Non-strict `AgentMessagePartSchema` branches accept unknown keys on older readers; prove schema addition by a payload older ignores and today refuses. */
+  readonly olderAcceptsInvalid?: unknown;
 }
 
+const acpProvider = { schemaVersion: 1, provider: 'acp', data: { kind: 'read' } };
+const toolResultPart = {
+  type: 'tool-result',
+  callId: 'c-1',
+  toolName: 'read_file',
+  outcome: 'success',
+  output: { ok: true },
+};
 const usage = (extra: Record<string, unknown>) => ({
   ...BASELINE.report,
   deltas: [{ type: 'usage', ...delta, inputTokens: 1, ...extra }, BASELINE.report.deltas[1]],
 });
+const reportWith = (deltas: unknown[]) => ({ ...BASELINE.report, deltas });
+const offerWith = (input: unknown[]) => ({ ...BASELINE.offer, input });
 const [engine] = BASELINE.hello.engines;
 const [profile] = BASELINE.hello.profiles;
 const capabilities = {
@@ -167,6 +181,20 @@ const capabilities = {
   planLimits: 'pull',
 };
 
+const add = (
+  path: string,
+  documented: string,
+  message: string,
+  carrying: unknown,
+  olderAcceptsInvalid?: unknown,
+): Addition => ({
+  path,
+  documented,
+  message,
+  carrying,
+  ...(olderAcceptsInvalid !== undefined && { olderAcceptsInvalid }),
+});
+
 /** What each release added to the wire, read against the snapshot of the release before it. */
 const SKEW: readonly {
   readonly release: string;
@@ -180,94 +208,72 @@ const SKEW: readonly {
     newerSnapshot: '0.130.1',
     added: {
       'executor→server': [
-        {
-          path: 'hello.engines[].capabilities',
-          documented: 'engines[].capabilities',
-          message: 'hello',
-          carrying: { ...BASELINE.hello, engines: [{ ...engine, capabilities }] },
-        },
-        {
-          path: 'report.deltas[][type=status]',
-          documented: "deltas[].type = 'status'",
-          message: 'report',
-          carrying: {
-            ...BASELINE.report,
-            deltas: [{ type: 'status', ...delta, phase: 'spawning' }],
-          },
-        },
-        {
-          path: 'report.deltas[][type=turn-end].threadDisposition',
-          documented: 'turn-end.threadDisposition',
-          message: 'report',
-          carrying: {
-            ...BASELINE.report,
-            deltas: [
-              { type: 'turn-end', ...delta, outcome: 'failed', threadDisposition: 'broken' },
-            ],
-          },
-        },
-        {
-          path: 'report.deltas[][type=usage].cacheCreationInputTokens',
-          documented: 'usage.cacheCreationInputTokens',
-          message: 'report',
-          carrying: usage({ cacheCreationInputTokens: 1 }),
-        },
-        {
-          path: 'report.deltas[][type=usage].modelUsage',
-          documented: 'usage.modelUsage',
-          message: 'report',
-          carrying: usage({ modelUsage: { 'model-1': { inputTokens: 1, outputTokens: 1 } } }),
-        },
-        {
-          path: 'report.deltas[][type=usage].thinkingTokens',
-          documented: 'usage.thinkingTokens',
-          message: 'report',
-          carrying: usage({ thinkingTokens: 1 }),
-        },
-        {
-          path: 'report.deltas[][type=usage].total',
-          documented: 'usage.total',
-          message: 'report',
-          carrying: usage({ total: { inputTokens: 1 } }),
-        },
-        {
-          path: 'report.deltas[][type=usage].totalTokens',
-          documented: 'usage.totalTokens',
-          message: 'report',
-          carrying: usage({ totalTokens: 1 }),
-        },
-        {
-          path: 'report.failure.threadDisposition',
-          documented: 'failure.threadDisposition',
-          message: 'report',
-          carrying: {
-            ...BASELINE.report,
-            failure: { ...BASELINE.report.failure, threadDisposition: 'broken' },
-          },
-        },
+        add('hello.engines[].capabilities', 'engines[].capabilities', 'hello', {
+          ...BASELINE.hello,
+          engines: [{ ...engine, capabilities }],
+        }),
+        add(
+          'report.deltas[][type=status]',
+          "deltas[].type = 'status'",
+          'report',
+          reportWith([{ type: 'status', ...delta, phase: 'spawning' }]),
+        ),
+        add(
+          'report.deltas[][type=turn-end].threadDisposition',
+          'turn-end.threadDisposition',
+          'report',
+          reportWith([
+            { type: 'turn-end', ...delta, outcome: 'failed', threadDisposition: 'broken' },
+          ]),
+        ),
+        add(
+          'report.deltas[][type=usage].cacheCreationInputTokens',
+          'usage.cacheCreationInputTokens',
+          'report',
+          usage({ cacheCreationInputTokens: 1 }),
+        ),
+        add(
+          'report.deltas[][type=usage].modelUsage',
+          'usage.modelUsage',
+          'report',
+          usage({ modelUsage: { 'model-1': { inputTokens: 1, outputTokens: 1 } } }),
+        ),
+        add(
+          'report.deltas[][type=usage].thinkingTokens',
+          'usage.thinkingTokens',
+          'report',
+          usage({ thinkingTokens: 1 }),
+        ),
+        add(
+          'report.deltas[][type=usage].total',
+          'usage.total',
+          'report',
+          usage({ total: { inputTokens: 1 } }),
+        ),
+        add(
+          'report.deltas[][type=usage].totalTokens',
+          'usage.totalTokens',
+          'report',
+          usage({ totalTokens: 1 }),
+        ),
+        add('report.failure.threadDisposition', 'failure.threadDisposition', 'report', {
+          ...BASELINE.report,
+          failure: { ...BASELINE.report.failure, threadDisposition: 'broken' },
+        }),
       ],
       'server→executor': [
-        {
-          path: 'reply.reply[kind=approve].scope',
-          documented: 'approve.scope',
-          message: 'reply',
-          carrying: { ...BASELINE.approve, reply: { kind: 'approve', scope: 'session' } },
-        },
-        {
-          path: 'reply.reply[kind=approve].updatedInput',
-          documented: 'approve.updatedInput',
-          message: 'reply',
-          carrying: {
-            ...BASELINE.approve,
-            reply: { kind: 'approve', updatedInput: { command: 'ls' } },
-          },
-        },
-        {
-          path: 'reply.reply[kind=deny].interrupt',
-          documented: 'deny.interrupt',
-          message: 'reply',
-          carrying: { ...BASELINE.deny, reply: { ...BASELINE.deny.reply, interrupt: true } },
-        },
+        add('reply.reply[kind=approve].scope', 'approve.scope', 'reply', {
+          ...BASELINE.approve,
+          reply: { kind: 'approve', scope: 'session' },
+        }),
+        add('reply.reply[kind=approve].updatedInput', 'approve.updatedInput', 'reply', {
+          ...BASELINE.approve,
+          reply: { kind: 'approve', updatedInput: { command: 'ls' } },
+        }),
+        add('reply.reply[kind=deny].interrupt', 'deny.interrupt', 'reply', {
+          ...BASELINE.deny,
+          reply: { ...BASELINE.deny.reply, interrupt: true },
+        }),
       ],
     },
   },
@@ -277,20 +283,15 @@ const SKEW: readonly {
     newerSnapshot: '0.132.3',
     added: {
       'executor→server': [
-        {
-          path: 'hello.profiles[].planLimits.plan',
-          documented: 'profiles[].planLimits.plan',
-          message: 'hello',
-          carrying: {
-            ...BASELINE.hello,
-            profiles: [{ ...profile, planLimits: { ...profile?.planLimits, plan: 'pro' } }],
-          },
-        },
-        {
-          path: 'hello.profiles[].planLimits.windows[].scope',
-          documented: 'profiles[].planLimits.windows[].scope',
-          message: 'hello',
-          carrying: {
+        add('hello.profiles[].planLimits.plan', 'profiles[].planLimits.plan', 'hello', {
+          ...BASELINE.hello,
+          profiles: [{ ...profile, planLimits: { ...profile?.planLimits, plan: 'pro' } }],
+        }),
+        add(
+          'hello.profiles[].planLimits.windows[].scope',
+          'profiles[].planLimits.windows[].scope',
+          'hello',
+          {
             ...BASELINE.hello,
             profiles: [
               {
@@ -302,16 +303,60 @@ const SKEW: readonly {
               },
             ],
           },
-        },
+        ),
       ],
       'server→executor': [],
+    },
+  },
+  {
+    release: '0.134.0',
+    olderSnapshot: '0.132.3',
+    newerSnapshot: '0.134.0',
+    added: {
+      'executor→server': [
+        add(
+          'report.deltas[][type=plan]',
+          "deltas[].type = 'plan'",
+          'report',
+          reportWith([
+            {
+              type: 'plan',
+              ...delta,
+              action: 'set',
+              entries: [{ content: 'Audit', status: 'in_progress', priority: 'high' }],
+            },
+          ]),
+        ),
+        add(
+          'report.deltas[][type=tool-result].provider',
+          'tool-result.provider',
+          'report',
+          reportWith([{ ...toolResultPart, ...delta, provider: acpProvider }]),
+        ),
+      ],
+      'server→executor': [
+        add(
+          'offer.input[][type=text].provider',
+          'input[type=text].provider',
+          'offer',
+          offerWith([{ type: 'text', text: 'hello', provider: acpProvider }]),
+          offerWith([{ type: 'text', text: 'hello', provider: 'not-an-envelope' }]),
+        ),
+        add(
+          'offer.input[][type=tool-result].provider',
+          'input[type=tool-result].provider',
+          'offer',
+          offerWith([{ ...toolResultPart, provider: acpProvider }]),
+          offerWith([{ ...toolResultPart, provider: 'not-an-envelope' }]),
+        ),
+      ],
     },
   },
   {
     // The release in work: a key added here is named in a new row of this table and of the
     // reference before it ships.
     release: 'unreleased',
-    olderSnapshot: '0.132.3',
+    olderSnapshot: '0.134.0',
     newerSnapshot: 'current',
     added: { 'executor→server': [], 'server→executor': [] },
   },
@@ -340,6 +385,7 @@ describe('executor ↔ server version skew', () => {
       z.fromJSONSchema(oldest[direction][message] ?? {}).safeParse(value).success;
     expect(accepts('executor→server', 'hello', BASELINE.hello)).toBe(true);
     expect(accepts('executor→server', 'report', BASELINE.report)).toBe(true);
+    expect(accepts('server→executor', 'offer', BASELINE.offer)).toBe(true);
     expect(accepts('server→executor', 'reply', BASELINE.approve)).toBe(true);
     expect(accepts('server→executor', 'reply', BASELINE.deny)).toBe(true);
     // A restored schema is as strict as the release was: an invented key is refused.
@@ -362,25 +408,27 @@ describe('executor ↔ server version skew', () => {
         expect(addedWirePaths(pathsOf(newer, direction), pathsOf(older, direction))).toEqual(
           [],
         );
-        // 2. Each addition, alone in a real message: the older reader refuses, today's reads.
+        // 2. Each addition, alone in a real message: older reader refuses (or ignores non-strict part keys), today's validates.
         for (const addition of expected) {
           const olderSchema = z.fromJSONSchema(older[direction][addition.message] ?? {});
           const todaySchema = CURRENT_SCHEMAS[direction][addition.message];
-          expect([addition.path, olderSchema.safeParse(addition.carrying).success]).toEqual([
-            addition.path,
-            false,
-          ]);
-          expect([addition.path, todaySchema?.safeParse(addition.carrying).success]).toEqual([
-            addition.path,
-            true,
-          ]);
+          const check = (ok: boolean | undefined, want: boolean) =>
+            expect([addition.path, ok]).toEqual([addition.path, want]);
+          check(todaySchema?.safeParse(addition.carrying).success, true);
+          if (addition.olderAcceptsInvalid !== undefined) {
+            check(olderSchema.safeParse(addition.carrying).success, true);
+            check(olderSchema.safeParse(addition.olderAcceptsInvalid).success, true);
+            check(todaySchema?.safeParse(addition.olderAcceptsInvalid).success, false);
+          } else {
+            check(olderSchema.safeParse(addition.carrying).success, false);
+          }
         }
       }
     },
   );
 
   test('the last snapshot is today’s wire: nothing is added or removed unnamed', () => {
-    const last = released('0.132.3');
+    const last = released('0.134.0');
     for (const direction of DIRECTIONS) {
       expect(Object.keys(current[direction]).sort()).toEqual(
         Object.keys(last[direction]).sort(),

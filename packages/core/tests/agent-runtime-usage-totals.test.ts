@@ -21,10 +21,12 @@ import {
 
 /** One turn through the real OpenRouter adapter over a fixture SSE response. */
 async function runTurn(details?: number): Promise<AgentUsage | undefined> {
+  const promptTokens = Math.max(100, (details ?? 0) * 2);
+  const completionTokens = Math.max(4, details ?? 0);
   const usage = {
-    prompt_tokens: 100,
-    completion_tokens: 4,
-    total_tokens: 104,
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: promptTokens + completionTokens,
     cost: 0.003,
     ...(details !== undefined && {
       prompt_tokens_details: { cached_tokens: details, cache_write_tokens: details },
@@ -67,8 +69,7 @@ async function runTurn(details?: number): Promise<AgentUsage | undefined> {
           contextWindow: 100_000,
           capabilities: [],
         },
-        model: provider.create('fixture/model'),
-        ...(provider.normalizeUsage && { normalizeUsage: provider.normalizeUsage }),
+        driver: provider.create('fixture/model'),
       }),
     },
     prompt: () => ({

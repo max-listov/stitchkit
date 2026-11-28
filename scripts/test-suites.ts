@@ -11,6 +11,7 @@
  * 'scripts orphans'` runs the named suites only, as CI runs the repository scripts.
  */
 import { availableParallelism } from 'node:os';
+import { reexecInNodeQueueIfAvailable } from './node-queue';
 
 export const CORE_SHARDS = 4;
 
@@ -119,6 +120,11 @@ export function selectSuites(
 if (import.meta.main) {
   const root = `${import.meta.dir}/..`;
   const chosen = selectSuites(suites(), process.argv.slice(2));
+  const queuedExit = await reexecInNodeQueueIfAvailable({
+    label: 'stitchkit-test',
+    kind: 'test',
+  });
+  if (queuedExit !== undefined) process.exit(queuedExit);
   const results = await runSuites(chosen, availableParallelism(), (suite) =>
     runSuite(suite, root),
   );

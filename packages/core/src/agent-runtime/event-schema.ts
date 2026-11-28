@@ -116,8 +116,8 @@ export const AgentToolProgressEventSchema = EventIdentitySchema.extend({
   callId: AgentRecordIdSchema,
   toolName: z.string().min(1),
   message: z.string().max(AGENT_TOOL_PROGRESS_MESSAGE_MAX).optional(),
-  progress: z.number().finite().optional(),
-  total: z.number().finite().optional(),
+  progress: z.number().optional(),
+  total: z.number().optional(),
 });
 export const AgentTerminalEventSchema = EventIdentitySchema.extend({
   type: z.literal('terminal'),

@@ -73,7 +73,6 @@ export const MAX_SYSTEMD_INTERVAL_SECONDS = 18_446_744_073_708;
 
 export const SystemdIntervalSecondsSchema = z
   .number()
-  .finite()
   .nonnegative()
   .max(MAX_SYSTEMD_INTERVAL_SECONDS);
 

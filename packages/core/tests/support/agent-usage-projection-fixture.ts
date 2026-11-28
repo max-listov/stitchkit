@@ -1,15 +1,18 @@
 import { randomBytes } from 'node:crypto';
-import { simulateReadableStream, tool } from 'ai';
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import type { createBunSqliteAgentRuntimeStore } from '../../src/agent-runtime/sqlite-bun';
 import {
+  type AgentModelDriverFactory,
   type AgentUsage,
   createAgentRuntime,
   createModelInvocationLedger,
   defineAgentProtocol,
   defineModelRegistry,
 } from '../../src/entrypoints/agent-runtime';
+import { fromAiSdkModel } from '../../src/entrypoints/agent-runtime/ai-sdk';
+import { defineAgentTool } from '../../src/entrypoints/tools';
 
 const CostMetadataSchema = z.object({
   billing: z.object({
@@ -131,16 +134,14 @@ export function createUsageTestRuntime(input: {
     contextWindow: 100_000,
     capabilities: [],
   });
-  const providers: Record<
-    string,
-    {
-      create: () => MockLanguageModelV4;
-      normalizeUsage?: typeof normalizePricedUsage;
-    }
-  > = {
+  const wrapModel = (model: MockLanguageModelV4) =>
+    fromAiSdkModel(
+      model,
+      input.withPriceNormalizer !== false ? { normalizeUsage: normalizePricedUsage } : {},
+    );
+  const providers: Record<string, AgentModelDriverFactory> = {
     'priced-model': {
-      create: () => input.model,
-      ...(input.withPriceNormalizer !== false && { normalizeUsage: normalizePricedUsage }),
+      create: () => wrapModel(input.model),
     },
   };
   const modelEntries: Record<string, ReturnType<typeof descriptor>> = {
@@ -150,8 +151,7 @@ export function createUsageTestRuntime(input: {
     const modelId = `${key}-model`;
     modelEntries[key] = descriptor(modelId);
     providers[modelId] = {
-      create: () => extraModel,
-      ...(input.withPriceNormalizer !== false && { normalizeUsage: normalizePricedUsage }),
+      create: () => wrapModel(extraModel),
     };
   }
   const models = defineModelRegistry({ models: modelEntries, providers });
@@ -168,9 +168,9 @@ export function createUsageTestRuntime(input: {
     protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
     models: { resolve: () => models.resolve('priced') },
     tools: () => ({
-      ping: tool({
+      ping: defineAgentTool({
         description: 'ping',
-        inputSchema: z.object({}),
+        input: z.object({}),
         execute: async () => 'pong',
       }),
     }),

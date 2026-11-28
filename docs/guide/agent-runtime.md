@@ -1,10 +1,10 @@
 ---
 title: "Agent application runtime"
-description: Configure Stitchkit's optional durable history, stream loop, run coordination and managed-tool fencing.
+description: Configure Stitchkit's peer-free durable history, native AgentModelDriver step loop, three native providers, run coordination and managed-tool fencing.
 type: architecture
 status: active
 created: 2026-08-22
-updated: 2026-10-15 14:56 +07:00
+updated: 2026-11-28
 ---
 
 # Agent application runtime
@@ -12,17 +12,21 @@ updated: 2026-10-15 14:56 +07:00
 > **Maturity: evolving.** This surface is still finding its shape and may be
 > redefined in any minor release — always with a `### ⚠️ Breaking changes` entry
 > and a migration section, never silently. If your application already owns the
-> conversation loop, `mountAgent` from `stitchkit/tools/agent` is the direct path.
+> conversation loop, `mountAgentTools` from `stitchkit/tools` (or `mountAgent`
+> from `stitchkit/tools/agent` for an AI SDK loop) is the direct path.
 
-`stitchkit/agent-runtime` is the server-only, opinionated layer above
-`mountAgent`. Use it when the application wants Stitchkit to own conversation
-mechanics: durable acceptance, history projection, the AI SDK stream loop,
-checkpoints, keyed interruption, terminal commit and stable application events.
+`stitchkit/agent-runtime` is the peer-free, server-only, opinionated layer above
+`mountAgentTools`. Use it when the application wants Stitchkit to own conversation
+mechanics: durable acceptance, history projection, the native `AgentModelDriver`
+step loop, checkpoints, keyed interruption, terminal commit and stable application
+events.
 
-If the application already owns that loop, import `mountAgent` from
-`stitchkit/tools/agent`. Neither `stitchkit/tools` nor `stitchkit/tools/agent` depends on
-this entrypoint; this entrypoint uses the tool executor, but pulls no MCP peer, so
-choosing `mountAgent` alone costs you nothing from here.
+If the application already owns that loop, import `mountAgentTools` from
+`stitchkit/tools` (peer-free) or `mountAgent` from `stitchkit/tools/agent` (AI SDK
+adapter). Neither `stitchkit/tools` nor `stitchkit/tools/agent` depends on this
+entrypoint; this entrypoint uses the tool executor, pulls no MCP peer and no AI SDK
+peer, and runs directly against three native providers (`openrouter`, `openai`,
+`anthropic`) or any custom `AgentModelDriver`.
 
 UI and shared DTO code must import canonical records and delivery validation from
 `stitchkit/agent-runtime/browser`, not from the server runtime barrel:
@@ -42,16 +46,22 @@ persistence, event sinks and every Node context dependency.
 ## Install
 
 ```sh
-bun add stitchkit ai zod
+bun add stitchkit zod
 ```
 
-`mountAgent` from `stitchkit/tools/agent` — used in the composition below — needs no
-peer beyond `ai`.
+`stitchkit/agent-runtime`, `stitchkit/agent-runtime/harness`,
+`stitchkit/agent-runtime/testing`, `stitchkit/tools` (`mountAgentTools`,
+`defineAgentTool`), and all three native providers
+(`stitchkit/agent-runtime/openrouter`, `stitchkit/agent-runtime/openai`,
+`stitchkit/agent-runtime/anthropic`) are completely peer-free beyond `zod`.
 
-OpenRouter is isolated so other runtime users do not resolve its package:
+Install `ai` only when bridging an existing AI SDK v4 `LanguageModel` or `ToolSet`
+through the thin optional-peer adapter `stitchkit/agent-runtime/ai-sdk`
+(`fromAiSdkModel`, `fromAiSdkTools`) or mounting an AI SDK `ToolSet` through
+`stitchkit/tools/agent` (`mountAgent`):
 
 ```sh
-bun add @openrouter/ai-sdk-provider
+bun add ai@^7
 ```
 
 ## Minimal composition
@@ -67,8 +77,7 @@ import {
   defineModelRegistry,
 } from 'stitchkit/agent-runtime'
 import { openRouterProvider } from 'stitchkit/agent-runtime/openrouter'
-import { composeToolLifecycle } from 'stitchkit/tools'
-import { mountAgent } from 'stitchkit/tools/agent'
+import { composeToolLifecycle, mountAgentTools } from 'stitchkit/tools'
 
 const protocol = defineAgentProtocol({
   context: z.object({ userId: z.string() }),
@@ -117,7 +126,7 @@ const runtime = createAgentRuntime({
       },
     }),
   tools: ({ context, toolFenceLifecycle }) =>
-    mountAgent(service, {
+    mountAgentTools(service, {
       context,
       access: { gate: composeToolLifecycle(authLifecycle, toolFenceLifecycle) },
     }),
@@ -156,11 +165,205 @@ await ticket.accepted
 const terminal = await ticket.result
 ```
 
-A stop policy's `when` receives the steps so far together with the same run context
-`prepareStep` gets — `context`, `run`, `signal`, `toolFenceLifecycle` and `contextUsage` —
-typed by the runtime's `CONTEXT`. A rule that depends on its own run (a receipt bound to the
-run's request, a per-tenant limit) reads it there; it needs no map of its own keyed by `runId`.
-The first policy to return `true` ends the run as `policy_stop` with its `name` as `policyName`.
+A stop policy's `when` receives the completed `AgentStepResult[]` steps so far together with the
+same run context `prepareStep` gets — `context`, `run`, `signal`, `toolFenceLifecycle` and
+`contextUsage` — typed by the runtime's `CONTEXT`. A rule that depends on its own run (a receipt
+bound to the run's request, a per-tenant limit) reads it there; it needs no map of its own keyed
+by `runId`. The first policy to return `true` ends the run as `policy_stop` with its `name` as
+`policyName`.
+
+## Native model port, providers and driver composition
+
+Every model call crosses one single-step port — `AgentModelDriver.stream(request, signal)` — with
+no SDK retries and no tool execution inside the driver (ADR 0336). Any throw out of `stream()` or
+while reading `parts` is provider-origin by construction; HTTP and stream failures surface as
+`AgentProviderError` (guard with `isAgentProviderError`) or `AgentProviderStreamCutError`.
+`AgentModelRequest.headers` merges per-request headers (such as `traceparent` or deadline headers)
+without allowing `content-type: application/json` to be overwritten. `AgentModelToolSpec` also
+reserves an additive `{ type: 'provider', id, name, config? }` union branch for provider-hosted
+tools; drivers that do not implement a declared provider tool fail fast with `TypeError`.
+
+Three peer-free native providers implement `AgentModelDriverFactory` over Web `fetch` and SSE,
+all accepting either a static string or a dynamic `apiKey: () => string | Promise<string>` resolved
+freshly per stream call and reporting server `response.timestamp` alongside `modelId`:
+
+- **`stitchkit/agent-runtime/openrouter`** (`openRouterProvider`): OpenRouter Chat Completions SSE
+  with camelCase `baseUrl` and `providerApiKeys`, `looseTools` (sending `strict: false` while
+  preserving explicit per-tool `strict: true`), `reasoning.effort: 'max'`, `sessionPerConversation`
+  derived from `request.correlation.conversationId` without requiring `invocations`,
+  `reasoning_details` and Gemini `thought_signature` round-trip, ≤ 4 cache breakpoints, BYOK
+  `costDetails` (`cost + upstream_inference_cost`), and `native_finish_reason` abnormal-stop guards.
+- **`stitchkit/agent-runtime/openai`** (`openAiProvider`): OpenAI Responses API
+  (`POST /v1/responses`) defaulting to stateless `store: false` with automatic
+  `include: ['reasoning.encrypted_content']` round-trip, `role: 'developer'` instructions,
+  `strict: false` default tool schemas, `item_id` (`fc_*`) vs `call_id` separation, `text.format`
+  structured outputs, `cachePerConversation` (`prompt_cache_key`), and fail-fast `TypeError`
+  refusal of unsupported call settings.
+- **`stitchkit/agent-runtime/anthropic`** (`anthropicProvider`): Anthropic Messages API
+  (`POST /v1/messages`) with mandatory `maxOutputTokens` and
+  `maxOutputTokens > thinking.budgetTokens` fail-fast validation, verbatim multi-block
+  `thinking` + `signature` and `redacted_thinking` preservation, `computed` total `inputTokens`
+  when cache counters are positive (ADR 0109), image splitting out of `is_error` tool results,
+  ≤ 4 cache breakpoints with TTL-order checks, `output_config.format` JSON Schema (refusing
+  schemaless `json-object`), and retryable `529 overloaded_error` classification.
+
+For an existing AI SDK v4 model or `ToolSet`, import `fromAiSdkModel` and `fromAiSdkTools` from
+`stitchkit/agent-runtime/ai-sdk`. Both adapt directly onto `AgentModelDriver` and `AgentToolSet`
+(driving `model.doStream()` without importing `streamText` or `generateText`) and normalize legacy
+deprecated tool outputs into canonical `{ type: 'file', data, mediaType }` parts.
+
+Wrap any driver with `wrapModelDriver` or `composeModelDrivers` for admission holds, credit
+reservations, request transforms, signal tightening (`transformSignal`, which links a tighter
+`AbortSignal` without ever loosening the caller's signal), or per-part telemetry. `onClose` runs
+once per stream on finish, error, early consumer break, or signal abort:
+
+```ts
+import { composeModelDrivers } from 'stitchkit/agent-runtime'
+import { openAiProvider } from 'stitchkit/agent-runtime/openai'
+
+const base = openAiProvider({ apiKey: env.OPENAI_API_KEY }).create('gpt-5')
+const guarded = composeModelDrivers(base, [admissionDecorator, telemetryDecorator])
+```
+
+### OpenRouter catalog snapshots, pricing ceilings, and cache
+
+`stitchkit/agent-runtime/openrouter` also provides a peer-free, Web Fetch-clean catalog layer for
+discovering models, checking pricing ceilings, and keeping a cached catalog in sync across requests:
+
+- `loadOpenRouterCatalogSnapshot` fetches `/models` (and optional per-model `/endpoints`) with
+  unauthenticated public access or a static/dynamic `apiKey`, extracting `canonicalSlug`,
+  `description`, `createdAt`, `aliasTarget`, `inputModalities`, `outputModalities`, `tokenizer`,
+  `topProviderContextLength`, `maxCompletionTokens`, `reasoning`, per-unit/cache/conditional
+  `pricingTiers`, and endpoint telemetry (`latencyP50Ms`, `throughputP50`, `uptime1d`, `tag`).
+- `resolveOpenRouterModelCeiling` returns the worst-case per-unit rates across base pricing and
+  conditional tiers without understating unknown tiers; `summarizeOpenRouterEndpoints` aggregates
+  distinct provider counts, median latency/throughput, and 1-day uptime.
+- `findOpenRouterModel` looks up a model by exact `id` or `canonicalSlug`, and
+  `listOpenRouterModels` filters snapshots by `tools`, `reasoning`, modalities, `minContextLength`,
+  price bounds, `freeOnly`, and `author`.
+- `createOpenRouterCatalogCache` wraps snapshot refreshes with single-flight coalescing, per-caller
+  `AbortSignal` isolation, `freshMs` TTL, `retryBackoffMs` stale fallback, and an optional
+  pluggable `OpenRouterCatalogStore` for durable hydration and persistence. `catalog.read()` returns
+  a discriminated union (`status: 'current' | 'stale' | 'unavailable'`) so admission and billing
+  callers can narrow on `res.status !== 'unavailable'` and observe stale or unavailable catalog
+  state explicitly; the convenience helpers `getModel` and `listModels` map `'unavailable'` to
+  `undefined` and `[]`.
+
+```ts
+import {
+  createOpenRouterCatalogCache,
+  evaluateOpenRouterModelAdmission,
+  findOpenRouterModel,
+  listOpenRouterModels,
+  resolveOpenRouterModelCeiling,
+  summarizeOpenRouterEndpoints,
+} from 'stitchkit/agent-runtime/openrouter'
+
+const catalog = createOpenRouterCatalogCache({
+  freshMs: 15 * 60_000,
+  retryBackoffMs: 60_000,
+  endpointsFor: ['anthropic/claude-sonnet-4.6'],
+})
+
+// Admission and billing paths use catalog.read() to observe 'current', 'stale', and 'unavailable'.
+const res = await catalog.read()
+if (res.status !== 'unavailable') {
+  const admission = evaluateOpenRouterModelAdmission({
+    snapshot: res.snapshot,
+    modelId: 'anthropic/claude-sonnet-4.6',
+    policy: { maxSnapshotAgeMs: 30 * 60_000, requiredParameters: ['tools'] },
+  })
+  const reasoningTools = listOpenRouterModels(res.snapshot, { tools: true, reasoning: true })
+  const sonnet = findOpenRouterModel(res.snapshot, 'anthropic/claude-sonnet-4.6')
+  const ceiling = sonnet ? resolveOpenRouterModelCeiling(sonnet) : undefined
+  const endpoints = sonnet?.endpoints ? summarizeOpenRouterEndpoints(sonnet.endpoints) : undefined
+  void [admission, reasoningTools, ceiling, endpoints]
+}
+```
+
+## Peer-free tools and stateless completions
+
+Build standalone peer-free tools with `defineAgentTool` or project contracts and runtime tools
+with `mountAgentTools` from `stitchkit/tools` (including the single-argument
+`mountAgentTools({ runtimeTools, access })` form when no HTTP service contracts are mounted). Both
+return `AgentTool` / `AgentToolSet` carrying JSON Schema 2020-12 `inputSchema`, Zod `parseInput`,
+optional `needsApproval`, `onInputAvailable`, and `toModelOutput` returning `AgentToolModelOutput`.
+
+When an operation needs one or a few model steps without a durable conversation store — structured
+extraction, classification, a bounded tool loop, or standalone streaming — call `completeText`,
+`streamComplete`, or `completeObject` from `stitchkit/agent-runtime`:
+
+- Compile-time XOR enforces passing either `prompt` or `messages` (never both or neither).
+- Pass `onPart` on `completeText` / `completeObject` or use `streamComplete` to consume
+  `text-delta`, `reasoning-delta`, `tool-input-start`, `tool-call`, `tool-result` (preliminary and
+  final), `tool-error`, `attempt-reset`, `finish-step`, and `finish` events over a bounded async
+  iterable without a store.
+- Standalone completions have no durable approval loop, so any tool with `needsApproval: true` (or
+  a `needsApproval` predicate returning `true`) fails closed before execution with
+  `AgentToolApprovalError` (`reason: 'approval-unsupported'`); a predicate returning `false` lets
+  the safe call proceed.
+- Pass `retry` (`AgentRetryPolicy`) and optional `onAttemptDiscarded` for stateless retry with
+  `Retry-After` handling; exhausting retries throws `AgentRetryExhaustedError` carrying every failed
+  attempt, `lastError`, and accumulated billable `usage`.
+- Pass `stopPolicies` (`AgentCompleteStopPolicy[]`) and `idleTimeoutMs` to bound multi-step loops
+  and stalled streams (suspending the idle timer during local tool execution).
+
+```ts
+import { z } from 'zod'
+import { AgentStructuredOutputError, completeObject } from 'stitchkit/agent-runtime'
+import { anthropicProvider } from 'stitchkit/agent-runtime/anthropic'
+import { defineAgentTool } from 'stitchkit/tools'
+
+const driver = anthropicProvider(
+  { apiKey: env.ANTHROPIC_API_KEY },
+  { defaultPolicy: { maxOutputTokens: 2048 } },
+).create('claude-sonnet-4-5')
+
+const lookup = defineAgentTool({
+  description: 'Fetch record summary',
+  input: z.object({ id: z.string() }),
+  execute: async ({ id }) => db.findSummary(id),
+})
+
+const { object, usage, steps } = await completeObject({
+  driver,
+  instructions: 'Return the normalized verdict.',
+  prompt: 'Classify ticket T-42',
+  tools: { lookup },
+  schema: z.object({ severity: z.enum(['low', 'high']), summary: z.string() }),
+})
+```
+
+`completeObject` projects the Zod schema through `toJsonSchema(schema, 'input')` (supporting
+`.transform()` and `.default()`), strips strict-mode synthesized `null`s on optional non-nullable
+fields before `schema.safeParse`, validates `schemaName` through `AgentModelResponseFormatSchema`,
+and throws `AgentStructuredOutputError` (`reason: 'truncated' | 'tool-calls' | 'content-filter' |
+'provider-error' | 'interrupted' | 'empty' | 'invalid-json' | 'schema-mismatch'`, with
+`finishReason`, `rawText`, `steps`, and `usage`) when the response cannot satisfy the schema.
+
+For durable runs, the native loop also exposes:
+
+- `loop.maxDurationMs` — hard wall-clock run deadline (`number | null`) that never pauses during
+  tool execution or resets on provider deltas, distinct from `loop.idleTimeoutMs`.
+- `loop.beforeStepToolCalls` — a whole-step batch policy invoked once all tool calls of a step are
+  parsed and validated, returning `{ refuse: Map<toolCallId, Error> }` for any call to reject.
+- `loop.stepBarriers.onMaxReasoningChars: 'abort' | 'finish-length'` — `'abort'` (default) ends the
+  run as `policy_stop`; `'finish-length'` cuts only the current step cleanly with
+  `finishReason: 'length'` so `protocol.acceptTerminal` can run a recovery continuation.
+- `loop.stepBarriers.onPredecessorFailure: 'refuse'` — fail-cascades dependent calls waiting on
+  the same entity with `STEP_PREDECESSOR_FAILED` when an earlier call fails execution, fails input
+  validation, is refused by `beforeStepToolCalls`, or returns a payload matching
+  `isToolResultFailure(output)`.
+- `loop.stepBarriers.stepText: 'after-tools'` with optional `stepTextOnInterrupt: 'drop' | 'flush'`
+  and `filterStepText(text, { step, interrupted, finishReason, toolCalls, toolResults })` — holds
+  premature step text when any tool fails (including `isToolResultFailure`) or requests approval,
+  and lets callers flush or transform held text cleanly.
+- `loop.toolApproval` per-tool rule maps infer each tool's typed `input` from `TOOLS[K]`.
+- `protocol.acceptTerminal` returning `{ action: 'continue', message, instructions? }` — runs a
+  bounded continuation step capped by `loop.maxContinuations` (default 3); use `carriedToolWork`
+  to inspect whether earlier steps executed tools.
+- `loop.onAttemptDiscarded` and `loop.onToolInputStart` — observe discarded retry attempts (with
+  failure reason and billed usage) and streamed tool-input starts.
 
 ## Bounded deferred tool catalogs
 
@@ -266,7 +469,7 @@ has no side effect; an external supervisor owns process placement and restart.
 | execution loop | `createAgentRuntime` | already available; do not copy a second loop |
 | model choice | `defineModelRegistry` and `models.resolve` | provider credentials/discovery stay application-owned |
 | resources | `createHeadlessAgentHarness` → `composeAgentPrompt` | paths, trust, precedence and watching stay application-owned |
-| tools | `mountAgent` + `createAgentToolFenceLifecycle` | auth and domain effects stay application-owned |
+| tools | `mountAgentTools` + `createAgentToolFenceLifecycle` | auth and domain effects stay application-owned |
 | follow-up | `runs.inputPolicy: 'queue'` | durable FIFO after the current run |
 | interrupt | `interrupt` or `interrupt-next` | `interrupt-next` terminates the active run and gives the new durable admission next priority |
 | recovery | `runtime.recover` + `scanRecoverable` | replay safety and context reconstruction are explicit callbacks |
@@ -285,13 +488,14 @@ and requests a fresh snapshot. It never writes a second frame concurrently with 
 `reduceAgentControlSnapshot` and `reduceAgentControlEvent`; the reducer owns no renderer and marks a
 conversation `resyncRequired` after a transient sequence gap.
 
-Configure `loop.toolApproval` to use the installed AI SDK approval policy and
-`loop.toolApprovalSecret` to sign exact requests. A request is stored on the terminal assistant
-before any effect. `pendingApprovals()` derives unresolved requests from canonical messages;
-`respondToApproval()` writes one tool-role approval response and queues a successor. The SDK
-revalidates the signature/tool call/input before the original direct tool reaches its existing
-fence. Reconnect and SQLite reopen require no promise registry. Remembered policy and a stronger
-cross-crash exactly-once guarantee remain application concerns.
+Configure `loop.toolApproval` for the runtime's native approval policy and
+`loop.toolApprovalSecret` to bind exact requests with WebCrypto HMAC-SHA256 signatures. A request
+is stored on the terminal assistant before any effect. `pendingApprovals()` derives unresolved
+requests from canonical messages; `respondToApproval()` writes one tool-role approval response and
+queues a successor. The native loop revalidates the signature/tool call/input once before any
+retry attempts and before the original direct tool reaches its existing fence. Reconnect and SQLite
+reopen require no promise registry. Remembered policy and a stronger cross-crash exactly-once
+guarantee remain application concerns.
 
 Approval requests suspend a call; they do not settle its result. History carries exact call and
 approval identity across assistant/tool records, so an approved result can precede the next signed
@@ -889,8 +1093,9 @@ Third-party drivers must provide atomic write transactions and archive support f
 requests and completed provider response identities enter the same append-only ledger. A
 `provider/response` payload binds `response: { id, provider? }` to its `runId`, retry `attempt` and
 `stepNumber`; `step-finished.response` projects the same object to the operator sink. The optional
-upstream name comes from the model provider's own `resolveResponseProvider` — `openRouterProvider`
-supplies it — so the runtime carries the fact without learning any gateway's metadata key. The normalized
+upstream name comes from the `AgentModelDriver` `finish.responseProvider` field (emitted directly by
+`openRouterProvider`, or supplied via `FromAiSdkModelOptions.resolveResponseProvider` for AI SDK
+models) so the runtime carries the fact without learning any gateway's metadata key. The normalized
 head/run/message tables remain the fast operational projection.
 
 For `runtime/transition` payload inspection, use `AgentStoreTransitionRecordSchema` and its
@@ -939,7 +1144,7 @@ are built per run:
 createAgentRuntime({
   ...config,
   tools: (run) =>
-    mountAgent([], {
+    mountAgentTools({
       access: { gate: run.toolFenceLifecycle },
       runtimeTools: createAgentStateTools({ state, run }),
     }),
@@ -1062,8 +1267,11 @@ behind its bounded result locator.
 `AgentStepSpend & AgentRuntimeRunContext<CONTEXT>` fact for every billed model step
 (`phase: 'step'`), billed retried attempt (`phase: 'abandoned-attempt'`), and compaction call
 (`phase: 'compaction'`), after the `provider/response` ledger entry (which now persists `usage` in
-the non-audited ledger too) is written. The same fact feeds `observe` `step-finished` events and run
-totals.
+the non-audited ledger too) is written. Step facts and `observe` `step-finished` events both carry
+`finishReason`, `rawFinishReason`, `toolCallCount`, `costDetails` (`promptCostUsd`, `outputCostUsd`,
+`isByok`), split `timings` (`ttftMs`, `responseTimeMs`, `toolExecutionMs`, `stepTimeMs`, plus
+optional `chunkIntervalsMs` percentiles when a step streams two or more output deltas), and
+`response.{id, provider, modelId, timestamp}`. The same fact feeds run totals.
 
 `onStepSpend` is awaited up to `stepSpendTimeoutMs` (default `5_000` ms): the run does not start its
 next step, or retry a discarded attempt, until the hook settles, so a slow hook adds its time to
@@ -1704,18 +1912,18 @@ and replay are detached snapshots; mutating a returned object cannot rewrite a r
 The optional [sandbox coding profile](sandbox.md#coding-tool-integration) reuses the
 same tool mounting, authorization and output handling for namespace-backed commands.
 
-Always compose `toolFenceLifecycle` into `mountAgent`. It checks ownership
+Always compose `toolFenceLifecycle` into `mountAgentTools`. It checks ownership
 before a managed side effect and again before accepting its result. Fence loss
 uses an internal control signal: it stops the old loop and is not sent to the
 model as a tool error.
 
-`mountAgent` sends failed runner outcomes through the AI SDK's tool-error
-channel. AgentRuntime persists them with `outcome: 'error'`, publishes the same
-safe envelope, and replays them as an error result on later turns. Classification
-comes from the execution channel, never from inspecting output fields: a valid
-successful result such as `{ error: 'domain value' }` remains successful. Typed
-`AppError` codes and safe details may reach the model; arbitrary thrown causes
-are retained for local hooks and reduced to `INTERNAL_SERVER_ERROR` outside.
+`mountAgentTools` throws `AgentToolError` for failed runner outcomes. AgentRuntime
+persists them with `outcome: 'error'`, publishes the same safe envelope, and replays
+them as an error result on later turns. Classification comes from the execution
+channel, never from inspecting output fields: a valid successful result such as
+`{ error: 'domain value' }` remains successful. Typed `AppError` codes and safe
+details may reach the model; arbitrary thrown causes are retained for local hooks
+and reduced to `INTERNAL_SERVER_ERROR` outside.
 
 The framework cannot undo an already-started non-cooperative external effect.
 Pass the stable call/run idempotency identity into business mutations when the
@@ -1723,8 +1931,8 @@ effect must be replay-safe.
 
 ## History, provider metadata and files
 
-`projectAgentHistory` converts canonical engine records into provider-valid AI
-SDK messages and pairs tool calls/results in persisted causal order. Adjacent
+`projectAgentHistory` converts canonical engine records into provider-valid
+`AgentModelMessage[]` and pairs tool calls/results in persisted causal order. Adjacent
 parallel calls stay in one assistant round and their adjacent results stay in
 one tool round; a dependent call after those results starts a new assistant
 round, and trailing final text remains after the last tool result. Provider-required metadata is kept
@@ -1738,8 +1946,10 @@ complete turns, protects system/summary, incomplete and configured recent turns,
 keep/remove reason with measured/estimated/unavailable token provenance. An oversized protected turn
 returns `oversized`; unavailable accounting returns `unavailable` without invented arithmetic.
 
-`ComposedAgentPrompt.instructions` accepts the AI SDK `Instructions` contract.
-Use `adaptInstructions` when a provider needs metadata on the system message:
+`ComposedAgentPrompt.instructions` accepts `AgentInstructions` (a string, one
+`AgentModelSystemMessage`, or an ordered array of `AgentModelSystemMessage`).
+Use `adaptInstructions` when a provider needs cache control or provider options on
+the system message:
 
 ```ts
 prompt({
@@ -1748,7 +1958,7 @@ prompt({
   adaptInstructions: (content) => ({
     role: 'system',
     content,
-    providerOptions: { openrouter: { cacheControl: { type: 'ephemeral' } } },
+    cacheControl: { type: 'ephemeral' },
   }),
 })
 ```
@@ -1758,8 +1968,8 @@ stores a reference returned by `persistGeneratedFile`; it never silently puts
 base64 blobs into the neutral history store.
 
 To send a stored attachment back to a multimodal model, configure
-`history.resolveFile`. It maps the neutral file reference to AI SDK file data
-(URL, bytes, provider reference or text). Without a resolver the
+`history.resolveFile`. It maps the neutral file reference to tagged
+`AgentModelFileData` (`{ type: 'data' | 'url' | 'reference' | 'text', ... }`). Without a resolver the
 `unresolvedFile` policy applies, and it is **`omit`** by default: the file part
 simply does not reach the provider. Choose `text` for a describing placeholder —
 the filename or media type, never the storage reference, because that string is
@@ -1778,7 +1988,12 @@ and prompt. Pass `previousSummary` for a direct call, or configure
 `readPreviousSummary` for runtime-managed compaction, to merge and atomically
 replace a leading summary on the next compaction.
 Set `maxAttempts` to allow bounded conflict recovery. Every retry reloads the snapshot, reselects the
-eligible range and recomputes the summary; the stale summary is never retried.
+eligible range and recomputes the summary; the stale summary is never retried. Inside
+`createAgentRuntime`, `history.compact` runs after `models.resolve` and receives the resolved
+`model` descriptor (including `contextWindow`), `tools`, and `context`. `structuredCompaction`'s
+`summarize` callback may return either the parsed summary directly or `{ summary, usage }` so
+`structuredCompaction` accumulates `usage` across `maxAttempts` CAS retries and hands it directly to
+run totals and `onStepSpend`.
 
 ### Recovering a prefix after a failed turn
 
@@ -1889,9 +2104,9 @@ Read the provenance before the number (→ ADR 0109):
 - **`provider-reported`** — the provider handed us exactly this. On
   `step-finished`, that is what a step's figures are.
 - **`computed`** — a total, added up over steps. **Every figure on a terminal
-  event is this**, tokens included: the AI SDK's `totalUsage` is a sum it
-  performed, not a number a provider reported for the run. It is not a figure to
-  bill against unchanged.
+  event is this**, tokens included: the run sums step usage across steps rather
+  than reporting one provider-stated total for the whole run. It is not a figure
+  to bill against unchanged.
 - **`unavailable`** — nobody reported it. Not zero.
 
 Two rules follow from that last one, and they differ by field on purpose:
@@ -2086,11 +2301,11 @@ in SQLite — so admission costs the same on a long conversation as on a new one
 `store.findEventOnce({ conversationId, kind, key })` reads the same event back.
 Invocation payload artifacts are keyed by their artifact id the same way.
 
-### Migration from direct SDK completions
+### Migration from direct provider completions
 
 **Who must act:** applications opting into shared completion/agent receipts.
-Replace the direct `generateText` call with `invocations.complete`, configure host
+Replace direct unlogged model calls with `invocations.complete` (or `completeText` /
+`completeObject` when no durable receipt ledger is needed), configure host
 authorization and a retained payload key, and pass the same ledger in the agent's
 `invocations` option. Use the returned invocation ID and the paginated `read` method
-for receipt queries; do not import runtime internals. Available since 0.100.0;
-existing runtime configurations need no migration.
+for receipt queries; do not import runtime internals.

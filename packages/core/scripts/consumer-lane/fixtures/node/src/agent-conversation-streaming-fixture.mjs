@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import { simulateReadableStream, tool } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import {
   agentOutlineProjection,
   agentStateSlotsProjection,
@@ -12,9 +10,11 @@ import {
   defineAgentProtocol,
   defineStateSlot,
 } from 'stitchkit/agent-runtime';
+import { createScriptedModelDriver } from 'stitchkit/agent-runtime/testing';
+import { defineAgentTool } from 'stitchkit/tools';
 import { z } from 'zod';
 
-/** Real public writes only; also runs unchanged against the published 0.109.4 SDK. */
+/** Real public writes only; produces archives compatible with 0.109.4+ fixtures. */
 export async function streamingFixture(sqlite, providerMetadata) {
   const conversationId = 'stream-source';
   const spills = createAgentSpillStore({ host: sqlite.host, conversationId });
@@ -23,11 +23,55 @@ export async function streamingFixture(sqlite, providerMetadata) {
     mediaType: 'text/plain',
     authorization: { operation: 'read', path: 'source-only' },
   });
-  let calls = 0;
   const usage = {
-    inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-    outputTokens: { total: 1, text: 1, reasoning: undefined },
+    inputTokens: { value: 1, provenance: 'provider-reported' },
+    outputTokens: { value: 1, provenance: 'provider-reported' },
   };
+  const provider = providerMetadata
+    ? { schemaVersion: 1, provider: 'ai-sdk', data: providerMetadata }
+    : undefined;
+  const driver = createScriptedModelDriver({
+    provider: 'test',
+    modelId: 'stream-fixture',
+    steps: [
+      [
+        ...(provider
+          ? [
+              { type: 'text-start', id: 'intro', provider },
+              { type: 'text-delta', id: 'intro', delta: 'streamed intro', provider },
+              { type: 'text-end', id: 'intro', provider },
+              { type: 'reasoning-start', id: 'reasoning', provider },
+              {
+                type: 'reasoning-delta',
+                id: 'reasoning',
+                delta: 'synthetic reasoning',
+                provider,
+              },
+              { type: 'reasoning-end', id: 'reasoning', provider },
+            ]
+          : []),
+        {
+          ...(provider && { provider }),
+          type: 'tool-call',
+          toolCallId: 'fixture-call',
+          toolName: 'run_command',
+          input: '{}',
+        },
+        { type: 'finish', finishReason: 'tool-calls', usage },
+      ],
+      [
+        { type: 'text-start', id: 'text', ...(provider && { provider }) },
+        {
+          type: 'text-delta',
+          id: 'text',
+          delta: 'streamed answer',
+          ...(provider && { provider }),
+        },
+        { type: 'text-end', id: 'text', ...(provider && { provider }) },
+        { type: 'finish', finishReason: 'stop', usage },
+      ],
+    ],
+  });
   const runtime = createAgentRuntime({
     protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
     store: sqlite.store,
@@ -39,74 +83,7 @@ export async function streamingFixture(sqlite, providerMetadata) {
           contextWindow: 4096,
           capabilities: [],
         },
-        model: new MockLanguageModelV4({
-          doStream: async () => {
-            calls++;
-            return {
-              stream: simulateReadableStream({
-                chunks:
-                  calls === 1
-                    ? [
-                        ...(providerMetadata
-                          ? [
-                              { type: 'text-start', id: 'intro', providerMetadata },
-                              {
-                                type: 'text-delta',
-                                id: 'intro',
-                                delta: 'streamed intro',
-                                providerMetadata,
-                              },
-                              { type: 'text-end', id: 'intro', providerMetadata },
-                              { type: 'reasoning-start', id: 'reasoning', providerMetadata },
-                              {
-                                type: 'reasoning-delta',
-                                id: 'reasoning',
-                                delta: 'synthetic reasoning',
-                                providerMetadata,
-                              },
-                              { type: 'reasoning-end', id: 'reasoning', providerMetadata },
-                            ]
-                          : []),
-                        {
-                          ...(providerMetadata && { providerMetadata }),
-                          type: 'tool-call',
-                          toolCallId: 'fixture-call',
-                          toolName: 'run_command',
-                          input: '{}',
-                        },
-                        {
-                          type: 'finish',
-                          finishReason: { unified: 'tool-calls', raw: undefined },
-                          usage,
-                        },
-                      ]
-                    : [
-                        {
-                          type: 'text-start',
-                          id: 'text',
-                          ...(providerMetadata && { providerMetadata }),
-                        },
-                        {
-                          type: 'text-delta',
-                          id: 'text',
-                          delta: 'streamed answer',
-                          ...(providerMetadata && { providerMetadata }),
-                        },
-                        {
-                          type: 'text-end',
-                          id: 'text',
-                          ...(providerMetadata && { providerMetadata }),
-                        },
-                        {
-                          type: 'finish',
-                          finishReason: { unified: 'stop', raw: undefined },
-                          usage,
-                        },
-                      ],
-              }),
-            };
-          },
-        }),
+        driver,
       }),
     },
     prompt: () => ({
@@ -116,8 +93,8 @@ export async function streamingFixture(sqlite, providerMetadata) {
       contextDecision: 'unavailable',
     }),
     tools: () => ({
-      run_command: tool({
-        inputSchema: z.object({}),
+      run_command: defineAgentTool({
+        input: z.object({}),
         execute: async () => ({
           executable: 'fixture',
           exitCode: 0,
@@ -148,7 +125,7 @@ export async function streamingFixture(sqlite, providerMetadata) {
   } finally {
     await runtime.close();
   }
-  assert.equal(calls, 2);
+  assert.equal(driver.requests.length, 2);
   const snapshot = await sqlite.store.loadSnapshot(conversationId);
   const runId = snapshot.runs[0]?.id;
   assert.ok(runId);

@@ -9,15 +9,15 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { InvocationFinishedSchema } from '../src/agent-runtime/invocation-schema';
 import { createAgentSpillStore } from '../src/agent-runtime/spill';
 import { createBunSqliteAgentRuntimeStore } from '../src/agent-runtime/sqlite-bun';
 import {
   type AgentMessage,
+  type AgentModelDriver,
   type AgentRuntimeStore,
+  type AgentUsage,
   type BranchAgentConversationInput,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
@@ -35,9 +35,9 @@ const LEDGER_KINDS = [
   'provider/response',
 ];
 const trace = { operationId: 'operation', project: 'project', purpose: 'purpose' };
-const usage = {
-  inputTokens: { total: 8, noCache: 8, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 2, text: 2, reasoning: undefined },
+const usage: AgentUsage = {
+  inputTokens: { value: 8, provenance: 'provider-reported' },
+  outputTokens: { value: 2, provenance: 'provider-reported' },
 };
 const request = (destination: string, source = 'source') =>
   ({
@@ -49,26 +49,24 @@ const request = (destination: string, source = 'source') =>
 const Payload = z.record(z.string(), z.json());
 const ObservationSchema = z.object({ sourceKind: z.string(), payload: Payload });
 
-/** A model that answers both a completion and an agent turn. */
-function model() {
-  return new MockLanguageModelV4({
-    doGenerate: async () => ({
-      content: [{ type: 'text', text: 'the answer' }],
-      usage,
-      warnings: [],
-      finishReason: { unified: 'stop', raw: undefined },
-    }),
-    doStream: async () => ({
-      stream: simulateReadableStream({
-        chunks: [
-          { type: 'text-start', id: 't' },
-          { type: 'text-delta', id: 't', delta: 'hello' },
-          { type: 'text-end', id: 't' },
-          { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-        ],
-      }),
-    }),
-  });
+/** A driver that answers both a completion and an agent turn. */
+function modelDriver(): AgentModelDriver {
+  return {
+    provider: 'mock',
+    modelId: 'model',
+    async stream() {
+      return {
+        parts: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: 'text-start', id: 't' };
+            yield { type: 'text-delta', id: 't', delta: 'hello' };
+            yield { type: 'text-end', id: 't' };
+            yield { type: 'finish', finishReason: 'stop', usage };
+          },
+        },
+      };
+    },
+  };
 }
 
 /**
@@ -80,7 +78,7 @@ async function audited(store: AgentRuntimeStore) {
     models: {
       model: { provider: 'mock', modelId: 'model', contextWindow: 8_000, capabilities: [] },
     },
-    providers: { mock: { create: () => model() } },
+    providers: { mock: { create: () => modelDriver() } },
   });
   const ledger = createModelInvocationLedger({
     store,

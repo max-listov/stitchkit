@@ -13,53 +13,58 @@
  * real fill; substituting it reports a model as overflowing while it has room.
  */
 import { describe, expect, test } from 'bun:test';
-import { simulateReadableStream, tool } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   type AgentContextUsage,
+  type AgentModelDriver,
+  type AgentModelStreamPart,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { defineAgentTool } from '../src/entrypoints/tools';
 
-/** A model whose steps report growing prompts, the way a real conversation does. */
-function growingModel(promptTokens: readonly number[]) {
+/** A model driver whose steps report growing prompts, the way a real conversation does. */
+function growingDriver(promptTokens: readonly number[]): AgentModelDriver {
   let call = 0;
-  return new MockLanguageModelV4({
-    doStream: async () => {
+  return {
+    provider: 'test',
+    modelId: 'test-model',
+    async stream() {
       const index = call;
       call += 1;
       const last = call >= promptTokens.length;
-      const body = last
+      const body: AgentModelStreamPart[] = last
         ? [
             { type: 'text-start', id: 't' },
             { type: 'text-delta', id: 't', delta: 'done' },
             { type: 'text-end', id: 't' },
           ]
         : [{ type: 'tool-call', toolCallId: `c-${call}`, toolName: 'wait', input: '{}' }];
+      const inputCount = promptTokens[index];
+      const parts: AgentModelStreamPart[] = [
+        ...body,
+        {
+          type: 'finish',
+          finishReason: last ? 'stop' : 'tool-calls',
+          usage: {
+            inputTokens:
+              inputCount === undefined
+                ? { provenance: 'unavailable' }
+                : { value: inputCount, provenance: 'provider-reported' },
+            outputTokens: { value: 5, provenance: 'provider-reported' },
+          },
+        },
+      ];
       return {
-        stream: simulateReadableStream({
-          chunks: [
-            ...body,
-            {
-              type: 'finish',
-              finishReason: { unified: last ? 'stop' : 'tool-calls', raw: undefined },
-              usage: {
-                inputTokens: {
-                  total: promptTokens[index],
-                  noCache: promptTokens[index],
-                  cacheRead: undefined,
-                  cacheWrite: undefined,
-                },
-                outputTokens: { total: 5, text: 5, reasoning: undefined },
-              },
-            },
-          ],
-        } as never),
+        parts: {
+          async *[Symbol.asyncIterator]() {
+            for (const part of parts) yield part;
+          },
+        },
       };
     },
-  });
+  };
 }
 
 function runtimeReporting(
@@ -77,7 +82,7 @@ function runtimeReporting(
           contextWindow: 100_000,
           capabilities: [],
         },
-        model: growingModel(promptTokens),
+        driver: growingDriver(promptTokens),
       }),
     },
     prompt: () => ({
@@ -87,9 +92,9 @@ function runtimeReporting(
       contextDecision: 'unavailable',
     }),
     tools: () => ({
-      wait: tool({
+      wait: defineAgentTool({
         description: 'w',
-        inputSchema: z.object({}),
+        input: z.object({}),
         execute: async () => 'waited',
       }),
     }),

@@ -1,18 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import { simulateReadableStream } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
   AgentMessageSchema,
+  type AgentModelDriver,
   AgentRunSchema,
+  type AgentUsage,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
 
-const usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 1, text: 1, reasoning: undefined },
+const usage: AgentUsage = {
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
 };
 
 const protocol = defineAgentProtocol({
@@ -41,40 +41,43 @@ describe('durable interrupt-next priority', () => {
     const firstStarted = Promise.withResolvers<void>();
     const prompts: string[] = [];
     let call = 0;
-    const model = new MockLanguageModelV4({
-      doStream: async ({ abortSignal, prompt }) => {
+    const driver: AgentModelDriver = {
+      provider: 'test',
+      modelId: 'interrupt-priority',
+      async stream(request, signal) {
         call += 1;
-        prompts.push(JSON.stringify(prompt));
+        prompts.push(JSON.stringify([...request.instructions, ...request.messages]));
         if (call === 1) {
           return {
-            stream: new ReadableStream({
-              start(controller) {
-                controller.enqueue({ type: 'stream-start', warnings: [] });
+            parts: {
+              async *[Symbol.asyncIterator]() {
                 firstStarted.resolve();
-                abortSignal?.addEventListener('abort', () => controller.close(), {
-                  once: true,
+                await new Promise<void>((resolve) => {
+                  if (signal.aborted) resolve();
+                  else signal.addEventListener('abort', () => resolve(), { once: true });
                 });
               },
-            }),
+            },
           };
         }
         const answer = call === 2 ? 'ANSWER_C' : 'ANSWER_B';
+        const stepId = `text-${call}`;
         return {
-          stream: simulateReadableStream({
-            chunks: [
-              { type: 'text-start', id: `text-${call}` },
-              { type: 'text-delta', id: `text-${call}`, delta: answer },
-              { type: 'text-end', id: `text-${call}` },
-              { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-            ],
-          }),
+          parts: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: 'text-start', id: stepId };
+              yield { type: 'text-delta', id: stepId, delta: answer };
+              yield { type: 'text-end', id: stepId };
+              yield { type: 'finish', finishReason: 'stop', usage };
+            },
+          },
         };
       },
-    });
+    };
     const runtime = createAgentRuntime({
       protocol,
       store,
-      models: { resolve: () => ({ descriptor, model }) },
+      models: { resolve: () => ({ descriptor, driver }) },
       prompt: () => ({
         instructions: 'test',
         sections: [],
@@ -189,27 +192,29 @@ describe('durable interrupt-next priority', () => {
       });
     }
     const order: string[] = [];
-    const model = new MockLanguageModelV4({
-      doStream: async ({ prompt }) => {
-        const rendered = JSON.stringify(prompt);
+    const driver: AgentModelDriver = {
+      provider: 'test',
+      modelId: 'interrupt-priority',
+      async stream(request) {
+        const rendered = JSON.stringify([...request.instructions, ...request.messages]);
         const id = rendered.includes('INPUT_C') && !rendered.includes('INPUT_B') ? 'C' : 'B';
         order.push(id);
         return {
-          stream: simulateReadableStream({
-            chunks: [
-              { type: 'text-start', id: `text-${id}` },
-              { type: 'text-delta', id: `text-${id}`, delta: `ANSWER_${id}` },
-              { type: 'text-end', id: `text-${id}` },
-              { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-            ],
-          }),
+          parts: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: 'text-start', id: `text-${id}` };
+              yield { type: 'text-delta', id: `text-${id}`, delta: `ANSWER_${id}` };
+              yield { type: 'text-end', id: `text-${id}` };
+              yield { type: 'finish', finishReason: 'stop', usage };
+            },
+          },
         };
       },
-    });
+    };
     const runtime = createAgentRuntime({
       protocol,
       store,
-      models: { resolve: () => ({ descriptor, model }) },
+      models: { resolve: () => ({ descriptor, driver }) },
       prompt: () => ({
         instructions: 'test',
         sections: [],

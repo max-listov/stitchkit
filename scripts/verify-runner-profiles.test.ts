@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test';
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { copyCoreSourceFixture } from './core-source-fixture';
 import { readGreenGates } from './gate-memo';
+import { NODE_QUEUE_ACTIVE_ENV, NODE_QUEUE_DISABLE_ENV } from './node-queue';
 import { writeStarterHeadFixture } from './starter-head-fixture';
 import { FAST_STEPS, PROFILES, releaseProfile, VERIFY_STEPS } from './verify-profiles';
 
@@ -45,13 +46,17 @@ async function fixture(scenario: Scenario) {
   const init = Bun.spawn(['git', 'init', '--quiet'], { cwd: root });
   expect(await init.exited).toBe(0);
   const memo = join(scratch, 'memo');
-  const env = { ...Bun.env, STITCHKIT_GATE_MEMO_DIR: memo };
-  async function run(flags: string[]) {
+  const env = { ...Bun.env, STITCHKIT_GATE_MEMO_DIR: memo, STITCHKIT_NODE_QUEUE: '0' };
+  async function run(flags: string[], extraEnv?: Record<string, string | undefined>) {
+    const mergedEnv: Record<string, string | undefined> = { ...env, ...extraEnv };
+    for (const [key, value] of Object.entries(mergedEnv)) {
+      if (value === undefined) delete mergedEnv[key];
+    }
     const child = Bun.spawn(
       [process.execPath, join(root, 'scripts/verify.ts'), ...flags, '--if-changed'],
       {
         cwd: root,
-        env,
+        env: mergedEnv,
         stdout: 'pipe',
         stderr: 'pipe',
         timeout: 15_000,
@@ -262,3 +267,102 @@ test('the release profile takes its lanes from the CI evidence lanes of the trai
     await rm(scratch, { recursive: true, force: true });
   }
 });
+
+test('queued fallback without --plan writes exactly one green memo and queued-plan defers heavy concurrency via --internal-heavy auto', async () => {
+  const f = await fixture('stable');
+  try {
+    const binDir = join(f.scratch, 'bin');
+    await mkdir(binDir, { recursive: true });
+    const devkitPath = join(binDir, 'devkit');
+    // 1. Older devkit without --plan: re-execs verify.ts once; outer process must not write a second green memo.
+    await writeFile(
+      devkitPath,
+      `#!/bin/sh
+if [ "$1" = "run" ] && [ "$2" = "--help" ]; then
+  printf '%s\\n' 'Usage: devkit run --label <name> --project <id> -- <command>'
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--" ]; then shift; break; fi
+    shift
+  done
+  exec "$@"
+fi
+exit 2
+`,
+    );
+    await chmod(devkitPath, 0o755);
+    const queuedPath = [binDir, dirname(process.execPath), '/usr/bin', '/bin'].join(':');
+    const queuedRes = await f.run(['--fast'], {
+      PATH: queuedPath,
+      [NODE_QUEUE_DISABLE_ENV]: undefined,
+      [NODE_QUEUE_ACTIVE_ENV]: undefined,
+    });
+    expect(queuedRes.code, queuedRes.output).toBe(0);
+    expect(await f.history(PROFILES.fast.gate)).toHaveLength(1);
+
+    // 2. Plan-capable devkit: emits --internal-heavy auto so RAM is measured only after acquiring the queue slot,
+    //    and non-zero exit returns cleanly without saving a green memo.
+    const planPath = join(f.scratch, 'captured-plan.json');
+    await writeFile(
+      devkitPath,
+      `#!/bin/sh
+if [ "$1" = "run" ] && [ "$2" = "--help" ]; then
+  printf '%s\\n' 'Usage: devkit run --label <name> --project <id> (--plan - | -- <command>)'
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  "${process.execPath}" -e '
+    import { writeFileSync } from "node:fs";
+    const stdin = await new Response(Bun.stdin.stream()).text();
+    writeFileSync(process.argv[1], stdin);
+  ' "${planPath}"
+  exit "${'$'}{FAKE_DEVKIT_EXIT:-0}"
+fi
+exit 2
+`,
+    );
+    await chmod(devkitPath, 0o755);
+    const planFail = await f.run([], {
+      PATH: queuedPath,
+      FAKE_DEVKIT_EXIT: '42',
+      [NODE_QUEUE_DISABLE_ENV]: undefined,
+      [NODE_QUEUE_ACTIVE_ENV]: undefined,
+    });
+    expect(planFail.code).toBe(42);
+    // Green memo count stays 1 (from earlier --fast), not incremented on failed plan.
+    expect(await f.history(PROFILES.fast.gate)).toHaveLength(1);
+    const plan = JSON.parse(await readFile(planPath, 'utf8')) as {
+      steps: Array<{ name: string; argv: string[] }>;
+    };
+    const heavyStep = plan.steps.find((step) => step.name === 'heavy-lanes');
+    expect(heavyStep?.argv.slice(2, 5)).toEqual(['--internal-heavy', 'auto', '--built']);
+
+    // 3. Running `--internal-heavy auto` directly resolves concurrency at execution time.
+    const heavyDirect = Bun.spawn(
+      [
+        process.execPath,
+        join(f.root, 'scripts/verify.ts'),
+        '--internal-heavy',
+        'auto',
+        '--',
+        'smoke:node',
+      ],
+      {
+        cwd: f.root,
+        env: { ...Bun.env, VERIFY_HEAVY_CONCURRENCY: '1', [NODE_QUEUE_DISABLE_ENV]: '0' },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+    const [heavyErr, heavyCode] = await Promise.all([
+      new Response(heavyDirect.stderr).text(),
+      heavyDirect.exited,
+    ]);
+    expect(heavyCode, heavyErr).toBe(0);
+    expect(heavyErr).toContain('heavy lanes: 1 at a time (VERIFY_HEAVY_CONCURRENCY=1)');
+  } finally {
+    await rm(f.scratch, { recursive: true, force: true });
+  }
+}, 30_000);

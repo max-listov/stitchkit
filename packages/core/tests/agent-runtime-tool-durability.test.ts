@@ -10,8 +10,8 @@ import {
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
-import { defineRuntimeTool } from '../src/entrypoints/tools';
-import { mountAgent } from '../src/entrypoints/tools/agent';
+import { fromAiSdkModel } from '../src/entrypoints/agent-runtime/ai-sdk';
+import { defineRuntimeTool, mountAgentTools } from '../src/entrypoints/tools';
 
 test('a separate process resumes the runtime without repeating a recorded effect', async () => {
   const root = await mkdtemp(join(tmpdir(), 'stitchkit-durable-restart-'));
@@ -96,7 +96,7 @@ test('runtime supplies durability through SDK context to the mounted handler', a
           contextWindow: 4096,
           capabilities: [],
         },
-        model,
+        driver: fromAiSdkModel(model),
       }),
     },
     prompt: () => ({
@@ -107,7 +107,7 @@ test('runtime supplies durability through SDK context to the mounted handler', a
       sections: [],
     }),
     tools: () =>
-      mountAgent([], { access: { open: 'local-operator' }, runtimeTools: [effect] }),
+      mountAgentTools([], { access: { open: 'local-operator' }, runtimeTools: [effect] }),
     loop: { maxSteps: 1 },
   });
   try {

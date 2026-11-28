@@ -1,6 +1,7 @@
-import type { ToolSet } from 'ai';
 import type { z } from 'zod';
+import type { AgentProviderEnvelope } from '../agent-parts/parts';
 import type { MutationQueue } from '../internal/mutation-queue';
+import type { AgentToolSet } from '../tools/agent-tools';
 import { type AgentRuntimeEvent, agentDurableEventId } from './events';
 import type { AgentInjectionRegistry } from './injection';
 import type { ModelInvocationTrace } from './invocation-schema';
@@ -8,13 +9,7 @@ import type { AgentInvocationScope } from './invocations';
 import type { AgentResolvedModel } from './models';
 import type { createAgentRunOperationLifecycle } from './run-operation-lifecycle';
 import type { AgentRuntimeConfig, AgentRuntimeRunContext } from './runtime';
-import {
-  addUsage,
-  type createIdleDeadline,
-  findRun,
-  providerEnvelope,
-  statedUsage,
-} from './runtime-internals';
+import { addUsage, type createIdleDeadline, findRun, statedUsage } from './runtime-internals';
 import {
   type AgentMessage,
   type AgentMessagePart,
@@ -29,7 +24,7 @@ import {
 import { AgentRuntimeConflictError, appliedSnapshot } from './terminal-commit';
 
 /** Everything one run needs from the factory that owns it. */
-export interface RunExecutorDependencies<CONTEXT, TOOLS extends ToolSet> {
+export interface RunExecutorDependencies<CONTEXT, TOOLS extends AgentToolSet> {
   config: AgentRuntimeConfig<CONTEXT, TOOLS>;
   publish(event: AgentRuntimeEvent): Promise<void>;
   runtimeEpoch: string;
@@ -38,6 +33,7 @@ export interface RunExecutorDependencies<CONTEXT, TOOLS extends ToolSet> {
   checkpointEveryEvents: number;
   maxSteps: number;
   idleTimeoutMs?: number;
+  maxDurationMs?: number;
   stepSpendTimeoutMs: number;
   /**
    * Present only when this runtime's `inputPolicy` can ever produce `inject`.
@@ -114,8 +110,8 @@ export interface RunExecutionState {
   modelUsage: AgentUsage | undefined;
   /**
    * What retried attempts cost. Kept apart from `modelUsage` because the
-   * SDK's `finish` part carries the total for the attempt that finished and
-   * `mergeModelTotals` takes that total as authoritative — folding an
+   * native loop's `finish` part carries the total for the attempt that finished
+   * and `mergeModelTotals` takes that total as authoritative — folding an
    * abandoned attempt into the same figure lost it on the next `finish`.
    */
   abandonedUsage: AgentUsage | undefined;
@@ -128,11 +124,24 @@ export interface RunExecutionState {
   sawProviderFinish: boolean;
   step: number;
   /** The current step under `stepBarriers`: held text, a failed call, reasoning so far. */
-  stepGuard: { text: string; toolFailed: boolean; reasoningChars: number };
+  stepGuard: {
+    text: string;
+    textProvider?: AgentProviderEnvelope;
+    toolFailed: boolean;
+    reasoningChars: number;
+  };
   selectedModel: AgentResolvedModel | undefined;
   internalCause: unknown;
   providerStreamCleanupFailure: unknown;
   reasoningPartIndex: number | undefined;
+  /** Distinct reasoning blocks indexed by provider stream part ID for multi-block preservation. */
+  readonly reasoningPartIndexes: Map<string, number>;
+  /** Active unnamed text block index within the current step. */
+  textPartIndex?: number;
+  /** Distinct text blocks indexed by provider stream part ID for provider-envelope preservation. */
+  readonly textPartIndexes: Map<string, number>;
+  /** Set when `protocol.acceptTerminal` already settled acceptance inside the step loop. */
+  terminalDecision: 'accepted' | 'rejected' | undefined;
   firstOutputAt: number | undefined;
   terminalPolicyName: string | undefined;
   // The prompt size of the last completed step — the one number that says
@@ -142,12 +151,12 @@ export interface RunExecutionState {
   lastPromptTokens: AgentUsageValue;
 }
 
-type RootTrace<CONTEXT, TOOLS extends ToolSet> = ReturnType<
+type RootTrace<CONTEXT, TOOLS extends AgentToolSet> = ReturnType<
   NonNullable<AgentRuntimeConfig<CONTEXT, TOOLS>['observe']>['rootTrace']
 >;
 
 /** One acquired run: its dependencies, its input, its state and its owned machinery. */
-export interface RunExecution<CONTEXT, TOOLS extends ToolSet> {
+export interface RunExecution<CONTEXT, TOOLS extends AgentToolSet> {
   invocation?: AgentInvocationScope;
   invocationTrace?: ModelInvocationTrace;
   runtimeContext?: AgentRuntimeRunContext<CONTEXT>;
@@ -162,8 +171,8 @@ export interface RunExecution<CONTEXT, TOOLS extends ToolSet> {
    * Owned mutations of this run take their turn here.
    *
    * The assistant checkpoint and the model-request admission are written by
-   * two independent schedules — the stream consumer and the SDK's model
-   * middleware — against one compare-and-set revision.
+   * two independent schedules — the stream consumer and the native loop's
+   * `AgentModelDriver` request admission — against one compare-and-set revision.
    */
   readonly serialize: MutationQueue;
   readonly operationLifecycle: ReturnType<typeof createAgentRunOperationLifecycle>;
@@ -206,15 +215,32 @@ export function runUsage(state: RunExecutionState): AgentUsage | undefined {
     : (billed ?? state.nonModelUsage);
 }
 
+export function mergeProviderEnvelopes(
+  current: AgentProviderEnvelope | undefined,
+  next: AgentProviderEnvelope | undefined,
+): AgentProviderEnvelope | undefined {
+  if (!next) return current;
+  if (!current || current.provider !== next.provider) return next;
+  return {
+    ...current,
+    schemaVersion: next.schemaVersion,
+    data: { ...current.data, ...next.data },
+  };
+}
+
 export function updateReasoning(
   state: RunExecutionState,
   text: string,
-  metadata?: unknown,
+  provider?: AgentProviderEnvelope,
+  blockId?: string,
 ): void {
   const { parts } = state;
-  const provider = providerEnvelope(metadata);
-  if (state.reasoningPartIndex === undefined) {
-    state.reasoningPartIndex = parts.length;
+  const targetIndex =
+    blockId !== undefined ? state.reasoningPartIndexes.get(blockId) : state.reasoningPartIndex;
+  if (targetIndex === undefined) {
+    const nextIndex = parts.length;
+    state.reasoningPartIndex = nextIndex;
+    if (blockId !== undefined) state.reasoningPartIndexes.set(blockId, nextIndex);
     parts.push(
       AgentMessagePartSchema.parse({
         type: 'reasoning',
@@ -224,19 +250,62 @@ export function updateReasoning(
     );
     return;
   }
-  const current = parts[state.reasoningPartIndex];
+  const current = parts[targetIndex];
   if (current?.type !== 'reasoning') {
     throw new AgentRuntimeConflictError('reasoning accumulator');
   }
+  state.reasoningPartIndex = targetIndex;
+  const mergedProvider = mergeProviderEnvelopes(current.provider, provider);
   parts.splice(
-    state.reasoningPartIndex,
+    targetIndex,
     1,
     AgentMessagePartSchema.parse({
       ...current,
       text: current.text + text,
+      ...(mergedProvider && { provider: mergedProvider }),
+    }),
+  );
+}
+
+export function updateTextBlock(
+  state: RunExecutionState,
+  text: string,
+  provider?: AgentProviderEnvelope,
+  blockId?: string,
+): void {
+  const { parts } = state;
+  const targetIndex =
+    blockId !== undefined ? state.textPartIndexes.get(blockId) : state.textPartIndex;
+  if (
+    targetIndex !== undefined &&
+    (blockId !== undefined || targetIndex === parts.length - 1)
+  ) {
+    const current = parts[targetIndex];
+    if (current?.type === 'text') {
+      const mergedProvider = mergeProviderEnvelopes(current.provider, provider);
+      parts.splice(
+        targetIndex,
+        1,
+        AgentMessagePartSchema.parse({
+          ...current,
+          text: current.text + text,
+          ...(mergedProvider && { provider: mergedProvider }),
+        }),
+      );
+      return;
+    }
+  }
+  if (text.length === 0 && provider === undefined) return;
+  const nextIndex = parts.length;
+  parts.push(
+    AgentMessagePartSchema.parse({
+      type: 'text',
+      text,
       ...(provider && { provider }),
     }),
   );
+  if (blockId !== undefined) state.textPartIndexes.set(blockId, nextIndex);
+  else state.textPartIndex = nextIndex;
 }
 
 /** A tool call's new status, published after the checkpoint that holds it. */
@@ -248,7 +317,7 @@ export interface CheckpointedToolStatus {
   output?: z.core.util.JSONType;
 }
 
-export function checkpoint<CONTEXT, TOOLS extends ToolSet>(
+export function checkpoint<CONTEXT, TOOLS extends AgentToolSet>(
   execution: RunExecution<CONTEXT, TOOLS>,
   toolStatus?: CheckpointedToolStatus,
 ): Promise<void> {

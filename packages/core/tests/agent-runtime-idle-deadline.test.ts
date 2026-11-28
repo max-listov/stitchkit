@@ -1,54 +1,43 @@
 import { expect, test } from 'bun:test';
-import { simulateReadableStream, tool } from 'ai';
-import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import {
+  type AgentModelDriver,
+  type AgentUsage,
   createAgentRuntime,
   createMemoryAgentRuntimeStore,
   defineAgentProtocol,
 } from '../src/entrypoints/agent-runtime';
+import { createScriptedModelDriver } from '../src/entrypoints/agent-runtime/testing';
+import { defineAgentTool } from '../src/entrypoints/tools';
 
-const usage = {
-  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { total: 1, text: 1, reasoning: undefined },
+const usage: AgentUsage = {
+  inputTokens: { value: 1, provenance: 'provider-reported' },
+  outputTokens: { value: 1, provenance: 'provider-reported' },
 };
 function fixture(
   execute: (signal?: AbortSignal) => Promise<string>,
   prepare?: () => Promise<void>,
-  override?: MockLanguageModelV4,
+  override?: AgentModelDriver,
 ) {
-  let calls = 0;
   // This fixture measures preparation/tool waits. Its ready provider chunks must not
   // add timer scheduling delays that can exhaust the 20ms provider silence budget.
-  const model =
+  const driver =
     override ??
-    new MockLanguageModelV4({
-      doStream: async () => ({
-        stream:
-          ++calls === 1
-            ? simulateReadableStream({
-                initialDelayInMs: null,
-                chunkDelayInMs: null,
-                chunks: [
-                  { type: 'tool-call', toolCallId: 'child', toolName: 'wait', input: '{}' },
-                  {
-                    type: 'finish',
-                    finishReason: { unified: 'tool-calls', raw: undefined },
-                    usage,
-                  },
-                ],
-              })
-            : simulateReadableStream({
-                initialDelayInMs: null,
-                chunkDelayInMs: null,
-                chunks: [
-                  { type: 'text-start', id: 'a' },
-                  { type: 'text-delta', id: 'a', delta: 'done' },
-                  { type: 'text-end', id: 'a' },
-                  { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
-                ],
-              }),
-      }),
+    createScriptedModelDriver({
+      provider: 'test',
+      modelId: 'clocks',
+      steps: [
+        [
+          { type: 'tool-call', toolCallId: 'child', toolName: 'wait', input: '{}' },
+          { type: 'finish', finishReason: 'tool-calls', usage },
+        ],
+        [
+          { type: 'text-start', id: 'a' },
+          { type: 'text-delta', id: 'a', delta: 'done' },
+          { type: 'text-end', id: 'a' },
+          { type: 'finish', finishReason: 'stop', usage },
+        ],
+      ],
     });
   return createAgentRuntime({
     protocol: defineAgentProtocol({ context: z.object({}), inputMetadata: z.object({}) }),
@@ -61,7 +50,7 @@ function fixture(
           contextWindow: 4096,
           capabilities: [],
         },
-        model,
+        driver,
       }),
     },
     prompt: async () => {
@@ -74,8 +63,8 @@ function fixture(
       };
     },
     tools: () => ({
-      wait: tool({
-        inputSchema: z.object({}),
+      wait: defineAgentTool({
+        input: z.object({}),
         execute: (_, options) => execute(options.abortSignal),
       }),
     }),
@@ -118,17 +107,19 @@ test('preparation and an active child wait do not consume provider silence budge
 });
 
 test('provider silence before the stream is returned still times out', async () => {
-  const model = new MockLanguageModelV4({
-    doStream: ({ abortSignal }) =>
+  const driver: AgentModelDriver = {
+    provider: 'test',
+    modelId: 'clocks',
+    stream: (_request, signal) =>
       new Promise((_resolve, reject) => {
-        abortSignal?.addEventListener(
+        signal.addEventListener(
           'abort',
           () => reject(new Error('aborted by provider deadline')),
           { once: true },
         );
       }),
-  });
-  const runtime = fixture(async () => '', undefined, model);
+  };
+  const runtime = fixture(async () => '', undefined, driver);
   try {
     expect((await submit(runtime).result).reason).toBe('timeout');
   } finally {

@@ -14,7 +14,10 @@
  * the one that reads as true and is not.
  */
 import { describe, expect, test } from 'bun:test';
-import { normalizeOpenRouterUsage, openRouterProvider } from '../src/agent-runtime/openrouter';
+import {
+  normalizeOpenRouterUsage,
+  openRouterProvider,
+} from '../src/entrypoints/agent-runtime/openrouter';
 
 /** One SDK usage record, in the shape the provider hands over. */
 const usage = {
@@ -29,7 +32,36 @@ const usage = {
     prompt_tokens_details: { cached_tokens: 800 },
     completion_tokens_details: { reasoning_tokens: 64 },
   },
-} as unknown as Parameters<typeof normalizeOpenRouterUsage>[0];
+};
+
+function mockFetch(payload: Record<string, unknown>): typeof fetch {
+  return Object.assign(async () => Response.json(payload), {
+    preconnect() {
+      /* No network I/O in fixture. */
+    },
+  });
+}
+
+async function runSingleFinish(payload: Record<string, unknown>) {
+  const driver = openRouterProvider({
+    apiKey: 'test-key',
+    fetch: mockFetch(payload),
+  }).create('fixture/model');
+  const stream = await driver.stream(
+    {
+      instructions: [],
+      messages: [{ role: 'user', content: 'test' }],
+      tools: [],
+      settings: {},
+      correlation: { conversationId: 'conv', attemptId: 'att', step: 0 },
+    },
+    new AbortController().signal,
+  );
+  for await (const part of stream.parts) {
+    if (part.type === 'finish') return part;
+  }
+  throw new Error('Expected finish part from OpenRouter fixture');
+}
 
 describe('provider usage normalisation is usable without the runtime', () => {
   test('a reported count carries provider-reported, and a missing one carries unavailable', () => {
@@ -65,38 +97,47 @@ describe('provider usage normalisation is usable without the runtime', () => {
     ).toEqual({ value: 0.5, currency: 'USD', provenance: 'provider-reported' });
   });
 
-  test('the provider and the direct call agree, because they are one implementation', () => {
+  test('the provider and the direct call agree, because they are one implementation', async () => {
     // The property that keeps this export from becoming a second copy: if the
     // provider stopped using this function, the two would drift and this fails.
     const metadata = { openrouter: { cost: 0.01 } };
-    const provider = openRouterProvider({ apiKey: 'test-key' });
-    expect(provider.normalizeUsage?.({ usage, providerMetadata: metadata })).toEqual(
-      normalizeOpenRouterUsage(usage, metadata),
-    );
+    const finish = await runSingleFinish({
+      id: 'resp-1',
+      model: 'fixture/model',
+      choices: [
+        { index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+      ],
+      usage: { ...usage.raw, cost: 0.01 },
+    });
+    expect(finish.usage).toEqual(normalizeOpenRouterUsage(usage, metadata));
   });
 
-  test('the adapter names the upstream provider, and names nobody when it cannot', () => {
+  test('the adapter names the upstream provider, and names nobody when it cannot', async () => {
     // The other half of the response identity a completed step publishes. The
     // runtime asks its model and never reads this key itself, so if this
     // reading is wrong nothing else in the framework is in a position to
     // notice. An empty or absent name is ABSENT, not an empty string: a
     // response identity carrying `provider: ''` would claim the gateway
     // answered and named nobody.
-    const provider = openRouterProvider({ apiKey: 'test-key' });
-    const resolve = provider.resolveResponseProvider;
-    if (!resolve) throw new Error('openRouterProvider must resolve a response provider');
-    expect(resolve({ providerMetadata: { openrouter: { provider: 'DeepInfra' } } })).toBe(
-      'DeepInfra',
-    );
-    for (const metadata of [
-      undefined,
-      {},
-      { openrouter: {} },
-      { openrouter: { provider: '' } },
-      { openrouter: { provider: 7 } },
-      { openrouter: 'DeepInfra' },
-    ]) {
-      expect(resolve({ providerMetadata: metadata })).toBeUndefined();
+    const named = await runSingleFinish({
+      id: 'resp-1',
+      model: 'fixture/model',
+      provider: 'DeepInfra',
+      choices: [
+        { index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+      ],
+    });
+    expect(named.responseProvider).toBe('DeepInfra');
+    for (const provider of [undefined, '', 7, {}]) {
+      const finish = await runSingleFinish({
+        id: 'resp-1',
+        model: 'fixture/model',
+        ...(provider !== undefined && { provider }),
+        choices: [
+          { index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+        ],
+      });
+      expect(finish.responseProvider).toBeUndefined();
     }
   });
 
@@ -106,7 +147,7 @@ describe('provider usage normalisation is usable without the runtime', () => {
       inputTokens: 12.5,
       outputTokens: -1,
       raw: { prompt_tokens: 12.5, completion_tokens: -1 },
-    } as unknown as Parameters<typeof normalizeOpenRouterUsage>[0];
+    };
     const normalized = normalizeOpenRouterUsage(fractional, {});
     expect(normalized.inputTokens).toEqual({ provenance: 'unavailable' });
     expect(normalized.outputTokens).toEqual({ provenance: 'unavailable' });
